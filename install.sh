@@ -81,15 +81,18 @@ mkdir -p "$BIN"
 sed "s#__HOME__#$H#g" "$REPO/engine/bin/gbq" > "$BIN/gbq" && chmod +x "$BIN/gbq"; ok "gbq → $BIN/gbq"
 sed "s#__HOME__#$H#g" "$REPO/engine/nightly/gbrain-nightly.sh" > "$HOOKS/gbrain-nightly.sh" && chmod +x "$HOOKS/gbrain-nightly.sh"; ok "gbrain-nightly.sh"
 
-# ── 7. launchd nightly ──────────────────────────────────────────────────────
-say "launchd nightly (04:00)"
+# ── 7. launchd jobs (nightly maintenance + daily reflection) ─────────────────
+say "launchd (nightly 04:00 + reflection 12:00/23:00)"
 mkdir -p "$H/Library/LaunchAgents"
-PLIST="$H/Library/LaunchAgents/com.$U.gbrain-nightly.plist"
-sed -e "s#__HOME__#$H#g" -e "s#__USER__#$U#g" \
-  "$REPO/engine/nightly/com.USER.gbrain-nightly.plist.template" > "$PLIST"
-launchctl bootout "gui/$(id -u)/com.$U.gbrain-nightly" 2>/dev/null || true
-launchctl bootstrap "gui/$(id -u)" "$PLIST" 2>/dev/null || true
-ok "loaded: com.$U.gbrain-nightly"
+load_agent() {  # <label> <template>
+  local label="$1" tpl="$2" plist="$H/Library/LaunchAgents/$1.plist"
+  sed -e "s#__HOME__#$H#g" -e "s#__USER__#$U#g" "$REPO/engine/nightly/$tpl" > "$plist"
+  launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
+  launchctl bootstrap "gui/$(id -u)" "$plist" 2>/dev/null || true
+  ok "loaded: $label"
+}
+load_agent "com.$U.gbrain-nightly"   "com.USER.gbrain-nightly.plist.template"
+load_agent "com.$U.brain-reflection" "com.USER.brain-reflection.plist.template"
 
 # ── 8. settings.json (merge hooks, non-destructive) ─────────────────────────
 say "Registering hooks (~/.claude/settings.json)"

@@ -10,6 +10,7 @@ A **personal second brain** for Claude Code, in one command. Everyone gets the *
 | **Hooks** (`~/.claude/hooks/brain`) | Auto-capture: corrections → `lessons.md`, sessions → `Journal/`, summaries → `memory.md` |
 | **GBrain** (`~/.gbrain`) | Semantic search over the vault (`gbq query "..."`) — ZeroEntropy embeddings |
 | **Nightly** (launchd 04:00) | commit vault → sync → dream cycle (dedup, facts, consolidation) → self-update |
+| **Reflection** (launchd 12:00 + 23:00) | LLM summary of the day's sessions → `Journal/` + rolling 15-day `memory.md` |
 
 It all runs inside Claude Code (terminal/IDE). No bot, no server, no shared cloud.
 
