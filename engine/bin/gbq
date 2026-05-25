@@ -1,0 +1,55 @@
+#!/bin/zsh
+# gbq — safe wrapper around `gbrain` read queries (query/search/ask/graph-query).
+#
+# Why this exists: in the current gbrain + PGLite(WASM) + bun combo, a read query
+# prints its results then FAILS TO EXIT — the process lingers holding PGLite's
+# single-connection lock, so the next `gbrain` call (agents, cron, CLI) blocks
+# forever. Sync/dream/embed exit cleanly, so they don't need this; only reads do.
+#
+# Strategy: run gbrain in the background, stream output to a temp file, detect
+# when output has settled (stable size for ~3s), then force-kill so the lock
+# frees immediately. Hard cap ~45s. Finally, sweep a stale lock if no gbrain is
+# left running.
+#
+# Usage: gbq query "question"   |   gbq search "kw"   |   gbq "<q>" --source rain
+
+GBRAIN="$HOME/.bun/bin/gbrain"
+TMP=$(mktemp -t gbq)
+LOCK="$HOME/.gbrain/brain.pglite/.gbrain-lock"
+
+# Clear a stale lock left by a previous force-killed read (kill -9 skips cleanup).
+# Only safe when no gbrain is actually running right now.
+if ! pgrep -f "bun.*gbrain" >/dev/null 2>&1; then
+    [ -d "$LOCK" ] && mv "$LOCK" "$LOCK.stale-$(date +%s)" 2>/dev/null
+fi
+
+"$GBRAIN" "$@" >"$TMP" 2>&1 &
+GP=$!
+
+last=-1
+stable=0
+for _ in $(seq 1 90); do                 # hard cap ~45s
+    kill -0 "$GP" 2>/dev/null || break   # exited on its own — ideal
+    sz=$(wc -c <"$TMP" 2>/dev/null || echo 0)
+    if [ "$sz" -gt 0 ] && [ "$sz" = "$last" ]; then
+        stable=$((stable + 1))
+        if [ "$stable" -ge 6 ]; then     # ~3s with no new output → results done
+            kill -9 "$GP" 2>/dev/null
+            break
+        fi
+    else
+        stable=0
+    fi
+    last=$sz
+    sleep 0.5
+done
+kill -9 "$GP" 2>/dev/null
+
+cat "$TMP"
+rm -f "$TMP"
+
+# Stale-lock sweep: if nothing else is using gbrain, a leftover lock is stale.
+if ! pgrep -f "bun.*gbrain" >/dev/null 2>&1; then
+    L="$HOME/.gbrain/brain.pglite/.gbrain-lock"
+    [ -d "$L" ] && mv "$L" "$L.stale-$(date +%s)" 2>/dev/null
+fi

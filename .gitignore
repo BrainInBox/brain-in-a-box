@@ -1,0 +1,5 @@
+*.log
+.DS_Store
+_test-home/
+__pycache__/
+*.pyc
