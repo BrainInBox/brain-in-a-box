@@ -1,0 +1,26 @@
+name: tests
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+
+jobs:
+  hooks:
+    runs-on: macos-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run test-hooks.sh (5 hooks + YAML frontmatter validation)
+        run: bash test-hooks.sh
+
+      - name: Lint shell scripts (bash -n)
+        run: |
+          bash -n install.sh
+          bash -n setup-company.sh
+          bash -n test-hooks.sh
+          bash -n try-it-locally.sh
+          bash -n engine/nightly/gbrain-nightly.sh
+          zsh  -n engine/bin/gbq
