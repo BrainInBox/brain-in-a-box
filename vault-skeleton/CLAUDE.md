@@ -45,13 +45,20 @@ The index refreshes every night (sync + dream cycle). See `Profile/stack.md`.
 | Folder | Content |
 |---|---|
 | `Profile/` | Identity, rules, business, stack (permanent) |
+| `Team/` | Humans on the team — one file per person (gstack-style entity) |
+| `Agents/` | AI agents on the team — same schema as `Team/`, both first-class |
+| `Decisions/` | One file per meaningful decision (`YYYY-MM-DD-<slug>.md`) |
+| `Skills/` | Procedures in [gstack SKILL.md format](https://github.com/garrytan/gstack) (YAML triggers + workflow) |
 | `Journal/` | Daily notes YYYY-MM-DD.md (auto) |
-| `Projects/` | Active projects (roadmap, decisions) |
+| `Projects/` | Active projects (roadmap, status) |
 | `Clients/` | Actifs/, Prospects/ |
 | `Resources/` | Templates/, reusable |
 
 ## Routing — where to write
 - Correction → `Profile/lessons.md` (Rule #1)
+- Meaningful decision worth answering "why X?" in 6 months → `Decisions/YYYY-MM-DD-<slug>.md`
+- New teammate (human) → `Team/<name>.md` · new agent → `Agents/<name>.md`
+- New procedure / skill → `Skills/<slug>.md` (gstack-compatible SKILL.md format)
 - Business/project info → `Profile/business.md` or `Projects/<name>.md`
 - Tools/env → `Profile/stack.md`
 

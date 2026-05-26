@@ -14,10 +14,14 @@ BIN="$H/.local/bin"
 GREPO="$H/DEV/gbrain"
 GDATA="$H/.gbrain"
 
-# Team mode: ./install.sh --company <git-url-of-company-vault>
+# Flags:
+#   --company <git-url>   join a team (clone company vault as 2nd GBrain source)
+#   --with-gstack         also install gstack (Garry Tan's 23 AI specialists for Claude Code)
 COMPANY_URL=""
+WITH_GSTACK=""
 while [ $# -gt 0 ]; do case "$1" in
-  --company) COMPANY_URL="${2:-}"; shift 2;;
+  --company)     COMPANY_URL="${2:-}"; shift 2;;
+  --with-gstack) WITH_GSTACK=1; shift;;
   *) shift;;
 esac; done
 
@@ -189,7 +193,23 @@ else
   warn "not installed — download free at https://obsidian.md"
 fi
 
-# ── 14. Verify (hooks healthy) ──────────────────────────────────────────────
+# ── 14. GStack (optional — 23 AI specialists for Claude Code) ───────────────
+if [ -n "$WITH_GSTACK" ]; then
+  say "GStack (23 AI specialists — gstack.com)"
+  GS="$H/.claude/skills/gstack"
+  if [ -d "$GS/.git" ]; then
+    ok "already cloned"
+  else
+    mkdir -p "$(dirname "$GS")"
+    git clone --single-branch --depth 1 https://github.com/garrytan/gstack.git "$GS" >/dev/null 2>&1 && ok "cloned" || warn "clone failed — try manually: git clone https://github.com/garrytan/gstack.git $GS"
+  fi
+  if [ -x "$GS/setup" ]; then
+    ( cd "$GS" && ./setup >/dev/null 2>&1 ) && ok "setup complete" || warn "gstack setup reported issues — run 'cd $GS && ./setup' manually"
+  fi
+  echo "    slash commands now available: /office-hours · /plan-ceo-review · /review · /qa · /retro · /investigate · /cso · /learn (+15 more)"
+fi
+
+# ── 15. Verify (hooks healthy) ──────────────────────────────────────────────
 say "Verifying hooks"
 bash "$REPO/test-hooks.sh" >/dev/null 2>&1 && ok "all 5 hooks healthy" || warn "hook check reported issues — run ./test-hooks.sh to see them"
 

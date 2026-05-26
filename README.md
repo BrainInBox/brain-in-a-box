@@ -1,12 +1,14 @@
 # brain-in-a-box
 
-A **personal second brain** for Claude Code, in one command. Everyone gets the **same engine** (auto-capture of corrections, semantic memory, nightly consolidation) but with **their own data** — everything stays **local on their machine**, nothing is shared.
+A **personal second brain** for Claude Code — and a **shared memory layer for mixed AI + human teams**. One command to install. Markdown vault (browsable in Obsidian) + auto-capture hooks + semantic memory (GBrain). Composes with any agent stack: [gstack](https://github.com/garrytan/gstack), [openclaw](https://github.com/openclaw/openclaw), [Hermes](https://github.com/NousResearch/HermesAgent), or plain Claude Code — they all read and write the same vault.
+
+Everyone gets the **same engine**, with **their own data** — everything stays **local on their machine**.
 
 ## What's inside
 
 | Layer | What |
 |---|---|
-| **Vault** (`~/Documents/Brain`) | Your markdown notes: Profile, Journal, Projects, Clients, Resources |
+| **Vault** (`~/Documents/Brain`) | Your markdown notes: Profile · **Team · Agents · Decisions · Skills** · Journal · Projects · Clients · Resources |
 | **Hooks** (`~/.claude/hooks/brain`) | Auto-capture: corrections → `lessons.md`, sessions → `Journal/`, summaries → `memory.md` |
 | **GBrain** (`~/.gbrain`) | Semantic search over the vault (`gbq query "..."`) — ZeroEntropy embeddings |
 | **Nightly** (launchd 04:00) | commit vault → sync → dream cycle (dedup, facts, consolidation) → self-update |
@@ -36,6 +38,23 @@ cd ~/Documents/Brain && claude
 ```bash
 ./test-hooks.sh    # runs all 5 hooks end-to-end, reports pass/fail
 ```
+
+## Optional: gstack (23 AI specialists)
+
+Garry Tan's [gstack](https://github.com/garrytan/gstack) ships 23 Claude Code skills (a "virtual engineering team": CEO, eng manager, designer, reviewer, QA, CSO, release engineer…). brain-in-a-box installs it alongside on request — they compose: gstack's specialists work, brain-in-a-box captures and remembers.
+
+```bash
+./install.sh --with-gstack
+```
+You get slash commands like `/office-hours`, `/plan-ceo-review`, `/review`, `/qa`, `/retro`, `/investigate`, `/cso`, `/learn` (and 15 more). All read your vault for context, all can write decisions/learnings back into it.
+
+## Team-first vault — humans & agents side by side
+
+The vault treats **humans** (`Team/`) and **AI agents** (`Agents/`) as first-class entities with the same schema. New teammate, human or AI, gets a file. Any agent can query "who knows X" and get a unified answer.
+
+Decisions live in `Decisions/` (one file per decision, with options + trade-offs + status) — answer "why did we choose X?" six months later in one query. Skills live in `Skills/` in [gstack's SKILL.md format](https://github.com/garrytan/gstack) (YAML frontmatter + triggers + workflow) — directly invokable by Claude Code, gstack, or any compatible runtime.
+
+In team mode, all of these federate with the company vault (`BrainCo/`) — your personal entities stay personal, your shared ones are searched across the org.
 
 ## Team mode (company)
 
