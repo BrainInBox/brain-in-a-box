@@ -35,6 +35,19 @@ if cd "$GREPO" 2>/dev/null; then
     fi
 fi
 
+# 0bis. Self-update gstack (if installed via --with-gstack). Same shape: pull + re-setup if HEAD moved.
+GSTACK="$HOME/.claude/skills/gstack"
+if [ -d "$GSTACK/.git" ] && cd "$GSTACK" 2>/dev/null; then
+    g_before=$(git rev-parse --short HEAD 2>/dev/null)
+    if git pull --ff-only >> "$LOG" 2>&1; then
+        g_after=$(git rev-parse --short HEAD 2>/dev/null)
+        if [ "$g_before" != "$g_after" ]; then
+            echo "[update] gstack $g_before -> $g_after" >> "$LOG"
+            ./setup >> "$LOG" 2>&1 || echo "[update] gstack setup non-fatal" >> "$LOG"
+        fi
+    fi
+fi
+
 # 1. Commit the personal vault first (sync is git-diff based → without a commit, edits are invisible).
 if cd "$VAULT" 2>/dev/null && [ -n "$(git status --porcelain 2>/dev/null)" ]; then
     git add -A >> "$LOG" 2>&1
