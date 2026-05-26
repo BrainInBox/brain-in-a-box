@@ -43,7 +43,14 @@ STEP 2 — fill in the company profile (you, or via Claude Code):
   cd $CO && claude
   # "Fill company.md with the company context (stack, team, conventions)."
 
-STEP 3 — give each member the join command:
+STEP 3 — seed the team-first folders (1-2 entries each is enough to start):
+  $CO/Team/      humans on the team (1 file per person, copy _template.md)
+  $CO/Agents/    AI agents the company uses (gstack specialists, Hermes, custom)
+  $CO/Decisions/ company-wide decisions (one file per decision, YYYY-MM-DD-<slug>.md)
+  $CO/Skills/    invocable procedures (gstack SKILL.md format)
+  $CO/Process/   HR/ops processes (onboarding, vacation, expense) — distinct from Skills/
+
+STEP 4 — give each member the join command:
   cd brain-in-a-box && ./install.sh --company https://github.com/<your-org>/brain-company
 
 Members get their personal brain + the 'company' source (queryable, git-pulled nightly).
