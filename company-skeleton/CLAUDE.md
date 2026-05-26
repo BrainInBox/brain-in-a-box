@@ -6,11 +6,13 @@ Shared vault indexed as the `company` source in each member's GBrain.
 | Folder | Content |
 |---|---|
 | `company.md` | Identity, stack, team, conventions |
-| `Decisions/` | Locked decisions (one file per decision, dated) |
-| `Process/` | Recurring procedures (onboarding, deploy, incident, reconcile…) |
+| `Team/` | Humans on the team — one file per person (replaces older `People/`) |
+| `Agents/` | AI agents the company uses — same schema as `Team/`, both first-class |
+| `Decisions/` | Locked decisions, one file per decision (`YYYY-MM-DD-<slug>.md`) |
+| `Skills/` | Procedures in [gstack SKILL.md format](https://github.com/garrytan/gstack) — invokable by any agent |
+| `Process/` | HR / ops / business processes (onboarding, vacation, expense) — distinct from `Skills/` |
 | `Projects/` | Active projects (status, roadmap, decisions) |
 | `Clients/` | Client/partner sheets |
-| `People/` | Who does what, internal contacts |
 
 ## Contributing (open contribution)
 Everyone can enrich:
