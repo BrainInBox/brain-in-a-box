@@ -64,6 +64,21 @@ grep -q "journal summary" "$H/.claude/logs/claude-stub-prompt.txt" 2>/dev/null &
 rm -f "$H/.claude/logs/sessions-$DAY.jsonl"
 HOME="$H" python3 "$HB/daily-reflection.py" 2>/dev/null && ok "exits gracefully when there's nothing to do" || no "crashed when nothing to do"
 
+echo "════ 6) vault-skeleton — YAML frontmatters parse cleanly ════"
+# Catches unquoted {{PLACEHOLDER}} that breaks Claude Code / gstack skill loaders.
+# Uses ruby (preinstalled on macOS, no extra dep needed).
+if command -v ruby >/dev/null 2>&1; then
+  while IFS= read -r f; do
+    head -1 "$f" | grep -q '^---$' || continue
+    rel="${f#"$REPO"/vault-skeleton/}"
+    fm=$(awk '/^---$/{n++; next} n==1' "$f")
+    err=$(printf '%s' "$fm" | ruby -ryaml -e 'YAML.safe_load(STDIN.read)' 2>&1)
+    [ -z "$err" ] && ok "$rel" || no "$rel — $(printf '%s' "$err" | head -1)"
+  done < <(find "$REPO/vault-skeleton" -name "*.md" -type f)
+else
+  printf "  \033[1;33m⚠\033[0m skipped (no ruby found) — install ruby to enable YAML validation\n"
+fi
+
 echo ""
 if [ "$FAIL" -eq 0 ]; then
   printf "\033[1;32m✅ All hooks healthy: %s/%s passed.\033[0m\n" "$PASS" "$((PASS+FAIL))"
