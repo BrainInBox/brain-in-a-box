@@ -93,6 +93,10 @@ Each member's nightly pulls the team's contributions + re-indexes. The dream cyc
 ## Security / privacy
 - Everything is **local**: your vault, your index, your key. Nothing goes to a third party (except the text embedding sent to ZeroEntropy at indexing time — see their policy).
 - Never a secret in the vault (the `file-protection` hook + the directives remind you).
+- **Found a security issue?** See [SECURITY.md](SECURITY.md) — please use GitHub Security Advisories, not public Issues.
+
+## Contributing
+PRs welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) for the workflow (the `master` branch is protected — every change goes through a PR). MIT licensed (see [LICENSE](LICENSE)). Changelog tracked in [CHANGELOG.md](CHANGELOG.md).
 
 ## Updating
 ```bash
