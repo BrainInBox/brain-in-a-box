@@ -1,23 +1,32 @@
 #!/bin/zsh
-# gbq — safe wrapper around `gbrain` read queries (query/search/ask/graph-query).
+# gbq — safe universal wrapper around `gbrain`.
 #
-# Why this exists: in the current gbrain + PGLite(WASM) + bun combo, a read query
-# prints its results then FAILS TO EXIT — the process lingers holding PGLite's
-# single-connection lock, so the next `gbrain` call (agents, cron, CLI) blocks
-# forever. Sync/dream/embed exit cleanly, so they don't need this; only reads do.
+# Two regimes:
+#   READS   (query, search, ask, graph-query)  → force-kill after output stabilizes.
+#           In the gbrain + PGLite(WASM) + bun combo, a read prints results then
+#           FAILS TO EXIT — the process lingers holding PGLite's single-connection
+#           lock, blocking every subsequent gbrain call (agents, cron, CLI).
+#           We watch the output size, force-kill when it's stable ~3s, then sweep
+#           the stale lock so the next call succeeds.
 #
-# Strategy: run gbrain in the background, stream output to a temp file, detect
-# when output has settled (stable size for ~3s), then force-kill so the lock
-# frees immediately. Hard cap ~45s. Finally, sweep a stale lock if no gbrain is
-# left running.
+#   WRITES (sync, embed, dream, skillify, brainstorm, code-def, code-refs, sources,
+#          init, doctor, anything else) → just `wait`. They exit cleanly and may
+#          legitimately pause >3s (LLM calls in skillify/brainstorm) — force-kill
+#          here would truncate the operation. Stale-lock sweep still runs after.
 #
-# Usage: gbq query "question"   |   gbq search "kw"   |   gbq "<q>" --source rain
+# Usage: gbq query "question"  · gbq search "kw"  · gbq skillify <url>  · gbq <any>
 
 GBRAIN="$HOME/.bun/bin/gbrain"
 TMP=$(mktemp -t gbq)
 LOCK="$HOME/.gbrain/brain.pglite/.gbrain-lock"
 
-# Clear a stale lock left by a previous force-killed read (kill -9 skips cleanup).
+# Read vs write — only known-buggy reads get the force-kill dance.
+case "${1:-}" in
+  query|search|ask|graph-query) IS_READ=1;;
+  *)                            IS_READ=0;;
+esac
+
+# Sweep a stale lock left by a previous force-killed read (kill -9 skips cleanup).
 # Only safe when no gbrain is actually running right now.
 if ! pgrep -f "bun.*gbrain" >/dev/null 2>&1; then
     [ -d "$LOCK" ] && mv "$LOCK" "$LOCK.stale-$(date +%s)" 2>/dev/null
@@ -26,24 +35,30 @@ fi
 "$GBRAIN" "$@" >"$TMP" 2>&1 &
 GP=$!
 
-last=-1
-stable=0
-for _ in $(seq 1 90); do                 # hard cap ~45s
-    kill -0 "$GP" 2>/dev/null || break   # exited on its own — ideal
-    sz=$(wc -c <"$TMP" 2>/dev/null || echo 0)
-    if [ "$sz" -gt 0 ] && [ "$sz" = "$last" ]; then
-        stable=$((stable + 1))
-        if [ "$stable" -ge 6 ]; then     # ~3s with no new output → results done
-            kill -9 "$GP" 2>/dev/null
-            break
+if [ "$IS_READ" = "1" ]; then
+    # Force-kill dance: watch output size, kill when stable ~3s. Hard cap ~45s.
+    last=-1
+    stable=0
+    for _ in $(seq 1 90); do
+        kill -0 "$GP" 2>/dev/null || break   # exited on its own — ideal
+        sz=$(wc -c <"$TMP" 2>/dev/null || echo 0)
+        if [ "$sz" -gt 0 ] && [ "$sz" = "$last" ]; then
+            stable=$((stable + 1))
+            if [ "$stable" -ge 6 ]; then     # ~3s with no new output → results done
+                kill -9 "$GP" 2>/dev/null
+                break
+            fi
+        else
+            stable=0
         fi
-    else
-        stable=0
-    fi
-    last=$sz
-    sleep 0.5
-done
-kill -9 "$GP" 2>/dev/null
+        last=$sz
+        sleep 0.5
+    done
+    kill -9 "$GP" 2>/dev/null
+else
+    # Writes exit cleanly and may legitimately pause (LLM call) — just wait.
+    wait "$GP" 2>/dev/null
+fi
 
 cat "$TMP"
 rm -f "$TMP"

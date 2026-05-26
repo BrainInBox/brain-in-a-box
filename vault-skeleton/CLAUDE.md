@@ -34,9 +34,10 @@ Before answering about a past decision/context/person, **query instead of guessi
 ```
 ~/.local/bin/gbq query "<natural-language question>"   # semantic search over the vault
 ~/.local/bin/gbq search "<keyword>"                     # fast keyword search
+~/.local/bin/gbq skillify <url-or-file>                 # draft a SKILL.md from content
+~/.local/bin/gbq brainstorm "<question>"                # bisociation idea generator
 ```
-Always use `gbq` (not `gbrain query` directly — it hangs on the lock). Cite the returned slug.
-The index refreshes every night (sync + dream cycle). See `Profile/stack.md`.
+Always use `gbq` — it's the safe universal wrapper for every gbrain command (reads avoid the PGLite lock hang, writes wait cleanly). Cite the returned slug. The index refreshes every night (sync + dream cycle). See `Profile/stack.md`.
 
 ---
 

@@ -86,6 +86,8 @@ Each member's nightly pulls the team's contributions + re-indexes. The dream cyc
 
 - **Live your life** in Claude Code: the corrections you give are captured in `lessons.md`, your sessions summarized in `Journal/`. Zero effort.
 - **Recall**: `gbq query "what did we decide about X?"` → answer from your memory, with the source.
+- **Skillify**: `gbq skillify <url-or-file>` extracts a SKILL.md draft from a tweet, article, or doc (via [gbrain](https://github.com/garrytan/gbrain)). Drop it in `~/Documents/Brain/Skills/` and your agents can use it.
+- **Brainstorm / code search**: `gbq brainstorm "<question>"` (idea generation), `gbq code-def <symbol>` / `code-refs <symbol>` (when you indexed a code repo as a source). All gbrain commands are safe through `gbq` — it routes reads through the lock-safe path and writes via clean wait.
 - **In the morning**: the dream cycle deduped/consolidated overnight.
 
 ## Security / privacy
