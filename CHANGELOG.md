@@ -6,7 +6,14 @@ Format inspired by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-_Nothing yet — open an issue to suggest._
+### Changed
+- **`daily-reflection.py` now builds the journal from a git digest + a full transcript scan**, not the Stop-driven session index alone. The index only logs a session on the day of its `Stop`, so any session whose work spans midnight (or is resumed) was missed — measured ~40% of sessions and ~55% of records on busy days, which is why big days read thin. Now it:
+  - discovers the day's sessions by **scanning `~/.claude/projects` by local date** (not the index);
+  - injects an authoritative **git digest** (your own commits, `--no-merges`, deduped by subject) for the repos you worked in — repos discovered from session cwds (scans child dirs when a cwd is a non-repo parent), author from each repo's `git config user.name`. No hardcoded paths;
+  - caps the transcript block, splits the budget fairly across sessions (head+tail on line boundaries), streams transcripts (RAM O(day) not O(file)), and tells the LLM to **merge** rather than overwrite existing journal/memory.
+
+### Fixed
+- **`session-indexer.py`**: lock is now per `(session, day)` instead of per session, so a session resumed across days is re-indexed on every active day (was only indexed on its first `Stop`).
 
 ## [0.1.0] — 2026-05-26 — Initial public release
 
