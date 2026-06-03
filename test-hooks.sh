@@ -57,11 +57,15 @@ printf '%s' "$*" > "$HOME/.claude/logs/claude-stub-prompt.txt"
 exit 0
 STUB
 chmod +x "$H/.local/bin/claude"
+# daily-reflection now DISCOVERS sessions by scanning ~/.claude/projects (not the
+# Stop-driven index), so place the fake transcript there for it to find.
+mkdir -p "$H/.claude/projects/proj"
+cp "$TX" "$H/.claude/projects/proj/$SID.jsonl"
 rm -f /tmp/brain-daily-reflection-$DAY-*.lock 2>/dev/null   # clear debounce lock from prior runs
 HOME="$H" python3 "$HB/daily-reflection.py" 2>/dev/null
-[ -f "$H/.claude/logs/claude-stub-called.txt" ] && ok "cron flow ran (read logs → built prompt → invoked claude)" || no "cron flow did not run"
+[ -f "$H/.claude/logs/claude-stub-called.txt" ] && ok "cron flow ran (scanned transcripts → built prompt → invoked claude)" || no "cron flow did not run"
 grep -q "journal summary" "$H/.claude/logs/claude-stub-prompt.txt" 2>/dev/null && ok "prompt is correct" || no "prompt wrong"
-rm -f "$H/.claude/logs/sessions-$DAY.jsonl"
+rm -rf "$H/.claude/projects"; rm -f /tmp/brain-daily-reflection-$DAY-*.lock 2>/dev/null
 HOME="$H" python3 "$HB/daily-reflection.py" 2>/dev/null && ok "exits gracefully when there's nothing to do" || no "crashed when nothing to do"
 
 echo "════ 6) vault-skeleton — YAML frontmatters parse cleanly ════"
