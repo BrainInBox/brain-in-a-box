@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import json, sys, os, time, subprocess
+import json, sys, os, time, subprocess, tempfile, shutil
 from pathlib import Path
 
 BRAIN = Path.home() / "Documents" / "Brain"
@@ -7,7 +7,7 @@ LOGS = Path.home() / ".claude" / "logs"
 DAY = time.strftime("%Y-%m-%d")
 slot = "midday" if int(time.strftime("%H")) < 18 else "evening"
 
-lock = Path(f"/tmp/brain-daily-reflection-{DAY}-{slot}.lock")
+lock = Path(tempfile.gettempdir()) / f"brain-daily-reflection-{DAY}-{slot}.lock"
 if lock.exists() and (time.time() - lock.stat().st_mtime) < 3600:
     sys.exit(0)
 lock.write_text(str(time.time()))
@@ -55,7 +55,13 @@ Transcripts:
 """
 
 try:
-    claude_bin = "__HOME__/.local/bin/claude"
+    home_claude = Path.home() / ".local" / "bin" / "claude"
+    claude_bin = (
+        os.environ.get("CLAUDE_BIN")
+        or (str(home_claude) if home_claude.exists() else None)
+        or shutil.which("claude")
+        or str(home_claude)
+    )
     subprocess.run(
         [claude_bin, "-p", "--permission-mode", "acceptEdits", prompt],
         cwd=str(BRAIN),

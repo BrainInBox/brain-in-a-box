@@ -1,0 +1,10 @@
+# Keep LF in the repo on every platform — Python/JSON hooks and shell scripts
+# break if checked out with CRLF on Windows.
+* text=auto eol=lf
+
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.webp binary
+*.pdf  binary
+*.zip  binary

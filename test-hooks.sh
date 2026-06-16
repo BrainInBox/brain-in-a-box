@@ -7,10 +7,11 @@ set -u
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 H="$(mktemp -d -t biab-hooktest)"
+export TMPDIR="$H/tmp"             # isolate hook locks (tempfile.gettempdir()) in the throwaway HOME
 DAY=$(date +%Y-%m-%d)
 SID="biabtest$(date +%s)"          # unique per run → no stale-lock collisions
 HB="$H/.claude/hooks/brain"
-mkdir -p "$HB" "$H/.claude/logs" "$H/Documents/Brain/Journal" "$H/Documents/Brain/Profile" "$H/.local/bin"
+mkdir -p "$HB" "$H/.claude/logs" "$H/Documents/Brain/Journal" "$H/Documents/Brain/Profile" "$H/.local/bin" "$H/tmp"
 
 # Install the repo's hooks into the temp HOME exactly like install.sh does.
 for f in "$REPO"/engine/hooks/*.py; do
@@ -57,7 +58,7 @@ printf '%s' "$*" > "$HOME/.claude/logs/claude-stub-prompt.txt"
 exit 0
 STUB
 chmod +x "$H/.local/bin/claude"
-rm -f /tmp/brain-daily-reflection-$DAY-*.lock 2>/dev/null   # clear debounce lock from prior runs
+rm -f "$TMPDIR"/brain-daily-reflection-$DAY-*.lock 2>/dev/null   # clear debounce lock from prior runs
 HOME="$H" python3 "$HB/daily-reflection.py" 2>/dev/null
 [ -f "$H/.claude/logs/claude-stub-called.txt" ] && ok "cron flow ran (read logs → built prompt → invoked claude)" || no "cron flow did not run"
 grep -q "journal summary" "$H/.claude/logs/claude-stub-prompt.txt" 2>/dev/null && ok "prompt is correct" || no "prompt wrong"
