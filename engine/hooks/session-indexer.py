@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import json, sys, os, time
+import json, sys, os, time, tempfile
 from pathlib import Path
 
 try:
@@ -8,7 +8,7 @@ except Exception:
     sys.exit(0)
 
 sid = payload.get("session_id") or payload.get("sessionId") or "unknown"
-lock_dir = Path("/tmp/claude-session-locks")
+lock_dir = Path(tempfile.gettempdir()) / "claude-session-locks"
 lock_dir.mkdir(parents=True, exist_ok=True)
 lock = lock_dir / f"indexer-{sid}.lock"
 if lock.exists():

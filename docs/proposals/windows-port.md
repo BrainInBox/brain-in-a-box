@@ -4,6 +4,17 @@ Status: **proposal** (per CONTRIBUTING, approach before code). Scope: make
 brain-in-a-box installable and runnable for a **solo user on Windows**. Team mode
 (`setup-company.sh`) is out of scope for v1.
 
+> **Update 2026-06 — Phase 1 done.** The engine hooks are now cross-platform
+> (pure Python): `/tmp` → `tempfile.gettempdir()`, `claude` resolved via
+> `shutil.which()`, home resolved at runtime with `Path.home()` (no `__HOME__`
+> bake-in), and `.gitattributes` enforces LF so CRLF can't break the hooks on
+> Windows. This benefits macOS too and is **not gated by gbrain**. Remaining:
+> `install.ps1`, the scheduler step, and the search path (Phases 2–6 below).
+> **Field note:** a downstream deployment ran fully native on Windows by putting
+> **semantic search server-side** (a small search API the client hits over HTTP)
+> instead of embedded gbrain — which sidesteps the #1549 PGLite/pgvector gating
+> entirely. Worth considering as the Windows search path here.
+
 ## Why it doesn't run on Windows today
 
 Everything macOS-specific, by layer:

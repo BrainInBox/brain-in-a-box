@@ -5,14 +5,14 @@ Stop hook: extracts lightweight stats from a Claude session and appends them to
 
 Idempotent (skips if session_id already present). No LLM call.
 """
-import json, sys, os, re, time
+import json, sys, os, re, time, tempfile
 from pathlib import Path
 from collections import Counter
 from datetime import datetime
 
-BRAIN = Path("__HOME__/Documents/Brain")
+BRAIN = Path.home() / "Documents" / "Brain"
 JOURNAL_DIR = BRAIN / "Journal"
-LOCK_DIR = Path("/tmp/claude-session-locks")
+LOCK_DIR = Path(tempfile.gettempdir()) / "claude-session-locks"
 
 SIGNAL_PATTERNS = [
     # SSH / infra
@@ -253,8 +253,8 @@ def main():
             sys.exit(0)
     lock.write_text(str(time.time()))
 
-    # Skip smoke tests / /tmp cwd
-    if cwd.startswith("/tmp") or cwd.startswith("/private/tmp"):
+    # Skip smoke tests / temp cwd (cross-platform)
+    if cwd.startswith(tempfile.gettempdir()) or cwd.startswith("/tmp") or cwd.startswith("/private/tmp"):
         sys.exit(0)
 
     stats = parse_transcript(transcript_path)
