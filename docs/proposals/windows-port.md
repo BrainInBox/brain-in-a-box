@@ -8,12 +8,19 @@ brain-in-a-box installable and runnable for a **solo user on Windows**. Team mod
 > (pure Python): `/tmp` → `tempfile.gettempdir()`, `claude` resolved via
 > `shutil.which()`, home resolved at runtime with `Path.home()` (no `__HOME__`
 > bake-in), and `.gitattributes` enforces LF so CRLF can't break the hooks on
-> Windows. This benefits macOS too and is **not gated by gbrain**. Remaining:
-> `install.ps1`, the scheduler step, and the search path (Phases 2–6 below).
-> **Field note:** a downstream deployment ran fully native on Windows by putting
-> **semantic search server-side** (a small search API the client hits over HTTP)
-> instead of embedded gbrain — which sidesteps the #1549 PGLite/pgvector gating
-> entirely. Worth considering as the Windows search path here.
+> Windows. This benefits macOS too and is **not gated by gbrain**.
+>
+> **Update 2026-06 — Windows path now implemented (search un-gated).** Rather
+> than wait on gbrain #1549, the search is replaced on Windows by
+> `engine/search/brain_search.py` — a **local BM25 search in pure Python** (no
+> bun, no pgvector, no model download, offline). `install.ps1` wires it up: copies
+> the vault skeleton, installs the (now cross-platform) hooks, builds the index,
+> drops a `gbq.cmd` shim so the existing `gbq query "..."` interface still works,
+> registers Task Scheduler jobs (reindex 04:00 + reflection 12:00/23:00), and
+> merges the global `CLAUDE.md`. Tested: `brain_search` indexes + queries a real
+> vault on macOS; `test-hooks.sh` 15/15. `install.ps1` still needs a real-Windows
+> smoke test. (BM25 = keyword ranking; embeddings remain an optional upgrade for
+> machines that can `pip install sentence-transformers`.)
 
 ## Why it doesn't run on Windows today
 
