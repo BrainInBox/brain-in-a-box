@@ -3,3 +3,7 @@
 _test-home/
 __pycache__/
 *.pyc
+
+# secrets locaux — ne jamais committer
+.mcp.json
+**/config.json
