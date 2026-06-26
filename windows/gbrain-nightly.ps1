@@ -15,6 +15,12 @@ $Vault   = "$env:USERPROFILE\Documents\Brain"
 $VaultCo = "$env:USERPROFILE\Documents\BrainCo"
 $GRepo   = "$env:USERPROFILE\DEV\gbrain"
 $Log     = "$env:USERPROFILE\.gbrain\nightly.log"
+# Mail connector (collecteur metadata + enrichissement LLM -> notes mails/).
+$EmailDir    = "$env:USERPROFILE\brain-in-a-box\windows\email-collector"
+$EmailCli    = "$EmailDir\email-collector.mjs"
+$EmailEnrich = "$EmailDir\email-enrich.py"
+$PyExe       = (Get-Command python.exe -ErrorAction SilentlyContinue | Where-Object { $_.Source -notmatch 'WindowsApps' } | Select-Object -First 1).Source
+if (-not $PyExe) { $PyExe = "$env:LOCALAPPDATA\Programs\Python\Launcher\py.exe" }
 
 # All logging goes through one UTF-8 sink so the log stays readable. PowerShell
 # 5.1's `*>>` redirect writes UTF-16 (mixes encodings), so we pipe to Add-Content.
@@ -52,12 +58,32 @@ if (Test-Path "$Vault\.git") {
     }
     Pop-Location
 }
-Gbrain sync --repo $Vault --no-pull
+# IMPORTANT: pin BOTH --source AND --repo. Syncing with a bare --repo (no
+# --source) makes gbrain write that path onto the wrong source row -> it
+# repointed 'company' at the personal vault (corruption seen 2026-06-22).
+# Pinning each source to its repo is self-healing: a wrong path is re-corrected
+# every night.
+Gbrain sync --source default --repo $Vault --no-pull
 
-# 2. COMPANY vault (team mode): pull teammates' contributions + sync the 'company' source.
+# 2. COMPANY vault (team mode): pull + collecte/enrichissement mail + sync.
 if (Test-Path "$VaultCo\.git") {
     Run git -C $VaultCo pull --ff-only
-    Gbrain sync --source company
+
+    # 2a. Mail : collecte (metadata, lecture seule) puis enrichissement LLM
+    #     (reponses clients -> 1 note par mail dans BrainCo/mails/, affiliees au client).
+    if (Test-Path $EmailCli) { Run $Bun $EmailCli run }
+    if ((Test-Path $EmailEnrich) -and $PyExe) { Run $PyExe $EmailEnrich }
+
+    # 2b. Commit LOCAL des notes mail (le push reste manuel/volontaire).
+    Push-Location $VaultCo
+    if (git status --porcelain) {
+        Run git add -A
+        Run git -c user.email="brain@local" -c user.name="brain" commit -q -m "nightly mails $(Get-Date -Format 'yyyy-MM-dd')"
+        Log "[git] company mail notes committed (local)"
+    }
+    Pop-Location
+
+    Gbrain sync --source company --repo $VaultCo --no-pull
     Log "[sync] company source"
 }
 
