@@ -54,17 +54,31 @@ Transcripts:
 {big}
 """
 
-claude_bin = shutil.which("claude") or os.path.expandvars(r"%APPDATA%\npm\claude.cmd")
+claude_bin = shutil.which("claude.cmd") or shutil.which("claude") or os.path.expandvars(r"%APPDATA%\npm\claude.cmd")
 if not claude_bin or not Path(claude_bin).exists():
     (LOGS / "daily-reflection-errors.log").open("a", encoding="utf-8").write(f"{time.strftime('%Y-%m-%dT%H:%M:%S')} claude introuvable: {claude_bin}" + chr(10))
     sys.exit(0)
+# claude -p en automatisation : config MCP VIDE (--strict-mcp-config) sinon il
+# lance toute la flotte MCP (Playwright, n8n...) -> hang en headless + zombies (2026-06-22).
+no_mcp = Path.home() / ".gbrain" / "no-mcp-config.json"
+if not no_mcp.exists():
+    no_mcp.parent.mkdir(parents=True, exist_ok=True)
+    no_mcp.write_text('{"mcpServers":{}}', encoding="utf-8")
 try:
+    # Windows: le prompt (jusqu'a 200k chars de transcripts) passe par STDIN,
+    # pas par argv -- la ligne de commande Windows plafonne a ~32k chars
+    # (WinError 206). cmd /c pour executer le .cmd de facon fiable.
     subprocess.run(
-        [claude_bin, "-p", "--permission-mode", "acceptEdits", prompt],
+        ["cmd", "/c", claude_bin, "-p",
+         "--strict-mcp-config", "--mcp-config", str(no_mcp),
+         "--permission-mode", "acceptEdits"],
+        input=prompt,
+        text=True,
+        encoding="utf-8",
         cwd=str(BRAIN),
         timeout=600,
         check=False,
     )
-except Exception as e:
+except (OSError, subprocess.SubprocessError) as e:
     (LOGS / "daily-reflection-errors.log").open("a", encoding="utf-8").write(f"{time.strftime('%Y-%m-%dT%H:%M:%S')} {e}" + chr(10))
 sys.exit(0)
