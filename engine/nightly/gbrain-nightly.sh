@@ -14,6 +14,19 @@ VAULT_CO="$HOME/Documents/BrainCo"
 GREPO="$HOME/DEV/gbrain"
 LOG="$HOME/.gbrain/nightly.log"
 
+# Sweep an orphan .git/index.lock that silently breaks `git commit` (a crashed
+# git leaves it behind → the vault never commits → gbrain sync stalls on "No
+# commits in repo" → the index freezes, unnoticed). Only remove it when no git
+# runs in the repo AND the lock is >5 min old (a fresh one may be a legit
+# concurrent commit). Root-caused 2026-06-28: a 14-day-old lock froze the index.
+sweep_git_lock() {
+    local repo="$1" lock="$1/.git/index.lock"
+    [ -f "$lock" ] || return 0
+    if ! pgrep -f "[g]it .*$repo" >/dev/null 2>&1 && [ -z "$(find "$lock" -mmin -5 2>/dev/null)" ]; then
+        rm -f "$lock" && echo "[lock] removed stale .git/index.lock in $repo" >> "$LOG"
+    fi
+}
+
 echo "===== $(date '+%Y-%m-%d %H:%M:%S') nightly start =====" >> "$LOG"
 
 # -1. Stale-lock recovery (a gbrain killed with SIGKILL leaves a .gbrain-lock that blocks everything).
@@ -21,6 +34,8 @@ if ! pgrep -f "bun.*gbrain" >/dev/null 2>&1; then
     L="$HOME/.gbrain/brain.pglite/.gbrain-lock"
     [ -d "$L" ] && mv "$L" "${L}.stale-$(date +%s)" 2>/dev/null && echo "[lock] rotated stale lock" >> "$LOG"
 fi
+sweep_git_lock "$VAULT"
+[ -d "$VAULT_CO/.git" ] && sweep_git_lock "$VAULT_CO"
 
 # 0. Self-update GBrain (resilient: a failure must never block the cycle).
 if cd "$GREPO" 2>/dev/null; then
