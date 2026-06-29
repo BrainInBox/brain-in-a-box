@@ -55,9 +55,10 @@ if [ "$IS_READ" = "1" ]; then
         sleep 0.5
     done
     kill -9 "$GP" 2>/dev/null
+    RC=0            # read output captured; the force-kill is intentional, not a failure
 else
     # Writes exit cleanly and may legitimately pause (LLM call) — just wait.
-    wait "$GP" 2>/dev/null
+    wait "$GP"; RC=$?
 fi
 
 cat "$TMP"
@@ -68,3 +69,7 @@ if ! pgrep -f "bun.*gbrain" >/dev/null 2>&1; then
     L="$HOME/.gbrain/brain.pglite/.gbrain-lock"
     [ -d "$L" ] && mv "$L" "$L.stale-$(date +%s)" 2>/dev/null
 fi
+
+# Propagate gbrain's real exit code — NOT the lock-sweep test above (which is
+# false, hence exit 1, whenever there's no stale lock to clear → false failures).
+exit $RC

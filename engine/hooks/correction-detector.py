@@ -26,7 +26,7 @@ if not (brain / "Profile" / "lessons.md").exists():
 
 reminder = (
     "⚠️ CORRECTION DETECTED — BEFORE doing anything else:\n"
-    f"1. Append a line to {brain}/Profile/lessons.md under today's header (## YYYY-MM-DD).\n"
+    f"1. Append a line to {brain}/Profile/lessons.md under today's header (## YYYY-MM-DD). The file is chronological (most recent day at the BOTTOM — that is what the tail-injection re-reads): today's header lives at the END of the file. Create it at the end if missing and add the entry right below it, NEVER at the top.\n"
     "   Format: - **[short context]** -> rule: [what to do] (when: [trigger condition])\n"
     "2. Confirm visibly: ✓ noted in lessons.md\n"
     "3. Only then apply the correction and continue."
