@@ -17,7 +17,7 @@ if not index_file.exists():
     sys.exit(0)
 
 sessions = []
-for line in index_file.read_text().splitlines():
+for line in index_file.read_text(encoding="utf-8").splitlines():
     try:
         sessions.append(json.loads(line))
     except Exception:
@@ -30,7 +30,7 @@ for s in sessions:
     tp = s.get("transcript_path")
     if tp and Path(tp).exists():
         try:
-            transcripts.append(Path(tp).read_text()[:50000])
+            transcripts.append(Path(tp).read_text(encoding="utf-8")[:50000])
         except Exception:
             pass
 
@@ -69,5 +69,5 @@ try:
         check=False,
     )
 except Exception as e:
-    (LOGS / "daily-reflection-errors.log").open("a").write(f"{time.strftime(chr(37)+chr(70)+chr(84)+chr(37)+chr(84))} {e}" + chr(10))
+    (LOGS / "daily-reflection-errors.log").open("a", encoding="utf-8").write(f"{time.strftime(chr(37)+chr(70)+chr(84)+chr(37)+chr(84))} {e}" + chr(10))
 sys.exit(0)
