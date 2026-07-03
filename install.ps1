@@ -119,7 +119,12 @@ if ($cur -match [regex]::Escape($mark)) {
 Say "Task Scheduler (reindex 04:00 + reflection 12:00/23:00)"
 function Register-BrainTask($name, $argument, $triggers) {
     $action = New-ScheduledTaskAction -Execute $Py -Argument $argument
-    Register-ScheduledTask -TaskName $name -Action $action -Trigger $triggers -Force -User $env:USERNAME | Out-Null
+    # LogonType S4U : tourne meme si personne n'est connecte/deverrouille (pas de mot de passe stocke).
+    # Le defaut de Register-ScheduledTask -User est LogonType Interactive, qui exige une session active -
+    # observe en pratique : echec (0x800710E0, "operateur/administrateur a refuse la requete") au declenchement
+    # de nuit/verrouille, succes seulement quand relance manuellement en session active.
+    $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType S4U -RunLevel Limited
+    Register-ScheduledTask -TaskName $name -Action $action -Trigger $triggers -Principal $principal -Force | Out-Null
     Ok "tache: $name"
 }
 try {

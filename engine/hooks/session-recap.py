@@ -68,7 +68,7 @@ def parse_transcript(path):
     if not path or not Path(path).exists():
         return stats
 
-    with open(path, "r") as f:
+    with open(path, "r", encoding="utf-8") as f:
         for line in f:
             try:
                 d = json.loads(line)
@@ -206,9 +206,9 @@ def ensure_journal(day):
     f = JOURNAL_DIR / f"{day}.md"
     if not f.exists():
         JOURNAL_DIR.mkdir(parents=True, exist_ok=True)
-        f.write_text(f"# {day} — Daily\n\n## 📊 Claude Sessions\n\n")
-    elif "## 📊 Claude Sessions" not in f.read_text():
-        with f.open("a") as fh:
+        f.write_text(f"# {day} — Daily\n\n## 📊 Claude Sessions\n\n", encoding="utf-8")
+    elif "## 📊 Claude Sessions" not in f.read_text(encoding="utf-8"):
+        with f.open("a", encoding="utf-8") as fh:
             fh.write("\n## 📊 Claude Sessions\n\n")
     return f
 
@@ -216,7 +216,7 @@ def ensure_journal(day):
 def upsert_session(journal, session_id, entry):
     """Replace existing block for this sid (or append). True if changed."""
     sid_short = session_id[:8]
-    txt = journal.read_text()
+    txt = journal.read_text(encoding="utf-8")
     # Match existing block: header line + nested "  - ..." continuation lines
     pattern = re.compile(
         rf"^- \*\*[^\n]+sid:`{re.escape(sid_short)}`[^\n]*\n(?:  - [^\n]+\n?)*",
@@ -228,7 +228,7 @@ def upsert_session(journal, session_id, entry):
         new_txt = new_txt.rstrip() + "\n\n## 📊 Claude Sessions\n\n"
     new_txt = new_txt.rstrip("\n") + "\n" + entry + "\n"
     if new_txt != txt:
-        journal.write_text(new_txt)
+        journal.write_text(new_txt, encoding="utf-8")
         return True
     return False
 
@@ -276,7 +276,7 @@ if __name__ == "__main__":
         # Log the error but never break the Stop hook
         err_log = Path.home() / ".claude" / "logs" / "session-recap-errors.log"
         try:
-            err_log.open("a").write(f"{time.strftime('%FT%T')} {type(e).__name__}: {e}\n")
+            err_log.open("a", encoding="utf-8").write(f"{time.strftime('%FT%T')} {type(e).__name__}: {e}\n")
         except Exception:
             pass
         sys.exit(0)
