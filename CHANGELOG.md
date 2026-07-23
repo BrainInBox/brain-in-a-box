@@ -6,7 +6,13 @@ Format inspired by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-_Nothing yet — open an issue to suggest._
+### Added
+- **Weekly lint** (`engine/nightly/gbrain-lint.sh`, launchd Monday 08:00) — verify-and-surface pass over the whole pipeline: doctor, vault lint, orphans, anomalies, back-links, stats, and a "did the nightly actually run in the last 48h" check. 🟢/🟠/🔴 verdict pinned in `Profile/memory.md` (idempotent marker block), full report in `Profile/lint.md`. Pure CLI, no LLM — a silently-failing maintenance job no longer looks healthy.
+- **Link graph actually builds now** — `link_resolution.global_basename` is enabled at install (and idempotently by the nightly for existing installs). Without it, every skeleton dir (`Team/`, `Agents/`, `Decisions/`, `Skills/`, `Journal/`…) is outside gbrain's entity-dir whitelist and all wikilinks were silently dropped: empty graph, forever. Field-tested on a 562-page vault: 0 → 185 edges. Skeleton `CLAUDE.md`s document the convention: bare-basename wikilinks (`[[Page-Name]]`, no path, no `.md`) + a short `## See also` per page.
+
+### Changed
+- **Nightly**: vault is pushed to its git remote after the nightly commit (best-effort, never blocks — local commits are worth little if the disk dies). Sync and embed are now split (`sync --no-embed` + `embed --stale`): sync's inline embed path fails against `zembed-1` with a misleading parse error and silently stops ingesting the vault.
+- **Reflection**: the headless `claude -p` run is retried (3 attempts, 60s apart) — transient API failures ("Connection closed mid-response") were silently losing whole days of journal. Failures are logged to `daily-reflection-errors.log`.
 
 ## [0.1.0] — 2026-05-26 — Initial public release
 
