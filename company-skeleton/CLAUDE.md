@@ -25,5 +25,6 @@ Each member's nightly `git pull`s this vault + re-indexes. The dream cycle dedup
 
 ## Rules
 - **Zero secrets** (shared vault + on GitHub). Locations only.
+- Link related pages with bare-basename wikilinks (`[[Page-Name]]`, no path, no `.md`) — that's what builds the shared graph. End substantial pages with a short `## See also`.
 - 1 decision = 1 dated file in `Decisions/` (`YYYY-MM-DD-topic.md`), clear title, the "why".
 - Factual, no personal drafts (those go in your personal vault `~/Documents/Brain`).
