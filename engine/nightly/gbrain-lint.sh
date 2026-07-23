@@ -167,9 +167,12 @@ mem = mem_path.read_text() if mem_path.exists() else "# Memory\n"
 if "<!-- LINT:BEGIN -->" in mem:
     mem = re.sub(r"<!-- LINT:BEGIN -->.*?<!-- LINT:END -->", block, mem, flags=re.S)
 else:
-    lines = mem.splitlines(keepends=True)
-    lines.insert(min(2, len(lines)), "\n" + block + "\n")
-    mem = "".join(lines)
+    # Frontmatter-aware insertion: NEVER inside the YAML block. A naive
+    # line-2 insert lands inside the frontmatter of any page that has one
+    # and corrupts it (found in the field on a dashboard page).
+    fm = re.match(r"^---\n.*?\n---\n", mem, re.S)
+    at = fm.end() if fm else 0
+    mem = mem[:at] + "\n" + block + "\n" + mem[at:]
 mem_path.write_text(mem)
 
 print(f"lint {verdict} — {summary}")
