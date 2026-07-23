@@ -63,13 +63,34 @@ if [ -d "$GSTACK/.git" ] && cd "$GSTACK" 2>/dev/null; then
     fi
 fi
 
+# 0ter. Link-graph resolution: idempotent, upgrades installs that predate the
+# flag (see install.sh — without it every skeleton dir is outside gbrain's
+# entity-dir whitelist and wikilinks are silently dropped: empty graph).
+"$GBRAIN" config set link_resolution.global_basename true >> "$LOG" 2>&1
+
 # 1. Commit the personal vault first (sync is git-diff based → without a commit, edits are invisible).
 if cd "$VAULT" 2>/dev/null && [ -n "$(git status --porcelain 2>/dev/null)" ]; then
     git add -A >> "$LOG" 2>&1
     git -c user.email="brain@local" -c user.name="brain" commit -q -m "nightly $(date '+%Y-%m-%d')" >> "$LOG" 2>&1 \
         && echo "[git] personal vault committed" >> "$LOG"
 fi
-"$GBRAIN" sync --repo "$VAULT" --no-pull >> "$LOG" 2>&1
+# 1bis. Back up the vault off-machine. The vault is the only copy otherwise
+# (local commits aren't worth much if the disk dies). Best-effort: a remote may
+# be absent and a cron may lack creds — never block the cycle.
+# GIT_TERMINAL_PROMPT=0 so a missing credential fails fast instead of hanging.
+if cd "$VAULT" 2>/dev/null && git remote get-url origin >/dev/null 2>&1; then
+    GIT_TERMINAL_PROMPT=0 git push origin HEAD >> "$LOG" 2>&1 \
+        && echo "[git] vault pushed to origin" >> "$LOG" \
+        || echo "[git] vault push skipped (no remote creds in cron?)" >> "$LOG"
+fi
+# Import and embed are split on purpose (2026-07-16). `sync` with its built-in
+# embed fails on most files with "[embed(zeroentropyai:zembed-1)] Invalid JSON
+# response", reported as "N file(s) failed to parse" — a lie: the parse is fine.
+# Only sync's inline embed path fails; the same texts embed cleanly on their
+# own. Left unsplit, the RAG silently stops ingesting the vault for weeks.
+# Re-test `sync` alone after a gbrain upgrade; drop this split once fixed.
+"$GBRAIN" sync --repo "$VAULT" --no-pull --no-embed >> "$LOG" 2>&1
+"$GBRAIN" embed --stale >> "$LOG" 2>&1
 
 # 2. COMPANY vault (team mode): pull teammates' contributions + sync the 'company' source.
 if [ -d "$VAULT_CO/.git" ]; then

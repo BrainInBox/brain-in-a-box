@@ -164,6 +164,13 @@ os.chmod(p, 0o600)
 print("  ok ZE key written (config.json, 600)")
 PY
 "$GBQ_BIN" config set search.mode balanced >/dev/null 2>&1 || true
+# Link graph: gbrain's extractor only auto-recognizes English "entity" dirs
+# (people/, companies/, projects/…). EVERY skeleton dir (Team/, Agents/,
+# Decisions/, Skills/, Journal/…) is outside that whitelist, so without this
+# flag all wikilinks are silently dropped and the graph stays empty forever.
+# Basename resolution links [[Page-Name]] to the page whose filename matches
+# (case-insensitive), regardless of folder.
+"$GBQ_BIN" config set link_resolution.global_basename true >/dev/null 2>&1 || true
 "$GBQ_BIN" import "$BRAIN" --no-embed >/dev/null 2>&1 && ok "vault imported"
 say "Embedding (may take 1-2 min)…"
 "$GBQ_BIN" embed --stale >/dev/null 2>&1 && ok "embedded" || warn "re-run embed: gbrain embed --stale"
