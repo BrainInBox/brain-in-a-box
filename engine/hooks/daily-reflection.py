@@ -54,20 +54,31 @@ Transcripts:
 {big}
 """
 
-try:
-    home_claude = Path.home() / ".local" / "bin" / "claude"
-    claude_bin = (
-        os.environ.get("CLAUDE_BIN")
-        or (str(home_claude) if home_claude.exists() else None)
-        or shutil.which("claude")
-        or str(home_claude)
-    )
-    subprocess.run(
-        [claude_bin, "-p", "--permission-mode", "acceptEdits", prompt],
-        cwd=str(BRAIN),
-        timeout=600,
-        check=False,
-    )
-except Exception as e:
-    (LOGS / "daily-reflection-errors.log").open("a").write(f"{time.strftime(chr(37)+chr(70)+chr(84)+chr(37)+chr(84))} {e}" + chr(10))
+home_claude = Path.home() / ".local" / "bin" / "claude"
+claude_bin = (
+    os.environ.get("CLAUDE_BIN")
+    or (str(home_claude) if home_claude.exists() else None)
+    or shutil.which("claude")
+    or str(home_claude)
+)
+# Transient API failures ("Connection closed mid-response") kill headless
+# claude runs often enough that an unretried cron silently loses whole days
+# of journal. 3 attempts, 60s apart; a non-zero exit counts as a failure.
+for attempt in range(3):
+    try:
+        r = subprocess.run(
+            [claude_bin, "-p", "--permission-mode", "acceptEdits", prompt],
+            cwd=str(BRAIN),
+            timeout=600,
+            check=False,
+        )
+        if r.returncode == 0:
+            break
+        err = f"exit {r.returncode}"
+    except Exception as e:
+        err = f"{type(e).__name__}: {e}"
+    (LOGS / "daily-reflection-errors.log").open("a").write(
+        f"{time.strftime(chr(37)+chr(70)+chr(84)+chr(37)+chr(84))} attempt {attempt + 1}/3 failed: {err}" + chr(10))
+    if attempt < 2:
+        time.sleep(60)
 sys.exit(0)
