@@ -84,9 +84,10 @@ say "gbq + nightly"
 mkdir -p "$BIN"
 sed "s#__HOME__#$H#g" "$REPO/engine/bin/gbq" > "$BIN/gbq" && chmod +x "$BIN/gbq"; ok "gbq → $BIN/gbq"
 sed "s#__HOME__#$H#g" "$REPO/engine/nightly/gbrain-nightly.sh" > "$HOOKS/gbrain-nightly.sh" && chmod +x "$HOOKS/gbrain-nightly.sh"; ok "gbrain-nightly.sh"
+sed "s#__HOME__#$H#g" "$REPO/engine/nightly/gbrain-lint.sh" > "$HOOKS/gbrain-lint.sh" && chmod +x "$HOOKS/gbrain-lint.sh"; ok "gbrain-lint.sh"
 
-# ── 7. launchd jobs (nightly maintenance + daily reflection) ─────────────────
-say "launchd (nightly 04:00 + reflection 12:00/23:00)"
+# ── 7. launchd jobs (nightly maintenance + daily reflection + weekly lint) ───
+say "launchd (nightly 04:00 + reflection 12:00/23:00 + lint Monday 08:00)"
 mkdir -p "$H/Library/LaunchAgents"
 load_agent() {  # <label> <template>
   local label="$1" tpl="$2" plist="$H/Library/LaunchAgents/$1.plist"
@@ -97,6 +98,7 @@ load_agent() {  # <label> <template>
 }
 load_agent "com.$U.gbrain-nightly"   "com.USER.gbrain-nightly.plist.template"
 load_agent "com.$U.brain-reflection" "com.USER.brain-reflection.plist.template"
+load_agent "com.$U.gbrain-lint"      "com.USER.gbrain-lint.plist.template"
 
 # ── 8. settings.json (merge hooks, non-destructive) ─────────────────────────
 say "Registering hooks (~/.claude/settings.json)"
