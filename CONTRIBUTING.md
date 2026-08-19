@@ -21,7 +21,7 @@ git checkout -b <type>/<short-name>     # e.g. fix/yaml-validation, feat/ollama-
 # 2. Make your change
 
 # 3. Run tests locally BEFORE pushing
-bash test-hooks.sh                       # 15/15 expected (5 hooks + 4 YAML frontmatters)
+bash test-hooks.sh                       # 25/25 expected
 bash -n install.sh                       # syntax check on every shell script you touched
 
 # 4. Push + open PR

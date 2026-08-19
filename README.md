@@ -11,7 +11,8 @@ Everyone gets the **same engine**, with **their own data** — everything stays 
 | **Vault** (`~/Documents/Brain`) | Your markdown notes: Profile · **Team · Agents · Decisions · Skills** · Journal · Projects · Clients · Resources |
 | **Hooks** (`~/.claude/hooks/brain`) | Auto-capture: corrections → `lessons.md`, sessions → `Journal/`, summaries → `memory.md` |
 | **GBrain** (`~/.gbrain`) | Semantic search over the vault (`gbq query "..."`) — ZeroEntropy embeddings |
-| **Nightly** (launchd 04:00) | commit vault → sync → dream cycle (dedup, facts, consolidation) → self-update |
+| **Nightly** (launchd 04:00) | commit vault → sync → dream cycle (dedup, facts, consolidation) → self-update GBrain (auto-rollback if broken) |
+| **Self-update catch-up** (SessionStart) | if the machine missed the 04:00 run, the first Claude Code session of the day checks in the background — you're never more than a day behind |
 | **Reflection** (launchd 12:00 + 23:00) | LLM summary of the day's sessions → `Journal/` + rolling 15-day `memory.md` |
 | **Weekly lint** (launchd Monday 08:00) | Verifies the whole pipeline (doctor, lint, orphans, nightly freshness) → 🟢/🟠/🔴 verdict pinned in `memory.md` + report in `Profile/lint.md` |
 
@@ -37,7 +38,7 @@ cd ~/Documents/Brain && claude
 
 **Verify your install** any time (safe, runs in a throwaway temp dir — never touches your real brain):
 ```bash
-./test-hooks.sh    # runs all 5 hooks end-to-end, reports pass/fail
+./test-hooks.sh    # runs all hooks + gbrain self-update end-to-end, reports pass/fail
 ```
 
 ## Optional: gstack (23 AI specialists)

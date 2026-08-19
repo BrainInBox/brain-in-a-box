@@ -37,18 +37,11 @@ fi
 sweep_git_lock "$VAULT"
 [ -d "$VAULT_CO/.git" ] && sweep_git_lock "$VAULT_CO"
 
-# 0. Self-update GBrain (resilient: a failure must never block the cycle).
-if cd "$GREPO" 2>/dev/null; then
-    before=$(git rev-parse --short HEAD 2>/dev/null)
-    if git pull --ff-only >> "$LOG" 2>&1; then
-        after=$(git rev-parse --short HEAD 2>/dev/null)
-        if [ "$before" != "$after" ]; then
-            echo "[update] gbrain $before -> $after" >> "$LOG"
-            "$BUN" install >> "$LOG" 2>&1 && "$BUN" link >> "$LOG" 2>&1
-            "$GBRAIN" apply-migrations --yes >> "$LOG" 2>&1 || echo "[update] migrations non-fatal" >> "$LOG"
-        fi
-    fi
-fi
+# 0. Self-update GBrain — pull, install, migrate, smoke-test, auto-rollback on
+# a broken build. Extracted to gbrain-selfupdate.sh (also invoked by the
+# SessionStart catch-up hook on days the machine missed this 04:00 run).
+# Resilient: a failure must never block the rest of the cycle.
+"$(dirname "$0")/gbrain-selfupdate.sh" "$LOG"
 
 # 0bis. Self-update gstack (if installed via --with-gstack). Same shape: pull + re-setup if HEAD moved.
 GSTACK="$HOME/.claude/skills/gstack"
