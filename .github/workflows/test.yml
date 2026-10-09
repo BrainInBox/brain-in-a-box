@@ -16,12 +16,17 @@ jobs:
       - name: Run test-hooks.sh (hooks + gbrain self-update + YAML frontmatter validation)
         run: bash test-hooks.sh
 
-      - name: Lint shell scripts (bash -n)
+      # Each script is parsed by the shell its shebang names: the zsh scripts
+      # used to be checked with bash, and new scripts were easy to forget.
+      - name: Syntax-check every script with its own shell
         run: |
-          bash -n install.sh
-          bash -n setup-company.sh
-          bash -n test-hooks.sh
-          bash -n try-it-locally.sh
-          bash -n engine/nightly/gbrain-nightly.sh
-          bash -n engine/nightly/gbrain-selfupdate.sh
-          zsh  -n engine/bin/gbq
+          for f in *.sh engine/nightly/*.sh engine/bin/gbq; do
+            sh=$(head -1 "$f" | sed -E 's@^#! *@@; s@^/usr/bin/env +@@; s@^.*/@@; s@ .*@@')
+            echo "$sh -n $f" && "$sh" -n "$f"
+          done
+
+      - name: Compile the Python hooks and search
+        run: python3 -m py_compile engine/hooks/*.py engine/search/*.py
+
+      - name: launchd templates are well-formed plists
+        run: for f in engine/nightly/*.plist.template; do plutil -lint "$f"; done
