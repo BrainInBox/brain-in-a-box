@@ -6,6 +6,10 @@ Format inspired by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-10-09 — Field hardening
+
+Four months of running the box on real machines, fixed where it broke. The daily reflection is rewritten around what actually happened that day (transcripts sliced to the day, a digest of your own commits). gbrain updates no longer get stuck on an old Bun. Secrets are masked before anything is written to the vault or sent to a model. The correction detector stops firing on ordinary negations (22% → 4% of real prompts). Windows gets an experimental installer. The test suite doubles, from 25 to 50 checks, and CI now parses every script with its own shell.
+
 ### Added
 - **Windows (experimental)** — `install.ps1` installs the vault skeleton, the (now cross-platform) hooks and the global `CLAUDE.md`, and registers Task Scheduler jobs (reindex 04:00, reflection 12:00/23:00). Search runs on `engine/search/brain_search.py`, a local BM25 index in pure Python, behind a `gbq.cmd` shim, because gbrain's PGLite build lacks pgvector on Windows. Still needs a real-Windows smoke test; see `docs/proposals/windows-port.md`.
 - **Hardened gbrain self-update** (`engine/nightly/gbrain-selfupdate.sh`) — extracted from the nightly script so it can run from two places: the 04:00 nightly, and a new **SessionStart catch-up hook** (`gbrain-update-check.py`) that checks once per calendar day so a machine asleep at 04:00 is never more than a day behind. Every update now runs a smoke test (`gbrain doctor --fast`) after installing — a broken pull is **auto-rolled-back** to the previous commit instead of leaving a dead `gbrain`. Result is written to `~/.gbrain/last-update.json` and surfaced as a one-line block in `Profile/memory.md` (with the new version's top CHANGELOG bullets) — only when something actually changed, no daily noise.
