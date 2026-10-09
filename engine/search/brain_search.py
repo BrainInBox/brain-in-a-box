@@ -23,6 +23,13 @@ import sys
 import unicodedata
 from pathlib import Path
 
+# Windows consoles default stdout/stderr to the system codepage (e.g. cp1252),
+# which can't encode arrows/em-dashes/accents found in vault snippets and
+# crashes with UnicodeEncodeError. Force UTF-8 so query output never crashes.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8")
+
 BRAIN = Path(os.environ.get("BRAIN_DIR") or (Path.home() / "Documents" / "Brain"))
 INDEX = Path(os.environ.get("BRAIN_SEARCH_INDEX") or (Path.home() / ".brain-search" / "index.json"))
 K1, B = 1.5, 0.75

@@ -24,6 +24,6 @@ entry = {
     "cwd": payload.get("cwd") or os.getcwd(),
     "transcript_path": payload.get("transcript_path"),
 }
-with (log_dir / f"sessions-{day}.jsonl").open("a") as f:
+with (log_dir / f"sessions-{day}.jsonl").open("a", encoding="utf-8") as f:
     f.write(json.dumps(entry) + chr(10))
 sys.exit(0)
