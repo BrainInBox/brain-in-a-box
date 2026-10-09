@@ -15,6 +15,9 @@ Format inspired by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Nightly**: vault is pushed to its git remote after the nightly commit (best-effort, never blocks — local commits are worth little if the disk dies). Sync and embed are now split (`sync --no-embed` + `embed --stale`): sync's inline embed path fails against `zembed-1` with a misleading parse error and silently stops ingesting the vault.
 - **Reflection**: the headless `claude -p` run is retried (3 attempts, 60s apart) — transient API failures ("Connection closed mid-response") were silently losing whole days of journal. Failures are logged to `daily-reflection-errors.log`.
 
+### Security
+- **Session recap masks secrets** before writing the session's first prompt to the journal. The journal is committed and pushed every night, so a key pasted into a prompt ended up in the vault's git history, and was re-copied at every Stop. Common token shapes (private keys, cloud/API keys, JWTs, bearer tokens, `password=`-style values, credentials in URLs, raw 32-byte hex keys) are replaced by `[REDACTED]`, before truncation so a half-cut key cannot slip through. Covered by two new checks in `test-hooks.sh`.
+
 ## [0.1.0] — 2026-05-26 — Initial public release
 
 The first public-OSS day. The product was built and dogfooded privately the day before; today it went public after a multi-layer scan (file content + full git history + tier names like personal contacts) confirmed zero personal info leaks.

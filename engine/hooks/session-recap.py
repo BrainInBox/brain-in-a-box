@@ -14,6 +14,38 @@ BRAIN = Path.home() / "Documents" / "Brain"
 JOURNAL_DIR = BRAIN / "Journal"
 LOCK_DIR = Path(tempfile.gettempdir()) / "claude-session-locks"
 
+# The first prompt lands in the journal, which is committed and pushed every
+# night. A key pasted into that prompt was copied there verbatim and re-copied
+# at every Stop, undoing any manual edit. Mask BEFORE truncating: a key cut at
+# 200 chars no longer matches its pattern and slips through.
+# Safety net, not a guarantee: an unusual secret format will pass.
+_MASK = "[REDACTED]"
+_SECRET_RES = [
+    (re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)", re.S), _MASK),
+    (re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"), _MASK),
+    (re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{50,})\b"), _MASK),
+    (re.compile(r"\bsk-(?:ant-|or-|proj-)?[A-Za-z0-9_-]{20,}"), _MASK),
+    (re.compile(r"\b[sr]k_(?:live|test)_[A-Za-z0-9]{16,}\b"), _MASK),
+    (re.compile(r"\bxox[abpors]-[A-Za-z0-9-]{10,}"), _MASK),
+    (re.compile(r"\bAIza[0-9A-Za-z_-]{35}\b"), _MASK),
+    (re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"), _MASK),
+    (re.compile(r"https://discord(?:app)?\.com/api/webhooks/\d+/[A-Za-z0-9_-]+"), _MASK),
+    # Raw 32-byte keys (EVM / Solana-style private keys). Also hides sha256
+    # digests, an acceptable loss in a one-line intent.
+    (re.compile(r"\b(?:0x)?[0-9a-fA-F]{64}\b"), _MASK),
+    # Below, group 1 (the context) is kept and only the value is masked.
+    (re.compile(r"(?i)(\bbearer\s+)[A-Za-z0-9._~+/=-]{20,}"), r"\1" + _MASK),
+    (re.compile(r"(://)[^:\s/\"'@]+:[^@\s\"'/]+(?=@)"), r"\1" + _MASK),
+    (re.compile(r"(?i)((?<![a-z])(?:password|passwd|pwd|secret|api_key|apikey|api-key|token|access_key|client_secret|private_key)"
+                r"[\"'\\]{0,3}\s{0,2}[:=]\s{0,2}[\"'\\]{0,3})[^\s\"'\\,;&{}]{4,}"), r"\1" + _MASK),
+]
+
+
+def redact(text):
+    for rx, repl in _SECRET_RES:
+        text = rx.sub(repl, text)
+    return text
+
 SIGNAL_PATTERNS = [
     # SSH / infra
     ("ssh",            re.compile(r"\bssh\s+\S")),
@@ -88,10 +120,10 @@ def parse_transcript(path):
                 if isinstance(content, list):
                     for c in content:
                         if c.get("type") == "text":
-                            stats["first_prompt"] = c.get("text", "")[:200]
+                            stats["first_prompt"] = redact(c.get("text", ""))[:200]
                             break
                 elif isinstance(content, str):
-                    stats["first_prompt"] = content[:200]
+                    stats["first_prompt"] = redact(content)[:200]
 
             # Model name
             if d.get("type") == "assistant" and not stats["model"]:

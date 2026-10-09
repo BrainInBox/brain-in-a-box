@@ -52,6 +52,13 @@ grep -q "📊 Claude Sessions" "$J" 2>/dev/null && ok "Journal section created" 
 grep -q "sid:.${SID:0:8}" "$J" 2>/dev/null && ok "session entry present" || no "no session entry"
 grep -qE "Read 1|Edit 1|Bash 1" "$J" 2>/dev/null && ok "tools recorded" || no "tools not recorded"
 grep -q "intent: build a login page" "$J" 2>/dev/null && ok "intent captured" || no "intent not captured"
+# A secret pasted in the first prompt must never reach the journal.
+FAKEKEY="0x$(printf 'ab%.0s' $(seq 32))"
+TX2="$H/fake-transcript-secret.jsonl"
+sed "s#build a login page with tests#sign with $FAKEKEY then curl ?user=admin\&password=hunter2-not-real#" "$TX" > "$TX2"
+echo "{\"session_id\":\"secretrc$(date +%s)\",\"cwd\":\"/Users/builder/proj\",\"transcript_path\":\"$TX2\"}" | HOME="$H" python3 "$HB/session-recap.py" 2>/dev/null
+grep -q "intent: sign with \[REDACTED\]" "$J" 2>/dev/null && ok "secret in intent is redacted" || no "secret not redacted"
+! grep -qE "abababab|hunter2" "$J" 2>/dev/null && ok "no secret value left in the journal" || no "secret value leaked into the journal"
 
 echo "════ 5) daily-reflection (claude stubbed) ════"
 cat > "$H/.local/bin/claude" <<'STUB'
