@@ -55,6 +55,19 @@ Always use `gbq` — it's the safe universal wrapper for every gbrain command (r
 | `Clients/` | Actifs/, Prospects/ |
 | `Resources/` | Templates/, reusable |
 
+## Wikilinks — how the graph gets built
+
+Link pages with **bare-basename wikilinks**: `[[Page-Name]]` — no folder path, no
+`.md`, case-insensitive. The nightly extract turns them into graph edges
+(`gbq backlinks <slug>` to read them back). Path-qualified links
+(`[[Projects/Page-Name]]`) break resolution on some write paths — avoid them.
+
+When you write or update a page, end it with a short `## See also` section
+(2-5 wikilinks to genuinely related pages, one short reason each). A page
+nobody links to is invisible to graph traversal. Few good links > many weak.
+
+---
+
 ## Routing — where to write
 - Correction → `Profile/lessons.md` (Rule #1)
 - Meaningful decision worth answering "why X?" in 6 months → `Decisions/YYYY-MM-DD-<slug>.md`

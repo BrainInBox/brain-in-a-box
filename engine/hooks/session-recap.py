@@ -14,6 +14,20 @@ BRAIN = Path.home() / "Documents" / "Brain"
 JOURNAL_DIR = BRAIN / "Journal"
 LOCK_DIR = Path(tempfile.gettempdir()) / "claude-session-locks"
 
+# The first prompt lands in the journal, which is committed and pushed every
+# night: mask secrets BEFORE truncating (a key cut at 200 chars no longer
+# matches its pattern). Patterns live in _redact.py, shared with the reflection.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    from _redact import redact as _redact
+except ImportError:  # module missing next to the hook: drop the intent, never write it unmasked
+    _redact = None
+
+
+def redact(text):
+    return _redact(text)[0] if _redact else ""
+
+
 SIGNAL_PATTERNS = [
     # SSH / infra
     ("ssh",            re.compile(r"\bssh\s+\S")),
@@ -88,10 +102,10 @@ def parse_transcript(path):
                 if isinstance(content, list):
                     for c in content:
                         if c.get("type") == "text":
-                            stats["first_prompt"] = c.get("text", "")[:200]
+                            stats["first_prompt"] = redact(c.get("text", ""))[:200]
                             break
                 elif isinstance(content, str):
-                    stats["first_prompt"] = content[:200]
+                    stats["first_prompt"] = redact(content)[:200]
 
             # Model name
             if d.get("type") == "assistant" and not stats["model"]:

@@ -13,7 +13,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Run test-hooks.sh (5 hooks + YAML frontmatter validation)
+      - name: Run test-hooks.sh (hooks + gbrain self-update + YAML frontmatter validation)
         run: bash test-hooks.sh
 
       - name: Lint shell scripts (bash -n)
@@ -23,4 +23,5 @@ jobs:
           bash -n test-hooks.sh
           bash -n try-it-locally.sh
           bash -n engine/nightly/gbrain-nightly.sh
+          bash -n engine/nightly/gbrain-selfupdate.sh
           zsh  -n engine/bin/gbq

@@ -11,14 +11,16 @@ Everyone gets the **same engine**, with **their own data** — everything stays 
 | **Vault** (`~/Documents/Brain`) | Your markdown notes: Profile · **Team · Agents · Decisions · Skills** · Journal · Projects · Clients · Resources |
 | **Hooks** (`~/.claude/hooks/brain`) | Auto-capture: corrections → `lessons.md`, sessions → `Journal/`, summaries → `memory.md` |
 | **GBrain** (`~/.gbrain`) | Semantic search over the vault (`gbq query "..."`) — ZeroEntropy embeddings |
-| **Nightly** (launchd 04:00) | commit vault → sync → dream cycle (dedup, facts, consolidation) → self-update |
-| **Reflection** (launchd 12:00 + 23:00) | LLM summary of the day's sessions → `Journal/` + rolling 15-day `memory.md` |
+| **Nightly** (launchd 04:00) | commit vault → sync → dream cycle (dedup, facts, consolidation) → self-update GBrain (auto-rollback if broken) |
+| **Self-update catch-up** (SessionStart) | if the machine missed the 04:00 run, the first Claude Code session of the day checks in the background — you're never more than a day behind |
+| **Reflection** (launchd 12:00 + 23:00) | LLM summary of the day's sessions and your git commits → `Journal/` + rolling 15-day `memory.md`. Secrets masked before sending; a failing run pins a warning in `memory.md`. Missed a day? `daily-reflection.py --day YYYY-MM-DD` (`--dry-run` to preview) |
+| **Weekly lint** (launchd Monday 08:00) | Verifies the whole pipeline (doctor, lint, orphans, nightly freshness) → 🟢/🟠/🔴 verdict pinned in `memory.md` + report in `Profile/lint.md` |
 
 It all runs inside Claude Code (terminal/IDE). No bot, no server, no shared cloud.
 
 ## Install (per person)
 
-Requirements: macOS, [Claude Code](https://claude.ai/code), a **free** [ZeroEntropy](https://dashboard.zeroentropy.dev) key (embeddings — free account, no card).
+Requirements: macOS (Windows: experimental `install.ps1`, see [the port notes](docs/proposals/windows-port.md)), [Claude Code](https://claude.ai/code), a **free** [ZeroEntropy](https://dashboard.zeroentropy.dev) key (embeddings — free account, no card).
 
 ```bash
 git clone <URL_OF_THIS_REPO> brain-in-a-box
@@ -36,7 +38,7 @@ cd ~/Documents/Brain && claude
 
 **Verify your install** any time (safe, runs in a throwaway temp dir — never touches your real brain):
 ```bash
-./test-hooks.sh    # runs all 5 hooks end-to-end, reports pass/fail
+./test-hooks.sh    # runs all hooks + gbrain self-update end-to-end, reports pass/fail
 ```
 
 ## Optional: gstack (23 AI specialists)
@@ -92,7 +94,7 @@ Each member's nightly pulls the team's contributions + re-indexes. The dream cyc
 
 ## Security / privacy
 - Everything is **local**: your vault, your index, your key. Nothing goes to a third party (except the text embedding sent to ZeroEntropy at indexing time — see their policy).
-- Never a secret in the vault (the `file-protection` hook + the directives remind you).
+- Never a secret in the vault. The global `CLAUDE.md` directives tell your agents so, but nothing scans the vault for you: keep secrets in your password manager or Keychain and write down where they live, never the value.
 - **Found a security issue?** See [SECURITY.md](SECURITY.md) — please use GitHub Security Advisories, not public Issues.
 
 ## Contributing

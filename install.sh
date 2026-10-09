@@ -84,9 +84,11 @@ say "gbq + nightly"
 mkdir -p "$BIN"
 sed "s#__HOME__#$H#g" "$REPO/engine/bin/gbq" > "$BIN/gbq" && chmod +x "$BIN/gbq"; ok "gbq → $BIN/gbq"
 sed "s#__HOME__#$H#g" "$REPO/engine/nightly/gbrain-nightly.sh" > "$HOOKS/gbrain-nightly.sh" && chmod +x "$HOOKS/gbrain-nightly.sh"; ok "gbrain-nightly.sh"
+sed "s#__HOME__#$H#g" "$REPO/engine/nightly/gbrain-lint.sh" > "$HOOKS/gbrain-lint.sh" && chmod +x "$HOOKS/gbrain-lint.sh"; ok "gbrain-lint.sh"
+sed "s#__HOME__#$H#g" "$REPO/engine/nightly/gbrain-selfupdate.sh" > "$HOOKS/gbrain-selfupdate.sh" && chmod +x "$HOOKS/gbrain-selfupdate.sh"; ok "gbrain-selfupdate.sh"
 
-# ── 7. launchd jobs (nightly maintenance + daily reflection) ─────────────────
-say "launchd (nightly 04:00 + reflection 12:00/23:00)"
+# ── 7. launchd jobs (nightly maintenance + daily reflection + weekly lint) ───
+say "launchd (nightly 04:00 + reflection 12:00/23:00 + lint Monday 08:00)"
 mkdir -p "$H/Library/LaunchAgents"
 load_agent() {  # <label> <template>
   local label="$1" tpl="$2" plist="$H/Library/LaunchAgents/$1.plist"
@@ -97,6 +99,7 @@ load_agent() {  # <label> <template>
 }
 load_agent "com.$U.gbrain-nightly"   "com.USER.gbrain-nightly.plist.template"
 load_agent "com.$U.brain-reflection" "com.USER.brain-reflection.plist.template"
+load_agent "com.$U.gbrain-lint"      "com.USER.gbrain-lint.plist.template"
 
 # ── 8. settings.json (merge hooks, non-destructive) ─────────────────────────
 say "Registering hooks (~/.claude/settings.json)"
@@ -123,6 +126,7 @@ def ensure(evt, names):
             grp["hooks"].append(c)
 ensure("UserPromptSubmit", ["correction-detector.py"])
 ensure("Stop", ["session-logger.py","session-indexer.py","session-recap.py"])
+ensure("SessionStart", ["gbrain-update-check.py"])
 json.dump(d, open(p,"w"), indent=2, ensure_ascii=False)
 print("  ok settings.json")
 PY
@@ -164,6 +168,13 @@ os.chmod(p, 0o600)
 print("  ok ZE key written (config.json, 600)")
 PY
 "$GBQ_BIN" config set search.mode balanced >/dev/null 2>&1 || true
+# Link graph: gbrain's extractor only auto-recognizes English "entity" dirs
+# (people/, companies/, projects/…). EVERY skeleton dir (Team/, Agents/,
+# Decisions/, Skills/, Journal/…) is outside that whitelist, so without this
+# flag all wikilinks are silently dropped and the graph stays empty forever.
+# Basename resolution links [[Page-Name]] to the page whose filename matches
+# (case-insensitive), regardless of folder.
+"$GBQ_BIN" config set link_resolution.global_basename true >/dev/null 2>&1 || true
 "$GBQ_BIN" import "$BRAIN" --no-embed >/dev/null 2>&1 && ok "vault imported"
 say "Embedding (may take 1-2 min)…"
 "$GBQ_BIN" embed --stale >/dev/null 2>&1 && ok "embedded" || warn "re-run embed: gbrain embed --stale"
@@ -211,7 +222,7 @@ fi
 
 # ── 15. Verify (hooks healthy) ──────────────────────────────────────────────
 say "Verifying hooks"
-bash "$REPO/test-hooks.sh" >/dev/null 2>&1 && ok "all 5 hooks healthy" || warn "hook check reported issues — run ./test-hooks.sh to see them"
+bash "$REPO/test-hooks.sh" >/dev/null 2>&1 && ok "hooks + gbrain self-update healthy" || warn "hook check reported issues — run ./test-hooks.sh to see them"
 
 # ── Done ─────────────────────────────────────────────────────────────────────
 printf "\n\033[1;32m✅ brain-in-a-box installed.\033[0m\n"
@@ -225,7 +236,7 @@ Browse your brain visually in Obsidian:
   open it → "Open folder as vault" → $BRAIN
 
 Checks:
-  ./test-hooks.sh                         # verify all 5 hooks work
+  ./test-hooks.sh                         # verify all hooks + gbrain self-update work
   ~/.local/bin/gbq query "test"          # the memory answers
   gbrain doctor --fast                    # health (aim for 85+)
   cat ~/.gbrain/nightly.log              # tomorrow morning: the nightly ran

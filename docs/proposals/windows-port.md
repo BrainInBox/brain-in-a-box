@@ -1,6 +1,6 @@
 # Proposal — Windows port (solo first)
 
-Status: **proposal** (per CONTRIBUTING, approach before code). Scope: make
+Status: **implemented, experimental** — `install.ps1` is merged and still awaits a real-Windows smoke test (originally a proposal, per CONTRIBUTING: approach before code). Scope: make
 brain-in-a-box installable and runnable for a **solo user on Windows**. Team mode
 (`setup-company.sh`) is out of scope for v1.
 

@@ -4,9 +4,9 @@ Thanks for wanting to make this better. The project is small, the workflow is st
 
 ## Quick rules
 
-- **macOS only** (the nightly + reflection rely on `launchd`). Linux/Windows ports welcome via discussion first — propose the approach before coding.
+- **macOS first** (the nightly + reflection rely on `launchd`). Windows has an experimental `install.ps1` that still needs a real-Windows smoke test — see [docs/proposals/windows-port.md](docs/proposals/windows-port.md). Linux ports welcome via discussion first — propose the approach before coding.
 - **One concern per PR.** Schema change in one PR, doc change in another. Easier to review, easier to revert.
-- **No secrets, ever.** Not in the vault, not in tests, not in code. The `file-protection.sh` hook tries to catch them but don't rely on it.
+- **No secrets, ever.** Not in the vault, not in tests, not in code. Nothing in the repo scans for them, so read your own diff before pushing.
 - **Match the existing style.** Concise English, no corporate fluff. Read what's there before writing.
 
 ## Workflow
@@ -21,7 +21,7 @@ git checkout -b <type>/<short-name>     # e.g. fix/yaml-validation, feat/ollama-
 # 2. Make your change
 
 # 3. Run tests locally BEFORE pushing
-bash test-hooks.sh                       # 15/15 expected (5 hooks + 4 YAML frontmatters)
+bash test-hooks.sh                       # 25/25 expected
 bash -n install.sh                       # syntax check on every shell script you touched
 
 # 4. Push + open PR
