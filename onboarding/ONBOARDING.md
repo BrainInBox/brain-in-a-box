@@ -8,7 +8,7 @@ Replace every `{{PLACEHOLDER}}` in:
 - `~/Documents/Brain/Profile/business.md` (activity/projects)
 - `~/Documents/Brain/Profile/soul.md` (language, tone)
 - `~/Documents/Brain/Profile/stack.md` (personal tools)
-- `~/.claude/CLAUDE.md` (the brain-in-a-box block: {{NAME}}, {{LANGUAGE}})
+- `~/.claude/CLAUDE.md` (the brain-in-a-box block: {{NAME}}; the language goes in `soul.md`)
 
 Then **seed** the team-first folders with the user's real entities (no need to fill all at once — start with what's immediately relevant):
 - `~/Documents/Brain/Team/<firstname>.md` (themselves, and any humans they collaborate with regularly)
@@ -37,8 +37,9 @@ Each of these folders ships a `README.md` (purpose) + `_template.md` (schema). C
 3. **Commit + re-index**:
    ```bash
    cd ~/Documents/Brain && git add -A && git commit -q -m "onboarding: profile filled"
-   ~/.local/bin/gbq query "who am I"   # force a refresh, check recall
-   gbrain sync --repo ~/Documents/Brain --no-pull   # re-embed the profile
+   ~/.local/bin/gbq sync --repo ~/Documents/Brain --no-pull --no-embed   # import the profile
+   ~/.local/bin/gbq embed --stale                                       # embed it (kept separate, like the nightly)
+   ~/.local/bin/gbq query "who am I"                                    # check recall
    ```
 4. **Confirm** to the user: profile filled, memory active, next step = just live (the hooks capture corrections + sessions, the nightly consolidates at 4am).
 
