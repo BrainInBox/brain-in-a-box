@@ -13,6 +13,7 @@ Format inspired by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Link graph actually builds now** — `link_resolution.global_basename` is enabled at install (and idempotently by the nightly for existing installs). Without it, every skeleton dir (`Team/`, `Agents/`, `Decisions/`, `Skills/`, `Journal/`…) is outside gbrain's entity-dir whitelist and all wikilinks were silently dropped: empty graph, forever. Field-tested on a 562-page vault: 0 → 185 edges. Skeleton `CLAUDE.md`s document the convention: bare-basename wikilinks (`[[Page-Name]]`, no path, no `.md`) + a short `## See also` per page.
 
 ### Fixed
+- **`gbq` reports a read that fails on its own.** Reads (`query`, `search`, `ask`, `graph-query`) always returned 0 because the force-kill of a hung read is intentional. A gbrain that refuses to start (wrong Bun, broken install) looked like a successful empty read. The exit code is now 0 only when `gbq` cut the read itself. First tests for `gbq` and `brain_search` in `test-hooks.sh`.
 - `setup-company.sh` and `try-it-locally.sh` printed their final banner with literal `\033[1;32m` codes (escapes are not interpreted inside a heredoc); it is now printed with `printf`.
 - **CI** parses each script with the shell its shebang names (the zsh scripts were checked with bash, and `gbrain-lint.sh` not at all), compiles the Python hooks, and lints the launchd templates.
 - **Windows**:

@@ -39,6 +39,7 @@ if [ "$IS_READ" = "1" ]; then
     # Force-kill dance: watch output size, kill when stable ~3s. Hard cap ~45s.
     last=-1
     stable=0
+    killed=0
     for _ in $(seq 1 90); do
         kill -0 "$GP" 2>/dev/null || break   # exited on its own — ideal
         sz=$(wc -c <"$TMP" 2>/dev/null || echo 0)
@@ -46,6 +47,7 @@ if [ "$IS_READ" = "1" ]; then
             stable=$((stable + 1))
             if [ "$stable" -ge 6 ]; then     # ~3s with no new output → results done
                 kill -9 "$GP" 2>/dev/null
+                killed=1
                 break
             fi
         else
@@ -54,8 +56,18 @@ if [ "$IS_READ" = "1" ]; then
         last=$sz
         sleep 0.5
     done
-    kill -9 "$GP" 2>/dev/null
-    RC=0            # read output captured; the force-kill is intentional, not a failure
+    if kill -0 "$GP" 2>/dev/null; then   # hard cap reached
+        kill -9 "$GP" 2>/dev/null
+        killed=1
+    fi
+    if [ "$killed" = 1 ]; then
+        wait "$GP" 2>/dev/null
+        RC=0        # read output captured; the force-kill is intentional, not a failure
+    else
+        # Exited on its own: its exit code is the truth. A gbrain that refuses
+        # to start (wrong Bun, broken install) must not look like a successful read.
+        wait "$GP"; RC=$?
+    fi
 else
     # Writes exit cleanly and may legitimately pause (LLM call) — just wait.
     wait "$GP"; RC=$?
