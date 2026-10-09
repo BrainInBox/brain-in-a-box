@@ -163,6 +163,40 @@ else
   printf "  \033[1;33m⚠\033[0m skipped (no ruby found) — install ruby to enable YAML validation\n"
 fi
 
+echo "════ 9) gbrain-nightly — waits for the network, retries the vault push ════"
+# Runs the real nightly in its own throwaway HOME, with gbrain and the self-update
+# stubbed. python3 (the DNS probe) and sleep are shadowed through ~/.bun/bin, which
+# comes first on the nightly's PATH: a dead resolver is faked without waiting 5 min,
+# and no real DNS is needed.
+nightly_run() {   # $1 = probe exit code (0 = network up), $2 = vault remote ("" = a local bare repo)
+  NH="$(mktemp -d -t biab-nightly)"
+  mkdir -p "$NH/.bun/bin" "$NH/.gbrain" "$NH/nightly" "$NH/Documents/Brain"
+  printf '#!/bin/sh\nexit 0\n' > "$NH/.bun/bin/gbrain"
+  printf '#!/bin/sh\nexit 0\n' > "$NH/.bun/bin/sleep"
+  printf '#!/bin/sh\nexit %s\n' "$1" > "$NH/.bun/bin/python3"
+  printf '#!/bin/sh\nexit 0\n' > "$NH/nightly/gbrain-selfupdate.sh"
+  cp "$REPO/engine/nightly/gbrain-nightly.sh" "$NH/nightly/"
+  chmod +x "$NH/.bun/bin/"* "$NH/nightly/"*.sh
+  git init -q --bare "$NH/remote.git"
+  git -C "$NH/Documents/Brain" init -q
+  git -C "$NH/Documents/Brain" remote add origin "${2:-$NH/remote.git}"
+  echo note > "$NH/Documents/Brain/a.md"
+  HOME="$NH" zsh "$NH/nightly/gbrain-nightly.sh" 2>/dev/null
+  NLOG="$NH/.gbrain/nightly.log"
+}
+nightly_run 0 ""
+grep -q "vault pushed to origin (attempt 1)" "$NLOG" && git --git-dir="$NH/remote.git" rev-parse -q --verify HEAD >/dev/null \
+  && ok "network up: vault committed and pushed" || no "network up: vault not pushed"
+rm -rf "$NH"
+nightly_run 1 ""
+grep -q "still unresolvable" "$NLOG" && grep -q "push SKIPPED — no network" "$NLOG" \
+  && ok "no network: waits, then says why the push was skipped" || no "no network: cause not logged"
+rm -rf "$NH"
+nightly_run 0 "/nonexistent/remote.git"
+[ "$(grep -c '^fatal:' "$NLOG")" -ge 3 ] && grep -q "push FAILED after 3 attempts" "$NLOG" \
+  && ok "push error: retried 3 times, then reported" || no "push error: not retried or not reported"
+rm -rf "$NH"
+
 echo ""
 if [ "$FAIL" -eq 0 ]; then
   printf "\033[1;32m✅ All hooks healthy: %s/%s passed.\033[0m\n" "$PASS" "$((PASS+FAIL))"

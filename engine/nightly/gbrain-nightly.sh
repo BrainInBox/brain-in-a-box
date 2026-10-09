@@ -27,7 +27,25 @@ sweep_git_lock() {
     fi
 }
 
+# At 04:00 a laptop is often just waking up: launchd fires before the Wi-Fi is
+# back, so every remote step dies on "Could not resolve host" — and since the
+# cycle is best-effort, nothing says so. Field case: the vault's origin sat 3
+# days behind with no error anywhere. Wait (up to 5 min) for DNS first.
+wait_for_net() {
+    local i
+    for i in 1 2 3 4 5 6 7 8 9 10; do
+        if python3 -c 'import socket; socket.getaddrinfo("github.com", 443)' 2>/dev/null; then
+            [ "$i" -gt 1 ] && echo "[net] github.com resolved after $i attempt(s)" >> "$LOG"
+            return 0
+        fi
+        sleep 30
+    done
+    echo "[net] github.com still unresolvable after 5 min — remote steps will fail" >> "$LOG"
+    return 1
+}
+
 echo "===== $(date '+%Y-%m-%d %H:%M:%S') nightly start =====" >> "$LOG"
+wait_for_net; NET_OK=$?
 
 # -1. Stale-lock recovery (a gbrain killed with SIGKILL leaves a .gbrain-lock that blocks everything).
 if ! pgrep -f "bun.*gbrain" >/dev/null 2>&1; then
@@ -71,10 +89,24 @@ fi
 # (local commits aren't worth much if the disk dies). Best-effort: a remote may
 # be absent and a cron may lack creds — never block the cycle.
 # GIT_TERMINAL_PROMPT=0 so a missing credential fails fast instead of hanging.
+# A failed push is retried and logged with its real cause: nothing downstream
+# ever notices that origin fell behind.
 if cd "$VAULT" 2>/dev/null && git remote get-url origin >/dev/null 2>&1; then
-    GIT_TERMINAL_PROMPT=0 git push origin HEAD >> "$LOG" 2>&1 \
-        && echo "[git] vault pushed to origin" >> "$LOG" \
-        || echo "[git] vault push skipped (no remote creds in cron?)" >> "$LOG"
+    if [ "$NET_OK" -ne 0 ]; then
+        echo "[git] vault push SKIPPED — no network (commits stay local, origin falls behind)" >> "$LOG"
+    else
+        for attempt in 1 2 3; do
+            if GIT_TERMINAL_PROMPT=0 git push origin HEAD >> "$LOG" 2>&1; then
+                echo "[git] vault pushed to origin (attempt $attempt)" >> "$LOG"
+                break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+                echo "[git] vault push FAILED after 3 attempts — origin is now behind, see errors above" >> "$LOG"
+            else
+                sleep 60
+            fi
+        done
+    fi
 fi
 # Import and embed are split on purpose (2026-07-16). `sync` with its built-in
 # embed fails on most files with "[embed(zeroentropyai:zembed-1)] Invalid JSON
