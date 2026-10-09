@@ -184,6 +184,12 @@ reflect --day "$DAY" --slot backfill
 ! grep -q "REFLECTION-STATUS" "$M" && grep -q "BACKFILL run" "$P" \
   && ok "a good run (here a backfill) clears the warning" || no "warning not cleared by a good run"
 
+# A non-UTF-8 locale (cp1252 on Windows; ISO-8859-1 here) must not break the
+# hand-off: the prompt carries "→" and accented letters.
+rm -f "$TMPDIR"/brain-daily-reflection-*.lock "$RL/claude-stub-called.txt"
+LC_ALL=en_US.ISO8859-1 PYTHONUTF8=0 reflect --slot midday >/dev/null
+[ -f "$RL/claude-stub-called.txt" ] && grep -q "→ Bash bun test" "$P" \
+  && ok "non-UTF-8 locale: prompt still handed over intact" || no "prompt hand-off broke under a non-UTF-8 locale"
 rm -f "$RL/claude-stub-called.txt"
 reflect --day 2001-01-01 && [ ! -f "$RL/claude-stub-called.txt" ] \
   && ok "exits gracefully when there's nothing to do" || no "crashed or called claude with nothing to do"

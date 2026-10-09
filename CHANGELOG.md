@@ -13,6 +13,11 @@ Format inspired by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Link graph actually builds now** — `link_resolution.global_basename` is enabled at install (and idempotently by the nightly for existing installs). Without it, every skeleton dir (`Team/`, `Agents/`, `Decisions/`, `Skills/`, `Journal/`…) is outside gbrain's entity-dir whitelist and all wikilinks were silently dropped: empty graph, forever. Field-tested on a 562-page vault: 0 → 185 edges. Skeleton `CLAUDE.md`s document the convention: bare-basename wikilinks (`[[Page-Name]]`, no path, no `.md`) + a short `## See also` per page.
 
 ### Fixed
+- **Windows**:
+  - The reflection exchanges UTF-8 with `claude` and `git` explicitly. Text mode used the locale's codepage (cp1252) and died on the first `→` or accented letter of a prompt.
+  - The session recap's error log no longer uses `%F`/`%T`, which Windows' `strftime` does not support.
+  - `install.ps1` falls back to the default logon type when S4U is refused (reported on Windows Home in #6), instead of installing no scheduled task.
+  - UTF-8 file I/O in the session hooks and on `brain_search`'s output, and S4U scheduled tasks so they run in a locked session (#8, thanks @ismabillion-ship-it).
 - **Nightly sweeps an orphan `.git/index.lock`** (only when no git runs in the repo and the lock is >5 min old). A crashed git left it behind, the vault stopped committing, and `gbrain sync` froze the index without any error.
 - **`gbq` returns gbrain's real exit code.** It used to end on the stale-lock test and exit 1 after a successful command, which broke `gbq sync && …`.
 - **Correction reminder states where to append** in `lessons.md` (chronological, newest at the bottom). Agents writing at the top split the file in two.

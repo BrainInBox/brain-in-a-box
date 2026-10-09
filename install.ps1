@@ -123,9 +123,16 @@ function Register-BrainTask($name, $argument, $triggers) {
     # Le defaut de Register-ScheduledTask -User est LogonType Interactive, qui exige une session active -
     # observe en pratique : echec (0x800710E0, "operateur/administrateur a refuse la requete") au declenchement
     # de nuit/verrouille, succes seulement quand relance manuellement en session active.
+    # Certaines editions refusent S4U (Acces refuse rapporte sous Windows Home, PR #6) : on retombe
+    # alors sur le mode par defaut plutot que de n'installer aucune tache.
     $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType S4U -RunLevel Limited
-    Register-ScheduledTask -TaskName $name -Action $action -Trigger $triggers -Principal $principal -Force | Out-Null
-    Ok "tache: $name"
+    try {
+        Register-ScheduledTask -TaskName $name -Action $action -Trigger $triggers -Principal $principal -Force -ErrorAction Stop | Out-Null
+        Ok "tache: $name"
+    } catch {
+        Register-ScheduledTask -TaskName $name -Action $action -Trigger $triggers -Force -User $env:USERNAME -ErrorAction Stop | Out-Null
+        Warn "tache: $name - S4U refuse ($($_.Exception.Message)) ; enregistree en mode session ouverte, elle ne tourne que session deverrouillee"
+    }
 }
 try {
     Register-BrainTask "BrainSearchReindex" "`"$BSDIR\brain_search.py`" index" (New-ScheduledTaskTrigger -Daily -At "04:00")
