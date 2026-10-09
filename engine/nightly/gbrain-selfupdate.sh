@@ -60,6 +60,24 @@ p.write_text(mem)
 PY
 }
 
+# Prints the Bun version gbrain's package.json requires ("engines.bun") when the
+# installed Bun is older; prints nothing when it is recent enough or unreadable.
+bun_shortfall() {
+    python3 - "$GREPO/package.json" "$("$BUN" --version 2>/dev/null)" <<'PY'
+import json, re, sys
+try:
+    spec = json.load(open(sys.argv[1])).get("engines", {}).get("bun", "")
+except Exception:
+    sys.exit(0)
+need = re.search(r"(\d+)\.(\d+)(?:\.(\d+))?", spec)
+have = re.match(r"(\d+)\.(\d+)\.(\d+)", sys.argv[2])
+if need and have:
+    need = tuple(int(x or 0) for x in need.groups())
+    if tuple(map(int, have.groups())) < need:
+        print(".".join(map(str, need)))
+PY
+}
+
 [ -d "$GREPO/.git" ] || exit 0
 cd "$GREPO" || exit 0
 
@@ -71,6 +89,23 @@ after=$(git rev-parse --short HEAD 2>/dev/null)
 [ -z "$after" ] && exit 0
 
 echo "[update] gbrain $before -> $after" >> "$LOG"
+
+# A gbrain that needs a newer Bun refuses to start: the smoke test fails, the
+# update is rolled back, and the next night pulls the same commit again —
+# stuck forever, since nothing upgraded Bun. Upgrade it first, keeping the old
+# binary so a rollback returns to the exact state that worked.
+need=$(bun_shortfall)
+bun_prev=""
+bun_stuck=""
+if [ -n "$need" ]; then
+    echo "[update] gbrain $after needs Bun >= $need, found $("$BUN" --version 2>/dev/null) — running bun upgrade" >> "$LOG"
+    bun_prev="$HOME/.gbrain/bun.pre-upgrade"
+    cp -p "$BUN" "$bun_prev"
+    "$BUN" upgrade >> "$LOG" 2>&1
+    bun_stuck=$(bun_shortfall)
+    [ -n "$bun_stuck" ] && echo "[update] bun upgrade did not reach $need" >> "$LOG"
+fi
+
 "$BUN" install >> "$LOG" 2>&1
 "$BUN" link >> "$LOG" 2>&1
 "$GBRAIN" apply-migrations --yes >> "$LOG" 2>&1 || echo "[update] migrations non-fatal" >> "$LOG"
@@ -83,12 +118,25 @@ if "$GBRAIN" doctor --fast --json >/dev/null 2>>"$LOG"; then
     cl_json=$(printf '%s\n' "$changelog" | python3 -c 'import json,sys; print(json.dumps([l.strip() for l in sys.stdin if l.strip()]))')
     write_status "updated" "$before" "$after" "$cl_json"
     flat=$(printf '%s' "$changelog" | tr '\n' ' ' | sed 's/  */ /g')
-    update_memory_block "🔄" "\`$before\` → \`$after\`. $flat"
+    bun_note=""
+    if [ -n "$bun_prev" ]; then
+        rm -f "$bun_prev"
+        bun_note=" Bun upgraded to $("$BUN" --version 2>/dev/null)."
+    fi
+    update_memory_block "🔄" "\`$before\` → \`$after\`.$bun_note $flat"
 else
     echo "[update] SMOKE TEST FAILED — rolling back $after -> $before" >> "$LOG"
     git reset --hard "$before" >> "$LOG" 2>&1
+    if [ -n "$bun_prev" ]; then
+        cp -p "$bun_prev" "$BUN" && rm -f "$bun_prev" \
+            && echo "[update] Bun restored to $("$BUN" --version 2>/dev/null)" >> "$LOG"
+    fi
     "$BUN" install >> "$LOG" 2>&1
     "$BUN" link >> "$LOG" 2>&1
     write_status "rolled_back" "$before" "$after" "[]"
-    update_memory_block "⚠️" "tried \`$before\` → \`$after\`, broke \`gbrain doctor\` — rolled back to \`$before\` automatically. Check \`~/.gbrain/nightly.log\`."
+    if [ -n "$bun_stuck" ]; then
+        update_memory_block "⚠️" "\`$after\` needs Bun >= $bun_stuck and \`bun upgrade\` could not get there — run \`bun upgrade\` by hand; still on \`$before\`. Check \`~/.gbrain/nightly.log\`."
+    else
+        update_memory_block "⚠️" "tried \`$before\` → \`$after\`, broke \`gbrain doctor\` — rolled back to \`$before\` automatically. Check \`~/.gbrain/nightly.log\`."
+    fi
 fi
