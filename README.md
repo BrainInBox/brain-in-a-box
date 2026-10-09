@@ -20,7 +20,7 @@ It all runs inside Claude Code (terminal/IDE). No bot, no server, no shared clou
 
 ## Install (per person)
 
-Requirements: macOS, [Claude Code](https://claude.ai/code), a **free** [ZeroEntropy](https://dashboard.zeroentropy.dev) key (embeddings — free account, no card).
+Requirements: macOS (Windows: experimental `install.ps1`, see [the port notes](docs/proposals/windows-port.md)), [Claude Code](https://claude.ai/code), a **free** [ZeroEntropy](https://dashboard.zeroentropy.dev) key (embeddings — free account, no card).
 
 ```bash
 git clone <URL_OF_THIS_REPO> brain-in-a-box
@@ -94,7 +94,7 @@ Each member's nightly pulls the team's contributions + re-indexes. The dream cyc
 
 ## Security / privacy
 - Everything is **local**: your vault, your index, your key. Nothing goes to a third party (except the text embedding sent to ZeroEntropy at indexing time — see their policy).
-- Never a secret in the vault (the `file-protection` hook + the directives remind you).
+- Never a secret in the vault. The global `CLAUDE.md` directives tell your agents so, but nothing scans the vault for you: keep secrets in your password manager or Keychain and write down where they live, never the value.
 - **Found a security issue?** See [SECURITY.md](SECURITY.md) — please use GitHub Security Advisories, not public Issues.
 
 ## Contributing
