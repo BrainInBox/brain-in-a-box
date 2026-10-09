@@ -94,10 +94,16 @@ git clone -q "$REMOTE" "$H/DEV/gbrain-src" 2>/dev/null
 ( cd "$GREPO" && git pull -q --ff-only )   # bring the clone up to the same commit as a real install would be
 
 # Stub bun/gbrain so the script never touches real binaries.
-cat > "$H/.bun/bin/bun" <<'STUB'
+# bun: `--version` reads a file (1.3.12 by default), `upgrade` bumps it to 1.4.2
+# unless told to fail.
+cat > "$H/.bun/bin/bun" <<STUBEOF
 #!/usr/bin/env bash
+case "\$1" in
+  --version) cat "$H/.gbrain/bun-version" 2>/dev/null || echo 1.3.12;;
+  upgrade)   [ -f "$H/.gbrain/bun-upgrade-fails" ] && exit 1; echo 1.4.2 > "$H/.gbrain/bun-version";;
+esac
 exit 0
-STUB
+STUBEOF
 chmod +x "$H/.bun/bin/bun"
 echo 0 > "$H/.gbrain/doctor-exit"
 cat > "$H/.bun/bin/gbrain" <<STUBEOF
@@ -134,6 +140,27 @@ python3 -c "import json,sys; d=json.load(open('$H/.gbrain/last-update.json')); s
   && ok "last-update.json status=rolled_back" || no "wrong status after rollback"
 grep -q "rolled back" "$MEM" 2>/dev/null && ok "rollback surfaced in memory.md" || no "rollback not surfaced"
 echo 0 > "$H/.gbrain/doctor-exit"
+
+# gbrain starts requiring a newer Bun than the installed one (engines.bun).
+( cd "$H/DEV/gbrain-src" && printf '{"engines":{"bun":">=1.4.0"}}\n' > package.json \
+    && git add -A && git -c user.email=t@t -c user.name=t commit -qm "chore: require bun 1.4" && git push -q origin HEAD )
+HOME="$H" "$HB/gbrain-selfupdate.sh" "$SU_LOG" 2>/dev/null
+[ "$(cat "$H/.gbrain/bun-version" 2>/dev/null)" = "1.4.2" ] && grep -q "needs Bun >= 1.4.0" "$SU_LOG" \
+  && ok "Bun upgraded first when gbrain requires a newer one" || no "Bun not upgraded before installing gbrain"
+python3 -c "import json,sys; d=json.load(open('$H/.gbrain/last-update.json')); sys.exit(0 if d['status']=='updated' else 1)" \
+  && grep -q "Bun upgraded to 1.4.2" "$MEM" && [ ! -f "$H/.gbrain/bun.pre-upgrade" ] \
+  && ok "update kept, Bun upgrade surfaced in memory.md" || no "update with Bun upgrade not reported"
+
+# bun upgrade cannot reach the minimum: gbrain won't start → rollback with the real cause, old Bun restored.
+rm -f "$H/.gbrain/bun-version"; touch "$H/.gbrain/bun-upgrade-fails"; echo 1 > "$H/.gbrain/doctor-exit"
+( cd "$H/DEV/gbrain-src" && printf '{"engines":{"bun":">=1.9.0"}}\n' > package.json \
+    && git -c user.email=t@t -c user.name=t commit -aqm "chore: require bun 1.9" && git push -q origin HEAD )
+before_bun=$(cd "$GREPO" && git rev-parse --short HEAD)
+HOME="$H" "$HB/gbrain-selfupdate.sh" "$SU_LOG" 2>/dev/null
+[ "$(cd "$GREPO" && git rev-parse --short HEAD)" = "$before_bun" ] && grep -q "Bun restored" "$SU_LOG" \
+  && grep -q "needs Bun >= 1.9.0 and \`bun upgrade\` could not get there" "$MEM" \
+  && ok "Bun upgrade impossible: rolled back, Bun restored, cause in memory.md" || no "Bun shortfall not handled on rollback"
+rm -f "$H/.gbrain/bun-upgrade-fails"; echo 0 > "$H/.gbrain/doctor-exit"
 
 echo "════ 7) gbrain-update-check — SessionStart daily catch-up ════"
 rm -f "$H/.gbrain/last-selfupdate-check"
