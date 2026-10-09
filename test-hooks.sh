@@ -34,8 +34,68 @@ EOF
 PAYLOAD="{\"session_id\":\"$SID\",\"cwd\":\"/Users/builder/proj\",\"transcript_path\":\"$TX\"}"
 
 echo "════ 1) correction-detector ════"
-echo '{"prompt":"no, actually do it the other way"}' | HOME="$H" python3 "$HB/correction-detector.py" 2>/dev/null | grep -q "CORRECTION DETECTED" && ok "fires on a real correction" || no "did not fire"
-out=$(echo '{"prompt":"build me a dashboard"}' | HOME="$H" python3 "$HB/correction-detector.py" 2>/dev/null); [ -z "$out" ] && ok "stays silent on a neutral prompt" || no "fired on a neutral prompt"
+verdict() {   # $1 prompt, $2 hook (default: installed one) → CORRECTION | CONFUSION | SILENT
+  local out
+  out=$(printf '%s' "$1" | python3 -c 'import json,sys; print(json.dumps({"prompt": sys.stdin.read()}))' \
+        | HOME="$H" python3 "${2:-$HB/correction-detector.py}" 2>/dev/null)
+  case "$out" in "") echo SILENT;; *"CONFUSION DETECTED"*) echo CONFUSION;; *"CORRECTION DETECTED"*) echo CORRECTION;; *) echo "?";; esac
+}
+expect_all() {   # $1 label, $2 expected verdict, then one prompt per argument
+  local label="$1" want="$2" bad="" p; shift 2
+  for p in "$@"; do [ "$(verdict "$p")" = "$want" ] || bad="$bad | $p"; done
+  local n="$# case"; [ $# -gt 1 ] && n="${n}s"
+  [ -z "$bad" ] && ok "$label ($n → $want)" || no "$label — wrong on:$bad"
+}
+expect_all "real corrections fire" CORRECTION \
+  "no, actually do it the other way" \
+  "you forgot to update the changelog" \
+  "that's not what I asked, I wanted a CLI" \
+  "from now on run the tests before pushing" \
+  "your fix breaks the login page, it doesn't handle empty input" \
+  "use the existing helper instead of a new one" \
+  "non, garde l'ancienne version" \
+  "t'as oublié de mettre à jour le changelog" \
+  "à l'avenir préviens-moi avant de pousser" \
+  "c'est pas bon, le total est faux" \
+  'no, not that: ```const x = 1``` the other way round'
+expect_all "not following the explanation is told apart" CONFUSION \
+  "I don't follow, what's a reconciler?" \
+  "sorry, I didn't understand the last part" \
+  "what do you mean by idempotent here" \
+  "j'ai pas tout compris honnêtement" \
+  "je vois pas ce que tu veux dire"
+expect_all "ordinary negations stay silent" SILENT \
+  "build me a dashboard" \
+  "the build doesn't work on node 22" \
+  "I don't know which library to pick" \
+  "why does this not compile?" \
+  "I don't understand why the CI fails on main" \
+  "no worries, take your time and add tests" \
+  "it's not urgent, refactor when you can" \
+  "ça marche pas sur mon mac" \
+  "je sais pas quelle lib choisir" \
+  "tkt c'est pas un pb, on verra demain"
+expect_all "relayed content stays silent" SILENT \
+  "$(printf '<task-notification>\nAgent "fix login" finished.\nDo NOT retry the deploy, the build is wrong.\n</task-notification>')" \
+  "$(printf '[SYSTEM NOTIFICATION - NOT USER INPUT]\nverifier done: no regression, nothing wrong found')" \
+  "$(printf 'output of the run\n```\n[run 1] edit refused\n[run 1] npm ci blocked\nnpm ERR! code EACCES\n```')" \
+  "$(printf 'worker result\n```\n[E2E] / ......... render OK\n[E2E] /buy ...... render OK\n[E2E] api ....... not reachable\n[E2E] verdict: no regression\n```')"
+# A long prompt is a spec or a paste: only its opening can carry a correction.
+SPEC="Implement the export feature. $(printf 'Each row carries an id, a label and a total; %.0s' $(seq 12))Use streaming instead of loading everything, and from now on the CSV is the default format."
+expect_all "long spec: wording in its body is not a correction" SILENT "$SPEC"
+expect_all "long prompt opening on a correction still fires" CORRECTION "No, that's not what I meant. $SPEC"
+# The guard fails OPEN: broken or missing, corrections must still fire.
+GT="$H/guardtest"; mkdir -p "$GT"; cp "$REPO"/engine/hooks/correction-detector.py "$GT/"
+bad=""
+for g in 'raise ImportError("broken")' 'def is_relayed(t):
+    return 1/0'; do
+  printf '%s\n' "$g" > "$GT/_paste_guard.py"
+  [ "$(verdict "no, actually the other way" "$GT/correction-detector.py")" = CORRECTION ] || bad="$bad | $g"
+done
+rm -f "$GT/_paste_guard.py"
+[ "$(verdict "no, actually the other way" "$GT/correction-detector.py")" = CORRECTION ] || bad="$bad | missing module"
+[ -z "$bad" ] && ok "relay guard broken or missing: corrections still fire" || no "guard failure swallowed corrections:$bad"
+rm -rf "$GT"
 
 echo "════ 2) session-logger ════"
 echo "$PAYLOAD" | HOME="$H" python3 "$HB/session-logger.py" 2>/dev/null

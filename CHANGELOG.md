@@ -20,6 +20,11 @@ Format inspired by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Self-update upgrades Bun when gbrain needs a newer one.** gbrain now declares `engines.bun >= 1.4.0`; on an older Bun it refuses to start, so the smoke test failed and the update was rolled back every night, forever. The self-update reads `engines.bun` after the pull, runs `bun upgrade` when the installed Bun is too old, and restores the previous Bun binary if the update is rolled back. When Bun cannot be upgraded, `memory.md` now says so instead of blaming `gbrain doctor`.
 
 ### Changed
+- **Correction detector: far fewer false alarms, English + French.** A bare negation is no longer a correction: the old pattern (`no|not|don't|stop`…) fired on ordinary prompts ("it doesn't build", "I don't know which lib"). It now looks for signals aimed at the assistant's work (redirection, reproach, a lasting rule, a prompt opening on "no", a verdict on its output), in English and French.
+  - Relayed content (agent output, task notifications, pasted logs) is skipped by a new `_paste_guard.py`, which fails open: if it breaks, corrections still fire.
+  - A long prompt is a spec or a paste, so only its opening is read.
+  - "I don't follow" / "j'ai pas compris" now gets its own reminder: the lesson is about how the assistant explains.
+  - On ~1,500 real prompts, the hook fired on 22.3% before and 4.1% after. `test-hooks.sh` gains 7 checks (32 prompts).
 - **Daily reflection rewritten** (`daily-reflection.py`, supersedes #4):
   - Finds the day's sessions by scanning `~/.claude/projects` and slicing each transcript to that day, instead of the Stop-hook index: a long session whose Stop fired another day was missing, and only the first 50k chars of a transcript were read.
   - Sends readable turns (user / assistant text, one line per tool call) instead of raw JSONL; tool output, which is most of the volume, is dropped. The budget is split fairly between sessions, keeping each one's start and end.
