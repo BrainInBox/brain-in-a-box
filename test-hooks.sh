@@ -355,6 +355,37 @@ nightly_run 0 "/nonexistent/remote.git"
   && ok "push error: retried 3 times, then reported" || no "push error: not retried or not reported"
 rm -rf "$NH"
 
+echo "════ 10) gbq + brain_search ════"
+# gbq against a stub gbrain: sync exits with $GBQ_STUB_RC; query prints a hit, then
+# either exits with $GBQ_STUB_RC or hangs like the real PGLite read does.
+GQ="$H/gbq-home"; mkdir -p "$GQ/.bun/bin" "$GQ/.gbrain/brain.pglite"
+cat > "$GQ/.bun/bin/gbrain" <<'STUB'
+#!/usr/bin/env bash
+case "$1" in
+  sync)  exit "${GBQ_STUB_RC:-0}";;
+  query) echo "hit: pricing.md"; [ -n "$GBQ_STUB_RC" ] && exit "$GBQ_STUB_RC"; exec sleep 60;;
+esac
+STUB
+chmod +x "$GQ/.bun/bin/gbrain"
+HOME="$GQ" GBQ_STUB_RC=3 zsh "$REPO/engine/bin/gbq" sync >/dev/null 2>&1; rc=$?
+[ "$rc" = 3 ] && ok "gbq: a write returns gbrain's exit code" || no "gbq: write returned $rc, want 3"
+t0=$(date +%s); out=$(HOME="$GQ" zsh "$REPO/engine/bin/gbq" query pricing 2>&1); rc=$?; took=$(( $(date +%s) - t0 ))
+[ "$rc" = 0 ] && echo "$out" | grep -q "hit: pricing.md" && [ "$took" -lt 15 ] \
+  && ok "gbq: a read that never exits is cut once its output settles (${took}s)" || no "gbq: hung read not handled (rc=$rc, ${took}s)"
+HOME="$GQ" GBQ_STUB_RC=2 zsh "$REPO/engine/bin/gbq" query pricing >/dev/null 2>&1; rc=$?
+[ "$rc" = 2 ] && ok "gbq: a read that fails on its own reports the failure" || no "gbq: failing read returned $rc, want 2"
+
+BV="$H/bs-vault"; BSI="$H/bs-index.json"; BS="$REPO/engine/search/brain_search.py"
+mkdir -p "$BV/Decisions"
+printf '# Pricing\n\nWe chose the annual plan → cheaper for small teams.\n' > "$BV/Decisions/pricing.md"
+printf '# Lunch\n\nNotes about the cafeteria menu.\n' > "$BV/lunch.md"
+BRAIN_SEARCH_INDEX="$BSI" python3 "$BS" index --brain "$BV" >/dev/null 2>&1
+out=$(BRAIN_SEARCH_INDEX="$BSI" python3 "$BS" query "annual plan" --json 2>/dev/null)
+python3 -c 'import json,sys; h=json.loads(sys.argv[1])["hits"]; sys.exit(0 if h and h[0]["path"]=="Decisions/pricing.md" else 1)' "$out" 2>/dev/null \
+  && ok "brain_search: indexes the vault and ranks the right note first" || no "brain_search: wrong or no ranking"
+BRAIN_SEARCH_INDEX="$BSI" PYTHONIOENCODING=ascii python3 "$BS" query "annual plan" >/dev/null 2>&1 \
+  && ok "brain_search: a non-UTF-8 console does not crash on '→'" || no "brain_search: crashed on a non-UTF-8 console"
+
 echo ""
 if [ "$FAIL" -eq 0 ]; then
   printf "\033[1;32m✅ All hooks healthy: %s/%s passed.\033[0m\n" "$PASS" "$((PASS+FAIL))"
