@@ -290,7 +290,7 @@ if __name__ == "__main__":
         # Log the error but never break the Stop hook
         err_log = Path.home() / ".claude" / "logs" / "session-recap-errors.log"
         try:
-            err_log.open("a", encoding="utf-8").write(f"{time.strftime('%FT%T')} {type(e).__name__}: {e}\n")
+            err_log.open("a", encoding="utf-8").write(f"{time.strftime('%Y-%m-%dT%H:%M:%S')} {type(e).__name__}: {e}\n")
         except Exception:
             pass
         sys.exit(0)

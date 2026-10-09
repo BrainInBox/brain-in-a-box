@@ -196,7 +196,8 @@ def hermes_sessions(day):
 
 def _git(*args, cwd=None):
     try:
-        r = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, timeout=20)
+        r = subprocess.run(["git", *args], cwd=cwd, capture_output=True, timeout=20,
+                           encoding="utf-8", errors="replace")
         return r.stdout.strip() if r.returncode == 0 else ""
     except Exception:
         return ""
@@ -364,8 +365,11 @@ def run_claude(prompt, day, slot):
         try:
             # The prompt goes through stdin: up to 300 KB does not fit in one
             # argument on Linux (128 KB) nor in a Windows command line (32 KB).
+            # Explicit UTF-8: text mode would use the locale's codepage (cp1252
+            # on Windows) and die on the first "→" or accented letter.
             r = subprocess.run([claude_bin(), "-p", "--permission-mode", "acceptEdits"], input=prompt,
-                               cwd=str(BRAIN), timeout=TIMEOUT, capture_output=True, text=True, env=env)
+                               cwd=str(BRAIN), timeout=TIMEOUT, capture_output=True, env=env,
+                               encoding="utf-8", errors="replace")
             sys.stdout.write(r.stdout)  # the scheduler keeps them in its own logs
             sys.stderr.write(r.stderr)
             if r.returncode == 0:
