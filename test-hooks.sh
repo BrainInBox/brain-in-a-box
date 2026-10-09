@@ -61,19 +61,77 @@ grep -q "intent: sign with \[REDACTED\]" "$J" 2>/dev/null && ok "secret in inten
 ! grep -qE "abababab|hunter2" "$J" 2>/dev/null && ok "no secret value left in the journal" || no "secret value leaked into the journal"
 
 echo "════ 5) daily-reflection (claude stubbed) ════"
+# claude stub: records its stdin (the prompt) and exits with the code in claude-exit;
+# on failure it prints a usage-limit message, which stops the retries at once.
 cat > "$H/.local/bin/claude" <<'STUB'
 #!/usr/bin/env bash
+cat > "$HOME/.claude/logs/claude-stub-prompt.txt"
 echo called > "$HOME/.claude/logs/claude-stub-called.txt"
-printf '%s' "$*" > "$HOME/.claude/logs/claude-stub-prompt.txt"
-exit 0
+code=$(cat "$HOME/.claude/claude-exit" 2>/dev/null || echo 0)
+[ "$code" != 0 ] && echo "You've hit your usage limit"
+exit "$code"
 STUB
 chmod +x "$H/.local/bin/claude"
-rm -f "$TMPDIR"/brain-daily-reflection-$DAY-*.lock 2>/dev/null   # clear debounce lock from prior runs
-HOME="$H" python3 "$HB/daily-reflection.py" 2>/dev/null
-[ -f "$H/.claude/logs/claude-stub-called.txt" ] && ok "cron flow ran (read logs → built prompt → invoked claude)" || no "cron flow did not run"
-grep -q "journal summary" "$H/.claude/logs/claude-stub-prompt.txt" 2>/dev/null && ok "prompt is correct" || no "prompt wrong"
-rm -f "$H/.claude/logs/sessions-$DAY.jsonl"
-HOME="$H" python3 "$HB/daily-reflection.py" 2>/dev/null && ok "exits gracefully when there's nothing to do" || no "crashed when nothing to do"
+RL="$H/.claude/logs"
+reflect() { HOME="$H" BRAIN_NO_NOTIFY=1 python3 "$HB/daily-reflection.py" "$@" 2>/dev/null; }
+stamp() { python3 -c "from datetime import datetime,timedelta; print((datetime.now().astimezone().replace(hour=12,minute=0,second=0,microsecond=0)-timedelta(days=$1)).isoformat())"; }
+T0=$(stamp 0); T1=$(stamp 1)
+HOME="$H" git config --global user.email builder@example.com
+HOME="$H" git config --global user.name Builder
+# Sessions often start from a parent folder holding several repos — here a repo
+# itself, with an independent repo nested in it (the harder case to discover).
+mkdir -p "$H/work/app" "$H/.claude/projects/-work"
+git init -q "$H/work"
+( cd "$H/work/app" && git init -q && echo a > a && git add a \
+  && HOME="$H" git commit -qm "feat: add login page" \
+  && echo b > b && git add b && git -c user.email=other@example.com -c user.name=Other commit -qm "chore: someone else" )
+FAKEKEY="0x$(printf 'ab%.0s' $(seq 32))"
+cat > "$H/.claude/projects/-work/day-session.jsonl" <<EOF
+{"type":"user","timestamp":"$T1","cwd":"$H/work","message":{"content":"YESTERDAY-ONLY"}}
+{"type":"user","timestamp":"$T0","cwd":"$H/work","message":{"content":"ship the login page, key $FAKEKEY"}}
+{"type":"assistant","timestamp":"$T0","cwd":"$H/work","message":{"content":[{"type":"text","text":"On it."},{"type":"tool_use","name":"Bash","input":{"command":"bun test"}}]}}
+{"type":"user","timestamp":"$T0","cwd":"$H/work","message":{"content":[{"type":"tool_result","content":"TOOL-OUTPUT-NOISE"}]}}
+{"type":"assistant","timestamp":"$T0","cwd":"$H/work","message":{"content":[{"type":"text","text":"Login page shipped."}]}}
+EOF
+cat > "$H/.claude/projects/-work/own-run.jsonl" <<EOF
+{"type":"user","timestamp":"$T0","cwd":"$H/Documents/Brain","message":{"content":"<!-- brain-daily-reflection -->\nSELF-RUN"}}
+{"type":"assistant","timestamp":"$T0","message":{"content":[{"type":"text","text":"SELF-RUN a"}]}}
+{"type":"assistant","timestamp":"$T0","message":{"content":[{"type":"text","text":"SELF-RUN b"}]}}
+EOF
+printf -- '---\ntype: memory\n---\n# Memory\n\n## Recent context\n' > "$H/Documents/Brain/Profile/memory.md"
+P="$RL/claude-stub-prompt.txt"
+
+out=$(reflect --dry-run)
+echo "$out" | grep -q "1 Claude session(s), 0 Hermes session(s), 1 repo(s) with commits, 1 secret(s) masked" && [ ! -f "$RL/claude-stub-called.txt" ] \
+  && ok "--dry-run reports the sources without calling claude" || no "--dry-run wrong: $out"
+reflect --slot midday
+[ -f "$RL/claude-stub-called.txt" ] && grep -q "Journal/$DAY.md" "$P" && grep -q "Login page shipped" "$P" \
+  && ok "prompt built from the day's transcript and sent on stdin" || no "claude not called with the day's sessions"
+! grep -qE "YESTERDAY-ONLY|TOOL-OUTPUT-NOISE|SELF-RUN" "$P" \
+  && ok "other days, tool output and its own past runs are left out" || no "prompt carries out-of-scope text"
+grep -q "feat: add login page" "$P" && ! grep -q "someone else" "$P" \
+  && ok "git digest: your commits only, nested repo under the session folder found" || no "git digest wrong"
+grep -q "\[REDACTED\]" "$P" && ! grep -q "abababab" "$P" \
+  && ok "secrets masked before the prompt leaves the machine" || no "secret reached the prompt"
+
+echo 1 > "$H/.claude/claude-exit"
+reflect --slot evening >/dev/null
+M="$H/Documents/Brain/Profile/memory.md"
+grep -q "REFLECTION-STATUS:BEGIN" "$M" && grep -q "usage limit" "$M" && head -1 "$M" | grep -q '^---$' \
+  && ok "failure: warning pinned in memory.md, frontmatter intact" || no "failure not surfaced in memory.md"
+echo 0 > "$H/.claude/claude-exit"
+reflect --day "$DAY" --slot backfill
+! grep -q "REFLECTION-STATUS" "$M" && grep -q "BACKFILL run" "$P" \
+  && ok "a good run (here a backfill) clears the warning" || no "warning not cleared by a good run"
+
+rm -f "$RL/claude-stub-called.txt"
+reflect --day 2001-01-01 && [ ! -f "$RL/claude-stub-called.txt" ] \
+  && ok "exits gracefully when there's nothing to do" || no "crashed or called claude with nothing to do"
+LONE="$H/lone"; mkdir -p "$LONE"; cp "$HB/daily-reflection.py" "$HB/session-recap.py" "$LONE/"
+HOME="$H" BRAIN_NO_NOTIFY=1 python3 "$LONE/daily-reflection.py" --slot evening 2>/dev/null
+[ ! -f "$RL/claude-stub-called.txt" ] && grep -q "_redact.py not found" "$RL/daily-reflection-errors.log" \
+  && ok "without _redact.py: no unmasked transcript is ever sent" || no "ran without its redaction module"
+rm -rf "$M" "$LONE" "$H/work" "$H/.claude/projects" "$H/.gitconfig"   # leave the shared HOME as section 6 expects it
 
 echo "════ 6) gbrain-selfupdate (pull → install → migrate → smoke-test → rollback) ════"
 mkdir -p "$H/.gbrain" "$H/DEV" "$H/Documents/Brain/Profile" "$H/.bun/bin"

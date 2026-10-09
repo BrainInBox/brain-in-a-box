@@ -13,7 +13,7 @@ Everyone gets the **same engine**, with **their own data** — everything stays 
 | **GBrain** (`~/.gbrain`) | Semantic search over the vault (`gbq query "..."`) — ZeroEntropy embeddings |
 | **Nightly** (launchd 04:00) | commit vault → sync → dream cycle (dedup, facts, consolidation) → self-update GBrain (auto-rollback if broken) |
 | **Self-update catch-up** (SessionStart) | if the machine missed the 04:00 run, the first Claude Code session of the day checks in the background — you're never more than a day behind |
-| **Reflection** (launchd 12:00 + 23:00) | LLM summary of the day's sessions → `Journal/` + rolling 15-day `memory.md` |
+| **Reflection** (launchd 12:00 + 23:00) | LLM summary of the day's sessions and your git commits → `Journal/` + rolling 15-day `memory.md`. Secrets masked before sending; a failing run pins a warning in `memory.md`. Missed a day? `daily-reflection.py --day YYYY-MM-DD` (`--dry-run` to preview) |
 | **Weekly lint** (launchd Monday 08:00) | Verifies the whole pipeline (doctor, lint, orphans, nightly freshness) → 🟢/🟠/🔴 verdict pinned in `memory.md` + report in `Profile/lint.md` |
 
 It all runs inside Claude Code (terminal/IDE). No bot, no server, no shared cloud.
