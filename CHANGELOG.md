@@ -13,6 +13,7 @@ Format inspired by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Link graph actually builds now** — `link_resolution.global_basename` is enabled at install (and idempotently by the nightly for existing installs). Without it, every skeleton dir (`Team/`, `Agents/`, `Decisions/`, `Skills/`, `Journal/`…) is outside gbrain's entity-dir whitelist and all wikilinks were silently dropped: empty graph, forever. Field-tested on a 562-page vault: 0 → 185 edges. Skeleton `CLAUDE.md`s document the convention: bare-basename wikilinks (`[[Page-Name]]`, no path, no `.md`) + a short `## See also` per page.
 
 ### Fixed
+- `setup-company.sh` and `try-it-locally.sh` printed their final banner with literal `\033[1;32m` codes (escapes are not interpreted inside a heredoc); it is now printed with `printf`.
 - **CI** parses each script with the shell its shebang names (the zsh scripts were checked with bash, and `gbrain-lint.sh` not at all), compiles the Python hooks, and lints the launchd templates.
 - **Windows**:
   - The reflection exchanges UTF-8 with `claude` and `git` explicitly. Text mode used the locale's codepage (cp1252) and died on the first `→` or accented letter of a prompt.

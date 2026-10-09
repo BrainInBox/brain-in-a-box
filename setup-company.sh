@@ -31,9 +31,8 @@ say "git init"
   && git add -A && git -c user.email="brain@local" -c user.name="brain" commit -q -m "company brain init: $NAME" )
 ok "local git repo ready"
 
+printf "\n\033[1;32m✅ Team brain created locally.\033[0m\n"
 cat <<EOF
-
-\033[1;32m✅ Team brain created locally.\033[0m
 
 STEP 1 — push it to a PRIVATE GitHub repo (access = your members):
   cd $CO

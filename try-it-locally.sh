@@ -51,9 +51,8 @@ if [ "$SKIP_INSTALL" = "0" ]; then
     bash "$REPO/install.sh" 2>&1 | grep -iE "▶|✓|⚠|✅" | sed 's/^/  /'
 fi
 
+printf "\n\033[1;32m✅ Sandbox ready at %s — go play (your real brain is untouched).\033[0m\n" "$TRYHOME"
 cat <<EOF
-
-\033[1;32m✅ Sandbox ready at $TRYHOME — go play (your real brain is untouched).\033[0m
 
 1) Query the memory (works now):
    HOME=$TRYHOME $TRYHOME/.local/bin/gbq query "what is this brain"
