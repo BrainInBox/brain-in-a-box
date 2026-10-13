@@ -152,6 +152,7 @@ dependencies = [
 name = "brain-in-a-box"
 version = "0.1.0"
 dependencies = [
+ "regex",
  "serde",
  "serde_json",
  "tauri",
