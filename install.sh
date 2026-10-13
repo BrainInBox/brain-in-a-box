@@ -142,6 +142,11 @@ else
   ok "appended (your existing content preserved)"
 fi
 
+# ── 9bis. Claude Code skills (never overwrites one of yours, see the script) ─
+say "Claude Code skills"
+python3 "$REPO/engine/install_skills.py" --src "$REPO/skills" --dest "$H/.claude/skills" \
+  && ok "skills up to date" || warn "skills: see above"
+
 # ── 10. git init vault ──────────────────────────────────────────────────────
 say "git init vault"
 if [ ! -d "$BRAIN/.git" ]; then

@@ -297,6 +297,11 @@ if ($cur -match [regex]::Escape($mark)) {
     Ok "ajoute (ton contenu existant preserve)"
 }
 
+# 6bis. Skills Claude Code (jamais un skill a toi ecrase : voir engine/install_skills.py)
+Say "Skills Claude Code ($H\.claude\skills)"
+Invoke-Native { & $Py -I "$REPO\engine\install_skills.py" --src "$REPO\skills" --dest "$H\.claude\skills" }
+if ($LASTEXITCODE -eq 0) { Ok "skills a jour" } else { Warn "skills : echec (code $LASTEXITCODE)" }
+
 # 7. Task Scheduler (reindex nuit + reflection 12h/23h)
 Say "Task Scheduler (reindex 04:00 + reflection 12:00/23:00)"
 function Register-BrainTask($name, $exe, $argument, $triggers) {
