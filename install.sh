@@ -182,7 +182,7 @@ PY
 "$GBQ_BIN" config set link_resolution.global_basename true >/dev/null 2>&1 || true
 "$GBQ_BIN" import "$BRAIN" --no-embed >/dev/null 2>&1 && ok "vault imported"
 say "Embedding (may take 1-2 min)…"
-"$GBQ_BIN" embed --stale >/dev/null 2>&1 && ok "embedded" || warn "re-run embed: gbrain embed --stale"
+"$GBQ_BIN" embed --stale --max-usd 1 >/dev/null 2>&1 && ok "embedded" || warn "re-run embed: gbrain embed --stale --max-usd 1"
 
 # ── 12. TEAM mode: company vault as a 2nd source (federated, git-pull nightly)
 if [ -n "$COMPANY_URL" ]; then

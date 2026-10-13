@@ -38,7 +38,7 @@ Each of these folders ships a `README.md` (purpose) + `_template.md` (schema). C
    ```bash
    cd ~/Documents/Brain && git add -A && git commit -q -m "onboarding: profile filled"
    ~/.local/bin/gbq sync --repo ~/Documents/Brain --no-pull --no-embed   # import the profile
-   ~/.local/bin/gbq embed --stale                                       # embed it (kept separate, like the nightly)
+   ~/.local/bin/gbq embed --stale --max-usd 0.10                        # embed it (kept separate, like the nightly; paid runs need a cap)
    ~/.local/bin/gbq query "who am I"                                    # check recall
    ```
 4. **Confirm** to the user: profile filled, memory active, next step = just live (the hooks capture corrections + sessions, the nightly consolidates at 4am).
