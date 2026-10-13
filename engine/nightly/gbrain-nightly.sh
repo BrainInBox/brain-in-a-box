@@ -115,7 +115,10 @@ fi
 # own. Left unsplit, the RAG silently stops ingesting the vault for weeks.
 # Re-test `sync` alone after a gbrain upgrade; drop this split once fixed.
 "$GBRAIN" sync --repo "$VAULT" --no-pull --no-embed >> "$LOG" 2>&1
-"$GBRAIN" embed --stale >> "$LOG" 2>&1
+# Since gbrain 0.60.106 a paid run needs approval: without one, embed exits 3
+# ("confirmation_required") and nothing is embedded. The cap covers a normal
+# day of notes many times over (about 1.6M tokens at list price).
+"$GBRAIN" embed --stale --max-usd 0.10 >> "$LOG" 2>&1
 
 # 2. COMPANY vault (team mode): pull teammates' contributions + sync the 'company' source.
 if [ -d "$VAULT_CO/.git" ]; then
