@@ -12,7 +12,7 @@ Everyone gets the **same engine**, with **their own data** — everything stays 
 | **Skills** (`~/.claude/skills`) | `brain-boost` (what the setup does, how to grow it safely) · `quick-research` · `html-artifact` · `convert-documents-to-markdown`. Installed with the box; a skill of yours with the same name, or one you edited, is never overwritten |
 | **Hooks** (`~/.claude/hooks/brain`) | Auto-capture: corrections → `lessons.md`, sessions → `Journal/`, summaries → `memory.md` |
 | **GBrain** (`~/.gbrain`) | Search over the vault (`gbq query "..."`): by meaning with a Voyage AI key, by keywords without one |
-| **Nightly** (launchd 04:00) | commit vault → sync → dream cycle (dedup, facts, consolidation) → self-update GBrain (auto-rollback if broken) |
+| **Nightly** (launchd 04:00) | commit vault → sync → dream cycle (dedup, facts, consolidation) → self-update GBrain (auto-rollback if broken). Windows (Task Scheduler 04:00, catches up when the PC wakes): commit vault → sync → embed |
 | **Self-update catch-up** (SessionStart) | if the machine missed the 04:00 run, the first Claude Code session of the day checks in the background — you're never more than a day behind |
 | **Reflection** (launchd 12:00 + 23:00) | LLM summary of the day's sessions and your git commits → `Journal/` + rolling 15-day `memory.md`. Secrets masked before sending; a failing run pins a warning in `memory.md`. Missed a day? `daily-reflection.py --day YYYY-MM-DD` (`--dry-run` to preview) |
 | **Weekly lint** (launchd Monday 08:00) | Verifies the whole pipeline (doctor, lint, orphans, nightly freshness) → 🟢/🟠/🔴 verdict pinned in `memory.md` + report in `Profile/lint.md` |
@@ -29,9 +29,11 @@ Press **Win + R**, paste this line, press **Enter** (it works the same pasted in
 powershell -NoExit -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/BrainInBox/brain-in-a-box/master/install.ps1 | iex"
 ```
 
-That's all. It installs what's missing (Python, Git, Claude Code, Obsidian — per-user, no admin rights when the package allows it), sets up your brain in `Documents\Brain`, and prints the next steps. Run the same line again to update. You need a Claude **Pro or Max** plan to use Claude Code.
+That's all. It installs what's missing (Python, Git, Bun, Claude Code, Obsidian — per-user, no admin rights when the package allows it) and the same memory as on macOS (GBrain), sets up your brain in `Documents\Brain`, and prints the next steps. Along the way it offers to add a [Voyage AI](https://dashboard.voyageai.com) key so your brain finds notes by meaning; press Enter to skip, search then works on keywords, and running the line again later adds the key. Run the same line again to update. You need a Claude **Pro or Max** plan to use Claude Code.
 
-Prefer to read the code first? Download the repository (**Code → Download ZIP**), extract it, read it, then run `powershell -ExecutionPolicy Bypass -File install.ps1` from the extracted folder: it uses those files and downloads nothing else from this repo. On Windows, search runs locally on keywords (no gbrain yet, see [the port notes](docs/proposals/windows-port.md)).
+Prefer to read the code first? Download the repository (**Code → Download ZIP**), extract it, read it, then run `powershell -ExecutionPolicy Bypass -File install.ps1` from the extracted folder: it uses those files and downloads nothing else from this repo. Started without a console (from an app, a script), it asks nothing: set `VOYAGE_API_KEY` in that process to give the key.
+
+GBrain is installed at the commit the Windows CI tests (`$GBRAIN_REF` in `install.ps1`) and updates when you run the install line again. If it cannot be installed (no network, a locked-down PC), or stops answering, `gbq query` answers from a local keyword index instead: search never goes away. Details in [the port notes](docs/proposals/windows-port.md); the install log is `~\.brain-in-a-box\install.log`.
 
 ### macOS
 
@@ -138,7 +140,7 @@ PRs welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) for the workflow (the `mast
 
 ## Updating & undo
 
-Update: on Windows, run the install line again. On macOS:
+Update: on Windows, run the install line again; a hook, `gbq` or search script that differs from the new version (one you adapted) is copied to `~\.brain-in-a-box\backups\<date>\` before being replaced, `settings.json` to `settings.json.bak-<date>`, and the installer lists them. On macOS:
 ```bash
 cd brain-in-a-box && git pull && ./install.sh   # idempotent, re-applies without breaking
 ```
@@ -149,7 +151,8 @@ Undo any part. Your vault (`Documents/Brain`) is never touched by these:
 |---|---|---|
 | Hooks | `rm -rf ~/.claude/hooks/brain`, then remove their entries in `~/.claude/settings.json` | `Remove-Item -Recurse ~\.claude\hooks\brain`, same for `settings.json` |
 | One skill | `rm -rf ~/.claude/skills/<name>` | `Remove-Item -Recurse ~\.claude\skills\<name>` |
-| Scheduled jobs | `launchctl bootout gui/$(id -u)/com.$USER.gbrain-nightly` (same for `brain-reflection`, `gbrain-lint`) | `Unregister-ScheduledTask BrainSearchReindex, BrainReflection -Confirm:$false` |
+| Scheduled jobs | `launchctl bootout gui/$(id -u)/com.$USER.gbrain-nightly` (same for `brain-reflection`, `gbrain-lint`) | `Unregister-ScheduledTask BrainNightly, BrainReflection -Confirm:$false` |
+| GBrain and its index | `rm -rf ~/DEV/gbrain ~/.gbrain` | `Remove-Item -Recurse ~\DEV\gbrain, ~\.gbrain, ~\.brain-search`; Bun: Settings → Apps → Bun |
 | Global directives | in `~/.claude/CLAUDE.md`, delete the block that starts with `<!-- brain-in-a-box -->` | same file |
 
 ## Not included (on purpose)

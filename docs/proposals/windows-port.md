@@ -1,8 +1,65 @@
 # Proposal — Windows port (solo first)
 
-Status: **implemented** — `install.ps1` runs end to end on a real Windows in CI (`windows` job in `.github/workflows/test.yml`); field reports welcome (originally a proposal, per CONTRIBUTING: approach before code). Scope: make
+Status: **implemented, with the same memory as macOS** — `install.ps1` installs GBrain (PGLite + pgvector) and runs end to end on a real Windows in CI (`windows` job in `.github/workflows/test.yml`); field reports welcome (originally a proposal, per CONTRIBUTING: approach before code). Scope: make
 brain-in-a-box installable and runnable for a **solo user on Windows**. Team mode
 (`setup-company.sh`) is out of scope for v1.
+
+> **Update 2026-10 — gbrain on Windows, the gate is open.** gbrain #1549
+> (pgvector missing from PGLite on Windows) does not reproduce. A spike on four
+> Windows runners (windows-latest, windows-2022, windows-11-arm, and
+> windows-latest with Defender real-time scanning on), gbrain 0.60.210.0 and
+> Bun 1.4.3, no secret:
+>
+> - pgvector 0.8.1 loads in gbrain's own PGLite build: `CREATE EXTENSION`, HNSW
+>   index and `<=>` distance on disk, under a path with a space and an accent too;
+> - keyword brain (`init --no-embedding`): init, import, query and search in
+>   about 1 s, and reads exit on their own (the PGLite read hang that `gbq`
+>   works around on macOS does not happen here);
+> - Voyage path (`voyage:voyage-4`, 1024 d, `rerank-3-lite`) against a local
+>   stand-in (`.github/ci/fake_voyage.py`, wired through `provider_base_urls`):
+>   embeddings written, the query by meaning ranks the right page first;
+> - 1000 pages, the macOS nightly cycle (`sync --no-embed`, `embed --stale
+>   --max-usd`): sync 39-66 s (13 s on an M-series Mac), embed 15-23 s; a writer
+>   killed mid-sync leaves no corruption; an S4U scheduled task runs it all.
+>
+> What ships, in `install.ps1`:
+>
+> - **Bun** from its official installer (per user, no admin, `-NoCompletions`)
+>   and **GBrain** at `$GBRAIN_REF`, a commit fetched alone (`--depth 1`, about
+>   46 MB instead of 600 MB of history), then `bun install` + `bun link`. Both
+>   versions are pinned: gbrain moves daily, and the `windows` CI job installs
+>   exactly that pin, so bumping it is a PR whose CI must pass. Running the
+>   install line again moves a user to the new pin; `self_upgrade.mode` is set
+>   to `off` so `gbrain upgrade` never bypasses it. There is no nightly
+>   self-update on Windows.
+> - **Voyage key, optional**, same text and one-token check as `install.sh`.
+>   Asked only when a console is there (`irm | iex` from Win+R); without one,
+>   `VOYAGE_API_KEY` from the process. The key goes to `~\.gbrain\config.json`
+>   through Python's environment, never in a command line or the install log.
+>   A key given later moves an existing keyword brain to search by meaning.
+> - **The vault is a gbrain source** (`sources add vault --path <vault>`), then
+>   `sync --source vault`. On a fresh gbrain the `default` source is gbrain's
+>   own content folder, so `sync --repo <vault>` without a registered source
+>   fails with "not a git repository" (macOS too). The vault is committed
+>   first: gbrain reads it through git, and Windows installs before this one
+>   never committed it.
+> - **`gbq`** (`gbq.cmd`, and `gbq` for Git Bash, Claude Code's Bash tool) runs
+>   `engine/search/gbq.py`: gbrain when `~\.brain-search\engine` says so;
+>   a busy brain (`pglite_busy`, a long write holds PGLite's single writer for
+>   more than 30 s) is retried once; a missing, broken or still-busy gbrain,
+>   or a read still running after 60 s (killed with its Bun process), is
+>   answered from **brain_search**, the offline keyword index, which is
+>   always installed and rebuilt. If gbrain cannot be installed at all, the
+>   install still succeeds in keyword mode.
+> - **BrainNightly** (Task Scheduler 04:00, S4U, runs at wake-up when missed,
+>   on battery too): `engine/nightly/windows-nightly.py` commits the vault,
+>   runs `sync` and `embed --stale --max-usd 0.10`, then rebuilds the keyword
+>   index. It replaces `BrainSearchReindex`. No dream cycle, no weekly lint yet.
+>
+> Not covered by CI: third-party antivirus, SmartScreen, a non-admin account,
+> Windows Home, real traffic to api.voyageai.com from Bun (corporate proxy or
+> TLS inspection), `gbrain serve` (MCP). First indexing is 3 to 5 times slower
+> than on an M-series Mac: a large vault can take several minutes.
 
 > **Update 2026-06 — Phase 1 done.** The engine hooks are now cross-platform
 > (pure Python): `/tmp` → `tempfile.gettempdir()`, `claude` resolved via
@@ -22,7 +79,7 @@ brain-in-a-box installable and runnable for a **solo user on Windows**. Team mod
 > smoke test. (BM25 = keyword ranking; embeddings remain an optional upgrade for
 > machines that can `pip install sentence-transformers`.)
 
-## Why it doesn't run on Windows today
+## What was macOS-only (the original inventory)
 
 Everything macOS-specific, by layer:
 
@@ -35,7 +92,7 @@ Everything macOS-specific, by layer:
 | Hooks (Python) | hardcoded `/tmp/...` locks, `__HOME__/.local/bin/claude` | `tempfile.gettempdir()`, resolve `claude` on PATH |
 | Obsidian | `brew install --cask obsidian` | `winget install Obsidian.Obsidian` |
 
-## The gating dependency — gbrain on Windows (researched 2026-06)
+## The gating dependency — gbrain on Windows (researched 2026-06, lifted 2026-10: see the update above)
 
 brain-in-a-box sits on **gbrain** (separate project, bun-based). The *foundation*
 is Windows-ready: **bun's Windows support went stable in bun 1.2** (Jan 2026; ARM64
@@ -111,7 +168,7 @@ runner) and a `windows-latest` entry in the CI matrix so it doesn't regress.
 - Path separators / `%USERPROFILE%` vs `~` — handled by `pathlib`/`os.path` if we
   remove the remaining hardcoded POSIX paths (Phase 1).
 
-## Recommendation
+## Recommendation (2026-06, superseded by the 2026-10 update)
 
 **Don't build the Windows port yet** — it's gated on gbrain fixing PGLite/pgvector
 on Windows (#1549). The right move now:
