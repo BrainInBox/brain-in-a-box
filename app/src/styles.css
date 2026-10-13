@@ -488,6 +488,72 @@ body.big .plan { justify-content: center; text-align: left; }
   user-select: text;
 }
 
+/* Repair with Claude: what is sent, the timer, the proposal, « Remettre comme avant ». */
+
+.bullets {
+  margin: 0;
+  padding-left: 20px;
+  display: grid;
+  gap: 6px;
+}
+
+.repair-card { padding: 14px 16px; }
+
+/* After .bullets, whose margin it overrides. */
+.repair-card > * + * { margin-top: 8px; }
+
+.card-title { font-weight: 650; }
+
+.bullets li::marker { color: var(--accent); }
+
+/* An action with its « Ouvrir les Réglages » next to it. */
+.bullets li.with-btn > span { margin-right: 10px; }
+
+.bullets li.with-btn .btn { margin-top: 6px; vertical-align: baseline; }
+
+.said {
+  margin: 0;
+  padding: 10px 14px;
+  border-left: 3px solid var(--accent);
+  border-radius: 0 10px 10px 0;
+  background: var(--accent-soft);
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.said-who { font-size: 13px; font-weight: 650; color: var(--ink-2); }
+
+.said p + p { margin-top: 2px; }
+
+.chrono {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+}
+
+.chrono-text { display: flex; align-items: baseline; gap: 14px; min-width: 0; flex-wrap: wrap; }
+
+.chrono-time {
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.chrono-stage { color: var(--ink-2); }
+
+.undo {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 10px 14px;
+  font-size: 14px;
+}
+
+.undo .btn { flex: none; }
+
 .report {
   width: 100%;
   height: 140px;
