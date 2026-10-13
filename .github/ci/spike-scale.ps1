@@ -24,6 +24,11 @@ git -C $vault -c user.email=brain@local -c user.name=brain commit -q -m init
 
 Note "### $N pages: nightly cycle"
 $r = Invoke-Timed 'init voyage:voyage-4 (scale)' $g @('init', '--pglite', '--embedding-model', 'voyage:voyage-4', '--embedding-dimensions', '1024', '--search-mode', 'balanced', '--json') 600
+# A fresh brain's 'default' source is gbrain's own content dir (not a git repo), so
+# `sync --repo <vault>` fails on it, macOS included. Registering the vault as its own
+# source is what makes the nightly's git-diff sync work.
+$r = Invoke-Timed 'sources add vault --path <vault>' $g @('sources', 'add', 'vault', '--path', $vault) 300
+Check 'vault registered as a source' ($r.ExitCode -eq 0)
 $r = Invoke-Timed "sync --repo --no-pull --no-embed ($N pages)" $g @('sync', '--repo', $vault, '--no-pull', '--no-embed') 1200
 Check "sync of $N pages exits 0" ($r.ExitCode -eq 0) "$($r.Seconds)s"
 $r = Invoke-Timed "embed --stale --max-usd 0.10 ($N pages)" $g @('embed', '--stale', '--max-usd', '0.10') 1200
