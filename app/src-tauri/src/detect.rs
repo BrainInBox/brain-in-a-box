@@ -86,16 +86,27 @@ pub fn claude() -> Found {
 }
 
 pub fn claude_logged_in() -> bool {
-    let Some(claude) = claude_bin() else { return false };
-    let out = sys::run(&claude, &["auth", "status"], TIMEOUT);
-    out.ok() && logged_in(&out.stdout)
+    claude_auth_method().is_some_and(|m| m != "none")
 }
 
-/// `claude auth status` prints JSON; "authMethod": "none" means nobody is logged in.
-fn logged_in(status: &str) -> bool {
+/// How Claude Code is logged in: "claude.ai" for a Pro or Max subscription, "none"
+/// for nobody. Only this field is read: the rest of `claude auth status` (email,
+/// organization) never leaves this function.
+pub fn claude_auth_method() -> Option<String> {
+    let claude = claude_bin()?;
+    let out = sys::run(&claude, &["auth", "status"], TIMEOUT);
+    if out.ok() {
+        auth_method(&out.stdout)
+    } else {
+        None
+    }
+}
+
+/// `claude auth status` prints JSON, sometimes after a line of notes.
+fn auth_method(status: &str) -> Option<String> {
     let json = status.find('{').map_or("", |i| &status[i..]);
-    let Some(Ok(v)) = serde_json::Deserializer::from_str(json).into_iter::<Value>().next() else { return false };
-    v.get("authMethod").and_then(Value::as_str).is_some_and(|m| m != "none")
+    let Some(Ok(v)) = serde_json::Deserializer::from_str(json).into_iter::<Value>().next() else { return None };
+    v.get("authMethod").and_then(Value::as_str).map(String::from)
 }
 
 // ── Obsidian ────────────────────────────────────────────────────────────────
@@ -303,13 +314,15 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn auth_status_needs_a_real_login() {
-        assert!(logged_in(r#"{"loggedIn":true,"authMethod":"claude.ai","apiProvider":"firstParty"}"#));
-        assert!(logged_in("note: update available\n{\"authMethod\":\"api_key\"}\n"));
-        assert!(!logged_in(r#"{"loggedIn":false,"authMethod":"none"}"#));
-        assert!(!logged_in(r#"{"loggedIn":true}"#));
-        assert!(!logged_in("Not logged in"));
-        assert!(!logged_in(""));
+    fn auth_status_gives_only_the_method() {
+        let logged = include_str!("../tests/fixtures/repair/auth-status-claude-ai.json");
+        assert_eq!(auth_method(logged).as_deref(), Some("claude.ai"));
+        let out = include_str!("../tests/fixtures/repair/auth-status-none.json");
+        assert_eq!(auth_method(out).as_deref(), Some("none"));
+        assert_eq!(auth_method("note: update available\n{\"authMethod\":\"api_key\"}\n").as_deref(), Some("api_key"));
+        for nothing in [r#"{"loggedIn":true}"#, r#"{"authMethod":4}"#, "Not logged in", "", "{oops"] {
+            assert_eq!(auth_method(nothing), None, "{nothing}");
+        }
     }
 
     #[test]

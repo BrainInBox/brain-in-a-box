@@ -10,6 +10,7 @@ use std::io::{self, BufRead, BufReader, Read, Write};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -106,7 +107,7 @@ pub fn run_with(program: &Path, args: &[&str], env: &[(&str, &str)], stdin: Opti
         });
     }
     let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
-    let code = supervise(&mut child, &rx, timeout, &mut |pipe, bytes| match pipe {
+    let code = supervise(&mut child, &rx, timeout, None, &mut |pipe, bytes| match pipe {
         Pipe::Out => stdout.extend(bytes),
         Pipe::Err => stderr.extend(bytes),
     });
@@ -147,13 +148,52 @@ pub fn run_streaming(
             return -1;
         }
     };
-    let code = supervise(&mut child, &rx, limit, &mut |_, bytes| {
+    let code = supervise(&mut child, &rx, limit, None, &mut |_, bytes| {
         on_line(strip_ansi(String::from_utf8_lossy(&bytes).trim_end_matches('\n')));
     });
     code.unwrap_or_else(|| {
         on_line(format!("Toujours pas fini au bout de {} : j'arrête.", minutes(limit)));
         -1
     })
+}
+
+/// How `run_isolated` runs a program that must not inherit anything from the app.
+pub struct Isolated<'a> {
+    /// The whole environment: nothing else is passed on.
+    pub env: &'a [(&'a str, &'a str)],
+    pub cwd: &'a Path,
+    pub stdin: &'a str,
+    pub limit: Duration,
+    /// Set from anywhere (another thread, `on_line` itself): the program and
+    /// everything it started are killed at the next tick.
+    pub cancel: &'a AtomicBool,
+}
+
+/// Runs `program` with only `iso.env`, in `iso.cwd`, with `iso.stdin` as its input,
+/// and hands every stdout/stderr line to `on_line`, raw. Returns the exit code, -1
+/// if it could not start, was cancelled or ran past `iso.limit`.
+pub fn run_isolated(program: &Path, args: &[&str], iso: &Isolated, on_line: &mut dyn FnMut(String)) -> i32 {
+    let mut cmd = Command::new(program);
+    cmd.args(args).env_clear().envs(iso.env.iter().copied()).current_dir(iso.cwd).stdin(Stdio::piped());
+    let (mut child, rx) = match start(&mut cmd) {
+        Ok(started) => started,
+        Err(e) => {
+            on_line(format!("impossible de lancer {}: {}", program.display(), e));
+            return -1;
+        }
+    };
+    if let Some(mut sin) = child.stdin.take() {
+        // On a thread: a program that never reads its stdin must not keep us past the
+        // limit. Dropping `sin` closes the pipe, which ends its input.
+        let data = iso.stdin.to_string();
+        thread::spawn(move || {
+            let _ = sin.write_all(data.as_bytes());
+        });
+    }
+    let code = supervise(&mut child, &rx, iso.limit, Some(iso.cancel), &mut |_, bytes| {
+        on_line(String::from_utf8_lossy(&bytes).trim_end_matches(['\n', '\r']).to_string());
+    });
+    code.unwrap_or(-1)
 }
 
 fn command(program: &Path) -> Command {
@@ -203,14 +243,16 @@ fn pump(r: impl Read + Send + 'static, pipe: Pipe, tx: Sender<(Pipe, Vec<u8>)>) 
 }
 
 /// Hands the output to `sink` until the program exits, or kills its whole group at the
-/// deadline. Returns the exit code, None when it had to be killed.
+/// deadline or once `cancel` is set. Returns the exit code, None when it had to be killed.
 fn supervise(
     child: &mut Child,
     rx: &Lines,
     timeout: Duration,
+    cancel: Option<&AtomicBool>,
     sink: &mut dyn FnMut(Pipe, Vec<u8>),
 ) -> Option<i32> {
     let deadline = Instant::now() + timeout;
+    let cancelled = || cancel.is_some_and(|c| c.load(Ordering::SeqCst));
     let mut open = true;
     let mut exited: Option<(i32, Instant)> = None;
     loop {
@@ -230,7 +272,7 @@ fn supervise(
         }
         match exited {
             Some((code, at)) if !open || at.elapsed() >= DRAIN || Instant::now() >= deadline => return Some(code),
-            None if Instant::now() >= deadline => break,
+            None if Instant::now() >= deadline || cancelled() => break,
             _ => {}
         }
     }
@@ -415,6 +457,102 @@ mod tests {
             &mut |l| lines.push(l),
         );
         assert_eq!((code, lines), (0, vec!["a\u{fffd}".to_string(), "b".to_string()]));
+    }
+
+    fn isolated<'a>(env: &'a [(&'a str, &'a str)], cwd: &'a Path, stdin: &'a str, cancel: &'a AtomicBool) -> Isolated<'a> {
+        Isolated { env, cwd, stdin, limit: Duration::from_secs(5), cancel }
+    }
+
+    #[test]
+    fn isolated_programs_get_only_the_given_environment() {
+        let dir = tempfile::tempdir().unwrap();
+        let cancel = AtomicBool::new(false);
+        let env = [("HOME", "/nowhere"), ("BIAB_T", "x y")];
+        let mut lines = Vec::new();
+        let code = run_isolated(Path::new("/usr/bin/env"), &[], &isolated(&env, dir.path(), "", &cancel), &mut |l| lines.push(l));
+        lines.sort();
+        assert_eq!((code, lines), (0, vec!["BIAB_T=x y".to_string(), "HOME=/nowhere".to_string()]));
+    }
+
+    #[test]
+    fn isolated_programs_read_stdin_in_their_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let cwd = fs::canonicalize(dir.path()).unwrap();
+        let cancel = AtomicBool::new(false);
+        let mut lines = Vec::new();
+        let iso = isolated(&[], &cwd, "le dossier\nsur deux lignes\n", &cancel);
+        let code = run_isolated(Path::new("/bin/sh"), &["-c", "pwd -P; /bin/cat; exit 4"], &iso, &mut |l| lines.push(l));
+        assert_eq!(code, 4);
+        assert_eq!(lines, [cwd.to_string_lossy().as_ref(), "le dossier", "sur deux lignes"]);
+    }
+
+    #[test]
+    fn a_program_that_ignores_a_big_stdin_does_not_block() {
+        let dir = tempfile::tempdir().unwrap();
+        let cancel = AtomicBool::new(false);
+        let big = "x".repeat(4 << 20);
+        let t = Instant::now();
+        let code = run_isolated(Path::new("/bin/sleep"), &["0.1"], &isolated(&[], dir.path(), &big, &cancel), &mut |_| {});
+        assert_eq!(code, 0);
+        assert!(t.elapsed() < Duration::from_secs(3), "{:?}", t.elapsed());
+    }
+
+    #[test]
+    fn cancel_kills_the_program_and_what_it_started() {
+        let dir = tempfile::tempdir().unwrap();
+        let pidfile = dir.path().join("pid");
+        let script = format!("/bin/sleep 30 & echo $! > '{}'; wait", pidfile.display());
+        let cancel = AtomicBool::new(false);
+        let t = Instant::now();
+        let code = thread::scope(|s| {
+            s.spawn(|| {
+                thread::sleep(Duration::from_millis(300));
+                cancel.store(true, Ordering::SeqCst);
+            });
+            run_isolated(Path::new("/bin/sh"), &["-c", &script], &isolated(&[], dir.path(), "", &cancel), &mut |_| {})
+        });
+        assert_eq!(code, -1);
+        assert!(t.elapsed() < Duration::from_secs(3), "{:?}", t.elapsed());
+        let pid = fs::read_to_string(&pidfile).unwrap();
+        let t = Instant::now();
+        while alive(pid.trim()) && t.elapsed() < Duration::from_secs(3) {
+            thread::sleep(TICK);
+        }
+        assert!(!alive(pid.trim()), "sleep {} survived", pid.trim());
+    }
+
+    #[test]
+    fn a_line_can_stop_the_program() {
+        let dir = tempfile::tempdir().unwrap();
+        let cancel = AtomicBool::new(false);
+        let mut seen = Vec::new();
+        let t = Instant::now();
+        let code = run_isolated(
+            Path::new("/bin/sh"),
+            &["-c", "echo stop; exec /bin/sleep 30"],
+            &isolated(&[], dir.path(), "", &cancel),
+            &mut |l| {
+                if l == "stop" {
+                    cancel.store(true, Ordering::SeqCst);
+                }
+                seen.push(l);
+            },
+        );
+        assert_eq!((code, seen), (-1, vec!["stop".to_string()]));
+        assert!(t.elapsed() < Duration::from_secs(3));
+    }
+
+    #[test]
+    fn isolated_stops_at_its_limit_and_says_when_it_cannot_start() {
+        let dir = tempfile::tempdir().unwrap();
+        let cancel = AtomicBool::new(false);
+        let iso = Isolated { limit: Duration::from_millis(300), ..isolated(&[], dir.path(), "", &cancel) };
+        let t = Instant::now();
+        assert_eq!(run_isolated(Path::new("/bin/sleep"), &["30"], &iso, &mut |_| {}), -1);
+        assert!(t.elapsed() < Duration::from_secs(2));
+        let mut lines = Vec::new();
+        assert_eq!(run_isolated(&dir.path().join("missing"), &[], &iso, &mut |l| lines.push(l)), -1);
+        assert!(lines[0].starts_with("impossible de lancer"), "{lines:?}");
     }
 
     #[test]

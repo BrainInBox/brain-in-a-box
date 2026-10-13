@@ -119,7 +119,7 @@ fn command_text(program: &str, args: &[&str]) -> Option<String> {
 }
 
 /// Any HTTP status counts: claude.ai answers 403 to curl, which still proves the network works.
-fn answers(url: &str) -> bool {
+pub(crate) fn answers(url: &str) -> bool {
     let args = ["-sS", "-o", "/dev/null", "-m", "8", "-w", "%{http_code}", url];
     http_answered(&sys::run(Path::new("/usr/bin/curl"), &args, PROBE_TIMEOUT).stdout)
 }
@@ -258,7 +258,7 @@ fn check_claude_auth(claude_works: bool, logged_in: bool) -> Check {
     match (claude_works, logged_in) {
         (false, _) => CLAUDE_AUTH.is(Status::Warn, "Tu te connecteras une fois Claude Code installé."),
         (true, true) => CLAUDE_AUTH.is(Status::Ok, "Tu es connecté."),
-        (true, false) => CLAUDE_AUTH.is(Status::Warn, "Pas encore connecté. Tu le feras en un clic à la fin."),
+        (true, false) => CLAUDE_AUTH.is(Status::Warn, "Pas encore connecté. Tu le feras en un clic."),
     }
 }
 
@@ -502,7 +502,7 @@ mod tests {
             ..healthy_facts()
         };
         let d = decide(tmp.path(), &facts);
-        assert_eq!(d.todo, ["clt", "bun", "claude", "brain"]);
+        assert_eq!(d.todo, ["claude", "clt", "bun", "brain"]);
         assert!(d.can_install);
         // Warnings never land in the todo list.
         assert_eq!(by_id(&d, "claude_auth").status, Status::Warn);

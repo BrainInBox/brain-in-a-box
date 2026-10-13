@@ -9,18 +9,21 @@ use std::fs;
 use std::io::{self, Write};
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
-use std::sync::{mpsc, Mutex, TryLockError};
+use std::sync::{mpsc, Mutex, MutexGuard, TryLockError};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
 
+use crate::config_guard;
 use crate::detect::{self, fmt_version, Found};
 use crate::model::StepResult;
 use crate::sys::{self, minutes};
 use crate::voyage;
 
-pub const ORDER: &[&str] = &["clt", "bun", "claude", "obsidian", "brain"];
+/// Claude Code first: its installer needs none of Apple's tools, and once the user is
+/// logged in, Claude can help repair the steps that follow.
+pub const ORDER: &[&str] = &["claude", "clt", "bun", "obsidian", "brain"];
 
 const BUN_PIN: &str = "bun-v1.4.2";
 const OBSIDIAN_URL: &str = "https://github.com/obsidianmd/obsidian-releases/releases/download/v1.14.4/Obsidian-1.14.4.dmg";
@@ -39,34 +42,102 @@ const LINK_HOSTS: &[&str] = &["dashboard.voyageai.com", "docs.voyageai.com", "cl
 /// The sentence for the user: Ok when done, Err with the cause and what to do.
 type Step = Result<String, String>;
 
-/// Two clicks must not run two installers over each other.
+/// Two clicks must not run two installers over each other. A repair holds it from
+/// Claude's analysis to the end of the relaunch.
 static RUNNING: Mutex<()> = Mutex::new(());
+/// Snapshots of the configuration guard, under ~.
+pub(crate) const GUARD_DIR: &str = ".brain-in-a-box/garde";
+
+/// The right to run a step, or why not now.
+pub(crate) fn exclusive() -> Result<MutexGuard<'static, ()>, String> {
+    match RUNNING.try_lock() {
+        Ok(g) => Ok(g),
+        Err(TryLockError::Poisoned(p)) => Ok(p.into_inner()),
+        Err(TryLockError::WouldBlock) => Err("Une autre étape est déjà en cours. Attends qu'elle finisse.".into()),
+    }
+}
 
 pub fn run(id: &str, voyage_key: Option<&str>, log: &mut dyn FnMut(String)) -> StepResult {
-    let _one_at_a_time = match RUNNING.try_lock() {
-        Ok(g) => g,
-        Err(TryLockError::Poisoned(p)) => p.into_inner(),
-        Err(TryLockError::WouldBlock) => {
-            return StepResult {
-                id: id.to_string(),
-                ok: false,
-                message: "Une autre étape est déjà en cours. Attends qu'elle finisse.".into(),
-            }
-        }
-    };
+    match exclusive() {
+        Ok(g) => run_held(&g, id, voyage_key, log).result,
+        Err(message) => StepResult { id: id.to_string(), ok: false, message },
+    }
+}
+
+/// A step's result, and the files the configuration guard had to put back.
+pub(crate) struct Held {
+    pub result: StepResult,
+    /// "~/.claude/hooks/brain/x.py (réécrit)": empty unless the guard stepped in.
+    pub restored: Vec<String>,
+}
+
+/// Runs a step for whoever holds `exclusive()`. The brain step runs under the
+/// configuration guard, a first install like a repair.
+pub(crate) fn run_held(_g: &MutexGuard<'static, ()>, id: &str, voyage_key: Option<&str>, log: &mut dyn FnMut(String)) -> Held {
+    let mut restored = Vec::new();
     let res = match id {
         "clt" => clt(log),
         "bun" => bun(log),
         "claude" => claude(log),
         "obsidian" => obsidian(log),
-        "brain" => brain(voyage_key, log),
+        "brain" => {
+            let home = sys::home();
+            let (res, back) = guarded(&home, &home.join(GUARD_DIR), log, |log| brain(voyage_key, log));
+            restored = back;
+            res
+        }
         _ => Err("Étape inconnue.".into()),
     };
     let (ok, message) = match res {
         Ok(m) => (true, m),
         Err(m) => (false, m),
     };
-    StepResult { id: id.to_string(), ok, message }
+    Held { result: StepResult { id: id.to_string(), ok, message }, restored }
+}
+
+/// Runs `step` between a snapshot of the user's configuration and its check: what
+/// the step should not have touched is put back, and the step fails.
+fn guarded(
+    home: &Path,
+    store: &Path,
+    log: &mut dyn FnMut(String),
+    step: impl FnOnce(&mut dyn FnMut(String)) -> Step,
+) -> (Step, Vec<String>) {
+    let snap = match config_guard::take(home, store) {
+        Ok(s) => s,
+        Err(e) => {
+            return (
+                Err(format!(
+                    "Je n'ai pas pu mettre de côté tes réglages Claude avant de commencer ({e}). Je n'ai rien installé."
+                )),
+                Vec::new(),
+            )
+        }
+    };
+    let res = step(&mut *log);
+    let report = config_guard::settle(snap, home);
+    if report.clean() {
+        return (res, Vec::new());
+    }
+    for v in &report.restored {
+        log(format!("✗ {v} : je l'ai remis exactement comme avant."));
+    }
+    for v in &report.failed {
+        log(format!("✗ {v} : je n'ai pas pu le remettre comme avant."));
+    }
+    let named = report.paths().into_iter().take(3).collect::<Vec<_>>().join(", ");
+    let message = match &report.kept {
+        None => format!(
+            "L'installation touchait à des fichiers à toi ({named}) : je les ai remis exactement comme avant. \
+             Copie le rapport et envoie-le à l'équipe."
+        ),
+        Some(copy) => format!(
+            "L'installation touchait à des fichiers à toi ({named}) et je n'ai pas pu tout remettre. \
+             Une copie de tes fichiers d'avant est dans {}. Copie le rapport et envoie-le à l'équipe.",
+            config_guard::tilde(copy, home)
+        ),
+    };
+    (Err(message), report.paths())
 }
 
 // ── Apple command line tools (git, python3) ─────────────────────────────────
@@ -233,18 +304,20 @@ fn install_obsidian_into(apps: &Path, log: &mut dyn FnMut(String)) -> Result<Pat
     Ok(dest)
 }
 
-/// Copies left in ~/Applications by an Obsidian step that was cut short (app quit, Mac
-/// turned off): only real folders, named exactly like our work folders, owned by `owner`.
-fn remove_stale_copies(apps: &Path, owner: u32) {
-    let Ok(entries) = fs::read_dir(apps) else { return };
+/// Work folders left in `dir` by a step that was cut short (app quit, Mac turned off):
+/// only real folders, named exactly like ours, owned by `owner`. Returns how many went.
+pub(crate) fn remove_stale_copies(dir: &Path, owner: u32) -> usize {
+    let Ok(entries) = fs::read_dir(dir) else { return 0 };
+    let mut removed = 0;
     for entry in entries.filter_map(Result::ok) {
         let name = entry.file_name();
         let ours = name.to_str().and_then(|n| n.strip_prefix(WORK_PREFIX)).is_some_and(is_work_id);
         // DirEntry::metadata does not follow symlinks: a link is never ours.
-        if ours && entry.metadata().is_ok_and(|m| m.is_dir() && m.uid() == owner) {
-            let _ = fs::remove_dir_all(entry.path());
+        if ours && entry.metadata().is_ok_and(|m| m.is_dir() && m.uid() == owner) && fs::remove_dir_all(entry.path()).is_ok() {
+            removed += 1;
         }
     }
+    removed
 }
 
 /// The shape of `random_hex()`.
@@ -514,7 +587,7 @@ fn sh_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
 }
 
-fn open_in_terminal(name: &str, script: &str) -> Result<(), String> {
+pub(crate) fn open_in_terminal(name: &str, script: &str) -> Result<(), String> {
     let dir = sys::home().join(".brain-in-a-box");
     fs::create_dir_all(&dir).map_err(|e| format!("Je n'ai pas pu créer le dossier .brain-in-a-box ({e})."))?;
     let file = dir.join(name);
@@ -768,7 +841,7 @@ fn random_hex() -> String {
 
 /// Writes through a temporary file and a rename: readers see the old or the new
 /// file, never half of one.
-fn write_atomic(path: &Path, data: &[u8], mode: u32) -> io::Result<()> {
+pub(crate) fn write_atomic(path: &Path, data: &[u8], mode: u32) -> io::Result<()> {
     let mut tmp = path.as_os_str().to_owned();
     tmp.push(".biab-tmp");
     let tmp = PathBuf::from(tmp);
@@ -1119,6 +1192,38 @@ mod tests {
             assert!(err.contains("caractères inattendus"), "{err}");
             assert!(!err.contains(bad) && lines.is_empty());
         }
+    }
+
+    #[test]
+    fn the_guard_puts_back_what_a_step_overwrote() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = fs::canonicalize(dir.path()).unwrap();
+        let hook = home.join(".claude/hooks/brain/correction-detector.py");
+        fs::create_dir_all(hook.parent().unwrap()).unwrap();
+        fs::write(&hook, "mine").unwrap();
+        let store = home.join(GUARD_DIR);
+        let mut lines = Vec::new();
+        let (res, back) = guarded(&home, &store, &mut |l| lines.push(l), |log| {
+            log("J'installe…".into());
+            fs::write(home.join(".claude/hooks/brain/correction-detector.py"), "ours").unwrap();
+            Ok("Ton cerveau est installé.".into())
+        });
+        let err = res.unwrap_err();
+        assert!(err.contains("(~/.claude/hooks/brain/correction-detector.py (réécrit))") && err.contains("comme avant"), "{err}");
+        assert_eq!(back, ["~/.claude/hooks/brain/correction-detector.py (réécrit)"]);
+        assert_eq!(fs::read_to_string(&hook).unwrap(), "mine");
+        assert_eq!(lines[0], "J'installe…");
+        assert!(lines[1].starts_with("✗ ~/.claude/hooks/brain/correction-detector.py (réécrit)"), "{lines:?}");
+
+        // A step that leaves the user's files alone keeps its own result.
+        let (res, back) = guarded(&home, &store, &mut |_| {}, |_| Err("Bun ne répond pas.".into()));
+        assert_eq!((res, back.len()), (Err("Bun ne répond pas.".into()), 0));
+
+        // No snapshot, no step.
+        let file_store = home.join("not-a-folder");
+        fs::write(&file_store, "").unwrap();
+        let (res, _) = guarded(&home, &file_store, &mut |_| {}, |_| panic!("the step ran without its guard"));
+        assert!(res.unwrap_err().contains("Je n'ai rien installé"));
     }
 
     #[test]
