@@ -30,14 +30,18 @@ async fn run_step(app: tauri::AppHandle, id: String, voyage_key: Option<String>)
     res.unwrap_or_else(|e| model::StepResult { id: step, ok: false, message: format!("Erreur interne : {e}") })
 }
 
+/// What leaves for the window (and the copied report) is masked like Claude's dossier;
+/// the trace keeps the raw lines, masked when a dossier is built from them.
 fn run_traced(id: &str, voyage_key: Option<&str>, emit: &mut dyn FnMut(String)) -> model::StepResult {
+    repair::remember_key(voyage_key);
     repair::trace_start(id);
+    let mask = repair::masker();
     let r = steps::run(id, voyage_key, &mut |line| {
         repair::record_line(id, &line);
-        emit(line);
+        emit(mask(&line));
     });
     repair::record_result(&r);
-    r
+    model::StepResult { message: mask(&r.message), ..r }
 }
 
 #[tauri::command]
