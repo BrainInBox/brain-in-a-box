@@ -44,11 +44,31 @@ fi
 command -v bun >/dev/null || die "bun unavailable after install."
 ok "deps OK"
 
-# ── 2. ZeroEntropy key ──────────────────────────────────────────────────────
-say "ZeroEntropy key (embeddings — free account at dashboard.zeroentropy.dev)"
-ZE=""
-read -rs -p "  Paste your ZeroEntropy key (ze_...) : " ZE; echo
-[ -n "$ZE" ] || die "empty key."
+# ── 2. Search by meaning: Voyage AI key (optional) ──────────────────────────
+# A brain that already has embeddings keeps them (ZeroEntropy installs stay on
+# ZeroEntropy). Without a key, search works on keywords; re-run to add one.
+say "Search by meaning (Voyage AI key, optional)"
+EMBED_MODEL="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("embedding_model") or "")' "$GDATA/config.json" 2>/dev/null || true)"
+VOYAGE="${VOYAGE_API_KEY:-}"
+if [ -n "$EMBED_MODEL" ]; then
+  ok "already set up ($EMBED_MODEL), kept as is"
+elif [ -n "$VOYAGE" ]; then
+  ok "key taken from VOYAGE_API_KEY"
+elif [ -t 0 ]; then
+  cat <<'EOF'
+  Your brain finds notes by keywords out of the box. To also find them by
+  meaning, it uses Voyage AI (5 minutes):
+    1. Sign up at https://dashboard.voyageai.com
+    2. Add a card (Organization > Billing). Without one, Voyage allows 3
+       requests a minute: too slow. 200M tokens are free and a personal brain
+       uses well under 1% of that; beyond, Voyage bills monthly.
+    3. Create an API key (it starts with pa-) and paste it below.
+  Press Enter to skip. Re-run ./install.sh any time to add it.
+EOF
+  read -rs -p "  Voyage key: " VOYAGE || true; echo
+else
+  ok "no terminal: keyword search for now (re-run with VOYAGE_API_KEY set to add it)"
+fi
 
 # ── 3. GBrain (clone + deps + link) ─────────────────────────────────────────
 say "GBrain"
@@ -157,21 +177,41 @@ else ok "already a git repo"; fi
 
 # ── 11. GBrain init + key + import + embed ──────────────────────────────────
 say "GBrain init + import"
-if [ ! -d "$GDATA/brain.pglite" ]; then
-  "$GBQ_BIN" init --pglite --embedding-model zeroentropyai:zembed-1 --embedding-dimensions 1280 >/dev/null 2>&1
-  ok "brain initialized (ZE/1280)"
-fi
 mkdir -p "$GDATA"
-python3 - "$GDATA" "$ZE" <<'PY'
+# One-token request. The key reaches curl through stdin (printf is a builtin), never argv.
+voyage_check() {
+  printf 'header = "Authorization: Bearer %s"\n' "$1" | curl -s -m 20 -o /dev/null -w '%{http_code}' -K - \
+    -H 'Content-Type: application/json' -d '{"input":["ok"],"model":"voyage-4"}' https://api.voyageai.com/v1/embeddings || true
+}
+EMBED=""
+if [ -n "$EMBED_MODEL" ]; then
+  EMBED=1; ok "brain already initialized ($EMBED_MODEL)"
+elif [ -n "$VOYAGE" ] && [ "$(voyage_check "$VOYAGE")" = 200 ]; then
+  # Same path for the key: stdin, and the file is born 0600.
+  printf '%s' "$VOYAGE" | python3 -c '
 import json, os, sys
-gdata, ze = sys.argv[1], sys.argv[2]
-p = os.path.join(gdata, "config.json")
+p = os.path.join(sys.argv[1], "config.json")
 d = json.load(open(p)) if os.path.exists(p) else {}
-d["zeroentropy_api_key"] = ze
-json.dump(d, open(p,"w"))
-os.chmod(p, 0o600)
-print("  ok ZE key written (config.json, 600)")
-PY
+d["voyage_api_key"] = sys.stdin.read().strip()
+fd = os.open(p + ".tmp", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+with os.fdopen(fd, "w") as f:
+    json.dump(d, f)
+os.replace(p + ".tmp", p)' "$GDATA"
+  if "$GBQ_BIN" init --pglite --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --search-mode balanced >/dev/null 2>&1; then
+    EMBED=1; ok "brain initialized (Voyage: search by meaning)"
+    # rerank-3-lite is inside Voyage's free tokens; gbrain's default (rerank-2.5) is billed from the first search.
+    "$GBQ_BIN" config set search.reranker.model voyage:rerank-3-lite >/dev/null 2>&1 || true
+  else
+    warn "gbrain init failed: run gbrain doctor"
+  fi
+else
+  [ -n "$VOYAGE" ] && warn "Voyage did not accept this key (wrong key, or no network): keyword search for now. Fix it, then re-run ./install.sh"
+  if [ -d "$GDATA/brain.pglite" ]; then
+    ok "brain already initialized (keyword search)"
+  else
+    "$GBQ_BIN" init --pglite --no-embedding --search-mode balanced >/dev/null 2>&1 && ok "brain initialized (keyword search)" || warn "gbrain init failed: run gbrain doctor"
+  fi
+fi
 "$GBQ_BIN" config set search.mode balanced >/dev/null 2>&1 || true
 # Link graph: gbrain's extractor only auto-recognizes English "entity" dirs
 # (people/, companies/, projects/…). EVERY skeleton dir (Team/, Agents/,
@@ -181,8 +221,11 @@ PY
 # (case-insensitive), regardless of folder.
 "$GBQ_BIN" config set link_resolution.global_basename true >/dev/null 2>&1 || true
 "$GBQ_BIN" import "$BRAIN" --no-embed >/dev/null 2>&1 && ok "vault imported"
-say "Embedding (may take 1-2 min)…"
-"$GBQ_BIN" embed --stale --max-usd 1 >/dev/null 2>&1 && ok "embedded" || warn "re-run embed: gbrain embed --stale --max-usd 1"
+if [ -n "$EMBED" ]; then
+  say "Embedding (may take 1-2 min)…"
+  "$GBQ_BIN" embed --stale --max-usd 1 >/dev/null 2>&1 && ok "embedded" \
+    || warn "embedding did not finish (no card on Voyage yet? it allows 3 requests a minute without one). Re-run: gbrain embed --stale --max-usd 1"
+fi
 
 # ── 12. TEAM mode: company vault as a 2nd source (federated, git-pull nightly)
 if [ -n "$COMPANY_URL" ]; then

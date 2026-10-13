@@ -33,7 +33,7 @@ The maintainer is one person. Reasonable response targets:
 
 - **GBrain** (garrytan/gbrain) — report to the gbrain project directly
 - **gstack** (garrytan/gstack) — report to gstack project
-- **ZeroEntropy** (the embedding API) — report to zeroentropy.dev
+- **Voyage AI** (the embedding API, ZeroEntropy on installs from before 0.3) — report to voyageai.com (or zeroentropy.dev)
 - **Claude Code** itself — report to Anthropic
 
 ## What's NOT a vulnerability

@@ -6,6 +6,9 @@ Format inspired by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- **Embeddings move to Voyage AI, and the key is optional** (macOS). `install.sh` explains how to get a Voyage key and accepts Enter to skip: the brain then runs on keyword search (`gbrain init --no-embedding`) and gains search by meaning when you re-run with a key. The key is checked with a one-token request before use, travels through stdin only (never in a command line), and lands in `config.json` created with mode 600. The reranker is set to `voyage:rerank-3-lite`, inside Voyage's free tokens (gbrain's default, `rerank-2.5`, is billed from the first search). Existing ZeroEntropy installs are left as they are. A non-interactive run (an app, `curl | bash`) no longer dies on the key prompt; `VOYAGE_API_KEY` supplies the key.
+
 ### Added
 - **Claude Code skills, installed with the box** (merged from the Hermes Boost pack, rewritten for Claude Code; Hermes is no longer a target):
   - `brain-boost`: what this setup already does, how to get a beginner going (the "magic prompt", one automation at a time), and how to grow it safely: skills, app connections (claude.ai connectors, remote and local MCP servers), plugins, scheduled jobs. House rules: audit before installing anything third-party, pin versions, "done" means verified.
