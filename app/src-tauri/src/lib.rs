@@ -1,6 +1,7 @@
 mod detect;
 mod diagnose;
 mod model;
+mod redact;
 mod repair;
 mod steps;
 mod sys;
@@ -13,15 +14,20 @@ async fn diagnose_machine() -> model::Diagnosis {
     tauri::async_runtime::spawn_blocking(diagnose::run).await.unwrap_or_else(|e| diagnose::failed(&e.to_string()))
 }
 
-/// Runs one install step; its output arrives as "step-log" events.
+/// Runs one install step; its output arrives as "step-log" events. The repair keeps
+/// the same lines and the result: they are what Claude reads if the step fails.
 #[tauri::command]
 async fn run_step(app: tauri::AppHandle, id: String, voyage_key: Option<String>) -> model::StepResult {
     let step = id.clone();
     let res = tauri::async_runtime::spawn_blocking(move || {
         let tag = id.clone();
-        steps::run(&id, voyage_key.as_deref(), &mut |line| {
+        repair::trace_start(&id);
+        let r = steps::run(&id, voyage_key.as_deref(), &mut |line| {
+            repair::record_line(&tag, &line);
             let _ = app.emit("step-log", model::LogLine { step: tag.clone(), line });
-        })
+        });
+        repair::record_result(&r);
+        r
     })
     .await;
     res.unwrap_or_else(|e| model::StepResult { id: step, ok: false, message: format!("Erreur interne : {e}") })
@@ -45,7 +51,35 @@ async fn claude_logged_in() -> bool {
 async fn repair_status(step: String) -> repair::RepairStatus {
     tauri::async_runtime::spawn_blocking(move || repair::availability(&step))
         .await
-        .unwrap_or(repair::RepairStatus { state: repair::RepairState::Disabled })
+        .unwrap_or(repair::RepairStatus { state: repair::RepairState::Disabled, terminal_fallback: false })
+}
+
+/// Exactly what Claude would read, for « Voir exactement ce que j'envoie ».
+#[tauri::command]
+async fn repair_preview(step: String) -> String {
+    tauri::async_runtime::spawn_blocking(move || repair::preview(&step)).await.unwrap_or_default()
+}
+
+/// One analysis; its stages arrive as "repair-progress" events.
+#[tauri::command]
+async fn repair_analyze(app: tauri::AppHandle, step: String) -> Result<repair::RepairPlan, repair::RepairError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        repair::analyze(&step, &mut |stage| {
+            let _ = app.emit("repair-progress", stage);
+        })
+    })
+    .await
+    .unwrap_or_else(|e| Err(repair::RepairError::Internal { message: e.to_string() }))
+}
+
+#[tauri::command]
+fn repair_cancel() {
+    repair::cancel();
+}
+
+#[tauri::command]
+async fn repair_report() -> String {
+    tauri::async_runtime::spawn_blocking(repair::report).await.unwrap_or_default()
 }
 
 /// A command that is not async runs on the main thread: while `open` or `pgrep`
@@ -107,6 +141,10 @@ pub fn run() {
             check_voyage_key,
             claude_logged_in,
             repair_status,
+            repair_preview,
+            repair_analyze,
+            repair_cancel,
+            repair_report,
             open_claude_login,
             start_onboarding,
             open_vault,
