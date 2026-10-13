@@ -20,13 +20,13 @@ jobs:
       # used to be checked with bash, and new scripts were easy to forget.
       - name: Syntax-check every script with its own shell
         run: |
-          for f in *.sh engine/nightly/*.sh engine/bin/gbq; do
+          for f in *.sh engine/nightly/*.sh engine/bin/gbq skills/*/scripts/*.sh; do
             sh=$(head -1 "$f" | sed -E 's@^#! *@@; s@^/usr/bin/env +@@; s@^.*/@@; s@ .*@@')
             echo "$sh -n $f" && "$sh" -n "$f"
           done
 
       - name: Compile the Python hooks and search
-        run: python3 -m py_compile engine/hooks/*.py engine/search/*.py
+        run: python3 -m py_compile engine/*.py engine/hooks/*.py engine/search/*.py
 
       - name: launchd templates are well-formed plists
         run: for f in engine/nightly/*.plist.template; do plutil -lint "$f"; done
@@ -87,6 +87,9 @@ jobs:
           if (-not (Test-Path "$H\.local\bin\claude.exe")) { throw 'Claude Code not installed' }
           $m = @(Select-String -Path "$H\.claude\CLAUDE.md" -SimpleMatch '<!-- brain-in-a-box -->').Count
           if ($m -ne 1) { throw "CLAUDE.md marker found $m times" }
+          foreach ($sk in Get-ChildItem skills -Directory) {
+            if (-not (Test-Path "$H\.claude\skills\$($sk.Name)\SKILL.md")) { throw "skill $($sk.Name) not installed" }
+          }
 
       - name: A hook runs the way Claude Code spawns it (exec form)
         run: |

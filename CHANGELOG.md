@@ -6,6 +6,14 @@ Format inspired by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- **Claude Code skills, installed with the box** (merged from the Hermes Boost pack, rewritten for Claude Code; Hermes is no longer a target):
+  - `brain-boost`: what this setup already does, how to get a beginner going (the "magic prompt", one automation at a time), and how to grow it safely: skills, app connections (claude.ai connectors, remote and local MCP servers), plugins, scheduled jobs. House rules: audit before installing anything third-party, pin versions, "done" means verified.
+  - `quick-research`: a fast, sourced answer in the chat, checking the user's notes (`gbq`) before the web.
+  - `html-artifact`: one self-contained HTML page (report, plan, diagram, comparison), with a headless-browser preview so Claude checks what it built. Adapted from Anthropic's html-effectiveness gallery (MIT).
+  - `convert-documents-to-markdown`: reads Word, Excel, PowerPoint, EPUB and more through firecrawl's anydoc (MIT), version pinned.
+- `engine/install_skills.py`, run by `install.sh` and `install.ps1`: copies `skills/` into `~/.claude/skills`, never overwrites a skill the user already had or edited, and updates the ones it installed when they are untouched (hashes in `~/.brain-in-a-box/skills.json`).
+
 ### Fixed
 - **Windows install works for people who are not developers.** Field report: a group of first-time users on Windows could not get through `install.ps1`.
   - **One line, nothing to install first**: Win+R, paste `powershell -NoExit -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/BrainInBox/brain-in-a-box/master/install.ps1 | iex"`. It fetches the sources itself (no git clone), works under the Restricted policy of a fresh PC, and stops with a readable message instead of closing the window. ISE and locked-down (Constrained Language) PowerShell are refused up front with what to do.

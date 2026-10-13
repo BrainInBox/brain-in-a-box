@@ -386,6 +386,39 @@ python3 -c 'import json,sys; h=json.loads(sys.argv[1])["hits"]; sys.exit(0 if h 
 BRAIN_SEARCH_INDEX="$BSI" PYTHONIOENCODING=ascii python3 "$BS" query "annual plan" >/dev/null 2>&1 \
   && ok "brain_search: a non-UTF-8 console does not crash on '→'" || no "brain_search: crashed on a non-UTF-8 console"
 
+echo "════ 11) skills → ~/.claude/skills ════"
+SK="$H/skills-test"; SSRC="$SK/src"; SDST="$SK/dst"; SMF="$SK/skills.json"
+mkdir -p "$SSRC/alpha" "$SSRC/beta" "$SSRC/gamma" "$SDST/beta"
+for s in alpha beta gamma; do printf -- '---\nname: %s\ndescription: test\n---\nv1\n' "$s" > "$SSRC/$s/SKILL.md"; done
+printf 'my own beta\n' > "$SDST/beta/SKILL.md"
+sk(){ python3 "$REPO/engine/install_skills.py" --src "$SSRC" --dest "$SDST" --manifest "$SMF"; }
+sk >/dev/null
+cmp -s "$SSRC/alpha/SKILL.md" "$SDST/alpha/SKILL.md" && ok "skills: a missing skill is installed" || no "skills: alpha not installed"
+grep -q 'my own beta' "$SDST/beta/SKILL.md" && ok "skills: a same-name skill the user already had is left alone" || no "skills: user's beta overwritten"
+sk | grep -q 'up to date alpha' && ok "skills: a second run changes nothing" || no "skills: second run not idempotent"
+echo v2 >> "$SSRC/alpha/SKILL.md"; touch "$SDST/gamma/.DS_Store"; echo v2 >> "$SSRC/gamma/SKILL.md"; sk >/dev/null
+grep -q v2 "$SDST/alpha/SKILL.md" && grep -q v2 "$SDST/gamma/SKILL.md" \
+  && ok "skills: an untouched skill is updated (OS junk files ignored)" || no "skills: untouched skill not updated"
+echo 'my note' >> "$SDST/alpha/SKILL.md"; echo v3 >> "$SSRC/alpha/SKILL.md"; out=$(sk)
+grep -q 'my note' "$SDST/alpha/SKILL.md" && ! grep -q v3 "$SDST/alpha/SKILL.md" && echo "$out" | grep -q 'you edited' \
+  && ok "skills: a skill the user edited is kept and reported" || no "skills: user's edit lost or not reported"
+if [ -d "$REPO/skills" ]; then
+  python3 - "$REPO/skills" <<'PY' && ok "skills: every bundled skill has a name matching its folder and a description" || no "skills: bad SKILL.md frontmatter (see above)"
+import re, sys
+from pathlib import Path
+bad = []
+for d in sorted(p for p in Path(sys.argv[1]).iterdir() if p.is_dir()):
+    text = (d / "SKILL.md").read_text(encoding="utf-8") if (d / "SKILL.md").is_file() else ""
+    fm = re.match(r"---\n(.*?)\n---\n", text, re.S)
+    name = re.search(r"^name:\s*(\S+)\s*$", fm.group(1), re.M) if fm else None
+    if not (fm and name and name.group(1) == d.name and re.search(r"^description:\s*\S", fm.group(1), re.M)):
+        bad.append(d.name)
+print("  bad: %s" % ", ".join(bad)) if bad else None
+sys.exit(1 if bad else 0)
+PY
+  ! grep -rqi --exclude=LICENSE 'hermes' "$REPO/skills" && ok "skills: no Hermes leftovers in the bundled skills (attributions aside)" || no "skills: Hermes references remain"
+fi
+
 echo ""
 if [ "$FAIL" -eq 0 ]; then
   printf "\033[1;32m✅ All hooks healthy: %s/%s passed.\033[0m\n" "$PASS" "$((PASS+FAIL))"
