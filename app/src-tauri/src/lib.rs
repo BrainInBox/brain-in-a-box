@@ -1,6 +1,7 @@
 mod detect;
 mod diagnose;
 mod model;
+mod repair;
 mod steps;
 mod sys;
 mod voyage;
@@ -37,6 +38,14 @@ async fn check_voyage_key(key: String) -> model::KeyCheck {
 #[tauri::command]
 async fn claude_logged_in() -> bool {
     tauri::async_runtime::spawn_blocking(detect::claude_logged_in).await.unwrap_or(false)
+}
+
+/// What the window can offer under a failed step.
+#[tauri::command]
+async fn repair_status(step: String) -> repair::RepairStatus {
+    tauri::async_runtime::spawn_blocking(move || repair::availability(&step))
+        .await
+        .unwrap_or(repair::RepairStatus { state: repair::RepairState::Disabled })
 }
 
 /// A command that is not async runs on the main thread: while `open` or `pgrep`
@@ -97,6 +106,7 @@ pub fn run() {
             run_step,
             check_voyage_key,
             claude_logged_in,
+            repair_status,
             open_claude_login,
             start_onboarding,
             open_vault,

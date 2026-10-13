@@ -417,6 +417,11 @@ body.big .plan { justify-content: center; text-align: left; }
 
 .steps { list-style: none; margin: 0; padding: 0; overflow: hidden; }
 
+/* The Claude login, offered between two steps. */
+.login-card { padding: 14px 16px; }
+
+.login-card > * + * { margin-top: 12px; }
+
 .step {
   display: grid;
   grid-template-columns: 20px 1fr auto;

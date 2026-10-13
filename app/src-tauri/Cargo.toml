@@ -11,6 +11,11 @@ resolver = "3"
 name = "biab_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+default = ["repair-in-app"]
+# Claude analyzes a failed step from inside the app. Off, the window offers no in-app repair.
+repair-in-app = []
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

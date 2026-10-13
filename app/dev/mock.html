@@ -20,12 +20,15 @@
   //   ?s=installe  everything already installed
   //   ?s=motscles  everything installed, but the brain searches by keywords only (no Voyage key)
   //   ?s=bloque    old macOS, no network: nothing can be installed
+  //   ?s=login-early        Claude Code is there but not connected: the install asks for the login first
+  //   ?s=repair-not-logged  the same Mac, the login put off, then the Obsidian step fails: Claude needs the login
   // Driving, for screenshots: &go=<screen> clicks through to welcome|diag|voyage|install|login|done,
   // &key=pa-... types and checks that key on the Voyage screen (pa-…limit, pa-…off for the other answers),
   // &add=diag|done clicks « Activer la recherche par le sens » once on that screen,
   // &fail=obsidian|brain makes that step fail once, &pause=<step> leaves that step running (the Voyage upgrade is « brain »),
   // &details=1 opens the log, &press=1 clicks the main button once on arrival,
-  // &jump=showLogin|showDone opens that screen of app.js directly (the screenshot budget is only 3 s).
+  // &jump=showLogin|showDone opens that screen of app.js directly (the screenshot budget is only 3 s),
+  // &repair=offline|exhausted|unsupported|disabled|not_logged_in is what repair_status answers under a failed step.
   // Bibo: &sleep=3 makes it doze off after 3 s without activity instead of 45.
   (() => {
     const P = new URLSearchParams(location.search);
@@ -46,7 +49,7 @@
     };
     const FIX = { clt: 'clt', bun: 'bun', claude: 'claude', obsidian: 'obsidian', brain_vault: 'brain', brain_hooks: 'brain', brain_skills: 'brain', brain_memory: 'brain' };
     const C = (id, status, detail) => ({ id, label: LABELS[id], status, detail, fix: FIX[id] || null });
-    const ALL_STEPS = ['clt', 'bun', 'claude', 'obsidian', 'brain'];
+    const ALL_STEPS = ['claude', 'clt', 'bun', 'obsidian', 'brain'];
     const MISSING = [
       C('clt', 'missing', 'Pas encore installés. Apple s’en charge, il suffit de cliquer.'),
       C('bun', 'missing', 'Pas encore installé.'),
@@ -59,29 +62,42 @@
       C('brain_memory', 'missing', 'Pas encore créée.'),
       C('voyage', 'warn', 'Recherche par mots-clés seulement. Une clé Voyage permet de chercher par le sens.'),
     ];
+    const OK = {
+      clt: C('clt', 'ok', 'git et python3 sont là.'),
+      bun: C('bun', 'ok', 'Bun 1.4.2'),
+      claude: C('claude', 'ok', 'Claude Code 2.1.296'),
+      claude_auth: C('claude_auth', 'ok', 'Tu es connecté.'),
+      obsidian: C('obsidian', 'ok', 'Obsidian 1.14.4'),
+      brain_vault: C('brain_vault', 'ok', 'Il est dans Documents/Brain.'),
+      brain_hooks: C('brain_hooks', 'ok', 'Claude note tes corrections et tes séances.'),
+      brain_skills: C('brain_skills', 'ok', 'Installées.'),
+      brain_memory: C('brain_memory', 'ok', 'Prête.'),
+      voyage: C('voyage', 'ok', 'Activée (Voyage AI)'),
+    };
+    const ONLINE = [C('macos', 'ok', 'macOS 15.4'), C('disk', 'ok', '182 Go libres'), C('network', 'ok', 'github.com et claude.ai répondent.')];
+    // Claude Code installed but not connected, the steps in `todo` still to run.
+    const CLAUDE_ONLY = {
+      'login-early': ['clt', 'bun', 'obsidian', 'brain'],
+      'repair-not-logged': ['obsidian', 'brain'],
+    };
 
     function diagnosis() {
       if (scenario === 'installe' || scenario === 'motscles') {
         return {
           os: 'macOS 15.4', arch: 'arm64', ram_gb: 16, disk_free_gb: 182.4, online: true, todo: [], can_install: true,
           checks: [
-            C('macos', 'ok', 'macOS 15.4'),
-            C('disk', 'ok', '182 Go libres'),
-            C('network', 'ok', 'github.com et claude.ai répondent.'),
-            C('clt', 'ok', 'git et python3 sont là.'),
-            C('bun', 'ok', 'Bun 1.4.2'),
-            C('claude', 'ok', 'Claude Code 2.1.296'),
-            C('claude_auth', 'ok', 'Tu es connecté.'),
-            C('obsidian', 'ok', 'Obsidian 1.14.4'),
-            C('brain_vault', 'ok', 'Il est dans Documents/Brain.'),
-            C('brain_hooks', 'ok', 'Claude note tes corrections et tes séances.'),
-            C('brain_skills', 'ok', 'Installées.'),
-            C('brain_memory', 'ok', 'Prête.'),
-            scenario === 'motscles'
-              ? C('voyage', 'warn', 'Recherche par mots-clés seulement. Une clé Voyage permet de chercher par le sens.')
-              : C('voyage', 'ok', 'Activée (Voyage AI)'),
+            ...ONLINE,
+            ...MISSING.map((c) => (scenario === 'motscles' && c.id === 'voyage' ? c : OK[c.id])),
           ],
         };
+      }
+      if (Object.hasOwn(CLAUDE_ONLY, scenario)) {
+        const todo = CLAUDE_ONLY[scenario];
+        const checks = MISSING.map((c) => {
+          if (c.id === 'claude_auth') return C('claude_auth', 'warn', 'Pas encore connecté. Tu le feras en un clic.');
+          return c.id === 'voyage' || todo.includes(c.fix) ? c : OK[c.id];
+        });
+        return { os: 'macOS 15.4', arch: 'arm64', ram_gb: 16, disk_free_gb: 182.4, online: true, todo, can_install: true, checks: [...ONLINE, ...checks] };
       }
       if (scenario === 'bloque') {
         return {
@@ -96,12 +112,7 @@
       }
       return {
         os: 'macOS 15.4', arch: 'arm64', ram_gb: 16, disk_free_gb: 182.4, online: true, todo: ALL_STEPS, can_install: true,
-        checks: [
-          C('macos', 'ok', 'macOS 15.4'),
-          C('disk', 'ok', '182 Go libres'),
-          C('network', 'ok', 'github.com et claude.ai répondent.'),
-          ...MISSING,
-        ],
+        checks: [...ONLINE, ...MISSING],
       };
     }
 
@@ -127,10 +138,13 @@
       meaning: 'Ton cerveau est installé dans Documents/Brain, avec la recherche par le sens.',
       keywords: 'Ton cerveau est installé dans Documents/Brain. Il cherche par mots-clés ; tu pourras ajouter une clé Voyage plus tard.',
     };
-    const failing = P.get('fail') || (scenario === 'echec' ? 'obsidian' : '');
+    const failing = P.get('fail') || (scenario === 'echec' || scenario === 'repair-not-logged' ? 'obsidian' : '');
 
     const failedOnce = new Set();
+    // Connected two checks after the login window opened, like someone quick in the browser.
+    let loginOpened = false;
     let loginPolls = 0;
+    const loggedIn = () => scenario === 'installe' || scenario === 'motscles' || (loginOpened && loginPolls >= 2);
     const handlers = {
       async diagnose_machine() { await wait(P.get('go') ? 50 : 500); return diagnosis(); },
       async run_step({ id, voyageKey }) {
@@ -155,8 +169,14 @@
         if (k.length < 20) return { status: 'invalid', message: 'Voyage refuse cette clé. Vérifie que tu l’as copiée en entier.' };
         return { status: 'ok', message: 'Ton cerveau trouvera tes notes par le sens.' };
       },
-      async claude_logged_in() { await wait(150); loginPolls += 1; return scenario === 'installe' || scenario === 'motscles' || loginPolls > 2; },
-      async open_claude_login() { await wait(100); },
+      async claude_logged_in() { await wait(150); if (loginOpened) loginPolls += 1; return loggedIn(); },
+      async open_claude_login() { await wait(100); loginOpened = true; },
+      async repair_status({ step }) {
+        await wait(300);
+        if (step === 'claude') return { state: 'absent' };
+        if (P.get('repair')) return { state: P.get('repair') };
+        return { state: loggedIn() ? 'ready' : 'not_logged_in' };
+      },
       async start_onboarding() { await wait(100); },
       async open_vault() { await wait(100); },
       async open_link({ url }) { console.log('open_link', url); },
@@ -188,6 +208,8 @@
         const q = (sel) => document.querySelector(sel);
         if (P.get('details')) { const d = q('details.log'); if (d && !d.open) d.open = true; }
         const s = document.body.dataset.screen;
+        // This scenario is about someone who put the login off.
+        if (scenario === 'repair-not-logged' && q('.login-card')) { q('[data-act=skip]')?.click(); return; }
         if (s === add && !added && q('[data-act=voyage]')) {
           added = true;
           q('[data-act=voyage]').click();
@@ -210,7 +232,7 @@
       addEventListener('DOMContentLoaded', () => {
         const bar = document.createElement('nav');
         bar.className = 'mock-bar';
-        for (const [label, qs] of [['tout manque', '?s=manque'], ['échec', '?s=echec'], ['tout installé', '?s=installe'], ['sans Voyage', '?s=motscles'], ['bloqué', '?s=bloque']]) {
+        for (const [label, qs] of [['tout manque', '?s=manque'], ['échec', '?s=echec'], ['tout installé', '?s=installe'], ['sans Voyage', '?s=motscles'], ['bloqué', '?s=bloque'], ['connexion tôt', '?s=login-early'], ['réparer sans compte', '?s=repair-not-logged']]) {
           const a = document.createElement('a');
           a.href = qs;
           a.textContent = label;

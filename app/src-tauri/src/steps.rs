@@ -20,7 +20,9 @@ use crate::model::StepResult;
 use crate::sys::{self, minutes};
 use crate::voyage;
 
-pub const ORDER: &[&str] = &["clt", "bun", "claude", "obsidian", "brain"];
+/// Claude Code first: its installer needs none of Apple's tools, and once the user is
+/// logged in, Claude can help repair the steps that follow.
+pub const ORDER: &[&str] = &["claude", "clt", "bun", "obsidian", "brain"];
 
 const BUN_PIN: &str = "bun-v1.4.2";
 const OBSIDIAN_URL: &str = "https://github.com/obsidianmd/obsidian-releases/releases/download/v1.14.4/Obsidian-1.14.4.dmg";

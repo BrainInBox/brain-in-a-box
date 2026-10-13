@@ -154,12 +154,14 @@ const state = {
   steps: {},
   failed: null,
   logs: [],
+  // The install screen asked once for the Claude login (E1): it does not ask again.
+  loginAsked: false,
   loginSkipped: false,
 };
 
 // DOM handles and per-screen timers. screen() resets them.
 const ui = {};
-const view = { gen: 0, timers: [], rows: {}, log: null, bar: null, polling: 0 };
+const view = { gen: 0, timers: [], rows: {}, log: null, bar: null, polling: null, failure: null };
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -284,6 +286,8 @@ function screen(name, { big = false } = {}) {
   view.rows = {};
   view.log = null;
   view.bar = null;
+  view.polling = null;
+  view.failure = null;
   document.body.dataset.screen = name;
   document.body.classList.toggle('big', big);
   ui.screen.replaceChildren();
@@ -449,8 +453,8 @@ function showWelcome() {
   ui.screen.append(
     h('ol', { class: 'plan' },
       h('li', {}, 'Je regarde ce qui manque sur ton Mac.'),
-      h('li', {}, 'J’installe tout, tout seul.'),
-      h('li', {}, 'Tu connectes ton compte Claude, et c’est prêt.')),
+      h('li', {}, 'J’installe Claude, puis tu connectes ton compte (2 min).'),
+      h('li', {}, 'J’installe le reste tout seul. Si ça coince, Claude m’aide à réparer.')),
     h('p', { class: 'note' }, 'Il te faut un abonnement Claude Pro ou Max.'));
   // No autofocus here: a focus ring on the very first screen looks like a glitch.
   ui.actions.append(button('Vérifier mon Mac', runDiagnosis, { act: 'next' }));
@@ -712,7 +716,7 @@ function tickElapsed() {
 }
 
 function renderInstall() {
-  screen('install');
+  const gen = screen('install');
   const list = h('ol', { class: 'steps card' });
   for (const id of state.plan) {
     const info = stepInfo(id);
@@ -736,13 +740,18 @@ function renderInstall() {
   ui.screen.append(logPanel());
   paintProgress();
   every(tickElapsed, 10000);
+  return gen;
 }
 
 async function runInstall(from) {
-  renderInstall();
+  const gen = renderInstall();
   const { plan } = state;
   let result = '';
   for (let i = from; i < plan.length; i++) {
+    if (!state.loginAsked && !state.loginSkipped && claudeInstalled()) {
+      await askLoginInline(gen);
+      if (gen !== view.gen) return;
+    }
     const id = plan[i];
     const info = stepInfo(id);
     const run = stepRun(id);
@@ -783,15 +792,147 @@ async function runInstall(from) {
   }
 }
 
-function showFailure(index) {
-  say('worried', 'Oups, ça a coincé.', state.failed.message);
+// Claude Code is on the Mac: found by the diagnosis, or installed by this run.
+function claudeInstalled() {
+  if (state.steps.claude === 'done') return true;
+  const c = state.diag && state.diag.checks.find((x) => x.id === 'claude');
+  return Boolean(c) && c.status === 'ok';
+}
+
+// E1. Connected now, Claude can help repair a step that fails later. Inside the
+// install screen, without screen(): the steps stay in view.
+async function askLoginInline(gen) {
+  state.loginAsked = true;
+  say('thinking', 'Je vérifie ton compte Claude…');
+  let logged = false;
+  try {
+    logged = await invoke('claude_logged_in');
+  } catch {
+    logged = false;
+  }
+  if (logged || gen !== view.gen) return;
+
+  await new Promise((resolve) => {
+    const waiting = h('p', { class: 'loading', hidden: true }, h('span', { class: 'spinner', 'aria-hidden': 'true' }), 'J’attends ta connexion…');
+    const connect = button('Connecter mon compte Claude', open, { act: 'next' });
+    const card = h('div', { class: 'login-card card' },
+      h('ol', { class: 'plan' },
+        h('li', {}, 'Clique sur le bouton : une fenêtre Terminal s’ouvre.'),
+        h('li', {}, 'Ton navigateur te demande de te connecter à Claude.'),
+        h('li', {}, 'Reviens ici : je continue tout seul.')),
+      h('p', { class: 'note' }, 'Tu te connectes directement chez Anthropic : je ne vois jamais ton mot de passe.'),
+      waiting);
+
+    // « Plus tard » may come while the Terminal opens: nothing must follow it.
+    let over = false;
+
+    function finish() {
+      over = true;
+      stopPolling();
+      card.remove();
+      ui.actions.replaceChildren();
+      resolve();
+    }
+
+    async function open() {
+      connect.disabled = true;
+      try {
+        await invoke('open_claude_login');
+      } catch (e) {
+        if (over || gen !== view.gen) return;
+        say('worried', 'La fenêtre ne s’est pas ouverte.', errText(e));
+        connect.disabled = false;
+        return;
+      }
+      if (over || gen !== view.gen) return;
+      say('thinking', 'J’attends que tu te connectes…', 'Suis les étapes dans la fenêtre Terminal.');
+      waiting.hidden = false;
+      connect.textContent = 'Rouvrir la fenêtre';
+      connect.className = 'btn btn-secondary';
+      connect.disabled = false;
+      poll(() => {
+        say('happy', 'C’est connecté !', 'Claude est prêt à m’aider. Je continue.');
+        waiting.hidden = true;
+        ui.actions.replaceChildren();
+        later(finish, 2000);
+      });
+    }
+
+    say('idle', 'Connecte ton compte Claude maintenant', 'Comme ça, si une étape coince, Claude pourra m’aider à la réparer.');
+    ui.screen.querySelector('.steps').after(card);
+    ui.actions.append(button('Plus tard', finish, { kind: 'ghost', act: 'skip' }), connect);
+    card.scrollIntoView({ block: 'nearest' });
+    focusMain();
+  });
+}
+
+// E2: what Claude can do about the failure, from repair_status. The states missing
+// here get the plain screen.
+const REPAIR_NOTES = {
+  not_logged_in: 'Connecte ton compte Claude : il pourra m’aider à réparer.',
+  offline: 'Pas d’internet : ni moi ni Claude ne pouvons avancer. Vérifie le Wi-Fi ou le VPN, puis réessaie.',
+  exhausted: 'Claude a déjà essayé deux fois ici.',
+  unsupported: 'Ta version de Claude Code ne permet pas encore la réparation automatique.',
+};
+
+async function showFailure(index) {
+  const { id, message } = state.failed;
+  say('worried', 'Oups, ça a coincé.', message);
+  ui.actions.replaceChildren();
+  for (const el of ui.screen.querySelectorAll('.repair-note')) el.remove();
   // Search by meaning is a bonus: the brain keeps working by keywords without it.
   if (state.plan.includes('voyage')) {
     ui.actions.append(button('Plus tard', () => { state.key = ''; checkLogin(); }, { kind: 'ghost', act: 'skip' }));
   }
   const copy = button('Copier le rapport', () => copyReport(copy), { kind: 'secondary', act: 'copy' });
-  ui.actions.append(copy, button('Réessayer', () => runInstall(index), { act: 'next' }));
+  const retry = button('Réessayer', () => runInstall(index), { act: 'next' });
+  ui.actions.append(copy, retry);
   focusMain();
+
+  // The answer takes a few seconds (network, claude auth status): the buttons work meanwhile.
+  const ask = {};
+  view.failure = ask;
+  let status = null;
+  try {
+    status = await invoke('repair_status', { step: stepRun(id) });
+  } catch {
+    status = null;
+  }
+  if (view.failure !== ask) return;
+  const what = status && status.state;
+  if (Object.hasOwn(REPAIR_NOTES, what)) view.log.det.before(h('p', { class: 'note repair-note' }, REPAIR_NOTES[what]));
+  if (what === 'not_logged_in') {
+    retry.className = 'btn btn-secondary';
+    retry.dataset.act = 'retry';
+    const connect = button('Connecter Claude', () => connectForRepair(index, connect), { act: 'next' });
+    ui.actions.append(connect);
+    focusMain();
+  }
+}
+
+// Once connected, the failure screen comes back with what Claude can do now.
+async function connectForRepair(index, btn) {
+  const gen = view.gen;
+  btn.disabled = true;
+  try {
+    await invoke('open_claude_login');
+  } catch (e) {
+    if (gen !== view.gen) return;
+    say('worried', 'La fenêtre ne s’est pas ouverte.', errText(e));
+    btn.disabled = false;
+    return;
+  }
+  if (gen !== view.gen) return;
+  say('thinking', 'J’attends que tu te connectes…', 'Suis les étapes dans la fenêtre Terminal.');
+  btn.textContent = 'Rouvrir la fenêtre';
+  btn.className = 'btn btn-secondary';
+  btn.disabled = false;
+  poll(() => {
+    say('happy', 'C’est connecté !', 'Claude est prêt à m’aider.');
+    btn.remove();
+    for (const el of ui.screen.querySelectorAll('.repair-note')) el.remove();
+    later(() => showFailure(index), 2000);
+  });
 }
 
 function logPanel() {
@@ -925,7 +1066,7 @@ function showLogin() {
     connect.textContent = 'Rouvrir la fenêtre';
     connect.className = 'btn btn-secondary';
     connect.disabled = false;
-    poll(gen);
+    poll(showDone);
   }
 
   ui.screen.append(
@@ -941,10 +1082,12 @@ function showLogin() {
   focusMain();
 }
 
-// One polling loop per screen; screen() cancels it.
-function poll(gen) {
-  if (view.polling === gen) return;
-  view.polling = gen;
+// One polling loop at a time, until the login, stopPolling() or the next screen.
+function poll(onLogged) {
+  if (view.polling) return;
+  const gen = view.gen;
+  const loop = {};
+  view.polling = loop;
   const tick = async () => {
     let logged = false;
     try {
@@ -952,11 +1095,19 @@ function poll(gen) {
     } catch {
       logged = false;
     }
-    if (gen !== view.gen) return;
-    if (logged) showDone();
-    else later(tick, LOGIN_POLL_MS);
+    if (gen !== view.gen || view.polling !== loop) return;
+    if (!logged) {
+      later(tick, LOGIN_POLL_MS);
+      return;
+    }
+    view.polling = null;
+    onLogged();
   };
   later(tick, LOGIN_POLL_MS);
+}
+
+function stopPolling() {
+  view.polling = null;
 }
 
 // ── 6. Done ────────────────────────────────────────────────────────────────
