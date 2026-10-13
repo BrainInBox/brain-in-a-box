@@ -4,8 +4,10 @@
 //   bun pgvector_smoke.ts <dataDir>
 import { PGlite } from '@electric-sql/pglite';
 import { vector } from '@electric-sql/pglite/vector';
+import { mkdirSync } from 'node:fs';
 
 const dataDir = process.argv[2];
+mkdirSync(dataDir, { recursive: true }); // PGLite's NODEFS creates only the last level
 const t0 = performance.now();
 const db = await PGlite.create({ dataDir, extensions: { vector } });
 await db.exec('CREATE EXTENSION IF NOT EXISTS vector');

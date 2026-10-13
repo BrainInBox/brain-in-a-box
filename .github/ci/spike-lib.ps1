@@ -58,3 +58,22 @@ function New-TestVault([string]$Dir) {
     [IO.File]::WriteAllText("$Dir\notes.md", "# Weekly notes`n`nPaid the electricity invoice and renewed the car insurance.`n", $utf8)
     [IO.File]::WriteAllText("$Dir\journal\r$([char]0xE9)union-$([char]0xE9)t$([char]0xE9).md", "# R$([char]0xE9)union d'$([char]0xE9)t$([char]0xE9)`n`nOn a parl$([char]0xE9) du budget de la cantine et des f$([char]0xEA)tes de fin d'ann$([char]0xE9)e.`n", $utf8)
 }
+
+# The fake Voyage (.github/ci/fake_voyage.py) on 127.0.0.1:8899, started once and reused.
+function Start-FakeVoyage {
+    $c = New-Object Net.Sockets.TcpClient
+    try { $c.Connect('127.0.0.1', 8899); $c.Close(); return } catch {}
+    $log = Join-Path $env:RUNNER_TEMP 'fake-voyage.log'
+    Start-Process python -ArgumentList @('-I', (Join-Path $PWD '.github\ci\fake_voyage.py'), '8899') -RedirectStandardOutput $log -RedirectStandardError "$log.err" | Out-Null
+    Start-Sleep -Seconds 2
+}
+
+# Points GBRAIN_HOME at $HomeDir and writes the config install.sh writes (key in config.json,
+# never in argv), with Voyage redirected to the fake.
+function Use-FakeVoyageHome([string]$HomeDir) {
+    $env:GBRAIN_HOME = $HomeDir
+    $gd = Join-Path $HomeDir '.gbrain'
+    New-Item -ItemType Directory -Force $gd | Out-Null
+    $cfg = @{ voyage_api_key = 'ci-fake-key-not-a-secret'; provider_base_urls = @{ voyage = 'http://127.0.0.1:8899/v1' } } | ConvertTo-Json
+    [IO.File]::WriteAllText((Join-Path $gd 'config.json'), $cfg, (New-Object Text.UTF8Encoding $false))
+}
