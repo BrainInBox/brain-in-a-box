@@ -12,7 +12,7 @@
 #   - launchctl is stubbed → no real launchd job is loaded
 #   - gbrain + bun are symlinked from your real install → `bun link` is a no-op
 #     on your real repo (your global gbrain never changes)
-#   - your real ZeroEntropy key is reused (read locally) so search actually works
+#   - your real Voyage key is reused (read locally, never printed) so search by meaning works
 #
 # Usage:  ./try-it-locally.sh           # set up (or reuse) the sandbox
 #         ./try-it-locally.sh --fresh   # wipe and rebuild it
@@ -42,13 +42,15 @@ ln -sfn "$REAL_GBRAIN" "$TRYHOME/DEV/gbrain"
 printf '#!/bin/zsh\nexit 0\n' > "$STUB/launchctl"; chmod +x "$STUB/launchctl"
 
 if [ "$SKIP_INSTALL" = "0" ]; then
-  # reuse the real ZE key so embeddings work (read locally, never printed)
-  ZE="$(/usr/bin/python3 -c 'import json,os;print(json.load(open(os.path.expanduser("~/.gbrain/config.json"))).get("zeroentropy_api_key",""))' 2>/dev/null)"
-  [ -n "$ZE" ] || { echo "✗ no ZeroEntropy key found in ~/.gbrain/config.json"; exit 1; }
+  # reuse the real Voyage key so search by meaning works (read locally, never printed);
+  # without one the sandbox runs on keyword search
+  VOYAGE="$(/usr/bin/python3 -c 'import json,os;print(json.load(open(os.path.expanduser("~/.gbrain/config.json"))).get("voyage_api_key",""))' 2>/dev/null)"
+  [ -n "$VOYAGE" ] || echo "  (no voyage_api_key in ~/.gbrain/config.json: keyword search only)"
   echo "▶ Installing brain-in-a-box into $TRYHOME (isolated)…"
-  printf '%s\n' "$ZE" | env HOME="$TRYHOME" \
-    PATH="$STUB:$REAL_BUN/bin:/opt/homebrew/bin:/usr/bin:/bin:$HOME/.local/bin" \
-    bash "$REPO/install.sh" 2>&1 | grep -iE "▶|✓|⚠|✅" | sed 's/^/  /'
+  # export, not `env KEY=…`: env is a program, so the key would show in its argv (ps)
+  ( export VOYAGE_API_KEY="$VOYAGE"
+    env HOME="$TRYHOME" PATH="$STUB:$REAL_BUN/bin:/opt/homebrew/bin:/usr/bin:/bin:$HOME/.local/bin" \
+      bash "$REPO/install.sh" </dev/null 2>&1 ) | grep -iE "▶|✓|⚠|✅" | sed 's/^/  /'
 fi
 
 printf "\n\033[1;32m✅ Sandbox ready at %s — go play (your real brain is untouched).\033[0m\n" "$TRYHOME"

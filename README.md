@@ -11,7 +11,7 @@ Everyone gets the **same engine**, with **their own data** — everything stays 
 | **Vault** (`~/Documents/Brain`) | Your markdown notes: Profile · **Team · Agents · Decisions · Skills** · Journal · Projects · Clients · Resources |
 | **Skills** (`~/.claude/skills`) | `brain-boost` (what the setup does, how to grow it safely) · `quick-research` · `html-artifact` · `convert-documents-to-markdown`. Installed with the box; a skill of yours with the same name, or one you edited, is never overwritten |
 | **Hooks** (`~/.claude/hooks/brain`) | Auto-capture: corrections → `lessons.md`, sessions → `Journal/`, summaries → `memory.md` |
-| **GBrain** (`~/.gbrain`) | Semantic search over the vault (`gbq query "..."`) — ZeroEntropy embeddings |
+| **GBrain** (`~/.gbrain`) | Search over the vault (`gbq query "..."`): by meaning with a Voyage AI key, by keywords without one |
 | **Nightly** (launchd 04:00) | commit vault → sync → dream cycle (dedup, facts, consolidation) → self-update GBrain (auto-rollback if broken) |
 | **Self-update catch-up** (SessionStart) | if the machine missed the 04:00 run, the first Claude Code session of the day checks in the background — you're never more than a day behind |
 | **Reflection** (launchd 12:00 + 23:00) | LLM summary of the day's sessions and your git commits → `Journal/` + rolling 15-day `memory.md`. Secrets masked before sending; a failing run pins a warning in `memory.md`. Missed a day? `daily-reflection.py --day YYYY-MM-DD` (`--dry-run` to preview) |
@@ -35,12 +35,12 @@ Prefer to read the code first? Download the repository (**Code → Download ZIP*
 
 ### macOS
 
-Requirements: [Claude Code](https://claude.ai/code), a **free** [ZeroEntropy](https://dashboard.zeroentropy.dev) key (embeddings — free account, no card).
+Requirements: [Claude Code](https://claude.ai/code). Optional: a [Voyage AI](https://dashboard.voyageai.com) key, so your brain finds notes by meaning, not just keywords. Voyage asks for a card (without one it allows 3 requests a minute); 200M tokens are free and a personal brain uses well under 1% of that.
 
 ```bash
 git clone <URL_OF_THIS_REPO> brain-in-a-box
 cd brain-in-a-box
-./install.sh        # asks for the ZE key, installs everything, overwrites nothing
+./install.sh        # offers to add a Voyage key (Enter skips), installs everything, overwrites nothing
 ```
 
 Then the onboarding (15 min, fills in your profile):
@@ -129,7 +129,7 @@ Read [PHILOSOPHY.md](PHILOSOPHY.md): nine habits that turn Claude from an adviso
 | Personal life | "fix this for me", a screenshot of what's broken, dictation |
 
 ## Security / privacy
-- Everything is **local**: your vault, your index, your key. Nothing goes to a third party (except the text embedding sent to ZeroEntropy at indexing time — see their policy).
+- Everything is **local**: your vault, your index, your key. Nothing goes to a third party (except, with a Voyage key, the text sent to Voyage AI to compute embeddings: in the Voyage dashboard, set Organization → Terms of Service to "Opted Out" so it is not used for training). Installs from before 0.3 keep ZeroEntropy.
 - Never a secret in the vault. The global `CLAUDE.md` directives tell your agents so, but nothing scans the vault for you: keep secrets in your password manager or Keychain and write down where they live, never the value.
 - **Found a security issue?** See [SECURITY.md](SECURITY.md) — please use GitHub Security Advisories, not public Issues.
 
@@ -154,4 +154,4 @@ Undo any part. Your vault (`Documents/Brain`) is never touched by these:
 
 ## Not included (on purpose)
 - No Telegram bot — separate add-on.
-- Embeddings = ZeroEntropy (**free**, no-card account). For a 100%-local/offline variant (nothing leaves the machine), an Ollama `nomic-embed-text` variant is planned — not for cost (ZE is already free), just for full privacy.
+- Embeddings = Voyage AI (optional; keyword search without a key). A 100%-local/offline variant (nothing leaves the machine), with Ollama `nomic-embed-text`, is planned for full privacy.
