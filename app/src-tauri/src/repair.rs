@@ -4,12 +4,15 @@
 //! dossier the app builds (the step, its log, facts about the Mac) and to answer
 //! with a cause and remedies picked from closed lists. Claude gets no tool: it cannot
 //! run anything, the app checks how it was started and every field of its answer.
-//! Applying the remedies comes later (remedies, config guard).
+//!
+//! A second click applies the plan: the app runs the remedies itself (remedies.rs),
+//! relaunches the step under the configuration guard, then checks the Mac again. It
+//! never takes Claude's word for a repair.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::io::{self, Write};
-use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{LazyLock, Mutex, MutexGuard, OnceLock, PoisonError};
@@ -21,9 +24,9 @@ use serde::Serialize;
 use serde_json::{json, Map, Value};
 
 use crate::detect::{self, fmt_version, parse_version, Found, Version};
-use crate::model::StepResult;
+use crate::model::{Diagnosis, Status, StepResult};
 use crate::redact::{self, display_text, redact};
-use crate::{diagnose, sys};
+use crate::{config_guard, diagnose, remedies, steps, sys};
 
 /// The first version checked with every flag the analysis relies on.
 pub const MIN_CLAUDE: Version = (2, 1, 296);
@@ -38,6 +41,8 @@ const JOURNAL_BYTES: usize = 30_000;
 /// Claude's stream keeps its lines whole enough to be read back.
 const STREAM_LINE: usize = 16_000;
 const SESSIONS_KEPT: usize = 10;
+/// Session folders and journal.jsonl, under ~.
+const STORE: &str = ".brain-in-a-box/reparations";
 /// Facts shown by « Voir exactement ce que j'envoie » are the ones sent, if this fresh.
 const FACTS_FRESH: Duration = Duration::from_secs(120);
 const PROBE_TIMEOUT: Duration = Duration::from_secs(20);
@@ -273,6 +278,8 @@ pub enum Stage {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RepairError {
     Unavailable { state: RepairState },
+    /// A step or a repair is already running.
+    Busy,
     /// The step did not fail, or ran again since.
     NoFailure,
     Cancelled,
@@ -291,7 +298,7 @@ pub enum RepairError {
 impl RepairError {
     fn said(&self) -> &'static str {
         match self {
-            RepairError::Unavailable { .. } | RepairError::NoFailure => "pas lancée",
+            RepairError::Unavailable { .. } | RepairError::NoFailure | RepairError::Busy => "pas lancée",
             RepairError::Cancelled => "arrêtée",
             RepairError::Timeout => "délai dépassé",
             RepairError::Quota => "forfait à sa limite",
@@ -417,6 +424,8 @@ struct Session {
     facts: Mutex<Option<CachedFacts>>,
     /// Claude once started outside the expected setup: no analysis for the rest of the session.
     unsupported: AtomicBool,
+    /// Steps whose repair was undone (guard, regression): Claude is not asked again.
+    closed: Mutex<HashSet<String>>,
 }
 
 static SESSION: LazyLock<Session> = LazyLock::new(Session::default);
@@ -488,8 +497,15 @@ impl Session {
         (rounds.get(step).map_or(0, Vec::len), rounds.values().map(Vec::len).sum())
     }
 
+    fn is_closed(&self, step: &str) -> bool {
+        lock(&self.closed).contains(step)
+    }
+
     /// Takes the next round for `step` (1-based), or says the limits are reached.
     fn reserve(&self, step: &str) -> Result<usize, RepairError> {
+        if self.is_closed(step) {
+            return Err(RepairError::Unavailable { state: RepairState::Exhausted });
+        }
         let mut rounds = lock(&self.rounds);
         let session: usize = rounds.values().map(Vec::len).sum();
         let mine = rounds.entry(step.to_string()).or_default();
@@ -601,6 +617,7 @@ pub fn availability(step: &str) -> RepairStatus {
         return RepairStatus { state: RepairState::Disabled, terminal_fallback: true };
     }
     let (mine, all) = SESSION.used(step);
+    let mine = if SESSION.is_closed(step) { MAX_PER_STEP } else { mine };
     let used = Used { step: mine, session: all, unsupported: SESSION.unsupported.load(Ordering::SeqCst) };
     RepairStatus::of(decide(&probe(&claude), used))
 }
@@ -666,6 +683,8 @@ pub fn preview(step: &str) -> String {
 /// One analysis, one click. Blocks until Claude answers, `cancel()`, or the limit.
 pub fn analyze(step: &str, on_progress: &mut dyn FnMut(Stage)) -> Result<RepairPlan, RepairError> {
     CANCEL.store(false, Ordering::SeqCst);
+    // No step runs meanwhile: it would change the very log Claude reads.
+    let _one_at_a_time = steps::exclusive().map_err(|_| RepairError::Busy)?;
     let status = availability(step);
     if status.state != RepairState::Ready {
         return Err(RepairError::Unavailable { state: status.state });
@@ -673,7 +692,7 @@ pub fn analyze(step: &str, on_progress: &mut dyn FnMut(Stage)) -> Result<RepairP
     let claude = detect::claude_bin().ok_or(RepairError::Unavailable { state: RepairState::Absent })?;
     let home = sys::home();
     let ctx = Ctx {
-        store: home.join(".brain-in-a-box/reparations"),
+        store: home.join(STORE),
         user: login_name(&home),
         home,
         claude,
@@ -833,6 +852,375 @@ fn plan(step: &str, n: usize, id: &str, v: &Verdict) -> RepairPlan {
         remedies: v.remedies.iter().map(line).collect(),
         actions: v.actions.iter().map(line).collect(),
     }
+}
+
+// ── Applying a plan ─────────────────────────────────────────────────────────
+
+/// Never counted as a regression: the network comes and goes, and an install takes
+/// disk space by design (a full disk shows as the step failing).
+const NOT_REGRESSIONS: &[&str] = &["network", "disk"];
+
+#[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Ending {
+    /// The step went through and the app's own checks for it are green.
+    Fixed,
+    /// Nothing got worse, but the step still fails.
+    StillFailing,
+    /// A remedy's condition no longer held: what was done is undone, nothing ran.
+    RemedyFailed,
+    /// The step touched the user's files: put back, remedies undone.
+    GuardRestored,
+    /// Something that worked before no longer does: remedies undone.
+    Regression,
+    /// Nothing done: unknown or used plan, a step already running, no failure left.
+    Refused,
+}
+
+impl Ending {
+    fn said(self) -> &'static str {
+        match self {
+            Ending::Fixed => "réparé",
+            Ending::StillFailing => "toujours en échec",
+            Ending::RemedyFailed => "remède impossible, rien relancé",
+            Ending::GuardRestored => "fichiers de l'utilisateur touchés, tout remis comme avant",
+            Ending::Regression => "autre chose cassé, réparation annulée",
+            Ending::Refused => "refusé",
+        }
+    }
+}
+
+#[derive(Serialize, Clone, Debug)]
+pub struct RepairOutcome {
+    pub outcome: Ending,
+    pub step: String,
+    /// The step's own sentence after the relaunch, or why nothing ran.
+    pub message: String,
+    /// The cause in the app's words, for « C'était : … ».
+    pub cause: String,
+    /// Something is still set aside: « Remettre comme avant » can bring it back.
+    pub undoable: bool,
+    /// Claude may look at this step once more.
+    pub retry: bool,
+    /// What the guard put back, or what got worse.
+    pub details: Vec<String>,
+}
+
+impl RepairOutcome {
+    fn refused(step: &str, message: impl Into<String>) -> Self {
+        RepairOutcome {
+            outcome: Ending::Refused,
+            step: step.to_string(),
+            message: message.into(),
+            cause: String::new(),
+            undoable: false,
+            retry: false,
+            details: Vec::new(),
+        }
+    }
+
+    pub fn internal(e: impl std::fmt::Display) -> Self {
+        Self::refused("", format!("Erreur interne : {e}"))
+    }
+}
+
+/// What a repair acts on and looks at: the real Mac in the app, fakes in tests.
+struct Fixer<'a> {
+    home: PathBuf,
+    /// Session folders and journal.jsonl.
+    store: PathBuf,
+    /// The user's uid: remedies move only what they own.
+    me: u32,
+    probes: &'a remedies::Probes,
+    work_dirs: Vec<PathBuf>,
+    diag: &'a dyn Fn() -> Diagnosis,
+}
+
+/// Runs a step: `steps::run_held` in the app.
+type Runner<'a> = dyn FnMut(&str, Option<&str>, &mut dyn FnMut(String)) -> steps::Held + 'a;
+
+/// Applies the plan `plan_id` (once), relaunches its step and checks the Mac again:
+/// whatever Claude said, only the app's own checks make a repair. The step's lines
+/// go to `log` with its id.
+pub fn apply(plan_id: &str, key: Option<&str>, log: &mut dyn FnMut(&str, String)) -> RepairOutcome {
+    let guard = match steps::exclusive() {
+        Ok(g) => g,
+        Err(message) => return RepairOutcome::refused("", message),
+    };
+    let home = sys::home();
+    let fixer = Fixer {
+        store: home.join(STORE),
+        me: owner(&home),
+        probes: &remedies::REAL_PROBES,
+        // Where steps::TempDir puts its work folders.
+        work_dirs: vec![std::env::temp_dir(), home.join("Applications"), home.join(".brain-in-a-box")],
+        diag: &diagnose::run,
+        home,
+    };
+    SESSION.apply(&fixer, plan_id, key, &mut |step, key, log| steps::run_held(&guard, step, key, log), log)
+}
+
+/// « Remettre comme avant »: what plan `plan_id` set aside goes back where it was.
+pub fn undo(plan_id: &str) -> Result<String, String> {
+    let _one_at_a_time = steps::exclusive()?;
+    let home = sys::home();
+    undo_in(&home, &home.join(STORE), owner(&home), plan_id)
+}
+
+/// Nobody's uid when the home folder cannot be read: then nothing is the user's to move.
+fn owner(home: &Path) -> u32 {
+    fs::metadata(home).map_or(u32::MAX, |m| m.uid())
+}
+
+fn undo_in(home: &Path, store: &Path, me: u32, plan_id: &str) -> Result<String, String> {
+    // The id names a folder: only the shape of our session names gets that far.
+    if !is_session(plan_id) {
+        return Err("Je ne connais pas cette réparation.".into());
+    }
+    let aside = home.join(remedies::SET_ASIDE_DIR).join(plan_id);
+    let res = remedies::undo(home, me, &aside);
+    let _ = journal(
+        store,
+        &json!({
+            "ts": iso(now_secs()),
+            "app": env!("CARGO_PKG_VERSION"),
+            "action": "remettre",
+            "session": plan_id,
+            "remis": res.as_ref().ok(),
+            "erreur": res.as_ref().err(),
+        }),
+    );
+    match res {
+        Ok(back) if back.is_empty() => Ok("Il n'y avait rien à remettre.".into()),
+        Ok(back) => Ok(format!("J'ai tout remis comme avant ({}).", back.join(", "))),
+        Err(e) => Err(format!("Je n'ai pas pu tout remettre : {e}.")),
+    }
+}
+
+/// A plan as `apply` takes it from the rounds.
+struct Plan {
+    step: String,
+    n: usize,
+    cause_id: &'static str,
+    remedies: Vec<&'static str>,
+}
+
+/// What `finish` writes down and hands back.
+struct Closing<'a> {
+    step: &'a str,
+    n: usize,
+    plan_id: &'a str,
+    ending: Ending,
+    message: String,
+    cause: String,
+    details: Vec<String>,
+    actions: Vec<Value>,
+    relaunch: Option<StepResult>,
+    aside: &'a Path,
+    started: Instant,
+}
+
+impl Session {
+    /// The latest analysis of a step that still fails, if it gave a diagnosis and
+    /// was not applied yet.
+    fn plan(&self, plan_id: &str) -> Option<Plan> {
+        let found = lock(&self.rounds).iter().find_map(|(step, rounds)| {
+            let n = rounds.iter().position(|r| !plan_id.is_empty() && r.id == plan_id)? + 1;
+            let r = &rounds[n - 1];
+            let cause_id = r.cause_id.filter(|_| n == rounds.len() && !r.applied)?;
+            Some(Plan { step: step.clone(), n, cause_id, remedies: r.remedies.clone() })
+        })?;
+        (!self.is_closed(&found.step) && self.failure(&found.step).is_some()).then_some(found)
+    }
+
+    fn apply(
+        &self,
+        fx: &Fixer,
+        plan_id: &str,
+        key: Option<&str>,
+        run: &mut Runner,
+        log: &mut dyn FnMut(&str, String),
+    ) -> RepairOutcome {
+        let started = Instant::now();
+        let Some(Plan { step, n, cause_id, remedies: ids }) = self.plan(plan_id) else {
+            return RepairOutcome::refused("", "Ce plan n'est plus valable : demande une nouvelle analyse.");
+        };
+        let step = step.as_str();
+        let cause = find(CAUSES, step, cause_id).map_or_else(String::new, |e| e.user_text(step));
+        let before = (fx.diag)();
+        let snap = match config_guard::take(&fx.home, &fx.home.join(steps::GUARD_DIR)) {
+            Ok(s) => s,
+            Err(e) => {
+                let message = format!("Je n'ai pas pu mettre tes réglages de côté avant de réparer ({e}). Je n'ai rien touché.");
+                return RepairOutcome { cause, ..RepairOutcome::refused(step, message) };
+            }
+        };
+        if let Some(r) = lock(&self.rounds).get_mut(step).and_then(|r| r.get_mut(n - 1)) {
+            r.applied = true;
+        }
+        let known = known_secrets(&fx.home);
+        let known = refs(&known);
+        let aside = fx.home.join(remedies::SET_ASIDE_DIR).join(plan_id);
+        let rctx = remedies::Ctx { home: &fx.home, me: fx.me, probes: fx.probes, work_dirs: &fx.work_dirs, aside: &aside };
+        let key_given = key.is_some_and(|k| !k.trim().is_empty());
+        let mut closing = Closing {
+            step,
+            n,
+            plan_id,
+            ending: Ending::StillFailing,
+            message: String::new(),
+            cause,
+            details: Vec::new(),
+            actions: Vec::new(),
+            relaunch: None,
+            aside: &aside,
+            started,
+        };
+
+        let mut without_key = false;
+        for id in &ids {
+            let text = find(REMEDIES, step, id).map_or_else(|| id.to_string(), |e| e.user_text(step));
+            log(step, format!("→ {text}"));
+            match remedies::apply(id, step, &rctx, key_given) {
+                Ok(done) => {
+                    without_key |= done == remedies::Done::WithoutKey;
+                    closing.actions.push(json!({ "remede": id, "ok": true, "fait": done_text(&done, &fx.home) }));
+                }
+                Err(why) => {
+                    log(step, format!("✗ {why}"));
+                    closing.actions.push(json!({ "remede": id, "ok": false, "erreur": redact(&why, &known) }));
+                    if let Err(e) = remedies::undo(&fx.home, fx.me, &aside) {
+                        closing.details.push(format!("annulation incomplète : {e}"));
+                    }
+                    closing.details.extend(config_guard::settle(snap, &fx.home).paths());
+                    closing.ending = Ending::RemedyFailed;
+                    closing.message = format!("Je n'ai pas pu faire « {text} » : {why}. Je n'ai rien relancé.");
+                    return self.finish(fx, closing, &known);
+                }
+            }
+        }
+
+        self.trace_start(step);
+        let held = run(step, if without_key { None } else { key }, &mut |line| {
+            self.record_line(step, &line);
+            log(step, line);
+        });
+        self.record_result(&held.result);
+        let report = config_guard::settle(snap, &fx.home);
+        let after = (fx.diag)();
+
+        let mut touched = held.restored.clone();
+        touched.extend(report.paths());
+        let worse = regressions(&before, &after);
+        (closing.ending, closing.details, closing.message) = if !touched.is_empty() {
+            let m = match (&report.kept, held.restored.is_empty()) {
+                (Some(copy), _) => format!(
+                    "La réparation touchait à des fichiers à toi et je n'ai pas pu tout remettre. \
+                     Une copie de tes fichiers d'avant est dans {}.",
+                    config_guard::tilde(copy, &fx.home)
+                ),
+                // The brain step's own guard said what it did.
+                (None, false) => held.result.message.clone(),
+                (None, true) => "La réparation touchait à des fichiers à toi : j'ai tout remis comme avant.".into(),
+            };
+            (Ending::GuardRestored, touched, m)
+        } else if !worse.is_empty() {
+            let m = format!("La réparation abîmait autre chose ({}) : je l'ai annulée.", worse.join(", "));
+            (Ending::Regression, worse, m)
+        } else if held.result.ok && step_checks_ok(&after, step) && remedies::intact(&aside) {
+            (Ending::Fixed, Vec::new(), held.result.message.clone())
+        } else {
+            (Ending::StillFailing, Vec::new(), held.result.message.clone())
+        };
+        if matches!(closing.ending, Ending::GuardRestored | Ending::Regression) {
+            if let Err(e) = remedies::undo(&fx.home, fx.me, &aside) {
+                closing.details.push(format!("annulation incomplète : {e}"));
+            }
+        }
+        closing.relaunch = Some(held.result);
+        self.finish(fx, closing, &known)
+    }
+
+    /// Records the outcome in the round, the journal and the session folder.
+    fn finish(&self, fx: &Fixer, c: Closing, known: &[&str]) -> RepairOutcome {
+        let relaunched = c.relaunch.as_ref().map(|r| redact(&r.message, known));
+        if let Some(r) = lock(&self.rounds).get_mut(c.step).and_then(|r| r.get_mut(c.n - 1)) {
+            r.outcome = Some(c.ending.said().into());
+            r.message = relaunched.clone();
+        }
+        if matches!(c.ending, Ending::GuardRestored | Ending::Regression) {
+            lock(&self.closed).insert(c.step.to_string());
+        }
+        let (mine, all) = self.used(c.step);
+        let details: Vec<String> = c.details.iter().map(|d| redact(d, known)).collect();
+        let outcome = RepairOutcome {
+            outcome: c.ending,
+            step: c.step.to_string(),
+            message: c.message,
+            cause: c.cause,
+            undoable: remedies::pending(c.aside),
+            retry: matches!(c.ending, Ending::StillFailing | Ending::RemedyFailed)
+                && !self.is_closed(c.step)
+                && mine < MAX_PER_STEP
+                && all < MAX_PER_SESSION,
+            details: c.details,
+        };
+        let dir = fx.store.join(c.plan_id);
+        if fs::symlink_metadata(&dir).is_ok_and(|m| m.is_dir()) {
+            let _ = write_private(&dir.join("actions.json"), &Value::Array(c.actions.clone()).to_string());
+            let shown = json!({
+                "outcome": outcome.outcome,
+                "message": redact(&outcome.message, known),
+                "undoable": outcome.undoable,
+                "retry": outcome.retry,
+                "details": details,
+            });
+            let _ = write_private(&dir.join("outcome.json"), &shown.to_string());
+        }
+        let _ = journal(
+            &fx.store,
+            &json!({
+                "ts": iso(now_secs()),
+                "app": env!("CARGO_PKG_VERSION"),
+                "action": "reparer",
+                "etape": c.step,
+                "essai": c.n,
+                "session": c.plan_id,
+                "remedes": c.actions,
+                "relance": c.relaunch.as_ref().map(|r| json!({ "ok": r.ok, "message": relaunched })),
+                "details": details,
+                "outcome": c.ending,
+                "duree_s": (c.started.elapsed().as_secs_f64() * 10.0).round() / 10.0,
+            }),
+        );
+        outcome
+    }
+}
+
+/// For the journal: what a remedy did, paths written ~.
+fn done_text(done: &remedies::Done, home: &Path) -> String {
+    match done {
+        remedies::Done::Nothing => "rien".into(),
+        remedies::Done::Cleaned(n) => format!("{n} dossier(s) de travail supprimé(s)"),
+        remedies::Done::SetAside(to) => format!("mis de côté dans {}", config_guard::tilde(to, home)),
+        remedies::Done::WithoutKey => "relance sans la clé Voyage".into(),
+    }
+}
+
+/// The checks that were green before and are not anymore.
+fn regressions(before: &Diagnosis, after: &Diagnosis) -> Vec<String> {
+    let ok_after = |id: &str| after.checks.iter().any(|c| c.id == id && c.status == Status::Ok);
+    before
+        .checks
+        .iter()
+        .filter(|c| c.status == Status::Ok && !NOT_REGRESSIONS.contains(&c.id.as_str()) && !ok_after(&c.id))
+        .map(|c| c.label.clone())
+        .collect()
+}
+
+/// Every check the step is meant to fix is green.
+fn step_checks_ok(after: &Diagnosis, step: &str) -> bool {
+    after.checks.iter().filter(|c| c.fix.as_deref() == Some(step)).all(|c| c.status == Status::Ok)
 }
 
 // ── The dossier ─────────────────────────────────────────────────────────────
@@ -1338,9 +1726,10 @@ fn write_private(path: &Path, text: &str) -> io::Result<()> {
     private_file(path)?.write_all(text.as_bytes())
 }
 
-/// One line per analysis in journal.jsonl (0600), next to the session folders.
+/// One line per analysis, repair or undo in journal.jsonl (0600), next to the session folders.
 fn journal(store: &Path, entry: &Value) -> io::Result<()> {
     let mut f = fs::OpenOptions::new().append(true).create(true).mode(0o600).open(store.join("journal.jsonl"))?;
+    f.set_permissions(fs::Permissions::from_mode(0o600))?;
     writeln!(f, "{entry}")
 }
 
@@ -2223,6 +2612,330 @@ mod tests {
             s.analyze(&ctx, "brain", &mut |_| {}).map(|_| ()),
             Err(RepairError::Unavailable { state: RepairState::Exhausted })
         );
+    }
+
+    // ── Applying a plan, in a temp home, with a fake step and fake checks ───
+
+    use crate::model::Check;
+    use std::cell::Cell;
+
+    fn bun_works(home: &Path) -> bool {
+        home.join(".bun/ok").exists()
+    }
+
+    fn never(_: &Path) -> bool {
+        false
+    }
+
+    const PROBES: remedies::Probes = remedies::Probes { bun_ok: bun_works, obsidian_installed: never };
+
+    /// What the window would see: bun and brain from the temp home, claude while
+    /// ~/claude-ok exists, the network and the disk from ~/offline and ~/disk-full.
+    fn checks_of(home: &Path) -> Diagnosis {
+        let ok = |yes: bool| if yes { Status::Ok } else { Status::Missing };
+        let list = [
+            ("network", ok(!home.join("offline").exists()), None),
+            ("disk", if home.join("disk-full").exists() { Status::Warn } else { Status::Ok }, None),
+            ("claude", ok(home.join("claude-ok").exists()), Some("claude")),
+            ("bun", ok(bun_works(home)), Some("bun")),
+            ("brain_vault", ok(home.join("Documents/Brain").is_dir()), Some("brain")),
+        ];
+        Diagnosis {
+            os: "macOS 26.3".into(),
+            arch: "arm64".into(),
+            ram_gb: 16.0,
+            disk_free_gb: 100.0,
+            online: true,
+            checks: list
+                .into_iter()
+                .map(|(id, status, fix)| Check {
+                    id: id.into(),
+                    label: format!("contrôle {id}"),
+                    status,
+                    detail: String::new(),
+                    fix: fix.map(String::from),
+                })
+                .collect(),
+            todo: Vec::new(),
+            can_install: true,
+        }
+    }
+
+    struct Bench {
+        _tmp: tempfile::TempDir,
+        home: PathBuf,
+        store: PathBuf,
+        s: Session,
+    }
+
+    impl Bench {
+        fn new() -> Self {
+            let tmp = tempfile::tempdir().unwrap();
+            let home = fs::canonicalize(tmp.path()).unwrap().join("home");
+            fs::create_dir_all(&home).unwrap();
+            fs::write(home.join("claude-ok"), "").unwrap();
+            let store = home.join(STORE);
+            Bench { _tmp: tmp, home, store, s: Session::default() }
+        }
+
+        /// The step failed and Claude answered with `remedies` for `cause`.
+        fn planned(&self, step: &str, cause: &'static str, remedies: &[&'static str]) -> String {
+            self.s.trace_start(step);
+            self.s.record_line(step, "✗ ça a coincé");
+            self.s.record_result(&StepResult { id: step.into(), ok: false, message: "Ça a coincé.".into() });
+            let n = self.s.reserve(step).unwrap();
+            let id = format!("20261013-18445{n}-{step}");
+            fs::DirBuilder::new().recursive(true).mode(0o700).create(self.store.join(&id)).unwrap();
+            let round = Round {
+                id: id.clone(),
+                cause_id: Some(cause),
+                confiance: Some("moyenne"),
+                remedies: remedies.to_vec(),
+                ..Round::default()
+            };
+            self.s.settle(step, n, Some(round));
+            id
+        }
+
+        fn apply(&self, plan: &str, key: Option<&str>, run: &mut Runner) -> (RepairOutcome, Vec<String>) {
+            let home = self.home.clone();
+            let diag = move || checks_of(&home);
+            let fixer = Fixer {
+                home: self.home.clone(),
+                store: self.store.clone(),
+                me: owner(&self.home),
+                probes: &PROBES,
+                work_dirs: vec![self.home.join(".brain-in-a-box")],
+                diag: &diag,
+            };
+            let mut lines = Vec::new();
+            let out = self.s.apply(&fixer, plan, key, run, &mut |_, l| lines.push(l));
+            (out, lines)
+        }
+
+        fn journal(&self) -> Vec<Value> {
+            fs::read_to_string(self.store.join("journal.jsonl"))
+                .unwrap_or_default()
+                .lines()
+                .map(|l| serde_json::from_str(l).unwrap())
+                .collect()
+        }
+
+        fn broken_bun(&self) {
+            fs::create_dir_all(self.home.join(".bun/bin")).unwrap();
+            fs::write(self.home.join(".bun/bin/bun"), "old and broken").unwrap();
+        }
+    }
+
+    fn held(step: &str, ok: bool, message: &str) -> steps::Held {
+        steps::Held { result: StepResult { id: step.into(), ok, message: message.into() }, restored: Vec::new() }
+    }
+
+    /// A Bun installer that works: a fresh ~/.bun.
+    fn reinstall_bun(home: &Path) -> steps::Held {
+        fs::create_dir_all(home.join(".bun/bin")).unwrap();
+        fs::write(home.join(".bun/ok"), "").unwrap();
+        held("bun", true, "Bun 1.4.2 est installé.")
+    }
+
+    #[test]
+    fn a_plan_is_applied_once_and_judged_by_the_app() {
+        let b = Bench::new();
+        b.broken_bun();
+        let plan = b.planned("bun", "dossier_bun_abime", &["mettre_de_cote_bun"]);
+        let runs = Cell::new(0);
+        let home = b.home.clone();
+        let mut run = |step: &str, _: Option<&str>, log: &mut dyn FnMut(String)| {
+            runs.set(runs.get() + 1);
+            log("J'installe Bun…".into());
+            assert_eq!(step, "bun");
+            reinstall_bun(&home)
+        };
+        let (out, lines) = b.apply(&plan, None, &mut run);
+        assert_eq!(out.outcome, Ending::Fixed, "{out:?}");
+        assert_eq!((out.message.as_str(), out.cause.as_str()), ("Bun 1.4.2 est installé.", "L'installation de Bun est abîmée."));
+        assert!(out.undoable && !out.retry && out.details.is_empty());
+        assert_eq!(
+            lines,
+            ["→ Mettre de côté l'installation abîmée de Bun, puis la refaire. Rien n'est effacé.", "J'installe Bun…"]
+        );
+        let kept = b.home.join(remedies::SET_ASIDE_DIR).join(&plan).join("mettre_de_cote_bun");
+        assert_eq!(fs::read_to_string(kept.join("bin/bun")).unwrap(), "old and broken");
+        assert!(b.s.failure("bun").is_none(), "the relaunch is the step's new trace");
+
+        // Once only.
+        let (again, _) = b.apply(&plan, None, &mut run);
+        assert_eq!(again.outcome, Ending::Refused);
+        assert_eq!(runs.get(), 1);
+
+        let entry = b.journal().pop().unwrap();
+        assert_eq!((entry["action"].as_str(), entry["outcome"].as_str()), (Some("reparer"), Some("fixed")));
+        assert_eq!(entry["remedes"][0]["fait"], json!(format!("mis de côté dans ~/{}/{plan}/mettre_de_cote_bun", remedies::SET_ASIDE_DIR)));
+        assert_eq!(fs::metadata(b.store.join("journal.jsonl")).unwrap().permissions().mode() & 0o777, 0o600);
+        for f in ["actions.json", "outcome.json"] {
+            let p = b.store.join(&plan).join(f);
+            assert_eq!(fs::metadata(&p).unwrap().permissions().mode() & 0o777, 0o600, "{f}");
+        }
+        assert!(b.s.previous("bun", 2).contains("appliqués : oui ; résultat : réparé"), "{}", b.s.previous("bun", 2));
+    }
+
+    #[test]
+    fn a_step_saying_ok_is_not_enough() {
+        let b = Bench::new();
+        b.broken_bun();
+        let plan = b.planned("bun", "dossier_bun_abime", &["mettre_de_cote_bun"]);
+        // The installer exits 0 but Bun still does not answer: the app's check decides.
+        let home = b.home.clone();
+        let (out, _) = b.apply(&plan, None, &mut |_, _, _| {
+            fs::create_dir_all(home.join(".bun")).unwrap();
+            held("bun", true, "Bun est installé.")
+        });
+        assert_eq!(out.outcome, Ending::StillFailing);
+        assert!(out.retry && out.undoable);
+
+        // « Remettre comme avant »: the old one back, the new one set aside.
+        let said = undo_in(&b.home, &b.store, owner(&b.home), &plan).unwrap();
+        assert_eq!(said, "J'ai tout remis comme avant (~/.bun).");
+        assert_eq!(fs::read_to_string(b.home.join(".bun/bin/bun")).unwrap(), "old and broken");
+        assert_eq!(undo_in(&b.home, &b.store, owner(&b.home), &plan).unwrap(), "Il n'y avait rien à remettre.");
+        assert!(undo_in(&b.home, &b.store, owner(&b.home), "../../Documents").is_err());
+        let entry = b.journal().pop().unwrap();
+        assert_eq!(entry["action"], "remettre");
+
+        // The second and last round: no third.
+        let plan2 = b.planned("bun", "installation_abimee", &["relancer"]);
+        let (out, _) = b.apply(&plan2, None, &mut |_, _, _| held("bun", false, "Bun ne répond pas."));
+        assert_eq!(out.outcome, Ending::StillFailing);
+        assert!(!out.retry && !out.undoable);
+    }
+
+    #[test]
+    fn a_relaunch_that_touches_the_users_files_is_undone() {
+        let b = Bench::new();
+        b.broken_bun();
+        let hook = b.home.join(".claude/hooks/mine.py");
+        fs::create_dir_all(hook.parent().unwrap()).unwrap();
+        fs::write(&hook, "à moi").unwrap();
+        let plan = b.planned("bun", "dossier_bun_abime", &["mettre_de_cote_bun"]);
+        let home = b.home.clone();
+        let (out, _) = b.apply(&plan, None, &mut |_, _, _| {
+            fs::write(home.join(".claude/hooks/mine.py"), "écrasé").unwrap();
+            reinstall_bun(&home)
+        });
+        assert_eq!(out.outcome, Ending::GuardRestored, "{out:?}");
+        assert_eq!(out.details, ["~/.claude/hooks/mine.py (réécrit)"]);
+        assert!(!out.retry && !out.undoable);
+        assert_eq!(fs::read_to_string(&hook).unwrap(), "à moi");
+        assert_eq!(fs::read_to_string(b.home.join(".bun/bin/bun")).unwrap(), "old and broken", "set aside, then put back");
+        // Claude is not asked again about this step.
+        assert_eq!(b.s.reserve("bun"), Err(RepairError::Unavailable { state: RepairState::Exhausted }));
+
+        // The guard of the brain step itself (inside run_held) says so too.
+        let b = Bench::new();
+        let plan = b.planned("brain", "inconnu", &["relancer"]);
+        let (out, _) = b.apply(&plan, None, &mut |_, _, _| steps::Held {
+            restored: vec!["~/.claude/settings.json (hooks retirés)".into()],
+            ..held("brain", false, "L'installation touchait à des fichiers à toi.")
+        });
+        assert_eq!((out.outcome, out.details.len()), (Ending::GuardRestored, 1));
+    }
+
+    #[test]
+    fn what_worked_before_must_still_work() {
+        let b = Bench::new();
+        b.broken_bun();
+        let plan = b.planned("bun", "dossier_bun_abime", &["mettre_de_cote_bun"]);
+        let home = b.home.clone();
+        let (out, _) = b.apply(&plan, None, &mut |_, _, _| {
+            fs::remove_file(home.join("claude-ok")).unwrap();
+            reinstall_bun(&home)
+        });
+        assert_eq!(out.outcome, Ending::Regression);
+        assert_eq!(out.details, ["contrôle claude"]);
+        assert_eq!(fs::read_to_string(b.home.join(".bun/bin/bun")).unwrap(), "old and broken");
+        assert!(b.s.is_closed("bun"));
+
+        // The network and the disk come and go: not the repair's doing.
+        let b = Bench::new();
+        b.broken_bun();
+        let plan = b.planned("bun", "dossier_bun_abime", &["mettre_de_cote_bun"]);
+        let home = b.home.clone();
+        let (out, _) = b.apply(&plan, None, &mut |_, _, _| {
+            fs::write(home.join("offline"), "").unwrap();
+            fs::write(home.join("disk-full"), "").unwrap();
+            reinstall_bun(&home)
+        });
+        assert_eq!(out.outcome, Ending::Fixed, "{out:?}");
+    }
+
+    #[test]
+    fn a_remedy_that_no_longer_holds_stops_everything() {
+        let b = Bench::new();
+        fs::create_dir_all(b.home.join(".brain-in-a-box/src")).unwrap();
+        fs::write(b.home.join(".brain-in-a-box/src/install.sh"), "v1").unwrap();
+        // ~/DEV/gbrain without install.sh's mark: the user's own clone.
+        fs::create_dir_all(b.home.join("DEV/gbrain")).unwrap();
+        let plan = b.planned("brain", "gbrain_abime", &["mettre_de_cote_sources", "mettre_de_cote_gbrain"]);
+        let (out, lines) = b.apply(&plan, Some("pa-0123456789abcdef0123"), &mut |_, _, _| panic!("nothing runs"));
+        assert_eq!(out.outcome, Ending::RemedyFailed, "{out:?}");
+        assert!(out.message.contains("Brain in a Box"), "{}", out.message);
+        assert!(lines.last().is_some_and(|l| l.starts_with("✗ ")));
+        assert_eq!(fs::read_to_string(b.home.join(".brain-in-a-box/src/install.sh")).unwrap(), "v1", "the first one is undone");
+        assert!(b.home.join("DEV/gbrain").is_dir() && !out.undoable);
+        assert!(out.retry, "Claude may look again, knowing this remedy could not apply");
+        let entry = b.journal().pop().unwrap();
+        assert_eq!(entry["remedes"][1]["ok"], json!(false));
+        assert!(!entry.to_string().contains("pa-0123456789abcdef0123"));
+        // Applied, even if nothing ran: the plan is used.
+        assert_eq!(b.apply(&plan, None, &mut |_, _, _| panic!()).0.outcome, Ending::Refused);
+    }
+
+    #[test]
+    fn the_voyage_key_goes_only_where_the_plan_says() {
+        let got: std::cell::RefCell<Vec<Option<String>>> = Default::default();
+        for remedy in ["relancer_sans_cle_voyage", "relancer"] {
+            let b = Bench::new();
+            let plan = b.planned("brain", "cle_voyage_refusee", &[remedy]);
+            let home = b.home.clone();
+            let (out, _) = b.apply(&plan, Some("pa-0123456789abcdef0123"), &mut |_, key, _| {
+                got.borrow_mut().push(key.map(String::from));
+                fs::create_dir_all(home.join("Documents/Brain")).unwrap();
+                held("brain", true, "Ton cerveau est installé.")
+            });
+            assert_eq!(out.outcome, Ending::Fixed, "{remedy}: {out:?}");
+        }
+        assert_eq!(*got.borrow(), [None, Some("pa-0123456789abcdef0123".into())]);
+    }
+
+    #[test]
+    fn only_the_latest_unused_plan_of_a_failing_step_applies() {
+        let b = Bench::new();
+        let mut never_runs = |_: &str, _: Option<&str>, _: &mut dyn FnMut(String)| -> steps::Held { panic!("no plan") };
+        assert_eq!(b.apply("", None, &mut never_runs).0.outcome, Ending::Refused);
+        assert_eq!(b.apply("20261013-184451-bun", None, &mut never_runs).0.outcome, Ending::Refused);
+        let first = b.planned("bun", "reseau", &["relancer"]);
+        let second = b.planned("bun", "reseau", &["relancer"]);
+        assert_eq!(b.apply(&first, None, &mut never_runs).0.outcome, Ending::Refused, "superseded");
+        // The step went through since: nothing left to repair.
+        b.s.record_result(&StepResult { id: "bun".into(), ok: true, message: "ok".into() });
+        assert_eq!(b.apply(&second, None, &mut never_runs).0.outcome, Ending::Refused);
+        // An analysis that gave no diagnosis is no plan.
+        let b = Bench::new();
+        b.s.trace_start("clt");
+        b.s.record_result(&StepResult { id: "clt".into(), ok: false, message: "x".into() });
+        b.s.reserve("clt").unwrap();
+        b.s.settle("clt", 1, Some(Round { id: "20261013-184451-clt".into(), error: Some(RepairError::Timeout), ..Round::default() }));
+        assert_eq!(b.apply("20261013-184451-clt", None, &mut never_runs).0.outcome, Ending::Refused);
+    }
+
+    #[test]
+    fn the_window_gets_the_outcome_in_snake_case() {
+        let json = serde_json::to_value(RepairOutcome::refused("bun", "non")).unwrap();
+        assert_eq!(json["outcome"], "refused");
+        assert_eq!(serde_json::to_value(Ending::GuardRestored).unwrap(), "guard_restored");
+        assert_eq!(serde_json::to_value(RepairError::Busy).unwrap(), json!({ "kind": "busy" }));
+        // Every remedy Claude may name is one the app knows how to apply.
+        assert!(REMEDIES.iter().all(|e| remedies::tests::known(e.id)));
     }
 
     /// This Mac's facts, read only, as Claude would get them for the bun step:

@@ -1,7 +1,9 @@
+mod config_guard;
 mod detect;
 mod diagnose;
 mod model;
 mod redact;
+mod remedies;
 mod repair;
 mod steps;
 mod sys;
@@ -77,6 +79,27 @@ fn repair_cancel() {
     repair::cancel();
 }
 
+/// Applies a plan from `repair_analyze`: the window sends only its id. The relaunched
+/// step's output arrives as "step-log" events.
+#[tauri::command]
+async fn repair_apply(app: tauri::AppHandle, plan_id: String, voyage_key: Option<String>) -> repair::RepairOutcome {
+    tauri::async_runtime::spawn_blocking(move || {
+        repair::apply(&plan_id, voyage_key.as_deref(), &mut |step, line| {
+            let _ = app.emit("step-log", model::LogLine { step: step.to_string(), line });
+        })
+    })
+    .await
+    .unwrap_or_else(repair::RepairOutcome::internal)
+}
+
+/// « Remettre comme avant ».
+#[tauri::command]
+async fn repair_undo(plan_id: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || repair::undo(&plan_id))
+        .await
+        .unwrap_or_else(|e| Err(format!("Erreur interne : {e}")))
+}
+
 #[tauri::command]
 async fn repair_report() -> String {
     tauri::async_runtime::spawn_blocking(repair::report).await.unwrap_or_default()
@@ -144,6 +167,8 @@ pub fn run() {
             repair_preview,
             repair_analyze,
             repair_cancel,
+            repair_apply,
+            repair_undo,
             repair_report,
             open_claude_login,
             start_onboarding,
