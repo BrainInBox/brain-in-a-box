@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="14 26 212 212">
+  <title>Bibo</title>
+  <ellipse cx="120" cy="211" rx="76" ry="7" fill="#3b2418" opacity=".16"/>
+  <g stroke="#4b2e2b" stroke-width="3" stroke-linejoin="round" stroke-linecap="round">
+    <path d="M46 138 L60 124 L180 124 L194 138 Z" fill="#9c6136"/>
+    <path d="M46 138 L60 124 L36 104 L20 119 Z" fill="#d8955a"/>
+    <path d="M194 138 L180 124 L204 104 L220 119 Z" fill="#d8955a"/>
+    <path d="M70 142 C62 128 58 110 66 96 C62 78 72 64 88 62 C92 46 112 40 120 48 C128 40 148 46 152 62 C168 64 178 78 174 96 C182 110 178 128 170 142 Z" fill="#f7a9c4"/>
+    <g fill="none" stroke="#da6f98">
+      <path d="M120 50 C116 56 124 61 120 68"/>
+      <path d="M96 58 C102 53 110 55 112 62"/>
+      <path d="M128 62 C130 55 138 53 144 58"/>
+      <path d="M70 90 C70 80 77 74 85 74"/>
+      <path d="M170 90 C170 80 163 74 155 74"/>
+    </g>
+    <ellipse cx="97" cy="51" rx="6" ry="3" transform="rotate(-24 97 51)" fill="#fff" opacity=".7" stroke="none"/>
+    <g fill="#ff7fa6" opacity=".55" stroke="none">
+      <ellipse cx="79" cy="119" rx="8" ry="5"/>
+      <ellipse cx="161" cy="119" rx="8" ry="5"/>
+    </g>
+    <ellipse cx="100" cy="102" rx="14" ry="16.5" fill="#fff"/>
+    <ellipse cx="140" cy="102" rx="14" ry="16.5" fill="#fff"/>
+    <g stroke="none">
+      <ellipse cx="101" cy="104" rx="8.5" ry="10.5" fill="#2b1a1e"/>
+      <ellipse cx="141" cy="104" rx="8.5" ry="10.5" fill="#2b1a1e"/>
+      <circle cx="104.5" cy="99" r="3.4" fill="#fff"/>
+      <circle cx="144.5" cy="99" r="3.4" fill="#fff"/>
+      <circle cx="98" cy="109.5" r="1.6" fill="#fff"/>
+      <circle cx="138" cy="109.5" r="1.6" fill="#fff"/>
+    </g>
+    <path d="M113 124 Q120 131 127 124" fill="none"/>
+    <rect x="46" y="138" width="148" height="66" rx="7" fill="#e7a96b"/>
+    <rect x="50" y="141.5" width="140" height="5" rx="2.5" fill="#f2c08a" stroke="none"/>
+    <path d="M120 188 C105 178 107 164 115.5 165 C118 165.4 119.5 167 120 169.5 C120.5 167 122 165.4 124.5 165 C133 164 135 178 120 188 Z" fill="#f7a9c4" stroke-width="2.5"/>
+  </g>
+</svg>

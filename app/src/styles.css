@@ -1,0 +1,735 @@
+:root {
+  --bg: #fbf5ec;
+  --card: #ffffff;
+  --ink: #2e2220;
+  --ink-2: #6b5a55;
+  --line: #eadfce;
+  --line-strong: #cdbca6;
+  --accent: #c23a6e;
+  --accent-hover: #a92f5e;
+  --accent-ink: #ffffff;
+  --accent-soft: #fbe3ec;
+  --ok: #287c4e;
+  --missing: #5f6886;
+  --warn: #a35f09;
+  --error: #c0392b;
+  --on-status: #ffffff;
+  --log-bg: #2a211f;
+  --log-ink: #f3e9da;
+  --track: rgba(70, 40, 30, 0.12);
+  --shadow: 0 1px 2px rgba(70, 45, 30, 0.06), 0 8px 24px rgba(70, 45, 30, 0.08);
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1c1715;
+    --card: #28211e;
+    --ink: #f5ece4;
+    --ink-2: #bcaba1;
+    --line: #3a302b;
+    --line-strong: #5a4b43;
+    --accent: #f27fa8;
+    --accent-hover: #f79abb;
+    --accent-ink: #2a0e19;
+    --accent-soft: #46222f;
+    --ok: #63d296;
+    --missing: #aab2cc;
+    --warn: #f2c04e;
+    --error: #ff8a7a;
+    --on-status: #1c1715;
+    --log-bg: #120e0d;
+    --log-ink: #e9ddd2;
+    --track: rgba(255, 255, 255, 0.14);
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.25);
+  }
+}
+
+* { box-sizing: border-box; }
+
+html, body { height: 100%; margin: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font: 15px/1.45 ui-rounded, "SF Pro Rounded", -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -webkit-user-select: none;
+  user-select: none;
+  cursor: default;
+}
+
+p { margin: 0; }
+
+[hidden] { display: none !important; }
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* Layout: Bibo and the message on top, the screen in the middle, buttons at the bottom. */
+
+.app {
+  height: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 20px 28px 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.hero {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.hero .bibo {
+  flex: none;
+  width: 100px;
+  height: 100px;
+}
+
+/* The screen's title and text, next to Bibo (he does not talk: no speech bubble). */
+.message {
+  flex: 1;
+  min-width: 0;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.say-title {
+  font-size: 19px;
+  font-weight: 700;
+  line-height: 1.3;
+  text-wrap: balance;
+}
+
+.say-text {
+  margin-top: 4px;
+  color: var(--ink-2);
+  text-wrap: pretty;
+}
+
+.screen {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 2px;
+}
+
+.screen > * + * { margin-top: 14px; }
+
+.actions {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 14px 0 20px;
+  border-top: 1px solid var(--line);
+}
+
+.actions:empty { display: none; }
+
+/* Big layout (welcome, done): Bibo centered, message below, the whole group centered in the window. */
+
+body.big .app { justify-content: center; }
+
+body.big .screen { flex: 0 1 auto; }
+
+body.big .hero {
+  flex-direction: column;
+  text-align: center;
+  padding-top: 8px;
+  gap: 16px;
+}
+
+body.big .hero .bibo { width: 200px; height: 200px; }
+
+body.big .message {
+  flex: none;
+  max-width: 520px;
+}
+
+body.big .say-title { font-size: 22px; }
+
+body.big .screen { text-align: center; }
+
+body.big .actions {
+  justify-content: center;
+  border-top: 0;
+  padding-top: 6px;
+  padding-bottom: 28px;
+}
+
+@media (max-height: 640px) {
+  body.big .hero .bibo { width: 150px; height: 150px; }
+}
+
+/* Buttons */
+
+.btn {
+  appearance: none;
+  border: 1.5px solid transparent;
+  border-radius: 12px;
+  padding: 10px 20px;
+  font: inherit;
+  font-weight: 650;
+  line-height: 1.3;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+}
+
+.btn:active:not(:disabled) { transform: translateY(1px); }
+
+.btn:disabled { opacity: 0.5; cursor: default; }
+
+.btn:focus-visible,
+.input:focus-visible,
+summary:focus-visible,
+.log-lines:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: var(--accent-ink);
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.12);
+}
+
+.btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+
+.btn-secondary {
+  background: var(--card);
+  color: var(--ink);
+  border-color: var(--line-strong);
+}
+
+.btn-secondary:hover:not(:disabled) { border-color: var(--ink-2); }
+
+.btn-ghost {
+  background: transparent;
+  color: var(--ink-2);
+  padding-left: 8px;
+  padding-right: 8px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.btn-ghost:hover:not(:disabled) { color: var(--ink); }
+
+.btn-small { padding: 6px 12px; font-size: 14px; }
+
+/* Welcome and login: a short numbered plan. */
+
+.plan {
+  list-style: none;
+  counter-reset: plan;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+body.big .plan { justify-content: center; text-align: left; }
+
+.plan li {
+  counter-increment: plan;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.plan li::before {
+  content: counter(plan);
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 24px;
+  text-align: center;
+}
+
+.note { color: var(--ink-2); font-size: 14px; }
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+
+.loading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--ink-2);
+}
+
+/* Status icons */
+
+.ic { display: block; width: 20px; height: 20px; }
+.ic-ok { color: var(--ok); }
+.ic-warn { color: var(--warn); }
+.ic-error { color: var(--error); }
+.ic-missing { color: var(--missing); }
+.ic-pending { color: var(--line-strong); }
+.ic .ic-bg { fill: currentColor; }
+.ic .ic-fg { fill: none; stroke: var(--on-status); stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.ic .ic-dot { fill: var(--on-status); }
+.ic .ic-ring { fill: none; stroke: currentColor; stroke-width: 1.8; }
+.ic-missing .ic-ring { stroke-dasharray: 3 2.4; }
+.ic .ic-line { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+.spinner {
+  display: block;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2.5px solid var(--track);
+  border-top-color: var(--accent);
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Diagnosis */
+
+.sys { color: var(--ink-2); font-size: 13.5px; }
+
+.checks { list-style: none; margin: 0; padding: 0; }
+
+/* 15em fits the longest label of diagnose.rs on one line ("Bun (le moteur de la mémoire)"). */
+.check {
+  display: grid;
+  grid-template-columns: 20px 15em 1fr;
+  gap: 12px;
+  align-items: baseline;
+  padding: 5px 14px;
+}
+
+.check + .check { border-top: 1px solid var(--line); }
+
+.check .ic { align-self: center; }
+
+.check-label { font-weight: 650; }
+
+.check-detail { color: var(--ink-2); font-size: 13.5px; overflow-wrap: anywhere; }
+
+.check.is-error { background: rgba(192, 57, 43, 0.07); }
+
+/* Voyage key */
+
+.vsteps {
+  list-style: none;
+  counter-reset: vs;
+  margin: 0;
+  padding: 4px 16px;
+}
+
+.vsteps > li {
+  counter-increment: vs;
+  position: relative;
+  padding: 10px 0 10px 36px;
+}
+
+.vsteps > li + li { border-top: 1px solid var(--line); }
+
+.vsteps > li::before {
+  content: counter(vs);
+  position: absolute;
+  left: 0;
+  top: 10px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 24px;
+  text-align: center;
+}
+
+.vsteps .note { margin-top: 2px; }
+
+.vsteps .btn { margin-top: 8px; }
+
+.keybox { padding: 14px 16px; }
+
+.keybox label { display: block; font-weight: 650; margin-bottom: 6px; }
+
+.keyrow { display: flex; gap: 10px; }
+
+.input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1.5px solid var(--line-strong);
+  border-radius: 10px;
+  padding: 9px 12px;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.input::placeholder { color: var(--ink-2); opacity: 0.7; }
+
+.key-msg { margin-top: 8px; min-height: 1.45em; font-size: 14px; color: var(--ink-2); }
+.key-msg.is-ok { color: var(--ok); }
+.key-msg.is-invalid,
+.key-msg.is-offline { color: var(--error); }
+.key-msg.is-limited { color: var(--warn); }
+
+.upgrade .btn { margin-top: 8px; }
+
+/* Install */
+
+.bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--track);
+  overflow: hidden;
+}
+
+.bar-fill {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: 3px;
+  background: var(--accent);
+  transition: width 0.4s ease;
+}
+
+.steps { list-style: none; margin: 0; padding: 0; overflow: hidden; }
+
+.step {
+  display: grid;
+  grid-template-columns: 20px 1fr auto;
+  gap: 14px;
+  align-items: center;
+  padding: 11px 16px;
+  transition: background-color 0.2s ease;
+}
+
+.step + .step { border-top: 1px solid var(--line); }
+
+.step-text { display: flex; flex-direction: column; min-width: 0; }
+
+.step-name { font-weight: 650; }
+
+.step-what { color: var(--ink-2); font-size: 13.5px; }
+
+.step-status { color: var(--ink-2); font-size: 13.5px; white-space: nowrap; }
+
+.step.is-pending .step-name { color: var(--ink-2); }
+.step.is-running { background: var(--accent-soft); }
+.step.is-running .step-status { color: var(--ink); font-weight: 600; }
+.step.is-done .step-status { color: var(--ok); }
+.step.is-failed { background: rgba(192, 57, 43, 0.08); }
+.step.is-failed .step-status { color: var(--error); font-weight: 600; }
+
+.log summary {
+  display: inline-block;
+  cursor: pointer;
+  color: var(--ink-2);
+  font-weight: 600;
+  font-size: 14px;
+  border-radius: 6px;
+  padding: 2px 4px;
+}
+
+.log summary::-webkit-details-marker { display: none; }
+
+.log summary::before {
+  content: "";
+  display: inline-block;
+  margin-right: 7px;
+  border: 5px solid transparent;
+  border-left: 7px solid currentColor;
+  border-right: 0;
+  transition: transform 0.15s ease;
+}
+
+.log[open] summary::before { transform: rotate(90deg); }
+
+.log-lines {
+  margin: 8px 0 0;
+  max-height: 190px;
+  overflow: auto;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--log-bg);
+  color: var(--log-ink);
+  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  text-align: left;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.report {
+  width: 100%;
+  height: 140px;
+  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--ink);
+  background: var(--card);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  padding: 8px 10px;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* Screen entrance */
+
+.screen > *,
+.actions > * { animation: rise 0.28s ease-out backwards; }
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* Bibo. The root carries one mood class: idle, thinking, working, happy, worried.
+   app.js adds the rest on top: blink, hop, giggle, waking for a moment, asleep until woken. */
+
+.bibo { display: block; overflow: visible; cursor: pointer; }
+
+/* A worried Bibo ignores clicks (app.js, onPoke). */
+.bibo.worried { cursor: default; }
+
+.bibo .b-hop,
+.bibo .b-body,
+.bibo .b-brain,
+.bibo .b-eyes,
+.bibo .m-o,
+.bibo .b-shadow,
+.bibo .b-drop,
+.bibo .b-bubbles circle,
+.bibo .b-sparks path,
+.bibo .b-zzz path {
+  transform-box: fill-box;
+  transform-origin: 50% 50%;
+}
+
+.bibo .b-hop,
+.bibo .b-body,
+.bibo .b-brain { transform-origin: 50% 100%; }
+
+.bibo .b-lids,
+.bibo .b-glee,
+.bibo .m-open,
+.bibo .m-o,
+.bibo .m-wobble,
+.bibo .b-brows,
+.bibo .b-drop,
+.bibo .b-bubbles,
+.bibo .b-sparks,
+.bibo .b-zzz { opacity: 0; }
+
+.bibo .b-lids,
+.bibo .b-glee,
+.bibo .m-smile,
+.bibo .m-open,
+.bibo .m-wobble,
+.bibo .b-brows,
+.bibo .b-zzz { transition: opacity 0.2s ease; }
+
+.bibo .b-eyes { transition: opacity 0.2s ease, transform 0.06s ease-in; }
+.bibo .m-o { transition: opacity 0.2s ease, transform 0.3s ease; }
+
+/* The pupils follow the pointer (--gx, --gy from app.js), unless the mood looks somewhere. */
+.bibo .b-pupil {
+  transform: translate(var(--gx, 0px), var(--gy, 0px));
+  transition: transform 0.25s ease-out;
+}
+
+.bibo.idle .b-body { animation: sway 4s ease-in-out infinite alternate; }
+
+.bibo.thinking .m-smile { opacity: 0; }
+.bibo.thinking .m-o { opacity: 1; }
+.bibo.thinking .b-pupil { transform: translate(3px, -5px); }
+.bibo.thinking .b-brain { animation: tilt 2.6s ease-in-out infinite alternate; }
+.bibo.thinking .b-bubbles { opacity: 1; }
+.bibo.thinking .b-bubbles circle { opacity: 0; animation: bubble 2.1s ease-in-out infinite; }
+.bibo.thinking .b-bubbles circle:nth-child(2) { animation-delay: 0.3s; }
+.bibo.thinking .b-bubbles circle:nth-child(3) { animation-delay: 0.6s; }
+
+.bibo.working .b-brain { animation: wiggle 0.45s ease-in-out infinite alternate; }
+.bibo.working .b-pupil { transform: translate(-2px, 2px); }
+
+.bibo.happy .m-smile { opacity: 0; }
+.bibo.happy .m-open { opacity: 1; }
+.bibo.happy .b-body { animation: jump 0.9s cubic-bezier(0.3, 0.6, 0.4, 1) infinite; }
+.bibo.happy .b-shadow { animation: shadow 0.9s cubic-bezier(0.3, 0.6, 0.4, 1) infinite; }
+.bibo.happy .b-sparks { opacity: 1; }
+.bibo.happy .b-sparks path { opacity: 0; animation: twinkle 1.4s ease-in-out infinite; }
+.bibo.happy .b-sparks g:nth-child(2) path { animation-delay: 0.35s; }
+.bibo.happy .b-sparks g:nth-child(3) path { animation-delay: 0.7s; }
+.bibo.happy .b-sparks g:nth-child(4) path { animation-delay: 1.05s; }
+
+.bibo.worried .m-smile { opacity: 0; }
+.bibo.worried .m-wobble { opacity: 1; }
+.bibo.worried .b-brows { opacity: 1; }
+.bibo.worried .b-drop { opacity: 1; animation: drip 2.4s ease-in infinite; }
+.bibo.worried .b-pupil { transform: translate(0, 2px); }
+
+/* After the moods, so these win while they last. */
+
+.bibo.blink .b-eyes { transform: scaleY(0.1); }
+
+/* The pointer comes by: a little hop. */
+.bibo.hop .b-hop { animation: hop 0.75s cubic-bezier(0.3, 0.6, 0.4, 1); }
+.bibo.hop .b-shadow { animation: shadow 0.75s cubic-bezier(0.3, 0.6, 0.4, 1); }
+.bibo.hop .m-smile,
+.bibo.hop .m-o { opacity: 0; }
+.bibo.hop .m-open { opacity: 1; }
+.bibo.hop .b-sparks { opacity: 1; }
+.bibo.hop .b-sparks path { opacity: 0; animation: twinkle 0.7s ease-in-out; }
+.bibo.hop .b-sparks g:nth-child(2) path { animation-delay: 0.06s; }
+.bibo.hop .b-sparks g:nth-child(3) path { animation-delay: 0.12s; }
+.bibo.hop .b-sparks g:nth-child(4) path { animation-delay: 0.18s; }
+
+/* A click: a giggle, eyes squeezed shut. */
+.bibo.giggle .b-brain { animation: giggle 0.8s ease-in-out; }
+.bibo.giggle .b-eyes { opacity: 0; }
+.bibo.giggle .b-glee { opacity: 1; }
+.bibo.giggle .m-smile,
+.bibo.giggle .m-o { opacity: 0; }
+.bibo.giggle .m-open { opacity: 1; }
+
+/* Asleep: eyes shut, slow breath, Zs. */
+.bibo.asleep .b-eyes { opacity: 0; }
+.bibo.asleep .b-lids { opacity: 1; }
+.bibo.asleep .m-smile { opacity: 0; }
+.bibo.asleep .m-o { opacity: 1; transform: scale(0.75); }
+.bibo.asleep .b-body { animation: none; }
+.bibo.asleep .b-brain { animation: breathe 4s ease-in-out infinite; }
+.bibo.asleep .b-zzz { opacity: 1; }
+.bibo.asleep .b-zzz path { opacity: 0; animation: snooze 3.6s ease-in-out infinite; }
+.bibo.asleep .b-zzz g:nth-child(2) path { animation-delay: 1.2s; }
+.bibo.asleep .b-zzz g:nth-child(3) path { animation-delay: 2.4s; }
+
+/* Woken up: a yawn and a stretch, then back to the mood. */
+.bibo.waking .b-eyes { opacity: 0; }
+.bibo.waking .b-lids { opacity: 1; }
+.bibo.waking .m-smile { opacity: 0; }
+.bibo.waking .m-o { opacity: 1; transform: scale(1.7, 2.1); }
+.bibo.waking .b-body { animation: stretch 1.2s ease-in-out; }
+
+@keyframes sway {
+  from { transform: rotate(-1.6deg); }
+  to { transform: rotate(1.6deg); }
+}
+
+@keyframes tilt {
+  from { transform: rotate(-2deg); }
+  to { transform: rotate(3deg); }
+}
+
+@keyframes wiggle {
+  from { transform: rotate(-3.5deg); }
+  to { transform: rotate(3.5deg) translateY(-2px); }
+}
+
+@keyframes bubble {
+  0% { opacity: 0; transform: scale(0.4); }
+  30%, 75% { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(1.05); }
+}
+
+@keyframes jump {
+  0%, 100% { transform: translateY(0) scale(1.05, 0.95); }
+  15% { transform: translateY(0) scale(1); }
+  45% { transform: translateY(-18px) scale(0.98, 1.03); }
+  75% { transform: translateY(0) scale(1); }
+}
+
+@keyframes shadow {
+  0%, 15%, 75%, 100% { transform: scale(1); opacity: 0.16; }
+  45% { transform: scale(0.72); opacity: 0.08; }
+}
+
+@keyframes twinkle {
+  0%, 100% { opacity: 0; transform: scale(0.3) rotate(0deg); }
+  50% { opacity: 1; transform: scale(1) rotate(25deg); }
+}
+
+@keyframes drip {
+  0% { opacity: 0; transform: translateY(-4px); }
+  20%, 75% { opacity: 1; }
+  100% { opacity: 0; transform: translateY(10px); }
+}
+
+@keyframes hop {
+  0%, 100% { transform: none; }
+  15% { transform: scale(1.05, 0.94); }
+  45% { transform: translateY(-14px) scale(0.97, 1.04); }
+  75% { transform: scale(1.03, 0.97); }
+}
+
+@keyframes giggle {
+  0%, 100% { transform: none; }
+  15% { transform: rotate(-5deg) scale(1.03, 0.97); }
+  32% { transform: rotate(4deg); }
+  50% { transform: rotate(-3deg) scale(1.02, 0.98); }
+  68% { transform: rotate(2deg); }
+  85% { transform: rotate(-1deg); }
+}
+
+@keyframes breathe {
+  0%, 100% { transform: rotate(-3deg); }
+  50% { transform: rotate(-3deg) scale(1.03, 1.05); }
+}
+
+@keyframes snooze {
+  0% { opacity: 0; transform: translate(-4px, 6px) scale(0.6); }
+  30%, 60% { opacity: 1; transform: none; }
+  100% { opacity: 0; transform: translate(5px, -7px) scale(1.15); }
+}
+
+@keyframes stretch {
+  0%, 100% { transform: none; }
+  35% { transform: scale(0.96, 1.07) rotate(-2deg); }
+  65% { transform: scale(0.96, 1.07) rotate(2deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Bibo keeps its expressions, fading in and out, but nothing moves: no hop, no shake. */
+  .bibo,
+  .bibo * {
+    animation: none !important;
+    transition-property: opacity !important;
+  }
+
+  /* Without the animations, the props stay still but visible. */
+  .bibo.thinking .b-bubbles circle,
+  .bibo.happy .b-sparks path,
+  .bibo.hop .b-sparks path,
+  .bibo.asleep .b-zzz path { opacity: 1; }
+
+  .screen > *,
+  .actions > * { animation: none; }
+
+  .bar-fill,
+  .btn,
+  .log summary::before { transition: none; }
+
+  .spinner { animation-duration: 2.4s; }
+}

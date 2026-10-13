@@ -1,0 +1,1142 @@
+//! The install steps, and what the window does once the install is over.
+//!
+//! Every step checks first (running it twice is harmless), installs, then checks
+//! again: a step is done only when that last check passes. Nothing needs admin
+//! rights, everything lands in the user's home. Downloads go to a fresh private
+//! folder that is removed when the step ends.
+
+use std::fs;
+use std::io::{self, Write};
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
+use std::path::{Path, PathBuf};
+use std::sync::{mpsc, Mutex, TryLockError};
+use std::thread;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+use serde_json::{json, Value};
+
+use crate::detect::{self, fmt_version, Found};
+use crate::model::StepResult;
+use crate::sys::{self, minutes};
+use crate::voyage;
+
+pub const ORDER: &[&str] = &["clt", "bun", "claude", "obsidian", "brain"];
+
+const BUN_PIN: &str = "bun-v1.4.2";
+const OBSIDIAN_URL: &str = "https://github.com/obsidianmd/obsidian-releases/releases/download/v1.14.4/Obsidian-1.14.4.dmg";
+const OBSIDIAN_SIZE: u64 = 233_704_463;
+/// Obsidian's Apple developer id: a copy signed by anyone else is thrown away.
+const OBSIDIAN_TEAM: &str = "6JSW4SJWN9";
+const BRAIN_ZIP: &str = "https://github.com/BrainInBox/brain-in-a-box/archive/refs/heads/master.zip";
+const CLT_WAIT: Duration = Duration::from_secs(45 * 60);
+/// Past these, an installer is stuck rather than slow: it is stopped.
+const INSTALLER_LIMIT: Duration = Duration::from_secs(20 * 60);
+const BRAIN_LIMIT: Duration = Duration::from_secs(40 * 60);
+/// Our work folders (see TempDir): nothing else is ever named like them.
+const WORK_PREFIX: &str = ".biab-";
+const LINK_HOSTS: &[&str] = &["dashboard.voyageai.com", "docs.voyageai.com", "claude.com", "claude.ai", "obsidian.md"];
+
+/// The sentence for the user: Ok when done, Err with the cause and what to do.
+type Step = Result<String, String>;
+
+/// Two clicks must not run two installers over each other.
+static RUNNING: Mutex<()> = Mutex::new(());
+
+pub fn run(id: &str, voyage_key: Option<&str>, log: &mut dyn FnMut(String)) -> StepResult {
+    let _one_at_a_time = match RUNNING.try_lock() {
+        Ok(g) => g,
+        Err(TryLockError::Poisoned(p)) => p.into_inner(),
+        Err(TryLockError::WouldBlock) => {
+            return StepResult {
+                id: id.to_string(),
+                ok: false,
+                message: "Une autre étape est déjà en cours. Attends qu'elle finisse.".into(),
+            }
+        }
+    };
+    let res = match id {
+        "clt" => clt(log),
+        "bun" => bun(log),
+        "claude" => claude(log),
+        "obsidian" => obsidian(log),
+        "brain" => brain(voyage_key, log),
+        _ => Err("Étape inconnue.".into()),
+    };
+    let (ok, message) = match res {
+        Ok(m) => (true, m),
+        Err(m) => (false, m),
+    };
+    StepResult { id: id.to_string(), ok, message }
+}
+
+// ── Apple command line tools (git, python3) ─────────────────────────────────
+
+/// " (git 2.39.5)", or nothing when git does not say.
+fn git_version(clt: &Path) -> String {
+    let out = sys::run(&clt.join("usr/bin/git"), &["--version"], Duration::from_secs(10));
+    match out.stdout.split_whitespace().nth(2) {
+        Some(v) if out.ok() => format!(" (git {v})"),
+        _ => String::new(),
+    }
+}
+
+fn clt(log: &mut dyn FnMut(String)) -> Step {
+    if let Some(dir) = detect::clt_dir() {
+        return Ok(format!("Les outils Apple sont déjà installés{}.", git_version(&dir)));
+    }
+    log("J'ouvre la fenêtre d'Apple : clique sur « Installer », puis accepte la licence.".into());
+    let out = sys::run(Path::new("/usr/bin/xcode-select"), &["--install"], Duration::from_secs(30));
+    if out.code == -1 {
+        return Err("Je n'ai pas pu ouvrir l'installeur d'Apple. Redémarre le Mac, puis réessaie.".into());
+    }
+    let said = format!("{}{}", out.stdout, out.stderr);
+    if said.contains("already installed") {
+        return Err("macOS croit que les outils Apple sont déjà là, mais il en manque une partie. \
+                    Ouvre Réglages Système > Général > Mise à jour de logiciels, puis réessaie."
+            .into());
+    }
+    // Any other refusal means no window to wait for: do not sit there for 45 minutes.
+    if !out.ok() && !apple_installer_open() {
+        log(said.trim().to_string());
+        return Err("L'installeur d'Apple n'a pas démarré. Redémarre le Mac, puis réessaie.".into());
+    }
+    let start = Instant::now();
+    let mut next_note = Duration::from_secs(30);
+    let (mut seen, mut gone) = (false, 0);
+    loop {
+        thread::sleep(Duration::from_secs(5));
+        if let Some(dir) = detect::clt_dir() {
+            return Ok(format!("Les outils Apple sont installés{}.", git_version(&dir)));
+        }
+        // Apple's window stays open until the install is over: if it was there and is
+        // gone (three checks in a row), the user closed it.
+        if apple_installer_open() {
+            (seen, gone) = (true, 0);
+        } else if seen {
+            gone += 1;
+            if gone >= 3 {
+                return Err("La fenêtre d'Apple s'est fermée avant la fin. \
+                            Relance l'étape et clique sur « Installer »."
+                    .into());
+            }
+        }
+        let waited = start.elapsed();
+        if waited >= CLT_WAIT {
+            return Err("Les outils Apple ne sont toujours pas installés après 45 minutes. \
+                        Relance l'étape pour réessayer."
+                .into());
+        }
+        if waited >= next_note {
+            log(format!("J'attends la fin de l'installation d'Apple ({})…", minutes(waited)));
+            next_note += Duration::from_secs(30);
+        }
+    }
+}
+
+fn apple_installer_open() -> bool {
+    sys::run(Path::new("/usr/bin/pgrep"), &["-f", "Install Command Line Developer Tools"], Duration::from_secs(5)).ok()
+}
+
+// ── Bun ─────────────────────────────────────────────────────────────────────
+
+fn bun(log: &mut dyn FnMut(String)) -> Step {
+    let home = sys::home();
+    let found = detect::bun(&home);
+    if detect::bun_ok(&found) {
+        return Ok(format!("{} est déjà installé.", found.label("Bun")));
+    }
+    if let Some(v) = found.version() {
+        log(format!("Bun {} est trop ancien : je le mets à jour.", fmt_version(v)));
+    }
+    run_installer("https://bun.sh/install", "Bun", &[BUN_PIN], log)?;
+    let found = detect::bun(&home);
+    match found.version() {
+        _ if detect::bun_ok(&found) => Ok(format!("{} est installé.", found.label("Bun"))),
+        Some(v) => Err(format!("Bun {} est encore trop ancien après la mise à jour. Relance l'étape.", fmt_version(v))),
+        None => Err("Bun ne répond pas après l'installation. Relance l'étape.".into()),
+    }
+}
+
+// ── Claude Code ─────────────────────────────────────────────────────────────
+
+fn claude(log: &mut dyn FnMut(String)) -> Step {
+    let found = detect::claude();
+    if found.answers() {
+        return Ok(format!("{} est déjà installé.", found.label("Claude Code")));
+    }
+    run_installer("https://claude.ai/install.sh", "Claude Code", &[], log)?;
+    let found = detect::claude();
+    if found.answers() {
+        Ok(format!("{} est installé.", found.label("Claude Code")))
+    } else {
+        Err("Claude Code ne répond pas après l'installation. Relance l'étape.".into())
+    }
+}
+
+// ── Obsidian ────────────────────────────────────────────────────────────────
+
+fn obsidian(log: &mut dyn FnMut(String)) -> Step {
+    let home = sys::home();
+    let apps = home.join("Applications");
+    if let Ok(me) = fs::metadata(&home).map(|m| m.uid()) {
+        remove_stale_copies(&apps, me);
+    }
+    let found = detect::obsidian(&home);
+    if found != Found::Absent {
+        return Ok(format!("{} est déjà installé.", found.label("Obsidian")));
+    }
+    install_obsidian_into(&apps, log)?;
+    match detect::obsidian(&home) {
+        Found::Absent => Err("Obsidian n'apparaît pas dans Applications après l'installation. Relance l'étape.".into()),
+        found => Ok(format!("{} est installé.", found.label("Obsidian"))),
+    }
+}
+
+/// Downloads the pinned Obsidian, checks its signature and puts it in `apps`.
+fn install_obsidian_into(apps: &Path, log: &mut dyn FnMut(String)) -> Result<PathBuf, String> {
+    let dest = apps.join("Obsidian.app");
+    // Not a working Obsidian (detect said so), but maybe the user's own files: never overwritten.
+    if fs::symlink_metadata(&dest).is_ok() {
+        return Err("Un Obsidian incomplet traîne dans le dossier Applications de ton dossier personnel. \
+                    Mets-le à la corbeille, puis relance l'étape."
+            .into());
+    }
+    let tmp = TempDir::new_in(&std::env::temp_dir())?;
+    let dmg = tmp.path().join("Obsidian.dmg");
+    download(OBSIDIAN_URL, &dmg, "Obsidian", Some(OBSIDIAN_SIZE), Duration::from_secs(60 * 60), log)?;
+    if fs::metadata(&dmg).map(|m| m.len()).unwrap_or(0) != OBSIDIAN_SIZE {
+        return Err("Le téléchargement d'Obsidian est incomplet. Vérifie ta connexion internet, puis réessaie.".into());
+    }
+
+    fs::create_dir_all(apps).map_err(|e| format!("Je n'ai pas pu créer ton dossier Applications ({e})."))?;
+    // Copied next to its final place, then moved in one go: a copy cut short never
+    // passes for an installed Obsidian. Removed with its content if anything fails.
+    let staging = TempDir::new_in(apps)?;
+    let copy = staging.path().join("Obsidian.app");
+    {
+        let mnt = Mount::attach(&dmg, &tmp.path().join("mnt"))?;
+        log("Je copie Obsidian dans ton dossier Applications…".into());
+        let out = sys::run(
+            Path::new("/usr/bin/ditto"),
+            &[&mnt.app("Obsidian.app"), &copy.to_string_lossy()],
+            Duration::from_secs(10 * 60),
+        );
+        if !out.ok() {
+            log(out.stderr.trim().to_string());
+            return Err("La copie d'Obsidian a échoué. Vérifie qu'il reste de la place sur le disque, puis réessaie."
+                .into());
+        }
+    }
+    log("Je vérifie la signature d'Obsidian…".into());
+    signed_by_obsidian(&copy)?;
+    fs::rename(&copy, &dest).map_err(|e| format!("Je n'ai pas pu ranger Obsidian dans Applications ({e})."))?;
+    Ok(dest)
+}
+
+/// Copies left in ~/Applications by an Obsidian step that was cut short (app quit, Mac
+/// turned off): only real folders, named exactly like our work folders, owned by `owner`.
+fn remove_stale_copies(apps: &Path, owner: u32) {
+    let Ok(entries) = fs::read_dir(apps) else { return };
+    for entry in entries.filter_map(Result::ok) {
+        let name = entry.file_name();
+        let ours = name.to_str().and_then(|n| n.strip_prefix(WORK_PREFIX)).is_some_and(is_work_id);
+        // DirEntry::metadata does not follow symlinks: a link is never ours.
+        if ours && entry.metadata().is_ok_and(|m| m.is_dir() && m.uid() == owner) {
+            let _ = fs::remove_dir_all(entry.path());
+        }
+    }
+}
+
+/// The shape of `random_hex()`.
+fn is_work_id(s: &str) -> bool {
+    s.len() == 16 && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+fn signed_by_obsidian(app: &Path) -> Result<(), String> {
+    let codesign = Path::new("/usr/bin/codesign");
+    let app = app.to_string_lossy();
+    let valid = sys::run(codesign, &["--verify", "--deep", "--strict", &app], Duration::from_secs(5 * 60)).ok();
+    let info = sys::run(codesign, &["-dv", &app], Duration::from_secs(30));
+    if valid && team_id(&info.stderr) == Some(OBSIDIAN_TEAM) {
+        Ok(())
+    } else {
+        Err("Cette copie d'Obsidian n'a pas la signature officielle : je l'ai supprimée par sécurité. \
+             Réessaie plus tard."
+            .into())
+    }
+}
+
+/// The signer's team, from `codesign -dv` (which writes on stderr).
+fn team_id(codesign_dv: &str) -> Option<&str> {
+    codesign_dv.lines().find_map(|l| l.trim().strip_prefix("TeamIdentifier=")).map(str::trim)
+}
+
+/// A mounted disk image, detached when dropped, the step failing or not.
+struct Mount(PathBuf);
+
+impl Mount {
+    fn attach(dmg: &Path, at: &Path) -> Result<Self, String> {
+        fs::create_dir(at).map_err(|e| format!("Je n'ai pas pu préparer l'ouverture d'Obsidian ({e})."))?;
+        // Guard first: if hdiutil mounts and then times out, the image is still detached.
+        let mount = Mount(at.to_path_buf());
+        let out = sys::run(
+            Path::new("/usr/bin/hdiutil"),
+            &["attach", "-nobrowse", "-readonly", "-noautoopen", "-mountpoint", &at.to_string_lossy(), &dmg.to_string_lossy()],
+            Duration::from_secs(3 * 60),
+        );
+        if !out.ok() {
+            return Err("Je n'ai pas pu ouvrir le fichier d'Obsidian téléchargé. Réessaie.".into());
+        }
+        Ok(mount)
+    }
+
+    fn app(&self, name: &str) -> String {
+        self.0.join(name).to_string_lossy().into_owned()
+    }
+}
+
+impl Drop for Mount {
+    fn drop(&mut self) {
+        let hdiutil = Path::new("/usr/bin/hdiutil");
+        let at = self.0.to_string_lossy();
+        if !sys::run(hdiutil, &["detach", &at], Duration::from_secs(60)).ok() {
+            let _ = sys::run(hdiutil, &["detach", "-force", &at], Duration::from_secs(60));
+        }
+    }
+}
+
+// ── The brain (brain-in-a-box's own install.sh) ─────────────────────────────
+
+/// The French names of the parts install.sh did not leave behind.
+fn missing_parts(brain: detect::Brain) -> Vec<&'static str> {
+    [
+        ("le dossier Documents/Brain", brain.vault),
+        ("les automatismes de Claude", brain.hooks),
+        ("la mémoire de recherche", brain.memory),
+        ("les compétences de Claude", brain.skills),
+    ]
+    .into_iter()
+    .filter(|(_, there)| !there)
+    .map(|(name, _)| name)
+    .collect()
+}
+
+enum Archive {
+    Remote(String),
+    Local(PathBuf),
+}
+
+/// BIAB_ARCHIVE (tests, support) replaces the GitHub zip: a local .zip or an https URL.
+fn archive_source(var: Option<String>) -> Result<Archive, String> {
+    match var.filter(|v| !v.trim().is_empty()) {
+        None => Ok(Archive::Remote(BRAIN_ZIP.into())),
+        Some(v) if v.starts_with("https://") => Ok(Archive::Remote(v)),
+        Some(v) if v.contains("://") => Err("BIAB_ARCHIVE n'accepte que les adresses https://.".into()),
+        Some(v) => Ok(Archive::Local(PathBuf::from(v))),
+    }
+}
+
+fn brain(voyage_key: Option<&str>, log: &mut dyn FnMut(String)) -> Step {
+    let key = voyage_key.map(str::trim).filter(|k| !k.is_empty());
+    // install.sh writes the key into a curl config line: a malformed one could add
+    // its own curl directives there.
+    if key.is_some_and(|k| !voyage::well_formed(k)) {
+        return Err("Cette clé Voyage contient des caractères inattendus. \
+                    Copie-la à nouveau depuis le site de Voyage, ou continue sans clé."
+            .into());
+    }
+    let home = sys::home();
+    // install.sh runs git and python3: without the Apple tools, that pops Apple's window.
+    if detect::clt_dir().is_none() {
+        return Err("Il faut d'abord installer les outils Apple.".into());
+    }
+    if !detect::bun_ok(&detect::bun(&home)) {
+        return Err("Il faut d'abord installer Bun.".into());
+    }
+    // Already there: run again only to add a Voyage key the brain does not have yet.
+    if detect::brain(&home).complete() && !(key.is_some() && detect::embedding_model(&home).is_none()) {
+        return Ok("Ton cerveau est déjà installé.".into());
+    }
+
+    let base = home.join(".brain-in-a-box");
+    fs::create_dir_all(&base).map_err(|e| format!("Je n'ai pas pu créer le dossier .brain-in-a-box ({e})."))?;
+    let src = install_sources(&base, &archive_source(std::env::var("BIAB_ARCHIVE").ok())?, log)?;
+
+    log("Je mets en place ton cerveau (quelques minutes)…".into());
+    // Without a key from the user, the variable is removed: a key inherited from the
+    // app's own environment never sneaks in.
+    let env = [("VOYAGE_API_KEY", key)];
+    let script = src.join("install.sh");
+    let mut last = String::new();
+    let code = sys::run_streaming(Path::new("/bin/bash"), &[&script.to_string_lossy()], &env, Some(&src), BRAIN_LIMIT, &mut |line| {
+        let line = match key {
+            Some(k) => line.replace(k, "***"),
+            None => line,
+        };
+        if !line.trim().is_empty() {
+            last = line.trim().chars().take(200).collect();
+        }
+        log(line);
+    });
+    if code != 0 {
+        return Err(format!(
+            "L'installation du cerveau s'est arrêtée (code {code}) sur : « {last} ». \
+             Relance l'étape ; si ça recommence, envoie le journal à l'équipe."
+        ));
+    }
+    let missing = missing_parts(detect::brain(&home));
+    if !missing.is_empty() {
+        return Err(format!("L'installation s'est terminée, mais il manque {}. Relance l'étape.", missing.join(", ")));
+    }
+    Ok(match (detect::embedding_model(&home), key) {
+        (Some(_), _) => "Ton cerveau est installé dans Documents/Brain, avec la recherche par le sens.".into(),
+        (None, Some(_)) => "Ton cerveau est installé dans Documents/Brain. Voyage n'a pas accepté la clé : \
+                            il cherche par mots-clés pour l'instant."
+            .into(),
+        (None, None) => "Ton cerveau est installé dans Documents/Brain. Il cherche par mots-clés ; \
+                         tu pourras ajouter une clé Voyage plus tard."
+            .into(),
+    })
+}
+
+/// Puts a fresh copy of the brain-in-a-box sources in `<base>/src` and returns that path.
+fn install_sources(base: &Path, archive: &Archive, log: &mut dyn FnMut(String)) -> Result<PathBuf, String> {
+    // Work inside `base` so the final move is a rename on the same disk.
+    let tmp = TempDir::new_in(base)?;
+    let zip = match archive {
+        Archive::Remote(url) => {
+            let z = tmp.path().join("brain.zip");
+            download(url, &z, "le moteur du cerveau", None, Duration::from_secs(15 * 60), log)?;
+            z
+        }
+        Archive::Local(p) => p.clone(),
+    };
+    let out = tmp.path().join("x");
+    let unzip = sys::run(
+        Path::new("/usr/bin/ditto"),
+        &["-x", "-k", &zip.to_string_lossy(), &out.to_string_lossy()],
+        Duration::from_secs(5 * 60),
+    );
+    if !unzip.ok() {
+        log(unzip.stderr.trim().to_string());
+        return Err("Le fichier du cerveau est illisible. Réessaie.".into());
+    }
+    let root = source_root(&out).ok_or("Le fichier téléchargé ne contient pas le moteur du cerveau. Réessaie plus tard.")?;
+
+    let src = base.join("src");
+    let old = tmp.path().join("old");
+    let had_old = fs::symlink_metadata(&src).is_ok();
+    if had_old {
+        fs::rename(&src, &old).map_err(|e| format!("Je n'ai pas pu remplacer l'ancienne version du cerveau ({e})."))?;
+    }
+    if let Err(e) = fs::rename(&root, &src) {
+        if had_old {
+            let _ = fs::rename(&old, &src);
+        }
+        return Err(format!("Je n'ai pas pu mettre en place le moteur du cerveau ({e})."));
+    }
+    Ok(src)
+}
+
+/// The extracted folder holding install.sh and vault-skeleton: the folder itself, or
+/// its only subfolder (GitHub zips wrap everything in "<repo>-<branch>/").
+fn source_root(dir: &Path) -> Option<PathBuf> {
+    let is_root = |d: &Path| d.join("install.sh").is_file() && d.join("vault-skeleton").is_dir();
+    if is_root(dir) {
+        return Some(dir.to_path_buf());
+    }
+    let mut found = fs::read_dir(dir)
+        .ok()?
+        .filter_map(Result::ok)
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+        .map(|e| e.path())
+        .filter(|p| is_root(p));
+    let first = found.next()?;
+    found.next().is_none().then_some(first)
+}
+
+// ── After the install ───────────────────────────────────────────────────────
+
+/// The user logs in with Claude Code's own command, in Terminal: the app never sees
+/// nor handles Anthropic credentials.
+pub fn open_claude_login() -> Result<(), String> {
+    if detect::claude_bin().is_none() {
+        return Err("Claude Code n'est pas encore installé.".into());
+    }
+    open_in_terminal("claude-login.command", &login_script(&sys::tool_path()))
+}
+
+pub fn start_onboarding() -> Result<(), String> {
+    let home = sys::home();
+    if detect::claude_bin().is_none() {
+        return Err("Claude Code n'est pas encore installé.".into());
+    }
+    if detect::vault(&home).is_none() {
+        return Err("Ton cerveau n'est pas encore installé.".into());
+    }
+    let guide = onboarding_guide(&home)?;
+    open_in_terminal("onboarding.command", &onboarding_script(&sys::tool_path(), &home, &guide))
+}
+
+/// The guide from the sources the brain step unpacked; when the brain was installed
+/// from a terminal (git clone + install.sh) there are none, so the copy built into the app.
+fn onboarding_guide(home: &Path) -> Result<PathBuf, String> {
+    let from_sources = home.join(".brain-in-a-box/src/onboarding/ONBOARDING.md");
+    if from_sources.is_file() {
+        return Ok(from_sources);
+    }
+    let dir = home.join(".brain-in-a-box/onboarding");
+    fs::create_dir_all(&dir).map_err(|e| format!("Je n'ai pas pu préparer le guide ({e})."))?;
+    let guide = dir.join("ONBOARDING.md");
+    write_atomic(&guide, include_str!("../../../onboarding/ONBOARDING.md").as_bytes(), 0o644)
+        .map_err(|e| format!("Je n'ai pas pu préparer le guide ({e})."))?;
+    Ok(guide)
+}
+
+fn login_script(path: &str) -> String {
+    format!("#!/bin/bash\nexport PATH={}\nclaude auth login\necho\necho 'Tu peux fermer cette fenêtre.'\n", sh_quote(path))
+}
+
+fn onboarding_script(path: &str, home: &Path, guide: &Path) -> String {
+    let vault = home.join("Documents/Brain");
+    let prompt = format!("Read {} and run it to personalize me.", guide.display());
+    format!(
+        "#!/bin/bash\nexport PATH={}\ncd {} || exit 1\nclaude {}\necho\necho 'Tu peux fermer cette fenêtre.'\n",
+        sh_quote(path),
+        sh_quote(&vault.to_string_lossy()),
+        sh_quote(&prompt)
+    )
+}
+
+/// Single quotes keep everything literal in a POSIX shell, except the quote itself,
+/// written '\''.
+fn sh_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', r"'\''"))
+}
+
+fn open_in_terminal(name: &str, script: &str) -> Result<(), String> {
+    let dir = sys::home().join(".brain-in-a-box");
+    fs::create_dir_all(&dir).map_err(|e| format!("Je n'ai pas pu créer le dossier .brain-in-a-box ({e})."))?;
+    let file = dir.join(name);
+    write_atomic(&file, script.as_bytes(), 0o700).map_err(|e| format!("Je n'ai pas pu préparer le Terminal ({e})."))?;
+    if sys::run(Path::new("/usr/bin/open"), &["-a", "Terminal", &file.to_string_lossy()], Duration::from_secs(15)).ok() {
+        Ok(())
+    } else {
+        Err("Je n'ai pas pu ouvrir le Terminal.".into())
+    }
+}
+
+pub fn open_vault() -> Result<(), String> {
+    let home = sys::home();
+    let Some(vault) = detect::vault(&home) else {
+        return Err("Ton cerveau n'est pas encore installé.".into());
+    };
+    let Some(app) = detect::obsidian_app(&home) else {
+        return Err("Obsidian n'est pas encore installé.".into());
+    };
+    let vault = vault.to_string_lossy();
+    let by_uri = format!("obsidian://open?path={}", percent_encode(&vault));
+    // A running Obsidian rewrites its vault list when it quits and would drop our
+    // entry: ask it directly instead.
+    if obsidian_running() {
+        return open_obsidian(&app, Some(&by_uri));
+    }
+    let config = home.join("Library/Application Support/obsidian/obsidian.json");
+    let existing = match fs::read_to_string(&config) {
+        Ok(s) => Some(s),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => None,
+        Err(_) => return unregistered(&app),
+    };
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
+    match add_vault(existing.as_deref(), &vault, &random_hex(), now) {
+        VaultList::AlreadyThere => open_obsidian(&app, Some(&by_uri)),
+        VaultList::Updated(json) => {
+            let mode = fs::metadata(&config).map(|m| m.permissions().mode() & 0o777).unwrap_or(0o644);
+            let saved =
+                config.parent().map_or(Ok(()), fs::create_dir_all).and_then(|_| write_atomic(&config, json.as_bytes(), mode));
+            if saved.is_err() {
+                return unregistered(&app);
+            }
+            open_obsidian(&app, None)
+        }
+        VaultList::Unreadable => unregistered(&app),
+    }
+}
+
+/// Obsidian's vault list could not be updated: open Obsidian anyway and say how to
+/// pick the folder by hand.
+fn unregistered(app: &Path) -> Result<(), String> {
+    open_obsidian(app, None)?;
+    Err("Je n'ai pas pu ajouter ton cerveau à Obsidian. \
+         Dans Obsidian, choisis « Ouvrir un dossier comme coffre », puis Documents > Brain."
+        .into())
+}
+
+fn obsidian_running() -> bool {
+    sys::run(Path::new("/usr/bin/pgrep"), &["-x", "Obsidian"], Duration::from_secs(5)).ok()
+}
+
+/// By the bundle's path, not its name nor the obsidian:// scheme: a copy made a
+/// minute ago may not be known to macOS (Launch Services) yet.
+fn open_obsidian(app: &Path, uri: Option<&str>) -> Result<(), String> {
+    let app = app.to_string_lossy();
+    let mut args = vec!["-a", app.as_ref()];
+    args.extend(uri);
+    if sys::run(Path::new("/usr/bin/open"), &args, Duration::from_secs(15)).ok() {
+        Ok(())
+    } else {
+        Err("Je n'ai pas pu ouvrir Obsidian.".into())
+    }
+}
+
+#[derive(Debug, PartialEq)]
+enum VaultList {
+    AlreadyThere,
+    Updated(String),
+    /// Not the JSON we expect: left untouched, we never rewrite what we do not understand.
+    Unreadable,
+}
+
+/// Adds `vault` to the content of Obsidian's obsidian.json, keeping everything else.
+fn add_vault(existing: Option<&str>, vault: &str, id: &str, ts: u64) -> VaultList {
+    let parsed = match existing {
+        Some(s) if !s.trim().is_empty() => serde_json::from_str(s),
+        _ => Ok(json!({})),
+    };
+    let Ok(mut root) = parsed else { return VaultList::Unreadable };
+    let Some(vaults) = root.as_object_mut().and_then(|o| o.entry("vaults").or_insert_with(|| json!({})).as_object_mut()) else {
+        return VaultList::Unreadable;
+    };
+    let same = |p: &str| p.trim_end_matches('/') == vault.trim_end_matches('/');
+    if vaults.values().any(|v| v.get("path").and_then(Value::as_str).is_some_and(same)) {
+        return VaultList::AlreadyThere;
+    }
+    if vaults.contains_key(id) {
+        return VaultList::Unreadable;
+    }
+    vaults.insert(id.to_string(), json!({ "path": vault, "ts": ts, "open": true }));
+    match serde_json::to_string(&root) {
+        Ok(s) => VaultList::Updated(s),
+        Err(_) => VaultList::Unreadable,
+    }
+}
+
+/// Everything but unreserved characters, '/' included, as Obsidian's URI scheme expects.
+fn percent_encode(s: &str) -> String {
+    s.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => (b as char).to_string(),
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
+}
+
+pub fn open_link(url: &str) -> Result<(), String> {
+    if !link_allowed(url) {
+        return Err("Ce lien n'est pas autorisé.".into());
+    }
+    if sys::run(Path::new("/usr/bin/open"), &[url], Duration::from_secs(15)).ok() {
+        Ok(())
+    } else {
+        Err("Je n'ai pas pu ouvrir ton navigateur.".into())
+    }
+}
+
+/// https only, on a few known hosts, written plainly (no port, no user@, no spaces).
+fn link_allowed(url: &str) -> bool {
+    let Some(rest) = url.strip_prefix("https://") else { return false };
+    let host = &rest[..rest.find(['/', '?', '#']).unwrap_or(rest.len())];
+    LINK_HOSTS.contains(&host) && url.len() <= 2048 && url.bytes().all(|b| b.is_ascii_graphic() && b != b'\\')
+}
+
+// ── Plumbing ────────────────────────────────────────────────────────────────
+
+/// Downloads `url` to `dest` and logs the progress every few seconds. `size` is the
+/// expected byte count, when known.
+fn download(
+    url: &str,
+    dest: &Path,
+    what: &str,
+    size: Option<u64>,
+    timeout: Duration,
+    log: &mut dyn FnMut(String),
+) -> Result<(), String> {
+    log(format!("Je télécharge {what}…"));
+    let args = curl_download_args(url, dest);
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        let _ = tx.send(sys::run(Path::new("/usr/bin/curl"), &args, timeout));
+    });
+    let out = loop {
+        match rx.recv_timeout(Duration::from_secs(5)) {
+            Ok(out) => break out,
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                let got = fs::metadata(dest).map(|m| m.len()).unwrap_or(0);
+                log(progress(got, size));
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                return Err(format!("Le téléchargement de {what} s'est interrompu. Réessaie."))
+            }
+        }
+    };
+    if !out.ok() {
+        log(out.stderr.trim().to_string());
+        return Err(format!("Je n'ai pas pu télécharger {what}. Vérifie ta connexion internet, puis réessaie."));
+    }
+    Ok(())
+}
+
+/// https only, redirects included; a stalled connection gives up instead of waiting
+/// for the timeout. `-q` comes first so ~/.curlrc cannot turn off certificate checks
+/// for scripts we then run.
+fn curl_download_args(url: &str, dest: &Path) -> Vec<String> {
+    let mut args: Vec<String> = [
+        "-q", "-fsSL", "--proto", "=https", "--proto-redir", "=https", "--retry", "3",
+        "--connect-timeout", "20", "--speed-limit", "1024", "--speed-time", "60", "-o",
+    ]
+    .map(String::from)
+    .to_vec();
+    args.extend([dest.to_string_lossy().into_owned(), url.to_string()]);
+    args
+}
+
+fn progress(got: u64, size: Option<u64>) -> String {
+    let mb = got / 1_000_000;
+    match size {
+        Some(total) if total > 0 => {
+            format!("Téléchargement : {} % ({mb} Mo sur {})", (got * 100 / total).min(100), total / 1_000_000)
+        }
+        _ => format!("Téléchargement : {mb} Mo"),
+    }
+}
+
+/// Downloads an official installer script and runs it with bash.
+fn run_installer(url: &str, name: &str, args: &[&str], log: &mut dyn FnMut(String)) -> Result<(), String> {
+    let tmp = TempDir::new_in(&std::env::temp_dir())?;
+    let script = tmp.path().join("install.sh");
+    download(url, &script, &format!("l'installeur de {name}"), None, Duration::from_secs(5 * 60), log)?;
+    log(format!("J'installe {name}…"));
+    let script = script.to_string_lossy();
+    let argv: Vec<&str> = std::iter::once(script.as_ref()).chain(args.iter().copied()).collect();
+    match sys::run_streaming(Path::new("/bin/bash"), &argv, &[], Some(tmp.path()), INSTALLER_LIMIT, log) {
+        0 => Ok(()),
+        code => Err(format!(
+            "L'installeur de {name} s'est arrêté (code {code}). Vérifie ta connexion internet, puis réessaie."
+        )),
+    }
+}
+
+/// A private folder (0700) removed with all its content when dropped.
+struct TempDir(PathBuf);
+
+impl TempDir {
+    fn new_in(parent: &Path) -> Result<Self, String> {
+        let fail = |e: io::Error| {
+            format!("Je n'ai pas pu créer un dossier de travail ({e}). Vérifie qu'il reste de la place sur le disque.")
+        };
+        for _ in 0..8 {
+            let p = parent.join(format!("{WORK_PREFIX}{}", random_hex()));
+            match fs::DirBuilder::new().mode(0o700).create(&p) {
+                Ok(()) => return Ok(TempDir(p)),
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(e) => return Err(fail(e)),
+            }
+        }
+        Err(fail(io::ErrorKind::AlreadyExists.into()))
+    }
+
+    fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+/// 16 hex digits, the shape of Obsidian's vault ids. Not a secret: RandomState's
+/// OS-seeded keys are random enough and save a dependency.
+fn random_hex() -> String {
+    use std::hash::{BuildHasher, Hasher};
+    let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+    h.write_u128(SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0));
+    format!("{:016x}", h.finish())
+}
+
+/// Writes through a temporary file and a rename: readers see the old or the new
+/// file, never half of one.
+fn write_atomic(path: &Path, data: &[u8], mode: u32) -> io::Result<()> {
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".biab-tmp");
+    let tmp = PathBuf::from(tmp);
+    let _ = fs::remove_file(&tmp);
+    let res = (|| {
+        let mut f = fs::OpenOptions::new().write(true).create_new(true).mode(mode).open(&tmp)?;
+        f.write_all(data)?;
+        f.sync_all()?;
+        // The umask may have trimmed the mode at creation.
+        fs::set_permissions(&tmp, fs::Permissions::from_mode(mode))?;
+        fs::rename(&tmp, path)
+    })();
+    if res.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    res
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn bash(script: &Path) -> sys::Output {
+        sys::run(Path::new("/bin/bash"), &[&script.to_string_lossy()], Duration::from_secs(10))
+    }
+
+    fn write_exec(path: &Path, content: &str) {
+        fs::write(path, content).unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    #[test]
+    fn only_known_https_links_open() {
+        for ok in [
+            "https://dashboard.voyageai.com/",
+            "https://dashboard.voyageai.com/organization/api-keys",
+            "https://docs.voyageai.com/docs/pricing",
+            "https://claude.com/pricing",
+            "https://claude.ai/download",
+            "https://claude.ai",
+            "https://obsidian.md/download?x=1#top",
+        ] {
+            assert!(link_allowed(ok), "{ok} should open");
+        }
+        for bad in [
+            "http://claude.ai/",
+            "https://claude.ai.evil.com/",
+            "https://evil.com/claude.ai/",
+            "https://claude.ai@evil.com/",
+            "https://claude.ai:8443/",
+            "https://CLAUDE.AI/",
+            "https://www.obsidian.md/",
+            "https://claude.ai/a b",
+            "https://claude.ai\\@evil.com/",
+            "https://claude.ai/\n",
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "-a Calculator",
+            "",
+        ] {
+            assert!(!link_allowed(bad), "{bad:?} should be refused");
+        }
+        assert!(!link_allowed(&format!("https://claude.ai/{}", "a".repeat(3000))));
+        assert!(open_link("https://evil.com/").is_err());
+    }
+
+    #[test]
+    fn vault_list_is_created_when_missing() {
+        let VaultList::Updated(json) = add_vault(None, "/Users/jo/Documents/Brain", "0123456789abcdef", 42) else { panic!() };
+        let v: Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v, json!({"vaults": {"0123456789abcdef": {"path": "/Users/jo/Documents/Brain", "ts": 42, "open": true}}}));
+        assert!(matches!(add_vault(Some("  \n"), "/b", "a", 1), VaultList::Updated(_)));
+    }
+
+    #[test]
+    fn vault_list_keeps_what_is_there() {
+        let before =
+            r#"{"vaults":{"b85c76e85c189889":{"path":"/Users/jo/Notes","ts":1779198301077,"open":true}},"updateDisabled":true}"#;
+        let VaultList::Updated(json) = add_vault(Some(before), "/Users/jo/Documents/Brain", "fedcba9876543210", 7) else {
+            panic!()
+        };
+        let v: Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["updateDisabled"], json!(true));
+        assert_eq!(v["vaults"]["b85c76e85c189889"], json!({"path": "/Users/jo/Notes", "ts": 1779198301077u64, "open": true}));
+        assert_eq!(v["vaults"]["fedcba9876543210"]["path"], json!("/Users/jo/Documents/Brain"));
+    }
+
+    #[test]
+    fn vault_already_listed_is_left_alone() {
+        let before = r#"{"vaults":{"664d155756b01bd0":{"path":"/Users/jo/Documents/Brain/","ts":1}}}"#;
+        assert_eq!(add_vault(Some(before), "/Users/jo/Documents/Brain", "x", 2), VaultList::AlreadyThere);
+    }
+
+    #[test]
+    fn unexpected_vault_list_is_never_rewritten() {
+        for bad in [r#"{"vaults":{"#, "not json", "[]", r#"{"vaults":[]}"#, r#"{"vaults":"x"}"#] {
+            assert_eq!(add_vault(Some(bad), "/b", "id", 1), VaultList::Unreadable, "{bad}");
+        }
+        // An id collision would overwrite someone else's vault.
+        assert_eq!(add_vault(Some(r#"{"vaults":{"id":{"path":"/other"}}}"#), "/b", "id", 1), VaultList::Unreadable);
+    }
+
+    #[test]
+    fn team_id_comes_from_codesign_output() {
+        let dv = "Executable=/Applications/Obsidian.app/Contents/MacOS/Obsidian\nIdentifier=md.obsidian\n\
+                  Signature size=8976\nTeamIdentifier=6JSW4SJWN9\nRuntime Version=14.0.0\n";
+        assert_eq!(team_id(dv), Some(OBSIDIAN_TEAM));
+        assert_eq!(team_id("TeamIdentifier=not set\n"), Some("not set"));
+        assert_eq!(team_id("code object is not signed at all\n"), None);
+        assert_ne!(team_id("TeamIdentifier=ABCDE12345\n"), Some(OBSIDIAN_TEAM));
+    }
+
+    #[test]
+    fn sh_quote_survives_bash() {
+        let dir = tempfile::tempdir().unwrap();
+        for s in ["plain", "with space", "Jo's \"brain\"", "$HOME `id` $(id) \\ ! * ;|&", "''", "line\nbreak", ""] {
+            let script = dir.path().join("q.sh");
+            fs::write(&script, format!("printf %s {}", sh_quote(s))).unwrap();
+            assert_eq!(bash(&script).stdout, s);
+        }
+    }
+
+    #[test]
+    fn terminal_scripts_quote_odd_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(dir.path()).unwrap();
+        let home = root.join("Jo's home $x");
+        let vault = home.join("Documents/Brain");
+        fs::create_dir_all(&vault).unwrap();
+        let bin = root.join("b'in dir");
+        fs::create_dir_all(&bin).unwrap();
+        let out = root.join("out");
+        write_exec(
+            &bin.join("claude"),
+            &format!("#!/bin/sh\n{{ pwd -P; printf '%s\\n' \"$@\"; }} > {}\n", sh_quote(&out.to_string_lossy())),
+        );
+
+        let script = root.join("onboarding.command");
+        let guide = onboarding_guide(&home).unwrap();
+        assert!(fs::read_to_string(&guide).unwrap().contains("ONBOARDING"), "built-in guide written");
+        fs::write(&script, onboarding_script(&bin.to_string_lossy(), &home, &guide)).unwrap();
+        let o = bash(&script);
+        assert!(o.ok(), "{}", o.stderr);
+        assert!(o.stdout.contains("Tu peux fermer cette fenêtre."));
+        assert_eq!(
+            fs::read_to_string(&out).unwrap(),
+            format!("{}\nRead {} and run it to personalize me.\n", vault.display(), guide.display())
+        );
+
+        let script = root.join("claude-login.command");
+        fs::write(&script, login_script(&bin.to_string_lossy())).unwrap();
+        assert!(bash(&script).ok());
+        let seen = fs::read_to_string(&out).unwrap();
+        assert_eq!(seen.lines().skip(1).collect::<Vec<_>>(), ["auth", "login"]);
+    }
+
+    #[test]
+    fn atomic_write_sets_the_mode() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("x.command");
+        fs::write(&p, "old").unwrap();
+        fs::set_permissions(&p, fs::Permissions::from_mode(0o644)).unwrap();
+        write_atomic(&p, b"new", 0o700).unwrap();
+        assert_eq!(fs::read_to_string(&p).unwrap(), "new");
+        assert_eq!(fs::metadata(&p).unwrap().permissions().mode() & 0o777, 0o700);
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn disk_image_is_detached_even_on_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let vol = dir.path().join("vol");
+        fs::create_dir_all(vol.join("Obsidian.app/Contents")).unwrap();
+        let dmg = dir.path().join("t.dmg");
+        let made = sys::run(
+            Path::new("/usr/bin/hdiutil"),
+            &["create", "-quiet", "-srcfolder", &vol.to_string_lossy(), "-volname", "T", &dmg.to_string_lossy()],
+            Duration::from_secs(60),
+        );
+        assert!(made.ok(), "{}", made.stderr);
+        let at = dir.path().join("mnt");
+        let mounted = || sys::run(Path::new("/sbin/mount"), &[], Duration::from_secs(5)).stdout.contains(&*at.to_string_lossy());
+        let attempt = || -> Result<(), String> {
+            let m = Mount::attach(&dmg, &at)?;
+            assert!(Path::new(&m.app("Obsidian.app")).is_dir() && mounted());
+            Err("copy failed".into())
+        };
+        assert!(attempt().is_err());
+        assert!(!mounted());
+        assert!(Mount::attach(&dir.path().join("missing.dmg"), &dir.path().join("mnt2")).is_err());
+    }
+
+    #[test]
+    fn apps_signed_by_someone_else_are_refused() {
+        assert!(signed_by_obsidian(Path::new("/System/Applications/Calculator.app")).is_err());
+        assert!(signed_by_obsidian(Path::new("/nonexistent/Obsidian.app")).is_err());
+    }
+
+    #[test]
+    fn missing_brain_parts_are_named() {
+        let all = detect::Brain { vault: true, hooks: true, skills: true, memory: true };
+        assert!(missing_parts(all).is_empty());
+        assert_eq!(missing_parts(detect::Brain { hooks: false, ..all }), ["les automatismes de Claude"]);
+        assert_eq!(missing_parts(detect::Brain { vault: false, hooks: false, skills: false, memory: false }).len(), 4);
+    }
+
+    #[test]
+    fn only_our_stale_copies_are_removed() {
+        let dir = tempfile::tempdir().unwrap();
+        let apps = dir.path().join("Applications");
+        let ours = apps.join(".biab-0123456789abcdef");
+        fs::create_dir_all(ours.join("Obsidian.app/Contents")).unwrap();
+        let kept = [".biab-FEDCBA9876543210", ".biab-0123", ".biab-0123456789abcdef0", "biab-0123456789abcdef", ".biab-tmp", "Obsidian.app"];
+        for name in kept {
+            fs::create_dir_all(apps.join(name).join("x")).unwrap();
+        }
+        fs::write(apps.join(".biab-1111111111111111"), "a file").unwrap();
+        let elsewhere = dir.path().join("elsewhere");
+        fs::create_dir_all(&elsewhere).unwrap();
+        fs::write(elsewhere.join("precious"), "x").unwrap();
+        std::os::unix::fs::symlink(&elsewhere, apps.join(".biab-2222222222222222")).unwrap();
+        let me = fs::metadata(dir.path()).unwrap().uid();
+
+        remove_stale_copies(&apps, me.wrapping_add(1));
+        assert!(ours.exists(), "someone else's folder stays");
+        remove_stale_copies(&apps, me);
+        assert!(!ours.exists());
+        for name in kept {
+            assert!(apps.join(name).join("x").exists(), "{name}");
+        }
+        assert!(apps.join(".biab-1111111111111111").is_file());
+        assert!(apps.join(".biab-2222222222222222").exists() && elsewhere.join("precious").exists());
+        remove_stale_copies(&dir.path().join("missing"), me);
+    }
+
+    #[test]
+    fn archive_override_is_https_or_a_file() {
+        assert!(matches!(archive_source(None), Ok(Archive::Remote(u)) if u == BRAIN_ZIP));
+        assert!(matches!(archive_source(Some(" ".into())), Ok(Archive::Remote(u)) if u == BRAIN_ZIP));
+        assert!(
+            matches!(archive_source(Some("https://x.test/a.zip".into())), Ok(Archive::Remote(u)) if u == "https://x.test/a.zip")
+        );
+        assert!(matches!(archive_source(Some("/tmp/a.zip".into())), Ok(Archive::Local(p)) if p == Path::new("/tmp/a.zip")));
+        assert!(archive_source(Some("http://x.test/a.zip".into())).is_err());
+        assert!(archive_source(Some("file:///tmp/a.zip".into())).is_err());
+    }
+
+    /// A zip shaped like GitHub's: everything under "brain-in-a-box-master/".
+    fn fake_archive(root: &Path, with_installer: bool) -> PathBuf {
+        let repo = root.join(format!("repo-{with_installer}")).join("brain-in-a-box-master");
+        fs::create_dir_all(repo.join("vault-skeleton/Profil")).unwrap();
+        if with_installer {
+            fs::write(repo.join("install.sh"), "echo hi\n").unwrap();
+        }
+        let zip = root.join(format!("biab-{with_installer}.zip"));
+        let o = sys::run(
+            Path::new("/usr/bin/ditto"),
+            &["-c", "-k", "--keepParent", &repo.to_string_lossy(), &zip.to_string_lossy()],
+            Duration::from_secs(30),
+        );
+        assert!(o.ok(), "{}", o.stderr);
+        zip
+    }
+
+    #[test]
+    fn sources_replace_the_previous_copy() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().join("base");
+        fs::create_dir_all(base.join("src")).unwrap();
+        fs::write(base.join("src/stale.txt"), "old").unwrap();
+
+        let src = install_sources(&base, &Archive::Local(fake_archive(dir.path(), true)), &mut |_| {}).unwrap();
+        assert_eq!(src, base.join("src"));
+        assert!(src.join("install.sh").is_file() && src.join("vault-skeleton/Profil").is_dir());
+        assert!(!src.join("stale.txt").exists());
+        let left: Vec<_> = fs::read_dir(&base).unwrap().map(|e| e.unwrap().file_name()).collect();
+        assert_eq!(left, vec!["src"], "the work folder must be gone");
+    }
+
+    #[test]
+    fn a_bad_archive_keeps_the_previous_copy() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().join("base");
+        fs::create_dir_all(base.join("src")).unwrap();
+        fs::write(base.join("src/install.sh"), "previous").unwrap();
+
+        assert!(install_sources(&base, &Archive::Local(fake_archive(dir.path(), false)), &mut |_| {}).is_err());
+        assert!(install_sources(&base, &Archive::Local(dir.path().join("nope.zip")), &mut |_| {}).is_err());
+        assert_eq!(fs::read_to_string(base.join("src/install.sh")).unwrap(), "previous");
+        assert_eq!(fs::read_dir(&base).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn source_root_needs_exactly_one_match() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        assert_eq!(source_root(d), None);
+        for name in ["a", "b"] {
+            fs::create_dir_all(d.join(name).join("vault-skeleton")).unwrap();
+            fs::write(d.join(name).join("install.sh"), "").unwrap();
+        }
+        assert_eq!(source_root(d), None, "two candidates: ambiguous");
+        fs::remove_dir_all(d.join("b")).unwrap();
+        assert_eq!(source_root(d), Some(d.join("a")));
+    }
+
+    #[test]
+    fn temp_dir_is_private_and_removed() {
+        let parent = tempfile::tempdir().unwrap();
+        let path = {
+            let t = TempDir::new_in(parent.path()).unwrap();
+            fs::write(t.path().join("f"), "x").unwrap();
+            assert_eq!(fs::metadata(t.path()).unwrap().permissions().mode() & 0o777, 0o700);
+            t.path().to_path_buf()
+        };
+        assert!(!path.exists());
+        assert_ne!(random_hex(), random_hex());
+        assert_eq!(random_hex().len(), 16);
+    }
+
+    #[test]
+    fn obsidian_uri_encodes_the_path() {
+        assert_eq!(percent_encode("/Users/Jo Doe/Documents/Brain"), "%2FUsers%2FJo%20Doe%2FDocuments%2FBrain");
+        assert_eq!(percent_encode("é&?#"), "%C3%A9%26%3F%23");
+    }
+
+    #[test]
+    fn progress_reads_well() {
+        assert_eq!(progress(117_000_000, Some(OBSIDIAN_SIZE)), "Téléchargement : 50 % (117 Mo sur 233)");
+        assert_eq!(progress(3_000_000, None), "Téléchargement : 3 Mo");
+    }
+
+    #[test]
+    fn downloads_ignore_curlrc_and_stay_on_https() {
+        let args = curl_download_args("https://bun.sh/install", Path::new("/t/install.sh"));
+        assert_eq!(args[0], "-q", "curl only skips ~/.curlrc when -q comes first");
+        assert!(args.windows(2).any(|w| w == ["--proto", "=https"]));
+        assert!(args.windows(2).any(|w| w == ["--proto-redir", "=https"]));
+        assert_eq!(args[args.len() - 3..], ["-o", "/t/install.sh", "https://bun.sh/install"]);
+    }
+
+    #[test]
+    fn brain_refuses_a_key_that_could_inject_curl_directives() {
+        // Refused before anything else runs or is touched.
+        for bad in ["pa-x\"\noutput = \"/tmp/pwn\"", "pa-x\\y", "pa-x y"] {
+            let mut lines = Vec::new();
+            let err = brain(Some(bad), &mut |l| lines.push(l)).unwrap_err();
+            assert!(err.contains("caractères inattendus"), "{err}");
+            assert!(!err.contains(bad) && lines.is_empty());
+        }
+    }
+
+    #[test]
+    fn unknown_step_fails_cleanly() {
+        let r = run("rm -rf", None, &mut |_| {});
+        assert!(!r.ok);
+        assert_eq!(r.id, "rm -rf");
+    }
+
+    /// Real download (233 MB) into a temp folder: `cargo test -- --ignored obsidian_real`.
+    #[test]
+    #[ignore]
+    fn obsidian_real_download_lands_signed() {
+        let apps = tempfile::tempdir().unwrap();
+        let app = install_obsidian_into(apps.path(), &mut |l| println!("{l}")).unwrap();
+        assert!(sys::is_executable(&app.join("Contents/MacOS/Obsidian")));
+        assert!(signed_by_obsidian(&app).is_ok());
+        let leftovers: Vec<_> = fs::read_dir(apps.path()).unwrap().filter_map(Result::ok).map(|e| e.file_name()).collect();
+        assert_eq!(leftovers, vec![std::ffi::OsString::from("Obsidian.app")], "no staging folder left");
+    }
+}
