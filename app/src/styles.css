@@ -72,7 +72,7 @@ p { margin: 0; }
   white-space: nowrap;
 }
 
-/* Layout: Bibo and its speech bubble on top, the screen in the middle, buttons at the bottom. */
+/* Layout: Bibo and the message on top, the screen in the middle, buttons at the bottom. */
 
 .app {
   height: 100%;
@@ -96,32 +96,12 @@ p { margin: 0; }
   height: 100px;
 }
 
-.bubble {
-  position: relative;
+/* The screen's title and text, next to Bibo (he does not talk: no speech bubble). */
+.message {
   flex: 1;
   min-width: 0;
-  background: var(--card);
-  border: 1.5px solid var(--line);
-  border-radius: 18px;
-  padding: 14px 18px;
-  box-shadow: var(--shadow);
   -webkit-user-select: text;
   user-select: text;
-}
-
-/* The tail points at Bibo: left in the compact layout, up in the big one. */
-.bubble::before {
-  content: "";
-  position: absolute;
-  left: -8.5px;
-  top: 50%;
-  width: 14px;
-  height: 14px;
-  margin-top: -7px;
-  background: var(--card);
-  border-left: 1.5px solid var(--line);
-  border-bottom: 1.5px solid var(--line);
-  transform: rotate(45deg);
 }
 
 .say-title {
@@ -159,7 +139,7 @@ p { margin: 0; }
 
 .actions:empty { display: none; }
 
-/* Big layout (welcome, done): Bibo centered, bubble below, the whole group centered in the window. */
+/* Big layout (welcome, done): Bibo centered, message below, the whole group centered in the window. */
 
 body.big .app { justify-content: center; }
 
@@ -174,17 +154,9 @@ body.big .hero {
 
 body.big .hero .bibo { width: 200px; height: 200px; }
 
-body.big .bubble {
+body.big .message {
   flex: none;
   max-width: 520px;
-  padding: 16px 24px;
-}
-
-body.big .bubble::before {
-  left: 50%;
-  top: -8.5px;
-  margin: 0 0 0 -7px;
-  transform: rotate(135deg);
 }
 
 body.big .say-title { font-size: 22px; }
@@ -534,41 +506,59 @@ body.big .plan { justify-content: center; text-align: left; }
   to { opacity: 1; transform: none; }
 }
 
-/* Bibo. The root carries one mood class: idle, thinking, working, happy, worried. */
+/* Bibo. The root carries one mood class: idle, thinking, working, happy, worried.
+   app.js adds the rest on top: blink, hop, giggle, waking for a moment, asleep until woken. */
 
-.bibo { display: block; overflow: visible; }
+.bibo { display: block; overflow: visible; cursor: pointer; }
 
+/* A worried Bibo ignores clicks (app.js, onPoke). */
+.bibo.worried { cursor: default; }
+
+.bibo .b-hop,
 .bibo .b-body,
 .bibo .b-brain,
 .bibo .b-eyes,
+.bibo .m-o,
 .bibo .b-shadow,
 .bibo .b-drop,
 .bibo .b-bubbles circle,
-.bibo .b-sparks path {
+.bibo .b-sparks path,
+.bibo .b-zzz path {
   transform-box: fill-box;
   transform-origin: 50% 50%;
 }
 
+.bibo .b-hop,
 .bibo .b-body,
 .bibo .b-brain { transform-origin: 50% 100%; }
 
+.bibo .b-lids,
+.bibo .b-glee,
 .bibo .m-open,
 .bibo .m-o,
 .bibo .m-wobble,
 .bibo .b-brows,
 .bibo .b-drop,
 .bibo .b-bubbles,
-.bibo .b-sparks { opacity: 0; }
+.bibo .b-sparks,
+.bibo .b-zzz { opacity: 0; }
 
+.bibo .b-lids,
+.bibo .b-glee,
 .bibo .m-smile,
 .bibo .m-open,
-.bibo .m-o,
 .bibo .m-wobble,
-.bibo .b-brows { transition: opacity 0.2s ease; }
+.bibo .b-brows,
+.bibo .b-zzz { transition: opacity 0.2s ease; }
 
-.bibo .b-pupil { transition: transform 0.35s ease; }
+.bibo .b-eyes { transition: opacity 0.2s ease, transform 0.06s ease-in; }
+.bibo .m-o { transition: opacity 0.2s ease, transform 0.3s ease; }
 
-.bibo .b-eyes { animation: blink 5s infinite; }
+/* The pupils follow the pointer (--gx, --gy from app.js), unless the mood looks somewhere. */
+.bibo .b-pupil {
+  transform: translate(var(--gx, 0px), var(--gy, 0px));
+  transition: transform 0.25s ease-out;
+}
 
 .bibo.idle .b-body { animation: sway 4s ease-in-out infinite alternate; }
 
@@ -600,10 +590,48 @@ body.big .plan { justify-content: center; text-align: left; }
 .bibo.worried .b-drop { opacity: 1; animation: drip 2.4s ease-in infinite; }
 .bibo.worried .b-pupil { transform: translate(0, 2px); }
 
-@keyframes blink {
-  0%, 92%, 100% { transform: scaleY(1); }
-  95% { transform: scaleY(0.08); }
-}
+/* After the moods, so these win while they last. */
+
+.bibo.blink .b-eyes { transform: scaleY(0.1); }
+
+/* The pointer comes by: a little hop. */
+.bibo.hop .b-hop { animation: hop 0.75s cubic-bezier(0.3, 0.6, 0.4, 1); }
+.bibo.hop .b-shadow { animation: shadow 0.75s cubic-bezier(0.3, 0.6, 0.4, 1); }
+.bibo.hop .m-smile,
+.bibo.hop .m-o { opacity: 0; }
+.bibo.hop .m-open { opacity: 1; }
+.bibo.hop .b-sparks { opacity: 1; }
+.bibo.hop .b-sparks path { opacity: 0; animation: twinkle 0.7s ease-in-out; }
+.bibo.hop .b-sparks g:nth-child(2) path { animation-delay: 0.06s; }
+.bibo.hop .b-sparks g:nth-child(3) path { animation-delay: 0.12s; }
+.bibo.hop .b-sparks g:nth-child(4) path { animation-delay: 0.18s; }
+
+/* A click: a giggle, eyes squeezed shut. */
+.bibo.giggle .b-brain { animation: giggle 0.8s ease-in-out; }
+.bibo.giggle .b-eyes { opacity: 0; }
+.bibo.giggle .b-glee { opacity: 1; }
+.bibo.giggle .m-smile,
+.bibo.giggle .m-o { opacity: 0; }
+.bibo.giggle .m-open { opacity: 1; }
+
+/* Asleep: eyes shut, slow breath, Zs. */
+.bibo.asleep .b-eyes { opacity: 0; }
+.bibo.asleep .b-lids { opacity: 1; }
+.bibo.asleep .m-smile { opacity: 0; }
+.bibo.asleep .m-o { opacity: 1; transform: scale(0.75); }
+.bibo.asleep .b-body { animation: none; }
+.bibo.asleep .b-brain { animation: breathe 4s ease-in-out infinite; }
+.bibo.asleep .b-zzz { opacity: 1; }
+.bibo.asleep .b-zzz path { opacity: 0; animation: snooze 3.6s ease-in-out infinite; }
+.bibo.asleep .b-zzz g:nth-child(2) path { animation-delay: 1.2s; }
+.bibo.asleep .b-zzz g:nth-child(3) path { animation-delay: 2.4s; }
+
+/* Woken up: a yawn and a stretch, then back to the mood. */
+.bibo.waking .b-eyes { opacity: 0; }
+.bibo.waking .b-lids { opacity: 1; }
+.bibo.waking .m-smile { opacity: 0; }
+.bibo.waking .m-o { opacity: 1; transform: scale(1.7, 2.1); }
+.bibo.waking .b-body { animation: stretch 1.2s ease-in-out; }
 
 @keyframes sway {
   from { transform: rotate(-1.6deg); }
@@ -649,16 +677,52 @@ body.big .plan { justify-content: center; text-align: left; }
   100% { opacity: 0; transform: translateY(10px); }
 }
 
+@keyframes hop {
+  0%, 100% { transform: none; }
+  15% { transform: scale(1.05, 0.94); }
+  45% { transform: translateY(-14px) scale(0.97, 1.04); }
+  75% { transform: scale(1.03, 0.97); }
+}
+
+@keyframes giggle {
+  0%, 100% { transform: none; }
+  15% { transform: rotate(-5deg) scale(1.03, 0.97); }
+  32% { transform: rotate(4deg); }
+  50% { transform: rotate(-3deg) scale(1.02, 0.98); }
+  68% { transform: rotate(2deg); }
+  85% { transform: rotate(-1deg); }
+}
+
+@keyframes breathe {
+  0%, 100% { transform: rotate(-3deg); }
+  50% { transform: rotate(-3deg) scale(1.03, 1.05); }
+}
+
+@keyframes snooze {
+  0% { opacity: 0; transform: translate(-4px, 6px) scale(0.6); }
+  30%, 60% { opacity: 1; transform: none; }
+  100% { opacity: 0; transform: translate(5px, -7px) scale(1.15); }
+}
+
+@keyframes stretch {
+  0%, 100% { transform: none; }
+  35% { transform: scale(0.96, 1.07) rotate(-2deg); }
+  65% { transform: scale(0.96, 1.07) rotate(2deg); }
+}
+
 @media (prefers-reduced-motion: reduce) {
+  /* Bibo keeps its expressions, fading in and out, but nothing moves: no hop, no shake. */
   .bibo,
   .bibo * {
     animation: none !important;
-    transition: none !important;
+    transition-property: opacity !important;
   }
 
-  /* Without the animations, the mood props stay still but visible. */
+  /* Without the animations, the props stay still but visible. */
   .bibo.thinking .b-bubbles circle,
-  .bibo.happy .b-sparks path { opacity: 1; }
+  .bibo.happy .b-sparks path,
+  .bibo.hop .b-sparks path,
+  .bibo.asleep .b-zzz path { opacity: 1; }
 
   .screen > *,
   .actions > * { animation: none; }

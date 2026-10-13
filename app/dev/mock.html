@@ -26,8 +26,10 @@
   // &fail=obsidian|brain makes that step fail once, &pause=<step> leaves that step running (the Voyage upgrade is « brain »),
   // &details=1 opens the log, &press=1 clicks the main button once on arrival,
   // &jump=showLogin|showDone opens that screen of app.js directly (the screenshot budget is only 3 s).
+  // Bibo: &sleep=3 makes it doze off after 3 s without activity instead of 45.
   (() => {
     const P = new URLSearchParams(location.search);
+    if (P.get('sleep')) window.BIBO_SLEEP_MS = Number(P.get('sleep')) * 1000;
     const scenario = P.get('s') || 'manque';
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     // Driven runs must reach their screen within the screenshot's 3 s budget.

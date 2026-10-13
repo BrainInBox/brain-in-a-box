@@ -64,66 +64,82 @@ const ICONS = {
 };
 
 // Bibo, inline so CSS can animate its parts. src/bibo.svg is the same drawing, still, for the icon.
+// Decorative: the screen's title and text say everything, so screen readers skip the drawing.
 const BIBO_SVG = `
-<svg class="bibo idle" viewBox="0 0 240 240" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Bibo, un petit cerveau dans une boîte">
+<svg class="bibo idle" viewBox="0 0 240 240" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">
   <ellipse class="b-shadow" cx="120" cy="211" rx="76" ry="7" fill="#3b2418" opacity=".16"/>
-  <g class="b-body" stroke="#4b2e2b" stroke-width="3" stroke-linejoin="round" stroke-linecap="round">
-    <path d="M46 138 L60 124 L180 124 L194 138 Z" fill="#9c6136"/>
-    <path d="M46 138 L60 124 L36 104 L20 119 Z" fill="#d8955a"/>
-    <path d="M194 138 L180 124 L204 104 L220 119 Z" fill="#d8955a"/>
-    <g class="b-brain">
-      <path d="M70 142 C62 128 58 110 66 96 C62 78 72 64 88 62 C92 46 112 40 120 48 C128 40 148 46 152 62 C168 64 178 78 174 96 C182 110 178 128 170 142 Z" fill="#f7a9c4"/>
-      <g fill="none" stroke="#da6f98">
-        <path d="M120 50 C116 56 124 61 120 68"/>
-        <path d="M96 58 C102 53 110 55 112 62"/>
-        <path d="M128 62 C130 55 138 53 144 58"/>
-        <path d="M70 90 C70 80 77 74 85 74"/>
-        <path d="M170 90 C170 80 163 74 155 74"/>
-      </g>
-      <ellipse cx="97" cy="51" rx="6" ry="3" transform="rotate(-24 97 51)" fill="#fff" opacity=".7" stroke="none"/>
-      <g fill="#ff7fa6" opacity=".55" stroke="none">
-        <ellipse cx="79" cy="119" rx="8" ry="5"/>
-        <ellipse cx="161" cy="119" rx="8" ry="5"/>
-      </g>
-      <g class="b-eyes">
-        <ellipse cx="100" cy="102" rx="14" ry="16.5" fill="#fff"/>
-        <ellipse cx="140" cy="102" rx="14" ry="16.5" fill="#fff"/>
-        <g class="b-pupil" stroke="none">
-          <ellipse cx="101" cy="104" rx="8.5" ry="10.5" fill="#2b1a1e"/>
-          <ellipse cx="141" cy="104" rx="8.5" ry="10.5" fill="#2b1a1e"/>
-          <circle cx="104.5" cy="99" r="3.4" fill="#fff"/>
-          <circle cx="144.5" cy="99" r="3.4" fill="#fff"/>
-          <circle cx="98" cy="109.5" r="1.6" fill="#fff"/>
-          <circle cx="138" cy="109.5" r="1.6" fill="#fff"/>
+  <g class="b-hop">
+    <g class="b-body" stroke="#4b2e2b" stroke-width="3" stroke-linejoin="round" stroke-linecap="round">
+      <path d="M46 138 L60 124 L180 124 L194 138 Z" fill="#9c6136"/>
+      <path d="M46 138 L60 124 L36 104 L20 119 Z" fill="#d8955a"/>
+      <path d="M194 138 L180 124 L204 104 L220 119 Z" fill="#d8955a"/>
+      <g class="b-brain">
+        <path d="M70 142 C62 128 58 110 66 96 C62 78 72 64 88 62 C92 46 112 40 120 48 C128 40 148 46 152 62 C168 64 178 78 174 96 C182 110 178 128 170 142 Z" fill="#f7a9c4"/>
+        <g fill="none" stroke="#da6f98">
+          <path d="M120 50 C116 56 124 61 120 68"/>
+          <path d="M96 58 C102 53 110 55 112 62"/>
+          <path d="M128 62 C130 55 138 53 144 58"/>
+          <path d="M70 90 C70 80 77 74 85 74"/>
+          <path d="M170 90 C170 80 163 74 155 74"/>
         </g>
+        <ellipse cx="97" cy="51" rx="6" ry="3" transform="rotate(-24 97 51)" fill="#fff" opacity=".7" stroke="none"/>
+        <g fill="#ff7fa6" opacity=".55" stroke="none">
+          <ellipse cx="79" cy="119" rx="8" ry="5"/>
+          <ellipse cx="161" cy="119" rx="8" ry="5"/>
+        </g>
+        <g class="b-eyes">
+          <ellipse cx="100" cy="102" rx="14" ry="16.5" fill="#fff"/>
+          <ellipse cx="140" cy="102" rx="14" ry="16.5" fill="#fff"/>
+          <g class="b-pupil" stroke="none">
+            <ellipse cx="101" cy="104" rx="8.5" ry="10.5" fill="#2b1a1e"/>
+            <ellipse cx="141" cy="104" rx="8.5" ry="10.5" fill="#2b1a1e"/>
+            <circle cx="104.5" cy="99" r="3.4" fill="#fff"/>
+            <circle cx="144.5" cy="99" r="3.4" fill="#fff"/>
+            <circle cx="98" cy="109.5" r="1.6" fill="#fff"/>
+            <circle cx="138" cy="109.5" r="1.6" fill="#fff"/>
+          </g>
+        </g>
+        <g class="b-lids" fill="none">
+          <path d="M88 103 Q100 112 112 103"/>
+          <path d="M128 103 Q140 112 152 103"/>
+        </g>
+        <g class="b-glee" fill="none">
+          <path d="M89 107 Q100 96 111 107"/>
+          <path d="M129 107 Q140 96 151 107"/>
+        </g>
+        <g class="b-brows" fill="none">
+          <path d="M87 81 L110 75"/>
+          <path d="M130 75 L153 81"/>
+        </g>
+        <path class="m-smile" d="M113 124 Q120 131 127 124" fill="none"/>
+        <g class="m-open">
+          <path d="M110 121 Q120 139 130 121 Z" fill="#7a2340"/>
+          <ellipse cx="120" cy="127.5" rx="4.5" ry="2.5" fill="#f27b9b" stroke="none"/>
+        </g>
+        <ellipse class="m-o" cx="120" cy="125" rx="3.5" ry="4.5" fill="#4b2e2b" stroke="none"/>
+        <path class="m-wobble" d="M111 126 Q115.5 122 120 126 Q124.5 130 129 126" fill="none"/>
       </g>
-      <g class="b-brows" fill="none">
-        <path d="M87 81 L110 75"/>
-        <path d="M130 75 L153 81"/>
-      </g>
-      <path class="m-smile" d="M113 124 Q120 131 127 124" fill="none"/>
-      <g class="m-open">
-        <path d="M110 121 Q120 139 130 121 Z" fill="#7a2340"/>
-        <ellipse cx="120" cy="127.5" rx="4.5" ry="2.5" fill="#f27b9b" stroke="none"/>
-      </g>
-      <ellipse class="m-o" cx="120" cy="125" rx="3.5" ry="4.5" fill="#4b2e2b" stroke="none"/>
-      <path class="m-wobble" d="M111 126 Q115.5 122 120 126 Q124.5 130 129 126" fill="none"/>
+      <rect x="46" y="138" width="148" height="66" rx="7" fill="#e7a96b"/>
+      <rect x="50" y="141.5" width="140" height="5" rx="2.5" fill="#f2c08a" stroke="none"/>
+      <path d="M120 188 C105 178 107 164 115.5 165 C118 165.4 119.5 167 120 169.5 C120.5 167 122 165.4 124.5 165 C133 164 135 178 120 188 Z" fill="#f7a9c4" stroke-width="2.5"/>
     </g>
-    <rect x="46" y="138" width="148" height="66" rx="7" fill="#e7a96b"/>
-    <rect x="50" y="141.5" width="140" height="5" rx="2.5" fill="#f2c08a" stroke="none"/>
-    <path d="M120 188 C105 178 107 164 115.5 165 C118 165.4 119.5 167 120 169.5 C120.5 167 122 165.4 124.5 165 C133 164 135 178 120 188 Z" fill="#f7a9c4" stroke-width="2.5"/>
-  </g>
-  <path class="b-drop" d="M172 60 C172 60 164 70 164 75 A8 8 0 0 0 180 75 C180 70 172 60 172 60 Z" fill="#8fd3ff" stroke="#4b2e2b" stroke-width="2.5" stroke-linejoin="round"/>
-  <g class="b-bubbles" fill="#fff" stroke="#4b2e2b" stroke-width="2.5">
-    <circle cx="186" cy="56" r="4"/>
-    <circle cx="199" cy="40" r="6.5"/>
-    <circle cx="215" cy="20" r="10"/>
+    <path class="b-drop" d="M172 60 C172 60 164 70 164 75 A8 8 0 0 0 180 75 C180 70 172 60 172 60 Z" fill="#8fd3ff" stroke="#4b2e2b" stroke-width="2.5" stroke-linejoin="round"/>
+    <g class="b-bubbles" fill="#fff" stroke="#4b2e2b" stroke-width="2.5">
+      <circle cx="186" cy="56" r="4"/>
+      <circle cx="199" cy="40" r="6.5"/>
+      <circle cx="215" cy="20" r="10"/>
+    </g>
   </g>
   <g class="b-sparks" fill="#ffc94a" stroke="#4b2e2b" stroke-width="2" stroke-linejoin="round">
     <g transform="translate(30 62)"><path d="M0 -11 C1.6 -3 3 -1.6 11 0 C3 1.6 1.6 3 0 11 C-1.6 3 -3 1.6 -11 0 C-3 -1.6 -1.6 -3 0 -11 Z"/></g>
     <g transform="translate(212 64) scale(.8)"><path d="M0 -11 C1.6 -3 3 -1.6 11 0 C3 1.6 1.6 3 0 11 C-1.6 3 -3 1.6 -11 0 C-3 -1.6 -1.6 -3 0 -11 Z"/></g>
     <g transform="translate(18 172) scale(.7)"><path d="M0 -11 C1.6 -3 3 -1.6 11 0 C3 1.6 1.6 3 0 11 C-1.6 3 -3 1.6 -11 0 C-3 -1.6 -1.6 -3 0 -11 Z"/></g>
     <g transform="translate(224 176) scale(.9)"><path d="M0 -11 C1.6 -3 3 -1.6 11 0 C3 1.6 1.6 3 0 11 C-1.6 3 -3 1.6 -11 0 C-3 -1.6 -1.6 -3 0 -11 Z"/></g>
+  </g>
+  <g class="b-zzz" fill="#cfe7ff" stroke="#4b2e2b" stroke-width="2" stroke-linejoin="round">
+    <g transform="translate(172 64) scale(.9)"><path d="M-7 -7.5 H7 V-4.2 L-1.6 4.2 H7 V7.5 H-7 V4.2 L1.6 -4.2 H-7 Z"/></g>
+    <g transform="translate(191 41) scale(1.2)"><path d="M-7 -7.5 H7 V-4.2 L-1.6 4.2 H7 V7.5 H-7 V4.2 L1.6 -4.2 H-7 Z"/></g>
+    <g transform="translate(213 14) scale(1.55)"><path d="M-7 -7.5 H7 V-4.2 L-1.6 4.2 H7 V7.5 H-7 V4.2 L1.6 -4.2 H-7 Z"/></g>
   </g>
 </svg>`;
 
@@ -236,28 +252,29 @@ function scrub(text) {
     .replace(/\/Users\/[^/\s:'"]+/g, '~');
 }
 
-// ── Frame: Bibo, its bubble, the screen, the buttons ───────────────────────
+// ── Frame: Bibo, the message, the screen, the buttons ──────────────────────
 
 function mount() {
   ui.bibo = fromMarkup(BIBO_SVG);
   ui.title = h('p', { class: 'say-title' });
   ui.text = h('p', { class: 'say-text' });
-  const bubble = h('div', { class: 'bubble', role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' }, ui.title, ui.text);
+  ui.message = h('div', { class: 'message', role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' }, ui.title, ui.text);
   ui.screen = h('main', { class: 'screen' });
   ui.actions = h('footer', { class: 'actions' });
-  document.body.replaceChildren(h('div', { class: 'app' }, h('header', { class: 'hero' }, ui.bibo, bubble), ui.screen, ui.actions));
+  document.body.replaceChildren(h('div', { class: 'app' }, h('header', { class: 'hero' }, ui.bibo, ui.message), ui.screen, ui.actions));
 }
 
 let moodTimer = 0;
 
 function say(mood, title, text = '') {
   clearTimeout(moodTimer);
-  ui.bibo.setAttribute('class', `bibo ${mood}`);
+  setMood(mood);
+  rouse();
   ui.title.textContent = nbsp(title);
   ui.text.textContent = nbsp(text);
   ui.text.hidden = !text;
   // Joy is short-lived: endless jumping would distract.
-  if (mood === 'happy') moodTimer = setTimeout(() => ui.bibo.setAttribute('class', 'bibo idle'), HAPPY_MS);
+  if (mood === 'happy') moodTimer = setTimeout(() => setMood('idle'), HAPPY_MS);
 }
 
 function screen(name, { big = false } = {}) {
@@ -278,6 +295,150 @@ function screen(name, { big = false } = {}) {
 function focusMain() {
   const btn = ui.actions.querySelector('[data-act="next"]:not(:disabled)');
   if (btn) btn.focus({ preventScroll: true });
+}
+
+// ── Bibo, alive ────────────────────────────────────────────────────────────
+// On top of its mood, Bibo blinks, follows the pointer with its eyes, hops when
+// the pointer comes by, giggles when clicked, and dozes off when nothing happens
+// on a screen that waits for the user. Just for fun: nothing depends on it.
+
+// dev/mock.html shortens it to try it out (&sleep=3).
+const SLEEP_MS = Number(window.BIBO_SLEEP_MS) || 45000;
+const CALM_SCREENS = ['welcome', 'diag', 'done'];
+const HOP_GAP_MS = 1500;
+
+const life = {
+  mood: 'idle',
+  asleep: false,
+  active: Date.now(),
+  hopAt: 0,
+  x: 0,
+  y: 0,
+  frame: 0,
+  sleepTimer: 0,
+  blinkTimer: 0,
+};
+
+function animateBibo() {
+  ui.bibo.addEventListener('pointerenter', onHover);
+  ui.bibo.addEventListener('click', onPoke);
+  document.addEventListener('pointermove', onPointerMove, { passive: true });
+  for (const type of ['pointerdown', 'keydown', 'wheel']) document.addEventListener(type, stir, { capture: true, passive: true });
+  // The pointer left the window: eyes back to the middle.
+  document.addEventListener('mouseout', (e) => {
+    if (!e.relatedTarget) look(0, 0);
+  });
+  sleepLater(SLEEP_MS);
+  blinkLater();
+}
+
+function setMood(mood) {
+  ui.bibo.classList.replace(life.mood, mood);
+  life.mood = mood;
+}
+
+function calm() {
+  return CALM_SCREENS.includes(document.body.dataset.screen);
+}
+
+// A class for a moment: blink, hop, giggle, waking.
+function flash(cls, ms) {
+  if (ui.bibo.classList.contains(cls)) return;
+  ui.bibo.classList.add(cls);
+  setTimeout(() => ui.bibo.classList.remove(cls), ms);
+}
+
+function blinkLater(ms = 2000 + Math.random() * 4500) {
+  clearTimeout(life.blinkTimer);
+  life.blinkTimer = setTimeout(() => {
+    if (!life.asleep) flash('blink', 130);
+    // Now and then, twice in a row.
+    blinkLater(Math.random() < 0.2 ? 300 : undefined);
+  }, ms);
+}
+
+// The user did something: a sleeping Bibo wakes up, the countdown starts over.
+function stir() {
+  life.active = Date.now();
+  if (life.asleep) wake(true);
+}
+
+// say() has news: Bibo is up for it, no yawning.
+// A yawn under way stops too: its mouth would clash with the new mood's.
+function rouse() {
+  ui.bibo.classList.remove('waking');
+  life.active = Date.now();
+  if (life.asleep) wake(false);
+}
+
+function sleepLater(ms) {
+  clearTimeout(life.sleepTimer);
+  life.sleepTimer = setTimeout(doze, ms);
+}
+
+// Never while Bibo thinks, works or worries: idle, on a calm screen, only.
+function doze() {
+  const left = life.active + SLEEP_MS - Date.now();
+  if (left > 0) {
+    sleepLater(left);
+  } else if (life.mood !== 'idle' || !calm()) {
+    sleepLater(SLEEP_MS);
+  } else {
+    // Until stir() or rouse(): no timer meanwhile.
+    life.asleep = true;
+    ui.bibo.classList.add('asleep');
+  }
+}
+
+function wake(yawn) {
+  life.asleep = false;
+  ui.bibo.classList.remove('asleep');
+  if (yawn) flash('waking', 1200);
+  sleepLater(SLEEP_MS);
+}
+
+function onPointerMove(e) {
+  // The engine repeats a still pointer's position when the page changes under it: not the user.
+  if (e.clientX === life.x && e.clientY === life.y) return;
+  stir();
+  life.x = e.clientX;
+  life.y = e.clientY;
+  if (!life.frame) life.frame = requestAnimationFrame(aim);
+}
+
+// The pupils lean towards the pointer, all the way once it is two Bibos away.
+// All the way means 3.5 × 4 units from the middle of the eye, where a rim of
+// white stays inside the outline; at rest they sit 1, 2 units off the middle.
+// A mood that looks somewhere (thinking, working, worried) wins in the CSS.
+function aim() {
+  life.frame = 0;
+  const r = ui.bibo.getBoundingClientRect();
+  const dx = life.x - (r.left + r.width / 2);
+  // The eyes sit at y 102 of 240.
+  const dy = life.y - (r.top + r.height * 0.425);
+  const d = Math.hypot(dx, dy) || 1;
+  const k = Math.min(1, d / (2 * r.width));
+  look(k * ((3.5 * dx) / d - 1), k * ((4 * dy) / d - 2));
+}
+
+function look(x, y) {
+  ui.bibo.style.setProperty('--gx', `${x.toFixed(2)}px`);
+  ui.bibo.style.setProperty('--gy', `${y.toFixed(2)}px`);
+}
+
+// Happy already jumps, and a worried Bibo has nothing to jump about.
+function onHover() {
+  const now = Date.now();
+  if (life.asleep || now - life.hopAt < HOP_GAP_MS) return;
+  if (life.mood === 'happy' || life.mood === 'worried' || ui.bibo.classList.contains('waking')) return;
+  life.hopAt = now;
+  flash('hop', 950);
+}
+
+// On a sleeping Bibo, the click only wakes it up: pointerdown got there first.
+function onPoke() {
+  if (life.mood === 'worried' || ui.bibo.classList.contains('waking')) return;
+  flash('giggle', 800);
 }
 
 // ── 1. Welcome ─────────────────────────────────────────────────────────────
@@ -847,6 +1008,7 @@ function guardContextMenu(e) {
 function start() {
   document.addEventListener('contextmenu', guardContextMenu);
   mount();
+  animateBibo();
   if (!window.__TAURI__) {
     say('worried', 'Ouvre l’app Brain in a Box.', 'Cette page ne marche que dans l’app.');
     return;
