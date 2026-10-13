@@ -25,17 +25,20 @@ jobs:
             echo "$sh -n $f" && "$sh" -n "$f"
           done
 
-      - name: Compile the Python hooks and search
-        run: python3 -m py_compile engine/*.py engine/hooks/*.py engine/search/*.py
+      - name: Compile the Python hooks, search, Windows nightly and CI helpers
+        run: python3 -m py_compile engine/*.py engine/hooks/*.py engine/search/*.py engine/nightly/*.py .github/ci/*.py
 
       - name: launchd templates are well-formed plists
         run: for f in engine/nightly/*.plist.template; do plutil -lint "$f"; done
 
   # A real install on a real Windows, the way a user runs it: no Python but the
   # Microsoft Store stub (what broke installs in the field), so Python comes from winget.
+  # The memory is gbrain, as on macOS, at the commit install.ps1 pins: this job is what
+  # makes that pin a tested one. No secret here: the Voyage path runs against
+  # .github/ci/fake_voyage.py, and the rejected-key path against the real API with a bad key.
   windows:
     runs-on: windows-latest
-    timeout-minutes: 25
+    timeout-minutes: 60
     defaults:
       run:
         shell: pwsh
@@ -54,7 +57,7 @@ jobs:
           $bad = Select-String -Path install.ps1 -Pattern '[^\x00-\x7F]'
           if ($bad) { $bad; exit 1 }
 
-      - name: Fresh install, only the Store python stub on the PATH
+      - name: Fresh install, only the Store python stub on the PATH, a Voyage key Voyage refuses
         run: |
           # The runner's own Python sits on the Machine PATH, which the installer re-reads: drop it from both.
           $tc = '*\hostedtoolcache\windows\Python\*'
@@ -66,8 +69,14 @@ jobs:
           # The py launcher would find the toolcache Pythons through the registry: a machine without Python has none.
           Set-Content "$stub\py.cmd" "@echo No installed Python found!`r`n@exit /b 103" -Encoding ascii
           $env:Path = "$stub;" + ((($env:Path -split ';') | Where-Object { $_ -notlike $tc }) -join ';')
-          powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1
+          $env:VOYAGE_API_KEY = 'pa-ci-refused-not-a-secret'
+          powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1 *>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\install-1.txt"
           if ($LASTEXITCODE) { exit 1 }
+          $out = Get-Content "$env:RUNNER_TEMP\install-1.txt" -Raw
+          if ($out -notmatch "Voyage n'a pas accepte cette cle") { throw 'a refused key was not reported' }
+          foreach ($f in "$env:RUNNER_TEMP\install-1.txt", "$env:USERPROFILE\.brain-in-a-box\install.log", "$env:USERPROFILE\.gbrain\config.json") {
+            if (Select-String -Path $f -SimpleMatch 'pa-ci-refused' -Quiet) { throw "the key leaked into $f" }
+          }
 
       - name: The install did what it says
         run: |
@@ -81,15 +90,38 @@ jobs:
           if ($cd[0].command -notlike '*python.exe') { throw "hook is not in exec form: $($cd[0].command)" }
           if (-not (Test-Path "$H\Documents\Brain\Profile")) { throw 'vault skeleton missing' }
           if (-not (Test-Path "$H\Documents\Brain\.git")) { throw 'vault is not a git repo' }
-          & "$H\.local\bin\gbq.cmd" query test; if ($LASTEXITCODE) { throw 'gbq.cmd query failed' }
-          & "$H\.local\bin\gbq.cmd" sync --repo x --no-pull; if ($LASTEXITCODE) { throw 'gbq.cmd sync (mapped to index) failed' }
-          Get-ScheduledTask -TaskName BrainSearchReindex, BrainReflection | Format-Table TaskName, State
+          Get-ScheduledTask -TaskName BrainNightly, BrainReflection | Format-Table TaskName, State
+          if (Get-ScheduledTask -TaskName BrainSearchReindex -ErrorAction SilentlyContinue) { throw 'the old BrainSearchReindex task is still there' }
+          if (-not (Get-ScheduledTask -TaskName BrainNightly).Settings.StartWhenAvailable) { throw 'a missed nightly would not catch up' }
           if (-not (Test-Path "$H\.local\bin\claude.exe")) { throw 'Claude Code not installed' }
           $m = @(Select-String -Path "$H\.claude\CLAUDE.md" -SimpleMatch '<!-- brain-in-a-box -->').Count
           if ($m -ne 1) { throw "CLAUDE.md marker found $m times" }
           foreach ($sk in Get-ChildItem skills -Directory) {
             if (-not (Test-Path "$H\.claude\skills\$($sk.Name)\SKILL.md")) { throw "skill $($sk.Name) not installed" }
           }
+
+      - name: gbrain is the memory (keyword brain, no key)
+        run: |
+          $H = $env:USERPROFILE
+          $gb = "$H\.bun\bin\gbrain.exe"
+          if (-not (Test-Path $gb)) { throw 'gbrain.exe not linked' }
+          if ((Get-Content "$H\.brain-search\engine").Trim() -ne 'gbrain') { throw "engine: $(Get-Content "$H\.brain-search\engine")" }
+          if (-not (Test-Path "$H\.gbrain\brain.pglite")) { throw 'no brain.pglite' }
+          $want = (Select-String -Path install.ps1 -Pattern '^\$GBRAIN_REF = "(\w+)"').Matches[0].Groups[1].Value
+          $head = (git -C "$H\DEV\gbrain" rev-parse HEAD).Trim()
+          if ($head -ne $want) { throw "gbrain at $head, install.ps1 pins $want" }
+          & $gb --version
+          $cfg = Get-Content "$H\.gbrain\config.json" -Raw | ConvertFrom-Json
+          if (-not $cfg.embedding_disabled) { throw 'a brain without a key should be keyword-only' }
+          $src = (& $gb sources list) -join "`n"; $src
+          if ($src -notmatch '(?m)^\s+vault\s') { throw 'the vault is not a gbrain source' }
+          # gbrain skips README.md files; Profile/lessons.md is a page.
+          $q = (& "$H\.local\bin\gbq.cmd" query "captured corrections") -join "`n"; $q
+          if ($LASTEXITCODE) { throw "gbq.cmd query exited $LASTEXITCODE" }
+          if ($q -notmatch '(?i)profile/lessons' -or $q -match '#chunk') { throw 'gbq.cmd query was not answered by gbrain' }
+          # The onboarding's re-index, verbatim.
+          & "$H\.local\bin\gbq.cmd" sync --repo "$H\Documents\Brain" --no-pull --no-embed; if ($LASTEXITCODE) { throw 'gbq.cmd sync failed' }
+          & "$H\.local\bin\gbq.cmd" embed --stale --max-usd 0.10; if ($LASTEXITCODE) { throw 'gbq.cmd embed failed on a keyword brain' }
 
       - name: A hook runs the way Claude Code spawns it (exec form)
         run: |
@@ -98,9 +130,31 @@ jobs:
           '{"prompt": "hello", "session_id": "ci", "transcript_path": ""}' | & $h.command @($h.args)
           if ($LASTEXITCODE) { throw "correction-detector exited $LASTEXITCODE" }
 
-      - name: gbq works from Git Bash (Claude Code's Bash tool)
+      - name: gbq works from Git Bash (Claude Code's Bash tool), onboarding commands included
         shell: bash
-        run: ~/.local/bin/gbq query test && ~/.local/bin/gbq embed --stale
+        run: |
+          out=$(~/.local/bin/gbq query "captured corrections") && echo "$out" && echo "$out" | grep -qi 'profile/lessons'
+          ~/.local/bin/gbq sync --repo ~/Documents/Brain --no-pull --no-embed
+          ~/.local/bin/gbq embed --stale --max-usd 0.10
+
+      - name: The nightly task commits the day's notes and indexes them (S4U, as registered)
+        run: |
+          $H = $env:USERPROFILE
+          $utf8 = New-Object Text.UTF8Encoding $false
+          [IO.File]::WriteAllText("$H\Documents\Brain\Journal\lighthouse.md", "# The lighthouse`n`nThe lighthouse keeper logs every storm and repairs the lamp lens before winter.`n", $utf8)
+          Start-ScheduledTask -TaskName BrainNightly
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          Start-Sleep -Seconds 3
+          while ((Get-ScheduledTask -TaskName BrainNightly).State -eq 'Running' -and $sw.Elapsed.TotalSeconds -lt 900) { Start-Sleep -Seconds 3 }
+          $info = Get-ScheduledTaskInfo -TaskName BrainNightly
+          Get-Content "$H\.gbrain\nightly.log"
+          if ($info.LastTaskResult -ne 0) { throw "BrainNightly LastTaskResult $($info.LastTaskResult)" }
+          $log = Get-Content "$H\.gbrain\nightly.log" -Raw
+          foreach ($want in '[git] vault committed', '[sync] exit 0', '[embed] exit 0', '[brain_search] exit 0', 'nightly done') {
+            if (-not $log.Contains($want)) { throw "nightly.log lacks '$want'" }
+          }
+          $q = (& "$H\.local\bin\gbq.cmd" query "lighthouse keeper storm") -join "`n"; $q
+          if ($q -notmatch '(?i)lighthouse' -or $q -match '#chunk') { throw 'the note written today is not in gbrain after the nightly' }
 
       - name: A second run is idempotent
         run: |
@@ -114,10 +168,13 @@ jobs:
           }
           $m = @(Select-String -Path "$env:USERPROFILE\.claude\CLAUDE.md" -SimpleMatch '<!-- brain-in-a-box -->').Count
           if ($m -ne 1) { throw "CLAUDE.md marker found $m times after a second run" }
+          if ((Get-Content "$env:USERPROFILE\.brain-search\engine").Trim() -ne 'gbrain') { throw 'a second run left gbrain' }
+          $n = @((& "$env:USERPROFILE\.bun\bin\gbrain.exe" sources list) | Select-String '^\s+vault\s').Count
+          if ($n -ne 1) { throw "vault source listed $n times after a second run" }
 
       - name: One-liner mode (irm | iex) under the Restricted policy of a fresh PC
         run: |
-          Unregister-ScheduledTask -TaskName BrainSearchReindex, BrainReflection -Confirm:$false
+          Unregister-ScheduledTask -TaskName BrainNightly, BrainReflection -Confirm:$false
           git archive --format=zip --prefix=brain-in-a-box-master/ -o "$env:RUNNER_TEMP\src.zip" HEAD
           $env:BIAB_ARCHIVE = "$env:RUNNER_TEMP\src.zip"
           $env:BRAIN_DIR = "$env:RUNNER_TEMP\Brain2"
@@ -125,4 +182,66 @@ jobs:
           if ($LASTEXITCODE) { exit 1 }
           if (-not (Test-Path "$env:USERPROFILE\.brain-in-a-box\src\vault-skeleton")) { throw 'sources not unpacked' }
           if (-not (Test-Path "$env:RUNNER_TEMP\Brain2\Profile")) { throw 'vault not created in BRAIN_DIR' }
-          Get-ScheduledTask -TaskName BrainSearchReindex, BrainReflection | Format-Table TaskName, State
+          Get-ScheduledTask -TaskName BrainNightly, BrainReflection | Format-Table TaskName, State
+
+      - name: A Voyage key added later turns on search by meaning (fake Voyage, no secret)
+        run: |
+          $H = $env:USERPROFILE
+          $py = (@((Get-Content "$H\.claude\settings.json" -Raw | ConvertFrom-Json).hooks.UserPromptSubmit.hooks)[0]).command
+          $flog = "$env:RUNNER_TEMP\fake-voyage.log"
+          Start-Process $py -ArgumentList @('-I', "$PWD\.github\ci\fake_voyage.py", '8899') -RedirectStandardOutput $flog -RedirectStandardError "$flog.err"
+          Start-Sleep -Seconds 2
+          # What a proxy setup looks like: gbrain, and the installer's key check, go to the stand-in.
+          $cfgPath = "$H\.gbrain\config.json"
+          'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["provider_base_urls"]={"voyage":"http://127.0.0.1:8899/v1"}; json.dump(d,open(p,"w"),indent=2)' | Set-Content "$env:RUNNER_TEMP\base.py" -Encoding ascii
+          & $py -I "$env:RUNNER_TEMP\base.py" $cfgPath
+          $env:VOYAGE_API_KEY = 'ci-fake-key-not-a-secret'
+          powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File install.ps1 *>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\install-voyage.txt"
+          if ($LASTEXITCODE) { exit 1 }
+          Remove-Item Env:VOYAGE_API_KEY
+          $out = Get-Content "$env:RUNNER_TEMP\install-voyage.txt" -Raw
+          if ($out -notmatch 'cle acceptee par Voyage') { throw 'the key check did not pass against the stand-in' }
+          if ($out -notmatch 'recherche par le sens') { throw 'the brain did not move to search by meaning' }
+          foreach ($f in "$env:RUNNER_TEMP\install-voyage.txt", "$H\.brain-in-a-box\install.log", "$H\.gbrain\nightly.log") {
+            if (Select-String -Path $f -SimpleMatch 'ci-fake-key' -Quiet) { throw "the key leaked into $f" }
+          }
+          $cfg = Get-Content $cfgPath -Raw | ConvertFrom-Json
+          if ($cfg.embedding_model -ne 'voyage:voyage-4') { throw "embedding_model: $($cfg.embedding_model)" }
+          if ($cfg.voyage_api_key -ne 'ci-fake-key-not-a-secret') { throw 'key not stored in config.json' }
+          $gb = "$H\.bun\bin\gbrain.exe"
+          $rr = (& $gb config get search.reranker.model) -join ''
+          if ($rr -notmatch 'rerank-3-lite') { throw "reranker: $rr" }
+          $stats = (& $gb stats) -join "`n"; $stats
+          $emb = [regex]::Match($stats, 'Embedded:\s+(\d+)').Groups[1].Value
+          if (-not $emb -or [int]$emb -lt 3) { throw "only '$emb' chunks embedded" }
+          $before = @(Select-String -Path $flog -Pattern 'embeddings n=').Count
+          $q = (& "$H\.local\bin\gbq.cmd" query "storm keeper lamp") -join "`n"; $q
+          if ($q -notmatch '(?i)lighthouse') { throw 'query by meaning missed the lighthouse note' }
+          $after = @(Select-String -Path $flog -Pattern 'embeddings n=').Count
+          Get-Content $flog
+          if ($after -le $before) { throw 'the query was not embedded (no vector search)' }
+
+      - name: Fallback - gbrain gone or impossible to install, keyword search stays
+        run: |
+          $H = $env:USERPROFILE
+          # gbrain removed behind the installer's back: gbq answers from the keyword index.
+          Rename-Item "$H\.bun\bin\gbrain.exe" gbrain.exe.off
+          $q = (& "$H\.local\bin\gbq.cmd" query "lighthouse keeper storm" 2>&1) -join "`n"; $q
+          if ($LASTEXITCODE -or $q -notmatch 'lighthouse.md#chunk') { throw 'no keyword fallback with gbrain missing' }
+          # A re-run that cannot install gbrain (its folder is not a gbrain clone): the install still
+          # succeeds, in keyword mode, and the nightly keeps the keyword index fresh.
+          Rename-Item "$H\DEV\gbrain" gbrain.off
+          New-Item -ItemType Directory "$H\DEV\gbrain" | Out-Null
+          Set-Content "$H\DEV\gbrain\notes.txt" 'not gbrain'
+          powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File install.ps1
+          if ($LASTEXITCODE) { exit 1 }
+          if ((Get-Content "$H\.brain-search\engine").Trim() -ne 'brain_search') { throw 'engine is not brain_search after a failed gbrain install' }
+          & "$H\.local\bin\gbq.cmd" sync; if ($LASTEXITCODE) { throw 'gbq sync (reindex) failed in fallback mode' }
+          $q = (& "$H\.local\bin\gbq.cmd" query "lighthouse keeper storm") -join "`n"; $q
+          if ($LASTEXITCODE -or $q -notmatch 'lighthouse.md#chunk') { throw 'gbq.cmd query failed in fallback mode' }
+          Start-ScheduledTask -TaskName BrainNightly
+          Start-Sleep -Seconds 3
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          while ((Get-ScheduledTask -TaskName BrainNightly).State -eq 'Running' -and $sw.Elapsed.TotalSeconds -lt 300) { Start-Sleep -Seconds 2 }
+          if ((Get-ScheduledTaskInfo -TaskName BrainNightly).LastTaskResult -ne 0) { throw 'nightly failed in fallback mode' }
+          Get-Content "$H\.gbrain\nightly.log" -Tail 6

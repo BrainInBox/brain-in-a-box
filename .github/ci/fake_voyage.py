@@ -42,6 +42,11 @@ class Handler(BaseHTTPRequestHandler):
             inputs = body.get("input") or []
             if isinstance(inputs, str):
                 inputs = [inputs]
+            # Like Voyage: a request without a model or a bearer key is refused, so a broken
+            # key check in install.ps1 cannot pass against this stand-in.
+            if not inputs or not body.get("model") or not (self.headers.get("Authorization") or "").startswith("Bearer "):
+                print(f"[fake-voyage] 400 embeddings {body.get('model')}", flush=True)
+                return self._send(400, {"detail": "bad request"})
             dims = int(body.get("output_dimension") or body.get("dimensions") or DIMS)
             data = [{"object": "embedding", "index": i, "embedding": embed(t, dims)} for i, t in enumerate(inputs)]
             tokens = sum(len(t.split()) for t in inputs)

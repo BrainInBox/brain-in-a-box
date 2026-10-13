@@ -386,6 +386,63 @@ python3 -c 'import json,sys; h=json.loads(sys.argv[1])["hits"]; sys.exit(0 if h 
 BRAIN_SEARCH_INDEX="$BSI" PYTHONIOENCODING=ascii python3 "$BS" query "annual plan" >/dev/null 2>&1 \
   && ok "brain_search: a non-UTF-8 console does not crash on '→'" || no "brain_search: crashed on a non-UTF-8 console"
 
+# Windows gbq (engine/search/gbq.py) against a stub gbrain: busy N times, then answers.
+GW="$H/gbqw-home"; mkdir -p "$GW/.bun/bin" "$GW/bs"
+cp "$REPO/engine/search/gbq.py" "$BS" "$GW/bs/"
+cat > "$GW/.bun/bin/gbrain" <<'STUB'
+#!/usr/bin/env bash
+case "$1" in
+  query|search)
+    n=$(cat "$HOME/calls" 2>/dev/null || echo 0); echo $((n + 1)) > "$HOME/calls"
+    [ "$n" -lt "${GBQ_BUSY:-0}" ] && { echo "Error [pglite_busy]: The brain is busy." >&2; exit 1; }
+    [ -n "${GBQ_FAIL:-}" ] && { echo "boom" >&2; exit 2; }
+    echo "[0.91] decisions/pricing -- from gbrain"; exit 0;;
+  sync) exit "${GBQ_STUB_RC:-0}";;
+esac
+STUB
+chmod +x "$GW/.bun/bin/gbrain"
+# env -u: a BUN_INSTALL or GBRAIN_HOME from your shell would point at your real gbrain.
+gw(){ rm -f "$GW/calls"; env -u BUN_INSTALL -u GBRAIN_HOME HOME="$GW" BRAIN_DIR="$BV" BRAIN_SEARCH_INDEX="$BSI" python3 "$GW/bs/gbq.py" "$@"; }
+echo gbrain > "$GW/bs/engine"
+out=$(gw query "annual plan" 2>/dev/null); rc=$?
+[ "$rc" = 0 ] && echo "$out" | grep -q "from gbrain" && ok "gbq.py: a read goes to gbrain" || no "gbq.py: read not sent to gbrain (rc=$rc)"
+out=$(GBQ_BUSY=1 gw query "annual plan" 2>&1); rc=$?
+[ "$rc" = 0 ] && echo "$out" | grep -q "from gbrain" && echo "$out" | grep -q "se met a jour" \
+  && ok "gbq.py: a busy brain (pglite_busy) is retried once" || no "gbq.py: busy brain not retried (rc=$rc)"
+out=$(GBQ_BUSY=9 gw query "annual plan" 2>/dev/null); rc=$?
+[ "$rc" = 0 ] && echo "$out" | grep -q "Decisions/pricing.md" \
+  && ok "gbq.py: still busy after a retry -> keyword results" || no "gbq.py: no fallback when busy (rc=$rc)"
+out=$(GBQ_FAIL=1 gw query "annual plan" 2>/dev/null); rc=$?
+[ "$rc" = 0 ] && echo "$out" | grep -q "Decisions/pricing.md" \
+  && ok "gbq.py: a failing gbrain read -> keyword results" || no "gbq.py: no fallback on failure (rc=$rc)"
+GBQ_STUB_RC=3 gw sync >/dev/null 2>&1; rc=$?
+[ "$rc" = 3 ] && ok "gbq.py: a write returns gbrain's exit code" || no "gbq.py: write returned $rc, want 3"
+mv "$GW/.bun/bin/gbrain" "$GW/gbrain.off"
+out=$(gw query "annual plan" 2>/dev/null); rc=$?
+[ "$rc" = 0 ] && echo "$out" | grep -q "Decisions/pricing.md" \
+  && ok "gbq.py: gbrain gone -> keyword results" || no "gbq.py: gbrain gone, no fallback (rc=$rc)"
+mv "$GW/gbrain.off" "$GW/.bun/bin/gbrain"
+echo brain_search > "$GW/bs/engine"
+out=$(gw query "annual plan" 2>/dev/null); rc=$?
+[ "$rc" = 0 ] && echo "$out" | grep -q "Decisions/pricing.md" && [ ! -f "$GW/calls" ] \
+  && ok "gbq.py: keyword mode never calls gbrain" || no "gbq.py: keyword mode wrong (rc=$rc)"
+gw embed --stale --max-usd 0.10 >/dev/null 2>&1 && ok "gbq.py: keyword mode maps sync/embed to a reindex" || no "gbq.py: keyword-mode embed failed"
+
+# Windows nightly (engine/nightly/windows-nightly.py): commits the vault, syncs, embeds, reindexes.
+NW="$H/nightly-home"; NV="$NW/Brain"; mkdir -p "$NW/.bun/bin" "$NW/.brain-search" "$NV"
+cp "$BS" "$NW/.brain-search/"; echo gbrain > "$NW/.brain-search/engine"
+printf '#!/usr/bin/env bash\necho "gbrain $*" >> "$HOME/gbrain-calls"\n' > "$NW/.bun/bin/gbrain"; chmod +x "$NW/.bun/bin/gbrain"
+( cd "$NV" && git init -q && printf '# A\n' > a.md && git add -A && git -c user.email=t@t -c user.name=t commit -qm init )
+printf '# Lighthouse\n\nThe keeper logs every storm.\n' > "$NV/lighthouse.md"
+env -u BUN_INSTALL -u GBRAIN_HOME HOME="$NW" BRAIN_SEARCH_INDEX="$NW/index.json" python3 "$REPO/engine/nightly/windows-nightly.py" --brain "$NV" --git "$(command -v git)"
+[ -z "$(git -C "$NV" status --porcelain)" ] && git -C "$NV" log -1 --format=%s | grep -q nightly \
+  && ok "windows nightly: commits the day's notes first" || no "windows nightly: vault not committed"
+grep -q "gbrain sync --source vault --no-pull --no-embed" "$NW/gbrain-calls" 2>/dev/null \
+  && grep -q "gbrain embed --stale --max-usd 0.10" "$NW/gbrain-calls" \
+  && ok "windows nightly: gbrain sync + embed with a spend cap" || no "windows nightly: gbrain steps missing"
+grep -q "lighthouse.md" "$NW/index.json" 2>/dev/null && grep -q "nightly done" "$NW/.gbrain/nightly.log" \
+  && ok "windows nightly: keyword index rebuilt, run logged" || no "windows nightly: no reindex or no log"
+
 echo "════ 11) skills → ~/.claude/skills ════"
 SK="$H/skills-test"; SSRC="$SK/src"; SDST="$SK/dst"; SMF="$SK/skills.json"
 mkdir -p "$SSRC/alpha" "$SSRC/beta" "$SSRC/gamma" "$SDST/beta"
