@@ -311,6 +311,7 @@ place "$REPO/engine/bin/gbq" "$BIN/gbq" "gbq → $BIN/gbq"
 for s in gbrain-nightly gbrain-lint gbrain-selfupdate; do
   place "$REPO/engine/nightly/$s.sh" "$HOOKS/$s.sh"
 done
+place "$REPO/engine/nightly/gbrain-sync-vault.py" "$HOOKS/gbrain-sync-vault.py"
 
 # ── 7. launchd jobs (nightly maintenance + daily reflection + weekly lint) ───
 say "launchd (nightly 04:00 + reflection 12:00/23:00 + lint Monday 08:00)"
@@ -358,8 +359,8 @@ else
   warn "vault: git init or first commit failed (see above); your notes are untouched"
 fi
 
-# ── 11. GBrain init + key + import + embed ──────────────────────────────────
-say "GBrain init + import"
+# ── 11. GBrain init + key + vault indexing + embed ──────────────────────────
+say "GBrain init + indexing the vault"
 mkdir -p "$GDATA"
 # One-token request. The key reaches curl through stdin (printf is a builtin), never argv;
 # -q first, so a ~/.curlrc (trace, proxy…) never applies to it.
@@ -404,7 +405,19 @@ fi
 # Basename resolution links [[Page-Name]] to the page whose filename matches
 # (case-insensitive), regardless of folder.
 "$GBQ_BIN" config set link_resolution.global_basename true >/dev/null 2>&1 || true
-logged "$GBQ_BIN" import "$BRAIN" --no-embed && ok "vault imported" || warn_log "vault import failed: re-run gbrain import $BRAIN --no-embed"
+# gbrain reads the vault through git: notes written since the last run are committed first.
+if [ -n "$(git -C "$BRAIN" status --porcelain 2>/dev/null)" ]; then
+  git -C "$BRAIN" add -A && git -C "$BRAIN" -c user.email="brain@local" -c user.name="brain" commit -q -m "brain-in-a-box: notes before indexing" \
+    || warn "vault: commit refused (see above); notes not committed yet are indexed by the nightly"
+fi
+# The vault is the 'default' source on an older brain, a source of its own
+# ('vault') on a newer one, where 'default' is gbrain's own folder; a brain that
+# imported the vault into that folder is repaired. See engine/nightly/gbrain-sync-vault.py.
+# Its "[vault] …" lines are shown; gbrain's own output stays in the log.
+from=$(( $(wc -c < "$LOG") + 1 ))
+if logged python3 "$REPO/engine/nightly/gbrain-sync-vault.py" "$BRAIN"; then rc=0; else rc=$?; fi
+tail -c +"$from" "$LOG" | sed -n 's/^\[vault\] /    /p'
+[ "$rc" = 0 ] && ok "vault indexed" || warn_log "vault not indexed (exit $rc): re-run ./install.sh, the nightly also retries"
 if [ -n "$EMBED" ]; then
   say "Embedding (may take 1-2 min)…"
   logged "$GBQ_BIN" embed --stale --max-usd 1 && ok "embedded" \

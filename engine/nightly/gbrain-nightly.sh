@@ -4,7 +4,8 @@
 # purpose: launchd starts without the user shell PATH.
 #
 # Steps: stale-lock recovery → self-update GBrain → commit personal vault →
-# sync personal → [if company vault present: git pull + sync 'company' source] → dream cycle.
+# sync personal (gbrain-sync-vault.py) → [if company vault present: git pull +
+# sync 'company' source] → dream cycle.
 
 export PATH="$HOME/.bun/bin:/opt/homebrew/bin:/usr/bin:/bin"
 GBRAIN="$HOME/.bun/bin/gbrain"
@@ -13,6 +14,7 @@ VAULT="$HOME/Documents/Brain"
 VAULT_CO="$HOME/Documents/BrainCo"
 GREPO="$HOME/DEV/gbrain"
 LOG="$HOME/.gbrain/nightly.log"
+SYNC_VAULT="${0:A:h}/gbrain-sync-vault.py"   # absolute: the steps below cd
 
 # Sweep an orphan .git/index.lock that silently breaks `git commit` (a crashed
 # git leaves it behind → the vault never commits → gbrain sync stalls on "No
@@ -114,7 +116,14 @@ fi
 # Only sync's inline embed path fails; the same texts embed cleanly on their
 # own. Left unsplit, the RAG silently stops ingesting the vault for weeks.
 # Re-test `sync` alone after a gbrain upgrade; drop this split once fixed.
-"$GBRAIN" sync --repo "$VAULT" --no-pull --no-embed >> "$LOG" 2>&1
+# Which source holds the vault depends on the brain's age: gbrain-sync-vault.py
+# reads `gbrain sources list`, syncs the right one, and repairs a brain whose
+# vault was imported into gbrain's own folder (there `sync --repo` fails).
+if [ -f "$SYNC_VAULT" ]; then
+    python3 "$SYNC_VAULT" "$VAULT" >> "$LOG" 2>&1
+else
+    "$GBRAIN" sync --repo "$VAULT" --no-pull --no-embed >> "$LOG" 2>&1
+fi
 # Since gbrain 0.60.106 a paid run needs approval: without one, embed exits 3
 # ("confirmation_required") and nothing is embedded. The cap covers a normal
 # day of notes many times over (about 1.6M tokens at list price).

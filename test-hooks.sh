@@ -355,6 +355,93 @@ nightly_run 0 "/nonexistent/remote.git"
   && ok "push error: retried 3 times, then reported" || no "push error: not retried or not reported"
 rm -rf "$NH"
 
+echo "════ 9bis) gbrain-sync-vault.py — the vault's source, read from gbrain sources list ════"
+# A stub gbrain: `sources list --json` prints $HOME/sources.json (no file: it fails),
+# `list --source-id X` prints $HOME/pages-X.json, sources.default is $HOME/default-set,
+# sync exits with $SYNC_RC. Every call is recorded in $HOME/calls.
+SV="$H/sync-vault"
+sv_home() {  # sv_home <name>: T = a throwaway HOME, V = its vault; CD = gbrain's own folder there
+  T="$SV/$1"; V="$T/Documents/Brain"; CD="$T/.gbrain/content/b1/default"
+  mkdir -p "$T/.bun/bin" "$T/Documents" "$CD"
+  cat > "$T/.bun/bin/gbrain" <<'STUB'
+#!/usr/bin/env bash
+echo "gbrain $*" >> "$HOME/calls"
+case "$1 $2" in
+  "sources list") [ -f "$HOME/sources.json" ] && cat "$HOME/sources.json" || exit 1;;
+  "config get") [ -f "$HOME/default-set" ] && cat "$HOME/default-set" || { echo "Config key not found: $3" >&2; exit 1; };;
+  "list --source-id") cat "$HOME/pages-$3.json";;
+  "sync --"*) exit "${SYNC_RC:-0}";;
+esac
+exit 0
+STUB
+  chmod +x "$T/.bun/bin/gbrain"
+}
+sv_sources() {  # sv_sources "<id> <path|-> <pages>" ...: what `gbrain sources list --json` prints
+  local rows="" id p n
+  for r in "$@"; do
+    read -r id p n <<<"$r"
+    [ "$p" = - ] && p=null || p="\"$p\""
+    rows="$rows${rows:+,}{\"id\":\"$id\",\"local_path\":$p,\"federated\":true,\"page_count\":$n}"
+  done
+  printf 'UPGRADE_AVAILABLE 0.1 0.2\n{"sources":[%s]}\n' "$rows" > "$T/sources.json"
+}
+sv_pages() {  # sv_pages <source> <slug>...
+  local s="$1" rows="" p; shift
+  for p in "$@"; do rows="$rows${rows:+,}{\"slug\":\"$p\",\"source_id\":\"$s\"}"; done
+  printf '[%s]\n' "$rows" > "$T/pages-$s.json"
+}
+sv_run() { env -u BUN_INSTALL -u GBRAIN_HOME HOME="$T" python3 "$REPO/engine/nightly/gbrain-sync-vault.py" "$V" > "$T/out" 2>&1; SVRC=$?; }
+called() { grep -qxF "gbrain $1" "$T/calls" 2>/dev/null; }
+never() { ! grep -q "^gbrain $1" "$T/calls" 2>/dev/null; }
+
+sv_home old; mkdir -p "$T/Brain"; ln -s "$T/Brain" "$V"; sv_sources "default $T/Brain 12"; sv_run
+[ "$SVRC" = 0 ] && called "sync --repo $V --no-pull --no-embed" && [ "$(wc -l < "$T/calls")" -eq 2 ] \
+  && ok "sync-vault: 'default' is the vault (through a symlink): sync --repo as always, nothing else" || no "sync-vault: old install not left as is: $(tr '\n' '|' < "$T/calls")"
+sv_home never-synced; mkdir -p "$V"; sv_sources "default - 12"; sv_run
+[ "$SVRC" = 0 ] && called "sync --repo $V --no-pull --no-embed" && never "sources add" \
+  && ok "sync-vault: 'default' without a folder (imported, never synced): sync --repo" || no "sync-vault: never-synced old install mishandled"
+sv_home fresh; mkdir -p "$V"; sv_sources "default $CD 0"; sv_run
+[ "$SVRC" = 0 ] && called "sources add vault --path $V --federated" && called "sync --source vault --no-pull --no-embed" \
+  && called "sources default vault" && never "list" && never "delete" \
+  && ok "sync-vault: new brain: vault added as a source, synced, made the default" || no "sync-vault: fresh brain: $(tr '\n' '|' < "$T/calls")"
+sv_home broken; mkdir -p "$V"; echo copy > "$CD/a.md"
+sv_sources "default $CD 3"; sv_pages default a b only-here; sv_pages vault a b d; sv_run
+[ "$SVRC" = 0 ] && called "sources add vault --path $V --federated" && called "sync --source vault --no-pull --no-embed" \
+  && called "delete a --source-id default --force" && called "delete b --source-id default --force" && never "delete only-here" \
+  && grep -q "^copy$" "$T"/.brain-in-a-box/backups/*-gbrain-default/a.md 2>/dev/null \
+  && ok "sync-vault: vault imported into gbrain's folder: its copies removed there (backed up), the rest kept" || no "sync-vault: broken brain not repaired: $(tr '\n' '|' < "$T/calls")"
+sv_home migrated; mkdir -p "$V"; echo vault > "$T/default-set"; sv_sources "default $CD 0" "vault $V 10"; sv_run
+[ "$SVRC" = 0 ] && called "sync --source vault --no-pull --no-embed" && never "sources add" && never "sources default" && never "delete" \
+  && ok "sync-vault: already a source: just synced" || no "sync-vault: migrated brain touched again: $(tr '\n' '|' < "$T/calls")"
+sv_home sync-fails; mkdir -p "$V"; sv_sources "default $CD 3"; sv_pages default a; sv_pages vault a
+SYNC_RC=1 sv_run
+[ "$SVRC" = 1 ] && never "sources default" && never "delete" \
+  && ok "sync-vault: a failed sync removes nothing and is reported" || no "sync-vault: acted after a failed sync (exit $SVRC)"
+sv_home user-folder; mkdir -p "$V" "$T/notes"; sv_sources "default $T/notes 2"; sv_pages default a; sv_pages vault a; sv_run
+[ "$SVRC" = 0 ] && called "sync --source vault --no-pull --no-embed" && never "delete" \
+  && ok "sync-vault: a 'default' that is a folder of yours is never emptied" || no "sync-vault: deleted pages from a user's folder"
+sv_home your-default; mkdir -p "$V"; echo mine > "$T/default-set"; sv_sources "default $CD 0"; sv_run
+[ "$SVRC" = 0 ] && never "sources default" && ok "sync-vault: a sources.default you chose is kept" || no "sync-vault: overwrote sources.default"
+sv_home no-list; mkdir -p "$V"; sv_run
+[ "$SVRC" = 0 ] && called "sync --repo $V --no-pull --no-embed" && never "sources add" \
+  && ok "sync-vault: sources list unreadable (older gbrain): sync --repo as before" || no "sync-vault: no fallback when sources list fails"
+sv_home taken; mkdir -p "$V" "$T/elsewhere"; sv_sources "default $CD 0" "vault $T/elsewhere 4"; sv_run
+[ "$SVRC" = 1 ] && never "sources add" && never "sync" && grep -q "already points to" "$T/out" \
+  && ok "sync-vault: a 'vault' source pointing elsewhere is left alone, and said" || no "sync-vault: hijacked another 'vault' source"
+
+# The nightly hands the vault to it, without install.sh: an install from before this fix
+# that imported the vault into gbrain's folder is repaired by the next 04:00 run.
+sv_home nightly; mkdir -p "$T/nightly" "$V"; sv_sources "default $CD 1"; sv_pages default a; sv_pages vault a
+printf '#!/bin/sh\nexit 0\n' > "$T/.bun/bin/sleep"; printf '#!/bin/sh\nexit 0\n' > "$T/nightly/gbrain-selfupdate.sh"
+cp "$REPO/engine/nightly/gbrain-nightly.sh" "$REPO/engine/nightly/gbrain-sync-vault.py" "$T/nightly/"
+chmod +x "$T/.bun/bin/sleep" "$T/nightly/"*
+( cd "$V" && git init -q && echo note > a.md )
+HOME="$T" zsh "$T/nightly/gbrain-nightly.sh" 2>/dev/null
+[ -z "$(git -C "$V" status --porcelain)" ] && called "sources add vault --path $V --federated" \
+  && called "sync --source vault --no-pull --no-embed" && called "delete a --source-id default --force" \
+  && grep -q "^\[vault\] vault registered" "$T/.gbrain/nightly.log" \
+  && ok "nightly: commits, then repairs a brain whose vault sat in gbrain's folder" || no "nightly: did not hand the vault to gbrain-sync-vault.py: $(tr '\n' '|' < "$T/calls")"
+
 echo "════ 10) gbq + brain_search ════"
 # gbq against a stub gbrain: sync exits with $GBQ_STUB_RC; query prints a hit, then
 # either exits with $GBQ_STUB_RC or hangs like the real PGLite read does.
