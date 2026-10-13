@@ -502,6 +502,17 @@ body.big .plan { justify-content: center; text-align: left; }
 /* After .bullets, whose margin it overrides. */
 .repair-card > * + * { margin-top: 8px; }
 
+/* E2: what Claude can do about the failure, apart from the install's own notes. */
+.repair-offer {
+  padding: 12px 16px;
+  font-size: 14px;
+  border-left: 3px solid var(--accent);
+}
+
+.repair-offer > * + * { margin-top: 6px; }
+
+.repair-offer .log { margin-top: 10px; }
+
 .card-title { font-weight: 650; }
 
 .bullets li::marker { color: var(--accent); }

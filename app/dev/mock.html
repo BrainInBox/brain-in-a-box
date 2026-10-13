@@ -42,7 +42,10 @@
   // &jump=showLogin|showDone opens that screen of app.js directly (the screenshot budget is only 3 s),
   // &repair=offline|exhausted|unsupported|disabled|not_logged_in is what repair_status answers under a failed step,
   // &pause=analyze|apply leaves Claude's analysis or the repair running,
-  // &at=<css> stops the driving on &go's screen only once that element is there, &click=<act> clicks that button once.
+  // &error=timeout|init_invalid|invalid_verdict|api|busy ends the first analysis on that error (init_invalid
+  // then rules the in-app repair out, as repair.rs does),
+  // &at=<css> stops the driving on &go's screen only once that element is there, &nth=<n> only on its n-th arrival there,
+  // &click=<act>[,<act>…] clicks those buttons in that order, once each, and &go's screen counts only after the last.
   // Bibo: &sleep=3 makes it doze off after 3 s without activity instead of 45.
   (() => {
     const P = new URLSearchParams(location.search);
@@ -267,6 +270,8 @@
     // (Claude's service refusing is free, as in repair.rs).
     let turn = 0;
     let counted = 0;
+    let error = P.get('error');
+    let unsupported = false;
     const plans = {};
     let cancelAnalysis = null;
     const stoppable = (ms) => new Promise((resolve, reject) => {
@@ -306,8 +311,9 @@
         if (step === 'claude') return of('absent');
         const forced = P.get('repair') || (REPAIR && REPAIR.status);
         if (forced) return of(forced);
+        if (unsupported) return of('unsupported');
         if (!loggedIn()) return of('not_logged_in');
-        return of(REPAIR && turn >= REPAIR.rounds.length ? 'exhausted' : 'ready');
+        return of(REPAIR && (turn >= REPAIR.rounds.length || counted >= 2) ? 'exhausted' : 'ready');
       },
       async repair_preview({ step }) {
         await wait(T(400));
@@ -326,6 +332,13 @@
         await stoppable(T(800));
         emit('repair-progress', 'asking');
         await stoppable(P.get('pause') === 'analyze' ? Infinity : T(1500));
+        if (error) {
+          const kind = error;
+          error = null;
+          if (!['api', 'busy'].includes(kind)) counted += 1;
+          if (kind === 'init_invalid') unsupported = true;
+          throw { kind };
+        }
         const r = REPAIR && REPAIR.rounds[turn];
         if (!r) throw { kind: 'unavailable', state: 'exhausted' };
         turn += 1;
@@ -379,8 +392,10 @@
     let added = false;
     const jump = P.get('jump');
     const at = P.get('at');
-    const click = P.get('click');
-    let clicked = false;
+    const clicks = (P.get('click') || '').split(',').filter(Boolean);
+    const nth = Number(P.get('nth')) || 1;
+    let seen = '';
+    let arrivals = 0;
     if (jump === 'showLogin' || jump === 'showDone') addEventListener('DOMContentLoaded', () => window[jump]());
     if (go) {
       document.documentElement.classList.add('driven');
@@ -389,6 +404,10 @@
         if (P.get('details')) { const d = q('details.log:not(.sent)'); if (d && !d.open) d.open = true; }
         if (P.get('sent')) { const d = q('details.sent'); if (d && !d.open) d.open = true; }
         const s = document.body.dataset.screen;
+        if (s !== seen) {
+          seen = s;
+          if (s === go) arrivals += 1;
+        }
         // This scenario is about someone who put the login off.
         if (scenario === 'repair-not-logged' && q('.login-card')) { q('[data-act=skip]')?.click(); return; }
         if (s === add && !added && q('[data-act=voyage]')) {
@@ -401,12 +420,11 @@
           if (input) { typed = true; input.value = key; input.dispatchEvent(new Event('input')); q('[data-act=verify]').click(); }
           return;
         }
-        if (click && !clicked && q(`[data-act=${click}]:not(:disabled)`)) {
-          clicked = true;
-          q(`[data-act=${click}]`).click();
+        if (clicks.length && q(`[data-act=${clicks[0]}]:not(:disabled)`)) {
+          q(`[data-act=${clicks.shift()}]`).click();
           return;
         }
-        if (s === go && (!at || q(at))) {
+        if (s === go && arrivals >= nth && !clicks.length && (!at || q(at))) {
           const main = q('[data-act=next]:not(:disabled)');
           if (P.get('press') && !pressed && main) { pressed = true; setTimeout(() => main.click(), 200); }
           return;

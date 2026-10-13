@@ -173,9 +173,10 @@ const view = { gen: 0, timers: [], rows: {}, log: null, bar: null, polling: null
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-// French typography: a no-break space before ! ? : ; and inside « ».
+// French typography: a no-break space before ! ? : ; and inside « », and the curly
+// apostrophe, also in the sentences that come from Rust.
 function nbsp(text) {
-  return text.replace(/ ([!?:;»])/g, ' $1').replace(/« /g, '« ');
+  return text.replace(/ ([!?:;»])/g, ' $1').replace(/« /g, '« ').replace(/(\p{L})'(?=\p{L})/gu, '$1’');
 }
 
 function h(tag, props, ...kids) {
@@ -264,13 +265,32 @@ function lowerFirst(text) {
   return /^(Voyage|Bun|Obsidian|Claude|Apple|Mac)\b/.test(text) ? text : text.charAt(0).toLowerCase() + text.slice(1);
 }
 
-// Masks anything that looks like an API key, and the user's name in paths.
+// No space inside: the patterns that keep a label (« token: … ») mask a mask into itself.
+const MASKED = '[masqué]';
+// The key shapes of src-tauri/src/redact.rs: the install log reaches the window as
+// the programs printed it, and from there the report and the clipboard.
+const SECRET_PATTERNS = [
+  [/\b(?:pa|al)-[A-Za-z0-9_-]{16,}/g, MASKED],
+  [/sk-ant-[\w-]+/g, MASKED],
+  [/\bsk-[A-Za-z0-9_-]{20,}/g, MASKED],
+  [/\bgh[pousr]_\w{20,}/g, MASKED],
+  [/\bgithub_pat_\w{20,}/g, MASKED],
+  [/\bglpat-[\w-]{20,}/g, MASKED],
+  [/\bnpm_[A-Za-z0-9]{36}/g, MASKED],
+  [/AKIA[0-9A-Z]{16}/g, MASKED],
+  [/xox[abposr]-\S+/g, MASKED],
+  [/\bbearer\s+\S+/gi, `Bearer ${MASKED}`],
+  [/(api[_-]?key|token|secret|password|authorization)(["']?\s*[:=]\s*)\S+/gi, `$1$2${MASKED}`],
+  [/(https?:\/\/)[^/\s:@]+:[^@\s]+@/g, `$1${MASKED}@`],
+  [/-----BEGIN [A-Z ]*KEY-----[\s\S]*?(?:-----END [A-Z ]*KEY-----|$)/g, MASKED],
+];
+
+// Masks anything that looks like a key or a token, and the user's name in paths.
 function scrub(text) {
   let out = text;
-  if (state.key) out = out.split(state.key).join('[clé masquée]');
-  return out
-    .replace(/\b(?:pa|al)-[A-Za-z0-9_-]{16,}/g, '[clé masquée]')
-    .replace(/\/Users\/[^/\s:'"]+/g, '~');
+  if (state.key) out = out.split(state.key).join(MASKED);
+  for (const [re, by] of SECRET_PATTERNS) out = out.replace(re, by);
+  return out.replace(/\/Users\/[^/\s:'"<>]+/g, '~');
 }
 
 // ── Frame: Bibo, the message, the screen, the buttons ──────────────────────
@@ -291,8 +311,9 @@ function say(mood, title, text = '') {
   clearTimeout(moodTimer);
   setMood(mood);
   rouse();
-  ui.title.textContent = nbsp(title);
-  ui.text.textContent = nbsp(text);
+  // Step messages and errors come from outside: masked like the log.
+  ui.title.textContent = nbsp(scrub(title));
+  ui.text.textContent = nbsp(scrub(text));
   ui.text.hidden = !text;
   // Joy is short-lived: endless jumping would distract.
   if (mood === 'happy') moodTimer = setTimeout(() => setMood('idle'), HAPPY_MS);
@@ -901,12 +922,15 @@ const REPAIR_NOTES = {
   ready: 'Claude peut regarder ce qui s’est passé et me dire comment réparer. Il lit le journal de cette étape, jamais tes clés ni tes fichiers personnels. Ça utilise un peu de ton abonnement Claude.',
   not_logged_in: 'Connecte ton compte Claude : il pourra m’aider à réparer.',
   offline: 'Pas d’internet : ni moi ni Claude ne pouvons avancer. Vérifie le Wi-Fi ou le VPN, puis réessaie.',
-  exhausted: 'Claude a déjà essayé de réparer cette étape.',
-  unsupported: 'Ta version de Claude Code ne permet pas encore la réparation automatique.',
+  // Two analyses for this step, four since the app opened, or a repair undone here.
+  exhausted: 'Claude a déjà fait tous les essais de réparation prévus.',
+  // Too old, logged in without a Pro or Max subscription, or it did not start as required.
+  unsupported: 'Ton Claude Code ne peut pas réparer depuis l’app (version trop ancienne ou compte non pris en charge).',
   disabled: 'Cette version de l’app ne répare pas toute seule.',
 };
 // Where Claude in Terminal (plan B) is offered on the failure screen.
 const TERMINAL_STATES = ['exhausted', 'unsupported', 'disabled'];
+const TERMINAL_NOTE = 'Claude peut t’aider dans le Terminal : je t’explique comment avant de l’ouvrir.';
 
 const REPAIR_STAGES = {
   collecting: 'Je rassemble ce qu’il lui faut sur ton Mac…',
@@ -918,8 +942,8 @@ const REPAIR_ERRORS = {
   quota: ['Ton forfait Claude est à sa limite pour le moment.', 'Il se recharge tout seul en quelques heures. Rien n’a été modifié.'],
   auth: ['Claude doit te reconnecter.', 'Connecte ton compte Claude, puis redemande-lui. Rien n’a été modifié.'],
   timeout: ['Claude a mis trop de temps : je l’ai arrêté.', 'Rien n’a été modifié.'],
-  init_invalid: ['Claude ne s’est pas lancé comme prévu.', 'Par prudence, je n’applique rien. Rien n’a été modifié.'],
-  invalid_verdict: ['Claude n’a pas répondu comme prévu.', 'Par prudence, je n’applique rien. Rien n’a été modifié.'],
+  init_invalid: ['Claude ne s’est pas lancé comme prévu.', 'Par prudence, je n’ai rien changé.'],
+  invalid_verdict: ['Claude n’a pas répondu comme prévu.', 'Par prudence, je n’ai rien changé.'],
   api: ['Le service de Claude a eu un souci.', 'Rien n’a été modifié. Réessaie dans un moment.'],
   busy: ['Une autre étape est déjà en cours.', 'Attends qu’elle finisse, puis réessaie.'],
 };
@@ -977,25 +1001,32 @@ async function showFailure(index, intro = null) {
   }
   if (view.failure !== ask) return;
   const what = status && status.state;
-  if (Object.hasOwn(REPAIR_NOTES, what)) addNote(h('p', { class: 'note repair-note' }, REPAIR_NOTES[what]));
+  if (!Object.hasOwn(REPAIR_NOTES, what)) return;
+  const terminal = TERMINAL_STATES.includes(what) && status.terminal_fallback;
+  const offer = h('div', { class: 'repair-offer card repair-note' },
+    h('p', {}, REPAIR_NOTES[what]),
+    terminal ? h('p', {}, TERMINAL_NOTE) : null,
+    what === 'ready' ? sentPanel(step) : null);
+  addNote(offer);
+  // The user may have moved on to another button meanwhile: only the one that steps aside hands its focus over.
+  const refocus = document.activeElement === retry || document.activeElement === document.body;
   if (what === 'ready') {
-    addNote(sentPanel(step));
     demote(retry);
     ui.actions.append(button('Demander à Claude de réparer', () => runRepair(index), { act: 'next' }));
   } else if (what === 'not_logged_in') {
     demote(retry);
-    const connect = button('Connecter Claude', () => connectForRepair(index, connect), { act: 'next' });
+    const connect = button('Connecter mon compte Claude', () => connectForRepair(index, connect), { act: 'next' });
     ui.actions.append(connect);
-  } else if (TERMINAL_STATES.includes(what) && status.terminal_fallback) {
+  } else if (terminal) {
     retry.before(terminalButton(index));
   }
-  focusMain();
+  if (refocus) focusMain();
 }
 
 // « Voir exactement ce que j'envoie »: the dossier itself, built when opened.
 function sentPanel(step) {
   const pre = h('pre', { class: 'log-lines', tabindex: '0', 'aria-label': 'Ce que j’envoie à Claude' }, 'Je prépare le dossier…');
-  const det = h('details', { class: 'log sent repair-note' }, h('summary', {}, 'Voir exactement ce que j’envoie'), pre);
+  const det = h('details', { class: 'log sent' }, h('summary', {}, 'Voir exactement ce que j’envoie'), pre);
   let asked = false;
   det.addEventListener('toggle', async () => {
     if (!det.open || asked) return;
@@ -1006,7 +1037,8 @@ function sentPanel(step) {
     } catch {
       text = '';
     }
-    pre.textContent = text || 'Rien à envoyer : l’étape n’est plus en échec.';
+    // Rust masked it already; the window masks what it knows too, like the log.
+    pre.textContent = text ? scrub(String(text)) : 'Rien à envoyer : l’étape n’est plus en échec.';
   });
   return det;
 }
@@ -1101,7 +1133,9 @@ function onRepairProgress(event) {
   if (view.progress && Object.hasOwn(REPAIR_STAGES, stage)) view.progress.textContent = nbsp(REPAIR_STAGES[stage]);
 }
 
-// E7, or back to E2 when there is nothing to say.
+// E7. Most errors go back to E2 with their own words: it offers what is still possible
+// (another analysis, or Claude in Terminal once repair.rs rules the in-app one out).
+// Asking again right away would only hit the limit again, or the same expired login.
 function showRepairError(index, err) {
   const kind = err && typeof err === 'object' ? String(err.kind || '') : '';
   if (kind === 'cancelled') {
@@ -1113,10 +1147,14 @@ function showRepairError(index, err) {
     backToFailure(index);
     return;
   }
-  renderInstall('repair-error');
   const [title, text] = Object.hasOwn(REPAIR_ERRORS, kind)
     ? REPAIR_ERRORS[kind]
     : ['Je n’ai pas pu demander à Claude.', `${errText(err)} Rien n’a été modifié.`];
+  if (kind !== 'quota' && kind !== 'auth') {
+    backToFailure(index, ['worried', title, text]);
+    return;
+  }
+  renderInstall('repair-error');
   say('worried', title, text);
   const retry = button('Réessayer', () => runInstall(index), { act: 'next' });
   ui.actions.append(copyButton(), retry);
@@ -1124,9 +1162,6 @@ function showRepairError(index, err) {
     demote(retry);
     const connect = button('Connecter mon compte Claude', () => connectForRepair(index, connect), { act: 'next' });
     ui.actions.append(connect);
-  } else if (kind === 'init_invalid') {
-    // No more analyses this session (repair.rs): Claude in Terminal is what is left.
-    retry.before(terminalButton(index));
   }
   focusMain();
 }
@@ -1175,13 +1210,19 @@ function showProposal(index, plan) {
   if (plan.confiance === 'basse') say('idle', 'Claude n’est pas sûr de lui.', `Il pense que : ${lowerFirst(cause)}`);
   else say('idle', 'Claude a trouvé ce qui coince.', cause);
   if (explained) ui.screen.append(said(explained));
-  if (remedies.length) {
-    ui.screen.append(planCard('Ce que je vais faire :', remedies.map((r) => h('li', {}, String(r.text)))));
-  }
+  // The user's part comes first: « Réparer » relaunches the step straight away.
   if (actions.length) {
-    ui.screen.append(planCard('Ce que toi tu dois faire :', actions.map((a) => h('li', { class: a.pane ? 'with-btn' : null },
-      h('span', {}, String(a.text)),
-      a.pane ? settingsButton(String(a.pane)) : null))));
+    ui.screen.append(planCard(remedies.length ? 'Avant de cliquer sur « Réparer » :' : 'Ce que toi tu dois faire :',
+      actions.map((a) => h('li', { class: a.pane ? 'with-btn' : null },
+        h('span', {}, String(a.text)),
+        a.pane ? settingsButton(String(a.pane)) : null))));
+  }
+  if (remedies.length) {
+    const card = planCard('Ce que je vais faire :', remedies.map((r) => h('li', {}, String(r.text))));
+    if (remedies.some((r) => String(r.id).startsWith('mettre_de_cote_'))) {
+      card.append(h('p', { class: 'note' }, 'Rien n’est effacé : je le range dans un dossier à part. Si ça ne marche pas, tu pourras le remettre comme avant.'));
+    }
+    ui.screen.append(card);
   }
   ui.actions.append(
     button('Annuler', () => backToFailure(index), { kind: 'ghost', act: 'cancel' }),
@@ -1258,12 +1299,16 @@ function showOutcome(index, plan, o, key) {
   const retry = button('Réessayer', () => runInstall(index), { act: 'next' });
 
   if (kind === 'guard_restored' || kind === 'regression') {
-    // E6d: undone, and Claude is not asked again for this step.
-    const message = String(o.message || '');
-    const title = kind === 'guard_restored'
-      ? 'J’ai arrêté la réparation.'
-      : o.undoable ? 'Je n’ai pas pu tout remettre comme avant.' : 'J’ai tout remis comme avant.';
-    say('worried', title, /rapport/.test(message) ? message : `${message} Copie le rapport pour l’équipe.`);
+    // E6d: undone, and Claude is not asked again for this step. The guard's sentence
+    // may say where a copy of the user's files is; a regression's only lists checks.
+    if (kind === 'guard_restored') {
+      const message = String(o.message || '');
+      say('worried', 'J’ai arrêté la réparation.', /rapport/.test(message) ? message : `${message} Copie le rapport pour l’équipe.`);
+    } else if (o.undoable) {
+      say('worried', 'Je n’ai pas pu tout remettre comme avant.', 'La réparation abîmait autre chose. Clique sur « Remettre comme avant », puis copie le rapport pour l’équipe.');
+    } else {
+      say('worried', 'J’ai tout remis comme avant.', 'La réparation abîmait autre chose, alors je l’ai annulée. Copie le rapport pour l’équipe.');
+    }
     undoCard(run);
     ui.actions.append(copyButton(), retry);
   } else if (o.retry) {
@@ -1313,7 +1358,8 @@ async function undoRepair(step, btn, card) {
   if (gen !== view.gen) return;
   if (ok) {
     card.remove();
-    say('idle', 'C’est remis comme avant.', answer);
+    // Rust's sentence says what came back where.
+    say('idle', 'C’est fait.', answer);
   } else {
     btn.disabled = false;
     say('worried', 'Je n’ai pas pu tout remettre.', answer);
@@ -1326,12 +1372,14 @@ function showTerminalHelp(index) {
   const step = stepRun(id);
   const gen = screen('terminal');
   say('idle', 'Claude peut t’aider dans le Terminal', 'Avant de l’ouvrir, voici comment ça va se passer.');
+  // Claude Code's own questions are in English: a French non-technician needs the two words.
   ui.screen.append(
     h('ol', { class: 'plan' },
       h('li', {}, 'Une fenêtre Terminal s’ouvre, avec Claude dedans.'),
       h('li', {}, 'Claude lit ce qui s’est passé, t’explique le problème avec des mots simples et te propose des étapes.'),
-      h('li', {}, 'Avant chaque commande, il te demande ton accord. Lis ce qu’il propose, puis réponds.'),
+      h('li', {}, 'Avant chaque commande, il te demande ton accord. Lis ce qu’il propose, puis réponds. Tu peux toujours dire non.'),
       h('li', {}, 'Suis ses étapes. Quand il a fini, reviens ici et clique sur « Vérifier ».')),
+    h('p', { class: 'note' }, 'Ses questions s’affichent en anglais : « Yes » veut dire oui, « No » veut dire non. Choisis avec les flèches du clavier, puis appuie sur Entrée. Évite « Yes, and don’t ask again… » : il ne te demanderait plus ton accord.'),
     h('p', { class: 'note' }, 'Ça utilise ton abonnement Claude. Ne lui donne jamais de mot de passe ni de clé.'));
   const back = button('Retour', () => backToFailure(index), { kind: 'ghost', act: 'back' });
   const open = button('Ouvrir le Terminal avec Claude', () => start(open), { act: 'next' });
@@ -1345,7 +1393,9 @@ function showTerminalHelp(index) {
       await invoke('open_repair_terminal', { step });
     } catch (e) {
       if (gen !== view.gen) return;
-      say('worried', 'Le Terminal ne s’est pas ouvert.', errText(e));
+      // Refused too when the log looks written to steer Claude: then the team should see the report.
+      say('worried', 'Je n’ai pas ouvert le Terminal.', errText(e));
+      if (!ui.actions.querySelector('[data-act="copy"]')) btn.before(copyButton());
       btn.disabled = false;
       return;
     }
@@ -1428,10 +1478,13 @@ async function copyReport(btn) {
     later(() => { btn.textContent = 'Copier le rapport'; }, 2500);
     return;
   }
-  // Last resort: show it, selected, for Cmd+C.
-  const area = h('textarea', { class: 'report', readonly: true, 'aria-label': 'Rapport d’installation' });
+  // Last resort: show it, selected, for Cmd+C. A second click reuses the same box.
+  let area = ui.screen.querySelector('textarea.report');
+  if (!area) {
+    area = h('textarea', { class: 'report', readonly: true, 'aria-label': 'Rapport d’installation' });
+    ui.screen.append(area);
+  }
   area.value = text;
-  ui.screen.append(area);
   area.focus();
   area.select();
 }
