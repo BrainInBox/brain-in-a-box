@@ -1023,9 +1023,9 @@ mod tests {
 
     /// The incident, replayed on a copy of the real install.sh in a temp home: no
     /// network (gbrain already cloned, bun and gbrain faked), a fake launchctl first
-    /// on the PATH. Before P0, install.sh rewrites hooks, gbq and LaunchAgents named
-    /// like ours and resets an unreadable settings.json: the guard must put every one
-    /// of them back. After P0 it leaves them alone and the guard has nothing to do.
+    /// on the PATH. Without a manifest or a git history, install.sh still replaces hooks,
+    /// gbq and LaunchAgents named like ours (after a backup): the guard puts every one of
+    /// them back. An unreadable settings.json stops install.sh before it writes anything.
     /// Either way the user's files come out byte for byte.
     #[test]
     fn the_real_install_sh_cannot_damage_the_users_files() {
@@ -1083,9 +1083,16 @@ mod tests {
             let iso = sys::Isolated { env: &env, cwd: &repo, stdin: "", limit: Duration::from_secs(120), cancel: &cancel };
             let mut log = Vec::new();
             let code = sys::run_isolated(Path::new("/bin/bash"), &[&repo.join("install.sh").to_string_lossy()], &iso, &mut |l| log.push(l));
-            assert_eq!(code, 0, "{}", log.join("\n"));
-            assert!(h.home.join(".claude/hooks/brain/session-recap.py").is_file(), "install.sh went through");
-            assert!(fs::read_to_string(&calls).unwrap().contains("bootstrap"), "launchctl was the fake one");
+            if broken_settings {
+                // Since P0, an unreadable settings.json stops install.sh before it writes anything.
+                assert_ne!(code, 0, "{}", log.join("\n"));
+                assert!(log.iter().any(|l| l.contains("left untouched")), "{}", log.join("\n"));
+                assert!(!calls.exists(), "nothing loaded in launchd");
+            } else {
+                assert_eq!(code, 0, "{}", log.join("\n"));
+                assert!(h.home.join(".claude/hooks/brain/session-recap.py").is_file(), "install.sh went through");
+                assert!(fs::read_to_string(&calls).unwrap().contains("bootstrap"), "launchctl was the fake one");
+            }
 
             let report = settle(snap, &h.home);
             eprintln!("install.sh (settings.json {}): {:?}", if broken_settings { "broken" } else { "valid" }, report.paths());
