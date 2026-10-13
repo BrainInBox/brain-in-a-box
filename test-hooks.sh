@@ -479,17 +479,133 @@ fi
 echo "════ 12) install.sh keeps what it replaces ════"
 PH="$H/place-test"; mkdir -p "$PH/src" "$PH/dst"
 eval "$(sed -n '/^# >>> place$/,/^# <<< place$/p' "$REPO/install.sh")"
-pl(){ ( H="$PH" BACKUP="$PH/backup" BACKED_UP=0; place "$@"; echo "$BACKED_UP" ); }
+# place() as install.sh runs it; prints the number of backups, then the files kept.
+# $PH/repo stands for the repo's git history; a source outside it has none (a ZIP).
+pl(){ ( H="$PH" U=tester REPO="$PH/repo" BACKUP="${PB:-$PH/backup}" BACKED_UP=0 MANIFEST="$PH/installed.json" PENDING="$PH/pending" KEPT=""
+        ok(){ :; }; warn(){ :; }; place "$@"; echo "$BACKED_UP$KEPT" ); }
+mtime(){ python3 -c 'import os,sys; print(os.stat(sys.argv[1]).st_mtime_ns)' "$1"; }
+mode(){ python3 -c 'import os,sys; print(oct(os.stat(sys.argv[1]).st_mode & 0o777)[2:])' "$1"; }
+recorded(){ python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get(sys.argv[2], ""))' "$PH/installed.json" "$1" 2>/dev/null; }
 printf 'v1 __HOME__\n' > "$PH/src/hook.py"
 n=$(pl "$PH/src/hook.py" "$PH/dst/hook.py")
-[ "$n" = 0 ] && grep -q "v1 $PH" "$PH/dst/hook.py" && [ -x "$PH/dst/hook.py" ] \
-  && ok "install: a new file is placed, __HOME__ filled in, executable" || no "install: new file not placed right"
+[ "$n" = 0 ] && grep -q "v1 $PH" "$PH/dst/hook.py" && [ -x "$PH/dst/hook.py" ] && [ "$(recorded "$PH/dst/hook.py")" = "$(sha256 "$PH/dst/hook.py")" ] \
+  && ok "install: a new file is placed (__HOME__ filled in, executable) and its sha256 recorded" || no "install: new file not placed or not recorded"
+cp "$PH/installed.json" "$PH/m1"; t1=$(mtime "$PH/dst/hook.py")
 n=$(pl "$PH/src/hook.py" "$PH/dst/hook.py")
-[ "$n" = 0 ] && [ ! -d "$PH/backup" ] && ok "install: an unchanged file is not backed up" || no "install: needless backup"
-printf 'my own tweak\n' > "$PH/dst/hook.py"
+[ "$n" = 0 ] && [ ! -d "$PH/backup" ] && [ ! -d "$PH/pending" ] && cmp -s "$PH/m1" "$PH/installed.json" && [ "$(mtime "$PH/dst/hook.py")" = "$t1" ] \
+  && ok "install: a re-run with nothing new changes nothing" || no "install: a re-run with nothing new touched something"
+printf 'v2 __HOME__\n' > "$PH/src/hook.py"
 n=$(pl "$PH/src/hook.py" "$PH/dst/hook.py")
-[ "$n" = 1 ] && grep -q 'my own tweak' "$PH/backup/hook.py" && grep -q "v1 $PH" "$PH/dst/hook.py" \
-  && ok "install: a file the user changed is backed up before it is replaced" || no "install: user's change lost"
+[ "$n" = 0 ] && grep -q "v2 $PH" "$PH/dst/hook.py" && [ ! -d "$PH/backup" ] && [ "$(recorded "$PH/dst/hook.py")" = "$(sha256 "$PH/dst/hook.py")" ] \
+  && ok "install: a file nobody changed is updated, no backup needed" || no "install: untouched file not updated"
+v2=$(recorded "$PH/dst/hook.py")
+printf 'my own tweak\n' > "$PH/dst/hook.py"; printf 'v3 __HOME__\n' > "$PH/src/hook.py"
+n=$(pl "$PH/src/hook.py" "$PH/dst/hook.py")
+[ "$n" = "0 hook.py" ] && grep -q 'my own tweak' "$PH/dst/hook.py" && grep -q "v3 $PH" "$PH/pending/hook.py" && [ ! -d "$PH/backup" ] \
+  && [ "$(recorded "$PH/dst/hook.py")" = "$v2" ] \
+  && ok "install: a file changed after install is kept, the new version waits in pending/" || no "install: user's change overwritten or not reported ($n)"
+printf 'from an older install\n' > "$PH/dst/gbq"; printf 'gbq v1\n' > "$PH/src/gbq"
+n=$(pl "$PH/src/gbq" "$PH/dst/gbq")
+[ "$n" = 1 ] && grep -q 'older install' "$PH/backup/gbq" && grep -q 'gbq v1' "$PH/dst/gbq" && [ "$(recorded "$PH/dst/gbq")" = "$(sha256 "$PH/dst/gbq")" ] \
+  && ok "install: a file not in the manifest, no git history to judge it: backed up, then replaced" || no "install: pre-manifest file not backed up ($n)"
+printf 'not json {' > "$PH/installed.json"; printf 'my gbq\n' > "$PH/dst/gbq"; printf 'gbq v2\n' > "$PH/src/gbq"
+n=$(pl "$PH/src/gbq" "$PH/dst/gbq" 2>&1)
+[ "$n" = 1 ] && grep -q 'my gbq' "$PH/backup/gbq" && grep -q 'gbq v2' "$PH/dst/gbq" && [ "$(recorded "$PH/dst/gbq")" = "$(sha256 "$PH/dst/gbq")" ] \
+  && ok "install: an unreadable manifest counts as none (backup, replace, rewritten)" || no "install: unreadable manifest mishandled ($n)"
+printf '{"%s": "not a sha256"}' "$PH/dst/gbq" > "$PH/installed.json"; printf 'my gbq again\n' > "$PH/dst/gbq"; printf 'gbq v3\n' > "$PH/src/gbq"
+n=$(pl "$PH/src/gbq" "$PH/dst/gbq")
+[ "$n" = 1 ] && grep -q 'my gbq again' "$PH/backup/gbq" && grep -q 'gbq v3' "$PH/dst/gbq" \
+  && ok "install: a damaged manifest entry counts as none, the file is not frozen for good" || no "install: damaged manifest entry mishandled ($n)"
+# The repo's history, as a clone has it: h.py went v1 → deleted → v2, and v3 is about to be installed.
+PR="$PH/repo"; mkdir -p "$PR/engine"
+g(){ git -C "$PR" -c user.name=t -c user.email=t@t -c commit.gpgsign=false -c core.hooksPath=/dev/null "$@" >/dev/null 2>&1; }
+g init -q; printf 'v1 __HOME__ __USER__\n' > "$PR/engine/h.py"; g add -A; g commit -qm 1
+g rm -q engine/h.py; g commit -qm 2
+mkdir -p "$PR/engine"; printf 'v2 __HOME__\n' > "$PR/engine/h.py"; g add -A; g commit -qm 3
+printf 'v3 __HOME__\n' > "$PR/engine/h.py"
+mkdir -p "$PH/old/a" "$PH/old/b" "$PH/old/c"; rm -rf "$PH/backup" "$PH/pending"
+printf 'v1 %s tester\n' "$PH" > "$PH/old/a/h.py"
+n=$(pl "$PR/engine/h.py" "$PH/old/a/h.py")
+[ "$n" = 0 ] && grep -q "v3 $PH" "$PH/old/a/h.py" && [ ! -d "$PH/backup" ] && [ ! -d "$PH/pending" ] \
+  && ok "install: an untouched file from before the manifest (a version git knows) is updated, no backup" || no "install: old untouched file mishandled ($n)"
+printf 'v2 %s/Documents/Cerveau\n' "$PH" > "$PH/old/b/h.py"
+n=$(pl "$PR/engine/h.py" "$PH/old/b/h.py")
+[ "$n" = "0 h.py" ] && grep -q Cerveau "$PH/old/b/h.py" && grep -q "v3 $PH" "$PH/pending/h.py" && [ ! -d "$PH/backup" ] \
+  && ok "install: a file adapted before the manifest existed (matches no version in git) is kept" || no "install: adapted pre-manifest file replaced ($n)"
+: > "$PH/old/c/h.py"
+n=$(pl "$PR/engine/h.py" "$PH/old/c/h.py")
+[ "$n" = "0 h.py" ] && [ ! -s "$PH/old/c/h.py" ] \
+  && ok "install: an emptied file is kept (the commit that deleted the source is no version)" || no "install: emptied file replaced ($n)"
+mkdir -p "$PH/dotfiles"; printf 'mine\n' > "$PH/dotfiles/s.py"; ln -s ../dotfiles/s.py "$PH/dst/s.py"; printf 's1\n' > "$PH/src/s.py"
+n=$(pl "$PH/src/s.py" "$PH/dst/s.py")
+[ "$n" = "0 s.py" ] && [ -L "$PH/dst/s.py" ] && grep -qx mine "$PH/dotfiles/s.py" && grep -qx s1 "$PH/pending/s.py" \
+  && ok "install: a symlinked file stays a link to the user's file, the new version waits" || no "install: symlink replaced ($n)"
+printf 'm1\n' > "$PH/src/m.py"; printf 'my m\n' > "$PH/dst/m.py"
+if [ "$(id -u)" != 0 ]; then
+  mkdir -p "$PH/ro"; chmod 500 "$PH/ro"
+  n=$(PB="$PH/ro/backup" pl "$PH/src/m.py" "$PH/dst/m.py" 2>/dev/null); chmod 700 "$PH/ro"
+  [ "$n" = "0 m.py" ] && grep -qx 'my m' "$PH/dst/m.py" \
+    && ok "install: no backup possible, no replacement" || no "install: replaced without a backup ($n)"
+fi
+rm -f "$PH/dst/m.py" "$PH/modes"
+n=$(mv(){ command mv "$@" && ls -l "${@: -1}" | cut -c1-10 >> "$PH/modes"; }; pl "$PH/src/m.py" "$PH/dst/m.py")
+[ "$(cat "$PH/modes")" = "-rwxr-xr-x" ] \
+  && ok "install: a script lands already executable (no window where a hook cannot run)" || no "install: script landed as $(cat "$PH/modes")"
+printf '<string>com.__USER__.x</string> __HOME__\n' > "$PH/src/x.plist.template"
+n=$(pl "$PH/src/x.plist.template" "$PH/dst/com.tester.x.plist")
+[ "$n" = 0 ] && grep -q "com.tester.x</string> $PH" "$PH/dst/com.tester.x.plist" && [ "$(mode "$PH/dst/com.tester.x.plist")" = 644 ] \
+  && ok "install: a launchd plist gets __USER__ and __HOME__, mode 644" || no "install: plist placed wrong ($n)"
+
+echo "════ 13) install.sh and ~/.claude/settings.json ════"
+SH="$H/settings-test"; SJ="$SH/.claude/settings.json"; mkdir -p "$SH/.claude"
+eval "$(sed -n '/^# >>> settings$/,/^# <<< settings$/p' "$REPO/install.sh")"
+ms(){ ( ok(){ printf '%s\n' "$*"; }; die(){ printf 'DIED %s\n' "$*"; exit 1; }; merge_settings "$SH" "$@" ); }
+baks(){ set -- "$SH/.claude"/settings.json.bak-*; [ -e "$1" ] && echo $# || echo 0; }
+printf '{\n  "model": "opus",\n  "hooks": {,}\n}\n' > "$SJ"; cp "$SJ" "$SH/ref"
+out=$(ms --check); rc1=$?; out2=$(ms); rc2=$?
+[ "$rc1" = 1 ] && [ "$rc2" = 1 ] && cmp -s "$SH/ref" "$SJ" && [ "$(baks)" = 0 ] && echo "$out2" | grep -q "DIED $SJ is not valid JSON (line 3, column" \
+  && ok "settings: one that does not parse is left untouched, the install stops on file + line" || no "settings: broken file touched or not reported: $out2"
+printf '{"hooks": {"Stop": [{"hooks": ["/x/not-an-object.sh"]}]}}\n' > "$SJ"; cp "$SJ" "$SH/ref"
+out=$(ms --check); rc=$?
+[ "$rc" = 1 ] && cmp -s "$SH/ref" "$SJ" && echo "$out" | grep -q '"Stop" that is not a list of hook groups' \
+  && ok "settings: a malformed hooks list stops the install at preflight, not half-way through" || no "settings: malformed hooks list passed the preflight: $out"
+printf '\357\273\277{"model": "opus", "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "/x/mine.sh"}]}]}}\n' > "$SJ"
+chmod 644 "$SJ"; cp "$SJ" "$SH/ref"
+out=$(ms); rc=$?; bak=$(ls "$SH/.claude"/settings.json.bak-* 2>/dev/null)
+[ "$rc" = 0 ] && [ "$(baks)" = 1 ] && [ "$(mode "$bak")" = 600 ] && cmp -s "$SH/ref" "$bak" && [ "$(mode "$SJ")" = 644 ] \
+  && [ -z "$(find "$SH/.claude" -maxdepth 1 -name '.settings*')" ] && python3 - "$SJ" "$SH" <<'PY' && ok "settings: merged (BOM read), previous version kept as .bak in 0600, written atomically" || no "settings: merge or backup wrong: $out"
+import json, sys
+d = json.load(open(sys.argv[1], encoding="utf-8"))
+cmds = lambda e: [h["command"] for g in d["hooks"][e] for h in g["hooks"]]
+b = sys.argv[2] + "/.claude/hooks/brain/"
+assert d["model"] == "opus"
+assert cmds("Stop") == ["/x/mine.sh", b + "session-logger.py", b + "session-indexer.py", b + "session-recap.py"]
+assert cmds("UserPromptSubmit") == [b + "correction-detector.py"] and cmds("SessionStart") == [b + "gbrain-update-check.py"]
+PY
+cp "$SJ" "$SH/ref"; out=$(ms)
+[ "$(baks)" = 1 ] && cmp -s "$SH/ref" "$SJ" && echo "$out" | grep -q "already registered" \
+  && ok "settings: a re-run with the hooks already there writes nothing" || no "settings: needless rewrite or backup"
+rm -f "$SJ" "$SH/.claude"/settings.json.bak-*; mkdir -p "$SH/dotfiles"; printf '{}\n' > "$SH/dotfiles/settings.json"
+ln -s ../dotfiles/settings.json "$SJ"; ms >/dev/null
+[ -L "$SJ" ] && grep -q correction-detector "$SH/dotfiles/settings.json" \
+  && ok "settings: a symlinked settings.json stays a symlink" || no "settings: symlink replaced by a file"
+
+echo "════ 14) install.sh logs what its tools say, never the Voyage key ════"
+LOG="$H/install-test.log"; VOYAGE="pa-test-$(date +%s)"; VOYAGE_STORED="pa-stored-key"
+eval "$(sed -n '/^# >>> log$/,/^# <<< log$/p' "$REPO/install.sh")"
+logged sh -c "echo cloning; echo token $VOYAGE >&2; echo old pa-stored-key; exit 4"; rc=$?
+[ "$rc" = 4 ] && grep -q '^\[.*\] \$ sh -c' "$LOG" && grep -q "cloning" "$LOG" && grep -q "token \[voyage key\]" "$LOG" \
+  && ! grep -qE "$VOYAGE|pa-stored-key" "$LOG" && grep -q '\] exit 4$' "$LOG" \
+  && ok "log: output and exit code kept with a timestamp, the Voyage key masked" || no "log: wrong content or key leaked"
+out=$(warn(){ echo "W $*"; }; warn_log "bun failed")
+echo "$out" | grep -q "W bun failed" && echo "$out" | grep -q "│ .*cloning" && [ "$(echo "$out" | grep -c '│')" -le 15 ] \
+  && ok "log: a failure shows the last lines of the log" || no "log: tail not shown on failure"
+out=$( (set -euo pipefail; unset VOYAGE VOYAGE_STORED; logged sh -c 'echo hi; exit 3' || echo "caught $?") 2>&1 )
+[ "$out" = "caught 3" ] && ok "log: under set -euo pipefail, with no key known, a failing tool is caught by ||" || no "log: logged broke under install.sh's shell options: $out"
+grep -n 'VOYAGE' "$REPO/install.sh" | grep -v 'env -u VOYAGE_API_KEY' | grep -E 'logged|"\$GBQ_BIN"|git clone|bun (install|link)' \
+  && no "log: the Voyage key is passed to a logged command" || ok "log: no logged command receives the Voyage key"
+grep -v '^[[:space:]]*#' "$REPO/install.sh" | grep -E 'bun (install|link)|bun\.sh/install|\./setup|brew install' | grep -v 'env -u VOYAGE_API_KEY' \
+  && no "log: code that is not gbrain inherits VOYAGE_API_KEY" || ok "log: bun, gstack's setup and brew run without VOYAGE_API_KEY"
 
 echo ""
 if [ "$FAIL" -eq 0 ]; then

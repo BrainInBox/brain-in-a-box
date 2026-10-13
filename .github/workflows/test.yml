@@ -31,6 +31,23 @@ jobs:
       - name: launchd templates are well-formed plists
         run: for f in engine/nightly/*.plist.template; do plutil -lint "$f"; done
 
+  # The Mac installer app: diagnosis, install steps, Voyage key check, command runner.
+  # (Real downloads are #[ignore] tests, run by hand.)
+  app:
+    runs-on: macos-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: app/src-tauri
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust tests
+        run: cargo test --locked
+      - name: Clippy, warnings are errors
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: The window's script parses
+        run: node --check ../src/app.js
+
   # A real install on a real Windows, the way a user runs it: no Python but the
   # Microsoft Store stub (what broke installs in the field), so Python comes from winget.
   # The memory is gbrain, as on macOS, at the commit install.ps1 pins: this job is what

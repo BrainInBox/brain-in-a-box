@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Brain in a Box (maquette)</title>
+  <link rel="stylesheet" href="../src/styles.css">
+  <style>
+    .mock-bar { position: fixed; right: 8px; bottom: 8px; z-index: 9; display: flex; gap: 6px; flex-wrap: wrap;
+      font: 12px -apple-system, sans-serif; background: #222; color: #eee; padding: 6px 8px; border-radius: 8px; opacity: .85; }
+    .mock-bar a { color: #9cf; }
+    /* Headless screenshots sometimes land mid-fade: driven runs skip the entrance animation. */
+    .driven .screen > *, .driven .actions > * { animation: none !important; }
+  </style>
+  <script>
+  // Fake window.__TAURI__ for the window in ../src, opened straight from disk.
+  //   ?s=manque    everything missing (default)
+  //   ?s=echec     the Obsidian step fails once, then « Réessayer » works
+  //   ?s=installe  everything already installed
+  //   ?s=motscles  everything installed, but the brain searches by keywords only (no Voyage key)
+  //   ?s=bloque    old macOS, no network: nothing can be installed
+  // Driving, for screenshots: &go=<screen> clicks through to welcome|diag|voyage|install|login|done,
+  // &key=pa-... types and checks that key on the Voyage screen (pa-…limit, pa-…off for the other answers),
+  // &add=diag|done clicks « Activer la recherche par le sens » once on that screen,
+  // &fail=obsidian|brain makes that step fail once, &pause=<step> leaves that step running (the Voyage upgrade is « brain »),
+  // &details=1 opens the log, &press=1 clicks the main button once on arrival,
+  // &jump=showLogin|showDone opens that screen of app.js directly (the screenshot budget is only 3 s).
+  // Bibo: &sleep=3 makes it doze off after 3 s without activity instead of 45.
+  (() => {
+    const P = new URLSearchParams(location.search);
+    if (P.get('sleep')) window.BIBO_SLEEP_MS = Number(P.get('sleep')) * 1000;
+    const scenario = P.get('s') || 'manque';
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    // Driven runs must reach their screen within the screenshot's 3 s budget.
+    const LINE_MS = P.get('go') ? 10 : 70;
+    const listeners = {};
+    const emit = (event, payload) => (listeners[event] || []).forEach((cb) => cb({ event, payload }));
+    // Same labels and wording as src-tauri/src/diagnose.rs.
+    const LABELS = {
+      macos: 'Version de macOS', disk: 'Espace disque', network: 'Connexion internet',
+      clt: 'Outils Apple (git, python3)', bun: 'Bun (le moteur de la mémoire)', claude: 'Claude Code',
+      claude_auth: 'Connexion à Claude', obsidian: 'Obsidian (pour lire tes notes)',
+      brain_vault: 'Ton dossier Brain', brain_hooks: 'Les automatismes de Claude',
+      brain_skills: 'Les compétences de Claude', brain_memory: 'La mémoire de recherche', voyage: 'Recherche par le sens',
+    };
+    const FIX = { clt: 'clt', bun: 'bun', claude: 'claude', obsidian: 'obsidian', brain_vault: 'brain', brain_hooks: 'brain', brain_skills: 'brain', brain_memory: 'brain' };
+    const C = (id, status, detail) => ({ id, label: LABELS[id], status, detail, fix: FIX[id] || null });
+    const ALL_STEPS = ['clt', 'bun', 'claude', 'obsidian', 'brain'];
+    const MISSING = [
+      C('clt', 'missing', 'Pas encore installés. Apple s’en charge, il suffit de cliquer.'),
+      C('bun', 'missing', 'Pas encore installé.'),
+      C('claude', 'missing', 'Pas encore installé.'),
+      C('claude_auth', 'warn', 'Tu te connecteras une fois Claude Code installé.'),
+      C('obsidian', 'missing', 'Pas encore installé.'),
+      C('brain_vault', 'missing', 'Pas encore créé.'),
+      C('brain_hooks', 'missing', 'Pas encore branchés.'),
+      C('brain_skills', 'missing', 'Pas encore installées.'),
+      C('brain_memory', 'missing', 'Pas encore créée.'),
+      C('voyage', 'warn', 'Recherche par mots-clés seulement. Une clé Voyage permet de chercher par le sens.'),
+    ];
+
+    function diagnosis() {
+      if (scenario === 'installe' || scenario === 'motscles') {
+        return {
+          os: 'macOS 15.4', arch: 'arm64', ram_gb: 16, disk_free_gb: 182.4, online: true, todo: [], can_install: true,
+          checks: [
+            C('macos', 'ok', 'macOS 15.4'),
+            C('disk', 'ok', '182 Go libres'),
+            C('network', 'ok', 'github.com et claude.ai répondent.'),
+            C('clt', 'ok', 'git et python3 sont là.'),
+            C('bun', 'ok', 'Bun 1.4.2'),
+            C('claude', 'ok', 'Claude Code 2.1.296'),
+            C('claude_auth', 'ok', 'Tu es connecté.'),
+            C('obsidian', 'ok', 'Obsidian 1.14.4'),
+            C('brain_vault', 'ok', 'Il est dans Documents/Brain.'),
+            C('brain_hooks', 'ok', 'Claude note tes corrections et tes séances.'),
+            C('brain_skills', 'ok', 'Installées.'),
+            C('brain_memory', 'ok', 'Prête.'),
+            scenario === 'motscles'
+              ? C('voyage', 'warn', 'Recherche par mots-clés seulement. Une clé Voyage permet de chercher par le sens.')
+              : C('voyage', 'ok', 'Activée (Voyage AI)'),
+          ],
+        };
+      }
+      if (scenario === 'bloque') {
+        return {
+          os: 'macOS 12.7', arch: 'x86_64', ram_gb: 8, disk_free_gb: 2.3, online: false, todo: ALL_STEPS, can_install: false,
+          checks: [
+            C('macos', 'error', 'macOS 12.7 : il faut macOS 13 ou plus récent. Fais la mise à jour dans Réglages Système.'),
+            C('disk', 'error', 'Il reste 2,3 Go, il en faut au moins 3. Fais un peu de place, puis relance.'),
+            C('network', 'error', 'Pas d’internet : ni github.com ni claude.ai ne répondent. Vérifie ton Wi-Fi, puis relance.'),
+            ...MISSING,
+          ],
+        };
+      }
+      return {
+        os: 'macOS 15.4', arch: 'arm64', ram_gb: 16, disk_free_gb: 182.4, online: true, todo: ALL_STEPS, can_install: true,
+        checks: [
+          C('macos', 'ok', 'macOS 15.4'),
+          C('disk', 'ok', '182 Go libres'),
+          C('network', 'ok', 'github.com et claude.ai répondent.'),
+          ...MISSING,
+        ],
+      };
+    }
+
+    const LOGS = {
+      clt: ['Je demande les outils Apple…', 'Toujours en attente de la fenêtre Apple (0 min 30 s)', 'Outils Apple installés dans /Library/Developer/CommandLineTools'],
+      bun: ['Téléchargement de https://bun.sh/install', '######################################################################## 100,0%', 'bun was installed successfully to ~/.bun/bin/bun', 'bun 1.4.2'],
+      claude: ['Téléchargement de l’installeur de Claude Code', 'Setting up Claude Code...', '✔ Claude Code successfully installed!', 'Version: 2.1.296', 'Location: /Users/camille/.local/bin/claude'],
+      obsidian: ['Téléchargement d’Obsidian 1.14.4 (233 Mo)', '  12 %', '  47 %', '  83 %', '  100 %', 'Copie dans /Users/camille/Applications/Obsidian.app', 'Signature vérifiée (6JSW4SJWN9)'],
+      brain: ['Téléchargement de brain-in-a-box', 'Extraction dans ~/.brain-in-a-box/src', '▸ Dependencies', '  ✓ deps OK', '▸ Search by meaning (Voyage AI key, optional)', '  ✓ key taken from VOYAGE_API_KEY', '▸ GBrain', '  ✓ cloned', '  ✓ deps + link', '▸ Vault', '  ✓ ~/Documents/Brain created', '▸ Hooks', '  ✓ 5 hooks installed', '▸ GBrain init + import', '  ✓ brain initialized (Voyage: search by meaning)', '  ✓ vault imported', '  ✓ embedded', 'Done.'],
+    };
+    const FAILS = {
+      obsidian: {
+        logs: ['Téléchargement d’Obsidian 1.14.4 (233 Mo)', '  12 %', 'curl: (28) Operation timed out after 300000 milliseconds with 29360128 out of 233704463 bytes received', 'Nettoyage de /var/folders/xy/T/biab-obsidian'],
+        message: 'Le téléchargement d’Obsidian a été coupé. Vérifie ta connexion, puis clique sur Réessayer.',
+      },
+      brain: {
+        logs: [...LOGS.brain.slice(0, 14), '  ✗ embedding failed: Voyage answered 503'],
+        message: "L'installation du cerveau s'est arrêtée (code 1) sur : « ✗ embedding failed: Voyage answered 503 ». Relance l'étape ; si ça recommence, envoie le journal à l'équipe.",
+      },
+    };
+    // Same sentences as steps.rs at the end of the brain step.
+    const BRAIN_OK = {
+      meaning: 'Ton cerveau est installé dans Documents/Brain, avec la recherche par le sens.',
+      keywords: 'Ton cerveau est installé dans Documents/Brain. Il cherche par mots-clés ; tu pourras ajouter une clé Voyage plus tard.',
+    };
+    const failing = P.get('fail') || (scenario === 'echec' ? 'obsidian' : '');
+
+    const failedOnce = new Set();
+    let loginPolls = 0;
+    const handlers = {
+      async diagnose_machine() { await wait(P.get('go') ? 50 : 500); return diagnosis(); },
+      async run_step({ id, voyageKey }) {
+        console.log('run_step', id, voyageKey ? '(avec clé)' : '(sans clé)');
+        const fail = id === failing && !failedOnce.has(id) && FAILS[id];
+        for (const line of fail ? fail.logs : LOGS[id] || ['…']) { await wait(LINE_MS); emit('step-log', { step: id, line }); }
+        if (P.get('pause') === id) return new Promise(() => {});
+        if (fail) {
+          failedOnce.add(id);
+          return { id, ok: false, message: fail.message };
+        }
+        if (id === 'brain') return { id, ok: true, message: voyageKey ? BRAIN_OK.meaning : BRAIN_OK.keywords };
+        return { id, ok: true, message: 'Fait.' };
+      },
+      async check_voyage_key({ key }) {
+        await wait(400);
+        const k = String(key).trim();
+        if (k.startsWith('al-')) return { status: 'invalid', message: 'Les clés MongoDB Atlas ne sont pas encore prises en charge : crée une clé sur dashboard.voyageai.com.' };
+        if (!k.startsWith('pa-')) return { status: 'invalid', message: 'Ce n’est pas une clé Voyage : elle commence par pa-.' };
+        if (k.includes('limit')) return { status: 'limited', message: 'Ta clé marche, mais sans carte Voyage la limite à 3 requêtes par minute. Ajoute une carte, attends une minute, puis revérifie.' };
+        if (k.includes('off')) return { status: 'offline', message: 'Pas de réponse de Voyage. Vérifie ta connexion, puis réessaie.' };
+        if (k.length < 20) return { status: 'invalid', message: 'Voyage refuse cette clé. Vérifie que tu l’as copiée en entier.' };
+        return { status: 'ok', message: 'Ton cerveau trouvera tes notes par le sens.' };
+      },
+      async claude_logged_in() { await wait(150); loginPolls += 1; return scenario === 'installe' || scenario === 'motscles' || loginPolls > 2; },
+      async open_claude_login() { await wait(100); },
+      async start_onboarding() { await wait(100); },
+      async open_vault() { await wait(100); },
+      async open_link({ url }) { console.log('open_link', url); },
+    };
+
+    window.__TAURI__ = {
+      core: {
+        invoke: (cmd, args = {}) => (Object.hasOwn(handlers, cmd) ? handlers[cmd](args) : Promise.reject(`commande inconnue : ${cmd}`)),
+      },
+      event: {
+        listen: async (event, cb) => {
+          (listeners[event] ||= []).push(cb);
+          return () => {};
+        },
+      },
+    };
+
+    const go = P.get('go');
+    const key = P.get('key');
+    const add = P.get('add');
+    let typed = false;
+    let pressed = false;
+    let added = false;
+    const jump = P.get('jump');
+    if (jump === 'showLogin' || jump === 'showDone') addEventListener('DOMContentLoaded', () => window[jump]());
+    if (go) {
+      document.documentElement.classList.add('driven');
+      setInterval(() => {
+        const q = (sel) => document.querySelector(sel);
+        if (P.get('details')) { const d = q('details.log'); if (d && !d.open) d.open = true; }
+        const s = document.body.dataset.screen;
+        if (s === add && !added && q('[data-act=voyage]')) {
+          added = true;
+          q('[data-act=voyage]').click();
+          return;
+        }
+        if (s === 'voyage' && key && !typed) {
+          const input = q('#voyage-key');
+          if (input) { typed = true; input.value = key; input.dispatchEvent(new Event('input')); q('[data-act=verify]').click(); }
+          return;
+        }
+        if (s === go) {
+          const main = q('[data-act=next]:not(:disabled)');
+          if (P.get('press') && !pressed && main) { pressed = true; setTimeout(() => main.click(), 200); }
+          return;
+        }
+        if (s === 'voyage' && !key) { q('[data-act=skip]')?.click(); return; }
+        q('[data-act=next]:not(:disabled)')?.click();
+      }, 120);
+    } else {
+      addEventListener('DOMContentLoaded', () => {
+        const bar = document.createElement('nav');
+        bar.className = 'mock-bar';
+        for (const [label, qs] of [['tout manque', '?s=manque'], ['échec', '?s=echec'], ['tout installé', '?s=installe'], ['sans Voyage', '?s=motscles'], ['bloqué', '?s=bloque']]) {
+          const a = document.createElement('a');
+          a.href = qs;
+          a.textContent = label;
+          bar.append(a);
+        }
+        document.documentElement.append(bar);
+      });
+    }
+  })();
+  </script>
+  <script src="../src/app.js" defer></script>
+</head>
+<body></body>
+</html>

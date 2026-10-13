@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "The installer window: core APIs only, the app's own commands do the work",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}
