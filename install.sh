@@ -34,13 +34,15 @@ die() { printf "\033[1;31m✗ %s\033[0m\n" "$*" >&2; exit 1; }
 
 # The output of clone, bun and gbrain goes to $LOG (0600, appended run after run);
 # when one of them fails, its last 15 lines are shown. The Voyage key never
-# reaches a command line, and is masked in case a tool prints it.
+# reaches a command line, and is masked in case a tool prints it. What is not
+# gbrain (bun's installer, dependency scripts, gstack's setup) runs without
+# VOYAGE_API_KEY in its environment: env -u VOYAGE_API_KEY.
 # >>> log
 mask_key() {
   local line k
-  [ -n "$VOYAGE$VOYAGE_STORED" ] || { cat; return; }
+  [ -n "${VOYAGE:-}${VOYAGE_STORED:-}" ] || { cat; return; }
   while IFS= read -r line || [ -n "$line" ]; do
-    for k in "$VOYAGE" "$VOYAGE_STORED"; do
+    for k in "${VOYAGE:-}" "${VOYAGE_STORED:-}"; do
       [ -n "$k" ] && line="${line//"$k"/[voyage key]}"
     done
     printf '%s\n' "$line"
@@ -90,6 +92,11 @@ if os.path.exists(target):
         stop("is not valid JSON (line %d, column %d: %s)" % (e.lineno, e.colno, e.msg))
     if not isinstance(d, dict) or not isinstance(d.get("hooks", {}), dict):
         stop("is JSON, but not a settings object with a \"hooks\" object")
+    for evt in ("UserPromptSubmit", "Stop", "SessionStart"):  # the lists ensure() walks, checked before anything is installed
+        arr = d.get("hooks", {}).get(evt, [])
+        if not (isinstance(arr, list) and all(isinstance(g, dict) and isinstance(g.get("hooks", []), list)
+                                              and all(isinstance(h, dict) for h in g.get("hooks", [])) for g in arr)):
+            stop("has a \"hooks\".\"%s\" that is not a list of hook groups" % evt)
 if check:
     sys.exit(0)
 
@@ -152,7 +159,7 @@ printf '\n===== install.sh %s =====\n' "$(date '+%Y-%m-%d %H:%M:%S')" >> "$LOG"
 command -v claude >/dev/null || warn "claude CLI not found — install Claude Code first."
 if ! command -v bun >/dev/null; then
   warn "bun missing → installing…"
-  curl -fsSL https://bun.sh/install | bash
+  curl -fsSL https://bun.sh/install | env -u VOYAGE_API_KEY bash
   export PATH="$H/.bun/bin:$PATH"
 fi
 command -v bun >/dev/null || die "bun unavailable after install."
@@ -164,7 +171,7 @@ ok "deps OK"
 say "Search by meaning (Voyage AI key, optional)"
 EMBED_MODEL="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("embedding_model") or "")' "$GDATA/config.json" 2>/dev/null || true)"
 VOYAGE_STORED="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("voyage_api_key") or "")' "$GDATA/config.json" 2>/dev/null || true)"  # only to mask it in the log
-VOYAGE="${VOYAGE_API_KEY:-}"
+VOYAGE="$(printf '%s' "${VOYAGE_API_KEY:-}" | tr -d '[:space:]')"  # trimmed as config.json stores it: the log mask then matches what gbrain prints
 if [ -n "$EMBED_MODEL" ]; then
   ok "already set up ($EMBED_MODEL), kept as is"
 elif [ -n "$VOYAGE" ]; then
@@ -192,7 +199,7 @@ if [ -d "$GREPO/.git" ]; then ok "already cloned"; else
   logged git clone https://github.com/garrytan/gbrain.git "$GREPO" || die_log "could not clone gbrain (network?)"
   ok "cloned"
 fi
-( cd "$GREPO" && logged bun install && logged bun link ) || die_log "bun install / bun link failed in $GREPO"
+( cd "$GREPO" && logged env -u VOYAGE_API_KEY bun install && logged env -u VOYAGE_API_KEY bun link ) || die_log "bun install / bun link failed in $GREPO"
 ok "deps + link"
 GBQ_BIN="$H/.bun/bin/gbrain"
 
@@ -209,28 +216,33 @@ fi
 # ── 5. Hooks (copy + make paths portable) ───────────────────────────────────
 # $MANIFEST records the sha256 of every file written here. A file changed since
 # then (another vault folder, other messages) is kept as is and the new version
-# waits in $PENDING. A file from an install older than the manifest that differs
-# is copied to $BACKUP before it is replaced.
+# waits in $PENDING. A file from an install older than the manifest is replaced
+# only when it is a version the repo's git history knows; without that history
+# (a ZIP), one that differs is copied to $BACKUP before it is replaced. A link or
+# a folder in the way is never replaced.
 BACKUP="$STATE/backups/$(date +%Y%m%d-%H%M%S)"
 BACKED_UP=0
 MANIFEST="$STATE/installed.json"
 PENDING="$STATE/en-attente"
 KEPT=""
 # >>> place
-sha256() { shasum -a 256 "$1" | cut -d' ' -f1; }
+sha256() { shasum -a 256 < "${1:-/dev/stdin}" | cut -d' ' -f1; }
+fill() { sed -e "s#__HOME__#$H#g" -e "s#__USER__#$U#g" "$@"; }
 manifest() {  # manifest get <path> | manifest set <path> <sha256>; never fails the install
   python3 - "$MANIFEST" "$@" <<'PY'
-import json, os, sys, tempfile
+import json, os, re, sys, tempfile
 m, op, key = sys.argv[1:4]
+sha = re.compile("[0-9a-f]{64}")
 try:
     with open(m, encoding="utf-8") as f:
         d = json.load(f)
     d = d if isinstance(d, dict) else {}
-except (OSError, ValueError):
+except Exception:
     d = {}  # unreadable: as if there were none
 if op == "get":
-    print(d.get(key) or "")
-elif d.get(key) != sys.argv[4]:
+    v = d.get(key)
+    print(v if isinstance(v, str) and sha.fullmatch(v) else "")  # a damaged entry counts as none
+elif sha.fullmatch(sys.argv[4]) and d.get(key) != sys.argv[4]:
     d[key] = sys.argv[4]
     try:
         os.makedirs(os.path.dirname(m), exist_ok=True)
@@ -243,34 +255,47 @@ elif d.get(key) != sys.argv[4]:
         print("  could not record %s in %s: %s" % (key, m, e), file=sys.stderr)
 PY
 }
+shipped() {  # shipped <source>: the sha256 of each version of it in the repo's git history, as place() writes it
+  local rel="${1#"$REPO"/}" c
+  [ "$(git -C "$REPO" rev-parse --is-shallow-repository 2>/dev/null)" = false ] || return 0
+  git -C "$REPO" log --format=%H -- "$rel" 2>/dev/null | while read -r c; do
+    git -C "$REPO" cat-file -e "$c:$rel" 2>/dev/null || continue  # the commit that deleted it
+    git -C "$REPO" cat-file blob "$c:$rel" | fill | sha256
+  done
+}
+replaceable() {  # replaceable <source> <destination>: may the new version of <source> replace <destination>?
+  local cur rec known
+  [ -f "$2" ] && [ ! -L "$2" ] || return 1
+  cur="$(sha256 "$2" 2>/dev/null)" || return 1  # unreadable: cannot tell
+  rec="$(manifest get "$2")"
+  if [ -n "$rec" ]; then [ "$cur" = "$rec" ]; return; fi
+  known="$(shipped "$1")" || known=""
+  if [ -n "$known" ]; then grep -qxF -- "$cur" <<<"$known"; return; fi
+  # Neither manifest nor history to tell an old version from an edit: back it up first.
+  # Called as a condition, so errexit is off here: a failed backup has to say no itself.
+  mkdir -p "$BACKUP" && cp -p "$2" "$BACKUP/$(basename "$2")" || return 1
+  BACKED_UP=$((BACKED_UP + 1))
+}
 place() {  # place <source> <destination> [label]
-  local tmp rec name
-  name="$(basename "$2")"
+  local tmp name label mode=755
+  name="$(basename "$2")"; label="${3:-$name}"
+  case "$name" in *.plist) mode=644;; esac
   tmp="$(mktemp)"
-  sed "s#__HOME__#$H#g" "$1" > "$tmp"
+  fill "$1" > "$tmp"
+  chmod "$mode" "$tmp"  # before it lands: a hook that fires meanwhile finds it whole and executable
   if cmp -s "$tmp" "$2"; then
     rm -f "$tmp"
+  elif { [ -e "$2" ] || [ -L "$2" ]; } && ! replaceable "$1" "$2"; then
+    mkdir -p "$PENDING"
+    mv "$tmp" "$PENDING/$name"
+    KEPT="$KEPT $name"
+    warn "$label: changed on this machine, kept as is; the new version is in $PENDING/$name"
+    return 0
   else
-    if [ -f "$2" ]; then
-      rec="$(manifest get "$2")"
-      if [ -z "$rec" ]; then  # installed before the manifest: cannot tell an edit from an old version
-        mkdir -p "$BACKUP"
-        cp -p "$2" "$BACKUP/$name"
-        BACKED_UP=$((BACKED_UP + 1))
-      elif [ "$(sha256 "$2")" != "$rec" ]; then  # changed since we wrote it
-        mkdir -p "$PENDING"
-        mv "$tmp" "$PENDING/$name"
-        chmod +x "$PENDING/$name"
-        KEPT="$KEPT $name"
-        warn "${3:-$name}: changed on this machine, kept as is; the new version is in $PENDING/$name"
-        return 0
-      fi
-    fi
     mv "$tmp" "$2"
   fi
-  chmod +x "$2"
   manifest set "$2" "$(sha256 "$2")"
-  ok "${3:-$name}"
+  ok "$label"
 }
 # <<< place
 say "Brain hooks ($HOOKS)"
@@ -286,21 +311,20 @@ place "$REPO/engine/bin/gbq" "$BIN/gbq" "gbq → $BIN/gbq"
 for s in gbrain-nightly gbrain-lint gbrain-selfupdate; do
   place "$REPO/engine/nightly/$s.sh" "$HOOKS/$s.sh"
 done
-if [ "$BACKED_UP" -gt 0 ]; then warn "$BACKED_UP file(s) you had changed were replaced; your versions are in $BACKUP"; fi
 
 # ── 7. launchd jobs (nightly maintenance + daily reflection + weekly lint) ───
 say "launchd (nightly 04:00 + reflection 12:00/23:00 + lint Monday 08:00)"
 mkdir -p "$H/Library/LaunchAgents"
-load_agent() {  # <label> <template>
-  local label="$1" tpl="$2" plist="$H/Library/LaunchAgents/$1.plist"
-  sed -e "s#__HOME__#$H#g" -e "s#__USER__#$U#g" "$REPO/engine/nightly/$tpl" > "$plist"
+load_agent() {  # <label> <template>; a plist you changed (another hour) is kept, like the hooks
+  local label="$1" plist="$H/Library/LaunchAgents/$1.plist"
+  place "$REPO/engine/nightly/$2" "$plist" "$label"
   launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
   launchctl bootstrap "gui/$(id -u)" "$plist" 2>/dev/null || true
-  ok "loaded: $label"
 }
 load_agent "com.$U.gbrain-nightly"   "com.USER.gbrain-nightly.plist.template"
 load_agent "com.$U.brain-reflection" "com.USER.brain-reflection.plist.template"
 load_agent "com.$U.gbrain-lint"      "com.USER.gbrain-lint.plist.template"
+if [ "$BACKED_UP" -gt 0 ]; then warn "$BACKED_UP file(s) you had changed were replaced; your versions are in $BACKUP"; fi
 
 # ── 8. settings.json (merge hooks, non-destructive) ─────────────────────────
 say "Registering hooks (~/.claude/settings.json)"
@@ -324,11 +348,15 @@ python3 "$REPO/engine/install_skills.py" --src "$REPO/skills" --dest "$H/.claude
 
 # ── 10. git init vault ──────────────────────────────────────────────────────
 say "git init vault"
-if [ ! -d "$BRAIN/.git" ]; then
-  ( cd "$BRAIN" && printf '.obsidian/\n.DS_Store\n' > .gitignore && git init -q \
-    && git add -A && git -c user.email="brain@local" -c user.name="brain" commit -q -m "brain init" )
+if [ -d "$BRAIN/.git" ]; then ok "already a git repo"
+# A vault that existed without git keeps its own .gitignore. A commit refused
+# (signing, a global pre-commit hook) is reported instead of ending the install.
+elif ( cd "$BRAIN" && { [ -e .gitignore ] || printf '.obsidian/\n.DS_Store\n' > .gitignore; } && git init -q \
+    && git add -A && git -c user.email="brain@local" -c user.name="brain" commit -q -m "brain init" ); then
   ok "git repo created"
-else ok "already a git repo"; fi
+else
+  warn "vault: git init or first commit failed (see above); your notes are untouched"
+fi
 
 # ── 11. GBrain init + key + import + embed ──────────────────────────────────
 say "GBrain init + import"
@@ -402,7 +430,7 @@ say "Obsidian (to browse your brain)"
 if [ -d "/Applications/Obsidian.app" ] || [ -d "$H/Applications/Obsidian.app" ]; then
   ok "already installed"
 elif command -v brew >/dev/null; then
-  brew install --cask obsidian >/dev/null 2>&1 && ok "installed via brew" || warn "brew install failed — get it free at https://obsidian.md"
+  env -u VOYAGE_API_KEY brew install --cask obsidian >/dev/null 2>&1 && ok "installed via brew" || warn "brew install failed — get it free at https://obsidian.md"
 else
   warn "not installed — download free at https://obsidian.md"
 fi
@@ -418,7 +446,7 @@ if [ -n "$WITH_GSTACK" ]; then
     logged git clone --single-branch --depth 1 https://github.com/garrytan/gstack.git "$GS" && ok "cloned" || warn_log "clone failed — try manually: git clone https://github.com/garrytan/gstack.git $GS"
   fi
   if [ -x "$GS/setup" ]; then
-    ( cd "$GS" && logged ./setup ) && ok "setup complete" || warn_log "gstack setup reported issues — run 'cd $GS && ./setup' manually"
+    ( cd "$GS" && logged env -u VOYAGE_API_KEY ./setup ) && ok "setup complete" || warn_log "gstack setup reported issues — run 'cd $GS && ./setup' manually"
   fi
   echo "    slash commands now available: /office-hours · /plan-ceo-review · /review · /qa · /retro · /investigate · /cso · /learn (+15 more)"
 fi
