@@ -184,13 +184,21 @@ function Read-GbrainConfig {
 }
 
 # La verification d'install.sh : une requete d'un token, la cle dans un en-tete de ce processus.
+# .NET plutot qu'Invoke-WebRequest : la journalisation des modules PowerShell (GPO d'entreprise)
+# enregistre les parametres des cmdlets, en-tete Authorization compris.
 function Test-VoyageKey([string]$Key, [string]$Base) {
-    $pp = $ProgressPreference; $ProgressPreference = "SilentlyContinue"
     try {
-        $r = Invoke-WebRequest -Uri "$Base/embeddings" -Method Post -UseBasicParsing -TimeoutSec 20 -ContentType "application/json" `
-            -Headers @{ Authorization = "Bearer $Key" } -Body '{"input":["ok"],"model":"voyage-4"}'
-        return ($r.StatusCode -eq 200)
-    } catch { return $false } finally { $ProgressPreference = $pp }
+        $req = [Net.WebRequest]::Create("$Base/embeddings")
+        $req.Method = "POST"
+        $req.ContentType = "application/json"
+        $req.Timeout = 20000
+        $req.Headers.Add("Authorization", "Bearer $Key")
+        $body = [Text.Encoding]::UTF8.GetBytes('{"input":["ok"],"model":"voyage-4"}')
+        $stream = $req.GetRequestStream()
+        try { $stream.Write($body, 0, $body.Length) } finally { $stream.Close() }
+        $resp = $req.GetResponse()
+        try { return ([int]$resp.StatusCode -eq 200) } finally { $resp.Close() }
+    } catch { return $false }
 }
 
 function Get-BunVersion([string]$Bun) {
