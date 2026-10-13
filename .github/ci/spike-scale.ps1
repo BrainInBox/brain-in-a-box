@@ -63,7 +63,11 @@ Start-Sleep -Milliseconds 1500
 $writing = -not $w.HasExited
 $r = Invoke-Timed 'query while a sync writes' $g @('query', 'lighthouse keeper storm') 180
 Note "write still running when the query started: $writing"
-Check 'a query during a write answers or waits, no crash' (($r.ExitCode -eq 0) -or (-not $writing)) "exit=$($r.ExitCode) $($r.Seconds)s; stderr: $((($r.Err -split "`n") | Select-String 'lock|busy|held' | Select-Object -First 2) -join ' / ')"
+# PGLite has one writer: a read waits up to 30 s for the lock (gbrain's default, every OS), then
+# exits with pglite_busy. Either outcome is clean; a crash or another error is not.
+$busy = $r.Err -match 'pglite_busy'
+Note "query during a write: $(if ($r.ExitCode -eq 0) { 'answered' } elseif ($busy) { 'pglite_busy (lock wait > 30 s)' } else { 'other failure' }) after $($r.Seconds) s"
+Check 'a query during a write answers or reports pglite_busy, nothing else' (($r.ExitCode -eq 0) -or $busy) "exit=$($r.ExitCode) $($r.Seconds)s; stderr: $((($r.Err -split "`n") | Select-String 'lock|busy|held' | Select-Object -First 1))"
 $w.WaitForExit(600000) | Out-Null
 Check 'the concurrent sync still completes' ($w.ExitCode -eq 0) "exit=$($w.ExitCode)"
 Get-Content "$wlog.err" -ErrorAction SilentlyContinue | Select-Object -Last 5 | ForEach-Object { Write-Host "sync stderr: $_" }
