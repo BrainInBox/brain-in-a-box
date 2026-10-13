@@ -178,9 +178,10 @@ else ok "already a git repo"; fi
 # ── 11. GBrain init + key + import + embed ──────────────────────────────────
 say "GBrain init + import"
 mkdir -p "$GDATA"
-# One-token request. The key reaches curl through stdin (printf is a builtin), never argv.
+# One-token request. The key reaches curl through stdin (printf is a builtin), never argv;
+# -q first, so a ~/.curlrc (trace, proxy…) never applies to it.
 voyage_check() {
-  printf 'header = "Authorization: Bearer %s"\n' "$1" | curl -s -m 20 -o /dev/null -w '%{http_code}' -K - \
+  printf 'header = "Authorization: Bearer %s"\n' "$1" | curl -q -s -m 20 -o /dev/null -w '%{http_code}' -K - \
     -H 'Content-Type: application/json' -d '{"input":["ok"],"model":"voyage-4"}' https://api.voyageai.com/v1/embeddings || true
 }
 EMBED=""

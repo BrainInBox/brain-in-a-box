@@ -6,12 +6,18 @@
 //! vector, never through a shell, and secrets go through stdin or env, never argv.
 
 use std::collections::HashSet;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{self, BufRead, BufReader, Read, Write};
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::sync::mpsc;
+use std::process::{Child, Command, Stdio};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::thread;
 use std::time::{Duration, Instant};
+
+const TICK: Duration = Duration::from_millis(50);
+/// Once the program has exited, what it wrote is read within this time. Past it,
+/// whatever still holds the pipes open (a job it left in the background) is not waited for.
+const DRAIN: Duration = Duration::from_millis(500);
 
 pub fn home() -> PathBuf {
     std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/"))
@@ -74,100 +80,192 @@ pub fn run(program: &Path, args: &[&str], timeout: Duration) -> Output {
     run_with(program, args, &[], None, timeout)
 }
 
-/// Same, with extra environment variables and an optional stdin payload (secrets go here).
+/// Trimmed stdout of a command that exited 0 and printed something.
+pub fn output_text(program: &Path, args: &[&str], timeout: Duration) -> Option<String> {
+    let out = run(program, args, timeout);
+    let text = out.stdout.trim();
+    (out.ok() && !text.is_empty()).then(|| text.to_string())
+}
+
+/// Same as `run`, with extra environment variables and an optional stdin payload (secrets go here).
 pub fn run_with(program: &Path, args: &[&str], env: &[(&str, &str)], stdin: Option<&str>, timeout: Duration) -> Output {
-    let mut cmd = Command::new(program);
-    cmd.args(args)
-        .env("PATH", tool_path())
-        .stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() })
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    let mut cmd = command(program);
+    cmd.args(args).stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() });
     for (k, v) in env {
         cmd.env(k, v);
     }
-    let mut child = match cmd.spawn() {
-        Ok(c) => c,
+    let (mut child, rx) = match start(&mut cmd) {
+        Ok(started) => started,
         Err(e) => return Output { code: -1, stdout: String::new(), stderr: e.to_string() },
     };
     if let (Some(data), Some(mut sin)) = (stdin, child.stdin.take()) {
-        let _ = sin.write_all(data.as_bytes());
-    }
-    // Drain both pipes on threads so a chatty program never blocks on a full pipe.
-    let drain = |r: Option<Box<dyn Read + Send>>| {
+        // On a thread: a program that never reads its stdin must not keep us past the timeout.
+        let data = data.to_string();
         thread::spawn(move || {
-            let mut s = String::new();
-            if let Some(mut r) = r {
-                let _ = r.read_to_string(&mut s);
-            }
-            s
-        })
-    };
-    let out = drain(child.stdout.take().map(|r| Box::new(r) as Box<dyn Read + Send>));
-    let err = drain(child.stderr.take().map(|r| Box::new(r) as Box<dyn Read + Send>));
-    let deadline = Instant::now() + timeout;
-    let code = loop {
-        match child.try_wait() {
-            Ok(Some(st)) => break st.code().unwrap_or(-1),
-            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(50)),
-            _ => {
-                let _ = child.kill();
-                let _ = child.wait();
-                break -1;
-            }
-        }
-    };
-    Output { code, stdout: out.join().unwrap_or_default(), stderr: err.join().unwrap_or_default() }
+            let _ = sin.write_all(data.as_bytes());
+        });
+    }
+    let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
+    let code = supervise(&mut child, &rx, timeout, &mut |pipe, bytes| match pipe {
+        Pipe::Out => stdout.extend(bytes),
+        Pipe::Err => stderr.extend(bytes),
+    });
+    Output {
+        code: code.unwrap_or(-1),
+        stdout: String::from_utf8_lossy(&stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&stderr).into_owned(),
+    }
 }
 
 /// Runs a long command (an installer) and hands every stdout/stderr line to `on_line`
-/// as it comes. Returns the exit code (-1 if it could not start).
+/// as it comes. In `env`, None removes a variable the app itself inherited. Past
+/// `limit`, the command and everything it started are killed. Returns the exit code,
+/// -1 if it could not start or was killed.
 pub fn run_streaming(
     program: &Path,
     args: &[&str],
-    env: &[(&str, &str)],
+    env: &[(&str, Option<&str>)],
     cwd: Option<&Path>,
+    limit: Duration,
     on_line: &mut dyn FnMut(String),
 ) -> i32 {
-    let mut cmd = Command::new(program);
-    cmd.args(args).env("PATH", tool_path()).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut cmd = command(program);
+    cmd.args(args).stdin(Stdio::null());
     for (k, v) in env {
-        cmd.env(k, v);
+        match v {
+            Some(v) => cmd.env(k, v),
+            None => cmd.env_remove(k),
+        };
     }
     if let Some(d) = cwd {
         cmd.current_dir(d);
     }
-    let mut child = match cmd.spawn() {
-        Ok(c) => c,
+    let (mut child, rx) = match start(&mut cmd) {
+        Ok(started) => started,
         Err(e) => {
             on_line(format!("impossible de lancer {}: {}", program.display(), e));
             return -1;
         }
     };
-    let (tx, rx) = mpsc::channel::<String>();
-    let pump = |r: Box<dyn Read + Send>, tx: mpsc::Sender<String>| {
-        thread::spawn(move || {
-            for line in BufReader::new(r).lines().map_while(Result::ok) {
-                if tx.send(line).is_err() {
-                    break;
-                }
+    let code = supervise(&mut child, &rx, limit, &mut |_, bytes| {
+        on_line(strip_ansi(String::from_utf8_lossy(&bytes).trim_end_matches('\n')));
+    });
+    code.unwrap_or_else(|| {
+        on_line(format!("Toujours pas fini au bout de {} : j'arrête.", minutes(limit)));
+        -1
+    })
+}
+
+fn command(program: &Path) -> Command {
+    let mut cmd = Command::new(program);
+    cmd.env("PATH", tool_path());
+    cmd
+}
+
+#[derive(Clone, Copy)]
+enum Pipe {
+    Out,
+    Err,
+}
+
+/// Lines from both pipes, newline included, as they come.
+type Lines = Receiver<(Pipe, Vec<u8>)>;
+
+/// Spawns the program in a process group of its own, so that a timeout stops it with
+/// everything it started, and reads both pipes on threads that send each line on.
+fn start(cmd: &mut Command) -> io::Result<(Child, Lines)> {
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).process_group(0);
+    let mut child = cmd.spawn()?;
+    let (tx, rx) = mpsc::channel();
+    if let Some(out) = child.stdout.take() {
+        pump(out, Pipe::Out, tx.clone());
+    }
+    if let Some(err) = child.stderr.take() {
+        pump(err, Pipe::Err, tx);
+    }
+    Ok((child, rx))
+}
+
+/// Raw bytes, newline included: a line that is not UTF-8 must not stop the reading,
+/// or the program blocks on a full pipe.
+fn pump(r: impl Read + Send + 'static, pipe: Pipe, tx: Sender<(Pipe, Vec<u8>)>) {
+    thread::spawn(move || {
+        let mut r = BufReader::new(r);
+        loop {
+            let mut line = Vec::new();
+            match r.read_until(b'\n', &mut line) {
+                Ok(0) | Err(_) => break,
+                Ok(_) if tx.send((pipe, line)).is_err() => break,
+                Ok(_) => {}
             }
-        })
-    };
-    let mut pumps = Vec::new();
-    if let Some(o) = child.stdout.take() {
-        pumps.push(pump(Box::new(o), tx.clone()));
+        }
+    });
+}
+
+/// Hands the output to `sink` until the program exits, or kills its whole group at the
+/// deadline. Returns the exit code, None when it had to be killed.
+fn supervise(
+    child: &mut Child,
+    rx: &Lines,
+    timeout: Duration,
+    sink: &mut dyn FnMut(Pipe, Vec<u8>),
+) -> Option<i32> {
+    let deadline = Instant::now() + timeout;
+    let mut open = true;
+    let mut exited: Option<(i32, Instant)> = None;
+    loop {
+        if open {
+            match rx.recv_timeout(TICK) {
+                Ok((pipe, bytes)) => sink(pipe, bytes),
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => open = false,
+            }
+        } else {
+            thread::sleep(TICK);
+        }
+        if exited.is_none() {
+            if let Ok(Some(status)) = child.try_wait() {
+                exited = Some((status.code().unwrap_or(-1), Instant::now()));
+            }
+        }
+        match exited {
+            Some((code, at)) if !open || at.elapsed() >= DRAIN || Instant::now() >= deadline => return Some(code),
+            None if Instant::now() >= deadline => break,
+            _ => {}
+        }
     }
-    if let Some(e) = child.stderr.take() {
-        pumps.push(pump(Box::new(e), tx.clone()));
+    kill_group(child);
+    // What it wrote before being killed still helps to understand why.
+    let until = Instant::now() + DRAIN;
+    while let Some(left) = until.checked_duration_since(Instant::now()) {
+        match rx.recv_timeout(left) {
+            Ok((pipe, bytes)) => sink(pipe, bytes),
+            Err(_) => break,
+        }
     }
-    drop(tx);
-    for line in rx {
-        on_line(strip_ansi(&line));
+    None
+}
+
+/// The program is not reaped yet, so its pid still names its group (see `start`).
+fn kill_group(child: &mut Child) {
+    let group = format!("-{}", child.id());
+    let _ = Command::new("/bin/kill")
+        .args(["-KILL", "--", &group])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    // If /bin/kill could not run, at least the program itself goes.
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+/// "30 s", "2 min".
+pub fn minutes(d: Duration) -> String {
+    match d.as_secs() {
+        s if s < 60 => format!("{s} s"),
+        s => format!("{} min", s / 60),
     }
-    for p in pumps {
-        let _ = p.join();
-    }
-    child.wait().ok().and_then(|s| s.code()).unwrap_or(-1)
 }
 
 /// Installers color their output; the window shows plain text.
@@ -196,6 +294,11 @@ pub fn strip_ansi(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+
+    fn alive(pid: &str) -> bool {
+        Command::new("/bin/kill").args(["-0", pid]).stderr(Stdio::null()).status().is_ok_and(|s| s.success())
+    }
 
     #[test]
     fn strips_colors_and_carriage_returns() {
@@ -206,6 +309,8 @@ mod tests {
     fn run_captures_output_and_exit_code() {
         let o = run(Path::new("/bin/sh"), &["-c", "echo hi; echo err >&2; exit 3"], Duration::from_secs(5));
         assert_eq!((o.code, o.stdout.trim(), o.stderr.trim()), (3, "hi", "err"));
+        assert_eq!(output_text(Path::new("/bin/sh"), &["-c", "echo ' 1.2 '"], Duration::from_secs(5)).as_deref(), Some("1.2"));
+        assert_eq!(output_text(Path::new("/bin/sh"), &["-c", "echo 1.2; exit 1"], Duration::from_secs(5)), None);
     }
 
     #[test]
@@ -217,6 +322,35 @@ mod tests {
     }
 
     #[test]
+    fn a_background_job_does_not_hold_the_pipes_past_the_timeout() {
+        // `sleep` keeps stdout and stderr open long after the shell is gone.
+        let t = Instant::now();
+        let o = run(Path::new("/bin/sh"), &["-c", "sleep 30 & echo $!"], Duration::from_secs(2));
+        let took = t.elapsed();
+        let _ = Command::new("/bin/kill").arg(o.stdout.trim()).status();
+        assert_eq!(o.code, 0);
+        assert!(took < Duration::from_secs(2), "{took:?}");
+    }
+
+    #[test]
+    fn timeout_kills_what_the_program_started() {
+        let dir = tempfile::tempdir().unwrap();
+        let pidfile = dir.path().join("pid");
+        let script = format!("sleep 30 & echo $! > '{}'; wait", pidfile.display());
+        let t = Instant::now();
+        let o = run(Path::new("/bin/sh"), &["-c", &script], Duration::from_millis(500));
+        assert_eq!(o.code, -1);
+        assert!(t.elapsed() < Duration::from_secs(2));
+        let pid = fs::read_to_string(&pidfile).unwrap();
+        // Killed, then reaped by launchd: give it a moment.
+        let t = Instant::now();
+        while alive(pid.trim()) && t.elapsed() < Duration::from_secs(3) {
+            thread::sleep(TICK);
+        }
+        assert!(!alive(pid.trim()), "sleep {} survived", pid.trim());
+    }
+
+    #[test]
     fn stdin_reaches_the_program() {
         let o = run_with(Path::new("/bin/cat"), &[], &[], Some("secret"), Duration::from_secs(5));
         assert_eq!(o.stdout, "secret");
@@ -225,8 +359,67 @@ mod tests {
     #[test]
     fn streaming_hands_over_every_line() {
         let mut lines = Vec::new();
-        let code = run_streaming(Path::new("/bin/sh"), &["-c", "echo a; echo b >&2; exit 2"], &[], None, &mut |l| lines.push(l));
+        let code = run_streaming(
+            Path::new("/bin/sh"),
+            &["-c", "echo a; echo b >&2; exit 2"],
+            &[],
+            None,
+            Duration::from_secs(5),
+            &mut |l| lines.push(l),
+        );
         lines.sort();
         assert_eq!((code, lines), (2, vec!["a".to_string(), "b".to_string()]));
+    }
+
+    #[test]
+    fn streaming_stops_at_its_limit() {
+        let mut lines = Vec::new();
+        let t = Instant::now();
+        let code = run_streaming(
+            Path::new("/bin/sh"),
+            &["-c", "echo started; sleep 30 & sleep 30"],
+            &[],
+            None,
+            Duration::from_millis(300),
+            &mut |l| lines.push(l),
+        );
+        assert_eq!(code, -1);
+        assert!(t.elapsed() < Duration::from_secs(2));
+        assert_eq!(lines.first().map(String::as_str), Some("started"));
+        assert_eq!(lines.last().map(String::as_str), Some("Toujours pas fini au bout de 0 s : j'arrête."));
+    }
+
+    #[test]
+    fn streaming_sets_and_removes_variables() {
+        let mut lines = Vec::new();
+        let code = run_streaming(
+            Path::new("/bin/sh"),
+            &["-c", r#"echo "${HOME-unset} $BIAB_T""#],
+            &[("HOME", None), ("BIAB_T", Some("x"))],
+            None,
+            Duration::from_secs(5),
+            &mut |l| lines.push(l),
+        );
+        assert_eq!((code, lines), (0, vec!["unset x".to_string()]));
+    }
+
+    #[test]
+    fn a_line_that_is_not_utf8_does_not_stop_the_stream() {
+        let mut lines = Vec::new();
+        let code = run_streaming(
+            Path::new("/bin/sh"),
+            &["-c", r"printf 'a\377\nb\n'"],
+            &[],
+            None,
+            Duration::from_secs(5),
+            &mut |l| lines.push(l),
+        );
+        assert_eq!((code, lines), (0, vec!["a\u{fffd}".to_string(), "b".to_string()]));
+    }
+
+    #[test]
+    fn durations_read_well() {
+        assert_eq!(minutes(Duration::from_secs(30)), "30 s");
+        assert_eq!(minutes(Duration::from_secs(150)), "2 min");
     }
 }

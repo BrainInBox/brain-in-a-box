@@ -1,3 +1,4 @@
+mod detect;
 mod diagnose;
 mod model;
 mod steps;
@@ -8,7 +9,7 @@ use tauri::Emitter;
 
 #[tauri::command]
 async fn diagnose_machine() -> model::Diagnosis {
-    tauri::async_runtime::spawn_blocking(diagnose::run).await.expect("diagnosis panicked")
+    tauri::async_runtime::spawn_blocking(diagnose::run).await.unwrap_or_else(|e| diagnose::failed(&e.to_string()))
 }
 
 /// Runs one install step; its output arrives as "step-log" events.
@@ -27,33 +28,42 @@ async fn run_step(app: tauri::AppHandle, id: String, voyage_key: Option<String>)
 
 #[tauri::command]
 async fn check_voyage_key(key: String) -> model::KeyCheck {
-    tauri::async_runtime::spawn_blocking(move || voyage::check_key(&key)).await.expect("key check panicked")
+    tauri::async_runtime::spawn_blocking(move || voyage::check_key(&key)).await.unwrap_or_else(|e| model::KeyCheck {
+        status: model::KeyStatus::Offline,
+        message: format!("Je n'ai pas pu vérifier la clé (erreur interne : {e}). Réessaie."),
+    })
 }
 
 #[tauri::command]
 async fn claude_logged_in() -> bool {
-    tauri::async_runtime::spawn_blocking(steps::claude_logged_in).await.unwrap_or(false)
+    tauri::async_runtime::spawn_blocking(detect::claude_logged_in).await.unwrap_or(false)
+}
+
+/// A command that is not async runs on the main thread: while `open` or `pgrep`
+/// runs (up to their timeouts), the window would freeze.
+async fn off_main(f: impl FnOnce() -> Result<(), String> + Send + 'static) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(f).await.unwrap_or_else(|e| Err(format!("Erreur interne : {e}")))
 }
 
 #[tauri::command]
-fn open_claude_login() -> Result<(), String> {
-    steps::open_claude_login()
+async fn open_claude_login() -> Result<(), String> {
+    off_main(steps::open_claude_login).await
 }
 
 #[tauri::command]
-fn start_onboarding() -> Result<(), String> {
-    steps::start_onboarding()
+async fn start_onboarding() -> Result<(), String> {
+    off_main(steps::start_onboarding).await
 }
 
 #[tauri::command]
-fn open_vault() -> Result<(), String> {
-    steps::open_vault()
+async fn open_vault() -> Result<(), String> {
+    off_main(steps::open_vault).await
 }
 
 /// Opens one of a few known pages (Voyage dashboard, downloads) in the default browser.
 #[tauri::command]
-fn open_link(url: String) -> Result<(), String> {
-    steps::open_link(&url)
+async fn open_link(url: String) -> Result<(), String> {
+    off_main(move || steps::open_link(&url)).await
 }
 
 pub fn run() {
