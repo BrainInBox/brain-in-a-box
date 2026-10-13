@@ -63,6 +63,8 @@ jobs:
           $stub = Join-Path $env:RUNNER_TEMP 'stub'
           New-Item -ItemType Directory $stub | Out-Null
           Set-Content "$stub\python.cmd" "@echo Python was not found; run without arguments to install from the Microsoft Store.`r`n@exit /b 9009" -Encoding ascii
+          # The py launcher would find the toolcache Pythons through the registry: a machine without Python has none.
+          Set-Content "$stub\py.cmd" "@echo No installed Python found!`r`n@exit /b 103" -Encoding ascii
           $env:Path = "$stub;" + ((($env:Path -split ';') | Where-Object { $_ -notlike $tc }) -join ';')
           powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1
           if ($LASTEXITCODE) { exit 1 }

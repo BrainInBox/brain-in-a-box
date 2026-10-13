@@ -222,6 +222,9 @@ $gbqSh = "#!/bin/sh`n# brain-in-a-box : gbq pour Git Bash, meme logique que gbq.
 [IO.File]::WriteAllText("$BIN\gbq", $gbqSh, (New-Object Text.UTF8Encoding $false))
 $userPath = [Environment]::GetEnvironmentVariable("PATH","User")
 if ($userPath -notlike "*$BIN*") { [Environment]::SetEnvironmentVariable("PATH","$userPath;$BIN","User") }
+# Aussi pour ce processus : l'installeur Claude (etape 9) verifie le PATH qu'il herite et sinon
+# demande d'aller dans les Proprietes systeme, ce qu'un non-dev ne saura pas faire.
+if (($env:Path -split ";") -notcontains $BIN) { $env:Path = "$BIN;$env:Path" }
 [Environment]::SetEnvironmentVariable("BRAIN_DIR",$BrainDir,"User")
 Ok "gbq installe ($BIN\gbq.cmd + gbq pour Git Bash)"
 
