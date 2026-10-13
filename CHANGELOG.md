@@ -7,6 +7,13 @@ Format inspired by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Changed
+- **Windows gets the same memory as macOS: GBrain, with search by meaning when you add a Voyage key.** A spike on four Windows runners showed gbrain #1549 (pgvector missing from PGLite on Windows) does not reproduce, so `install.ps1` now installs it:
+  - **Bun** (official installer, per user, no admin) and **GBrain** at a commit the Windows CI tests, fetched alone (46 MB instead of 600). The install line, run again, moves to the next tested commit; `gbrain upgrade` is turned off so nothing bypasses that.
+  - **Voyage key, optional**, same explanation and one-token check as on macOS. Asked only when a console is there; otherwise read from `VOYAGE_API_KEY`. The key goes to `~\.gbrain\config.json` through Python's environment, never in a command line or a log. Without a key, search works on keywords; a key given on a later run moves the brain to search by meaning.
+  - **Your vault is registered as a GBrain source and indexed**; notes the hooks wrote since a previous install are committed first, since GBrain reads the vault through git.
+  - **Search never goes away.** `gbq.cmd` and the Git Bash `gbq` go through `engine/search/gbq.py`: GBrain when it is installed, retried once when a long write holds the brain, and the offline keyword index (brain_search, still installed and rebuilt) when GBrain is missing, broken or busy. If GBrain cannot be installed, the install finishes in keyword mode and says so.
+  - **One nightly task, `BrainNightly`** (`engine/nightly/windows-nightly.py`, replaces `BrainSearchReindex`): commits the vault, `gbrain sync`, `gbrain embed --stale --max-usd 0.10`, then rebuilds the keyword index. Log in `~\.gbrain\nightly.log`, install log in `~\.brain-in-a-box\install.log`.
+  - Existing Windows installs migrate by running the install line again.
 - **Embeddings move to Voyage AI, and the key is optional** (macOS). `install.sh` explains how to get a Voyage key and accepts Enter to skip: the brain then runs on keyword search (`gbrain init --no-embedding`) and gains search by meaning when you re-run with a key. The key is checked with a one-token request before use, travels through stdin only (never in a command line), and lands in `config.json` created with mode 600. The reranker is set to `voyage:rerank-3-lite`, inside Voyage's free tokens (gbrain's default, `rerank-2.5`, is billed from the first search). Existing ZeroEntropy installs are left as they are. A non-interactive run (an app, `curl | bash`) no longer dies on the key prompt; `VOYAGE_API_KEY` supplies the key.
 
 ### Added
@@ -19,6 +26,7 @@ Format inspired by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `PHILOSOPHY.md`: nine habits for getting real results from Claude Code (adapted from the Hermes Boost pack). The README gains "Get the most out of it" (the magic prompt, tips, where to start by profile) and "Updating & undo" for macOS and Windows.
 
 ### Fixed
+- **Windows scheduled tasks run on laptops.** Task Scheduler's defaults skipped a task when the PC was asleep at its time and never started it on battery: the nightly and the reflection now run at wake-up when missed, on battery too.
 - **Re-running `install.sh` no longer loses your changes.** It used to overwrite the hooks, `gbq` and the nightly scripts with the repo's versions: on a machine where they had been adapted (another vault folder, other messages), those edits were gone for good. A file that differs is now copied to `~/.brain-in-a-box/backups/<date>/` before being replaced, and the installer says so at the end.
 - **New notes get embedded again.** Since gbrain 0.60.106, `gbrain embed` asks for approval before a paid run and, without a terminal, exits 3 with nothing embedded. The install and the nightly ran it bare, so a fresh install had no semantic index until the dream cycle caught up. They now pass an explicit cap: `--max-usd 1` at install, `--max-usd 0.10` per night (a normal day of notes costs a fraction of a cent); the onboarding does the same.
 - Docs no longer say a skill saved in the vault's `Skills/` folder is usable by Claude Code as is: Claude Code only loads `~/.claude/skills/<name>/SKILL.md` (README, `vault-skeleton/Skills/README.md`, `vault-skeleton/CLAUDE.md`).
@@ -30,6 +38,7 @@ Format inspired by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - `gbq` works from Git Bash (Claude Code's Bash tool on Windows ran `~/.local/bin/gbq`, which did not exist), and `gbq sync` / `gbq embed` from the onboarding map to a reindex instead of failing. `gbq.cmd` survives an accented user name.
   - A `settings.json` that does not parse (BOM, comment) is left untouched instead of being replaced by an empty one; a symlinked one stays a symlink.
   - The nightly reindex runs with `pythonw.exe`: no black window at 04:00. Native commands no longer abort the install on a stderr warning; their exit codes are checked. An empty existing vault folder gets the skeleton.
+- **CI installs GBrain on a real Windows**: the `windows` job now checks the pinned commit is the one installed, a query answered by GBrain from `gbq.cmd` and Git Bash, the onboarding's `gbq sync` / `gbq embed`, the nightly task end to end, a Voyage key refused (real API, bad key) and one accepted (local stand-in, no secret, key never in a log), and the keyword fallback when GBrain is gone or cannot be installed. `test-hooks.sh` tests `gbq.py` and the Windows nightly against a stub gbrain.
 - **CI installs on a real Windows** (`windows-latest`): parse under PowerShell 5.1 and 7; a fresh install with only the Store stub, so Python really comes from winget; a hook spawned the way Claude Code does; `gbq` from Git Bash; a second run for idempotence; the one-liner under the Restricted policy.
 
 ## [0.2.0] — 2026-10-09 — Field hardening
