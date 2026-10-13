@@ -419,6 +419,21 @@ PY
   ! grep -rqi --exclude=LICENSE 'hermes' "$REPO/skills" && ok "skills: no Hermes leftovers in the bundled skills (attributions aside)" || no "skills: Hermes references remain"
 fi
 
+echo "════ 12) install.sh keeps what it replaces ════"
+PH="$H/place-test"; mkdir -p "$PH/src" "$PH/dst"
+eval "$(sed -n '/^# >>> place$/,/^# <<< place$/p' "$REPO/install.sh")"
+pl(){ ( H="$PH" BACKUP="$PH/backup" BACKED_UP=0; place "$@"; echo "$BACKED_UP" ); }
+printf 'v1 __HOME__\n' > "$PH/src/hook.py"
+n=$(pl "$PH/src/hook.py" "$PH/dst/hook.py")
+[ "$n" = 0 ] && grep -q "v1 $PH" "$PH/dst/hook.py" && [ -x "$PH/dst/hook.py" ] \
+  && ok "install: a new file is placed, __HOME__ filled in, executable" || no "install: new file not placed right"
+n=$(pl "$PH/src/hook.py" "$PH/dst/hook.py")
+[ "$n" = 0 ] && [ ! -d "$PH/backup" ] && ok "install: an unchanged file is not backed up" || no "install: needless backup"
+printf 'my own tweak\n' > "$PH/dst/hook.py"
+n=$(pl "$PH/src/hook.py" "$PH/dst/hook.py")
+[ "$n" = 1 ] && grep -q 'my own tweak' "$PH/backup/hook.py" && grep -q "v1 $PH" "$PH/dst/hook.py" \
+  && ok "install: a file the user changed is backed up before it is replaced" || no "install: user's change lost"
+
 echo ""
 if [ "$FAIL" -eq 0 ]; then
   printf "\033[1;32m✅ All hooks healthy: %s/%s passed.\033[0m\n" "$PASS" "$((PASS+FAIL))"

@@ -90,22 +90,41 @@ else
 fi
 
 # ── 5. Hooks (copy + make paths portable) ───────────────────────────────────
+# A file already there that differs (an edited hook, a local tweak) is copied to
+# ~/.brain-in-a-box/backups/<run>/ before it is replaced: re-running the
+# installer never loses a change.
+BACKUP="$H/.brain-in-a-box/backups/$(date +%Y%m%d-%H%M%S)"
+BACKED_UP=0
+# >>> place
+place() {  # place <source> <destination>
+  local tmp
+  tmp="$(mktemp)"
+  sed "s#__HOME__#$H#g" "$1" > "$tmp"
+  if [ -f "$2" ] && ! cmp -s "$tmp" "$2"; then
+    mkdir -p "$BACKUP"
+    cp -p "$2" "$BACKUP/$(basename "$2")"
+    BACKED_UP=$((BACKED_UP + 1))
+  fi
+  mv "$tmp" "$2"
+  chmod +x "$2"
+}
+# <<< place
 say "Brain hooks ($HOOKS)"
 mkdir -p "$HOOKS"
 for f in "$REPO"/engine/hooks/*.py; do
   base="$(basename "$f")"
-  sed "s#__HOME__#$H#g" "$f" > "$HOOKS/$base"
-  chmod +x "$HOOKS/$base"
+  place "$f" "$HOOKS/$base"
   ok "$base"
 done
 
 # ── 6. gbq + nightly ────────────────────────────────────────────────────────
 say "gbq + nightly"
 mkdir -p "$BIN"
-sed "s#__HOME__#$H#g" "$REPO/engine/bin/gbq" > "$BIN/gbq" && chmod +x "$BIN/gbq"; ok "gbq → $BIN/gbq"
-sed "s#__HOME__#$H#g" "$REPO/engine/nightly/gbrain-nightly.sh" > "$HOOKS/gbrain-nightly.sh" && chmod +x "$HOOKS/gbrain-nightly.sh"; ok "gbrain-nightly.sh"
-sed "s#__HOME__#$H#g" "$REPO/engine/nightly/gbrain-lint.sh" > "$HOOKS/gbrain-lint.sh" && chmod +x "$HOOKS/gbrain-lint.sh"; ok "gbrain-lint.sh"
-sed "s#__HOME__#$H#g" "$REPO/engine/nightly/gbrain-selfupdate.sh" > "$HOOKS/gbrain-selfupdate.sh" && chmod +x "$HOOKS/gbrain-selfupdate.sh"; ok "gbrain-selfupdate.sh"
+place "$REPO/engine/bin/gbq" "$BIN/gbq"; ok "gbq → $BIN/gbq"
+for s in gbrain-nightly gbrain-lint gbrain-selfupdate; do
+  place "$REPO/engine/nightly/$s.sh" "$HOOKS/$s.sh"; ok "$s.sh"
+done
+if [ "$BACKED_UP" -gt 0 ]; then warn "$BACKED_UP file(s) you had changed were replaced; your versions are in $BACKUP"; fi
 
 # ── 7. launchd jobs (nightly maintenance + daily reflection + weekly lint) ───
 say "launchd (nightly 04:00 + reflection 12:00/23:00 + lint Monday 08:00)"
@@ -274,6 +293,9 @@ bash "$REPO/test-hooks.sh" >/dev/null 2>&1 && ok "hooks + gbrain self-update hea
 
 # ── Done ─────────────────────────────────────────────────────────────────────
 printf "\n\033[1;32m✅ brain-in-a-box installed.\033[0m\n"
+if [ "$BACKED_UP" -gt 0 ]; then
+  printf "\033[1;33m⚠ Your previous versions of %s replaced file(s) are in %s\033[0m\n" "$BACKED_UP" "$BACKUP"
+fi
 cat <<EOF
 
 Last step — the ONBOARDING (15 min) that fills in YOUR profile:
