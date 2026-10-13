@@ -13,6 +13,8 @@ HOOKS="$H/.claude/hooks/brain"
 BIN="$H/.local/bin"
 GREPO="$H/DEV/gbrain"
 GDATA="$H/.gbrain"
+STATE="$H/.brain-in-a-box"
+LOG="$STATE/install.log"
 
 # Flags:
 #   --company <git-url>   join a team (clone company vault as 2nd GBrain source)
@@ -30,11 +32,123 @@ ok()  { printf "  \033[1;32m✓\033[0m %s\n" "$*"; }
 warn(){ printf "  \033[1;33m⚠\033[0m %s\n" "$*"; }
 die() { printf "\033[1;31m✗ %s\033[0m\n" "$*" >&2; exit 1; }
 
+# The output of clone, bun and gbrain goes to $LOG (0600, appended run after run);
+# when one of them fails, its last 15 lines are shown. The Voyage key never
+# reaches a command line, and is masked in case a tool prints it.
+# >>> log
+mask_key() {
+  local line k
+  [ -n "$VOYAGE$VOYAGE_STORED" ] || { cat; return; }
+  while IFS= read -r line || [ -n "$line" ]; do
+    for k in "$VOYAGE" "$VOYAGE_STORED"; do
+      [ -n "$k" ] && line="${line//"$k"/[voyage key]}"
+    done
+    printf '%s\n' "$line"
+  done
+}
+logged() {  # logged <command...>
+  local rc
+  printf '[%s] $ %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" | mask_key >> "$LOG"
+  "$@" 2>&1 | mask_key >> "$LOG"
+  rc=${PIPESTATUS[0]}
+  [ "$rc" = 0 ] || printf '[%s] exit %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$rc" >> "$LOG"
+  return "$rc"
+}
+log_tail() { printf '    last lines of %s:\n' "$LOG"; tail -n 15 "$LOG" | sed 's/^/    │ /'; }
+warn_log() { warn "$*"; log_tail; }
+die_log() { log_tail; die "$*"; }
+# <<< log
+
+# >>> settings
+# Adds our hooks to ~/.claude/settings.json. A file that does not parse is left
+# untouched and stops the install. Otherwise the previous version is kept as
+# settings.json.bak-<date> (0600) and the new one is written atomically.
+merge_settings() {  # merge_settings <home> [--check]
+  local out
+  out="$(settings_py "$@")" || die "${out:-could not update $1/.claude/settings.json (see above)}"
+  [ -z "$out" ] || ok "$out"
+}
+settings_py() {
+  python3 - "$@" <<'PY'
+import json, os, stat, sys, tempfile, time
+H, check = sys.argv[1], sys.argv[2:] == ["--check"]
+p = os.path.join(H, ".claude", "settings.json")
+target = os.path.realpath(p)  # a symlinked settings.json stays a symlink
+def stop(why):
+    print("%s %s. It was left untouched: fix it, then re-run ./install.sh" % (p, why))
+    sys.exit(1)
+raw, d = None, {}
+if os.path.exists(target):
+    with open(target, "rb") as f:
+        raw = f.read()
+    try:
+        text = raw.decode("utf-8-sig")
+        d = json.loads(text) if text.strip() else {}
+    except UnicodeDecodeError as e:
+        stop("is not UTF-8 text (line %d)" % (raw[:e.start].count(b"\n") + 1))
+    except json.JSONDecodeError as e:
+        stop("is not valid JSON (line %d, column %d: %s)" % (e.lineno, e.colno, e.msg))
+    if not isinstance(d, dict) or not isinstance(d.get("hooks", {}), dict):
+        stop("is JSON, but not a settings object with a \"hooks\" object")
+if check:
+    sys.exit(0)
+
+before = json.dumps(d, sort_keys=True)
+hooks = d.setdefault("hooks", {})
+def cmd(name): return {"type":"command","command":f"{H}/.claude/hooks/brain/{name}"}
+def ensure(evt, names):
+    arr = hooks.setdefault(evt, [])
+    grp = next((g for g in arr if "matcher" not in g), None)
+    if grp is None:
+        grp = {"hooks":[]}; arr.append(grp)
+    have = {h.get("command") for h in grp.setdefault("hooks", [])}
+    for n in names:
+        c = cmd(n)
+        if c["command"] not in have:
+            grp["hooks"].append(c)
+ensure("UserPromptSubmit", ["correction-detector.py"])
+ensure("Stop", ["session-logger.py","session-indexer.py","session-recap.py"])
+ensure("SessionStart", ["gbrain-update-check.py"])
+if json.dumps(d, sort_keys=True) == before:
+    print("settings.json: hooks already registered")
+    sys.exit(0)
+
+bak = None
+if raw is not None:
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    bak, n = "%s.bak-%s" % (p, stamp), 1
+    while os.path.lexists(bak):
+        bak, n = "%s.bak-%s-%d" % (p, stamp, n), n + 1
+    with os.fdopen(os.open(bak, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb") as f:
+        f.write(raw)
+os.makedirs(os.path.dirname(target), exist_ok=True)
+fd, tmp = tempfile.mkstemp(dir=os.path.dirname(target), prefix=".settings.json.")
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(d, f, indent=2, ensure_ascii=False)
+        f.write("\n")
+        f.flush()
+        os.fsync(f.fileno())
+    if raw is not None:
+        os.chmod(tmp, stat.S_IMODE(os.stat(target).st_mode))
+    os.replace(tmp, target)
+except BaseException:
+    os.unlink(tmp)
+    raise
+print("settings.json: hooks registered" + (" (previous version: %s)" % bak if bak else ""))
+PY
+}
+# <<< settings
+
 # ── 1. Preflight ────────────────────────────────────────────────────────────
 say "Preflight"
 [ "$(uname)" = "Darwin" ] || die "macOS required (launchd)."
 command -v git >/dev/null   || die "git missing."
 command -v python3 >/dev/null || die "python3 missing."
+merge_settings "$H" --check   # a settings.json we cannot read stops us before anything is changed
+mkdir -p "$STATE"
+( umask 077; : >> "$LOG" ); chmod 600 "$LOG"
+printf '\n===== install.sh %s =====\n' "$(date '+%Y-%m-%d %H:%M:%S')" >> "$LOG"
 command -v claude >/dev/null || warn "claude CLI not found — install Claude Code first."
 if ! command -v bun >/dev/null; then
   warn "bun missing → installing…"
@@ -49,6 +163,7 @@ ok "deps OK"
 # ZeroEntropy). Without a key, search works on keywords; re-run to add one.
 say "Search by meaning (Voyage AI key, optional)"
 EMBED_MODEL="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("embedding_model") or "")' "$GDATA/config.json" 2>/dev/null || true)"
+VOYAGE_STORED="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("voyage_api_key") or "")' "$GDATA/config.json" 2>/dev/null || true)"  # only to mask it in the log
 VOYAGE="${VOYAGE_API_KEY:-}"
 if [ -n "$EMBED_MODEL" ]; then
   ok "already set up ($EMBED_MODEL), kept as is"
@@ -74,9 +189,11 @@ fi
 say "GBrain"
 mkdir -p "$H/DEV"
 if [ -d "$GREPO/.git" ]; then ok "already cloned"; else
-  git clone https://github.com/garrytan/gbrain.git "$GREPO"; ok "cloned"
+  logged git clone https://github.com/garrytan/gbrain.git "$GREPO" || die_log "could not clone gbrain (network?)"
+  ok "cloned"
 fi
-( cd "$GREPO" && bun install >/dev/null 2>&1 && bun link >/dev/null 2>&1 ) ; ok "deps + link"
+( cd "$GREPO" && logged bun install && logged bun link ) || die_log "bun install / bun link failed in $GREPO"
+ok "deps + link"
 GBQ_BIN="$H/.bun/bin/gbrain"
 
 # ── 4. Vault skeleton (never overwrite) ─────────────────────────────────────
@@ -90,39 +207,84 @@ else
 fi
 
 # ── 5. Hooks (copy + make paths portable) ───────────────────────────────────
-# A file already there that differs (an edited hook, a local tweak) is copied to
-# ~/.brain-in-a-box/backups/<run>/ before it is replaced: re-running the
-# installer never loses a change.
-BACKUP="$H/.brain-in-a-box/backups/$(date +%Y%m%d-%H%M%S)"
+# $MANIFEST records the sha256 of every file written here. A file changed since
+# then (another vault folder, other messages) is kept as is and the new version
+# waits in $PENDING. A file from an install older than the manifest that differs
+# is copied to $BACKUP before it is replaced.
+BACKUP="$STATE/backups/$(date +%Y%m%d-%H%M%S)"
 BACKED_UP=0
+MANIFEST="$STATE/installed.json"
+PENDING="$STATE/en-attente"
+KEPT=""
 # >>> place
-place() {  # place <source> <destination>
-  local tmp
+sha256() { shasum -a 256 "$1" | cut -d' ' -f1; }
+manifest() {  # manifest get <path> | manifest set <path> <sha256>; never fails the install
+  python3 - "$MANIFEST" "$@" <<'PY'
+import json, os, sys, tempfile
+m, op, key = sys.argv[1:4]
+try:
+    with open(m, encoding="utf-8") as f:
+        d = json.load(f)
+    d = d if isinstance(d, dict) else {}
+except (OSError, ValueError):
+    d = {}  # unreadable: as if there were none
+if op == "get":
+    print(d.get(key) or "")
+elif d.get(key) != sys.argv[4]:
+    d[key] = sys.argv[4]
+    try:
+        os.makedirs(os.path.dirname(m), exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(m), prefix=".installed.json.")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(d, f, indent=2, sort_keys=True)
+            f.write("\n")
+        os.replace(tmp, m)
+    except OSError as e:
+        print("  could not record %s in %s: %s" % (key, m, e), file=sys.stderr)
+PY
+}
+place() {  # place <source> <destination> [label]
+  local tmp rec name
+  name="$(basename "$2")"
   tmp="$(mktemp)"
   sed "s#__HOME__#$H#g" "$1" > "$tmp"
-  if [ -f "$2" ] && ! cmp -s "$tmp" "$2"; then
-    mkdir -p "$BACKUP"
-    cp -p "$2" "$BACKUP/$(basename "$2")"
-    BACKED_UP=$((BACKED_UP + 1))
+  if cmp -s "$tmp" "$2"; then
+    rm -f "$tmp"
+  else
+    if [ -f "$2" ]; then
+      rec="$(manifest get "$2")"
+      if [ -z "$rec" ]; then  # installed before the manifest: cannot tell an edit from an old version
+        mkdir -p "$BACKUP"
+        cp -p "$2" "$BACKUP/$name"
+        BACKED_UP=$((BACKED_UP + 1))
+      elif [ "$(sha256 "$2")" != "$rec" ]; then  # changed since we wrote it
+        mkdir -p "$PENDING"
+        mv "$tmp" "$PENDING/$name"
+        chmod +x "$PENDING/$name"
+        KEPT="$KEPT $name"
+        warn "${3:-$name}: changed on this machine, kept as is; the new version is in $PENDING/$name"
+        return 0
+      fi
+    fi
+    mv "$tmp" "$2"
   fi
-  mv "$tmp" "$2"
   chmod +x "$2"
+  manifest set "$2" "$(sha256 "$2")"
+  ok "${3:-$name}"
 }
 # <<< place
 say "Brain hooks ($HOOKS)"
 mkdir -p "$HOOKS"
 for f in "$REPO"/engine/hooks/*.py; do
-  base="$(basename "$f")"
-  place "$f" "$HOOKS/$base"
-  ok "$base"
+  place "$f" "$HOOKS/$(basename "$f")"
 done
 
 # ── 6. gbq + nightly ────────────────────────────────────────────────────────
 say "gbq + nightly"
 mkdir -p "$BIN"
-place "$REPO/engine/bin/gbq" "$BIN/gbq"; ok "gbq → $BIN/gbq"
+place "$REPO/engine/bin/gbq" "$BIN/gbq" "gbq → $BIN/gbq"
 for s in gbrain-nightly gbrain-lint gbrain-selfupdate; do
-  place "$REPO/engine/nightly/$s.sh" "$HOOKS/$s.sh"; ok "$s.sh"
+  place "$REPO/engine/nightly/$s.sh" "$HOOKS/$s.sh"
 done
 if [ "$BACKED_UP" -gt 0 ]; then warn "$BACKED_UP file(s) you had changed were replaced; your versions are in $BACKUP"; fi
 
@@ -142,33 +304,7 @@ load_agent "com.$U.gbrain-lint"      "com.USER.gbrain-lint.plist.template"
 
 # ── 8. settings.json (merge hooks, non-destructive) ─────────────────────────
 say "Registering hooks (~/.claude/settings.json)"
-python3 - "$H" <<'PY'
-import json, os, sys
-H = sys.argv[1]
-p = os.path.join(H, ".claude", "settings.json")
-os.makedirs(os.path.dirname(p), exist_ok=True)
-d = {}
-if os.path.exists(p):
-    try: d = json.load(open(p))
-    except Exception: d = {}
-hooks = d.setdefault("hooks", {})
-def cmd(name): return {"type":"command","command":f"{H}/.claude/hooks/brain/{name}"}
-def ensure(evt, names):
-    arr = hooks.setdefault(evt, [])
-    grp = next((g for g in arr if "matcher" not in g), None)
-    if grp is None:
-        grp = {"hooks":[]}; arr.append(grp)
-    have = {h.get("command") for h in grp.setdefault("hooks", [])}
-    for n in names:
-        c = cmd(n)
-        if c["command"] not in have:
-            grp["hooks"].append(c)
-ensure("UserPromptSubmit", ["correction-detector.py"])
-ensure("Stop", ["session-logger.py","session-indexer.py","session-recap.py"])
-ensure("SessionStart", ["gbrain-update-check.py"])
-json.dump(d, open(p,"w"), indent=2, ensure_ascii=False)
-print("  ok settings.json")
-PY
+merge_settings "$H"
 
 # ── 9. Global CLAUDE.md (append, never overwrite) ────────────────────────────
 say "Global CLAUDE.md"
@@ -216,19 +352,19 @@ fd = os.open(p + ".tmp", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
 with os.fdopen(fd, "w") as f:
     json.dump(d, f)
 os.replace(p + ".tmp", p)' "$GDATA"
-  if "$GBQ_BIN" init --pglite --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --search-mode balanced >/dev/null 2>&1; then
+  if logged "$GBQ_BIN" init --pglite --embedding-model voyage:voyage-4 --embedding-dimensions 1024 --search-mode balanced; then
     EMBED=1; ok "brain initialized (Voyage: search by meaning)"
     # rerank-3-lite is inside Voyage's free tokens; gbrain's default (rerank-2.5) is billed from the first search.
     "$GBQ_BIN" config set search.reranker.model voyage:rerank-3-lite >/dev/null 2>&1 || true
   else
-    warn "gbrain init failed: run gbrain doctor"
+    warn_log "gbrain init failed: run gbrain doctor"
   fi
 else
   [ -n "$VOYAGE" ] && warn "Voyage did not accept this key (wrong key, or no network): keyword search for now. Fix it, then re-run ./install.sh"
   if [ -d "$GDATA/brain.pglite" ]; then
     ok "brain already initialized (keyword search)"
   else
-    "$GBQ_BIN" init --pglite --no-embedding --search-mode balanced >/dev/null 2>&1 && ok "brain initialized (keyword search)" || warn "gbrain init failed: run gbrain doctor"
+    logged "$GBQ_BIN" init --pglite --no-embedding --search-mode balanced && ok "brain initialized (keyword search)" || warn_log "gbrain init failed: run gbrain doctor"
   fi
 fi
 "$GBQ_BIN" config set search.mode balanced >/dev/null 2>&1 || true
@@ -239,11 +375,11 @@ fi
 # Basename resolution links [[Page-Name]] to the page whose filename matches
 # (case-insensitive), regardless of folder.
 "$GBQ_BIN" config set link_resolution.global_basename true >/dev/null 2>&1 || true
-"$GBQ_BIN" import "$BRAIN" --no-embed >/dev/null 2>&1 && ok "vault imported"
+logged "$GBQ_BIN" import "$BRAIN" --no-embed && ok "vault imported" || warn_log "vault import failed: re-run gbrain import $BRAIN --no-embed"
 if [ -n "$EMBED" ]; then
   say "Embedding (may take 1-2 min)…"
-  "$GBQ_BIN" embed --stale --max-usd 1 >/dev/null 2>&1 && ok "embedded" \
-    || warn "embedding did not finish (no card on Voyage yet? it allows 3 requests a minute without one). Re-run: gbrain embed --stale --max-usd 1"
+  logged "$GBQ_BIN" embed --stale --max-usd 1 && ok "embedded" \
+    || warn_log "embedding did not finish (no card on Voyage yet? it allows 3 requests a minute without one). Re-run: gbrain embed --stale --max-usd 1"
 fi
 
 # ── 12. TEAM mode: company vault as a 2nd source (federated, git-pull nightly)
@@ -279,10 +415,10 @@ if [ -n "$WITH_GSTACK" ]; then
     ok "already cloned"
   else
     mkdir -p "$(dirname "$GS")"
-    git clone --single-branch --depth 1 https://github.com/garrytan/gstack.git "$GS" >/dev/null 2>&1 && ok "cloned" || warn "clone failed — try manually: git clone https://github.com/garrytan/gstack.git $GS"
+    logged git clone --single-branch --depth 1 https://github.com/garrytan/gstack.git "$GS" && ok "cloned" || warn_log "clone failed — try manually: git clone https://github.com/garrytan/gstack.git $GS"
   fi
   if [ -x "$GS/setup" ]; then
-    ( cd "$GS" && ./setup >/dev/null 2>&1 ) && ok "setup complete" || warn "gstack setup reported issues — run 'cd $GS && ./setup' manually"
+    ( cd "$GS" && logged ./setup ) && ok "setup complete" || warn_log "gstack setup reported issues — run 'cd $GS && ./setup' manually"
   fi
   echo "    slash commands now available: /office-hours · /plan-ceo-review · /review · /qa · /retro · /investigate · /cso · /learn (+15 more)"
 fi
@@ -295,6 +431,9 @@ bash "$REPO/test-hooks.sh" >/dev/null 2>&1 && ok "hooks + gbrain self-update hea
 printf "\n\033[1;32m✅ brain-in-a-box installed.\033[0m\n"
 if [ "$BACKED_UP" -gt 0 ]; then
   printf "\033[1;33m⚠ Your previous versions of %s replaced file(s) are in %s\033[0m\n" "$BACKED_UP" "$BACKUP"
+fi
+if [ -n "$KEPT" ]; then
+  printf "\033[1;33m⚠ Kept as you changed them:%s\n  The new versions are in %s: compare (diff), keep what you want.\033[0m\n" "$KEPT" "$PENDING"
 fi
 cat <<EOF
 
@@ -310,4 +449,5 @@ Checks:
   ~/.local/bin/gbq query "test"          # the memory answers
   gbrain doctor --fast                    # health (aim for 85+)
   cat ~/.gbrain/nightly.log              # tomorrow morning: the nightly ran
+  tail ~/.brain-in-a-box/install.log     # what clone, bun and gbrain said during this install
 EOF
