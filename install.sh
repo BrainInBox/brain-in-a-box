@@ -223,7 +223,7 @@ fi
 BACKUP="$STATE/backups/$(date +%Y%m%d-%H%M%S)"
 BACKED_UP=0
 MANIFEST="$STATE/installed.json"
-PENDING="$STATE/en-attente"
+PENDING="$STATE/pending"
 KEPT=""
 # >>> place
 sha256() { shasum -a 256 < "${1:-/dev/stdin}" | cut -d' ' -f1; }

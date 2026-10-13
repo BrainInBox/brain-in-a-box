@@ -424,7 +424,7 @@ PH="$H/place-test"; mkdir -p "$PH/src" "$PH/dst"
 eval "$(sed -n '/^# >>> place$/,/^# <<< place$/p' "$REPO/install.sh")"
 # place() as install.sh runs it; prints the number of backups, then the files kept.
 # $PH/repo stands for the repo's git history; a source outside it has none (a ZIP).
-pl(){ ( H="$PH" U=tester REPO="$PH/repo" BACKUP="${PB:-$PH/backup}" BACKED_UP=0 MANIFEST="$PH/installed.json" PENDING="$PH/en-attente" KEPT=""
+pl(){ ( H="$PH" U=tester REPO="$PH/repo" BACKUP="${PB:-$PH/backup}" BACKED_UP=0 MANIFEST="$PH/installed.json" PENDING="$PH/pending" KEPT=""
         ok(){ :; }; warn(){ :; }; place "$@"; echo "$BACKED_UP$KEPT" ); }
 mtime(){ python3 -c 'import os,sys; print(os.stat(sys.argv[1]).st_mtime_ns)' "$1"; }
 mode(){ python3 -c 'import os,sys; print(oct(os.stat(sys.argv[1]).st_mode & 0o777)[2:])' "$1"; }
@@ -435,7 +435,7 @@ n=$(pl "$PH/src/hook.py" "$PH/dst/hook.py")
   && ok "install: a new file is placed (__HOME__ filled in, executable) and its sha256 recorded" || no "install: new file not placed or not recorded"
 cp "$PH/installed.json" "$PH/m1"; t1=$(mtime "$PH/dst/hook.py")
 n=$(pl "$PH/src/hook.py" "$PH/dst/hook.py")
-[ "$n" = 0 ] && [ ! -d "$PH/backup" ] && [ ! -d "$PH/en-attente" ] && cmp -s "$PH/m1" "$PH/installed.json" && [ "$(mtime "$PH/dst/hook.py")" = "$t1" ] \
+[ "$n" = 0 ] && [ ! -d "$PH/backup" ] && [ ! -d "$PH/pending" ] && cmp -s "$PH/m1" "$PH/installed.json" && [ "$(mtime "$PH/dst/hook.py")" = "$t1" ] \
   && ok "install: a re-run with nothing new changes nothing" || no "install: a re-run with nothing new touched something"
 printf 'v2 __HOME__\n' > "$PH/src/hook.py"
 n=$(pl "$PH/src/hook.py" "$PH/dst/hook.py")
@@ -444,9 +444,9 @@ n=$(pl "$PH/src/hook.py" "$PH/dst/hook.py")
 v2=$(recorded "$PH/dst/hook.py")
 printf 'my own tweak\n' > "$PH/dst/hook.py"; printf 'v3 __HOME__\n' > "$PH/src/hook.py"
 n=$(pl "$PH/src/hook.py" "$PH/dst/hook.py")
-[ "$n" = "0 hook.py" ] && grep -q 'my own tweak' "$PH/dst/hook.py" && grep -q "v3 $PH" "$PH/en-attente/hook.py" && [ ! -d "$PH/backup" ] \
+[ "$n" = "0 hook.py" ] && grep -q 'my own tweak' "$PH/dst/hook.py" && grep -q "v3 $PH" "$PH/pending/hook.py" && [ ! -d "$PH/backup" ] \
   && [ "$(recorded "$PH/dst/hook.py")" = "$v2" ] \
-  && ok "install: a file changed after install is kept, the new version waits in en-attente/" || no "install: user's change overwritten or not reported ($n)"
+  && ok "install: a file changed after install is kept, the new version waits in pending/" || no "install: user's change overwritten or not reported ($n)"
 printf 'from an older install\n' > "$PH/dst/gbq"; printf 'gbq v1\n' > "$PH/src/gbq"
 n=$(pl "$PH/src/gbq" "$PH/dst/gbq")
 [ "$n" = 1 ] && grep -q 'older install' "$PH/backup/gbq" && grep -q 'gbq v1' "$PH/dst/gbq" && [ "$(recorded "$PH/dst/gbq")" = "$(sha256 "$PH/dst/gbq")" ] \
@@ -466,14 +466,14 @@ g init -q; printf 'v1 __HOME__ __USER__\n' > "$PR/engine/h.py"; g add -A; g comm
 g rm -q engine/h.py; g commit -qm 2
 mkdir -p "$PR/engine"; printf 'v2 __HOME__\n' > "$PR/engine/h.py"; g add -A; g commit -qm 3
 printf 'v3 __HOME__\n' > "$PR/engine/h.py"
-mkdir -p "$PH/old/a" "$PH/old/b" "$PH/old/c"; rm -rf "$PH/backup" "$PH/en-attente"
+mkdir -p "$PH/old/a" "$PH/old/b" "$PH/old/c"; rm -rf "$PH/backup" "$PH/pending"
 printf 'v1 %s tester\n' "$PH" > "$PH/old/a/h.py"
 n=$(pl "$PR/engine/h.py" "$PH/old/a/h.py")
-[ "$n" = 0 ] && grep -q "v3 $PH" "$PH/old/a/h.py" && [ ! -d "$PH/backup" ] && [ ! -d "$PH/en-attente" ] \
+[ "$n" = 0 ] && grep -q "v3 $PH" "$PH/old/a/h.py" && [ ! -d "$PH/backup" ] && [ ! -d "$PH/pending" ] \
   && ok "install: an untouched file from before the manifest (a version git knows) is updated, no backup" || no "install: old untouched file mishandled ($n)"
 printf 'v2 %s/Documents/Cerveau\n' "$PH" > "$PH/old/b/h.py"
 n=$(pl "$PR/engine/h.py" "$PH/old/b/h.py")
-[ "$n" = "0 h.py" ] && grep -q Cerveau "$PH/old/b/h.py" && grep -q "v3 $PH" "$PH/en-attente/h.py" && [ ! -d "$PH/backup" ] \
+[ "$n" = "0 h.py" ] && grep -q Cerveau "$PH/old/b/h.py" && grep -q "v3 $PH" "$PH/pending/h.py" && [ ! -d "$PH/backup" ] \
   && ok "install: a file adapted before the manifest existed (matches no version in git) is kept" || no "install: adapted pre-manifest file replaced ($n)"
 : > "$PH/old/c/h.py"
 n=$(pl "$PR/engine/h.py" "$PH/old/c/h.py")
@@ -481,7 +481,7 @@ n=$(pl "$PR/engine/h.py" "$PH/old/c/h.py")
   && ok "install: an emptied file is kept (the commit that deleted the source is no version)" || no "install: emptied file replaced ($n)"
 mkdir -p "$PH/dotfiles"; printf 'mine\n' > "$PH/dotfiles/s.py"; ln -s ../dotfiles/s.py "$PH/dst/s.py"; printf 's1\n' > "$PH/src/s.py"
 n=$(pl "$PH/src/s.py" "$PH/dst/s.py")
-[ "$n" = "0 s.py" ] && [ -L "$PH/dst/s.py" ] && grep -qx mine "$PH/dotfiles/s.py" && grep -qx s1 "$PH/en-attente/s.py" \
+[ "$n" = "0 s.py" ] && [ -L "$PH/dst/s.py" ] && grep -qx mine "$PH/dotfiles/s.py" && grep -qx s1 "$PH/pending/s.py" \
   && ok "install: a symlinked file stays a link to the user's file, the new version waits" || no "install: symlink replaced ($n)"
 printf 'm1\n' > "$PH/src/m.py"; printf 'my m\n' > "$PH/dst/m.py"
 if [ "$(id -u)" != 0 ]; then
