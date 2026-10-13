@@ -1,0 +1,196 @@
+name: gbrain-windows-spike
+
+# Temporary: does gbrain (PGLite + pgvector) run on native Windows today?
+# Answers it on a real Windows with evidence, no secrets: the Voyage path is
+# exercised against .github/ci/fake_voyage.py, a local stand-in.
+on:
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  spike:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, windows-2022, windows-11-arm]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      GBRAIN_REPO: https://github.com/garrytan/gbrain.git
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Machine
+        run: |
+          . .github/ci/spike-lib.ps1
+          Note "## ${{ matrix.os }}"
+          $os = Get-CimInstance Win32_OperatingSystem
+          Write-Host "OS: $($os.Caption) $($os.Version) $env:PROCESSOR_ARCHITECTURE"
+          Write-Host "USERPROFILE=$env:USERPROFILE TEMP=$env:TEMP RUNNER_TEMP=$env:RUNNER_TEMP"
+          try { Get-MpComputerStatus | Format-List AMServiceEnabled, AntivirusEnabled, RealTimeProtectionEnabled, IsTamperProtected } catch { Write-Host "Defender status unavailable: $_" }
+          try { Get-MpPreference | Format-List ExclusionPath } catch {}
+
+      - name: Install Bun (official one-liner, as a user would)
+        run: |
+          . .github/ci/spike-lib.ps1
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          irm bun.sh/install.ps1 | iex
+          $bin = "$env:USERPROFILE\.bun\bin"
+          $env:Path = "$bin;$env:Path"
+          Add-Content $env:GITHUB_PATH $bin
+          $v = & "$bin\bun.exe" --version
+          $rev = & "$bin\bun.exe" --revision
+          Note "- bun install ($v, $rev): $([math]::Round($sw.Elapsed.TotalSeconds,1)) s"
+          Check 'bun >= 1.4.0' ([version]($v -replace '-.*') -ge [version]'1.4.0') $v
+
+      - name: Clone gbrain + bun install + bun link (what install.sh does)
+        run: |
+          . .github/ci/spike-lib.ps1
+          $dir = "$env:USERPROFILE\DEV\gbrain"
+          $r = Invoke-Timed 'git clone gbrain (depth 1)' git @('clone', '--depth', '1', $env:GBRAIN_REPO, $dir) 600
+          $sha = (git -C $dir rev-parse HEAD).Trim()
+          $ver = (Get-Content "$dir\VERSION" -ErrorAction SilentlyContinue | Select-Object -First 1)
+          Note "gbrain commit: ``$sha`` (VERSION $ver)"
+          $r = Invoke-Timed 'bun install' bun @('install') 900 $dir
+          Check 'bun install exits 0' ($r.ExitCode -eq 0)
+          $r = Invoke-Timed 'bun link' bun @('link') 300 $dir
+          Check 'bun link exits 0' ($r.ExitCode -eq 0)
+          Get-ChildItem "$env:USERPROFILE\.bun\bin" | Format-Table Name, Length
+          $nm = (Get-ChildItem "$dir\node_modules" -Recurse -File -ErrorAction SilentlyContinue | Measure-Object Length -Sum)
+          Note "node_modules: $($nm.Count) files, $([math]::Round($nm.Sum/1MB)) MB"
+          $g = Gbrain-Exe
+          $r = Invoke-Timed 'gbrain --version (linked shim)' $g @('--version') 120
+          Check 'gbrain runs from the bun link shim' ($r.ExitCode -eq 0) "$g -> $($r.Out.Trim())"
+          $r = Invoke-Timed 'gbrain --version via cmd.exe' cmd.exe @('/d', '/c', 'gbrain --version') 120
+          Check 'gbrain runs from cmd.exe' ($r.ExitCode -eq 0)
+          $r = Invoke-Timed 'gbrain --version via Windows PowerShell 5.1' powershell.exe @('-NoProfile', '-Command', 'gbrain --version; exit $LASTEXITCODE') 120
+          Check 'gbrain runs from Windows PowerShell 5.1' ($r.ExitCode -eq 0)
+
+      - name: pgvector loads in PGLite (direct SQL, gbrain's own PGLite build)
+        if: ${{ !cancelled() }}
+        run: |
+          . .github/ci/spike-lib.ps1
+          $dir = "$env:USERPROFILE\DEV\gbrain"
+          Copy-Item .github/ci/pgvector_smoke.ts "$dir\pgvector_smoke.ts"
+          $r = Invoke-Timed 'pgvector smoke (plain path)' bun @('pgvector_smoke.ts', "$env:RUNNER_TEMP\pgv-plain") 300 $dir
+          Check 'pgvector: CREATE EXTENSION + HNSW + <=> on disk' ($r.ExitCode -eq 0) $r.Out.Trim()
+          $odd = "$env:RUNNER_TEMP\Jean Dupont $([char]0xE9)\pgv"
+          $r = Invoke-Timed 'pgvector smoke (path with space + accent)' bun @('pgvector_smoke.ts', $odd) 300 $dir
+          Check 'pgvector: data dir with space + accent' ($r.ExitCode -eq 0) $r.Out.Trim()
+
+      - name: Keyword brain (no key) - init, import, query, doctor
+        if: ${{ !cancelled() }}
+        run: |
+          . .github/ci/spike-lib.ps1
+          $g = Gbrain-Exe
+          $vault = "$env:RUNNER_TEMP\vault"; New-TestVault $vault
+          $r = Invoke-Timed 'init --pglite --no-embedding' $g @('init', '--pglite', '--no-embedding', '--search-mode', 'balanced', '--json') 600
+          Check 'keyword init exits 0' ($r.ExitCode -eq 0)
+          Get-ChildItem "$env:USERPROFILE\.gbrain" | Format-Table Name
+          $r = Invoke-Timed 'import vault --no-embed' $g @('import', $vault, '--no-embed') 600
+          Check 'import exits 0' ($r.ExitCode -eq 0) (($r.Out -split "`n" | Select-String 'imported|chunks') -join ' / ')
+          $r = Invoke-Timed 'query "tomatoes greenhouse"' $g @('query', 'tomatoes greenhouse') 90
+          Check 'keyword query finds people/alice' ($r.Out -match 'people/alice') "exit=$($r.ExitCode) timedOut=$($r.TimedOut)"
+          Check 'keyword query exits on its own (<90s)' (-not $r.TimedOut) "$($r.Seconds)s"
+          $r = Invoke-Timed 'query "cantine" (accented file)' $g @('query', 'budget cantine') 90
+          Check 'accented file indexed and found' ($r.Out -match 'journal/') ($r.Out -split "`n" | Select-String '^\[' | Select-Object -First 1)
+          $r = Invoke-Timed 'search "tomatoes"' $g @('search', 'tomatoes') 90
+          Check 'search exits on its own (<90s)' (-not $r.TimedOut) "$($r.Seconds)s"
+          $r = Invoke-Timed 'doctor --json' $g @('doctor', '--json') 300
+          try {
+            $d = $r.Out | ConvertFrom-Json
+            $pv = $d.checks | Where-Object name -eq 'pgvector'
+            Check 'doctor: pgvector ok (keyword brain)' ($pv.status -eq 'ok') "$($pv.status): $($pv.message); health_score=$($d.health_score)"
+            $d.checks | Where-Object status -ne 'ok' | ForEach-Object { Write-Host "doctor $($_.status): $($_.name) - $($_.message)" }
+          } catch { Check 'doctor --json parses' $false "$_" }
+          $r = Invoke-Timed 'stats' $g @('stats') 120
+
+      - name: Search by meaning - Voyage model against a local fake Voyage (path with space + accent)
+        if: ${{ !cancelled() }}
+        run: |
+          . .github/ci/spike-lib.ps1
+          $g = Gbrain-Exe
+          $log = "$env:RUNNER_TEMP\fake-voyage.log"
+          $srv = Start-Process python -ArgumentList @('-I', "$PWD\.github\ci\fake_voyage.py", '8899') -RedirectStandardOutput $log -RedirectStandardError "$log.err" -PassThru
+          Start-Sleep -Seconds 2
+          $env:GBRAIN_HOME = "$env:RUNNER_TEMP\Jean Dupont $([char]0xE9)"
+          $gd = "$env:GBRAIN_HOME\.gbrain"; New-Item -ItemType Directory -Force $gd | Out-Null
+          # Same config install.sh writes (key in config.json, never in argv) + the base URL of the fake.
+          $cfg = @{ voyage_api_key = 'ci-fake-key-not-a-secret'; provider_base_urls = @{ voyage = 'http://127.0.0.1:8899/v1' } } | ConvertTo-Json
+          [IO.File]::WriteAllText("$gd\config.json", $cfg, (New-Object Text.UTF8Encoding $false))
+          $vault = "$env:GBRAIN_HOME\Documents\Brain"; New-TestVault $vault
+          $r = Invoke-Timed 'init voyage:voyage-4 1024 (fake)' $g @('init', '--pglite', '--embedding-model', 'voyage:voyage-4', '--embedding-dimensions', '1024', '--search-mode', 'balanced', '--json') 600
+          Check 'vector init exits 0 with live probe ok' (($r.ExitCode -eq 0) -and ($r.Out -match '"live_ok":true')) "exit=$($r.ExitCode)"
+          $r = Invoke-Timed 'config set reranker rerank-3-lite' $g @('config', 'set', 'search.reranker.model', 'voyage:rerank-3-lite') 120
+          $r = Invoke-Timed 'import (vector brain)' $g @('import', $vault, '--no-embed') 600
+          $r = Invoke-Timed 'embed --stale --max-usd 1' $g @('embed', '--stale', '--max-usd', '1') 600
+          Check 'embed exits 0' ($r.ExitCode -eq 0) (($r.Out + $r.Err) -split "`n" | Select-String 'Embedded' | Select-Object -First 1)
+          $r = Invoke-Timed 'stats (vector brain)' $g @('stats') 120
+          $emb = [regex]::Match($r.Out, 'Embedded:\s+(\d+)').Groups[1].Value
+          Check 'all chunks embedded (vectors written to pgvector)' ($emb -and [int]$emb -ge 4) "Embedded=$emb"
+          $r = Invoke-Timed 'query "propulsion fuel valves" (hybrid + vector + rerank)' $g @('query', 'propulsion fuel valves') 90
+          $first = ($r.Out -split "`n" | Select-String '^\[' | Select-Object -First 1)
+          Check 'vector query ranks projects/rocket first' ("$first" -match 'projects/rocket') "$first"
+          Check 'vector query exits on its own (<90s)' (-not $r.TimedOut) "$($r.Seconds)s"
+          $r = Invoke-Timed 'doctor --json (vector brain)' $g @('doctor', '--json') 300
+          try {
+            $d = $r.Out | ConvertFrom-Json
+            foreach ($n in 'pgvector', 'embedding_provider', 'embeddings') { $c = $d.checks | Where-Object name -eq $n; if ($c) { Write-Host "doctor $n : $($c.status) - $($c.message)" } }
+          } catch { Write-Host "doctor json: $_" }
+          Write-Host '--- fake Voyage traffic ---'; Get-Content $log
+          $hits = @(Select-String -Path $log -Pattern 'embeddings').Count
+          Check 'gbrain called the embeddings endpoint (fake Voyage)' ($hits -ge 2) "$hits calls; rerank: $(@(Select-String -Path $log -Pattern 'rerank').Count)"
+          Stop-Process -Id $srv.Id -Force -ErrorAction SilentlyContinue
+
+      - name: Voyage model with NO key (real endpoint) - which error does a user see?
+        if: ${{ !cancelled() }}
+        run: |
+          . .github/ci/spike-lib.ps1
+          $g = Gbrain-Exe
+          $env:GBRAIN_HOME = "$env:RUNNER_TEMP\nokey"
+          Remove-Item Env:VOYAGE_API_KEY -ErrorAction SilentlyContinue
+          $r = Invoke-Timed 'init voyage:voyage-4 without key' $g @('init', '--pglite', '--embedding-model', 'voyage:voyage-4', '--embedding-dimensions', '1024', '--search-mode', 'balanced', '--json') 180
+          $txt = "$($r.Out)`n$($r.Err)"
+          $line = ($txt -split "`n" | Select-String -Pattern 'VOYAGE|key|vector|extension' | Select-Object -First 3) -join ' / '
+          Note "no-key init: exit=$($r.ExitCode) - $line"
+          Check 'no-key failure is about the key, not pgvector' (($txt -match 'VOYAGE_API_KEY|api key|API key') -and ($txt -notmatch 'extension "vector"|vector\.control|could not load library')) $line
+
+      - name: Same flow from a profile path with a space and an accent (C:\Users\Jean Dupont e-acute)
+        if: ${{ !cancelled() }}
+        run: |
+          . .github/ci/spike-lib.ps1
+          $home2 = "$env:RUNNER_TEMP\Users\Jean Dupont $([char]0xE9)"
+          $dir = "$home2\DEV\gbrain"
+          New-Item -ItemType Directory -Force $dir | Out-Null
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          robocopy "$env:USERPROFILE\DEV\gbrain" $dir /E /MT:16 /NFL /NDL /NJH /NJS /NP | Out-Null
+          Note "- robocopy checkout to the accented path: code $LASTEXITCODE, $([math]::Round($sw.Elapsed.TotalSeconds,1)) s"
+          $env:GBRAIN_HOME = $home2
+          $vault = "$home2\Documents\Brain"; New-TestVault $vault
+          $cli = "$dir\src\cli.ts"
+          $r = Invoke-Timed 'init from accented checkout' bun @($cli, 'init', '--pglite', '--no-embedding', '--search-mode', 'balanced', '--json') 600
+          Check 'init from a checkout + brain under C:\Users\Jean Dupont e-acute' ($r.ExitCode -eq 0)
+          $r = Invoke-Timed 'import from accented checkout' bun @($cli, 'import', $vault, '--no-embed') 600
+          $r = Invoke-Timed 'query from accented checkout' bun @($cli, 'query', 'tomatoes greenhouse') 90
+          Check 'query works from the accented profile' ($r.Out -match 'people/alice') "exit=$($r.ExitCode) timedOut=$($r.TimedOut)"
+          exit 0
+
+      - name: Verdict for this runner
+        if: ${{ always() }}
+        run: |
+          . .github/ci/spike-lib.ps1
+          if (-not (Test-Path $Results)) { Note 'no results recorded'; exit 1 }
+          $all = Get-Content $Results | ForEach-Object { $_ | ConvertFrom-Json }
+          $bad = @($all | Where-Object { -not $_.pass })
+          Note ""
+          Note "**${{ matrix.os }}: $(@($all).Count - $bad.Count)/$(@($all).Count) checks pass**"
+          $bad | ForEach-Object { Note "- failed: $($_.name) - $($_.detail)" }
+          if ($bad.Count) { exit 1 }
