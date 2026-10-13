@@ -669,6 +669,6 @@ if ($Obsidian) {
     }
 }
 Write-Host ""
-Write-Host "Memoire : gbq query `"...`" (recherche $mem). Mise a jour de l'index chaque nuit, reflection 12h/23h si Claude est connecte." -ForegroundColor Cyan
+Write-Host "Memoire : gbq query `"...`", recherche $mem. Mise a jour de l'index chaque nuit, reflection 12h/23h si Claude est connecte." -ForegroundColor Cyan
 Write-Host "Journal d'installation : $LOG" -ForegroundColor Cyan
 Write-Host "Mise a jour : relance la meme commande d'installation." -ForegroundColor Cyan
