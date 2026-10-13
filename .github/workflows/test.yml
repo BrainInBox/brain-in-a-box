@@ -173,10 +173,33 @@ jobs:
           $q = (& "$H\.local\bin\gbq.cmd" query "lighthouse keeper storm") -join "`n"; $q
           if ($q -notmatch '(?i)lighthouse' -or $q -match '#chunk') { throw 'the note written today is not in gbrain after the nightly' }
 
-      - name: A second run is idempotent
+      - name: A second run is idempotent, and an existing user loses nothing
         run: |
-          powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1
+          $H = $env:USERPROFILE
+          # What a Windows install from before gbrain left, and what its owner changed since.
+          Register-ScheduledTask -TaskName BrainSearchReindex -Action (New-ScheduledTaskAction -Execute cmd.exe -Argument '/c exit 0') -Trigger (New-ScheduledTaskTrigger -Daily -At 04:00) -User $env:USERNAME -Force | Out-Null
+          Add-Content "$H\.claude\hooks\brain\session-logger.py" '# adapted on this PC'
+          $sp = "$H\.claude\settings.json"
+          $j = Get-Content $sp -Raw | ConvertFrom-Json
+          $j | Add-Member -NotePropertyName mine -NotePropertyValue 'kept'
+          $j.hooks.Stop[0].hooks = @($j.hooks.Stop[0].hooks | Where-Object { "$($_.args)" -notlike '*session-recap.py*' })
+          [IO.File]::WriteAllText($sp, ($j | ConvertTo-Json -Depth 20))
+          $note = [IO.File]::ReadAllText("$H\Documents\Brain\Journal\lighthouse.md")
+          powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1 *>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\install-2.txt"
           if ($LASTEXITCODE) { exit 1 }
+          $bak = @(Get-ChildItem "$H\.brain-in-a-box\backups\*\brain\session-logger.py")
+          if ($bak.Count -ne 1 -or -not (Select-String -Path $bak[0].FullName -SimpleMatch 'adapted on this PC' -Quiet)) { throw 'the adapted hook was not backed up' }
+          if ((Get-FileHash "$H\.claude\hooks\brain\session-logger.py").Hash -ne (Get-FileHash engine\hooks\session-logger.py).Hash) { throw 'the hook was not updated' }
+          if ((Get-Content "$env:RUNNER_TEMP\install-2.txt" -Raw) -notmatch 'session-logger\.py') { throw 'the replaced hook was not reported' }
+          $all = @(Get-ChildItem "$H\.brain-in-a-box\backups" -Recurse -File)
+          if ($all.Count -ne 1) { throw "unchanged files were backed up: $($all.FullName -join ', ')" }
+          $sb = @(Get-ChildItem "$H\.claude\settings.json.bak-*" | Where-Object { Select-String -Path $_.FullName -SimpleMatch '"kept"' -Quiet })
+          if (-not $sb.Count) { throw 'settings.json was rewritten without a backup' }
+          if ((Get-Content $sp -Raw | ConvertFrom-Json).mine -ne 'kept') { throw 'a setting of the user was lost' }
+          if (Get-ScheduledTask -TaskName BrainSearchReindex -ErrorAction SilentlyContinue) { throw 'the old BrainSearchReindex task is still there' }
+          if ([IO.File]::ReadAllText("$H\Documents\Brain\Journal\lighthouse.md") -ne $note) { throw 'a note changed' }
+          $q = (& "$H\.local\bin\gbq.cmd" query "lighthouse keeper storm") -join "`n"
+          if ($q -notmatch '(?i)lighthouse' -or $q -match '#chunk') { throw 'gbrain lost the note on a second run' }
           $j = Get-Content "$env:USERPROFILE\.claude\settings.json" -Raw | ConvertFrom-Json
           $all = @(@($j.hooks.UserPromptSubmit.hooks) + @($j.hooks.Stop.hooks))
           foreach ($h in 'correction-detector', 'session-logger', 'session-indexer', 'session-recap') {

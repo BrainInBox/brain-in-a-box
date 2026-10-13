@@ -396,6 +396,7 @@ case "$1" in
     n=$(cat "$HOME/calls" 2>/dev/null || echo 0); echo $((n + 1)) > "$HOME/calls"
     [ "$n" -lt "${GBQ_BUSY:-0}" ] && { echo "Error [pglite_busy]: The brain is busy." >&2; exit 1; }
     [ -n "${GBQ_FAIL:-}" ] && { echo "boom" >&2; exit 2; }
+    [ -n "${GBQ_HANG:-}" ] && exec sleep 30
     echo "[0.91] decisions/pricing -- from gbrain"; exit 0;;
   sync) exit "${GBQ_STUB_RC:-0}";;
 esac
@@ -415,6 +416,9 @@ out=$(GBQ_BUSY=9 gw query "annual plan" 2>/dev/null); rc=$?
 out=$(GBQ_FAIL=1 gw query "annual plan" 2>/dev/null); rc=$?
 [ "$rc" = 0 ] && echo "$out" | grep -q "Decisions/pricing.md" \
   && ok "gbq.py: a failing gbrain read -> keyword results" || no "gbq.py: no fallback on failure (rc=$rc)"
+t0=$(date +%s); out=$(GBQ_HANG=1 GBQ_READ_TIMEOUT=2 gw query "annual plan" 2>/dev/null); rc=$?; t1=$(date +%s)
+[ "$rc" = 0 ] && echo "$out" | grep -q "Decisions/pricing.md" && [ $((t1 - t0)) -lt 15 ] \
+  && ok "gbq.py: a gbrain read that hangs is killed -> keyword results" || no "gbq.py: hanging read not cut (rc=$rc, $((t1 - t0)) s)"
 GBQ_STUB_RC=3 gw sync >/dev/null 2>&1; rc=$?
 [ "$rc" = 3 ] && ok "gbq.py: a write returns gbrain's exit code" || no "gbq.py: write returned $rc, want 3"
 mv "$GW/.bun/bin/gbrain" "$GW/gbrain.off"

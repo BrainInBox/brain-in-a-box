@@ -140,7 +140,7 @@ PRs welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) for the workflow (the `mast
 
 ## Updating & undo
 
-Update: on Windows, run the install line again. On macOS:
+Update: on Windows, run the install line again; a hook, `gbq` or search script that differs from the new version (one you adapted) is copied to `~\.brain-in-a-box\backups\<date>\` before being replaced, `settings.json` to `settings.json.bak-<date>`, and the installer lists them. On macOS:
 ```bash
 cd brain-in-a-box && git pull && ./install.sh   # idempotent, re-applies without breaking
 ```

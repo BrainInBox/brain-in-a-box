@@ -66,7 +66,35 @@ function Refresh-Path {
 }
 # Une commande native qui ecrit sur stderr (avertissement git, progression) devient une erreur
 # terminante quand PowerShell capture ce flux (ISE, CI, sortie redirigee) avec Stop. Le code de sortie fait foi.
-function Invoke-Native([scriptblock]$Cmd) { $ErrorActionPreference = "Continue"; & $Cmd }
+# Elle tourne sans VOYAGE_API_KEY (winget, installeurs, git, Python) : seul gbrain s'en sert, comme
+# `env -u VOYAGE_API_KEY` dans install.sh.
+function Invoke-Native([scriptblock]$Cmd) {
+    $ErrorActionPreference = "Continue"
+    $biabEnvKey = $env:VOYAGE_API_KEY
+    if ($biabEnvKey) { Remove-Item Env:VOYAGE_API_KEY }
+    try { & $Cmd } finally { if ($biabEnvKey) { $env:VOYAGE_API_KEY = $biabEnvKey } }
+}
+# Les cles Voyage connues (saisie, VOYAGE_API_KEY, config.json) : masquees dans le journal, au cas ou un outil les ecrirait.
+$KeyMasks = @()
+function Hide-Keys([string]$s) {
+    foreach ($k in $script:KeyMasks) { if ($k) { $s = $s.Replace($k, "[cle voyage]") } }
+    return $s
+}
+# Un fichier installe qui differe de sa nouvelle version (une version d'avant, ou adaptee sur ce PC)
+# est copie dans ~\.brain-in-a-box\backups\<date>\ avant d'etre remplace, comme install.sh.
+$BACKUP = "$H\.brain-in-a-box\backups\$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+$BackedUp = @()
+function Place-File([string]$Dest, [byte[]]$Bytes) {
+    if (Test-Path -LiteralPath $Dest -PathType Leaf) {
+        $old = [IO.File]::ReadAllBytes($Dest)
+        if ([Convert]::ToBase64String($old) -eq [Convert]::ToBase64String($Bytes)) { return }
+        $dir = Join-Path $BACKUP (Split-Path -Leaf (Split-Path -Parent $Dest))
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+        [IO.File]::WriteAllBytes((Join-Path $dir (Split-Path -Leaf $Dest)), $old)
+        $script:BackedUp += $Dest
+    }
+    [IO.File]::WriteAllBytes($Dest, $Bytes)
+}
 
 if ($psISE) { Fail "tu es dans PowerShell ISE. Ouvre 'Windows PowerShell' (pas ISE), puis recolle la commande." }
 
@@ -156,19 +184,24 @@ function Test-Interactive {
 
 # Lance un outil natif, sa sortie va dans le journal d'installation (pas a l'ecran). Les
 # arguments y sont recopies : une cle ne passe jamais par la, seulement par l'environnement.
+# Hors gbrain (installeur de Bun, scripts des dependances de bun install, git), sans VOYAGE_API_KEY.
 # Renvoie le code de sortie ; la sortie reste lisible dans $script:LastOut.
 function Invoke-Logged([string]$Exe, [string[]]$ArgList, [string]$Dir = "") {
     $ErrorActionPreference = "Continue"
-    Add-Content -LiteralPath $LOG -Value "`r`n> $(Split-Path -Leaf $Exe) $($ArgList -join ' ')" -Encoding utf8
+    Add-Content -LiteralPath $LOG -Value (Hide-Keys "`r`n> $(Split-Path -Leaf $Exe) $($ArgList -join ' ')") -Encoding utf8
     if ($Dir) { Push-Location -LiteralPath $Dir }
     $prev = $null
     try { $prev = [Console]::OutputEncoding; [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}   # gbrain ecrit en UTF-8
+    $envKey = $env:VOYAGE_API_KEY
+    $strip = $envKey -and ((Split-Path -Leaf $Exe) -notlike "gbrain*")
     try {
-        $out = @(& $Exe @ArgList 2>&1 | ForEach-Object { "$_" })
+        if ($strip) { Remove-Item Env:VOYAGE_API_KEY }
+        $out = @(& $Exe @ArgList 2>&1 | ForEach-Object { Hide-Keys "$_" })
         $code = $LASTEXITCODE
     } catch {
-        $out = @("$($_.Exception.Message)"); $code = 1
+        $out = @(Hide-Keys "$($_.Exception.Message)"); $code = 1
     } finally {
+        if ($strip) { $env:VOYAGE_API_KEY = $envKey }
         if ($prev) { try { [Console]::OutputEncoding = $prev } catch {} }
         if ($Dir) { Pop-Location }
     }
@@ -284,6 +317,8 @@ if ($EmbedModel) {
 } else {
     Ok "pas de console : recherche par mots-cles pour l'instant (relance avec VOYAGE_API_KEY pour l'ajouter)"
 }
+$ss = $null
+$KeyMasks = @(@($VoyageKey, "$env:VOYAGE_API_KEY".Trim(), $(if ($cfg) { [string]$cfg.voyage_api_key })) | Where-Object { $_ })
 if ($VoyageKey) {
     if (Test-VoyageKey $VoyageKey $VoyageBase) {
         Ok "cle acceptee par Voyage"
@@ -308,19 +343,19 @@ if ($hasContent) {
     Ok "skeleton place"
 }
 
-# 3. Hooks (cross-platform, simple copie)
+# 3. Hooks (cross-platform ; une version differente est sauvegardee avant d'etre remplacee)
 Say "Brain hooks ($HOOKS)"
 New-Item -ItemType Directory -Path $HOOKS -Force | Out-Null
-Copy-Item "$REPO\engine\hooks\*.py" $HOOKS -Force
-Copy-Item "$REPO\engine\nightly\windows-nightly.py" $HOOKS -Force
+foreach ($f in @(Get-ChildItem -LiteralPath "$REPO\engine\hooks" -Filter *.py -File) + @(Get-Item -LiteralPath "$REPO\engine\nightly\windows-nightly.py")) {
+    Place-File (Join-Path $HOOKS $f.Name) ([IO.File]::ReadAllBytes($f.FullName))
+}
 Ok "hooks copies"
 
 # 4. brain_search (mots-cles, hors ligne : le repli quand gbrain manque ou ne repond pas) + shims gbq
 Say "Recherche par mots-cles (brain_search, toujours la en repli)"
 New-Item -ItemType Directory -Path $BSDIR -Force | Out-Null
 New-Item -ItemType Directory -Path $BIN -Force | Out-Null
-Copy-Item "$REPO\engine\search\brain_search.py" "$BSDIR\brain_search.py" -Force
-Copy-Item "$REPO\engine\search\gbq.py" "$BSDIR\gbq.py" -Force
+foreach ($n in "brain_search.py", "gbq.py") { Place-File "$BSDIR\$n" ([IO.File]::ReadAllBytes("$REPO\engine\search\$n")) }
 $env:BRAIN_DIR = $BrainDir
 Invoke-Native { & $Py "$BSDIR\brain_search.py" index --brain $BrainDir }
 if ($LASTEXITCODE -ne 0) { Warn "indexation : echec (code $LASTEXITCODE) - la recherche sera vide jusqu'au reindex de 04:00" }
@@ -329,13 +364,13 @@ $pyCmd = To-CmdPath $Py
 $gbq = "@echo off`r`nsetlocal`r`nset `"BRAIN_DIR=$(To-CmdPath $BrainDir)`"`r`n" +
        "`"$pyCmd`" `"$(To-CmdPath "$BSDIR\gbq.py")`" %*`r`nexit /b %ERRORLEVEL%`r`n"
 try { $oem = [Text.Encoding]::GetEncoding([Globalization.CultureInfo]::CurrentCulture.TextInfo.OEMCodePage) } catch { $oem = [Text.Encoding]::ASCII }
-[IO.File]::WriteAllBytes("$BIN\gbq.cmd", $oem.GetBytes($gbq))
+Place-File "$BIN\gbq.cmd" $oem.GetBytes($gbq)
 # gbq (sans extension) pour Git Bash, ou tourne l'outil Bash de Claude Code : ~/.local/bin/gbq du CLAUDE.md.
 $fwd = { param($p) $p -replace "\\", "/" }
 $gbqSh = "#!/bin/sh`n# brain-in-a-box : gbq pour Git Bash, meme logique que gbq.cmd`n" +
          "export BRAIN_DIR=`"`${BRAIN_DIR:-$(& $fwd $BrainDir)}`"`n" +
          "exec `"$(& $fwd $Py)`" `"$(& $fwd "$BSDIR\gbq.py")`" `"`$@`"`n"
-[IO.File]::WriteAllText("$BIN\gbq", $gbqSh, (New-Object Text.UTF8Encoding $false))
+Place-File "$BIN\gbq" (New-Object Text.UTF8Encoding $false).GetBytes($gbqSh)
 $userPath = [Environment]::GetEnvironmentVariable("PATH","User")
 if ($userPath -notlike "*$BIN*") { [Environment]::SetEnvironmentVariable("PATH","$userPath;$BIN","User") }
 # Aussi pour ce processus : l'installeur Claude (etape 10) verifie le PATH qu'il herite et sinon
@@ -348,17 +383,20 @@ Ok "gbq installe ($BIN\gbq.cmd + gbq pour Git Bash)"
 Say "Hooks Claude (settings.json)"
 $settings = "$H\.claude\settings.json"
 $merge = @'
-import json, os, sys
+import json, os, sys, time
 settings, pyexe, hookdir = os.path.realpath(sys.argv[1]), sys.argv[2], sys.argv[3]
 os.makedirs(os.path.dirname(settings), exist_ok=True)
-d = {}
+raw, d = None, {}
 if os.path.exists(settings):
     try:
-        with open(settings, encoding="utf-8-sig") as f:  # -sig: Notepad and PowerShell 5.1 write a BOM
-            d = json.load(f)
+        with open(settings, "rb") as f:
+            raw = f.read()
+        text = raw.decode("utf-8-sig")  # -sig: Notepad and PowerShell 5.1 write a BOM
+        d = json.loads(text) if text.strip() else {}
     except Exception as e:
         print("settings.json unreadable, left untouched: %s" % e)
         sys.exit(3)
+before = json.dumps(d, sort_keys=True)
 hooks = d.setdefault("hooks", {})
 # Exec form (args): Claude Code spawns python.exe directly. The shell form needs Git Bash; without it
 # Claude falls back to PowerShell, which cannot run '"python.exe" "hook.py"'.
@@ -386,6 +424,12 @@ def ensure(evt, names):
             grp["hooks"].append(entry(n))
 ensure("UserPromptSubmit", ["correction-detector.py"])
 ensure("Stop", ["session-logger.py", "session-indexer.py", "session-recap.py"])
+if json.dumps(d, sort_keys=True) == before:
+    print("ok settings.json (unchanged)")
+    sys.exit(0)
+if raw is not None:  # the previous version stays next to it, as install.sh does
+    with open("%s.bak-%s" % (settings, time.strftime("%Y%m%d-%H%M%S")), "wb") as f:
+        f.write(raw)
 tmp = settings + ".tmp"
 with open(tmp, "w", encoding="utf-8") as f:
     json.dump(d, f, indent=2, ensure_ascii=False)
@@ -477,7 +521,12 @@ function Install-Gbrain {
         Write-Host "  ... gbrain : telechargement"
         $depth = @()
         if ($fresh -or ((Invoke-Logged $Git @("-C", $GREPO, "rev-parse", "--is-shallow-repository")) -eq 0 -and $script:LastOut.Trim() -eq "true")) { $depth = @("--depth", "1") }
-        if ((Invoke-Logged $Git (@("-C", $GREPO, "fetch", "-q") + $depth + @($GBRAIN_URL, $GBRAIN_REF))) -ne 0) {
+        # Un depot introuvable ferait demander un identifiant GitHub, cache derriere le journal : on echoue tout de suite.
+        $gtp = $env:GIT_TERMINAL_PROMPT
+        $env:GIT_TERMINAL_PROMPT = "0"
+        try { $rc = Invoke-Logged $Git (@("-C", $GREPO, "-c", "credential.helper=", "fetch", "-q") + $depth + @($GBRAIN_URL, $GBRAIN_REF)) }
+        finally { if ($null -eq $gtp) { Remove-Item Env:GIT_TERMINAL_PROMPT -ErrorAction SilentlyContinue } else { $env:GIT_TERMINAL_PROMPT = $gtp } }
+        if ($rc -ne 0) {
             Warn "gbrain : telechargement impossible, reseau ? (details : $LOG)"
             if ($fresh) { Remove-Item -LiteralPath $GREPO -Recurse -Force -ErrorAction SilentlyContinue }
             return $false
@@ -571,7 +620,9 @@ os.replace(p + ".tmp", p)
 }
 $prevEngine = if (Test-Path -LiteralPath "$BSDIR\engine") { ([IO.File]::ReadAllText("$BSDIR\engine")).Trim() } else { "" }
 $GbrainOk = $false
-try { $GbrainOk = [bool](Install-Gbrain | Select-Object -Last 1) } catch { Warn "gbrain : $($_.Exception.Message) (details : $LOG)" }
+try { $GbrainOk = [bool](Install-Gbrain | Select-Object -Last 1) } catch { Warn "gbrain : $(Hide-Keys $_.Exception.Message) (details : $LOG)" }
+# Lance par `irm | iex`, le script tourne dans la session de l'utilisateur : la cle n'y reste pas.
+$VoyageKey = $null; $KeyMasks = @()
 # gbq.py et la tache de nuit lisent ce fichier. Un gbrain qui marchait reste en place si cette
 # relance echoue (pas de reseau...) : gbq repassera de toute facon par les mots-cles s'il ne repond pas.
 $Engine = "brain_search"
@@ -612,13 +663,14 @@ if (-not (Test-Path -LiteralPath $Pyw)) { $Pyw = $Py }
 # Un antislash final avant le guillemet fermant l'echapperait ("D:\Brain\" -> D:\Brain"), on le double.
 $bdArg = $BrainDir -replace '\\+$', '$0$0'
 try {
+    $gitArg = if ($Git) { " --git `"$Git`"" } else { "" }
+    Register-BrainTask "BrainNightly" $Pyw "`"$HOOKS\windows-nightly.py`" --brain `"$bdArg`"$gitArg" (New-ScheduledTaskTrigger -Daily -At "04:00")
     # Avant gbrain, la nuit ne refaisait que l'index par mots-cles : BrainNightly fait les deux.
-    if (Get-ScheduledTask -TaskName "BrainSearchReindex" -ErrorAction SilentlyContinue) {
+    # L'ancienne tache ne part qu'une fois la nouvelle en place.
+    if ((Get-ScheduledTask -TaskName "BrainNightly" -ErrorAction SilentlyContinue) -and (Get-ScheduledTask -TaskName "BrainSearchReindex" -ErrorAction SilentlyContinue)) {
         Unregister-ScheduledTask -TaskName "BrainSearchReindex" -Confirm:$false
         Ok "ancienne tache BrainSearchReindex remplacee par BrainNightly"
     }
-    $gitArg = if ($Git) { " --git `"$Git`"" } else { "" }
-    Register-BrainTask "BrainNightly" $Pyw "`"$HOOKS\windows-nightly.py`" --brain `"$bdArg`"$gitArg" (New-ScheduledTaskTrigger -Daily -At "04:00")
     $t12 = New-ScheduledTaskTrigger -Daily -At "12:00"
     $t23 = New-ScheduledTaskTrigger -Daily -At "23:00"
     Register-BrainTask "BrainReflection" $Py "`"$HOOKS\daily-reflection.py`"" @($t12, $t23)
@@ -649,6 +701,7 @@ $cfg = Read-GbrainConfig
 $mem = if ($Engine -ne "gbrain") { "par mots-cles (brain_search)" }
        elseif ($cfg -and $cfg.embedding_model -and -not $cfg.embedding_disabled) { "par le sens (gbrain + Voyage AI)" }
        else { "par mots-cles (gbrain ; relance avec une cle Voyage pour chercher par le sens)" }
+$cfg = $null   # il contient la cle
 Ok "memoire : recherche $mem"
 
 Write-Host ""
@@ -672,3 +725,8 @@ Write-Host ""
 Write-Host "Memoire : gbq query `"...`", recherche $mem. Mise a jour de l'index chaque nuit, reflection 12h/23h si Claude est connecte." -ForegroundColor Cyan
 Write-Host "Journal d'installation : $LOG" -ForegroundColor Cyan
 Write-Host "Mise a jour : relance la meme commande d'installation." -ForegroundColor Cyan
+if ($BackedUp.Count) {
+    Write-Host ""
+    Write-Host "$($BackedUp.Count) fichier(s) remplace(s) par leur nouvelle version : $(($BackedUp | ForEach-Object { Split-Path -Leaf $_ }) -join ', ')." -ForegroundColor Yellow
+    Write-Host "L'ancienne version de chacun est dans $BACKUP (si tu les avais modifies, reprends tes changements depuis la)." -ForegroundColor Yellow
+}

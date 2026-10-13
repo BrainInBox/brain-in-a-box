@@ -46,8 +46,9 @@ brain-in-a-box installable and runnable for a **solo user on Windows**. Team mod
 > - **`gbq`** (`gbq.cmd`, and `gbq` for Git Bash, Claude Code's Bash tool) runs
 >   `engine/search/gbq.py`: gbrain when `~\.brain-search\engine` says so;
 >   a busy brain (`pglite_busy`, a long write holds PGLite's single writer for
->   more than 30 s) is retried once; a missing, broken or still-busy gbrain
->   answers reads from **brain_search**, the offline keyword index, which is
+>   more than 30 s) is retried once; a missing, broken or still-busy gbrain,
+>   or a read still running after 60 s (killed with its Bun process), is
+>   answered from **brain_search**, the offline keyword index, which is
 >   always installed and rebuilt. If gbrain cannot be installed at all, the
 >   install still succeeds in keyword mode.
 > - **BrainNightly** (Task Scheduler 04:00, S4U, runs at wake-up when missed,

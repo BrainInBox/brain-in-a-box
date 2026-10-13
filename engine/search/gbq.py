@@ -9,7 +9,9 @@ answer comes from brain_search, the offline keyword index kept next to it.
 Without gbrain, sync/embed/import rebuild that keyword index instead.
 
 macOS keeps engine/bin/gbq (zsh): reads there hang on PGLite and are force-killed;
-on Windows they exit on their own, so this wrapper only adds the fallback.
+on Windows they exit on their own. A read that still runs after READ_TIMEOUT
+seconds (network gone mid-request, a stuck gbrain) is killed, tree included,
+and answered by keywords: Claude Code's Bash tool gives up at 120 s.
 """
 import os
 import shutil
@@ -22,6 +24,7 @@ BRAIN_SEARCH = HERE / "brain_search.py"
 ENGINE_FILE = HERE / "engine"
 READS = {"query", "search"}
 REINDEX = {"sync", "embed", "import"}
+READ_TIMEOUT = float(os.environ.get("GBQ_READ_TIMEOUT") or 60)
 
 for _s in (sys.stdout, sys.stderr):
     if hasattr(_s, "reconfigure"):
@@ -83,15 +86,34 @@ def normalize_repo(args):
     return out
 
 
+def kill_tree(p):
+    # gbrain.exe is a shim that starts bun.exe: killing the shim alone leaves bun running.
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/F", "/T", "/PID", str(p.pid)],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    else:
+        p.kill()
+    try:
+        p.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        pass
+
+
 def gbrain_read(exe, args):
     """gbrain's stdout goes straight through; stderr is read to spot a busy brain."""
     for attempt in (1, 2):
         try:
-            p = subprocess.run([exe, *args], stderr=subprocess.PIPE, env=child_env())
+            p = subprocess.Popen([exe, *args], stderr=subprocess.PIPE, env=child_env())
         except OSError as e:
             note(f"gbrain ne demarre pas ({e}) : recherche par mots-cles")
             return None
-        err = p.stderr.decode("utf-8", errors="replace")
+        try:
+            _, err = p.communicate(timeout=READ_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            kill_tree(p)
+            note(f"gbrain n'a pas repondu en {READ_TIMEOUT:.0f} s : resultats par mots-cles")
+            return None
+        err = err.decode("utf-8", errors="replace")
         if p.returncode == 0:
             sys.stderr.write(err)
             return 0
