@@ -9,6 +9,7 @@ Everyone gets the **same engine**, with **their own data** — everything stays 
 | Layer | What |
 |---|---|
 | **Vault** (`~/Documents/Brain`) | Your markdown notes: Profile · **Team · Agents · Decisions · Skills** · Journal · Projects · Clients · Resources |
+| **Skills** (`~/.claude/skills`) | `brain-boost` (what the setup does, how to grow it safely) · `quick-research` · `html-artifact` · `convert-documents-to-markdown`. Installed with the box; a skill of yours with the same name, or one you edited, is never overwritten |
 | **Hooks** (`~/.claude/hooks/brain`) | Auto-capture: corrections → `lessons.md`, sessions → `Journal/`, summaries → `memory.md` |
 | **GBrain** (`~/.gbrain`) | Semantic search over the vault (`gbq query "..."`) — ZeroEntropy embeddings |
 | **Nightly** (launchd 04:00) | commit vault → sync → dream cycle (dedup, facts, consolidation) → self-update GBrain (auto-rollback if broken) |
@@ -69,7 +70,7 @@ You get slash commands like `/office-hours`, `/plan-ceo-review`, `/review`, `/qa
 
 The vault treats **humans** (`Team/`) and **AI agents** (`Agents/`) as first-class entities with the same schema. New teammate, human or AI, gets a file. Any agent can query "who knows X" and get a unified answer.
 
-Decisions live in `Decisions/` (one file per decision, with options + trade-offs + status) — answer "why did we choose X?" six months later in one query. Skills live in `Skills/` in [gstack's SKILL.md format](https://github.com/garrytan/gstack) (YAML frontmatter + triggers + workflow) — directly invokable by Claude Code, gstack, or any compatible runtime.
+Decisions live in `Decisions/` (one file per decision, with options + trade-offs + status) — answer "why did we choose X?" six months later in one query. Procedures live in `Skills/` in [gstack's SKILL.md format](https://github.com/garrytan/gstack) (YAML frontmatter + triggers + workflow): the team's library, searchable with `gbq`. Claude Code only *runs* skills from `~/.claude/skills/<name>/SKILL.md`, so copy one there when it should trigger on its own.
 
 In team mode, all of these federate with the company vault (`BrainCo/`) — your personal entities stay personal, your shared ones are searched across the org.
 
@@ -103,9 +104,29 @@ Each member's nightly pulls the team's contributions + re-indexes. The dream cyc
 
 - **Live your life** in Claude Code: the corrections you give are captured in `lessons.md`, your sessions summarized in `Journal/`. Zero effort.
 - **Recall**: `gbq query "what did we decide about X?"` → answer from your memory, with the source.
-- **Skillify**: `gbq skillify <url-or-file>` extracts a SKILL.md draft from a tweet, article, or doc (via [gbrain](https://github.com/garrytan/gbrain)). Drop it in `~/Documents/Brain/Skills/` and your agents can use it.
+- **Skillify**: `gbq skillify <url-or-file>` extracts a SKILL.md draft from a tweet, article, or doc (via [gbrain](https://github.com/garrytan/gbrain)). Keep it in `~/Documents/Brain/Skills/` (searchable), and copy it to `~/.claude/skills/<name>/SKILL.md` when Claude Code should use it on its own. The `brain-boost` skill walks you through it.
 - **Brainstorm / code search**: `gbq brainstorm "<question>"` (idea generation), `gbq code-def <symbol>` / `code-refs <symbol>` (when you indexed a code repo as a source). All gbrain commands are safe through `gbq` — it routes reads through the lock-safe path and writes via clean wait.
 - **In the morning**: the dream cycle deduped/consolidated overnight.
+
+## Get the most out of it
+
+Read [PHILOSOPHY.md](PHILOSOPHY.md): nine habits that turn Claude from an advisor into an operator. Not sure where to start? Ask Claude *"what can you do for me?"*: the `brain-boost` skill answers.
+
+**The magic prompt.** Paste it in a new session, one topic at a time:
+> Looking at all the work and tasks I've given you about **<topic>**, what can we automate? Posting, writing, research, scheduling, whatever makes sense. And what would the setup look like?
+
+- **Show, don't describe**: paste a screenshot (Ctrl+V on macOS, Alt+V on Windows) or drag a file or a PDF into Claude Code.
+- **Talk instead of typing**: your computer's dictation works in the prompt (Windows: Win+H, macOS: press Fn twice).
+- **Teach it once**: "from now on…" or "never…" is saved to `lessons.md` and applies to every future session.
+- **One automation a week**: automate one chore end to end, live with it, then take the next.
+
+| You are… | Start with |
+|---|---|
+| Creator / marketer | the magic prompt, `html-artifact` for visual pages, screenshots for feedback |
+| Student / researcher | `quick-research`, `convert-documents-to-markdown`, PDFs read directly |
+| Ops / business | recurring reports, one file per decision in `Decisions/`, app connections (`brain-boost` explains) |
+| Developer | everything, plus `./install.sh --with-gstack` on macOS |
+| Personal life | "fix this for me", a screenshot of what's broken, dictation |
 
 ## Security / privacy
 - Everything is **local**: your vault, your index, your key. Nothing goes to a third party (except the text embedding sent to ZeroEntropy at indexing time — see their policy).
@@ -115,10 +136,21 @@ Each member's nightly pulls the team's contributions + re-indexes. The dream cyc
 ## Contributing
 PRs welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) for the workflow (the `master` branch is protected — every change goes through a PR). MIT licensed (see [LICENSE](LICENSE)). Changelog tracked in [CHANGELOG.md](CHANGELOG.md).
 
-## Updating
+## Updating & undo
+
+Update: on Windows, run the install line again. On macOS:
 ```bash
 cd brain-in-a-box && git pull && ./install.sh   # idempotent, re-applies without breaking
 ```
+
+Undo any part. Your vault (`Documents/Brain`) is never touched by these:
+
+| What | macOS | Windows (PowerShell) |
+|---|---|---|
+| Hooks | `rm -rf ~/.claude/hooks/brain`, then remove their entries in `~/.claude/settings.json` | `Remove-Item -Recurse ~\.claude\hooks\brain`, same for `settings.json` |
+| One skill | `rm -rf ~/.claude/skills/<name>` | `Remove-Item -Recurse ~\.claude\skills\<name>` |
+| Scheduled jobs | `launchctl bootout gui/$(id -u)/com.$USER.gbrain-nightly` (same for `brain-reflection`, `gbrain-lint`) | `Unregister-ScheduledTask BrainSearchReindex, BrainReflection -Confirm:$false` |
+| Global directives | in `~/.claude/CLAUDE.md`, delete the block that starts with `<!-- brain-in-a-box -->` | same file |
 
 ## Not included (on purpose)
 - No Telegram bot — separate add-on.
