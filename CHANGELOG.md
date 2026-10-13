@@ -6,6 +6,17 @@ Format inspired by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- **Windows install works for people who are not developers.** Field report: a group of first-time users on Windows could not get through `install.ps1`.
+  - **One line, nothing to install first**: Win+R, paste `powershell -NoExit -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/BrainInBox/brain-in-a-box/master/install.ps1 | iex"`. It fetches the sources itself (no git clone), works under the Restricted policy of a fresh PC, and stops with a readable message instead of closing the window. ISE and locked-down (Constrained Language) PowerShell are refused up front with what to do.
+  - **The Microsoft Store `python` stub is no longer taken for Python.** It sits on the PATH of every fresh Windows and runs nothing (exit 9009); the installer kept it, then every step failed. Each candidate interpreter now has to run code, a Python installed by winget is found where it lands without reopening a terminal, and an accented user name (`C:\Users\Jérôme`) no longer makes a valid Python look missing.
+  - **Installs what was only warned about**: Git, Claude Code (Anthropic's official installer) and Obsidian, per-user when the package allows it, so no admin prompt in most cases.
+  - **Hooks are wired in exec form** (`"command": python.exe, "args": [hook]`): Claude Code spawns Python directly, so the hooks run with or without Git Bash. The shell form fell back to PowerShell without Git Bash, which cannot run `"python.exe" "hook.py"`. Re-running the installer migrates old entries and never wires a hook twice.
+  - `gbq` works from Git Bash (Claude Code's Bash tool on Windows ran `~/.local/bin/gbq`, which did not exist), and `gbq sync` / `gbq embed` from the onboarding map to a reindex instead of failing. `gbq.cmd` survives an accented user name.
+  - A `settings.json` that does not parse (BOM, comment) is left untouched instead of being replaced by an empty one; a symlinked one stays a symlink.
+  - The nightly reindex runs with `pythonw.exe`: no black window at 04:00. Native commands no longer abort the install on a stderr warning; their exit codes are checked. An empty existing vault folder gets the skeleton.
+- **CI installs on a real Windows** (`windows-latest`): parse under PowerShell 5.1 and 7; a fresh install with only the Store stub, so Python really comes from winget; a hook spawned the way Claude Code does; `gbq` from Git Bash; a second run for idempotence; the one-liner under the Restricted policy.
+
 ## [0.2.0] — 2026-10-09 — Field hardening
 
 Four months of running the box on real machines, fixed where it broke. The daily reflection is rewritten around what actually happened that day (transcripts sliced to the day, a digest of your own commits). gbrain updates no longer get stuck on an old Bun. Secrets are masked before anything is written to the vault or sent to a model. The correction detector stops firing on ordinary negations (22% → 4% of real prompts). Windows gets an experimental installer. The test suite doubles, from 25 to 50 checks, and CI now parses every script with its own shell.
