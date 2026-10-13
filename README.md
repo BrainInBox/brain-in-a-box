@@ -20,7 +20,21 @@ It all runs inside Claude Code (terminal/IDE). No bot, no server, no shared clou
 
 ## Install (per person)
 
-Requirements: macOS (Windows: experimental `install.ps1`, see [the port notes](docs/proposals/windows-port.md)), [Claude Code](https://claude.ai/code), a **free** [ZeroEntropy](https://dashboard.zeroentropy.dev) key (embeddings — free account, no card).
+### Windows
+
+Press **Win + R**, paste this line, press **Enter** (it works the same pasted in PowerShell or the Command Prompt):
+
+```
+powershell -NoExit -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/BrainInBox/brain-in-a-box/master/install.ps1 | iex"
+```
+
+That's all. It installs what's missing (Python, Git, Claude Code, Obsidian — per-user, no admin rights when the package allows it), sets up your brain in `Documents\Brain`, and prints the next steps. Run the same line again to update. You need a Claude **Pro or Max** plan to use Claude Code.
+
+Prefer to read the code first? Download the repository (**Code → Download ZIP**), extract it, read it, then run `powershell -ExecutionPolicy Bypass -File install.ps1` from the extracted folder: it uses those files and downloads nothing else from this repo. On Windows, search runs locally on keywords (no gbrain yet, see [the port notes](docs/proposals/windows-port.md)).
+
+### macOS
+
+Requirements: [Claude Code](https://claude.ai/code), a **free** [ZeroEntropy](https://dashboard.zeroentropy.dev) key (embeddings — free account, no card).
 
 ```bash
 git clone <URL_OF_THIS_REPO> brain-in-a-box
@@ -31,7 +45,8 @@ cd brain-in-a-box
 Then the onboarding (15 min, fills in your profile):
 ```bash
 cd ~/Documents/Brain && claude
-# paste: "Read onboarding/ONBOARDING.md and run it to personalize me."
+# paste the line the installer printed at the end:
+# "Read <path-to-brain-in-a-box>/onboarding/ONBOARDING.md and run it to personalize me."
 ```
 
 `install.sh` also installs **Obsidian** (if you don't have it) so you can browse your brain visually — open it and "Open folder as vault" → `~/Documents/Brain`.

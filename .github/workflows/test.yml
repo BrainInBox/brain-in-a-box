@@ -30,3 +30,94 @@ jobs:
 
       - name: launchd templates are well-formed plists
         run: for f in engine/nightly/*.plist.template; do plutil -lint "$f"; done
+
+  # A real install on a real Windows, the way a user runs it: no Python but the
+  # Microsoft Store stub (what broke installs in the field), so Python comes from winget.
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install.ps1 parses in Windows PowerShell 5.1 and PowerShell 7
+        run: |
+          foreach ($exe in 'powershell', 'pwsh') {
+            & $exe -NoProfile -Command '$e = $null; [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path install.ps1).Path, [ref]$null, [ref]$e); if ($e) { $e | ForEach-Object { Write-Host $_.Extent.StartLineNumber $_.Message }; exit 1 }'
+            if ($LASTEXITCODE) { exit 1 }
+          }
+
+      - name: install.ps1 is pure ASCII (5.1 reads a BOM-less script as ANSI)
+        run: |
+          $bad = Select-String -Path install.ps1 -Pattern '[^\x00-\x7F]'
+          if ($bad) { $bad; exit 1 }
+
+      - name: Fresh install, only the Store python stub on the PATH
+        run: |
+          # The runner's own Python sits on the Machine PATH, which the installer re-reads: drop it from both.
+          $tc = '*\hostedtoolcache\windows\Python\*'
+          $m = ([Environment]::GetEnvironmentVariable('Path', 'Machine') -split ';') | Where-Object { $_ -notlike $tc }
+          [Environment]::SetEnvironmentVariable('Path', ($m -join ';'), 'Machine')
+          $stub = Join-Path $env:RUNNER_TEMP 'stub'
+          New-Item -ItemType Directory $stub | Out-Null
+          Set-Content "$stub\python.cmd" "@echo Python was not found; run without arguments to install from the Microsoft Store.`r`n@exit /b 9009" -Encoding ascii
+          $env:Path = "$stub;" + ((($env:Path -split ';') | Where-Object { $_ -notlike $tc }) -join ';')
+          powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1
+          if ($LASTEXITCODE) { exit 1 }
+
+      - name: The install did what it says
+        run: |
+          $H = $env:USERPROFILE
+          $s = Get-Content "$H\.claude\settings.json" -Raw
+          if ($s -match 'stub') { throw 'hooks wired to the Store stub' }
+          if ($s -notmatch 'AppData\\\\Local\\\\Programs\\\\Python') { throw 'hooks not wired to the Python winget installed' }
+          $j = $s | ConvertFrom-Json
+          $cd = @(@($j.hooks.UserPromptSubmit.hooks) | Where-Object { "$($_.args)" -like '*correction-detector.py*' })
+          if ($cd.Count -ne 1) { throw "correction-detector wired $($cd.Count) times" }
+          if ($cd[0].command -notlike '*python.exe') { throw "hook is not in exec form: $($cd[0].command)" }
+          if (-not (Test-Path "$H\Documents\Brain\Profile")) { throw 'vault skeleton missing' }
+          if (-not (Test-Path "$H\Documents\Brain\.git")) { throw 'vault is not a git repo' }
+          & "$H\.local\bin\gbq.cmd" query test; if ($LASTEXITCODE) { throw 'gbq.cmd query failed' }
+          & "$H\.local\bin\gbq.cmd" sync --repo x --no-pull; if ($LASTEXITCODE) { throw 'gbq.cmd sync (mapped to index) failed' }
+          Get-ScheduledTask -TaskName BrainSearchReindex, BrainReflection | Format-Table TaskName, State
+          if (-not (Test-Path "$H\.local\bin\claude.exe")) { throw 'Claude Code not installed' }
+          $m = @(Select-String -Path "$H\.claude\CLAUDE.md" -SimpleMatch '<!-- brain-in-a-box -->').Count
+          if ($m -ne 1) { throw "CLAUDE.md marker found $m times" }
+
+      - name: A hook runs the way Claude Code spawns it (exec form)
+        run: |
+          $j = Get-Content "$env:USERPROFILE\.claude\settings.json" -Raw | ConvertFrom-Json
+          $h = @($j.hooks.UserPromptSubmit.hooks)[0]
+          '{"prompt": "hello", "session_id": "ci", "transcript_path": ""}' | & $h.command @($h.args)
+          if ($LASTEXITCODE) { throw "correction-detector exited $LASTEXITCODE" }
+
+      - name: gbq works from Git Bash (Claude Code's Bash tool)
+        shell: bash
+        run: ~/.local/bin/gbq query test && ~/.local/bin/gbq embed --stale
+
+      - name: A second run is idempotent
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1
+          if ($LASTEXITCODE) { exit 1 }
+          $j = Get-Content "$env:USERPROFILE\.claude\settings.json" -Raw | ConvertFrom-Json
+          $all = @(@($j.hooks.UserPromptSubmit.hooks) + @($j.hooks.Stop.hooks))
+          foreach ($h in 'correction-detector', 'session-logger', 'session-indexer', 'session-recap') {
+            $n = @($all | Where-Object { "$($_.command) $($_.args)" -like "*$h.py*" }).Count
+            if ($n -ne 1) { throw "$h wired $n times after a second run" }
+          }
+          $m = @(Select-String -Path "$env:USERPROFILE\.claude\CLAUDE.md" -SimpleMatch '<!-- brain-in-a-box -->').Count
+          if ($m -ne 1) { throw "CLAUDE.md marker found $m times after a second run" }
+
+      - name: One-liner mode (irm | iex) under the Restricted policy of a fresh PC
+        run: |
+          Unregister-ScheduledTask -TaskName BrainSearchReindex, BrainReflection -Confirm:$false
+          git archive --format=zip --prefix=brain-in-a-box-master/ -o "$env:RUNNER_TEMP\src.zip" HEAD
+          $env:BIAB_ARCHIVE = "$env:RUNNER_TEMP\src.zip"
+          $env:BRAIN_DIR = "$env:RUNNER_TEMP\Brain2"
+          powershell -NoProfile -ExecutionPolicy Restricted -Command "Get-Content -Raw '$PWD\install.ps1' | Invoke-Expression"
+          if ($LASTEXITCODE) { exit 1 }
+          if (-not (Test-Path "$env:USERPROFILE\.brain-in-a-box\src\vault-skeleton")) { throw 'sources not unpacked' }
+          if (-not (Test-Path "$env:RUNNER_TEMP\Brain2\Profile")) { throw 'vault not created in BRAIN_DIR' }
+          Get-ScheduledTask -TaskName BrainSearchReindex, BrainReflection | Format-Table TaskName, State
