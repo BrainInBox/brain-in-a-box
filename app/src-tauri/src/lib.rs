@@ -66,20 +66,26 @@ async fn open_link(url: String) -> Result<(), String> {
     off_main(move || steps::open_link(&url)).await
 }
 
+/// println! panics when the reader goes away (`--diagnose | head`): write and move on.
+fn out(line: &str) {
+    use std::io::Write;
+    let _ = writeln!(std::io::stdout(), "{line}");
+}
+
 pub fn run() {
     // Command-line mode, for tests and support: no window. The Voyage key comes
     // from VOYAGE_API_KEY, never from the command line.
     let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(String::as_str) {
         Some("--diagnose") => {
-            println!("{}", serde_json::to_string_pretty(&diagnose::run()).unwrap_or_default());
+            out(&serde_json::to_string_pretty(&diagnose::run()).unwrap_or_default());
             return;
         }
         Some("--run-step") => {
             let id = args.get(2).cloned().unwrap_or_default();
             let key = std::env::var("VOYAGE_API_KEY").ok().filter(|k| !k.is_empty());
-            let r = steps::run(&id, key.as_deref(), &mut |l| println!("  {l}"));
-            println!("{}", serde_json::to_string_pretty(&r).unwrap_or_default());
+            let r = steps::run(&id, key.as_deref(), &mut |l| out(&format!("  {l}")));
+            out(&serde_json::to_string_pretty(&r).unwrap_or_default());
             std::process::exit(if r.ok { 0 } else { 1 });
         }
         _ => {}

@@ -185,6 +185,15 @@ fn obsidian(log: &mut dyn FnMut(String)) -> Step {
     if found != Found::Absent {
         return Ok(format!("{} est déjà installé.", found.label("Obsidian")));
     }
+    install_obsidian_into(&apps, log)?;
+    match detect::obsidian(&home) {
+        Found::Absent => Err("Obsidian n'apparaît pas dans Applications après l'installation. Relance l'étape.".into()),
+        found => Ok(format!("{} est installé.", found.label("Obsidian"))),
+    }
+}
+
+/// Downloads the pinned Obsidian, checks its signature and puts it in `apps`.
+fn install_obsidian_into(apps: &Path, log: &mut dyn FnMut(String)) -> Result<PathBuf, String> {
     let dest = apps.join("Obsidian.app");
     // Not a working Obsidian (detect said so), but maybe the user's own files: never overwritten.
     if fs::symlink_metadata(&dest).is_ok() {
@@ -199,10 +208,10 @@ fn obsidian(log: &mut dyn FnMut(String)) -> Step {
         return Err("Le téléchargement d'Obsidian est incomplet. Vérifie ta connexion internet, puis réessaie.".into());
     }
 
-    fs::create_dir_all(&apps).map_err(|e| format!("Je n'ai pas pu créer ton dossier Applications ({e})."))?;
+    fs::create_dir_all(apps).map_err(|e| format!("Je n'ai pas pu créer ton dossier Applications ({e})."))?;
     // Copied next to its final place, then moved in one go: a copy cut short never
     // passes for an installed Obsidian. Removed with its content if anything fails.
-    let staging = TempDir::new_in(&apps)?;
+    let staging = TempDir::new_in(apps)?;
     let copy = staging.path().join("Obsidian.app");
     {
         let mnt = Mount::attach(&dmg, &tmp.path().join("mnt"))?;
@@ -221,10 +230,7 @@ fn obsidian(log: &mut dyn FnMut(String)) -> Step {
     log("Je vérifie la signature d'Obsidian…".into());
     signed_by_obsidian(&copy)?;
     fs::rename(&copy, &dest).map_err(|e| format!("Je n'ai pas pu ranger Obsidian dans Applications ({e})."))?;
-    match detect::obsidian(&home) {
-        Found::Absent => Err("Obsidian n'apparaît pas dans Applications après l'installation. Relance l'étape.".into()),
-        found => Ok(format!("{} est installé.", found.label("Obsidian"))),
-    }
+    Ok(dest)
 }
 
 /// Copies left in ~/Applications by an Obsidian step that was cut short (app quit, Mac
@@ -1120,5 +1126,17 @@ mod tests {
         let r = run("rm -rf", None, &mut |_| {});
         assert!(!r.ok);
         assert_eq!(r.id, "rm -rf");
+    }
+
+    /// Real download (233 MB) into a temp folder: `cargo test -- --ignored obsidian_real`.
+    #[test]
+    #[ignore]
+    fn obsidian_real_download_lands_signed() {
+        let apps = tempfile::tempdir().unwrap();
+        let app = install_obsidian_into(apps.path(), &mut |l| println!("{l}")).unwrap();
+        assert!(sys::is_executable(&app.join("Contents/MacOS/Obsidian")));
+        assert!(signed_by_obsidian(&app).is_ok());
+        let leftovers: Vec<_> = fs::read_dir(apps.path()).unwrap().filter_map(Result::ok).map(|e| e.file_name()).collect();
+        assert_eq!(leftovers, vec![std::ffi::OsString::from("Obsidian.app")], "no staging folder left");
     }
 }

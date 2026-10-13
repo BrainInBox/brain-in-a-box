@@ -6,6 +6,9 @@ Format inspired by [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- **Mac app (preview), `app/`**: installs everything without a terminal. Bibo, the mascot, checks the Mac (macOS version, disk, network, Apple tools, Bun, Claude Code and its login, Obsidian, the brain, search by meaning), installs what is missing without admin rights or Homebrew (Apple's own tools window, pinned Bun, Anthropic's official Claude Code installer, the pinned and signature-checked Obsidian DMG), then runs this repo's `install.sh`. Optional Voyage key with a one-token check. The user logs in to Claude Code in Terminal, the app never touches credentials. Tauri v2, plain HTML/JS, French. Unsigned for now. See `app/README.md`.
+
 ### Changed
 - **Embeddings move to Voyage AI, and the key is optional** (macOS). `install.sh` explains how to get a Voyage key and accepts Enter to skip: the brain then runs on keyword search (`gbrain init --no-embedding`) and gains search by meaning when you re-run with a key. The key is checked with a one-token request before use, travels through stdin only (never in a command line), and lands in `config.json` created with mode 600. The reranker is set to `voyage:rerank-3-lite`, inside Voyage's free tokens (gbrain's default, `rerank-2.5`, is billed from the first search). Existing ZeroEntropy installs are left as they are. A non-interactive run (an app, `curl | bash`) no longer dies on the key prompt; `VOYAGE_API_KEY` supplies the key.
 
