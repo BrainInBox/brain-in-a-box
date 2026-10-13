@@ -1,6 +1,6 @@
 # Skills — procedures your agents (and you) can invoke
 
-> One file per skill. The YAML frontmatter is the [gstack](https://github.com/garrytan/gstack) **SKILL.md** format — so a skill written here is directly usable by gstack, Claude Code, and any agent stack that respects the convention.
+> One file per skill. The YAML frontmatter is the [gstack](https://github.com/garrytan/gstack) **SKILL.md** format: this folder is your library of procedures, searchable with `gbq`. Claude Code only *runs* skills from `~/.claude/skills/<name>/SKILL.md`: copy one there (folder named after the skill) when it should trigger on its own. Ask Claude, the `brain-boost` skill knows how.
 
 Pattern: `Skills/{{slug}}.md`. Start from `_template.md`.
 

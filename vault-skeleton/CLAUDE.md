@@ -72,7 +72,7 @@ nobody links to is invisible to graph traversal. Few good links > many weak.
 - Correction → `Profile/lessons.md` (Rule #1)
 - Meaningful decision worth answering "why X?" in 6 months → `Decisions/YYYY-MM-DD-<slug>.md`
 - New teammate (human) → `Team/<name>.md` · new agent → `Agents/<name>.md`
-- New procedure / skill → `Skills/<slug>.md` (gstack-compatible SKILL.md format)
+- New procedure / skill → `Skills/<slug>.md` (gstack-compatible SKILL.md format). To make Claude Code run it on its own, also install it as `~/.claude/skills/<slug>/SKILL.md` (only place Claude Code loads skills from)
 - Business/project info → `Profile/business.md` or `Projects/<name>.md`
 - Tools/env → `Profile/stack.md`
 
