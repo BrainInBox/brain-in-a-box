@@ -529,7 +529,7 @@ class Locking(Sandbox):
     def test_second_run_says_already_running(self):
         self.small_vault()
         os.makedirs(self.etat)
-        with open(os.path.join(self.etat, "run.lock"), "w") as f:
+        with open(os.path.join(self.etat, "run.lock"), "w", encoding="utf-8") as f:
             f.write("%d %d\n" % (os.getpid(), int(time.time())))
         head = self.head()
         out = self.cli("nuit")
@@ -539,7 +539,7 @@ class Locking(Sandbox):
     def test_stale_lock_is_taken_over(self):
         self.small_vault()
         os.makedirs(self.etat)
-        with open(os.path.join(self.etat, "run.lock"), "w") as f:
+        with open(os.path.join(self.etat, "run.lock"), "w", encoding="utf-8") as f:
             f.write("%d %d\n" % (os.getpid(), int(time.time()) - 3 * 3600))
         out = self.cli("nuit")
         self.assertNotIn("déjà en cours", out)
@@ -703,6 +703,28 @@ class SecretShapes(unittest.TestCase):
                 "`grep -rn \"DELETE FROM\"` sur le BackEnd.\n\nRollback : `rm -rf $D`.\n")
         note = rules.Note("Projects/n.md", "/n", text.encode(), 0)
         self.assertEqual([t.key for t in rules.detect_s2(note, ctx)], ["rm -rf $D"])
+
+
+class CalibrationDecisions(Sandbox):
+    """What the owner decided after the calibration on a real vault (2026-10-14)."""
+
+    def test_s2_leaves_the_journal_alone(self):
+        ctx = rules.Context(date(2026, 10, 14))
+        text = "# Journée\n\nCe qui a tourné :\n\n```bash\nrm -rf ~/x\n```\n\nPuis `git push --force`.\n"
+        for rel, found in (("Journal/2026-10-13.md", 0), ("journal/2026-10-12.md", 0), ("Projects/n.md", 2)):
+            note = rules.Note(rel, "/n", text.encode("utf-8"), 0)
+            self.assertEqual(len(rules.detect_s2(note, ctx)), found, rel)
+
+    def test_memory_still_big_after_archiving_is_orange(self):
+        today = date.today()
+        mem = ["# Mémoire", "", "## Active decisions", ""] + ["- décision %04d " % i + "x" * 60 for i in range(3500)]
+        mem += ["", "## %s journée" % (today - timedelta(days=40)).isoformat(), "", "- fait", ""]
+        self.small_vault({"Profile/memory.md": "\n".join(mem) + "\n"})
+        self.cli("nuit")
+        etat = self.etat_json()
+        self.assertIn({"niveau": "orange", "code": "memoire_grosse"}, etat["alertes"])
+        self.assertNotEqual(etat["verdict"], "rouge")
+        self.assertIn("🟠 memory.md fait encore", read(self.vault, "Profile/controle.md"))
 
 
 if __name__ == "__main__":

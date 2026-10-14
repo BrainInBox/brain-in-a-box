@@ -523,8 +523,11 @@ def _quoted_not_run(line, m):
 
 def detect_s2(note, ctx, report_only=False):
     """Code blocks and inline code that erase or overwrite, not yet warned about.
-    report_only lists them in instruction files, which are never edited."""
-    if never_touched(note.rel, ctx) or (protected(note.rel, ctx) and not report_only):
+    report_only lists them in instruction files, which are never edited. Never in
+    Journal/: a day tells the commands that ran, it does not ask to run them
+    (35 warnings in 2 nights on a real vault, 2026-10-14)."""
+    if never_touched(note.rel, ctx) or (protected(note.rel, ctx) and not report_only) \
+            or note.rel.split("/")[0].lower() == "journal":
         return []
     lines, start = note.lines, note.body_start
     found, in_block = [], set()
@@ -1493,8 +1496,10 @@ def analyze(scan, ctx):
     if mem is not None:
         moved = sum(len(("\n".join(t.key.split("\n")) + "\n").encode("utf-8"))
                     for _, ts in an.plans["M1"] for t in ts)
+        # Orange: what stays is the reflection's last 15 days, a few lines a day since
+        # it writes memory.md itself; only a memory.md grown by hand stays this big.
         if len(mem.raw) - moved > 200 * 1024:
-            an.alerts.append(("rouge", "memoire_grosse", len(mem.raw) - moved))
+            an.alerts.append(("orange", "memoire_grosse", len(mem.raw) - moved))
     les = scan.by_rel.get(lessons_path(ctx))
     if les is not None:
         targets = next((ts for rel, ts in an.plans["M2"] if rel == les.rel), [])
