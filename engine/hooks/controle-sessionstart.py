@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """SessionStart: one line about the night check and gbrain's updates, at most.
 
-Reads two state files and nothing else: etat.json, written by controle.py in
+Reads two state files: etat.json, written by controle.py in
 ~/.brain-in-a-box/controle (or $BRAIN_CONTROLE_DIR), and last-update.json,
 written by gbrain_update.py in ~/.gbrain (or $GBRAIN_HOME/.gbrain). Never the
 vault, never the network, never Claude. The line is made of fixed sentences
@@ -10,6 +10,9 @@ from Claude, can reach the session through it.
 
 The dead man's switches are computed here, from the time of each job's last
 success: a job that stopped running is seen even when nothing runs to say so.
+For a job that never succeeded, the time its script was installed next to this
+hook counts. The update's switch is off without a gbrain clone in ~/DEV/gbrain
+or beside a gbrain-selfupdate.sh of the user's own, as in gbrain-update-check.py.
 
 A green or orange line is shown once per run, a red one once a day while its
 cause lasts (shown.json, next to etat.json). Silent in a headless run
@@ -25,8 +28,9 @@ from datetime import datetime, timezone
 CHECK_DEAD_H = 48
 UPDATE_DEAD_H = 72
 LATE_DAYS = 14
-VERSION = re.compile(r"^v?\d+(\.\d+){2,3}$")
-RUN_ID = re.compile(r"^\d{8}-\d{4}(-\d{1,2})?$")
+# Matched whole (fullmatch: no newline after it), ASCII digits only.
+VERSION = re.compile(r"v?\d+(\.\d+){2,3}", re.A)
+RUN_ID = re.compile(r"\d{8}-\d{4}(-\d{1,2})?", re.A)
 REPORTS = ("Profile/controle.md", "Profil/controle.md")
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -49,7 +53,7 @@ def num(value):
 
 
 def version(value):
-    if isinstance(value, str) and VERSION.match(value):
+    if isinstance(value, str) and VERSION.fullmatch(value):
         return value if value.startswith("v") else "v" + value
     return None
 
@@ -108,7 +112,7 @@ def check_lines(etat, now):
     elif secrets > 1:
         reds.insert(0, ("secret", "%s : %d mots de passe ou clés étaient écrits en clair et déjà enregistrés. Je les "
                                   "ai masqués, mais change-les (détail : %s)." % (who, secrets, report)))
-    run = etat.get("run") if isinstance(etat.get("run"), str) and RUN_ID.match(etat["run"]) else None
+    run = etat.get("run") if isinstance(etat.get("run"), str) and RUN_ID.fullmatch(etat["run"]) else None
     if not run or etat.get("rapport_reecrit") is not True or any(k == "controle" for k, _ in reds):
         return reds, None, None   # a quiet night rewrites no report, and says nothing
     fixed, look = num(etat.get("corrections")), num(etat.get("a_voir"))
