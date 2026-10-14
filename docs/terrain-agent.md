@@ -17,7 +17,10 @@ One JSON per OS and path (`terrain-macos-neuf.json`, `terrain-windows-montee.jso
 `{os, parcours, ref, run_url, scenarios: [{scenario, statut, etape, raison, details, reproduire}]}`,
 `statut` being `ok`, `echec` or `saute`. `etape` names the step that failed, `details` holds the
 measures and log tails. The issue only lists OS, path, scenario and step: the reasons are in the JSON.
-A row `job / aucun-resultat` means a job died before writing its results: read its log.
+Nothing missing passes for green: a row with step `absent` is a scenario that wrote nothing (killed
+by its timeout, cancelled, or refused to start); `job / aucun-resultat`, a job that wrote no file;
+`job / <job>-<result>` (e.g. `macos-cancelled`, `ref-failure`), a job that did not succeed although
+its rows say nothing. For those three, read the job's log (`gh run view <run-id> --log-failed`).
 
 ## Reproduce
 

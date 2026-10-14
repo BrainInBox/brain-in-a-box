@@ -130,6 +130,7 @@ jobs:
 
       - name: "Scenario: what a user changed on v0.2.0"
         if: ${{ !cancelled() && matrix.parcours == 'montee' }}
+        timeout-minutes: 10
         run: python3 -I engine/tests/terrain.py montee-avant --parcours "$PARCOURS" --vm --json "$TERRAIN_JSON"
 
       - name: Upgrade (the tested version, ./install.sh again)
@@ -252,6 +253,7 @@ jobs:
 
       - name: "Scenario: what a user changed on v0.2.0"
         if: ${{ !cancelled() && matrix.parcours == 'montee' }}
+        timeout-minutes: 10
         run: python -I engine/tests/terrain.py montee-avant --parcours $env:PARCOURS --vm --json $env:TERRAIN_JSON
 
       - name: Upgrade (irm | iex over v0.2.0)
@@ -300,7 +302,7 @@ jobs:
     name: Real Claude (${{ matrix.os }})
     needs: ref
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 60
+    timeout-minutes: 70
     environment: ${{ github.ref == 'refs/heads/master' && (inputs.ref || 'master') == 'master' && 'terrain-claude' || '' }}
     strategy:
       fail-fast: false
@@ -368,6 +370,8 @@ jobs:
       issues: write
     env:
       ATTENDUS: macos-neuf,macos-montee,windows-neuf,windows-montee,macos-claude,windows-claude
+      # A job that did not succeed is a failure even when its rows say nothing (terrain.py JOBS).
+      JOBS: ref=${{ needs.ref.result }},macos=${{ needs.macos.result }},windows=${{ needs.windows.result }},claude=${{ needs.claude.result }}
     steps:
       # The workflow's own commit: the code that writes the issue is the one this file came with.
       - uses: actions/checkout@v4
@@ -387,7 +391,7 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/terrain"
           shopt -s nullglob
-          python3 -I engine/tests/terrain.py rapport "$RUNNER_TEMP"/terrain/*.json --attendus "$ATTENDUS" >> "$GITHUB_STEP_SUMMARY"
+          python3 -I engine/tests/terrain.py rapport "$RUNNER_TEMP"/terrain/*.json --attendus "$ATTENDUS" --jobs "$JOBS" >> "$GITHUB_STEP_SUMMARY"
 
       # Scheduled runs only: a run started by hand on a branch never speaks for master.
       - name: Open, or comment, the issue "terrain"; say when it is green again
@@ -400,7 +404,7 @@ jobs:
           day=$(date -u +%Y-%m-%d)
           body="$RUNNER_TEMP/issue.md"
           python3 -I engine/tests/terrain.py issue "$RUNNER_TEMP"/terrain/*.json --attendus "$ATTENDUS" \
-            --run-url "$RUN_URL" --date "$day" > "$body"
+            --jobs "$JOBS" --run-url "$RUN_URL" --date "$day" > "$body"
           open=$(gh issue list --repo "$GITHUB_REPOSITORY" --label terrain --state open --author app/github-actions \
             --json number --jq '.[0].number // empty')
           if [ -s "$body" ]; then

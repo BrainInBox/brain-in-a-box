@@ -313,6 +313,29 @@ class Workflow(unittest.TestCase):
         self.assertIn("inputs.ref || github.ref_name", group)
 
 
+    def test_a_job_has_time_for_every_step_it_runs(self):
+        # A job cut by its own timeout kills a scenario before it records: the steps' budgets fit in it.
+        for name, job in self.jobs.items():
+            paths = (job.get("strategy") or {}).get("matrix", {}).get("parcours") or [None]
+            for path in paths:
+                steps = [st for st in job["steps"] if path is None or "matrix.parcours" not in st.get("if", "")
+                         or "matrix.parcours == '%s'" % path in st["if"]]
+                budget = sum(st.get("timeout-minutes", 0) for st in steps)
+                if budget:
+                    self.assertGreaterEqual(job["timeout-minutes"], budget + 10, "%s (%s)" % (name, path))
+
+    def test_the_report_knows_every_job_and_every_path(self):
+        rapport = self.jobs["rapport"]
+        self.assertEqual(sorted(rapport["needs"]), sorted(n for n in self.jobs if n != "rapport"))
+        self.assertEqual(sorted(rapport["env"]["JOBS"].split(",")),
+                         sorted("%s=${{ needs.%s.result }}" % (n, n) for n in terrain.JOBS))
+        self.assertEqual(sorted(terrain.JOBS), sorted(n for n in self.jobs if n != "rapport"))
+        want = sorted("%s-%s" % (o, pa) for o in ("macos", "windows") for pa in terrain.ATTENDUS)
+        self.assertEqual(sorted(rapport["env"]["ATTENDUS"].split(",")), want)
+        runs = json.dumps(rapport["steps"])
+        self.assertEqual(runs.count('--jobs \\"$JOBS\\"'), 2, "rapport and issue both get the jobs' results")
+
+
 class Score(unittest.TestCase):
     def test_points_and_annotations(self):
         old, new = terrain.PAIRES[3][0], terrain.PAIRES[3][4]
@@ -352,20 +375,51 @@ class Reports(Sandbox):
                                "--run-url", "https://github.com/BrainInBox/brain-in-a-box/actions/runs/42",
                                "--date", "2026-10-15")
         self.assertEqual(rc, 0, out)
-        self.assertIn("Terrain du 2026-10-15 : 3 échec(s).", out)
+        self.assertIn("Terrain du 2026-10-15 : 7 échec(s).", out)
         self.assertIn("| windows | neuf | nuits | nuit-2 |", out)
         self.assertIn("| windows | neuf | ? | ? |", out)
+        self.assertIn("| windows | neuf | installeur | absent |", out)
+        self.assertIn("| macos | neuf | nuits | absent |", out)
         self.assertIn("| windows | montee | job | aucun-resultat |", out)
         self.assertIn("https://github.com/BrainInBox/brain-in-a-box/actions/runs/42", out)
         self.assertIn(terrain.REPRO["nuits"], out)
         for bad in (leak, "canari", "la note dit", "rm -rf", "touch", "inventé", "pas de jeton"):
             self.assertNotIn(bad, out)
 
+    def green(self):
+        return [self.write("n.json", {"os": "macos", "parcours": "neuf", "scenarios": [
+                    {"scenario": s, "statut": "ok"} for s in terrain.ATTENDUS["neuf"]]}),
+                self.write("c.json", {"os": "macos", "parcours": "claude", "scenarios": [
+                    {"scenario": "vrai-claude", "statut": "saute"}]})]
+
     def test_a_green_night_gives_no_issue(self):
-        b = self.write("b.json", {"os": "macos", "parcours": "neuf", "scenarios": [
-            {"scenario": "nuits", "statut": "ok"}, {"scenario": "vrai-claude", "statut": "saute"}]})
-        rc, out = self.terrain("issue", b, "--attendus", "macos-neuf", "--run-url", "javascript:alert(1)")
+        rc, out = self.terrain("issue", *self.green(), "--attendus", "macos-neuf,macos-claude",
+                               "--jobs", "ref=success,macos=success,claude=success", "--run-url", "javascript:alert(1)")
         self.assertEqual((rc, out.strip()), (0, ""))
+
+    def test_nothing_missing_passes_for_green(self):
+        # A step killed by its timeout, or a guard that refused to run, writes no row.
+        only = self.write("o.json", {"os": "windows", "parcours": "montee", "scenarios": [
+            {"scenario": "installeur-v0.2.0", "statut": "ok"}]})
+        rc, out = self.terrain("issue", only, "--attendus", "windows-montee", "--date", "2026-10-15")
+        self.assertIn("Terrain du 2026-10-15 : 3 échec(s).", out)
+        for name in ("montee-avant", "installeur-montee", "montee"):
+            self.assertIn("| windows | montee | %s | absent |" % name, out)
+        # Every row there, yet the job did not succeed (an upload, a checkout...): said too.
+        rc, out = self.terrain("issue", *self.green(), "--attendus", "macos-neuf,macos-claude",
+                               "--jobs", "ref=success,macos=cancelled,claude=success,inconnu=failure,windows=bizarre")
+        self.assertIn("1 échec(s)", out)
+        self.assertIn("| macos | ? | job | macos-cancelled |", out)
+        self.assertNotIn("inconnu", out)
+        # A job whose own rows already say what failed gets no second row.
+        rc, out = self.terrain("issue", only, "--attendus", "windows-montee", "--jobs", "windows=failure")
+        self.assertNotIn("windows-failure", out)
+        # The commit to test refused: nothing ran, every expected path says so.
+        rc, out = self.terrain("issue", "--attendus", "macos-neuf,windows-claude", "--jobs",
+                               "ref=failure,macos=skipped,claude=skipped")
+        self.assertIn("| tous | ? | job | ref-failure |", out)
+        self.assertIn("| macos | neuf | job | aucun-resultat |", out)
+        self.assertIn("| windows | claude | job | aucun-resultat |", out)
 
     def test_the_summary_table(self):
         files, _ = self.files()

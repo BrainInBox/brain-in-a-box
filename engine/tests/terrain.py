@@ -18,6 +18,8 @@ Tools of the workflow:
   etape <name> --resultat <outcome>   records how a workflow step (an installer) ended
   rapport FILE...                     the results as Markdown ($GITHUB_STEP_SUMMARY)
   issue FILE...                       the nightly issue's body: fixed identifiers only, never a note nor a value
+(rapport and issue: --attendus os-parcours,... and --jobs job=result,...: a result file, a scenario
+or a job's success missing is a failure, never a green night.)
 
 Each scenario prints one line, `TERRAIN <scenario> OK|ÉCHEC|SAUTÉ : <raison>`, and is kept in
 --json (default <home>/terrain-resultats.json) with the step it failed at and how to reproduce
@@ -57,6 +59,16 @@ INSTALLEURS = ("installeur", "installeur-v0.2.0", "installeur-montee")
 VM_ONLY = ("installation", "montee-avant", "montee")
 PARCOURS = ("neuf", "montee", "claude", "local")
 OSES = ("macos", "windows", "linux")
+# The rows each path of terrain.yml writes. One missing is a failure: a step killed by its
+# timeout before it recorded, a cancelled job, a guard that refused to run.
+ATTENDUS = {"neuf": ("installeur", "installation", "nuits"),
+            "montee": ("installeur-v0.2.0", "montee-avant", "installeur-montee", "montee"),
+            "claude": ("vrai-claude",)}
+# terrain.yml's jobs, and the result files each one writes ("tous": the commit to test, for all).
+JOBS = {"ref": ("tous", ()), "macos": ("macos", ("macos-neuf", "macos-montee")),
+        "windows": ("windows", ("windows-neuf", "windows-montee")),
+        "claude": ("macos+windows", ("macos-claude", "windows-claude"))}
+JOB_RESULTS = ("success", "failure", "cancelled", "skipped")
 ETAPE_RE = re.compile(r"^[a-z0-9][a-z0-9.-]{0,40}$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 REPRO_VM = "gh workflow run terrain.yml --ref <branche> (VM GitHub seulement)"
@@ -1056,14 +1068,22 @@ def cmd_etape(opts):
     return 0
 
 
-def load_reports(files, expected):
-    """[(os, parcours, data)] of the result files, plus an empty entry for each expected os-parcours
-    without one (a job that died, timed out or was cancelled before writing)."""
+def load_reports(files, expected, jobs=None):
+    """[(os, parcours, data)] of the result files. Nothing missing passes for green: a scenario
+    its path should have recorded becomes a failed row (step `absent`), an expected os-parcours
+    without a file one row `aucun-resultat`, and a job that did not succeed with no failed row
+    of its own one row `<job>-<result>`. jobs: {job: result}, as terrain.yml's needs give it."""
     out, seen = [], set()
     for f in files:
-        data = read_json(f, {})
+        data = dict(read_json(f, {}))
         o = data.get("os") if data.get("os") in OSES else "?"
         pa = data.get("parcours") if data.get("parcours") in PARCOURS else "?"
+        rows = [r for r in data.get("scenarios", []) if isinstance(r, dict)]
+        done = {r.get("scenario") for r in rows}
+        rows += [{"scenario": name, "statut": "echec", "etape": "absent", "reproduire": repro(name),
+                  "raison": "aucune ligne de résultat : étape tuée par son délai, annulée ou jamais lancée"}
+                 for name in ATTENDUS.get(pa, ()) if name not in done]
+        data["scenarios"] = rows
         seen.add("%s-%s" % (o, pa))
         out.append((o, pa, data))
     for name in expected:
@@ -1072,6 +1092,26 @@ def load_reports(files, expected):
             out.append((o, pa, {"scenarios": [{"scenario": "job", "statut": "echec", "etape": "aucun-resultat",
                                                "raison": "aucun résultat : job interrompu, annulé ou trop long",
                                                "reproduire": REPRO_VM}]}))
+    for job, result in (jobs or {}).items():
+        if job not in JOBS or result in ("success", "skipped"):
+            continue
+        label, mine = JOBS[job]
+        if any(r.get("statut") == "echec" for o, pa, data in out if "%s-%s" % (o, pa) in mine
+               for r in data.get("scenarios", [])):
+            continue
+        out.append((label, "?", {"scenarios": [{"scenario": "job", "statut": "echec", "etape": "%s-%s" % (job, result),
+                                                "raison": "le job %s a fini : %s" % (job, result),
+                                                "reproduire": REPRO_VM}]}))
+    return out
+
+
+def parse_jobs(text):
+    """{job: result} of `ref=success,macos=failure,...`: known jobs and results only."""
+    out = {}
+    for item in text.split(","):
+        job, _, result = item.strip().partition("=")
+        if job in JOBS and result in JOB_RESULTS:
+            out[job] = result
     return out
 
 
@@ -1081,7 +1121,7 @@ def cell(text, cap=300):
 
 def cmd_rapport(opts):
     lines = []
-    for o, pa, data in load_reports(opts.fichiers, opts.attendus):
+    for o, pa, data in load_reports(opts.fichiers, opts.attendus, opts.jobs):
         ref = data.get("ref") or ""
         lines += ["### Terrain %s · %s%s" % (o, pa, " · `%s`" % ref[:12] if SHA_RE.match(ref) else ""), "",
                   "| Scénario | Résultat | Étape | Raison | Reproduire |", "|---|---|---|---|---|"]
@@ -1100,7 +1140,7 @@ def cmd_issue(opts):
     the run's link. The reasons stay in the run's artifact: an issue is public, and a reason
     could quote a note."""
     rows = []
-    for o, pa, data in load_reports(opts.fichiers, opts.attendus):
+    for o, pa, data in load_reports(opts.fichiers, opts.attendus, opts.jobs):
         for r in data.get("scenarios", []):
             if r.get("statut") != "echec":
                 continue
@@ -1146,6 +1186,7 @@ def parser():
         r = sub.add_parser(name)
         r.add_argument("fichiers", nargs="*")
         r.add_argument("--attendus", default="", type=lambda s: [x for x in s.split(",") if x])
+        r.add_argument("--jobs", default="", type=parse_jobs)
         r.add_argument("--run-url")
         r.add_argument("--date")
     return p
