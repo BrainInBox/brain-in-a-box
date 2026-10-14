@@ -184,15 +184,19 @@ jobs:
           $H = $env:USERPROFILE
           $py = (@((Get-Content "$H\.claude\settings.json" -Raw | ConvertFrom-Json).hooks.UserPromptSubmit.hooks)[0]).command
           $head = (git -C "$H\DEV\gbrain" rev-parse HEAD).Trim()
+          # Compared before and after rather than expected absent: a job that runs across 04:00
+          # also gets the real BrainNightly, which writes them (2026-10-14).
+          $files = 'update-state.json', 'last-update.json', 'update.lock'
+          $snap = { $files | ForEach-Object { $p = "$H\.gbrain\$_"; if (Test-Path $p) { "$_ $((Get-FileHash $p).Hash) $((Get-Item $p).LastWriteTimeUtc.Ticks)" } else { "$_ -" } } }
+          $before = (& $snap) -join "`n"
           # Its own lines carry accents: only their ASCII parts are matched.
           $out = (& $py -I "$H\.claude\hooks\brain\gbrain_update.py" --a-blanc 2>&1) -join "`n"; $out
           if ($LASTEXITCODE) { throw "gbrain_update.py --a-blanc exited $LASTEXITCODE" }
           if ($out -notmatch 'tags v\* en amont : [1-9]') { throw 'the list of gbrain releases was not read' }
           if ($out -notmatch 'cision : ') { throw 'no decision printed' }
           if ((git -C "$H\DEV\gbrain" rev-parse HEAD).Trim() -ne $head) { throw 'a dry run moved gbrain' }
-          foreach ($f in 'update-state.json', 'last-update.json', 'update.lock') {
-            if (Test-Path "$H\.gbrain\$f") { throw "a dry run wrote ~/.gbrain/$f" }
-          }
+          $after = (& $snap) -join "`n"
+          if ($after -ne $before) { throw "a dry run wrote in ~/.gbrain:`n$before`n->`n$after" }
 
       - name: The nightly task commits the day's notes and indexes them (S4U, as registered)
         run: |
