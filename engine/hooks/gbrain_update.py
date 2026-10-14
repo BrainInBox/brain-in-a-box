@@ -6,11 +6,13 @@ macOS), by the SessionStart catch-up hook and by `controle gbrain maintenant`.
 
 Only `refs/tags/v*` are installed: never master, never a lower version (the brain
 may already be migrated). A tag's age counts from the first time this machine saw
-it, or from its GitHub release date when older, never from the commit date, which a
-lightweight tag lets anyone pick. Bun is the exact version gbrain's release workflow
-uses, checked against Bun's SHASUMS256.txt. A snapshot (code, Bun, config.json,
-brain.pglite) is taken before the switch; any failure restores all of it, and
-gbrain doctor must prove the rollback.
+it at its current commit: never from the commit date, which a lightweight tag lets
+anyone pick, nor from its GitHub release date, which stays the same when the tag is
+force-pushed under the release. Bun is the exact version gbrain's release workflow
+uses, checked against Bun's SHASUMS256.txt. A snapshot (code, Bun, brain.pglite,
+config.json, preferences.json and the migration ledger) is taken before the switch;
+any failure restores all of it, and gbrain doctor must prove the rollback. A switch
+cut short (process killed, power lost) is rolled back by the next run.
 
 Not a hook: installed next to them, never registered in settings.json.
 """
@@ -42,7 +44,6 @@ MIN_AGE = dt.timedelta(days=7)
 PAUSE = dt.timedelta(days=7)
 KEEP = dt.timedelta(days=3)
 LATE_DAYS = 14
-LOCK_STALE_S = 2 * 3600
 BUDGET_S = 45 * 60
 DISK_MARGIN_MB = 500
 BUN_ZIP_MAX = 200 * 2 ** 20
@@ -51,9 +52,16 @@ TIMEOUT = {"ls-remote": 120, "fetch": 300, "download": 300, "install": 900,
 TAG_RE = re.compile(r"^v\d+\.\d+\.\d+(\.\d+)?$")
 OID_RE = re.compile(r"^[0-9a-f]{40}([0-9a-f]{24})?$")
 STAMP = "%Y%m%d-%H%M%S"
-SECRET_WORDS = ("KEY", "TOKEN", "SECRET", "PASSWORD")
-GIT_ENV_DROP = re.compile(r"^GIT_(DIR|WORK_TREE|INDEX_FILE|ASKPASS|CONFIG_PARAMETERS|CONFIG_COUNT"
-                          r"|CONFIG_KEY_\d+|CONFIG_VALUE_\d+)$")
+SECRET_WORDS = ("KEY", "TOKEN", "SECRET", "PASS", "CREDENTIAL", "AUTH")
+URL_WITH_PASSWORD = re.compile(r"://[^/\s:@]+:[^/\s@]+@")
+GIT_ENV_DROP = re.compile(r"^GIT_(DIR|WORK_TREE|INDEX_FILE|COMMON_DIR|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES"
+                          r"|NAMESPACE|ASKPASS|CONFIG_PARAMETERS|CONFIG_COUNT|CONFIG_KEY_\d+|CONFIG_VALUE_\d+)$")
+# gbrain takes these over config.json: a database the snapshot does not cover.
+DB_ENV = ("GBRAIN_DATABASE_URL", "DATABASE_URL")
+# What gbrain apply-migrations and `gbrain config set` write besides the base itself.
+STATE_FILES = ("config.json", "preferences.json", "migrations")
+JOURNAL = "update-journal.json"
+CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f\x9b]")
 WINDOWS = os.name == "nt"
 EXE = ".exe" if WINDOWS else ""
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -99,12 +107,20 @@ def system_tool(name):
 
 
 def child_env(bin_dir):
-    """The current environment minus anything that looks like a credential, and minus git
-    settings passed through the environment (a Claude Code session sets GIT_CONFIG_COUNT
-    and GIT_CONFIG_KEY_n/VALUE_n pairs: a value can be an auth header, and dropping only
-    the KEY half would leave git unable to start)."""
-    env = {k: v for k, v in os.environ.items()
-           if not any(w in k.upper() for w in SECRET_WORDS) and not GIT_ENV_DROP.match(k.upper())}
+    """The current environment minus anything that looks like a credential (by its name, or
+    a URL carrying a password outside a proxy setting), minus git settings passed through
+    the environment (a Claude Code session sets GIT_CONFIG_COUNT and GIT_CONFIG_KEY_n/VALUE_n
+    pairs: a value can be an auth header, and dropping only the KEY half would leave git
+    unable to start), and minus a database URL that would send gbrain's migrations to a
+    database the snapshot does not cover."""
+    env = {}
+    for k, v in os.environ.items():
+        name = k.upper()
+        if any(w in name for w in SECRET_WORDS) or GIT_ENV_DROP.match(name) or name in DB_ENV:
+            continue
+        if URL_WITH_PASSWORD.search(v) and not name.endswith("_PROXY"):
+            continue
+        env[k] = v
     env["GIT_TERMINAL_PROMPT"] = "0"
     env["PATH"] = os.pathsep.join(p for p in (str(bin_dir), env.get("PATH", "")) if p)
     return env
@@ -154,73 +170,39 @@ def run(cmd, timeout, cwd=None, env=None):
         return rc, out.read().decode("utf-8", "replace"), err.read().decode("utf-8", "replace")
 
 
-def pid_alive(pid):
-    if pid <= 0:
-        return False
-    if WINDOWS:
-        import ctypes
-        k = ctypes.WinDLL("kernel32", use_last_error=True)
-        k.OpenProcess.restype = ctypes.c_void_p
-        k.OpenProcess.argtypes = (ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong)
-        k.GetExitCodeProcess.argtypes = (ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong))
-        k.CloseHandle.argtypes = (ctypes.c_void_p,)
-        h = k.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
-        if not h:
-            return ctypes.get_last_error() == 5  # access denied: it exists
-        try:
-            code = ctypes.c_ulong()
-            return bool(k.GetExitCodeProcess(h, ctypes.byref(code))) and code.value == 259  # STILL_ACTIVE
-        finally:
-            k.CloseHandle(h)
-    try:
-        os.kill(pid, 0)
-    except PermissionError:
-        return True
-    except OSError:
-        return False
-    return True
-
-
 class Lock:
-    """O_EXCL file holding "<pid> <epoch>"; stale after 2 h or once its process is gone."""
+    """An OS lock on update.lock (flock, or a locked byte on Windows). The system releases it
+    when the process ends, however it ends: no stale lock to guess about, and no window where
+    two runs that both found a stale lock both take it. The file stays; it holds the pid."""
 
     def __init__(self, path):
-        self.path, self.held = path, False
+        self.path, self.f = path, None
 
     def acquire(self):
-        for _ in range(2):
-            try:
-                fd = os.open(str(self.path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-            except FileExistsError:
-                if not self.stale():
-                    return False
-                try:
-                    self.path.unlink()
-                except OSError:
-                    return False
-                continue
-            with os.fdopen(fd, "w") as f:
-                f.write("%d %d\n" % (os.getpid(), int(time.time())))
-            self.held = True
-            return True
-        return False
-
-    def stale(self):
+        f = open(str(self.path), "a+")
         try:
-            pid, started = (int(x) for x in self.path.read_text().split()[:2])
-        except (OSError, ValueError):
-            try:  # just created, not written yet: only age can tell
-                return time.time() - self.path.stat().st_mtime > LOCK_STALE_S
-            except OSError:
-                return True
-        return time.time() - started > LOCK_STALE_S or not pid_alive(pid)
+            if WINDOWS:
+                import msvcrt
+                f.seek(0)
+                msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            f.close()
+            return False
+        if not WINDOWS:  # a locked byte cannot be truncated away on Windows; the pid is only a hint
+            f.seek(0)
+            f.truncate()
+            f.write("%d %d\n" % (os.getpid(), int(time.time())))
+            f.flush()
+        self.f = f
+        return True
 
     def release(self):
-        if self.held:
-            try:
-                self.path.unlink()
-            except OSError:
-                pass
+        if self.f:
+            self.f.close()  # closing the handle releases the lock on both systems
+            self.f = None
 
 
 def read_json(path):
@@ -324,12 +306,13 @@ class _HttpsOnly(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
-def download(url, dest, limit, timeout):
-    """Streams url into dest; raises past `limit` bytes or `timeout` seconds overall."""
+def download(url, out, limit, timeout, accept="*/*"):
+    """Streams url into the binary file out; raises past `limit` bytes or `timeout` seconds
+    overall (a server sending one byte at a time never trips a per-read timeout)."""
     opener = urllib.request.build_opener(_HttpsOnly) if url.lower().startswith("https://") else urllib.request.build_opener()
-    req = urllib.request.Request(url, headers={"User-Agent": "brain-in-a-box", "Accept": "*/*"})
+    req = urllib.request.Request(url, headers={"User-Agent": "brain-in-a-box", "Accept": accept})
     end, total = time.monotonic() + timeout, 0
-    with opener.open(req, timeout=30) as r, open(str(dest), "wb") as f:
+    with opener.open(req, timeout=min(30, timeout)) as r:
         while True:
             chunk = r.read(1 << 16)
             if not chunk:
@@ -337,7 +320,7 @@ def download(url, dest, limit, timeout):
             total += len(chunk)
             if total > limit or time.monotonic() > end:
                 raise OSError("download too big or too slow")
-            f.write(chunk)
+            out.write(chunk)
 
 
 def sha256(path):
@@ -413,7 +396,7 @@ class Updater:
         except OSError:
             pass
 
-    def sh(self, cmd, timeout, cwd=None, show=False, hide=False, budget=True):
+    def sh(self, cmd, timeout, cwd=None, show=False, hide=False, budget=True, env=None):
         """run() within the 45 min budget, logged: the exit code of a failure, and the last
         lines of its output (20 lines even on success with show; none with hide, for
         outputs read as data such as doctor's JSON)."""
@@ -422,7 +405,7 @@ class Updater:
             if left <= 1:
                 return 124, "", "time budget spent"
             timeout = min(timeout, left)
-        rc, out, err = run(cmd, timeout, cwd=cwd, env=self.env)
+        rc, out, err = run(cmd, timeout, cwd=cwd, env=env or self.env)
         name = " ".join(str(c) for c in ([Path(str(cmd[0])).name] + list(cmd[1:3])))
         if rc == 124:
             self.log("%s : arrêté après %d s" % (name, timeout))
@@ -430,7 +413,7 @@ class Updater:
             self.log("%s : code %d" % (name, rc))
         if (show or rc) and not hide:
             for line in (out + err).strip().splitlines()[-(20 if show else 5):]:
-                self.log("    " + line[:300])
+                self.log("    " + CONTROL_CHARS.sub("", line)[:300])  # no terminal escapes from a program into the log
         return rc, out, err
 
     def git_(self, *args, timeout=TIMEOUT["short"], cwd=None, budget=True):
@@ -446,22 +429,39 @@ class Updater:
     # -- state -----------------------------------------------------------------
 
     def load_state(self):
+        """update-state.json, cleaned so that a damaged file can only make the wait start again,
+        never hold an update back for good: an entry without a readable date or commit is
+        dropped (seen again from now on), a date ahead of the clock (the clock was wrong once)
+        is brought back to now, and a pause ending more than 7 days ahead is lifted."""
         st = read_json(self.data / "update-state.json")
         st = st if isinstance(st, dict) else {}
-        tags = st.get("tags") if isinstance(st.get("tags"), dict) else {}
-        st["tags"] = {t: e for t, e in tags.items()
-                      if TAG_RE.match(t) and isinstance(e, dict) and isinstance(e.get("sha"), str)}
+        tags = {}
+        for tag, e in (st.get("tags") if isinstance(st.get("tags"), dict) else {}).items():
+            seen = parse_time(e.get("vu_le")) if isinstance(e, dict) else None
+            if TAG_RE.match(tag) and seen and isinstance(e.get("sha"), str) and OID_RE.match(e["sha"]):
+                e["vu_le"] = iso(min(seen, self.now))
+                tags[tag] = e
+        st["tags"] = tags
         blocked = st.get("bloques") if isinstance(st.get("bloques"), dict) else {}
         st["bloques"] = {t: e for t, e in blocked.items() if TAG_RE.match(t) and isinstance(e, dict)}
         for k in ("echecs_consecutifs", "ajournements_consecutifs"):
             st[k] = st[k] if isinstance(st.get(k), int) and st[k] >= 0 else 0
-        for k in ("pause_jusqua", "derniere_verif_ok", "dernier_succes"):
-            st[k] = st[k] if parse_time(st.get(k)) else None
+        for k in ("derniere_verif_ok", "dernier_succes"):
+            t = parse_time(st.get(k))
+            st[k] = iso(min(t, self.now)) if t else None
+        pause = parse_time(st.get("pause_jusqua"))
+        st["pause_jusqua"] = iso(pause) if pause and pause <= self.now + PAUSE else None
+        if not isinstance(st.get("casse"), dict):
+            st["casse"] = None
         return st
 
+    def save_state(self):
+        write_json(self.data / "update-state.json", self.state)
+
     def first_seen(self, entry):
-        times = [t for t in (parse_time(entry.get("vu_le")), parse_time(entry.get("publie_le"))) if t]
-        return min(times) if times else self.now
+        """When this machine first saw the tag at its current commit. Not the GitHub release
+        date: force-pushing a tag leaves its release, and that date, as they were."""
+        return parse_time(entry.get("vu_le")) or self.now
 
     def open_tags(self):
         """Tags above the installed version, not blocked, still listed upstream: (version, tag, first seen)."""
@@ -535,7 +535,7 @@ class Updater:
             return 0
         if self.installed:
             self.forget_below()
-        write_json(self.data / "update-state.json", st)
+        self.save_state()
         write_json(self.data / "last-update.json", result)
         return 0
 
@@ -548,12 +548,25 @@ class Updater:
         m = re.match(r"^\s*(\d+\.\d+\.\d+)", out)
         return m.group(1) if rc == 0 and m else None
 
-    def package_version(self, rev):
-        rc, out, _ = self.git_("show", "%s:package.json" % rev)
+    def show(self, rev, path):
+        """A file of the clone at rev; None when git says it is not there. Raises Postpone when
+        git itself failed (out of time, could not start): that says nothing about the release,
+        which must not be blocked for it."""
+        rc, out, _ = self.git_("show", "%s:%s" % (rev, path))
+        if rc in (124, 127):
+            raise Postpone("git n'a pas pu lire %s (%s)" % (path, "délai dépassé" if rc == 124 else "introuvable"),
+                           "git_failed")
+        return out if rc == 0 else None
+
+    def package_json(self, rev):
         try:
-            v = json.loads(out).get("version") if rc == 0 else None
-        except (ValueError, AttributeError):
-            return None
+            d = json.loads(self.show(rev, "package.json") or "")
+        except ValueError:
+            return {}
+        return d if isinstance(d, dict) else {}
+
+    def package_version(self, rev):
+        v = self.package_json(rev).get("version")
         return v if version(v) else None
 
     def list_tags(self):
@@ -594,16 +607,16 @@ class Updater:
 
     def fetch_json(self, url):
         try:
-            opener = urllib.request.build_opener(_HttpsOnly)
-            req = urllib.request.Request(url, headers={"User-Agent": "brain-in-a-box",
-                                                       "Accept": "application/vnd.github+json"})
-            with opener.open(req, timeout=20) as r:
-                return json.loads(r.read(5 * 2 ** 20 + 1)[:5 * 2 ** 20].decode("utf-8"))
+            with tempfile.TemporaryFile() as f:
+                download(url, f, 5 * 2 ** 20, 20, accept="application/vnd.github+json")
+                f.seek(0)
+                return json.loads(f.read().decode("utf-8"))
         except (OSError, ValueError, urllib.error.URLError):
             return None
 
     def add_release_dates(self):
-        """GitHub's own publication date: it cannot be backdated, unlike a commit date."""
+        """GitHub's publication date of each release, for information (what `controle gbrain`
+        shows). It never makes a tag eligible sooner: see first_seen()."""
         if not self.releases:
             return
         dated = 0
@@ -623,10 +636,26 @@ class Updater:
                 break
         self.log("dates de publication GitHub lues : %d" % dated)
 
+    def env_file_database(self):
+        """Whether ~/.gbrain/.env, which gbrain loads by itself, names a database URL."""
+        try:
+            with open(str(self.data / ".env"), encoding="utf-8", errors="replace") as f:
+                lines = f.read(2 ** 20).splitlines()
+        except OSError:
+            return False
+        for line in lines:
+            m = re.match(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$", line)
+            if m and m.group(1) in DB_ENV and m.group(2).strip().strip("'\"").strip():
+                return True
+        return False
+
     def database(self):
         cfg = read_json(self.data / "config.json")
         cfg = cfg if isinstance(cfg, dict) else {}
-        if cfg.get("database_url") or cfg.get("engine") == "postgres":
+        # The snapshot covers a PGLite base in ~/.gbrain only. GBRAIN_DATABASE_URL is honored by
+        # gbrain over config.json; a bare DATABASE_URL is simply not passed on to the children.
+        if (cfg.get("database_url") or cfg.get("engine") == "postgres"
+                or os.environ.get("GBRAIN_DATABASE_URL", "").strip() or self.env_file_database()):
             raise Postpone("base Postgres : mise à jour de gbrain à faire à la main", "db_unsupported")
         path = cfg.get("database_path")
         db = Path(os.path.expanduser(path.strip())) if isinstance(path, str) and path.strip() else self.data / "brain.pglite"
@@ -697,7 +726,8 @@ class Updater:
         doc = parse_json(out)
         fails = None
         if isinstance(doc, dict) and isinstance(doc.get("checks"), list):
-            fails = frozenset(c["name"] for c in doc["checks"] if isinstance(c, dict)
+            # Names end up in the log and in last-update.json: plain characters only.
+            fails = frozenset(re.sub(r"[^\w.:-]", "?", c["name"])[:80] for c in doc["checks"] if isinstance(c, dict)
                               and c.get("status") == "fail" and isinstance(c.get("name"), str))
         src_rc, src_out, _ = self.sh([self.gbrain, "sources", "list", "--json"], TIMEOUT["doctor"],
                                      cwd=self.neutral, hide=True, budget=budget)
@@ -729,6 +759,8 @@ class Updater:
     # -- the update ------------------------------------------------------------
 
     def fetch_tag(self, tag):
+        """Fetches this one tag; returns (commit, version, package.json) once it is exactly the
+        object ls-remote listed and its package.json carries the tag's version."""
         shallow = self.git_("rev-parse", "--is-shallow-repository")[1].strip() == "true"
         rc = self.sh([self.git, "-c", "credential.helper=", "fetch", "-q", "--no-tags"]
                      + (["--depth", "1"] if shallow else [])
@@ -737,25 +769,28 @@ class Updater:
         if rc != 0:
             raise Postpone("téléchargement de %s impossible (réseau ?)" % tag, "fetch_failed")
         # The object the tag names, as ls-remote reported it (a tag object or a commit).
-        obj = self.git_("rev-parse", "--verify", "-q", "refs/tags/%s" % tag)[1].strip()
-        if obj != self.state["tags"][tag]["sha"]:
+        rc, obj, _ = self.git_("rev-parse", "--verify", "-q", "refs/tags/%s" % tag)
+        if rc in (124, 127):
+            raise Postpone("git n'a pas pu lire %s" % tag, "git_failed")
+        if obj.strip() != self.state["tags"][tag]["sha"]:
             self.block(tag, "contenu différent de celui annoncé")
             self.alert("orange", "tag_change", tag)
             raise Postpone("%s a changé pendant le téléchargement : version bloquée" % tag, "tag_changed")
-        commit = self.git_("rev-parse", "--verify", "-q", "refs/tags/%s^{commit}" % tag)[1].strip()
-        new = self.package_version(commit) if OID_RE.match(commit) else None
-        if version(new) != version(tag):
+        rc, commit, _ = self.git_("rev-parse", "--verify", "-q", "refs/tags/%s^{commit}" % tag)
+        if rc in (124, 127):
+            raise Postpone("git n'a pas pu lire %s" % tag, "git_failed")
+        commit = commit.strip()
+        pkg = self.package_json(commit) if OID_RE.match(commit) else {}
+        new = pkg.get("version")
+        if version(new) is None or version(new) != version(tag):
             self.block(tag, "package.json ne porte pas la version du tag")
             raise Postpone("%s : version du code différente du tag, version bloquée" % tag, "tag_mismatch")
-        return commit, new
+        return commit, new, pkg
 
-    def plan_bun(self, commit, tag):
+    def plan_bun(self, commit, tag, pkg):
         """The exact Bun the new gbrain needs, staged and verified; None to keep the current one."""
-        rc, out, _ = self.git_("show", "%s:package.json" % commit)
-        try:
-            need = json.loads(out).get("engines", {}).get("bun")
-        except (ValueError, AttributeError):
-            need = None
+        engines = pkg.get("engines")
+        need = engines.get("bun") if isinstance(engines, dict) else None
         m = re.match(r"^>=\s*(\d+\.\d+\.\d+)$", need.strip()) if isinstance(need, str) else None
         if not m:
             self.block(tag, "exigence Bun illisible")
@@ -765,8 +800,8 @@ class Updater:
         if have and version(have) >= version(floor):
             return None
         exact = floor
-        rc, wf, _ = self.git_("show", "%s:.github/workflows/release.yml" % commit)
-        pinned = re.search(r"^\s*bun-version:\s*['\"]?(\d+\.\d+\.\d+)['\"]?\s*$", wf, re.M) if rc == 0 else None
+        wf = self.show(commit, ".github/workflows/release.yml") or ""
+        pinned = re.search(r"^\s*bun-version:\s*['\"]?(\d+\.\d+\.\d+)['\"]?\s*$", wf, re.M)
         if pinned and version(pinned.group(1)) >= version(floor):
             exact = pinned.group(1)
         self.log("%s demande Bun >= %s (installé : %s) : Bun %s" % (tag, floor, have or "aucun", exact))
@@ -782,7 +817,8 @@ class Updater:
         stage.mkdir(parents=True)
         sums, archive = stage / "SHASUMS256.txt", stage / (asset + ".zip")
         try:
-            download(base + "/SHASUMS256.txt", sums, 2 ** 20, TIMEOUT["download"])
+            with open(str(sums), "wb") as f:
+                download(base + "/SHASUMS256.txt", f, 2 ** 20, TIMEOUT["download"])
         except (OSError, ValueError, urllib.error.URLError):
             raise Postpone("téléchargement de Bun %s impossible (réseau ?)" % ver, "bun_download")
         expected = None
@@ -794,7 +830,8 @@ class Updater:
             self.alert("orange", "bun_introuvable")
             raise Postpone("Bun %s introuvable pour ce processeur (%s)" % (ver, asset), "bun_asset")
         try:
-            download("%s/%s.zip" % (base, asset), archive, BUN_ZIP_MAX, TIMEOUT["download"])
+            with open(str(archive), "wb") as f:
+                download("%s/%s.zip" % (base, asset), f, BUN_ZIP_MAX, TIMEOUT["download"])
         except (OSError, ValueError, urllib.error.URLError):
             raise Postpone("téléchargement de Bun %s impossible (réseau ?)" % ver, "bun_download")
         if sha256(archive) != expected:
@@ -830,8 +867,13 @@ class Updater:
             write_json(snap / "head.json", {"head": head, "branch": branch, "tag": tag, "bun": self.bun_version()})
             if self.bun.exists():
                 shutil.copy2(str(self.bun), str(snap / self.bun.name))
-            if (self.data / "config.json").exists():
-                shutil.copy2(str(self.data / "config.json"), str(snap / "config.json"))
+            for name in STATE_FILES:
+                src, dst = self.data / name, snap / "state" / name
+                if src.is_dir():
+                    shutil.copytree(str(src), str(dst), symlinks=True)
+                elif src.is_file():
+                    dst.parent.mkdir(exist_ok=True)
+                    shutil.copy2(str(src), str(dst))
             if self.db.exists():
                 copy_tree(self.db, snap / self.db.name, self.env)
         except (OSError, shutil.Error) as e:
@@ -839,6 +881,12 @@ class Updater:
             raise Postpone("instantané impossible (%s)" % e.__class__.__name__, "snapshot_failed")
         self.log("instantané : %s" % snap.name)
         return snap
+
+    def bun_install(self, budget=True):
+        # gbrain's postinstall would run the migrations inside `bun install`: they belong to their
+        # own step (switch), and never run on a base a rollback has just put back.
+        return self.sh([self.bun, "install", "--frozen-lockfile"], TIMEOUT["install"], cwd=str(self.repo), show=True,
+                       env=dict(self.env, GBRAIN_UPGRADE_OWNS_MIGRATIONS="1"), budget=budget)[0]
 
     def switch(self, commit, bun):
         """Every step of the switch, in order. Returns the name of the step that failed, or None."""
@@ -850,7 +898,7 @@ class Updater:
         repo = str(self.repo)
         steps += [
             ("git checkout", lambda: self.git_("-c", "advice.detachedHead=false", "checkout", "-q", "--detach", commit)[0]),
-            ("bun install", lambda: self.sh([self.bun, "install", "--frozen-lockfile"], TIMEOUT["install"], cwd=repo, show=True)[0]),
+            ("bun install", self.bun_install),
             ("bun link", lambda: self.sh([self.bun, "link"], TIMEOUT["short"] * 2, cwd=repo)[0]),
             ("gbrain apply-migrations", lambda: self.sh([self.gbrain, "apply-migrations", "--yes"], TIMEOUT["migrate"],
                                                         cwd=self.neutral, show=True)[0]),
@@ -867,9 +915,10 @@ class Updater:
                 return name
         return None
 
-    def rollback(self, snap, head, branch, bun, tag, before):
-        """Puts back code, Bun, base and config.json, then proves it with gbrain doctor.
-        Returns what could not be restored (empty: rollback proven)."""
+    def rollback(self, snap, head, branch, tag, before, data=True):
+        """Puts back code and Bun, and with data the base, config.json, preferences.json and the
+        migration ledger, then proves it with gbrain doctor. Returns what could not be
+        restored (empty: rollback proven). Never cut short by the time budget."""
         problems = []
         if branch:
             self.git_("checkout", "-q", "-f", branch, "--", budget=False)
@@ -878,29 +927,38 @@ class Updater:
         if self.git_("rev-parse", "HEAD", budget=False)[1].strip() != head:
             problems.append("code")
         stamp = self.now.strftime(STAMP)
-        if bun:
+        saved_bun = snap / self.bun.name
+        try:
+            if saved_bun.is_file() and (not self.bun.is_file() or sha256(saved_bun) != sha256(self.bun)):
+                replace_bun(self.bun, saved_bun, "echec-%s" % stamp)
+        except OSError:
+            problems.append("Bun")
+        if data:
             try:
-                replace_bun(self.bun, snap / self.bun.name, "echec-%s-%s" % (bun[1], stamp))
+                if self.db.exists() or self.db.is_symlink():
+                    os.rename(str(self.db), str(unique(self.data / ("%s.echec-%s-%s" % (self.db.name, tag, stamp)))))
+                if (snap / self.db.name).exists():
+                    os.rename(str(snap / self.db.name), str(self.db))
             except OSError:
-                problems.append("Bun")
-        try:
-            if self.db.exists() or self.db.is_symlink():
-                os.rename(str(self.db), str(unique(self.data / ("%s.echec-%s-%s" % (self.db.name, tag, stamp)))))
-            if (snap / self.db.name).exists():
-                os.rename(str(snap / self.db.name), str(self.db))
-        except OSError:
-            problems.append("base")
-        try:
-            if (snap / "config.json").exists():
-                tmp = self.data / "config.json.restore"
-                shutil.copy2(str(snap / "config.json"), str(tmp))
-                os.replace(str(tmp), str(self.data / "config.json"))
-        except OSError:
-            problems.append("config.json")
-        for name, cmd, timeout in (("bun install", [self.bun, "install", "--frozen-lockfile"], TIMEOUT["install"]),
-                                   ("bun link", [self.bun, "link"], TIMEOUT["short"] * 2)):
-            if self.sh(cmd, timeout, cwd=str(self.repo), budget=False)[0] != 0:
-                problems.append(name)
+                problems.append("base")
+            # What the failed version wrote goes aside in the snapshot (kept 3 days); what was there
+            # before comes back, and what was not there before stays out.
+            for name in STATE_FILES:
+                cur, saved = self.data / name, snap / "state" / name
+                try:
+                    if cur.exists() or cur.is_symlink():
+                        (snap / "echec").mkdir(exist_ok=True)
+                        os.rename(str(cur), str(unique(snap / "echec" / name)))
+                    if saved.is_dir():
+                        shutil.copytree(str(saved), str(cur), symlinks=True)
+                    elif saved.is_file():
+                        shutil.copy2(str(saved), str(cur))
+                except (OSError, shutil.Error):
+                    problems.append(name)
+        if self.bun_install(budget=False) != 0:
+            problems.append("bun install")
+        if self.sh([self.bun, "link"], TIMEOUT["short"] * 2, cwd=str(self.repo), budget=False)[0] != 0:
+            problems.append("bun link")
         rc, out, _ = self.sh([self.gbrain, "--version"], TIMEOUT["short"], cwd=self.neutral, hide=True, budget=False)
         if rc != 0 or not re.search(r"(?<![\d.])%s(?![\d.])" % re.escape(self.installed), out):
             problems.append("gbrain --version")
@@ -909,14 +967,30 @@ class Updater:
             problems.append(why)
         return problems
 
+    def drop_journal(self):
+        try:
+            (self.data / JOURNAL).unlink()
+        except FileNotFoundError:
+            pass
+
     def update(self, tag):
-        commit, new = self.fetch_tag(tag)
-        bun = self.plan_bun(commit, tag)
+        commit, new, pkg = self.fetch_tag(tag)
+        bun = self.plan_bun(commit, tag, pkg)
         head = self.git_("rev-parse", "HEAD")[1].strip()
+        if not OID_RE.match(head):
+            raise Postpone("version installée illisible (git)", "git_failed")
         branch = run([self.git, "symbolic-ref", "-q", "--short", "HEAD"], TIMEOUT["short"], cwd=str(self.repo),
                      env=self.env)[1].strip()  # exit 1 when detached: not worth a log line
         before = self.health()
         snap = self.snapshot(head, branch, tag)
+        try:  # before anything changes: a run cut short is rolled back by the next one (recover)
+            write_json(self.data / JOURNAL, {
+                "snap": snap.name, "head": head, "branch": branch, "tag": tag, "from": self.installed,
+                "le": iso(self.now), "before": {k: sorted(v) if isinstance(v, frozenset) else v
+                                                for k, v in before.items()}})
+        except OSError as e:
+            shutil.rmtree(str(snap), ignore_errors=True)
+            raise Postpone("journal de mise à jour impossible (%s)" % e.__class__.__name__, "snapshot_failed")
         self.log("bascule v%s -> %s" % (self.installed, tag))
         why = None
         try:  # from here on, whatever happens ends in a success or a rollback
@@ -934,29 +1008,97 @@ class Updater:
         if failed is None:
             self.installed = new
             st["echecs_consecutifs"], st["dernier_succes"], st["pause_jusqua"] = 0, iso(self.now), None
+            self.save_state()  # dernier_succes on disk first: then the journal no longer means "roll back"
+            self.drop_journal()
             self.changelog = self.read_changelog()
             for old in self.data.glob("*.echec-v*"):
                 shutil.rmtree(str(old), ignore_errors=True)
             return self.finish("updated", tag=tag)
         self.log("échec à l'étape « %s »%s : retour arrière" % (failed, " (%s)" % why if why else ""))
         try:
-            problems = self.rollback(snap, head, branch, bun, tag, before)
+            problems = self.rollback(snap, head, branch, tag, before)
         except Exception as e:
             problems = ["erreur inattendue (%s)" % e.__class__.__name__]
+        return self.after_rollback(tag, failed, problems, "step_failed")
+
+    def after_rollback(self, tag, failed, problems, code):
         self.log("retour arrière %s" % ("incomplet : " + ", ".join(problems) if problems
                                         else "fait et vérifié par gbrain doctor"))
+        st = self.state
         self.block(tag, "échec : %s" % failed)
         st["echecs_consecutifs"] += 1
         if st["echecs_consecutifs"] % 3 == 0:
             st["pause_jusqua"] = iso(self.now + PAUSE)
             self.log("3 échecs de suite : mises à jour en pause jusqu'au %s" % st["pause_jusqua"][:10])
+        self.drop_journal()
         if problems:
+            # Stays red on the next runs until gbrain starts again (go()), even with nothing to install.
+            st["casse"] = {"tag": tag, "le": iso(self.now)}
             self.alert("rouge", "broken", tag)
             return self.finish("broken", "retour arrière incomplet (%s) : relance l'installation"
                                % ", ".join(problems), "broken", tag)
         self.alert("rouge", "rollback", tag)
         return self.finish("rolled_back", "échec à l'étape « %s » : retour à v%s" % (failed, self.installed),
-                           "step_failed", tag)
+                           code, tag)
+
+    def journal(self):
+        """The journal of a switch that did not finish, checked; None when there is none."""
+        path = self.data / JOURNAL
+        if not path.exists():
+            return None
+        j = read_json(path)
+        ok = (isinstance(j, dict) and isinstance(j.get("snap"), str) and stamp_of(j["snap"])
+              and re.match(r"^[\d-]+$", j["snap"]) and (self.data / "rollback" / j["snap"]).is_dir()
+              and isinstance(j.get("head"), str) and OID_RE.match(j["head"])
+              and isinstance(j.get("tag"), str) and TAG_RE.match(j["tag"])
+              and isinstance(j.get("from"), str) and version(j["from"]) and parse_time(j.get("le"))
+              and isinstance(j.get("branch"), str) and re.match(r"^(?!-)[^\s\x00-\x1f\x7f]*$", j["branch"])
+              and isinstance(j.get("before"), dict))
+        if not ok:
+            self.log("journal de mise à jour illisible : ignoré")
+            self.alert("orange", "journal_illisible")
+            if not self.dry:
+                self.drop_journal()
+            return None
+        done = parse_time(self.state["dernier_succes"])
+        if done and done >= parse_time(j["le"]):  # that switch did succeed; only the cleanup was missed
+            if not self.dry:
+                self.drop_journal()
+            return None
+        return j
+
+    def recover(self):
+        """Rolls back a switch the previous run never finished (killed, power cut, computer put to
+        sleep for good), from the journal written before it touched anything. When the code had
+        not moved yet, neither had the base: only code and Bun are put back, so nothing written
+        to gbrain since is lost. Returns finish()'s result, or None with nothing to recover."""
+        j = self.journal()
+        if j is None:
+            return None
+        tag, snap = j["tag"], self.data / "rollback" / j["snap"]
+        self.before = self.installed = j["from"]
+        self.log("la mise à jour vers %s ne s'est pas terminée (arrêt en cours de route) : retour arrière" % tag)
+        if self.dry:
+            return self.finish("postponed", "mise à jour interrompue, retour arrière à faire", "interrupted", tag)
+        self.db = self.database()
+        if (self.db / ".gbrain-lock").exists() or self.gbrain_processes() != []:
+            raise Postpone("gbrain est en cours d'utilisation : retour arrière en attente", "busy")
+        moved = self.git_("rev-parse", "HEAD", budget=False)[1].strip() != j["head"]
+        index_lock = self.repo / ".git" / "index.lock"
+        try:  # left by a git killed mid-checkout; no git of the user holds it for 10 minutes
+            if time.time() - index_lock.stat().st_mtime > 600:
+                index_lock.unlink()
+        except OSError:
+            pass
+        b = j["before"]
+        before = {"rc": b.get("rc") if isinstance(b.get("rc"), int) else None,
+                  "fails": frozenset(x for x in b["fails"] if isinstance(x, str)) if isinstance(b.get("fails"), list) else None,
+                  "sources": frozenset(x for x in b["sources"] if isinstance(x, str)) if isinstance(b.get("sources"), list) else None}
+        try:
+            problems = self.rollback(snap, j["head"], j["branch"], tag, before, data=moved)
+        except Exception as e:
+            problems = ["erreur inattendue (%s)" % e.__class__.__name__]
+        return self.after_rollback(tag, "mise à jour interrompue", problems, "interrupted")
 
     def read_changelog(self):
         """The first 3 lines under the newest heading of gbrain's CHANGELOG.md (a 4 MB file)."""
@@ -980,13 +1122,16 @@ class Updater:
         return lines
 
     def purge(self):
-        """Last runs' leftovers: staging always, snapshots and old Bun after 3 days.
-        A failed base (brain.pglite.echec-*) stays until the next successful update."""
+        """Last runs' leftovers: staging always, snapshots and old Bun after 3 days (never the
+        snapshot of a switch still to roll back). A failed base (brain.pglite.echec-*) stays
+        until the next successful update."""
         shutil.rmtree(str(self.data / "staging"), ignore_errors=True)
         old = self.now - KEEP
+        j = read_json(self.data / JOURNAL)
+        pending = j.get("snap") if isinstance(j, dict) else None
         for snap in (self.data / "rollback").glob("*") if (self.data / "rollback").is_dir() else []:
             t = stamp_of(snap.name)
-            if t and t < old:
+            if t and t < old and snap.name != pending:
                 shutil.rmtree(str(snap), ignore_errors=True)
         for f in self.bin.glob("bun*.*-*") if self.bin.is_dir() else []:
             t = stamp_of(f.name)
@@ -998,18 +1143,32 @@ class Updater:
 
     def go(self):
         self.state = self.load_state()
-        if not self.dry:
-            self.purge()
         if self.args.reprendre:
             self.state["pause_jusqua"] = None
         if not self.git:
             return self.finish("postponed", "git introuvable", "no_git")
         if not (self.repo / ".git").exists():
             return self.finish("postponed", "pas de clone gbrain dans ~/DEV/gbrain", "no_clone")
-        self.before = self.installed = self.package_version("HEAD")
+        try:
+            done = self.recover()
+            if done is not None:
+                return done
+            if not self.dry:
+                self.purge()
+            self.before = self.installed = self.package_version("HEAD")
+        except Postpone as p:
+            return self.finish("postponed", p.cause, p.code)
         if not self.installed:
             return self.finish("postponed", "version installée illisible (package.json)", "bad_version")
         self.log("gbrain installé : v%s" % self.installed)
+        broken = self.state["casse"]
+        if broken:
+            if self.sh([self.gbrain, "--version"], TIMEOUT["short"], cwd=self.neutral, hide=True)[0] != 0:
+                tag = broken.get("tag") if TAG_RE.match(str(broken.get("tag"))) else None
+                self.alert("rouge", "broken", tag)
+                return self.finish("broken", "gbrain ne démarre plus après une mise à jour ratée : relance l'installation",
+                                   "broken", tag)
+            self.state["casse"] = None
         listing = self.list_tags()
         if listing is None:
             return self.finish("check_failed", "liste des versions de gbrain non lue (réseau ?)", "network")
@@ -1019,6 +1178,8 @@ class Updater:
         self.log("tags v* en amont : %d (le plus haut : %s)" % (len(listing), top))
         self.register()
         self.add_release_dates()
+        if not self.dry:  # an unwritable state must stop the run before anything is switched
+            self.save_state()
         tag = self.candidate()
         pause = parse_time(self.state["pause_jusqua"])
         if pause and pause > self.now:
@@ -1026,7 +1187,7 @@ class Updater:
         if tag is None:
             return self.finish("waiting" if self.next_tag() else "up_to_date")
         seen = self.first_seen(self.state["tags"][tag])
-        self.log("candidat : %s (vu ou publié il y a %d jours)" % (tag, (self.now - seen).days))
+        self.log("candidat : %s (vu pour la première fois il y a %d jours)" % (tag, (self.now - seen).days))
         try:
             self.prerequisites()
             if self.dry:
@@ -1048,11 +1209,13 @@ def parse_args(argv):
         description="Met gbrain à jour vers la plus récente version publiée depuis au moins 7 jours "
                     "(jamais master, jamais plus bas), avec Bun exact vérifié et retour arrière complet.",
         epilog="Chemins : le clone ~/DEV/gbrain ; l'état dans $GBRAIN_HOME/.gbrain (sinon ~/.gbrain) : "
-               "update-state.json, last-update.json, update.lock, rollback/, staging/ ; Bun et gbrain dans "
-               "$BUN_INSTALL/bin (sinon ~/.bun/bin) ou --bin-dir. Pour un essai isolé, change HOME "
-               "(USERPROFILE sous Windows). Aucun secret n'est lu dans l'environnement : les variables dont "
-               "le nom contient KEY, TOKEN, SECRET ou PASSWORD, et les réglages git passés par "
-               "l'environnement (GIT_CONFIG_*, GIT_ASKPASS), ne sont pas transmis aux commandes lancées.")
+               "update-state.json, last-update.json, update.lock, update-journal.json, rollback/, staging/ ; "
+               "Bun et gbrain dans $BUN_INSTALL/bin (sinon ~/.bun/bin) ou --bin-dir. Pour un essai isolé, "
+               "change HOME (USERPROFILE sous Windows). Aucun secret n'est lu dans l'environnement : les "
+               "variables dont le nom contient KEY, TOKEN, SECRET, PASS, CREDENTIAL ou AUTH, une adresse "
+               "avec mot de passe (hors *_PROXY), DATABASE_URL et GBRAIN_DATABASE_URL, et les réglages git "
+               "passés par l'environnement (GIT_CONFIG_*, GIT_ASKPASS, GIT_DIR...) ne sont pas transmis "
+               "aux commandes lancées.")
     ap.add_argument("--log", help="journal (défaut : ~/.gbrain/nightly.log)")
     ap.add_argument("--a-blanc", action="store_true", help="affiche la décision, n'installe et n'écrit rien")
     ap.add_argument("--reprendre", action="store_true", help="lève la pause posée après 3 échecs")

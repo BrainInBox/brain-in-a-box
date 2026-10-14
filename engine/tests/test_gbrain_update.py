@@ -29,7 +29,10 @@ EXE = ".exe" if WINDOWS else ""
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 T0 = dt.datetime(2026, 10, 1, 4, 0, tzinfo=dt.timezone.utc)
 CANARIES = {"GITHUB_TOKEN": "canari-gh", "FAKE_API_KEY": "canari-key", "MY_SECRET": "canari-secret",
-            "DB_PASSWORD": "canari-pw",
+            "DB_PASSWORD": "canari-pw", "SMTP_PASSWD": "canari-passwd", "GOOGLE_CREDENTIALS": "canari-cred",
+            "NPM_CONFIG__AUTH": "canari-auth", "MIRROR_URL": "https://me:canari-url@mirror.example/x",
+            # Not a secret, but gbrain would migrate that database instead of the snapshotted one.
+            "DATABASE_URL": "postgres://me:canari-db@db.example/app",
             # What a Claude Code session passes to its children: git settings through the environment.
             "GIT_CONFIG_COUNT": "2", "GIT_CONFIG_KEY_0": "core.abbrev", "GIT_CONFIG_VALUE_0": "12",
             "GIT_CONFIG_KEY_1": "http.extraHeader", "GIT_CONFIG_VALUE_1": "Authorization: Bearer canari-header",
@@ -45,13 +48,16 @@ def day(n, hours=0):
 
 
 RECORD = r'''
-import json, os, sys, time
+import json, os, re, sys, time
 args = sys.argv[1:]
 with open(os.path.join(CTL, "calls.jsonl"), "a") as f:
     f.write(json.dumps({"prog": PROG, "version": VERSION, "args": args, "cwd": os.getcwd(),
-                        "leaks": sorted(k for k in os.environ
-                                        if any(w in k.upper() for w in ("KEY", "TOKEN", "SECRET", "PASSWORD"))
-                                        or k.upper().startswith(("GIT_CONFIG_COUNT", "GIT_CONFIG_VALUE", "GIT_ASKPASS"))),
+                        "leaks": sorted(k for k, v in os.environ.items()
+                                        if any(w in k.upper() for w in ("KEY", "TOKEN", "SECRET", "PASS", "CREDENTIAL", "AUTH"))
+                                        or k.upper().startswith(("GIT_CONFIG_COUNT", "GIT_CONFIG_VALUE", "GIT_ASKPASS"))
+                                        or k.upper() in ("DATABASE_URL", "GBRAIN_DATABASE_URL")
+                                        or (re.search(r"://[^/@]+:[^/@]+@", v) and not k.upper().endswith("_PROXY"))),
+                        "owns_migrations": os.environ.get("GBRAIN_UPGRADE_OWNS_MIGRATIONS"),
                         "prompt": os.environ.get("GIT_TERMINAL_PROMPT")}) + "\n")
 def ctl(name):
     try:
@@ -76,6 +82,7 @@ with open(os.path.join(REPO, "package.json")) as f:
 db = os.path.join(DATA, "brain.pglite")
 if args[:1] == ["--version"]:
     print("gbrain " + ver)
+    sys.exit(ctl("gbrain.json").get("version_rc", 0))
 elif args[:1] == ["doctor"]:
     d = ctl("doctor.json").get(ver, {})
     checks = [{"name": n, "status": "fail", "message": "x"} for n in d.get("fails", [])]
@@ -88,6 +95,16 @@ elif args[:2] == ["sources", "list"]:
 elif args[:1] == ["apply-migrations"]:
     with open(os.path.join(db, "migrated-" + ver), "w") as f:
         f.write("schema " + ver)
+    # What the real one writes besides the base: its ledger, and preferences on some versions.
+    os.makedirs(os.path.join(DATA, "migrations"), exist_ok=True)
+    with open(os.path.join(DATA, "migrations", "completed.jsonl"), "a") as f:
+        f.write(json.dumps({"version": ver, "status": "complete"}) + "\n")
+    with open(os.path.join(DATA, "preferences.json"), "w") as f:
+        json.dump({"set_in_version": ver}, f)
+    if ctl("hang.json").get(ver):  # a run cut short in the middle of the migrations
+        with open(os.path.join(CTL, "hung.pid"), "w") as f:
+            f.write(str(os.getpid()))
+        time.sleep(600)
 elif args[:2] == ["config", "set"]:
     p = os.path.join(DATA, "config.json")
     with open(p) as f:
@@ -95,6 +112,21 @@ elif args[:2] == ["config", "set"]:
     c[args[2]] = args[3]
     with open(p, "w") as f:
         json.dump(c, f)
+'''
+
+
+FAKE_GIT = r'''
+import json, os, subprocess, sys
+args = sys.argv[1:]
+try:
+    with open(os.path.join(CTL, "git.json")) as f:
+        broken = json.load(f).get("show_fails")
+except (OSError, ValueError):
+    broken = False
+# git itself failing (127: could not start) while reading the release: nothing to do with the release.
+if broken and args[:1] == ["show"] and args[1].endswith(":package.json") and not args[1].startswith("HEAD:"):
+    sys.exit(127)
+sys.exit(subprocess.call([REAL] + args))
 '''
 
 
@@ -144,6 +176,31 @@ def rmtree(path):
         shutil.rmtree(str(path), onexc=retry)
     else:
         shutil.rmtree(str(path), onerror=retry)
+
+
+def pid_alive(pid):
+    if WINDOWS:
+        import ctypes
+        k = ctypes.WinDLL("kernel32", use_last_error=True)
+        k.OpenProcess.restype = ctypes.c_void_p
+        k.OpenProcess.argtypes = (ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong)
+        k.GetExitCodeProcess.argtypes = (ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong))
+        k.CloseHandle.argtypes = (ctypes.c_void_p,)
+        h = k.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not h:
+            return ctypes.get_last_error() == 5  # access denied: it exists
+        try:
+            code = ctypes.c_ulong()
+            return bool(k.GetExitCodeProcess(h, ctypes.byref(code))) and code.value == 259  # STILL_ACTIVE
+        finally:
+            k.CloseHandle(h)
+    try:
+        os.kill(pid, 0)
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
 
 
 def kill(p):
@@ -287,13 +344,25 @@ class World:
         (folder / "SHASUMS256.txt").write_text("\n".join(lines) + "\n")
         return self.serve()
 
-    def run(self, now, *extra, env=None, remote=None):
+    def command(self, now, *extra, env=None, remote=None):
         cmd = [sys.executable, "-I", str(SCRIPT), "--remote", remote or self.url, "--bin-dir", str(self.bin),
                "--maintenant", now, "--log", str(self.log)] + list(extra)
         e = {k: v for k, v in os.environ.items()
-             if k not in ("GBRAIN_HOME", "BUN_INSTALL", "XDG_CONFIG_HOME") and not k.startswith("GIT_")}
+             if k not in ("GBRAIN_HOME", "BUN_INSTALL", "XDG_CONFIG_HOME", "DATABASE_URL", "GBRAIN_DATABASE_URL")
+             and not k.startswith("GIT_")}
         e.update(HOME=str(self.home), USERPROFILE=str(self.home), GIT_CONFIG_NOSYSTEM="1")
         e.update(env or {})
+        return cmd, e
+
+    def start(self, now, *extra):
+        cmd, e = self.command(now, *extra)
+        p = subprocess.Popen(cmd, env=e, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL, creationflags=NO_WINDOW)
+        self.procs.append(p)
+        return p
+
+    def run(self, now, *extra, env=None, remote=None):
+        cmd, e = self.command(now, *extra, env=env, remote=remote)
         p = subprocess.run(cmd, env=e, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                            timeout=300)
         out = p.stdout.decode("utf-8", "replace") + p.stderr.decode("utf-8", "replace")
@@ -363,6 +432,7 @@ class Update(Base):
                                             "gbrain apply-migrations --yes", "gbrain config set self_upgrade.mode off"])
         install = [c for c in w.calls("bun") if c["args"][:1] == ["install"]][0]
         self.assertEqual(Path(install["cwd"]).resolve(), w.repo.resolve())
+        self.assertEqual(install["owns_migrations"], "1")  # gbrain's postinstall leaves them to their own step
         # Children get no credential from the environment, and git never prompts.
         self.assertEqual({tuple(c["leaks"]) for c in w.calls()}, {()})
         self.assertEqual({c["prompt"] for c in w.calls()}, {"0"})
@@ -451,20 +521,78 @@ class Update(Base):
         self.assertStatus("updated")
         self.assertEqual(w.head(), w.sha("v0.3.0"))
 
-    def test_github_release_date_counts_when_older(self):
+    def test_a_github_release_date_never_shortens_the_wait(self):
+        # A tag force-pushed under a month-old release keeps the release's date: on a machine
+        # that has never seen the tag, that date would make yesterday's commit installable.
         w = self.w
         w.install("v0.1.0")
         (w.www / "releases").write_text(json.dumps([
-            {"tag_name": "v0.4.0", "published_at": day(0), "draft": False},
+            {"tag_name": "v0.4.0", "published_at": day(-30), "draft": False},
             {"tag_name": "v0.3.0", "published_at": day(-10), "draft": False},
             {"tag_name": "v0.2.0", "published_at": day(-20), "draft": True},
         ]))
         url = w.serve()
         w.run(day(0), "--releases-url", url + "/nothing-here")
-        self.assertStatus("waiting")  # API silent: first sight only
+        self.assertStatus("waiting")  # API silent: nothing changes
         w.run(day(0, 1), "--releases-url", url + "/releases")
+        res = self.assertStatus("waiting")
+        self.assertEqual(res["prochaine"], {"tag": "v0.4.0", "eligible_le": day(7)})
+        self.assertEqual(w.head(), w.sha("v0.1.0"))
+        self.assertEqual(w.state()["tags"]["v0.4.0"]["publie_le"], day(-30))  # kept, for information
+        w.run(day(7), "--releases-url", url + "/releases")
         self.assertStatus("updated")
-        self.assertEqual(w.head(), w.sha("v0.3.0"))
+        self.assertEqual(w.head(), w.sha("v0.4.0"))
+
+    def test_a_damaged_state_never_holds_updates_back(self):
+        w = self.w
+        w.install("v0.1.0")
+        (w.data / "update-state.json").write_text(json.dumps({
+            "tags": {"v0.4.0": {"sha": w.sha("v0.4.0"), "vu_le": "2036-01-01T00:00:00Z"},  # a clock once wrong
+                     "v0.3.0": {"sha": "not a commit", "vu_le": day(-30)},
+                     "v0.2.0": {"sha": w.sha("v0.2.0"), "vu_le": "yesterday"}},
+            "bloques": "nothing", "pause_jusqua": "2036-01-01T00:00:00Z", "echecs_consecutifs": -4}))
+        w.run(day(0))
+        res = self.assertStatus("waiting")
+        self.assertEqual(res["prochaine"], {"tag": "v0.4.0", "eligible_le": day(7)})
+        self.assertIsNone(res["pause_jusqua"])
+        self.assertEqual({t: e["vu_le"] for t, e in w.state()["tags"].items()},
+                         {"v0.2.0": day(0), "v0.3.0": day(0), "v0.4.0": day(0)})
+        w.run(day(7))
+        self.assertStatus("updated")
+        self.assertEqual(w.head(), w.sha("v0.4.0"))
+
+    def test_a_git_failure_never_blocks_a_release(self):
+        w = self.w
+        w.install("v0.1.0")
+        w.run(day(0))
+        git = w.root / ("git" + EXE)
+        put_program(git, program(FAKE_GIT, REAL=shutil.which("git"), CTL=str(w.ctl)))
+        w.control("git.json", {"show_fails": True})
+        w.run(day(8), "--git", str(git))
+        res = self.assertStatus("postponed", "git_failed")
+        self.assertEqual(res["bloques"], {})
+        self.assertEqual(w.head(), w.sha("v0.1.0"))
+        w.control("git.json", {})
+        w.run(day(9), "--git", str(git))
+        self.assertStatus("updated")
+        self.assertEqual(w.head(), w.sha("v0.4.0"))
+
+    def test_a_database_the_snapshot_does_not_cover_postpones(self):
+        w = self.w
+        w.install("v0.1.0")
+        w.run(day(0))
+        url = "postgres://me:canari-db@db.example/brain"
+        (w.data / ".env").write_text("# gbrain reads this file by itself\nexport DATABASE_URL='%s'\n" % url)
+        w.run(day(8))
+        self.assertStatus("postponed", "db_unsupported")
+        (w.data / ".env").write_text("DATABASE_URL=\n")
+        w.run(day(8, 1), env={"GBRAIN_DATABASE_URL": url})
+        self.assertStatus("postponed", "db_unsupported")
+        self.assertEqual(w.head(), w.sha("v0.1.0"))
+        self.assertNotIn("canari", w.logged() + json.dumps(w.result()) + json.dumps(w.state()))
+        w.run(day(8, 2), env={"DATABASE_URL": url})  # someone else's database: gbrain never sees it
+        self.assertStatus("updated")
+        self.assertEqual({tuple(c["leaks"]) for c in w.calls()}, {()})
 
     def test_a_check_failing_before_and_after_is_not_a_failure(self):
         w = self.w
@@ -536,29 +664,30 @@ class Update(Base):
         w = self.w
         w.install("v0.1.0")
         w.run(day(0))
-        files = {p: p.read_bytes() for p in (w.data / "update-state.json", w.data / "last-update.json", w.log)}
+        files = {p: p.read_bytes() for p in (w.data / "update-state.json", w.data / "last-update.json", w.log,
+                                             w.data / "update.lock")}
         out = w.run(day(8), "--a-blanc")
         self.assertIn("décision : installer", out)
         self.assertIn("[v0.4.0]", out)
         self.assertEqual(w.head(), w.sha("v0.1.0"))
         self.assertEqual({p: p.read_bytes() for p in files}, files)
         self.assertEqual(w.switch_calls(), [])
-        self.assertFalse((w.data / "update.lock").exists())
 
     def test_a_second_instance_does_nothing(self):
         w = self.w
         w.install("v0.1.0")
-        (w.data / "update.lock").write_text("%d %d\n" % (os.getpid(), int(time.time())))
-        w.run(day(0))
+        lock = gu.Lock(w.data / "update.lock")
+        self.assertTrue(lock.acquire())
+        try:
+            w.run(day(0))
+        finally:
+            lock.release()
         self.assertIn("déjà en cours", w.logged())
         self.assertFalse((w.data / "last-update.json").exists())
-        gone = subprocess.Popen([sys.executable, "-c", "pass"])
-        gone.wait()
-        (w.data / "update.lock").write_text("%d %d\n" % (gone.pid, int(time.time())))
+        # What a killed run leaves behind is the file, never the lock.
+        (w.data / "update.lock").write_text("99999999 0\n")
         w.run(day(0))
         self.assertStatus("waiting")
-        self.assertFalse((w.data / "update.lock").exists())
-
 
     def test_three_failures_pause_seven_days_then_resume(self):
         w = self.w
@@ -587,20 +716,38 @@ class Update(Base):
 class Failures(Base):
     bun = {"0.4.0": (">=9.9.0", "9.9.1")}
 
-    def test_failed_update_restores_code_bun_base_and_config(self):
+    def before(self):
         w = self.w
-        w.install("v0.1.0", branch="work")
-        w.control("doctor.json", {"0.4.0": {"rc": 1, "fails": ["schema"]}})
-        w.run(day(0))
-        before = {"head": w.head(), "bun": (w.bin / ("bun" + EXE)).read_bytes(), "db": tree(w.db),
-                  "config": (w.data / "config.json").read_bytes()}
-        w.run(day(8), "--bun-base-url", w.publish_bun("9.9.1"))
-        res = self.assertStatus("rolled_back", "step_failed")
+        return {"head": w.head(), "bun": (w.bin / ("bun" + EXE)).read_bytes(), "db": tree(w.db),
+                "config": (w.data / "config.json").read_bytes(), "ledger": tree(w.data / "migrations"),
+                "preferences": (w.data / "preferences.json").exists()}
+
+    def assertRestored(self, before):
+        w = self.w
         self.assertEqual(w.head(), before["head"])
-        self.assertEqual(w.git("symbolic-ref", "--short", "HEAD", cwd=w.repo), "work")
         self.assertEqual((w.bin / ("bun" + EXE)).read_bytes(), before["bun"])
         self.assertEqual(tree(w.db), before["db"])
         self.assertEqual((w.data / "config.json").read_bytes(), before["config"])
+        # The ledger says which migrations ran: left saying "0.4.0 done" over a base put back
+        # to 0.1.0, it would make a later version skip them.
+        self.assertEqual(tree(w.data / "migrations"), before["ledger"])
+        self.assertEqual((w.data / "preferences.json").exists(), before["preferences"])
+        self.assertFalse((w.data / "update-journal.json").exists())
+
+    def test_failed_update_restores_code_bun_base_and_config(self):
+        w = self.w
+        w.install("v0.1.0", branch="work")
+        (w.data / "migrations").mkdir()
+        (w.data / "migrations" / "completed.jsonl").write_text('{"version": "0.1.0", "status": "complete"}\n')
+        w.control("doctor.json", {"0.4.0": {"rc": 1, "fails": ["schema"]}})
+        w.run(day(0))
+        before = self.before()
+        w.run(day(8), "--bun-base-url", w.publish_bun("9.9.1"))
+        res = self.assertStatus("rolled_back", "step_failed")
+        self.assertRestored(before)
+        self.assertEqual(w.git("symbolic-ref", "--short", "HEAD", cwd=w.repo), "work")
+        # The rollback's own bun install never ran migrations on the base it had put back.
+        self.assertEqual({c["owns_migrations"] for c in w.calls("bun") if c["args"][:1] == ["install"]}, {"1"})
         self.assertEqual(res["bloques"]["v0.4.0"]["cause"], "échec : contrôle de santé")
         self.assertEqual(res["echecs_consecutifs"], 1)
         self.assertIn({"niveau": "rouge", "code": "rollback", "tag": "v0.4.0"}, res["alertes"])
@@ -614,6 +761,80 @@ class Failures(Base):
         self.assertStatus("updated")
         self.assertEqual(w.head(), w.sha("v0.3.0"))
         self.assertEqual(list(w.data.glob("brain.pglite.echec-*")), [])
+
+    def test_a_switch_cut_short_is_rolled_back_by_the_next_run(self):
+        w = self.w
+        w.install("v0.1.0")
+        w.run(day(0))
+        before = self.before()
+        w.control("hang.json", {"0.4.0": True})
+        p = w.start(day(8), "--bun-base-url", w.publish_bun("9.9.1"))
+        hung = w.ctl / "hung.pid"
+        for _ in range(1200):
+            if hung.exists() and hung.read_text():
+                break
+            time.sleep(0.1)
+        pid = int(hung.read_text())
+        kill(p)  # killed in the middle of the migrations: power cut, a task's time limit
+        if not WINDOWS:  # the fake gbrain runs in a session of its own
+            os.kill(pid, 9)
+        for _ in range(100):
+            if not pid_alive(pid):
+                break
+            time.sleep(0.1)
+        self.assertTrue((w.data / "update-journal.json").exists())
+        self.assertEqual(w.head(), w.sha("v0.4.0"))
+        w.control("hang.json", {})
+
+        w.run(day(8, 1))
+        res = self.assertStatus("rolled_back", "interrupted")
+        self.assertRestored(before)
+        self.assertEqual(res["bloques"]["v0.4.0"]["cause"], "échec : mise à jour interrompue")
+        self.assertEqual(len(list(w.data.glob("brain.pglite.echec-v0.4.0-*"))), 1)
+        w.run(day(9))
+        self.assertStatus("updated")
+        self.assertEqual(w.head(), w.sha("v0.3.0"))
+
+    def test_a_switch_cut_short_before_the_code_moved_keeps_the_base(self):
+        # Killed while Bun was being replaced: the base was never migrated, and what was
+        # written to gbrain since must stay.
+        w = self.w
+        w.install("v0.1.0")
+        w.run(day(0))
+        before = self.before()
+        snap = w.data / "rollback" / "20261009-040000"
+        (snap / "state").mkdir(parents=True)
+        shutil.copy2(str(w.data / "config.json"), str(snap / "state" / "config.json"))
+        shutil.copy2(str(w.bin / ("bun" + EXE)), str(snap / ("bun" + EXE)))
+        w.put_bun(w.bin / ("bun" + EXE), "9.9.1")
+        (w.db / "written-since").write_text("a page saved the next morning")
+        (w.data / "update-journal.json").write_text(json.dumps({
+            "snap": snap.name, "head": w.head(), "branch": "", "tag": "v0.4.0", "from": "0.1.0", "le": day(8),
+            "before": {"rc": 0, "fails": [], "sources": ["default", "vault"]}}))
+        w.run(day(12))  # the computer stayed off for days: the snapshot is not purged first
+        self.assertStatus("rolled_back", "interrupted")
+        self.assertEqual((w.bin / ("bun" + EXE)).read_bytes(), before["bun"])
+        self.assertEqual((w.db / "written-since").read_text(), "a page saved the next morning")
+        self.assertEqual(w.head(), before["head"])
+        self.assertFalse((w.data / "update-journal.json").exists())
+
+    def test_an_incomplete_rollback_stays_red_until_gbrain_starts(self):
+        w = self.w
+        w.install("v0.1.0")
+        w.run(day(0))
+        w.control("bun.json", {"install_rc": 1})
+        w.run(day(8), "--bun-base-url", w.publish_bun("9.9.1"))
+        res = self.assertStatus("broken", "broken")
+        self.assertIn("bun install", res["cause"])
+        w.control("gbrain.json", {"version_rc": 1})
+        w.run(day(9))
+        self.assertStatus("broken", "broken")
+        self.assertIn({"niveau": "rouge", "code": "broken", "tag": "v0.4.0"}, w.result()["alertes"])
+        w.control("gbrain.json", {})
+        w.control("bun.json", {})
+        w.run(day(10))
+        self.assertStatus("updated")
+        self.assertEqual(w.head(), w.sha("v0.3.0"))
 
 
 class Bun(Base):
@@ -674,10 +895,10 @@ class Helpers(unittest.TestCase):
         self.assertLess(time.monotonic() - started, 60)
         grandchild = int(pidfile.read_text())
         for _ in range(100):
-            if not gu.pid_alive(grandchild):
+            if not pid_alive(grandchild):
                 break
             time.sleep(0.1)
-        self.assertFalse(gu.pid_alive(grandchild))
+        self.assertFalse(pid_alive(grandchild))
 
     def test_bun_can_be_replaced_while_it_runs(self):
         ctl = self.dir / "ctl"

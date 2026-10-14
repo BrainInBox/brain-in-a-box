@@ -82,12 +82,17 @@ def commit_vault(git, vault):
 
 
 def step_env(env):
-    """Neither the update nor the check needs a credential: no *KEY*, *TOKEN*, *SECRET* or
-    *PASSWORD* variable, and no git setting passed through the environment (a GIT_CONFIG_VALUE_n
-    can be an auth header, and dropping only its GIT_CONFIG_KEY_n half would break git)."""
+    """Neither the update nor the check needs a credential: no *KEY*, *TOKEN*, *SECRET*, *PASS*,
+    *CREDENTIAL* or *AUTH* variable, no URL with a password (proxies aside), no database URL
+    (gbrain would migrate it instead of the base it snapshots), and no git setting passed
+    through the environment (a GIT_CONFIG_VALUE_n can be an auth header, and dropping only its
+    GIT_CONFIG_KEY_n half would break git). Same rule as gbrain_update.py's child_env()."""
     return {k: v for k, v in env.items()
-            if not any(w in k.upper() for w in ("KEY", "TOKEN", "SECRET", "PASSWORD"))
-            and not re.match(r"GIT_(CONFIG|ASKPASS$|DIR$|WORK_TREE$|INDEX_FILE$)", k.upper())}
+            if not any(w in k.upper() for w in ("KEY", "TOKEN", "SECRET", "PASS", "CREDENTIAL", "AUTH"))
+            and k.upper() not in ("DATABASE_URL", "GBRAIN_DATABASE_URL")
+            and not (re.search(r"://[^/\s:@]+:[^/\s@]+@", v) and not k.upper().endswith("_PROXY"))
+            and not re.match(r"GIT_(CONFIG|ASKPASS$|DIR$|WORK_TREE$|INDEX_FILE$|COMMON_DIR$|OBJECT_DIRECTORY$"
+                             r"|ALTERNATE_OBJECT_DIRECTORIES$|NAMESPACE$)", k.upper())}
 
 
 def step(name, script, args, timeout, env):

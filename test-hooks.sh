@@ -250,7 +250,12 @@ checked 37; uc
 started && ok "last check 37 h ago: catch-up started" || no "no catch-up after 37 h"
 rm -f "$UM"; checked -48; uc
 started && ok "a last check dated in the future does not silence it" || no "a future date silenced the catch-up"
-rm -f "$UM"; rm -rf "$UH/DEV"; checked 37; uc; sleep 0.5
+# A gbrain-selfupdate.sh you changed is kept by the installer and runs at night: never a second updater on the clone.
+rm -f "$UM"; printf '#!/usr/bin/env zsh\ngit -C ~/DEV/gbrain pull --ff-only\n' > "$UB/gbrain-selfupdate.sh"; checked 37; uc; sleep 0.5
+[ ! -f "$UM" ] && ok "beside a gbrain-selfupdate.sh of your own: nothing started" || no "started a second updater beside the user's own"
+cp "$HB/gbrain-selfupdate.sh" "$UB/"; checked 37; uc
+started && ok "beside the kit's relay: catch-up started" || no "no catch-up beside the kit's relay"
+rm -f "$UM" "$UB/gbrain-selfupdate.sh"; rm -rf "$UH/DEV"; checked 37; uc; sleep 0.5
 [ ! -f "$UM" ] && ok "no gbrain clone: nothing started" || no "started without a gbrain clone"
 
 echo "════ 8) vault-skeleton — YAML frontmatters parse cleanly ════"
