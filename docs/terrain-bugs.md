@@ -20,6 +20,17 @@ Une entrée :
   suppression de notes · plusieurs nuits · montée de version · …
 ```
 
+## 2026-10-14 · macOS et Windows (VM) · Le terrain ne disait pas pourquoi Claude refusait
+- Symptôme : premier run avec le vrai jeton, `vrai-claude`, étape `relecture` : « saute:connexion »,
+  sur les deux OS, sans autre indice.
+- Cause : le harnais ne recopiait que la cause du journal du contrôle, pas le message de Claude Code
+  (déjà masqué par le contrôle). « connexion » couvre un login absent, un jeton refusé (401) ou un
+  bug du lanceur : impossible de trancher depuis les résultats.
+- Pourquoi les tests ne l'avaient pas vu : le faux claude des tests ne refusait jamais le jeton.
+- Correctif : la raison et `details.juge.detail` reprennent le message (PR fix/terrain-claude-detail).
+- Test de non-régression : `test_terrain.RealClaudeScenario.test_a_refused_token_says_what_claude_said`.
+- Catégorie à surveiller : diagnostic (un échec doit dire sa cause).
+
 ## 2026-10-14 · macOS (VM) · `gbq` échouait (code 127) dans un terminal ouvert avant l'installation
 - Symptôme : premier run du terrain, parcours `neuf`, scénario `installation`, étape `lanceurs` :
   « gbq query ne trouve pas Profile/lessons.md (code 127) ». L'installation elle-même avait réussi.
