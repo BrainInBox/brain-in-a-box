@@ -219,8 +219,8 @@ jobs:
           if (-not (Test-Path -LiteralPath "$dir\Profile")) { throw 'no vault in the accented folder' }
 
   # The Windows installer (NSIS, for the user alone, no administrator), built as release.yml
-  # builds it for the GitHub release, installed silently and started. A fork's pull request
-  # gets no artifact: a link to this repository's Actions must never hand out its build.
+  # builds it for the GitHub release, installed silently and started. The file people download
+  # comes from release.yml only: nothing is uploaded here.
   app-windows-bundle:
     needs: changes
     if: needs.changes.outputs.app == 'true'
@@ -263,12 +263,6 @@ jobs:
           $d = [IO.File]::ReadAllText($diag) | ConvertFrom-Json
           if ($d.os -notlike 'Windows 1*' -or @($d.checks).Count -lt 10) { throw "the installed app answered: $(Get-Content $diag -Raw)" }
           "installed app: $($d.os), $(@($d.checks).Count) checks"
-      - if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-        uses: actions/upload-artifact@v4
-        with:
-          name: brain-in-a-box-windows-preview
-          path: app/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*-setup.exe
-          retention-days: 7
 
   # A real install on a real Windows, the way a user runs it: no Python but the
   # Microsoft Store stub (what broke installs in the field), so Python comes from winget.
