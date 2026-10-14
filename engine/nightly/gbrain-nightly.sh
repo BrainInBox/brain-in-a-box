@@ -3,9 +3,10 @@
 # Invoked by launchd (com.<user>.gbrain-nightly) at 04:00. Absolute paths on
 # purpose: launchd starts without the user shell PATH.
 #
-# Steps: stale-lock recovery → self-update GBrain → commit personal vault →
-# sync personal (gbrain-sync-vault.py) → [if company vault present: git pull +
-# sync 'company' source] → dream cycle.
+# Steps: stale-lock recovery → self-update GBrain → night check of the vault
+# (controle.py) → commit + push personal vault → sync personal
+# (gbrain-sync-vault.py) → [if company vault present: git pull + sync 'company'
+# source] → dream cycle.
 
 export PATH="$HOME/.bun/bin:/opt/homebrew/bin:/usr/bin:/bin"
 GBRAIN="$HOME/.bun/bin/gbrain"
@@ -15,6 +16,7 @@ VAULT_CO="$HOME/Documents/BrainCo"
 GREPO="$HOME/DEV/gbrain"
 LOG="$HOME/.gbrain/nightly.log"
 SYNC_VAULT="${0:A:h}/gbrain-sync-vault.py"   # absolute: the steps below cd
+CONTROLE="${0:A:h}/controle.py"
 
 # Sweep an orphan .git/index.lock that silently breaks `git commit` (a crashed
 # git leaves it behind → the vault never commits → gbrain sync stalls on "No
@@ -80,6 +82,15 @@ fi
 # flag (see install.sh — without it every skeleton dir is outside gbrain's
 # entity-dir whitelist and wikilinks are silently dropped: empty graph).
 "$GBRAIN" config set link_resolution.global_basename true >> "$LOG" 2>&1
+
+# 0quater. Night check of the vault: commits the day's notes, fixes what is safe
+# (one commit per fix, each one undoable) and writes Profile/controle.md; the
+# SessionStart hook says it the next morning. It never pushes: step 1 does, and
+# runs whatever happened here, a crash included.
+if [ -f "$CONTROLE" ]; then
+    python3 -I "$CONTROLE" nuit --brain "$VAULT" >> "$LOG" 2>&1
+    echo "[controle] exit $?" >> "$LOG"
+fi
 
 # 1. Commit the personal vault first (sync is git-diff based → without a commit, edits are invisible).
 if cd "$VAULT" 2>/dev/null && [ -n "$(git status --porcelain 2>/dev/null)" ]; then
