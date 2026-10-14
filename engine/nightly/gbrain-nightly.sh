@@ -9,6 +9,9 @@
 # source] → dream cycle.
 
 export PATH="$HOME/.bun/bin:/opt/homebrew/bin:/usr/bin:/bin"
+# gbrain is third-party code, updated every week: never the Claude setup-token. The night check
+# and the reflection read it from ~/.brain-in-a-box/claude-oauth-token when they ask Claude.
+unset CLAUDE_CODE_OAUTH_TOKEN
 GBRAIN="$HOME/.bun/bin/gbrain"
 BUN="$HOME/.bun/bin/bun"
 VAULT="$HOME/Documents/Brain"

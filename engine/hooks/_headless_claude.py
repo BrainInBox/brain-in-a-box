@@ -8,8 +8,10 @@ says, all it can do is answer. Its stream is checked line by line against that
 other way than a claude.ai subscription, or whose settings send it to a gateway
 or a cloud provider, is never started, since an API key would be billed. A subscription reaches it two ways: the login `claude auth
 login` stores, or on a machine without a browser the token `claude setup-token`
-prints, in CLAUDE_CODE_OAUTH_TOKEN (the one credential the child is given;
-its value is never written anywhere). Same contract as the Mac app's repair
+prints, in CLAUDE_CODE_OAUTH_TOKEN or, for the scheduled jobs, in
+~/.brain-in-a-box/claude-oauth-token (mode 600), read only when Claude is asked:
+the one credential the child is given, never in the jobs' own environment, its
+value never written anywhere. Same contract as the Mac app's repair
 (app/src-tauri/src/repair.rs), which knows only the first.
 
     answer = run(prompt, schema, system_prompt, budget_usd=1.0, timeout=600)
@@ -25,6 +27,7 @@ import queue
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -52,6 +55,9 @@ LIMIT_RE = re.compile(r"hit your .*limit|session limit|usage limit", re.I)
 # token: this one, but also a gateway's ANTHROPIC_AUTH_TOKEN. So "oauth_token" is the
 # subscription only when the child was given this variable.
 TOKEN_VAR = "CLAUDE_CODE_OAUTH_TOKEN"
+# Where the scheduled jobs find it: an environment variable there would reach every step of the
+# night (gbrain included) and, set with `launchctl setenv`, every program of the session.
+TOKEN_FILE = (".brain-in-a-box", "claude-oauth-token")
 # What claude's settings files may add to its environment ("env") that sends the question
 # elsewhere or bills it, whatever `auth status` says: an API key, a gateway token or URL, a
 # cloud provider (CLAUDE_CODE_USE_*), or an apiKeyHelper.
@@ -152,10 +158,36 @@ def _login_name():
         return None
 
 
+def setup_token():
+    """The setup-token: CLAUDE_CODE_OAUTH_TOKEN when set, else the token file when its owner alone
+    can read it; None when neither. A token file that is not right is an auth error, said."""
+    if os.environ.get(TOKEN_VAR):
+        return os.environ[TOKEN_VAR]
+    path, shown = Path.home().joinpath(*TOKEN_FILE), "~/" + "/".join(TOKEN_FILE)
+    try:
+        st = os.lstat(str(path))
+    except OSError:
+        return None
+    if not stat.S_ISREG(st.st_mode):
+        raise HeadlessError("auth", f"{shown} is not a plain file", "logged_out")
+    if not WINDOWS and (st.st_mode & 0o077 or st.st_uid != os.getuid()):
+        raise HeadlessError("auth", f"{shown} can be read by others: chmod 600 {shown}", "logged_out")
+    try:
+        with open(str(path), encoding="utf-8") as f:
+            token = f.read(8192).strip()
+    except (OSError, ValueError):
+        token = ""
+    if not re.fullmatch(r"[\x21-\x7e]{20,4096}", token):
+        raise HeadlessError("auth", f"{shown} does not hold one token (the line `claude setup-token` prints)",
+                            "logged_out")
+    return token
+
+
 def child_env(tmp, path):
     """The child's whole environment: an allow-list, so no API key, other token or VOYAGE_API_KEY
-    travels; only a subscription's setup-token (TOKEN_VAR), which is how claude logs in where no
-    browser ever ran. USER is needed: without it Claude Code misses its login in the macOS keychain."""
+    travels; only a subscription's setup-token (TOKEN_VAR, or the token file), which is how claude
+    logs in where no browser ever ran. USER is needed: without it Claude Code misses its login in
+    the macOS keychain."""
     env = {"HOME": str(Path.home()), "PATH": path, "LANG": os.environ.get("LANG") or "en_US.UTF-8",
            "DISABLE_AUTOUPDATER": "1", "CLAUDE_CODE_DISABLE_ADVISOR_TOOL": "1"}
     user = _login_name()
@@ -167,8 +199,9 @@ def child_env(tmp, path):
     else:
         env["TMPDIR"] = tmp
     env.update({k: os.environ[k] for k in PROXY_VARS if os.environ.get(k)})
-    if os.environ.get(TOKEN_VAR):
-        env[TOKEN_VAR] = os.environ[TOKEN_VAR]
+    token = setup_token()
+    if token:
+        env[TOKEN_VAR] = token
     return env
 
 

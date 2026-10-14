@@ -142,6 +142,9 @@ def main():
     env["PATH"] = os.pathsep.join(extra + [env.get("PATH", "")])
     git_arg = ["--git", args.git] if args.git else []
     py_env = step_env(env)
+    # gbrain is third-party code, updated every week: never the Claude setup-token (the check and
+    # the reflection read it from its file when they ask Claude, see _headless_claude.py).
+    gb_env = {k: v for k, v in env.items() if k.upper() != "CLAUDE_CODE_OAUTH_TOKEN"}
 
     # Each step logs its exit code and never stops the night: the vault is committed whatever happens.
     # The update keeps to 45 min, but a rollback is never cut short (up to ~25 min more): killing
@@ -154,10 +157,10 @@ def main():
     commit_vault(args.git, vault)
 
     if engine == "gbrain" and gbrain.is_file():
-        rc = run([str(gbrain), "sync", "--source", "vault", "--no-pull", "--no-embed"], timeout=7200, env=env)
+        rc = run([str(gbrain), "sync", "--source", "vault", "--no-pull", "--no-embed"], timeout=7200, env=gb_env)
         log(f"[sync] exit {rc}")
         # Since gbrain 0.60.106 a paid run needs a cap; a keyword brain declines cleanly.
-        rc = run([str(gbrain), "embed", "--stale", "--max-usd", "0.10"], timeout=3600, env=env)
+        rc = run([str(gbrain), "embed", "--stale", "--max-usd", "0.10"], timeout=3600, env=gb_env)
         log(f"[embed] exit {rc}")
     elif engine == "gbrain":
         log("[gbrain] not found: keyword index only (re-run the installer to repair)")
