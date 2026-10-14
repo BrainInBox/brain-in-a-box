@@ -48,7 +48,7 @@ SOURCES = ("release", "build")
 # The marker the robot adds to the sources it hands the app on a branch: the app used them.
 MARQUEUR = ".terrain-ref"
 
-POLL = 2.0
+POLL = 1.0
 CAPTURE_ATTENTE = 120       # a capture every 2 min while a screen waits
 CLIC_RELANCE = 20           # a click that changed nothing is tried again after this
 CLIC_ESSAIS = 3
@@ -360,62 +360,91 @@ function norm(s) {
     .replace(/\s+/g, ' ').trim();
 }
 
-function noeud(el, depth, budget) {
-  budget.left -= 1;
-  var n = {r: str(prop(el, 'role')), s: str(prop(el, 'subrole')), n: str(prop(el, 'name')), v: str(prop(el, 'value')), k: []};
-  if (n.r === 'AXButton') {
-    n.d = str(prop(el, 'description'));
-    n.e = prop(el, 'enabled') !== false;
-  }
-  // A text has no children; a button's label is its name (its text only when it has none).
-  var leaf = n.r === 'AXStaticText' || (n.r === 'AXButton' && (n.n || n.d));
-  if (!leaf && depth < 40 && budget.left > 0) {
-    var kids = [];
-    try { kids = el.uiElements(); } catch (e) {}
-    for (var i = 0; i < kids.length && budget.left > 0; i++) n.k.push(noeud(kids[i], depth + 1, budget));
-  }
-  return n;
-}
-
-function proc(se, name) {
+// One Apple event for a property of all the children at once; per child when the batch fails
+// (an element without that property can fail the whole batch).
+function batch(spec, name, count) {
   try {
-    var ps = se.processes.whose({name: name});
-    if (ps.length > 0) return ps[0];
+    var v = spec[name]();
+    if (v && v.length === count) return v;
   } catch (e) {}
   return null;
 }
 
+// A text has no children; a button's label is its name (its text only when it has none).
+function feuille(n) {
+  return n.r === 'AXStaticText' || (n.r === 'AXButton' && (n.n || n.d));
+}
+
+function enfants(el, depth, budget) {
+  var out = [];
+  var spec = el.uiElements;
+  var count = 0;
+  try { count = spec.length; } catch (e) { return out; }
+  if (!count || depth > 40) return out;
+  var roles = batch(spec, 'role', count), subs = batch(spec, 'subrole', count);
+  var names = batch(spec, 'name', count), values = batch(spec, 'value', count);
+  for (var i = 0; i < count && budget.left > 0; i++) {
+    budget.left -= 1;
+    var k = spec[i];
+    var n = {r: str(roles ? roles[i] : prop(k, 'role')), s: str(subs ? subs[i] : prop(k, 'subrole')),
+             n: str(names ? names[i] : prop(k, 'name')), v: str(values ? values[i] : prop(k, 'value')), k: []};
+    if (n.r === 'AXButton') {
+      n.d = str(prop(k, 'description'));
+      n.e = prop(k, 'enabled') !== false;
+    }
+    if (!feuille(n)) n.k = enfants(k, depth + 1, budget);
+    out.push(n);
+  }
+  return out;
+}
+
 function fenetres(p, budget) {
   var out = [];
-  var ws = [];
-  try { ws = p.windows(); } catch (e) {}
-  for (var i = 0; i < ws.length; i++) out.push({titre: str(prop(ws[i], 'name')), arbre: noeud(ws[i], 0, {left: budget})});
+  var ws = p.windows;
+  var count = 0;
+  try { count = ws.length; } catch (e) {}
+  for (var i = 0; i < count; i++) {
+    var w = ws[i];
+    var arbre = {r: str(prop(w, 'role')), s: str(prop(w, 'subrole')), n: str(prop(w, 'name')), v: '', k: []};
+    arbre.k = enfants(w, 1, {left: budget});
+    out.push({titre: arbre.n, arbre: arbre});
+  }
   return out;
 }
 
 function lire(se, req) {
   var res = {app: null, dialogues: [], devant: ''};
-  var p = proc(se, req.processus);
-  if (p) res.app = fenetres(p, 900);
-  try { res.devant = se.processes.whose({frontmost: true})[0].name(); } catch (e) {}
+  var running = [];
+  try { running = se.processes.name(); } catch (e) {}
+  if (running.indexOf(req.processus) >= 0) res.app = fenetres(se.processes.byName(req.processus), 900);
+  try { res.devant = se.processes.whose({frontmost: true}).name()[0] || ''; } catch (e) {}
   var names = (req.dialogues || []).slice();
   // Whatever came to the front over the app is shown too: an unknown dialog gets a capture.
   if (res.devant && res.devant !== req.processus && (req.ignorer || []).indexOf(res.devant) < 0 &&
       names.indexOf(res.devant) < 0) names.push(res.devant);
   names.forEach(function (name) {
-    var d = proc(se, name);
-    if (d) fenetres(d, 200).forEach(function (f) { res.dialogues.push({processus: name, titre: f.titre, arbre: f.arbre}); });
+    if (running.indexOf(name) < 0) return;
+    fenetres(se.processes.byName(name), 200).forEach(function (f) {
+      res.dialogues.push({processus: name, titre: f.titre, arbre: f.arbre});
+    });
   });
   return res;
 }
 
 function chercher(el, label, depth) {
-  if (depth > 40) return null;
-  var kids = [];
-  try { kids = el.uiElements(); } catch (e) { return null; }
-  for (var i = 0; i < kids.length; i++) {
-    var k = kids[i];
-    if (str(prop(k, 'role')) === 'AXButton' && (norm(prop(k, 'name')) === label || norm(prop(k, 'description')) === label)) return k;
+  var spec = el.uiElements;
+  var count = 0;
+  try { count = spec.length; } catch (e) { return null; }
+  if (!count || depth > 40) return null;
+  var roles = batch(spec, 'role', count), names = batch(spec, 'name', count);
+  for (var i = 0; i < count; i++) {
+    var k = spec[i];
+    var role = str(roles ? roles[i] : prop(k, 'role'));
+    if (role === 'AXStaticText') continue;
+    if (role === 'AXButton') {
+      if (norm(names ? names[i] : prop(k, 'name')) === label || norm(prop(k, 'description')) === label) return k;
+      continue;
+    }
     var found = chercher(k, label, depth + 1);
     if (found) return found;
   }
@@ -423,12 +452,15 @@ function chercher(el, label, depth) {
 }
 
 function cliquer(se, req) {
-  var p = proc(se, req.processus);
-  if (!p) return {ok: false, pourquoi: 'processus'};
+  var running = [];
+  try { running = se.processes.name(); } catch (e) {}
+  if (running.indexOf(req.processus) < 0) return {ok: false, pourquoi: 'processus'};
+  var p = se.processes.byName(req.processus);
   var label = norm(req.libelle);
-  var ws = [];
-  try { ws = p.windows(); } catch (e) {}
-  for (var i = 0; i < ws.length; i++) {
+  var ws = p.windows;
+  var count = 0;
+  try { count = ws.length; } catch (e) {}
+  for (var i = 0; i < count; i++) {
     var b = chercher(ws[i], label, 0);
     if (!b) continue;
     if (prop(b, 'enabled') === false) return {ok: false, pourquoi: 'inactif'};
@@ -779,7 +811,7 @@ class Parcours:
         return {"captures": self.captures, "ecrans": self.ecrans,
                 "dialogues_systeme": [{k: v for k, v in d.items() if k != "clic_a"} for d in self.dialogues],
                 "bibo": {"titre": self.dernier.titre, "texte": self.dernier.texte},
-                "dernier_ecran": self.dernier.resume(), "lecture_fenetre_ms": mean}
+                "dernier_ecran": dict(self.dernier.resume(), lecture=self.dernier.lecture), "lecture_fenetre_ms": mean}
 
 
 # --------------------------------------------------------------------------- getting the app
