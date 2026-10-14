@@ -3,6 +3,9 @@
 version  the app's version, from app/src-tauri/tauri.conf.json (MAJOR.MINOR.PATCH)
 label    <version>-preview.<run number> when the run publishes, <version>-ci.<run number> otherwise
 publish  true or false, from the PUBLISH environment variable the workflow sets
+upload   true or false: whether the run leaves its installers as an artifact. Not for a pull
+         request from another repository (HEAD_REPO is not REPOSITORY, or is gone): its build
+         would sit in this repository's Actions tab under the app's own name
 matrix   the platforms to build: macOS always; Windows once the Tauri config Windows
          reads declares an NSIS installer, that is when bundle.targets (from
          tauri.windows.conf.json if it sets them, else from tauri.conf.json)
@@ -49,6 +52,8 @@ def main():
     if not run.isdigit():
         sys.exit(f"GITHUB_RUN_NUMBER {run!r} is not a number")
     publish = os.environ.get("PUBLISH") == "true"
+    head, repo = os.environ.get("HEAD_REPO", ""), os.environ.get("REPOSITORY", "")
+    upload = os.environ.get("EVENT_NAME") != "pull_request" or (head != "" and head == repo)
 
     include = [MACOS]
     if builds_windows(base, load("tauri.windows.conf.json")):
@@ -57,6 +62,7 @@ def main():
     print(f"version={version}")
     print(f"label={version}-{'preview' if publish else 'ci'}.{run}")
     print(f"publish={'true' if publish else 'false'}")
+    print(f"upload={'true' if upload else 'false'}")
     print("matrix=" + json.dumps({"include": include}, separators=(",", ":")))
 
 

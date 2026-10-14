@@ -3,13 +3,19 @@ name: app-release
 # The app as people download it: an unsigned preview on GitHub Releases.
 #
 # - pull_request touching the app: builds it and leaves the installers as an artifact of the
-#   run. Nothing is published; the token reads only and no secret is used (a fork's pull
-#   request included).
-# - push to master touching the app, or a run by hand on master: builds, then a job of its
-#   own, the only one allowed to write, publishes a pre-release tagged
-#   app-v<version>-preview.<run number> (version from app/src-tauri/tauri.conf.json) with the
-#   installers and SHA256SUMS, and deletes the app previews beyond the 5 newest. A tag that
-#   already exists is never moved. A run by hand on another branch only builds.
+#   run. Nothing is published; the token reads only and no secret is used. A fork's pull
+#   request builds and checks the same way but leaves no installer behind: it would sit in
+#   this repository's Actions tab under the app's own name.
+# - push to master touching the app, or a run by hand on master: builds without any cache
+#   (the default branch's caches can be written by any of its jobs), then a job of its own,
+#   the only one allowed to write, attests the installers (gh attestation verify) and
+#   publishes a pre-release tagged app-v<version>-preview.<run number> (version from
+#   app/src-tauri/tauri.conf.json) with them and SHA256SUMS, and deletes the app previews
+#   beyond the 5 newest. A tag that already exists is never moved. A run by hand on another
+#   branch only builds.
+#
+# Actions are pinned to a commit (a tag can be moved), and engine/tests/test_release_workflow.py
+# holds all of the above, since the publishing part only ever runs after the merge.
 #
 # macOS: one universal DMG (Apple Silicon and Intel), ad-hoc signed: unsigned by Apple, macOS
 # offers "Open Anyway" for it, while an app with no signature at all reads as "damaged".
@@ -49,15 +55,19 @@ jobs:
       version: ${{ steps.plan.outputs.version }}
       label: ${{ steps.plan.outputs.label }}
       publish: ${{ steps.plan.outputs.publish }}
+      upload: ${{ steps.plan.outputs.upload }}
       matrix: ${{ steps.plan.outputs.matrix }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
 
       - id: plan
         env:
           PUBLISH: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/master' }}
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          REPOSITORY: ${{ github.repository }}
         run: |
           python3 -I .github/ci/app-release-plan.py | tee -a "$GITHUB_OUTPUT"
 
@@ -80,7 +90,7 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
 
@@ -93,9 +103,12 @@ jobs:
           fi
           rustc --version
 
+      # Caches speed up pull requests only. The build that publishes starts clean: whatever a
+      # job of master put in a cache (a cargo-tauri, a target/) would end up in the preview.
       - name: Tauri CLI, cached
         id: tauri-cli
-        uses: actions/cache@v4
+        if: needs.plan.outputs.publish != 'true'
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ${{ runner.os == 'Windows' && '~/.cargo/bin/cargo-tauri.exe' || '~/.cargo/bin/cargo-tauri' }}
           key: tauri-cli-${{ env.TAURI_CLI_VERSION }}-${{ runner.os }}-${{ runner.arch }}
@@ -105,7 +118,8 @@ jobs:
         run: cargo install tauri-cli --version "=$TAURI_CLI_VERSION" --locked
 
       - name: Cargo cache
-        uses: actions/cache@v4
+        if: needs.plan.outputs.publish != 'true'
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             ~/.cargo/registry/index
@@ -194,7 +208,8 @@ jobs:
             done
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: needs.plan.outputs.upload == 'true'
         with:
           name: app-${{ matrix.platform }}
           path: dist/
@@ -210,6 +225,8 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
+      id-token: write # the attestation's signing certificate (Sigstore)
+      attestations: write
     # One publication at a time: two runs never prune each other's release.
     concurrency:
       group: app-release-publish
@@ -222,7 +239,7 @@ jobs:
       LABEL: ${{ needs.plan.outputs.label }}
     steps:
       # No checkout: this job runs no code of the repository, only gh on the files built above.
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: app-*
           path: dist
@@ -234,6 +251,14 @@ jobs:
           sums=$(sha256sum -- *)
           printf '%s\n' "$sums" > SHA256SUMS
           cat SHA256SUMS
+
+      # Signed proof, kept by GitHub outside the release, that each file was built by this
+      # workflow from this commit of master: a file swapped in the release afterwards, with
+      # its SHA256SUMS line, fails gh attestation verify.
+      - name: Attest the installers
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-checksums: dist/SHA256SUMS
 
       - name: Release notes
         run: |
@@ -255,7 +280,7 @@ jobs:
               echo "2. Si Windows affiche « Windows a protégé votre ordinateur », cliquez sur **Informations complémentaires**, puis **Exécuter quand même**."
             fi
             echo
-            echo "Vérifier un téléchargement : \`shasum -a 256 <fichier>\` (Mac) ou \`certutil -hashfile <fichier> SHA256\` (Windows) doit donner la ligne du fichier dans \`SHA256SUMS\`."
+            echo "Vérifier un téléchargement : \`shasum -a 256 <fichier>\` (Mac) ou \`certutil -hashfile <fichier> SHA256\` (Windows) doit donner la ligne du fichier dans \`SHA256SUMS\`. Vérifier qu'il a bien été construit ici, depuis \`master\` : \`gh attestation verify <fichier> -R $GH_REPO --signer-workflow $GH_REPO/.github/workflows/release.yml --source-ref refs/heads/master\`."
           } > "$RUNNER_TEMP/notes.md"
           cat "$RUNNER_TEMP/notes.md"
 

@@ -25,9 +25,12 @@ class Plan(unittest.TestCase):
     def conf(self, name, data):
         (self.root / "app" / "src-tauri" / name).write_text(json.dumps(data), encoding="utf-8")
 
-    def plan(self, publish="false", run="42"):
-        env = {k: v for k, v in os.environ.items() if k not in ("PUBLISH", "GITHUB_RUN_NUMBER")}
-        env.update(PUBLISH=publish, GITHUB_RUN_NUMBER=run)
+    def plan(self, publish="false", run="42", **github):
+        names = ("PUBLISH", "GITHUB_RUN_NUMBER", "EVENT_NAME", "HEAD_REPO", "REPOSITORY")
+        env = {k: v for k, v in os.environ.items() if k not in names}
+        env.update(PUBLISH=publish, GITHUB_RUN_NUMBER=run, EVENT_NAME="push", HEAD_REPO="",
+                   REPOSITORY="BrainInBox/brain-in-a-box")
+        env.update(github)
         p = subprocess.run([sys.executable, "-I", str(SCRIPT)], cwd=self.root, env=env,
                            capture_output=True, text=True, encoding="utf-8")
         if p.returncode:
@@ -93,6 +96,21 @@ class Plan(unittest.TestCase):
                 out, err = self.plan()
                 self.assertIsNone(out)
                 self.assertIn("MAJOR.MINOR.PATCH", err)
+
+    def test_a_pull_request_from_a_fork_leaves_no_installer_to_download(self):
+        # Its build would sit in this repository's Actions tab under the app's own name.
+        self.conf("tauri.conf.json", {"version": "0.1.0"})
+        cases = [
+            ({"EVENT_NAME": "push"}, "true"),
+            ({"EVENT_NAME": "workflow_dispatch"}, "true"),
+            ({"EVENT_NAME": "pull_request", "HEAD_REPO": "BrainInBox/brain-in-a-box"}, "true"),
+            ({"EVENT_NAME": "pull_request", "HEAD_REPO": "someone/brain-in-a-box"}, "false"),
+            ({"EVENT_NAME": "pull_request", "HEAD_REPO": ""}, "false"),  # fork deleted since
+        ]
+        for github, upload in cases:
+            with self.subTest(**github):
+                out, err = self.plan(**github)
+                self.assertEqual(out["upload"], upload, err)
 
     def test_a_run_number_that_is_not_a_number_is_refused(self):
         self.conf("tauri.conf.json", {"version": "0.1.0"})
