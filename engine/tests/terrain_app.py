@@ -607,12 +607,15 @@ function souris(se, p, w, b) {
   var x = pos[0] + size[0] / 2, y = pos[1] + size[1] / 2;
   if (wp && wsz && (x < wp[0] || y < wp[1] || x > wp[0] + wsz[0] || y > wp[1] + wsz[1])) return 'hors de sa fenetre';
   ObjC.import('ApplicationServices');
-  var hit = Ref(), pid = Ref();
-  if ($.AXUIElementCopyElementAtPosition($.AXUIElementCreateSystemWide(), x, y, hit) !== 0 ||
-      $.AXUIElementGetPid(hit[0], pid) !== 0) return 'rien sous le point du bouton';
-  if (pid[0] !== p.unixId()) {
+  var hit = Ref(), pid = Ref(), win = Ref(), wpid = Ref();
+  if ($.AXUIElementCopyElementAtPosition($.AXUIElementCreateSystemWide(), x, y, hit) !== 0) return 'rien sous le point du bouton';
+  var qui = $.AXUIElementGetPid(hit[0], pid) === 0 ? pid[0] : -1;
+  // A page's element may answer for WebKit's web content process: its window says whose it is.
+  if (qui !== p.unixId() && $.AXUIElementCopyAttributeValue(hit[0], $('AXWindow'), win) === 0 &&
+      $.AXUIElementGetPid(ObjC.castRefToObject(win[0]), wpid) === 0) qui = wpid[0];
+  if (qui !== p.unixId()) {
     var dessus = '?';
-    try { dessus = se.processes.whose({unixId: pid[0]}).name()[0] || '?'; } catch (e) {}
+    try { dessus = se.processes.whose({unixId: qui}).name()[0] || '?'; } catch (e) {}
     return 'un autre programme est sur le bouton (' + dessus + ')';
   }
   ObjC.import('CoreGraphics');
@@ -805,10 +808,11 @@ class PiloteMac(Pilote):
 
     def _refus(self, details, capturer):
         refus = lambda: next((d for d in self.lire().dialogues if d["processus"] == self.GATEKEEPER), None)
+        # The app's process may exist while macOS asks (a GitHub VM showed it): it must not get a window.
         dialogue = self.attendre(refus, 60)
-        if self.vivante():
-            raise ErreurPilote("macOS a laissé s'ouvrir la préversion non signée (pas de refus de Gatekeeper)")
         if not dialogue:
+            if self.lire().fenetre:
+                raise ErreurPilote("macOS a laissé s'ouvrir la préversion non signée (pas de refus de Gatekeeper)")
             return ["aucun dialogue de refus de Gatekeeper en 60 s : refus constaté par spctl seulement"]
         details["gatekeeper_dialogue"] = {"textes": dialogue["textes"][:6], "boutons": dialogue["boutons"]}
         if capturer:
@@ -819,6 +823,8 @@ class PiloteMac(Pilote):
         self.noter_clic("gatekeeper", bouton, self.cliquer(bouton, processus=self.GATEKEEPER))
         if not self.attendre(lambda: refus() is None, 30):
             raise ErreurPilote("le refus de Gatekeeper reste à l'écran après « %s »" % bouton)
+        if not self.attendre(lambda: not self.vivante(), 20):
+            raise ErreurPilote("l'app tourne encore après le refus de Gatekeeper")
         return []
 
     def outils(self, home):
@@ -1156,8 +1162,16 @@ class ProcessusShell:
 
 
 def smartscreen(fenetre):
-    """True for SmartScreen's window (« Windows protected your PC »), by its program or its title."""
-    return nom_programme(fenetre.get("exe")).lower() == "smartscreen" or "smartscreen" in str(fenetre.get("titre") or "").lower()
+    """True for SmartScreen's window (« Windows protected your PC »): its program, its title, or, as
+    a GitHub VM showed it (a frame of explorer's, without a title), a part of it named so."""
+    if nom_programme(fenetre.get("exe")).lower() == "smartscreen" or "smartscreen" in str(fenetre.get("titre") or "").lower():
+        return True
+    return any("smartscreen" in (str(n.get("n") or "") + " " + str(n.get("a") or "")).lower()
+               for _, n in _aplatir(fenetre.get("arbre") or {}))
+
+
+# Windows that may hold SmartScreen's question: UWP frames, which show other programs' content.
+CADRES_UWP = ("ApplicationFrameWindow",)
 
 
 def question(fenetre, qui):
@@ -1328,13 +1342,14 @@ class PiloteWindows(Pilote):
                                        for f in (self.dernier_arbre or {}).get("visibles") or [] if f.get("titre"))[:300]))
             # SmartScreen's window, in front or not; else the Attachment Manager's question, which the
             # shell shows from the process that opened the file (this one).
-            q, visibles = None, self._outil(["fenetres"]).get("fenetres") or []
-            ss = next((f for f in visibles if isinstance(f, dict) and smartscreen(f)), None)
-            if ss:
-                res = self._outil(["lire", ss.get("pid")])
-                fen = [f for f in res.get("fenetres") or [] if isinstance(f, dict) and f.get("h") == ss.get("h")]
-                q = question(fen[0], "SmartScreen") if fen else None
-            else:
+            q, res, visibles = None, {}, self._outil(["fenetres"]).get("fenetres") or []
+            for f in visibles:
+                if isinstance(f, dict) and (smartscreen(f) or f.get("classe") in CADRES_UWP):
+                    res = self._outil(["arbre", f.get("h")])
+                    if smartscreen(res):
+                        q = question(res, "SmartScreen")
+                        break
+            if not q:
                 res = self._outil(["lire", os.getpid()])
                 fen = [f for f in res.get("fenetres") or [] if isinstance(f, dict) and f.get("classe") == "#32770"]
                 q = question(fen[0], nom_programme(sys.executable)) if fen else None

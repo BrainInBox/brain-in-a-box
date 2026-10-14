@@ -16,6 +16,7 @@
 //   pilote-windows.exe capturer <file.png>         the whole screen
 //   pilote-windows.exe ranger                      the windows already open minimized (a user's desktop)
 //   pilote-windows.exe fenetres                    the visible top-level windows, each with its program
+//   pilote-windows.exe arbre <hwnd>                one window, its program and its tree
 //   pilote-windows.exe raccourci <file.lnk>        where a shortcut points
 //
 // Every answer is one line of JSON, ASCII only (\uXXXX escapes): the console's code page never
@@ -109,6 +110,7 @@ static class PiloteWindows
         if (op == "raccourci" && a.Length == 2) return Raccourci(a[1]);
         if (op == "ranger" && a.Length == 1) return Ranger();
         if (op == "fenetres" && a.Length == 1) return Fenetres();
+        if (op == "arbre" && a.Length == 2) return UneFenetre(Fenetre(a[1]));
         return Echec("usage : lire <pid> | cliquer <hwnd> <libelle> | cocher <hwnd> <libelle> 0|1 | fermer <hwnd> | "
                      + "devant <hwnd> | capturer <png> | raccourci <lnk> | ranger");
     }
@@ -411,7 +413,7 @@ static class PiloteWindows
         q.X = (int)pt.X;
         q.Y = (int)pt.Y;
         IntPtr dessous = WindowFromPoint(q);
-        if (dessous == IntPtr.Zero || GetAncestor(dessous, 2) != h)   // GA_ROOT
+        if (dessous == IntPtr.Zero || (GetAncestor(dessous, 2) != h && !Dessous(pt, e)))   // GA_ROOT
             return "une autre fenetre est sur le bouton (" + Classe(GetAncestor(dessous, 2)) + ")";
         SetCursorPos(q.X, q.Y);
         Thread.Sleep(80);
@@ -419,6 +421,25 @@ static class PiloteWindows
         Thread.Sleep(60);
         mouse_event(0x0004, 0, 0, 0, UIntPtr.Zero);   // left up
         return null;
+    }
+
+    // The element under the point is the button or inside it: a window of another program hosts
+    // the content (SmartScreen's question, in a frame of explorer's), yet nothing covers the button.
+    static bool Dessous(System.Windows.Point pt, AutomationElement b)
+    {
+        try
+        {
+            AutomationElement x = AutomationElement.FromPoint(pt);
+            for (int i = 0; x != null && i < 50; i++)
+            {
+                if (Automation.Compare(x, b)) return true;
+                x = TreeWalker.RawViewWalker.GetParent(x);
+            }
+        }
+        catch (ElementNotAvailableException)
+        {
+        }
+        return false;
     }
 
     static Dictionary<string, object> Cocher(IntPtr h, string libelle, bool voulu)
@@ -546,6 +567,18 @@ static class PiloteWindows
         }, IntPtr.Zero);
         Dictionary<string, object> res = Ok();
         res["fenetres"] = toutes;
+        return res;
+    }
+
+    static Dictionary<string, object> UneFenetre(IntPtr h)
+    {
+        uint pid;
+        GetWindowThreadProcessId(h, out pid);
+        Dictionary<string, object> res = Infos(h, pid, GetForegroundWindow());
+        res["ok"] = true;
+        res["exe"] = Image(pid);
+        string m;
+        res["arbre"] = Arbre(h, NOEUDS_APP, out m);
         return res;
     }
 

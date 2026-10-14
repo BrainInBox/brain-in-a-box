@@ -254,13 +254,14 @@ class FauxMac(ta.PiloteMac):
         return Open()
 
     def vivante(self):
-        return self.lance and self.ouvre
+        # The process exists while macOS asks, as on a GitHub VM.
+        return self.lance and (self.ouvre or self.refus_visible)
 
     def lire(self):
         self.h.now += 0.5
         d = [{"processus": "CoreServicesUIAgent", "boutons": ["?", "Done", "Move to Trash"],
               "textes": ["“Brain in a Box” Not Opened", "Apple could not verify “Brain in a Box” is free of malware."]}]
-        return ta.Ecran(dialogues=d if self.lance and self.refus_visible and not self.ouvre else [])
+        return ta.Ecran(fenetre=self.lance and self.ouvre, dialogues=d if self.lance and self.refus_visible and not self.ouvre else [])
 
     def cliquer(self, libelle, processus=None):
         self.clics.append((processus, libelle))
@@ -1114,13 +1115,26 @@ class WindowsApp(Base):
 
 
 def smartscreen(plus=False):
-    """SmartScreen's window as UI Automation shows it: a link « More info », then « Run anyway »."""
-    k = [uia("Text", "Windows protected your PC"),
-         uia("Text", "Microsoft Defender SmartScreen prevented an unrecognized app from starting.")]
-    k += [uia("Text", "App: Brain-in-a-Box_0.1.0_windows-x64-setup.exe"), uia("Button", "Run anyway")] if plus else \
-        [uia("Hyperlink", "More info")]
-    return {"h": 21, "pid": 90, "classe": "Windows.UI.Core.CoreWindow", "exe": r"C:\Windows\System32\smartscreen.exe",
-            "arbre": uia("Window", "Windows Defender SmartScreen", k + [uia("Button", "Don't run")])}
+    """SmartScreen's question as a GitHub VM showed it: a UWP frame of explorer's, without a title,
+    in front, holding a CoreWindow « Windows Defender SmartScreen »: a link « More info », then the
+    button « Run anyway »."""
+    lien = uia("Hyperlink", "More info", [uia("Text", "More info")], lt="link", a="moreBtn")
+    corps = [uia("Group", "", [uia("Text", "Windows protected your PC")], a="messageTitle"),
+             uia("Group", "", [uia("Text", "Microsoft Defender SmartScreen prevented an unrecognized app from starting. "
+                                           "Running this app might put your PC at risk.")], a="messageBody")]
+    corps += [uia("Text", "App: Brain-in-a-Box_0.1.0_windows-x64-setup.exe"), uia("Text", "Publisher: Unknown publisher")] \
+        if plus else [lien]
+    boutons = ([uia("Button", "Run anyway", a="runAnywayBtn")] if plus else []) + [uia("Button", "Don’t run", a="dontRunBtn")]
+    vue = uia("Pane", "about:blank", [uia("Pane", "", [uia("Group", "Windows protected your PC", corps, a="bodyWrapper")] + boutons)],
+              a="smartScreenWebView", c="WebView")
+    arbre = uia("Window", "", [
+        uia("Window", "", [uia("MenuBar", "System", [uia("MenuItem", "System")]), uia("Button", "Close ", a="Close")],
+            a="TitleBar", c="ApplicationFrameTitleBarWindow"),
+        uia("Window", "Windows Defender SmartScreen", [vue], c="Windows.UI.Core.CoreWindow"),
+        uia("Pane", "", c="ApplicationFrameInputSinkWindow"),
+        uia("TitleBar", "", [uia("Button", "Close", a="Close")], a="TitleBar")], c="ApplicationFrameWindow")
+    return {"ok": True, "h": 327790, "pid": 1772, "titre": "", "classe": "ApplicationFrameWindow", "devant": True,
+            "exe": r"C:\Windows\explorer.exe", "arbre": arbre}
 
 
 class WindowsShell(Base):
@@ -1136,13 +1150,16 @@ class WindowsShell(Base):
             self.h.now += 0.3
             shown = montre and not etat["fini"].is_set()
             if args[0] == "fenetres":
-                # Not in front (a GitHub VM showed it so), its program unreadable: found by its title.
-                return {"ok": True, "fenetres": [{"h": 3, "pid": 4, "titre": "Program Manager", "classe": "Progman", "exe": ""}] + (
-                    [{"h": 21, "pid": 90, "titre": "Windows Defender SmartScreen", "classe": "Windows.UI.Core.CoreWindow",
-                      "exe": "", "devant": False}] if shown else [])}
+                # explorer's windows, the UWP frame among them: neither its title nor its program says SmartScreen.
+                return {"ok": True, "fenetres": ([{k: v for k, v in smartscreen().items() if k != "arbre"}] if shown else []) + [
+                    {"h": 196740, "pid": 1772, "titre": "", "classe": "Shell_TrayWnd", "exe": r"C:\Windows\explorer.exe"},
+                    {"h": 3, "pid": 1772, "titre": "Program Manager", "classe": "Progman", "exe": r"C:\Windows\explorer.exe"}]}
+            if args[0] == "arbre":
+                self.assertEqual(args[1], "327790")
+                return smartscreen(etat["plus"])
             if args[0] == "lire":
-                self.assertEqual(args[1], "90" if shown else str(os.getpid()))
-                return {"ok": True, "fenetres": [smartscreen(etat["plus"])] if shown else [], "devant": None}
+                self.assertEqual(args[1], str(os.getpid()))
+                return {"ok": True, "fenetres": [], "devant": None}
             if args[0] == "cliquer":
                 if args[2] == "More info":
                     etat["plus"] = True
@@ -1168,7 +1185,9 @@ class WindowsShell(Base):
         self.assertEqual([c[2] for c in calls if c[0] == "cliquer"], ["More info", "Run anyway"])
         self.assertEqual(shots, ["smartscreen", "smartscreen"])
         self.assertEqual([c["comment"] for c in p.clics_installation], [ta.CLIC_SOURIS] * 2)
-        self.assertEqual(details["avant_installeur"][1]["boutons"], ["Run anyway", "Don't run"])
+        self.assertEqual(details["avant_installeur"][1]["boutons"], ["Close", "Run anyway", "Don't run"])
+        self.assertEqual(details["avant_installeur"][0]["liens"], ["More info"])
+        self.assertIn("Windows protected your PC", details["avant_installeur"][0]["textes"])
 
     def test_no_smartscreen_is_said_never_hidden(self):
         p, out, notes, details, shots, calls = self.lancer(montre=False)
@@ -1257,7 +1276,8 @@ class WindowsEnvironment(unittest.TestCase):
         with open(ta.__file__, encoding="utf-8") as f:
             py = f.read()
         asked = set(re.findall(r'_outil\(\[\s*"([a-z]+)"', py)) | {"cocher", "cliquer"}
-        self.assertEqual(asked, {"lire", "cliquer", "cocher", "fermer", "devant", "capturer", "raccourci", "ranger", "fenetres"})
+        self.assertEqual(asked, {"lire", "cliquer", "cocher", "fermer", "devant", "capturer", "raccourci", "ranger", "fenetres",
+                                 "arbre"})
         for op in asked:
             self.assertIn('op == "%s"' % op, src.decode("ascii"))
 
