@@ -16,6 +16,8 @@ name: terrain
 # fixed identifiers only, never a reason, a note or a log.
 
 on:
+  push:  # TEMPORARY: try the terrain on this branch before merge (removed before merging)
+    branches: [feat/terrain]
   schedule:
     # 01:17 UTC: far from 04:00 runner time, when the BrainNightly an install registers would run.
     - cron: "17 1 * * *"
