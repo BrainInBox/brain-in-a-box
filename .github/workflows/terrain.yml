@@ -1,7 +1,7 @@
 name: terrain
 
 # The kit as a user gets it, every night, on GitHub VMs nobody keeps (macOS and Windows):
-# a fresh install with its real nightly, an upgrade from v0.2.0, seven nights of the night
+# a fresh install with its real nightly, an upgrade (Windows from v0.2.0, macOS from #27), seven nights of the night
 # check in time travel, and the real Claude on a synthetic corpus (engine/tests/terrain.py).
 # Each job leaves a table in its summary and a JSON artifact; the scheduled run keeps one
 # issue labelled "terrain" up to date, read by the repair agent (docs/terrain-agent.md).
@@ -107,22 +107,27 @@ jobs:
         timeout-minutes: 45
         run: python3 -I engine/tests/terrain.py installation --parcours "$PARCOURS" --vm --json "$TERRAIN_JSON"
 
-      # --- upgrade: v0.2.0 first, then the tested version over it
-      - name: v0.2.0 install, as it was (gbrain at the tested pin, a fake ZeroEntropy key it insists on)
+      # --- upgrade: the previous version first, then the tested version over it
+      # macOS starts from #27 (ca8382a), not v0.2.0: v0.2.0's installer inits gbrain with ZeroEntropy,
+      # which gbrain retired on 2026-09-24 (v0.56.2.0), so no Mac installs v0.2.0 any more
+      # (docs/terrain-bugs.md). #27 is the first version a Mac still installs.
+      - name: "Previous version install, as it was (macOS: #27, gbrain at the tested pin)"
         id: v020
         if: matrix.parcours == 'montee'
         timeout-minutes: 30
         run: |
           git clone --quiet "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" "$HOME/brain-in-a-box"
           cd "$HOME/brain-in-a-box" || exit 1
-          git -c advice.detachedHead=false checkout -q v0.2.0
-          # v0.2.0 cloned gbrain's master of its week: the release the tested version pins stands for it.
+          git -c advice.detachedHead=false checkout -q ca8382a
+          # The old installer cloned gbrain's master of its week: the release the tested version pins stands for it.
           pin=$(python3 -I -c 'import json, re, sys; s = json.load(open(sys.argv[1]))["sha"]; assert re.fullmatch("[0-9a-f]{40}", s); print(s)' "$GITHUB_WORKSPACE/engine/gbrain-pin.json")
           mkdir -p "$HOME/DEV/gbrain"
           git -C "$HOME/DEV/gbrain" init -q
           git -C "$HOME/DEV/gbrain" fetch -q --depth 1 https://github.com/garrytan/gbrain.git "$pin"
           git -C "$HOME/DEV/gbrain" -c advice.detachedHead=false checkout -q FETCH_HEAD
-          printf 'ze_terrain_factice\n' | ./install.sh
+          # A user's terminal has Bun on its PATH by then (gbrain is a `#!/usr/bin/env bun` script).
+          export PATH="$HOME/.bun/bin:$PATH"
+          ./install.sh < /dev/null
 
       - name: v0.2.0 installer outcome, in the results
         if: ${{ !cancelled() && matrix.parcours == 'montee' }}
@@ -221,6 +226,17 @@ jobs:
       - name: The real nightly stays out of the way (tasks disabled)
         if: ${{ !cancelled() && matrix.parcours == 'neuf' }}
         run: Get-ScheduledTask -TaskName 'Brain*' -ErrorAction SilentlyContinue | Disable-ScheduledTask | Out-Null
+
+      # Each step re-reads the Machine PATH, which poste-neuf.ps1 emptied of the runner's Python:
+      # the harness gets it back through GITHUB_PATH (the kit itself runs on winget's Python).
+      - name: Python for the harness (the runner's, not the one the install set up)
+        if: ${{ !cancelled() && matrix.parcours == 'neuf' }}
+        run: |
+          $tc = Get-ChildItem "$env:RUNNER_TOOL_CACHE\Python\*\x64\python.exe" -ErrorAction SilentlyContinue |
+            Sort-Object { [version]($_.Directory.Parent.Name -replace '[^0-9.].*$', '') } | Select-Object -Last 1
+          if (-not $tc) { throw 'no Python in the runner tool cache for the harness' }
+          Split-Path $tc.FullName | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          "harness Python: $($tc.FullName)"
 
       - name: Installer outcome, in the results
         if: ${{ !cancelled() && matrix.parcours == 'neuf' }}

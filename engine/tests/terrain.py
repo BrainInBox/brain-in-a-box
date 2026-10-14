@@ -1027,8 +1027,8 @@ def montee(t, opts):
     t.check(USER_CLAUDE in text, "les consignes de l'utilisateur dans CLAUDE.md sont perdues")
     t.check(text.count(KIT_MARK) == 1, "le repère du kit est %d fois dans CLAUDE.md" % text.count(KIT_MARK))
 
-    # A v0.2.0 Mac install has a ZeroEntropy key, a fake one here: its search by meaning cannot answer.
-    check_install(t, opts, kept={"session-logger.py"}, fresh=False, query=WINDOWS)
+    # macOS upgrades from #27 (keyword search without a Voyage key), Windows from v0.2.0: both answer.
+    check_install(t, opts, kept={"session-logger.py"}, fresh=False)
     t.resume = "coffre octet pour octet, hook modifié %s, réglages gardés, tout le nouveau présent" % \
         t.details["hook_modifie"]
 
