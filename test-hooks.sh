@@ -199,112 +199,50 @@ HOME="$H" BRAIN_NO_NOTIFY=1 python3 "$LONE/daily-reflection.py" --slot evening 2
   && ok "without _redact.py: no unmasked transcript is ever sent" || no "ran without its redaction module"
 rm -rf "$M" "$LONE" "$H/work" "$H/.claude/projects" "$H/.gitconfig"   # leave the shared HOME as section 6 expects it
 
-echo "════ 6) gbrain-selfupdate (pull → install → migrate → smoke-test → rollback) ════"
-mkdir -p "$H/.gbrain" "$H/DEV" "$H/Documents/Brain/Profile" "$H/.bun/bin"
+echo "════ 6) gbrain-selfupdate.sh — relays to gbrain_update.py (the 7-day rule: engine/tests) ════"
+# The relay runs the gbrain_update.py next to it and hands it the log file.
+RL6="$H/relay"; mkdir -p "$RL6"
+cp "$HB/gbrain-selfupdate.sh" "$RL6/"
+cat > "$RL6/gbrain_update.py" <<'STUB'
+import sys
+open(sys.argv[0] + ".argv", "w").write("\n".join(sys.argv[1:]))
+STUB
+HOME="$H" "$RL6/gbrain-selfupdate.sh" "$H/su-test.log" 2>/dev/null
+[ "$(cat "$RL6/gbrain_update.py.argv" 2>/dev/null)" = "$(printf -- '--log\n%s' "$H/su-test.log")" ] \
+  && ok "relays to the gbrain_update.py beside it, log file passed on" || no "relay did not call gbrain_update.py with the log"
+HOME="$H" "$RL6/gbrain-selfupdate.sh" 2>/dev/null
+[ "$(cat "$RL6/gbrain_update.py.argv" 2>/dev/null)" = "$(printf -- '--log\n%s' "$H/.gbrain/nightly.log")" ] \
+  && ok "default log: ~/.gbrain/nightly.log" || no "wrong default log"
+# The real one behind the installed relay, in a HOME without a gbrain clone: postponed, nothing touched.
+# env -u: a BUN_INSTALL or GBRAIN_HOME from your shell would point at your real gbrain.
+RH="$H/relay-home"; mkdir -p "$RH"
+env -u GBRAIN_HOME -u BUN_INSTALL HOME="$RH" "$HB/gbrain-selfupdate.sh" "$RH/su.log" 2>/dev/null
+python3 -c "import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if (d['status'], d['cause_code']) == ('postponed', 'no_clone') else 1)" \
+  "$RH/.gbrain/last-update.json" 2>/dev/null && grep -q "^\[gbrain-update\] décision : reporté" "$RH/su.log" \
+  && ok "gbrain_update.py runs: no clone → postponed, said in the log" || no "gbrain_update.py did not run or did not report"
+[ ! -e "$RH/DEV" ] && [ ! -e "$RH/.bun" ] && ok "…and nothing was created outside ~/.gbrain" || no "created files outside ~/.gbrain"
 
-# Fake "gbrain" repo + its bare remote, so `git pull --ff-only` inside the
-# script behaves exactly like the real ~/DEV/gbrain clone.
-REMOTE="$H/DEV/gbrain-remote.git"
-GREPO="$H/DEV/gbrain"
-git init -q --bare "$REMOTE"
-git clone -q "$REMOTE" "$GREPO" 2>/dev/null
-git clone -q "$REMOTE" "$H/DEV/gbrain-src" 2>/dev/null
-(
-  cd "$H/DEV/gbrain-src" \
-    && printf '# Changelog\n\n- feat: first release\n' > CHANGELOG.md \
-    && git add -A && git -c user.email=t@t -c user.name=t commit -qm "chore: changelog" \
-    && git push -q origin HEAD
-)
-( cd "$GREPO" && git pull -q --ff-only )   # bring the clone up to the same commit as a real install would be
-
-# Stub bun/gbrain so the script never touches real binaries.
-# bun: `--version` reads a file (1.3.12 by default), `upgrade` bumps it to 1.4.2
-# unless told to fail.
-cat > "$H/.bun/bin/bun" <<STUBEOF
-#!/usr/bin/env bash
-case "\$1" in
-  --version) cat "$H/.gbrain/bun-version" 2>/dev/null || echo 1.3.12;;
-  upgrade)   [ -f "$H/.gbrain/bun-upgrade-fails" ] && exit 1; echo 1.4.2 > "$H/.gbrain/bun-version";;
-esac
-exit 0
-STUBEOF
-chmod +x "$H/.bun/bin/bun"
-echo 0 > "$H/.gbrain/doctor-exit"
-cat > "$H/.bun/bin/gbrain" <<STUBEOF
-#!/usr/bin/env bash
-case "\$1" in
-  doctor) exit "\$(cat "$H/.gbrain/doctor-exit" 2>/dev/null || echo 0)";;
-esac
-exit 0
-STUBEOF
-chmod +x "$H/.bun/bin/gbrain"
-
-SU_LOG="$H/.gbrain/su-test.log"
-MEM="$H/Documents/Brain/Profile/memory.md"
-
-HOME="$H" "$HB/gbrain-selfupdate.sh" "$SU_LOG" 2>/dev/null
-[ ! -f "$MEM" ] && ok "no-op when already up to date (no memory.md write)" || no "wrote memory.md with nothing new to report"
-
-( cd "$H/DEV/gbrain-src" && printf -- '- feat: new thing\n' >> CHANGELOG.md \
-    && git -c user.email=t@t -c user.name=t commit -aqm "feat: new thing" && git push -q origin HEAD )
-HOME="$H" "$HB/gbrain-selfupdate.sh" "$SU_LOG" 2>/dev/null
-grep -q "GBRAIN-UPDATE:BEGIN" "$MEM" 2>/dev/null && ok "memory.md gets a block on a real version change" || no "memory.md not updated on new version"
-grep -q "feat: new thing" "$MEM" 2>/dev/null && ok "changelog line surfaced in the block" || no "changelog not surfaced"
-python3 -c "import json,sys; d=json.load(open('$H/.gbrain/last-update.json')); sys.exit(0 if d['status']=='updated' else 1)" \
-  && ok "last-update.json status=updated" || no "wrong status in last-update.json"
-
-before_rb=$(cd "$GREPO" && git rev-parse --short HEAD)
-( cd "$H/DEV/gbrain-src" && printf -- '- feat: bad release\n' >> CHANGELOG.md \
-    && git -c user.email=t@t -c user.name=t commit -aqm "feat: bad release" && git push -q origin HEAD )
-echo 1 > "$H/.gbrain/doctor-exit"   # next "gbrain doctor" (the smoke test) fails
-HOME="$H" "$HB/gbrain-selfupdate.sh" "$SU_LOG" 2>/dev/null
-after_rb=$(cd "$GREPO" && git rev-parse --short HEAD)
-[ "$before_rb" = "$after_rb" ] && ok "auto-rollback: HEAD reverted after a failed smoke test" || no "did not roll back — HEAD still moved"
-python3 -c "import json,sys; d=json.load(open('$H/.gbrain/last-update.json')); sys.exit(0 if d['status']=='rolled_back' else 1)" \
-  && ok "last-update.json status=rolled_back" || no "wrong status after rollback"
-grep -q "rolled back" "$MEM" 2>/dev/null && ok "rollback surfaced in memory.md" || no "rollback not surfaced"
-echo 0 > "$H/.gbrain/doctor-exit"
-
-# gbrain starts requiring a newer Bun than the installed one (engines.bun).
-( cd "$H/DEV/gbrain-src" && printf '{"engines":{"bun":">=1.4.0"}}\n' > package.json \
-    && git add -A && git -c user.email=t@t -c user.name=t commit -qm "chore: require bun 1.4" && git push -q origin HEAD )
-HOME="$H" "$HB/gbrain-selfupdate.sh" "$SU_LOG" 2>/dev/null
-[ "$(cat "$H/.gbrain/bun-version" 2>/dev/null)" = "1.4.2" ] && grep -q "needs Bun >= 1.4.0" "$SU_LOG" \
-  && ok "Bun upgraded first when gbrain requires a newer one" || no "Bun not upgraded before installing gbrain"
-python3 -c "import json,sys; d=json.load(open('$H/.gbrain/last-update.json')); sys.exit(0 if d['status']=='updated' else 1)" \
-  && grep -q "Bun upgraded to 1.4.2" "$MEM" && [ ! -f "$H/.gbrain/bun.pre-upgrade" ] \
-  && ok "update kept, Bun upgrade surfaced in memory.md" || no "update with Bun upgrade not reported"
-
-# bun upgrade cannot reach the minimum: gbrain won't start → rollback with the real cause, old Bun restored.
-rm -f "$H/.gbrain/bun-version"; touch "$H/.gbrain/bun-upgrade-fails"; echo 1 > "$H/.gbrain/doctor-exit"
-( cd "$H/DEV/gbrain-src" && printf '{"engines":{"bun":">=1.9.0"}}\n' > package.json \
-    && git -c user.email=t@t -c user.name=t commit -aqm "chore: require bun 1.9" && git push -q origin HEAD )
-before_bun=$(cd "$GREPO" && git rev-parse --short HEAD)
-HOME="$H" "$HB/gbrain-selfupdate.sh" "$SU_LOG" 2>/dev/null
-[ "$(cd "$GREPO" && git rev-parse --short HEAD)" = "$before_bun" ] && grep -q "Bun restored" "$SU_LOG" \
-  && grep -q "needs Bun >= 1.9.0 and \`bun upgrade\` could not get there" "$MEM" \
-  && ok "Bun upgrade impossible: rolled back, Bun restored, cause in memory.md" || no "Bun shortfall not handled on rollback"
-rm -f "$H/.gbrain/bun-upgrade-fails"; echo 0 > "$H/.gbrain/doctor-exit"
-
-echo "════ 7) gbrain-update-check — SessionStart daily catch-up ════"
+echo "════ 7) gbrain-update-check — SessionStart daily catch-up, through the relay ════"
+mkdir -p "$H/.gbrain"
 rm -f "$H/.gbrain/last-selfupdate-check"
 MARKER="$H/.gbrain/selfupdate-ran.marker"
 rm -f "$MARKER"
-cat > "$HB/gbrain-selfupdate.sh" <<STUB
-#!/usr/bin/env bash
-echo ran >> "$MARKER"
+cp "$HB/gbrain_update.py" "$H/gbrain_update.py.real"
+cat > "$HB/gbrain_update.py" <<STUB
+open("$MARKER", "a").write("ran\n")
 STUB
-chmod +x "$HB/gbrain-selfupdate.sh"
 
 echo '{"session_id":"s1"}' | HOME="$H" python3 "$HB/gbrain-update-check.py" 2>/dev/null
 for i in 1 2 3 4 5 6 7 8 9 10; do [ -f "$MARKER" ] && break; sleep 0.2; done
-[ -f "$MARKER" ] && ok "dispatches self-update on the first session of the day" || no "did not dispatch on first session"
+[ -f "$MARKER" ] && ok "dispatches the update (hook → relay → gbrain_update.py) on the first session of the day" \
+  || no "did not dispatch on first session"
 [ "$(cat "$H/.gbrain/last-selfupdate-check" 2>/dev/null)" = "$DAY" ] && ok "stamps today's date" || no "stamp missing or wrong"
 
 rm -f "$MARKER"
 echo '{"session_id":"s2"}' | HOME="$H" python3 "$HB/gbrain-update-check.py" 2>/dev/null
 sleep 0.5
 [ ! -f "$MARKER" ] && ok "second session same day: rate-limited, no re-dispatch" || no "re-dispatched within the same day"
+mv "$H/gbrain_update.py.real" "$HB/gbrain_update.py"
 
 echo "════ 8) vault-skeleton — YAML frontmatters parse cleanly ════"
 # Catches unquoted {{PLACEHOLDER}} that breaks Claude Code / gstack skill loaders.
