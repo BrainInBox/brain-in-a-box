@@ -115,7 +115,7 @@ def ensure(evt, names):
             grp["hooks"].append(c)
 ensure("UserPromptSubmit", ["correction-detector.py"])
 ensure("Stop", ["session-logger.py","session-indexer.py","session-recap.py"])
-ensure("SessionStart", ["gbrain-update-check.py"])
+ensure("SessionStart", ["gbrain-update-check.py", "controle-sessionstart.py"])
 if json.dumps(d, sort_keys=True) == before:
     print("settings.json: hooks already registered")
     sys.exit(0)
@@ -338,10 +338,11 @@ for f in "$REPO"/engine/hooks/*.py; do
   place "$f" "$HOOKS/$(basename "$f")"
 done
 
-# ── 6. gbq + nightly ────────────────────────────────────────────────────────
-say "gbq + nightly"
+# ── 6. gbq, controle + nightly ──────────────────────────────────────────────
+say "gbq, controle + nightly"
 mkdir -p "$BIN"
 place "$REPO/engine/bin/gbq" "$BIN/gbq" "gbq → $BIN/gbq"
+place "$REPO/engine/bin/controle" "$BIN/controle" "controle → $BIN/controle"
 for s in gbrain-nightly gbrain-lint gbrain-selfupdate; do
   place "$REPO/engine/nightly/$s.sh" "$HOOKS/$s.sh"
 done

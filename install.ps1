@@ -13,6 +13,8 @@
   engine/search/gbq.py : gbrain, ou brain_search en repli. CLAUDE.md inchange.
   Une installation neuve de gbrain part de la version testee en CI (engine\gbrain-pin.json). Ensuite la
   tache de nuit le met a jour (gbrain_update.py : version publiee depuis au moins 7 jours, jamais plus bas).
+  La tache de nuit fait aussi le controle du cerveau (controle.py, un commit par correction, annulable) ;
+  controle.cmd et controle (Git Bash) le lancent a la demande, pour le skill /controle.
   Pre-requis : Windows 10 (1809+) ou 11. Le reste s'installe tout seul.
   Lance par `irm | iex`, le script telecharge le repo dans ~\.brain-in-a-box\src
   (BIAB_ARCHIVE = autre archive .zip, URL ou chemin local).
@@ -170,6 +172,10 @@ function To-CmdPath($p) {
     }
     return $p
 }
+
+# Lanceurs Git Bash : un chemin entre apostrophes, ' ecrit '\'' . Un profil nomme a$HOME, avec un
+# accent grave ou une accolade, ne lance rien et reste un seul mot.
+function ShQuote([string]$s) { return "'" + ($s -replace "'", "'\''") + "'" }
 
 # Quelqu'un devant une console peut repondre a une question. Lance par une appli, la CI
 # ou avec -NonInteractive, l'entree est redirigee : pas de question qui bloquerait.
@@ -384,9 +390,17 @@ Place-File "$BIN\gbq.cmd" $oem.GetBytes($gbq)
 # gbq (sans extension) pour Git Bash, ou tourne l'outil Bash de Claude Code : ~/.local/bin/gbq du CLAUDE.md.
 $fwd = { param($p) $p -replace "\\", "/" }
 $gbqSh = "#!/bin/sh`n# brain-in-a-box : gbq pour Git Bash, meme logique que gbq.cmd`n" +
-         "export BRAIN_DIR=`"`${BRAIN_DIR:-$(& $fwd $BrainDir)}`"`n" +
-         "exec `"$(& $fwd $Py)`" `"$(& $fwd "$BSDIR\gbq.py")`" `"`$@`"`n"
+         "[ -n `"`$BRAIN_DIR`" ] || BRAIN_DIR=$(ShQuote (& $fwd $BrainDir))`nexport BRAIN_DIR`n" +
+         "exec $(ShQuote (& $fwd $Py)) $(ShQuote (& $fwd "$BSDIR\gbq.py")) `"`$@`"`n"
 Place-File "$BIN\gbq" (New-Object Text.UTF8Encoding $false).GetBytes($gbqSh)
+# controle.cmd et controle (Git Bash) -> controle.py : le controle de nuit a la demande (skill /controle).
+$ctl = "@echo off`r`nsetlocal`r`nset `"BRAIN_DIR=$(To-CmdPath $BrainDir)`"`r`n" +
+       "`"$pyCmd`" -I `"$(To-CmdPath "$HOOKS\controle.py")`" %*`r`nexit /b %ERRORLEVEL%`r`n"
+Place-File "$BIN\controle.cmd" $oem.GetBytes($ctl)
+$ctlSh = "#!/bin/sh`n# brain-in-a-box : controle pour Git Bash, meme logique que controle.cmd`n" +
+         "[ -n `"`$BRAIN_DIR`" ] || BRAIN_DIR=$(ShQuote (& $fwd $BrainDir))`nexport BRAIN_DIR`n" +
+         "exec $(ShQuote (& $fwd $Py)) -I $(ShQuote (& $fwd "$HOOKS\controle.py")) `"`$@`"`n"
+Place-File "$BIN\controle" (New-Object Text.UTF8Encoding $false).GetBytes($ctlSh)
 $userPath = [Environment]::GetEnvironmentVariable("PATH","User")
 if ($userPath -notlike "*$BIN*") { [Environment]::SetEnvironmentVariable("PATH","$userPath;$BIN","User") }
 # Aussi pour ce processus : l'installeur Claude (etape 10) verifie le PATH qu'il herite et sinon
@@ -394,6 +408,7 @@ if ($userPath -notlike "*$BIN*") { [Environment]::SetEnvironmentVariable("PATH",
 if (($env:Path -split ";") -notcontains $BIN) { $env:Path = "$BIN;$env:Path" }
 [Environment]::SetEnvironmentVariable("BRAIN_DIR",$BrainDir,"User")
 Ok "gbq installe ($BIN\gbq.cmd + gbq pour Git Bash)"
+Ok "controle installe ($BIN\controle.cmd + controle pour Git Bash)"
 
 # 5. settings.json (merge non-destructif des hooks)
 Say "Hooks Claude (settings.json)"
@@ -440,7 +455,7 @@ def ensure(evt, names):
             grp["hooks"].append(entry(n))
 ensure("UserPromptSubmit", ["correction-detector.py"])
 ensure("Stop", ["session-logger.py", "session-indexer.py", "session-recap.py"])
-ensure("SessionStart", ["gbrain-update-check.py"])
+ensure("SessionStart", ["gbrain-update-check.py", "controle-sessionstart.py"])
 if json.dumps(d, sort_keys=True) == before:
     print("ok settings.json (unchanged)")
     sys.exit(0)
@@ -491,6 +506,9 @@ if (-not $Git) {
         if (-not (Test-Path -LiteralPath ".gitignore")) { ".obsidian/`n.DS_Store`n" | Set-Content .gitignore -Encoding ascii }
         Invoke-Native {
             & $Git init -q
+            # Git pour Windows reecrit les fins de ligne a chaque checkout (core.autocrlf=true) :
+            # annuler un controle passerait des notes LF en CRLF. Le vault garde ses octets.
+            & $Git config core.autocrlf false
             & $Git -c core.safecrlf=false add -A   # sans ca : un avertissement LF/CRLF par fichier
             & $Git -c user.email="brain@local" -c user.name="brain" commit -q --allow-empty -m "brain init"
         }
@@ -757,6 +775,7 @@ if ($Obsidian) {
 }
 Write-Host ""
 Write-Host "Memoire : gbq query `"...`", recherche $mem. Mise a jour de l'index chaque nuit, reflection 12h/23h si Claude est connecte." -ForegroundColor Cyan
+Write-Host "Controle de nuit : il corrige seul ce qui est sans risque (annulable), le reste est dans Profile\controle.md. Dans Claude : /controle." -ForegroundColor Cyan
 Write-Host "Journal d'installation : $LOG" -ForegroundColor Cyan
 Write-Host "Mise a jour : relance la meme commande d'installation." -ForegroundColor Cyan
 if ($BackedUp.Count) {

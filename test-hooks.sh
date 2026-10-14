@@ -36,8 +36,9 @@ PAYLOAD="{\"session_id\":\"$SID\",\"cwd\":\"/Users/builder/proj\",\"transcript_p
 echo "════ 1) correction-detector ════"
 verdict() {   # $1 prompt, $2 hook (default: installed one) → CORRECTION | CONFUSION | SILENT
   local out
+  # env -u: run from a claude -p (sdk-cli), the hook would rightly say nothing.
   out=$(printf '%s' "$1" | python3 -c 'import json,sys; print(json.dumps({"prompt": sys.stdin.read()}))' \
-        | HOME="$H" python3 "${2:-$HB/correction-detector.py}" 2>/dev/null)
+        | env -u CLAUDE_CODE_ENTRYPOINT HOME="$H" python3 "${2:-$HB/correction-detector.py}" 2>/dev/null)
   case "$out" in "") echo SILENT;; *"CONFUSION DETECTED"*) echo CONFUSION;; *"CORRECTION DETECTED"*) echo CORRECTION;; *) echo "?";; esac
 }
 expect_all() {   # $1 label, $2 expected verdict, then one prompt per argument
@@ -96,6 +97,8 @@ rm -f "$GT/_paste_guard.py"
 [ "$(verdict "no, actually the other way" "$GT/correction-detector.py")" = CORRECTION ] || bad="$bad | missing module"
 [ -z "$bad" ] && ok "relay guard broken or missing: corrections still fire" || no "guard failure swallowed corrections:$bad"
 rm -rf "$GT"
+out=$(printf '{"prompt": "no, actually do it the other way"}' | CLAUDE_CODE_ENTRYPOINT=sdk-cli HOME="$H" python3 "$HB/correction-detector.py")
+[ $? = 0 ] && [ -z "$out" ] && ok "headless run (claude -p, sdk-cli): silent, a correction included" || no "fired in a headless run: $out"
 
 echo "════ 2) session-logger ════"
 echo "$PAYLOAD" | HOME="$H" python3 "$HB/session-logger.py" 2>/dev/null
@@ -359,6 +362,33 @@ started && ok "beside the kit's relay: catch-up started" || no "no catch-up besi
 rm -f "$UM" "$UB/gbrain-selfupdate.sh"; rm -rf "$UH/DEV"; checked 37; uc; sleep 0.5
 [ ! -f "$UM" ] && ok "no gbrain clone: nothing started" || no "started without a gbrain clone"
 
+echo "════ 7bis) controle-sessionstart — the night check's line at session start ════"
+# The installed hook, in a HOME of its own holding only the night check's etat.json
+# (the cases, the red lines and the dead man's switches: engine/tests/test_controle.py).
+CH="$H/controle-hook"; CS="$CH/.brain-in-a-box/controle"; mkdir -p "$CS"
+etat(){  # etat <run id>: a night with 3 fixes, its report rewritten
+  printf '{"run": "%s", "mode": "nuit", "dernier_succes": "%s", "verdict": "vert", "corrections": 3, "a_voir": 0,
+"secrets_a_changer": 0, "rapport": "Profile/controle.md", "rapport_reecrit": true, "alertes": []}\n' \
+    "$1" "$(date +%Y-%m-%dT%H:%M:%S)" > "$CS/etat.json"
+}
+cs(){  # cs [source] [entrypoint]
+  echo "{\"session_id\":\"s1\",\"source\":\"${1:-startup}\"}" \
+    | env -u CLAUDE_CODE_ENTRYPOINT -u BRAIN_CONTROLE_DIR -u GBRAIN_HOME HOME="$CH" ${2:+CLAUDE_CODE_ENTRYPOINT=$2} \
+      python3 "$HB/controle-sessionstart.py"
+}
+etat 20261014-0407; out=$(cs); rc=$?
+[ "$rc" = 0 ] && printf '%s' "$out" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+h = d["hookSpecificOutput"]
+line = "\u00ab Contr\u00f4le de cette nuit : 3 corrections faites (annulables). D\u00e9tail : Profile/controle.md. \u00bb"
+sys.exit(0 if h["hookEventName"] == "SessionStart" and line in h["additionalContext"] and "systemMessage" not in d else 1)' \
+  && ok "the night's line, as SessionStart JSON (additionalContext, no systemMessage for green)" || no "wrong or no SessionStart JSON: $out"
+out=$(cs); [ -z "$out" ] && ok "said once: a second session says nothing" || no "said twice: $out"
+etat 20261015-0402
+[ -z "$(cs startup sdk-cli)" ] && [ -z "$(cs resume)" ] && [ -n "$(cs)" ] \
+  && ok "silent under claude -p (sdk-cli) and on resume; the line waits for the next real start" || no "spoke in a headless or resumed session"
+
 echo "════ 8) vault-skeleton — YAML frontmatters parse cleanly ════"
 # Catches unquoted {{PLACEHOLDER}} that breaks Claude Code / gstack skill loaders.
 # Uses ruby (preinstalled on macOS, no extra dep needed).
@@ -374,19 +404,21 @@ else
   printf "  \033[1;33m⚠\033[0m skipped (no ruby found) — install ruby to enable YAML validation\n"
 fi
 
-echo "════ 9) gbrain-nightly — waits for the network, retries the vault push ════"
+echo "════ 9) gbrain-nightly — night check, then commit; waits for the network, retries the vault push ════"
 # Runs the real nightly in its own throwaway HOME, with gbrain and the self-update
-# stubbed. python3 (the DNS probe) and sleep are shadowed through ~/.bun/bin, which
-# comes first on the nightly's PATH: a dead resolver is faked without waiting 5 min,
-# and no real DNS is needed.
-nightly_run() {   # $1 = probe exit code (0 = network up), $2 = vault remote ("" = a local bare repo)
+# stubbed. python3 (the DNS probe, and the night check) and sleep are shadowed
+# through ~/.bun/bin, which comes first on the nightly's PATH: a dead resolver is
+# faked without waiting 5 min, no real DNS is needed, and the check (controle.py,
+# tested in engine/tests) only records how it was called and exits with $3.
+nightly_run() {   # $1 = probe exit code (0 = network up), $2 = vault remote ("" = a local bare repo), $3 = check's exit code
   NH="$(mktemp -d -t biab-nightly)"
   mkdir -p "$NH/.bun/bin" "$NH/.gbrain" "$NH/nightly" "$NH/Documents/Brain"
   printf '#!/bin/sh\nexit 0\n' > "$NH/.bun/bin/gbrain"
   printf '#!/bin/sh\nexit 0\n' > "$NH/.bun/bin/sleep"
-  printf '#!/bin/sh\nexit %s\n' "$1" > "$NH/.bun/bin/python3"
+  printf '#!/bin/sh\ncase "$*" in *controle.py*) echo "$*" >> "$HOME/controle.calls"; exit %s;; esac\nexit %s\n' \
+    "${3:-0}" "$1" > "$NH/.bun/bin/python3"
   printf '#!/bin/sh\nexit 0\n' > "$NH/nightly/gbrain-selfupdate.sh"
-  cp "$REPO/engine/nightly/gbrain-nightly.sh" "$NH/nightly/"
+  cp "$REPO/engine/nightly/gbrain-nightly.sh" "$REPO/engine/hooks/controle.py" "$NH/nightly/"
   chmod +x "$NH/.bun/bin/"* "$NH/nightly/"*.sh
   git init -q --bare "$NH/remote.git"
   git -C "$NH/Documents/Brain" init -q
@@ -398,6 +430,15 @@ nightly_run() {   # $1 = probe exit code (0 = network up), $2 = vault remote (""
 nightly_run 0 ""
 grep -q "vault pushed to origin (attempt 1)" "$NLOG" && git --git-dir="$NH/remote.git" rev-parse -q --verify HEAD >/dev/null \
   && ok "network up: vault committed and pushed" || no "network up: vault not pushed"
+first(){ grep -n -m1 -- "$1" "$NLOG" | cut -d: -f1; }
+[ "$(cat "$NH/controle.calls" 2>/dev/null)" = "-I $(cd "$NH/nightly" && pwd -P)/controle.py nuit --brain $NH/Documents/Brain" ] \
+  && [ -n "$(first '^\[controle\] exit 0$')" ] && [ "$(first '^\[controle\] exit')" -lt "$(first 'vault pushed')" ] \
+  && ok "night check: python -I controle.py nuit on the vault, '[controle] exit 0' logged before the push" || no "night check not run as expected: $(cat "$NH/controle.calls" 2>/dev/null)"
+rm -rf "$NH"
+nightly_run 0 "" 1
+grep -q '^\[controle\] exit 1$' "$NLOG" && [ -z "$(git -C "$NH/Documents/Brain" status --porcelain)" ] \
+  && grep -q "vault pushed to origin (attempt 1)" "$NLOG" && git --git-dir="$NH/remote.git" rev-parse -q --verify HEAD >/dev/null \
+  && ok "night check crashed (exit 1): the vault is still committed and pushed" || no "a crashed night check stopped the commit or the push"
 rm -rf "$NH"
 nightly_run 1 ""
 grep -q "still unresolvable" "$NLOG" && grep -q "push SKIPPED — no network" "$NLOG" \
@@ -757,7 +798,8 @@ cmds = lambda e: [h["command"] for g in d["hooks"][e] for h in g["hooks"]]
 b = sys.argv[2] + "/.claude/hooks/brain/"
 assert d["model"] == "opus"
 assert cmds("Stop") == ["/x/mine.sh", b + "session-logger.py", b + "session-indexer.py", b + "session-recap.py"]
-assert cmds("UserPromptSubmit") == [b + "correction-detector.py"] and cmds("SessionStart") == [b + "gbrain-update-check.py"]
+assert cmds("UserPromptSubmit") == [b + "correction-detector.py"]
+assert cmds("SessionStart") == [b + "gbrain-update-check.py", b + "controle-sessionstart.py"]
 PY
 cp "$SJ" "$SH/ref"; out=$(ms)
 [ "$(baks)" = 1 ] && cmp -s "$SH/ref" "$SJ" && echo "$out" | grep -q "already registered" \

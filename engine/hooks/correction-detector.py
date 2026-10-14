@@ -11,6 +11,11 @@ regex fired on 36% of them, mostly on such ordinary negations.
 import json, sys, re, os
 from pathlib import Path
 
+# claude -p (the reflection, the night check's review, any script): the text it
+# reads is not the user correcting the assistant.
+if os.environ.get("CLAUDE_CODE_ENTRYPOINT") == "sdk-cli":
+    sys.exit(0)
+
 try:
     payload = json.load(sys.stdin)
 except Exception:

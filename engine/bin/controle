@@ -1,0 +1,4 @@
+#!/bin/sh
+# controle — the brain's night check, on demand (the /controle skill runs it).
+# The check itself is ~/.claude/hooks/brain/controle.py; `controle --help` lists its commands.
+exec /usr/bin/env python3 -I "$HOME/.claude/hooks/brain/controle.py" "$@"

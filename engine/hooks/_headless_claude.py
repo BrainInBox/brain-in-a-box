@@ -10,9 +10,10 @@ would be billed. Same contract as the Mac app's repair (app/src-tauri/src/repair
 
     answer = run(prompt, schema, system_prompt, budget_usd=1.0, timeout=600)
     answer.output  # the JSON object Claude returned, already parsed
+    check()        # the same checks of this claude, without asking it anything
 
-Used by daily-reflection.py. Not a hook: installed next to them, never
-registered in settings.json.
+Used by daily-reflection.py and by the night check's review (_controle_judge.py).
+Not a hook: installed next to them, never registered in settings.json.
 """
 import json
 import os
@@ -25,6 +26,7 @@ import tempfile
 import threading
 import time
 from collections import deque, namedtuple
+from contextlib import contextmanager
 from pathlib import Path
 
 WINDOWS = os.name == "nt"
@@ -61,11 +63,13 @@ def _label(value):
 
 
 class HeadlessError(Exception):
-    """kind: start, unsupported, auth, init, timeout, quota, api, invalid."""
+    """kind: start, unsupported, auth, init, timeout, quota, api, invalid.
+    reason, for the checks of the CLI only: version or flags (unsupported),
+    logged_out or billed (auth)."""
 
-    def __init__(self, kind, detail):
+    def __init__(self, kind, detail, reason=None):
         super().__init__(f"{kind}: {detail}")
-        self.kind, self.detail = kind, detail
+        self.kind, self.detail, self.reason = kind, detail, reason
 
     @property
     def retryable(self):
@@ -104,14 +108,15 @@ def base_argv(schema, system_prompt, *, budget_usd, max_turns=3, model=None, eff
                 "--output-format", "stream-json", "--verbose"]
 
 
-def child_path(program):
-    """PATH of the child: the folder of claude (and of its link target) and the system's, nothing the user added."""
+def child_path(program, git=None):
+    """PATH of the child: the folder of claude (and of its link target) and the system's, nothing the user added.
+    git: the git the caller found, when the PATH it was started with may not hold one (Windows)."""
     dirs = [os.path.dirname(os.path.abspath(program)), os.path.dirname(os.path.realpath(program))]
     if WINDOWS:
         root = os.environ.get("SystemRoot") or r"C:\Windows"
         dirs += [os.path.join(root, "System32"), root, os.path.join(root, "System32", "Wbem")]
         # Claude Code finds Git Bash from git.exe, and does not start without it.
-        git = shutil.which("git")
+        git = git or shutil.which("git")
         if git:
             dirs.append(os.path.dirname(git))
     else:
@@ -309,17 +314,18 @@ def check_cli(argv0, env, cwd):
         raise HeadlessError("start", f"claude --version said {_brief(out or ' '.join(err), 120)!r}")
     if version < MIN_CLAUDE:
         raise HeadlessError("unsupported", f"Claude Code {'.'.join(map(str, version))} is older than "
-                                           f"{'.'.join(map(str, MIN_CLAUDE))}: run `claude update`")
+                                           f"{'.'.join(map(str, MIN_CLAUDE))}: run `claude update`", "version")
     _, out, _ = _capture(argv0 + ["--help"], env, cwd)
     missing = missing_flags(out)
     if missing:
-        raise HeadlessError("unsupported", "this claude lacks " + ", ".join(missing))
+        raise HeadlessError("unsupported", "this claude lacks " + ", ".join(missing), "flags")
     _, out, _ = _capture(argv0 + ["auth", "status"], env, cwd)
     method = auth_method(out)
     if method != "claude.ai":
         raise HeadlessError("auth", f"Claude Code login is {_label(method) if method else 'missing'}, and only "
                                     "a claude.ai subscription is used (an API key would be billed). "
-                                    "Run `claude auth login`.")
+                                    "Run `claude auth login`.",
+                            "billed" if method and method != "none" else "logged_out")
     return version
 
 
@@ -450,28 +456,48 @@ class Watch:
         return Answer(out, self.version, self.result.get("total_cost_usd"), self.result.get("num_turns"))
 
 
-def run(prompt, schema, system_prompt, *, budget_usd, timeout, max_turns=3, model=None, effort=None, command=None):
-    """One isolated question to Claude Code. Returns an Answer, or raises HeadlessError.
-    command: argv that stands for claude (tests); default, the user's claude."""
+def _claude(command):
+    """argv of the claude to run: `command` (tests, CLAUDE_BIN) or the user's."""
     argv0 = list(command) if command else find_claude()
     if not argv0:
         raise HeadlessError("start", "Claude Code not found (~/.local/bin/claude or PATH)")
     if WINDOWS and not argv0[0].lower().endswith(".exe"):
         # A .cmd or .bat goes through cmd.exe, which reads our arguments as its own syntax.
         raise HeadlessError("start", f"{os.path.basename(argv0[0])} is not an .exe")
-    # Claude's folder: fresh, private, outside any vault, gone afterwards.
-    work = tempfile.mkdtemp(prefix="brain-claude-")
+    return argv0
+
+
+@contextmanager
+def _cage(argv0, work_root, git):
+    """Claude's folder: fresh, private, outside any vault (under work_root when given), gone
+    afterwards. Yields (folder, environment)."""
+    work = tempfile.mkdtemp(prefix="brain-claude-", dir=work_root)
     try:
         os.chmod(work, 0o700)
         tmp = os.path.join(work, "tmp")
         os.mkdir(tmp, 0o700)
-        env = child_env(tmp, child_path(argv0[0]))
+        yield work, child_env(tmp, child_path(argv0[0], git))
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def check(command=None, *, work_root=None, git=None):
+    """Whether this claude may be asked, without asking it anything: its version, or HeadlessError
+    (start, unsupported, auth). The probes run as the question would."""
+    argv0 = _claude(command)
+    with _cage(argv0, work_root, git) as (work, env):
+        return check_cli(argv0, env, work)
+
+
+def run(prompt, schema, system_prompt, *, budget_usd, timeout, max_turns=3, model=None, effort=None, command=None,
+        work_root=None, git=None):
+    """One isolated question to Claude Code. Returns an Answer, or raises HeadlessError.
+    command: argv that stands for claude (tests); default, the user's claude."""
+    argv0 = _claude(command)
+    with _cage(argv0, work_root, git) as (work, env):
         check_cli(argv0, env, work)
         watch = Watch(model)
         args = argv0 + base_argv(schema, system_prompt, budget_usd=budget_usd, max_turns=max_turns,
                                  model=model, effort=effort)
         _, timed_out, err = supervise(args, env, work, prompt, timeout, watch.line)
         return watch.conclude(timed_out, err)
-    finally:
-        shutil.rmtree(work, ignore_errors=True)
-
