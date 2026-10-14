@@ -155,6 +155,11 @@ class StubCase(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="juge-test-")
         self.addCleanup(shutil.rmtree, self.tmp, True)
+        # The probes read claude's settings: never the user's, nor this machine's managed ones.
+        for patch in (mock.patch.dict(os.environ, {"HOME": self.tmp, "USERPROFILE": self.tmp}),
+                      mock.patch.object(headless, "MANAGED_DIR", os.path.join(self.tmp, "managed"))):
+            patch.start()
+            self.addCleanup(patch.stop)
         self.stub = os.path.join(self.tmp, "stub.py")
         with open(self.stub, "w", encoding="utf-8") as f:
             f.write(STUB)
@@ -257,6 +262,46 @@ class Command(unittest.TestCase):
 
 
 class Environment(unittest.TestCase):
+    def setUp(self):
+        # child_env reads the token file in HOME: a throwaway one.
+        self.home = tempfile.mkdtemp(prefix="juge-env-")
+        self.addCleanup(shutil.rmtree, self.home, True)
+        patch = mock.patch.dict(os.environ, {"HOME": self.home, "USERPROFILE": self.home})
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def token_file(self, text, mode=0o600):
+        path = os.path.join(self.home, *headless.TOKEN_FILE)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+        os.chmod(path, mode)
+        return path
+
+    def test_the_scheduled_jobs_token_comes_from_its_file(self):
+        self.token_file("sk-ant-oat01-canari-fichier-0123456789\n")
+        with mock.patch.dict(os.environ, dict(PARENT_SECRETS, CLAUDE_CODE_OAUTH_TOKEN="")):
+            env = headless.child_env("/t/tmp", "/usr/bin:/bin")
+        self.assertEqual(env[headless.TOKEN_VAR], "sk-ant-oat01-canari-fichier-0123456789")
+        self.assertFalse(set(PARENT_SECRETS) & set(env))
+        # A run by hand with the variable set: the variable.
+        with mock.patch.dict(os.environ, {headless.TOKEN_VAR: "sk-ant-oat01-canari-variable"}):
+            self.assertEqual(headless.child_env("/t/tmp", "/usr/bin:/bin")[headless.TOKEN_VAR],
+                             "sk-ant-oat01-canari-variable")
+
+    def test_a_token_file_that_is_not_right_is_said(self):
+        bad = [("sk-ant-oat01-canari-fichier-0123456789", 0o644), ("deux mots", 0o600), ("", 0o600)]
+        if os.name == "nt":
+            bad = bad[1:]  # no mode bits there: the profile folder is the user's own
+        for text, mode in bad:
+            with self.subTest(mode=oct(mode), text=text[:4]):
+                self.token_file(text, mode)
+                with mock.patch.dict(os.environ, {headless.TOKEN_VAR: ""}):
+                    with self.assertRaises(headless.HeadlessError) as e:
+                        headless.child_env("/t/tmp", "/usr/bin:/bin")
+                self.assertEqual((e.exception.kind, e.exception.reason), ("auth", "logged_out"))
+                self.assertNotIn("canari", str(e.exception))
+
     def test_child_env_is_the_short_list(self):
         parent = dict(PARENT_SECRETS, HTTPS_PROXY="http://proxy.local:3128", SHELL="/bin/zsh", OLDPWD="/x")
         with mock.patch.dict(os.environ, parent):
@@ -267,6 +312,16 @@ class Environment(unittest.TestCase):
         self.assertEqual(env["HTTPS_PROXY"], "http://proxy.local:3128")
         self.assertEqual(env["PATH"], "/Users/jo/.local/bin:/usr/bin:/bin")
         self.assertEqual(env["DISABLE_AUTOUPDATER"], "1")
+        self.assertNotIn(headless.TOKEN_VAR, env)
+
+    def test_only_the_setup_token_travels(self):
+        parent = dict(PARENT_SECRETS, CLAUDE_CODE_OAUTH_TOKEN="sk-ant-oat01-canari-jeton")
+        with mock.patch.dict(os.environ, parent):
+            env = headless.child_env("/t/tmp", "/usr/bin:/bin")
+        self.assertEqual(env[headless.TOKEN_VAR], "sk-ant-oat01-canari-jeton")
+        self.assertFalse(set(PARENT_SECRETS) & set(env))
+        with mock.patch.dict(os.environ, dict(parent, CLAUDE_CODE_OAUTH_TOKEN="")):
+            self.assertNotIn(headless.TOKEN_VAR, headless.child_env("/t/tmp", "/usr/bin:/bin"))
 
     @unittest.skipUnless(os.name == "nt", "Windows: Claude Code needs Git Bash, found from git.exe")
     def test_the_git_found_by_the_check_reaches_claude(self):
@@ -479,6 +534,10 @@ class Isolation(StubCase):
         self.assertEqual(avail(help=short_help), (False, "options"))
         self.assertEqual(avail(auth={"loggedIn": False, "authMethod": "none"}), (False, "connexion"))
         self.assertEqual(avail(auth={"loggedIn": True, "authMethod": "apiKey"}), (False, "abonnement"))
+        # oauth_token is the subscription only with the setup-token given: else a gateway's token.
+        self.assertEqual(avail(auth={"loggedIn": True, "authMethod": "oauth_token"}), (False, "abonnement"))
+        with mock.patch.dict(os.environ, {headless.TOKEN_VAR: "sk-ant-oat01-factice"}):
+            self.assertEqual(avail(auth={"loggedIn": True, "authMethod": "oauth_token"}), (True, None))
         self.assertEqual(avail(auth={"loggedIn": False}), (False, "connexion"))
         self.assertEqual(self.records(), [], "nothing was asked")
 

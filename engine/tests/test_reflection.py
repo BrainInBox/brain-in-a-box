@@ -160,8 +160,12 @@ class Isolated(unittest.TestCase):
         (self.fake / "answer.json").write_text(json.dumps(ANSWER), encoding="utf-8")
         self.saved = dict(os.environ)
         os.environ.update(CANARIES, HOME=str(self.home), USERPROFILE=str(self.home))
+        # Never this machine's own managed settings.
+        self.managed = self.home / "managed"
+        self.saved_managed, hc.MANAGED_DIR = hc.MANAGED_DIR, str(self.managed)
 
     def tearDown(self):
+        hc.MANAGED_DIR = self.saved_managed
         os.environ.clear()
         os.environ.update(self.saved)
         shutil.rmtree(self.home, ignore_errors=True)
@@ -179,10 +183,14 @@ class Isolated(unittest.TestCase):
         self.assertEqual(answer.output, ANSWER)
         env = json.loads((self.fake / "env.json").read_text(encoding="utf-8"))
         allowed = {"HOME", "PATH", "LANG", "USER", "LOGNAME", "TMPDIR", "DISABLE_AUTOUPDATER",
-                   "CLAUDE_CODE_DISABLE_ADVISOR_TOOL", "TEMP", "TMP", *hc.WINDOWS_VARS, *hc.PROXY_VARS}
+                   "CLAUDE_CODE_DISABLE_ADVISOR_TOOL", "TEMP", "TMP", hc.TOKEN_VAR, *hc.WINDOWS_VARS,
+                   *hc.PROXY_VARS}
         # Windows hands a child its variables upper-cased.
         self.assertLessEqual({k.upper() for k in env} - SYSTEM_ADDED, {k.upper() for k in allowed})
-        self.assertFalse(set(CANARIES.values()) & set(env.values()))
+        # The subscription's setup-token is how claude logs in without a browser: it alone travels.
+        others = {v for k, v in CANARIES.items() if k != hc.TOKEN_VAR}
+        self.assertFalse(others & set(env.values()))
+        self.assertEqual({k.upper(): v for k, v in env.items()}.get(hc.TOKEN_VAR), CANARIES[hc.TOKEN_VAR])
         where = json.loads((self.fake / "cwd.json").read_text(encoding="utf-8"))
         if POSIX:
             self.assertEqual(where["mode"], "0o700")
@@ -203,6 +211,59 @@ class Isolated(unittest.TestCase):
             self.run_fake()
         self.assertEqual(e.exception.kind, "auth")
         self.assertEqual(self.calls(), 0)
+
+    def test_a_setup_token_is_the_subscription_too(self):
+        # `claude auth status` with CLAUDE_CODE_OAUTH_TOKEN set (claude setup-token): oauth_token.
+        (self.fake / "auth").write_text("oauth_token", encoding="utf-8")
+        self.assertEqual(self.run_fake().output, ANSWER)
+        self.assertEqual(self.calls(), 1)
+        for method in ("none", "apiKeyHelper", "bedrock"):
+            (self.fake / "auth").write_text(method, encoding="utf-8")
+            with self.assertRaises(hc.HeadlessError) as e:
+                self.run_fake()
+            self.assertEqual((e.exception.kind, e.exception.reason),
+                             ("auth", "logged_out" if method == "none" else "billed"), method)
+        self.assertEqual(self.calls(), 1)
+
+    def test_a_token_that_is_not_the_setup_token_is_refused(self):
+        # A gateway's ANTHROPIC_AUTH_TOKEN (settings "env", or a proxy setup) reads as oauth_token too.
+        (self.fake / "auth").write_text("oauth_token", encoding="utf-8")
+        os.environ.pop(hc.TOKEN_VAR)
+        with self.assertRaises(hc.HeadlessError) as e:
+            self.run_fake()
+        self.assertEqual((e.exception.kind, e.exception.reason), ("auth", "billed"))
+        self.assertEqual(self.calls(), 0)
+
+    def test_settings_that_send_claude_elsewhere_are_refused(self):
+        settings = self.home / ".claude" / "settings.json"
+        cases = [(settings, {"env": {"ANTHROPIC_AUTH_TOKEN": "gw-canari", "ANTHROPIC_BASE_URL": "http://127.0.0.1:9"}}),
+                 (settings, {"env": {"CLAUDE_CODE_USE_BEDROCK": "1"}}),
+                 (settings, {"apiKeyHelper": "echo canari"}),
+                 (self.home / ".claude" / "settings.local.json", {"env": {"ANTHROPIC_API_KEY": "canari"}}),
+                 (self.managed / "managed-settings.json", {"env": {"ANTHROPIC_BEDROCK_BASE_URL": "https://x"}}),
+                 (self.managed / "managed-settings.d" / "10-gw.json", {"env": {"ANTHROPIC_AUTH_TOKEN": "canari"}})]
+        for auth in ("oauth_token", "claude.ai"):
+            (self.fake / "auth").write_text(auth, encoding="utf-8")
+            for path, content in cases:
+                with self.subTest(auth=auth, path=path.name, content=sorted(content)):
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text(json.dumps(content), encoding="utf-8")
+                    with self.assertRaises(hc.HeadlessError) as e:
+                        self.run_fake()
+                    path.unlink()
+                    self.assertEqual((e.exception.kind, e.exception.reason), ("auth", "billed"))
+                    self.assertNotIn("canari", str(e.exception))
+        self.assertEqual(self.calls(), 0)
+        # Settings that send nothing elsewhere change nothing.
+        settings.write_text(json.dumps({"env": {"ANTHROPIC_BASE_URL": "", "DISABLE_TELEMETRY": "1"}, "model": "x"}),
+                            encoding="utf-8")
+        self.assertEqual(self.run_fake().output, ANSWER)
+
+    def test_no_token_no_token_variable(self):
+        os.environ.pop(hc.TOKEN_VAR)
+        self.run_fake()
+        env = json.loads((self.fake / "env.json").read_text(encoding="utf-8"))
+        self.assertNotIn(hc.TOKEN_VAR, {k.upper() for k in env})
 
     def test_no_question_to_an_old_claude(self):
         (self.fake / "version").write_text("2.1.10 (Claude Code)", encoding="utf-8")

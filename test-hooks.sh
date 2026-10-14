@@ -413,7 +413,7 @@ echo "════ 9) gbrain-nightly — night check, then commit; waits for the
 nightly_run() {   # $1 = probe exit code (0 = network up), $2 = vault remote ("" = a local bare repo), $3 = check's exit code
   NH="$(mktemp -d -t biab-nightly)"
   mkdir -p "$NH/.bun/bin" "$NH/.gbrain" "$NH/nightly" "$NH/Documents/Brain"
-  printf '#!/bin/sh\nexit 0\n' > "$NH/.bun/bin/gbrain"
+  printf '#!/bin/sh\necho "gbrain $1" >> "$HOME/gbrain-calls"\n[ -z "$CLAUDE_CODE_OAUTH_TOKEN" ] || echo "gbrain $1" >> "$HOME/gbrain-saw-token"\nexit 0\n' > "$NH/.bun/bin/gbrain"
   printf '#!/bin/sh\nexit 0\n' > "$NH/.bun/bin/sleep"
   printf '#!/bin/sh\ncase "$*" in *controle.py*) echo "$*" >> "$HOME/controle.calls"; exit %s;; esac\nexit %s\n' \
     "${3:-0}" "$1" > "$NH/.bun/bin/python3"
@@ -424,7 +424,7 @@ nightly_run() {   # $1 = probe exit code (0 = network up), $2 = vault remote (""
   git -C "$NH/Documents/Brain" init -q
   git -C "$NH/Documents/Brain" remote add origin "${2:-$NH/remote.git}"
   echo note > "$NH/Documents/Brain/a.md"
-  HOME="$NH" zsh "$NH/nightly/gbrain-nightly.sh" 2>/dev/null
+  CLAUDE_CODE_OAUTH_TOKEN=canari-claude-token HOME="$NH" zsh "$NH/nightly/gbrain-nightly.sh" 2>/dev/null
   NLOG="$NH/.gbrain/nightly.log"
 }
 nightly_run 0 ""
@@ -434,6 +434,8 @@ first(){ grep -n -m1 -- "$1" "$NLOG" | cut -d: -f1; }
 [ "$(cat "$NH/controle.calls" 2>/dev/null)" = "-I $(cd "$NH/nightly" && pwd -P)/controle.py nuit --brain $NH/Documents/Brain" ] \
   && [ -n "$(first '^\[controle\] exit 0$')" ] && [ "$(first '^\[controle\] exit')" -lt "$(first 'vault pushed')" ] \
   && ok "night check: python -I controle.py nuit on the vault, '[controle] exit 0' logged before the push" || no "night check not run as expected: $(cat "$NH/controle.calls" 2>/dev/null)"
+grep -q "gbrain embed" "$NH/gbrain-calls" 2>/dev/null && [ ! -f "$NH/gbrain-saw-token" ] \
+  && ok "nightly: gbrain never gets a CLAUDE_CODE_OAUTH_TOKEN the job was started with" || no "nightly: gbrain got the Claude token ($(tr '\n' ' ' < "$NH/gbrain-saw-token"))"
 rm -rf "$NH"
 nightly_run 0 "" 1
 grep -q '^\[controle\] exit 1$' "$NLOG" && [ -z "$(git -C "$NH/Documents/Brain" status --porcelain)" ] \
@@ -555,6 +557,16 @@ t0=$(date +%s); out=$(HOME="$GQ" zsh "$REPO/engine/bin/gbq" query pricing 2>&1);
   && ok "gbq: a read that never exits is cut once its output settles (${took}s)" || no "gbq: hung read not handled (rc=$rc, ${took}s)"
 HOME="$GQ" GBQ_STUB_RC=2 zsh "$REPO/engine/bin/gbq" query pricing >/dev/null 2>&1; rc=$?
 [ "$rc" = 2 ] && ok "gbq: a read that fails on its own reports the failure" || no "gbq: failing read returned $rc, want 2"
+# The real gbrain is a script run by `#!/usr/bin/env bun`: a shell opened before Bun was installed
+# (or Claude Code started then) has no ~/.bun/bin on its PATH, and gbq used to fail with 127.
+GB="$H/gbq-bun-home"; mkdir -p "$GB/.bun/bin" "$GB/.gbrain"
+printf '#!/bin/sh\necho "bun ran $(basename "$1") $2"\n' > "$GB/.bun/bin/bun"
+printf '#!/usr/bin/env bun\n' > "$GB/.bun/bin/gbrain"
+chmod +x "$GB/.bun/bin/bun" "$GB/.bun/bin/gbrain"
+out=$(HOME="$GB" PATH="/usr/bin:/bin" zsh "$REPO/engine/bin/gbq" sync 2>&1); rc=$?
+[ "$rc" = 0 ] && echo "$out" | grep -q "bun ran gbrain sync" \
+  && ok "gbq: finds Bun without ~/.bun/bin on the PATH (a terminal opened before the install)" \
+  || no "gbq: without ~/.bun/bin on the PATH: rc=$rc, $out"
 
 BV="$H/bs-vault"; BSI="$H/bs-index.json"; BS="$REPO/engine/search/brain_search.py"
 mkdir -p "$BV/Decisions"
@@ -622,7 +634,7 @@ NW="$H/nightly-home"; NV="$NW/Brain"; NWB="$NW/.claude/hooks/brain"; GIT="$(comm
 mkdir -p "$NW/.bun/bin" "$NW/.brain-search" "$NV" "$NWB"
 cp "$BS" "$NW/.brain-search/"; echo gbrain > "$NW/.brain-search/engine"
 cp "$REPO/engine/nightly/windows-nightly.py" "$NWB/"
-printf '#!/usr/bin/env bash\necho "gbrain $*" >> "$HOME/gbrain-calls"\n' > "$NW/.bun/bin/gbrain"; chmod +x "$NW/.bun/bin/gbrain"
+printf '#!/usr/bin/env bash\necho "gbrain $*" >> "$HOME/gbrain-calls"\n[ -z "$CLAUDE_CODE_OAUTH_TOKEN" ] || echo "gbrain $1" >> "$HOME/gbrain-saw-token"\n' > "$NW/.bun/bin/gbrain"; chmod +x "$NW/.bun/bin/gbrain"
 for st in gbrain_update:0 controle:3; do
   cat > "$NWB/${st%:*}.py" <<STUB
 import os, subprocess, sys
@@ -638,7 +650,7 @@ STUB
 done
 ( cd "$NV" && git init -q && printf '# A\n' > a.md && git add -A && git -c user.email=t@t -c user.name=t commit -qm init )
 printf '# Lighthouse\n\nThe keeper logs every storm.\n' > "$NV/lighthouse.md"
-nightly_win(){ env -u BUN_INSTALL -u GBRAIN_HOME HOME="$NW" FAKE_API_KEY=canari GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraHeader \
+nightly_win(){ env -u BUN_INSTALL -u GBRAIN_HOME HOME="$NW" FAKE_API_KEY=canari CLAUDE_CODE_OAUTH_TOKEN=canari-claude-token GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraHeader \
   GIT_CONFIG_VALUE_0="Authorization: Bearer canari" BRAIN_SEARCH_INDEX="$NW/index.json" python3 "$NWB/windows-nightly.py" --brain "$NV" --git "$GIT"; }
 nightly_win
 [ -z "$(git -C "$NV" status --porcelain)" ] && git -C "$NV" log -1 --format=%s | grep -q nightly \
@@ -658,6 +670,8 @@ echo gbrain > "$NW/.brain-search/engine"
 grep -q "gbrain sync --source vault --no-pull --no-embed" "$NW/gbrain-calls" 2>/dev/null \
   && grep -q "gbrain embed --stale --max-usd 0.10" "$NW/gbrain-calls" \
   && ok "windows nightly: gbrain sync + embed with a spend cap" || no "windows nightly: gbrain steps missing"
+[ ! -f "$NW/gbrain-saw-token" ] && ok "windows nightly: gbrain never gets the Claude token" \
+  || no "windows nightly: gbrain got the Claude token ($(tr '\n' ' ' < "$NW/gbrain-saw-token"))"
 grep -q "lighthouse.md" "$NW/index.json" 2>/dev/null && grep -q "nightly done" "$NW/.gbrain/nightly.log" \
   && ok "windows nightly: keyword index rebuilt, run logged" || no "windows nightly: no reindex or no log"
 

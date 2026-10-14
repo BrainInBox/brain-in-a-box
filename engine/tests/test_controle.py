@@ -738,6 +738,27 @@ class CalibrationDecisions(Sandbox):
         self.assertIn("🟠 memory.md fait encore", read(self.vault, "Profile/controle.md"))
 
 
+    # Found by the field test (terrain.py nuits, 2026-10-14): once the archive's month was already in
+    # the pointer, the last block of a memory.md ending with a blank line took that line along, the
+    # archive dropped it and the contract refused the fix every night.
+    def test_m1_archives_the_last_block_on_a_later_night(self):
+        today = date.today()
+        mem = ["# Mémoire", "", "## Active decisions", "- tout est chiffré", ""]
+        for back in (40, 13, 3):
+            mem += ["## %s journée" % (today - timedelta(days=back)).isoformat(), "", "- fait %d" % back, ""]
+        self.small_vault({"Profile/memory.md": "\n".join(mem) + "\n"})
+        self.cli("nuit", "--maintenant", later(4))   # archives -40 and -13: both months in the pointer
+        self.assertIn("- fait 3", read(self.vault, "Profile/memory.md"))
+        age_files(self.vault)  # out of the 10-minute guard
+        self.cli("nuit", "--maintenant", later(20))  # the last block is due now
+        mem = read(self.vault, "Profile/memory.md")
+        self.assertNotIn("- fait 3", mem)
+        self.assertEqual(mem.count("<!-- controle:archive-pointeur -->"), 1)
+        archived = "\n".join(read(self.vault, os.path.join("Profile", "Archive", f))
+                              for f in os.listdir(os.path.join(self.vault, "Profile", "Archive")) if f.startswith("memory-"))
+        self.assertIn("- fait 3", archived)
+        self.assertNotIn("contrat", json.dumps(self.etat_json()["alertes"]))
+
 # --------------------------------------------------------------------------- what two reviews found (2026-10-14)
 
 S1_ID = re.compile(r"S1-\d{6}-\d{2,3}")

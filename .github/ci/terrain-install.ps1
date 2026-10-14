@@ -1,0 +1,16 @@
+# The tested version of brain-in-a-box, installed the way a Windows user does (terrain.yml).
+# The scheduled night runs the README's line itself: master, downloaded from GitHub.
+# Started by hand on another ref: the same one-liner, fed with that ref's install.ps1 and
+# an archive of it (BIAB_ARCHIVE), as test.yml does.
+$ErrorActionPreference = 'Stop'
+if ($env:GITHUB_EVENT_NAME -eq 'schedule') {
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/BrainInBox/brain-in-a-box/master/install.ps1 | iex"
+} else {
+    $zip = Join-Path $env:RUNNER_TEMP 'terrain-src.zip'
+    git archive --format=zip --prefix=brain-in-a-box-terrain/ -o $zip HEAD
+    if ($LASTEXITCODE) { throw "git archive exited $LASTEXITCODE" }
+    $env:BIAB_ARCHIVE = $zip
+    $script = Join-Path (Get-Location) 'install.ps1'
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-Content -Raw '$script' | Invoke-Expression"
+}
+exit $LASTEXITCODE
