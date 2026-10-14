@@ -42,12 +42,19 @@ CALLS_PER_DAY = 3
 LIMIT_WINDOW = 6 * 3600
 EXCERPT_CHARS = 1500
 EXCERPTS_BUDGET = 78000
-MAX_EXCERPTS = 60
+MAX_EXCERPTS = 100
 LESSONS_MAX = 150
 LESSONS_BUDGET = 40000
 LESSON_CHARS = 1000
 DOSSIER_MAX = 120000
 NEIGHBOURS = 3
+# A big vault (calibrated on a real one, 2026-10-14): a changed note shows its
+# first sections, a source of truth a slice a night, tonight's rotation probes.
+HEAD_CHARS = 2500
+SOURCE_CHARS = 6000
+PROBE_NEIGHBOURS = 2
+ANCHORS_SHARE = 0.25
+SOURCES_SHARE = 0.55
 MAX_FINDINGS = 15
 QUOTE_MAX = 240
 MIN_QUOTE = 15
@@ -646,7 +653,7 @@ def eligible(note):
     if any(p.startswith(".") for p in parts) or any(p in NEVER_DIRS for p in low[:-1]):
         return False
     base = low[-1]
-    if base.startswith("_template") or base == "readme.md" or rules.is_external(note):
+    if base.startswith("_template") or base == "readme.md" or "archive" in base or rules.is_external(note):
         return False
     if len(parts) == 1:
         return True
@@ -685,6 +692,30 @@ class Dossier:
         return bool(self.suspect_subjects)
 
 
+def _pieces(paragraph, limit):
+    """A paragraph too long for one excerpt, cut at line ends, and a line too long
+    at a space: a list of bullets written without blank lines is one paragraph,
+    and its end must not be lost."""
+    out, buf = [], ""
+    for ln in paragraph.split("\n"):
+        while len(ln) > limit:
+            cut = ln.rfind(" ", 0, limit)
+            cut = cut if cut > limit // 2 else limit
+            if buf:
+                out.append(buf)
+                buf = ""
+            out.append(ln[:cut])
+            ln = ln[cut:].lstrip(" ")
+        if buf and len(buf) + 1 + len(ln) > limit:
+            out.append(buf)
+            buf = ln
+        else:
+            buf = buf + "\n" + ln if buf else ln
+    if buf:
+        out.append(buf)
+    return out
+
+
 def _chunks(lines, limit=EXCERPT_CHARS):
     """Paragraphs packed into excerpts of `limit` characters at most."""
     paras, cur = [], []
@@ -702,7 +733,7 @@ def _chunks(lines, limit=EXCERPT_CHARS):
             if buf:
                 out.append(buf)
                 buf = ""
-            out.append(p[:limit - 1] + "…")
+            out += _pieces(p, limit)
         elif buf and len(buf) + 2 + len(p) > limit:
             out.append(buf)
             buf = p
@@ -735,7 +766,13 @@ def _memory_sections(note):
     for b, e, _ in rules.marker_regions(lines, note.body_start):
         blocked.update(range(b, e + 1))
     hs = rules.headings(lines, note.body_start, mask)
-    out = []
+    # What sits above the first section is pinned by hand or by the reflection:
+    # undated too, and often the newest decisions.
+    first = next((i for i, level, _ in hs if level >= 2), len(lines))
+    head = [ln for j, ln in enumerate(lines[note.body_start:first], note.body_start)
+            if j not in blocked and not rules.HEADING.match(ln) and not rules.OUR_MARK.search(ln)
+            and rules.POINTER_MARK not in ln]
+    out = [(None, head)] if any(ln.strip() for ln in head) else []
     for k, (i, level, title) in enumerate(hs):
         clean = rules.clean_title(title)
         if level != 2 or not rules.PROTECTED_SECTION.match(clean) or rules.dates_in(clean[:30]):
@@ -888,40 +925,87 @@ def build_dossier(notes, profile, today, anchors=None, note_date=None, known=(),
                 return False
         return True
 
-    anchor_ix = [i for i, u in enumerate(units) if anchors is None or rules.nfc(u.rel) in anchors]
-    anchor_ix.sort(key=lambda i: (dates[units[i].rel], -i), reverse=True)
-    mem, stack, claude_md = (profile + "/memory.md").lower(), (profile + "/stack.md").lower(), "claude.md"
-    sources = [i for i, u in enumerate(units)
-               if u.rel.lower() in (mem, stack, claude_md)
-               or (u.rel.lower().startswith("decisions/") and by_note[u.rel][0] == i)]
-    doy = today.timetuple().tm_yday % 7
-    rotation = [i for i, u in enumerate(units)
-                if int(hashlib.sha1(u.rel.encode("utf-8")).hexdigest()[:8], 16) % 7 == doy]
+    chosen, size, edges = [], 0, []
 
-    chosen, size = [], 0
-
-    def take(i):
+    def take(i, ceiling=EXCERPTS_BUDGET):
         nonlocal size
         if i in chosen or len(chosen) >= MAX_EXCERPTS or not masked(units[i].rel):
             return False
         cost = len(units[i].text) + 120
-        if size + cost > EXCERPTS_BUDGET:
+        if size + cost > ceiling:
             return False
         chosen.append(i)
         size += cost
         return True
 
-    picked_anchors = [i for i in anchor_ix if take(i)]
-    for i in sources:
-        take(i)
-    near = neighbours(units, picked_anchors) if picked_anchors else {}
-    edges = []
-    for a in picked_anchors:
-        for j in near.get(a, ()):
-            if take(j) or j in chosen:
-                edges.append((a, j))
-    for i in rotation:
-        take(i)
+    if sum(len(u.raw) + 120 for u in units) <= EXCERPTS_BUDGET and len(units) <= MAX_EXCERPTS:
+        for i in range(len(units)):
+            take(i)
+    else:
+        # A big vault: a note shows its head (where it says what it is, and where
+        # stale claims stay), a big source of truth a new slice each night, and
+        # every probe brings the passages of other notes that share its rare
+        # words, a little deeper each night. Calibrated on a real vault, 2026-10-14.
+        def head(rel):
+            out, n = [], 0
+            for i in by_note[rel]:
+                if out and n + len(units[i].raw) > HEAD_CHARS:
+                    break
+                out.append(i)
+                n += len(units[i].raw)
+            return out
+
+        def slices(rel):
+            """A source cut in slices of SOURCE_CHARS: a small one is one slice."""
+            out, n = [[]], 0
+            for i in by_note[rel]:
+                if out[-1] and n + len(units[i].raw) > SOURCE_CHARS:
+                    out.append([])
+                    n = 0
+                out[-1].append(i)
+                n += len(units[i].raw)
+            return out
+
+        night = today.toordinal()
+        anchor_notes = sorted((r for r in by_note if anchors is None or rules.nfc(r) in anchors),
+                              key=lambda r: (dates[r], r), reverse=True)
+        picked = [i for r in anchor_notes for i in head(r) if take(i, ANCHORS_SHARE * EXCERPTS_BUDGET)]
+        mem, prof = (profile + "/memory.md").lower(), profile.lower() + "/"
+        ceiling = size + SOURCES_SHARE * EXCERPTS_BUDGET
+        sources = []
+        for r in sorted(by_note, key=lambda r: (r.lower() != mem, not r.lower().startswith("decisions/"), r)):
+            low = r.lower()
+            if low == mem:
+                ix = by_note[r]
+            elif low.startswith("decisions/"):
+                ix = by_note[r][:1]
+            elif low.startswith(prof) or low == "claude.md":
+                ix = slices(r)
+                ix = ix[night % len(ix)]
+            else:
+                continue
+            sources += [i for i in ix if take(i, ceiling)]
+        incoming = rules.build_incoming(notes)
+        doy = today.timetuple().tm_yday % 7
+        rotation = sorted((r for r in by_note if r not in anchor_notes
+                           and int(hashlib.sha1(r.encode("utf-8")).hexdigest()[:8], 16) % 7 == doy),
+                          key=lambda r: (-len(incoming.get(rules.note_name(r).lower(), set()) - {r}), r))
+        probes = [i for r in rotation for i in head(r)]
+        near = neighbours(units, picked + sources + probes, k=NEIGHBOURS * 7)
+        offset = night % 7 * PROBE_NEIGHBOURS
+
+        def bring(a, ranks):
+            for j in ranks:
+                if take(j) or j in chosen:
+                    edges.append((a, j))
+
+        for a in picked:
+            bring(a, near.get(a, ())[:NEIGHBOURS])
+        for a in sources:
+            bring(a, near.get(a, ())[offset:offset + PROBE_NEIGHBOURS])
+        for p in probes:
+            if take(p):
+                bring(p, near.get(p, ())[:NEIGHBOURS])
 
     # Subjects: an anchor and its neighbours, a note's excerpts together.
     parent = {i: i for i in chosen}

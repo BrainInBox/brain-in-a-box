@@ -25,7 +25,7 @@ from _paste_guard import is_relayed  # noqa: E402
 
 BOM = b"\xef\xbb\xbf"
 MAX_FILES = 10000
-MAX_BYTES = 1 << 20
+MAX_BYTES = 4 << 20  # a real vault kept a 2 MB memory archive with secrets in it (2026-10-14)
 PRIORITY = ["S1", "S2", "X1", "M1", "M2", "C3", "D2", "D1", "F1", "C2", "C1"]
 TYPE_NAMES = {
     "S1": "masquer un secret", "S2": "avertir d'une commande dangereuse", "X1": "désarmer un texte piégé",
@@ -59,13 +59,18 @@ INJECTION_MARKERS = [re.compile(p, re.I | re.M) for p in (
     r"disregard (the|all|previous)",
     r"\byou are now\b",
     r"\btu es maintenant\b",
-    r"system prompt",
-    r"prompt syst[èe]me",
+    # "system prompt" alone is how a technical user describes an agent: only the
+    # forms that speak to one (calibrated on a real vault, 2026-10-14).
+    r"\b(ignore|forget|disregard|override|reveal|print|show|repeat|output|new|oublie|r[ée]v[èe]le|affiche|montre|"
+    r"r[ée]p[èe]te|remplace|nouveau|nouvelle)\W+(\w+\W+){0,3}(system prompt|prompt syst[èe]me)",
+    r"^\W*(system prompt|prompt syst[èe]me)\s*[:=]",
     r"<\|im_start\|>",
     r"^\s*(assistant|system)\s*:",
     r"suspect\s*[:=]\s*(true|false)",
     r"StructuredOutput",
-    r"</?(extrait|lecon|lecons|sujet)\b",
+    # Our tags as they frame the dossier; a bare <sujet> is a French placeholder.
+    r"</\s*(extrait|lecon|lecons|sujet)\s*>",
+    r"<\s*(extrait|lecon|lecons|sujet)\s+\w+\s*=",
 )]
 
 SHELL_LANGS = {"", "bash", "sh", "zsh", "shell", "console", "powershell", "ps1", "sql"}
@@ -273,6 +278,7 @@ class Context:
         self.d1_canon = {}
         self.judge = {}   # C1 C2 C3 plans from the Claude review: {type: {rel: [Target]}}
         self.read = None  # set by the runner: rel -> current Note or None
+        self.secret_values = set()  # values known to be secrets: masked wherever else they appear
 
     def date_fr(self):
         return self.today.strftime("%d/%m/%Y")
@@ -436,10 +442,27 @@ def size_label(n):
 
 # --------------------------------------------------------------------------- S1 mask a secret
 
+def propagable(value):
+    """A secret long and mixed enough to be masked wherever else it is written,
+    even in prose with no keyword (« la clé de signature JWT (`...`) »)."""
+    classes = sum((any(c.islower() for c in value), any(c.isupper() for c in value),
+                   any(c.isdigit() for c in value), any(not c.isalnum() for c in value)))
+    words = re.fullmatch(r"[a-z]+(?:[-_ ][a-z]+)*", value)
+    return not words and ((len(value) >= 10 and classes >= 3) or (len(value) >= 20 and classes >= 2))
+
+
 def detect_s1(note, ctx):
     if never_touched(note.rel, ctx):
         return []
-    return [Target(note.text[s:e], (s, e, kind)) for s, e, kind in find_secrets(note.text)
+    spans = find_secrets(note.text)
+    # Found once here, masked everywhere in this note; in other notes only when it
+    # cannot be an ordinary word (propagable).
+    here = {note.text[s:e] for s, e, _ in spans if e - s >= 8}
+    for value in sorted(ctx.secret_values | here, key=len, reverse=True):
+        for m in re.finditer(re.escape(value), note.text):
+            if not any(s < m.end() and m.start() < e for s, e, _ in spans):
+                spans.append((m.start(), m.end(), "connu"))
+    return [Target(note.text[s:e], (s, e, kind)) for s, e, kind in sorted(spans)
             if not ctx.allowed_secret(note.text[s:e])]
 
 
@@ -486,6 +509,18 @@ def _warned_above(lines, i):
     return j >= 0 and "<!-- controle:S2-" in lines[j]
 
 
+# Inline code a note does not ask to run (calibrated on a real vault, 2026-10-14):
+# a search pattern (`grep -rn "DELETE FROM"`), or a command named to forbid it
+# ("aucun `curl | bash`", "jamais `git push --force`", "refusé `curl | sh`").
+SEARCH_CMD = re.compile(r"^\s*(?:grep|egrep|rg|ag|git\s+grep|git\s+log\s+-S|findstr|Select-String)\b", re.I)
+FORBIDDEN_BEFORE = re.compile(r"\b(?:aucune?|pas\s+de|jamais|sans|refus[ée]e?s?|interdits?|never|no|not|don'?t|avoid|"
+                              r"évite[rz]?|ne\s+(?:pas|jamais))\W{0,4}$", re.I)
+
+
+def _quoted_not_run(line, m):
+    return bool(SEARCH_CMD.match(m.group(1)) or FORBIDDEN_BEFORE.search(line[max(0, m.start() - 30):m.start()]))
+
+
 def detect_s2(note, ctx, report_only=False):
     """Code blocks and inline code that erase or overwrite, not yet warned about.
     report_only lists them in instruction files, which are never edited."""
@@ -500,7 +535,8 @@ def detect_s2(note, ctx, report_only=False):
     for i in range(start, len(lines)):
         if i in in_block or lines[i].lstrip().startswith("|"):
             continue
-        codes = [c for c in INLINE_CODE.findall(lines[i]) if dangerous(c)]
+        codes = [m.group(1) for m in INLINE_CODE.finditer(lines[i])
+                 if dangerous(m.group(1)) and not _quoted_not_run(lines[i], m)]
         if codes and not _warned_above(lines, i):
             found.append(Target(" ".join(" ".join(codes).split()), i))
     return found
@@ -1143,8 +1179,9 @@ def make_c1(note, targets, ctx, aid, limit=None):
                "réglé, supprime ce bloc. <!-- controle:%s -->" % (
                    ctx.date_fr(), link_name(t.data["new_rel"]), inline_quote(t.data["new_quote"], 120).rstrip("."),
                    aid))
-    # Right after a quote block it would join that block: a blank line first.
-    block = ([""] if lines[last].lstrip().startswith(">") else []) + [callout]
+    # Right after a quote block it would join that block, after a table it would
+    # read as one more row in some renderers: a blank line first.
+    block = ([""] if lines[last].lstrip().startswith((">", "|")) else []) + [callout]
     if last + 1 < len(lines) and lines[last + 1].strip():
         block.append("")
     lines[last + 1:last + 1] = block
@@ -1421,7 +1458,15 @@ def analyze(scan, ctx):
     for code, copy, canon in plan_duplicates(notes, ctx):
         an.points.append((code, copy, canon))
     an.eligible = sum(1 for n in notes if not protected(n.rel, ctx))
+    ctx.secret_values |= {n.text[s:e] for n in notes if not never_touched(n.rel, ctx)
+                          for s, e, _ in find_secrets(n.text) if propagable(n.text[s:e])}
     for n in notes:
+        if n.rel.rsplit("/", 1)[-1].startswith("."):
+            # A hidden file is never written (the runner refuses dot paths): say what it holds.
+            found = [x for x in find_secrets(n.text) if not ctx.allowed_secret(n.text[x[0]:x[1]])]
+            if found:
+                an.points.append(("secret_cache", n.rel, len(found)))
+            continue
         for t in PRIORITY:
             det = DETECTORS.get(t)
             if det is None:
@@ -1476,6 +1521,11 @@ def home_paths_missing(note, home):
     missing = []
     for m in re.finditer(r"(?<![\w/.])~/([\w.@+-]+(?:/[\w.@+-]+)*)/?", note.text):
         rel = m.group(1).strip().rstrip(".")
+        # Not a path of this machine: a name with a space ("Application Support/"),
+        # a pattern (sessions-YYYY-MM-DD.jsonl, <repo>, *.md).
+        if re.match(r" [\w.-]+/", note.text[m.end():]) or re.search(r"YYYY|MM-DD|XXX", rel) \
+                or note.text[m.end():m.end() + 1] in ("<", "{", "*"):
+            continue
         if rel and not os.path.lexists(os.path.join(home, *rel.split("/"))):
             missing.append("~/" + rel)
     return sorted(set(missing))
@@ -1485,7 +1535,7 @@ def written_versions(note):
     """{tool: version} as written in stack.md ('Bun 1.4.3', 'gbrain v0.60.212.0')."""
     out = {}
     for tool, rx in (("bun", r"\bbun\b"), ("gbrain", r"\bgbrain\b"), ("claude", r"\bclaude code\b|\bclaude\b")):
-        m = re.search(rx + r"[^\n\d]{0,20}?v?(\d+\.\d+\.\d+(?:\.\d+)?)", note.text, re.I)
+        m = re.search("(?:%s)" % rx + r"[^\n\d]{0,20}?v?(\d+\.\d+\.\d+(?:\.\d+)?)", note.text, re.I)
         if m:
             out[tool] = m.group(1)
     return out

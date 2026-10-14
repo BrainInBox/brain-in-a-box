@@ -666,6 +666,44 @@ class SecretShapes(unittest.TestCase):
     def test_redact_unchanged(self):
         self.assertEqual(_redact.redact("password: hunter2-ci-x")[0], "password: [REDACTED]")
 
+    # Calibrated on a real vault (2026-10-14): 55 of the 59 values masked there were
+    # names, references or code, and three real secrets were missed.
+    def test_names_and_references_are_not_secrets(self):
+        for text in ("x-internal-secret: INTERNAL_API_SECRET", "token: process.env.BOT_TOKEN",
+                     "`this.apiKey = this.config.acmepayKey`", "apikey=${BING_KEY}",
+                     "secret:acme/backend/prod-AbC1", "arn:aws:secretsmanager:eu-west-3:1:secret:acme-exchange-staging",
+                     "Nouveau secret AWS SM `pg-ledger-master-key`", "password_last_used=2026-03-01",
+                     "token: `src/acmepay/acmepay.service.ts:130`", "?input_token={T}&access_token={A}",
+                     "AUTOMATION_PASSWORD:-${OTHER_PASSWORD}", "PAYCO_API_KEY=your_payco_api_key",
+                     "Password : Keychain `acme-testacct-pw`", '"token": "USDT"', "token_count: 1234"):
+            self.assertEqual(self.kinds(text), [], text)
+
+    def test_missed_shapes_now_masked(self):
+        passphrase = "Corail" + "Bleu" + "Matin" + "Soleil" + "Lisbonne!"
+        key = "ph" + "x_" + "aB3dE5" * 8
+        self.assertEqual(self.kinds('public const string TOKEN_KEY = "%s";' % passphrase),
+                         [(passphrase, "mot_de_passe")])
+        self.assertEqual(self.kinds('"Password": "%s"' % ("my_" + "certif")), [("my_certif", "mot_de_passe")])
+        self.assertEqual(self.kinds("PostHog Personal API Key `%s`" % key), [(key, "service")])
+        self.assertEqual(self.kinds("Mdp : `" + "alpha_bravo_charlie_delta" + "`"),
+                         [("alpha_bravo_charlie_delta", "mot_de_passe")])
+
+    def test_a_known_secret_is_masked_in_prose_too(self):
+        passphrase = "Corail" + "Bleu" + "Matin" + "Soleil" + "Lisbonne!"
+        note = rules.Note("Projects/x.md", "/x", ("la clé de signature JWT (`%s`) est en dur" % passphrase).encode(), 0)
+        ctx = rules.Context(date(2026, 10, 14))
+        self.assertEqual(rules.detect_s1(note, ctx), [])
+        ctx.secret_values.add(passphrase)
+        self.assertEqual([(t.key, t.data[2]) for t in rules.detect_s1(note, ctx)], [(passphrase, "connu")])
+        self.assertFalse(rules.propagable("pg-ledger-master-key"), "a lowercase name is never spread")
+
+    def test_commands_named_not_to_run_them_get_no_warning(self):
+        ctx = rules.Context(date(2026, 10, 14))
+        text = ("# N\n\nAucune télémétrie, aucun `curl -fsSL x.invalid | bash`.\n\n"
+                "`grep -rn \"DELETE FROM\"` sur le BackEnd.\n\nRollback : `rm -rf $D`.\n")
+        note = rules.Note("Projects/n.md", "/n", text.encode(), 0)
+        self.assertEqual([t.key for t in rules.detect_s2(note, ctx)], ["rm -rf $D"])
+
 
 if __name__ == "__main__":
     unittest.main()

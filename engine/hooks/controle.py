@@ -59,12 +59,13 @@ SECRET_KINDS = {
     "aws": "clé AWS", "github": "jeton GitHub", "ia": "clé d'IA", "stripe": "clé Stripe", "slack": "jeton Slack",
     "google": "clé Google", "telegram": "jeton Telegram", "jwt": "jeton de connexion", "discord": "lien secret Discord",
     "url": "mot de passe dans une adresse", "bearer": "jeton d'accès", "mot_de_passe": "mot de passe",
-    "cle_privee": "clé privée",
+    "cle_privee": "clé privée", "service": "clé d'un service en ligne", "connu": "secret déjà repéré ailleurs",
 }
 REPORT_TEXT = {
     "S1": "J'ai masqué {n} secret{s} écrit{s} en clair ({kinds}).",
     "S1_hist": " Déjà enregistré dans l'historique : **change-le** là où il a été créé.",
-    "S2": "J'ai mis un avertissement au-dessus de {n} qui efface ou écrase. La commande n'a pas changé.",
+    "S2": "J'ai mis un avertissement au-dessus d'une commande qui efface ou écrase. La commande n'a pas changé.",
+    "S2_n": "J'ai mis un avertissement au-dessus de {n} commandes qui effacent ou écrasent. Elles n'ont pas changé.",
     "X1_chars": "J'ai retiré {n} caractère{s} invisible{s} qui pouvai{ent} cacher des consignes.",
     "X1_callout": "J'ai mis un avertissement en tête de ce texte venu de l'extérieur : il contient des phrases "
                   "adressées à une IA.",
@@ -92,6 +93,8 @@ POINT_TEXT = {
     "doublon_profil": "[[{n}]] et [[{m}]] ont exactement le même contenu. Je ne supprime rien dans Profile/ ni "
                       "Decisions/ : choisis laquelle garder.",
     "doublon_lie": "[[{n}]] est une copie exacte de [[{m}]], mais d'autres notes pointent vers elle : je l'ai gardée.",
+    "secret_cache": "Le fichier caché {rel} contient {x} secret{s} écrit{s} en clair. Je ne modifie pas les fichiers "
+                    "cachés : retire-le{s} toi-même (le cerveau est sauvegardé en ligne).",
     "fichier_secret": "Le fichier {rel} ressemble à un fichier de secrets. S'il contient une vraie clé, sors-le du "
                       "cerveau : il est sauvegardé en ligne.",
     "dossiers_casse": "Les dossiers {x} existent tous les deux : tes notes sont indexées deux fois. À regrouper à la "
@@ -551,6 +554,8 @@ class Run:
         self.ctx = rules.Context(self.today, profile, now_ts=self.now.timestamp(),
                                  allowed_secret=lambda v: self.fp("valeur", v) in self.white)
         self.ctx.read = lambda rel: rules.read_note(str(self.vault), rel)
+        # gbrain's keys and what earlier nights quarantined are masked wherever they show up again.
+        self.ctx.secret_values = {v for v in self.known_values() if rules.propagable(v)}
         self.masked_ids = []
         if self.can_fix:
             self.secrets_phase()
@@ -782,10 +787,13 @@ class Run:
         return verdict, "fait"
 
     def changed_since(self, sha):
-        """Paths changed since the last review (None: never reviewed, all of them)."""
+        """Paths changed since the last review; never reviewed: those committed in
+        the last 7 days (all of them would only show the newest few notes)."""
         if not (isinstance(sha, str) and re.match(r"^[0-9a-f]{40}$", sha)
                 and self.git.ok("cat-file", "-e", sha + "^{commit}")):
-            return None
+            week = (self.now - timedelta(days=7)).timestamp()
+            return {p for p, t in self.ctx.last_commit.items() if t >= week} | \
+                {rules.nfc(p) for p in status_paths(self.git) or []}
         rc, out, _ = self.git.run("-c", "core.quotepath=off", "diff", "--name-only", "-z", sha, "HEAD")
         if rc != 0:
             return None
@@ -1333,7 +1341,7 @@ class Run:
             if q.get("historique"):
                 text += REPORT_TEXT["S1_hist"]
         elif t == "S2":
-            text = REPORT_TEXT["S2"].format(n="%d commandes" % r["n"] if r["n"] > 1 else "une commande")
+            text = REPORT_TEXT["S2_n"].format(n=r["n"]) if r["n"] > 1 else REPORT_TEXT["S2"]
         elif t == "X1":
             parts = []
             if r.get("chars"):
