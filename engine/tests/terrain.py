@@ -361,13 +361,23 @@ def nuits(t, opts):
     t.check(not changed, "annuler la nuit a laissé %d fichier(s) changé(s) : %s" % (len(changed), ", ".join(changed[:5])))
 
     reset = user_note("Projects/reset.md", "# Reset\n\n```sh\ngit push --force origin main\n```\n")
+    motdepasse = "Nuit4" + "-terrain-" + "Qx7v2"   # fake, assembled here; written in clear by the "user"
+    user_note("Projects/acces-fournisseur.md", "# Accès fournisseur\n\npassword: %s\n" % motdepasse)
     night("nuit-4", 3)
     t.check(callout("Projects/reset.md"), "pas d'avertissement sur la commande de la nuit 4")
+    t.check(motdepasse not in read(vault, "Projects/acces-fournisseur.md"), "le mot de passe de la nuit 4 est resté en clair")
 
     t("pause")
     _, out = ctl("annuler", "derniere-nuit", quand=base + timedelta(days=3, hours=6))
     t.check((etat / "pause").exists(), "deux nuits annulées de suite n'ont pas mis les corrections en pause")
     t.check("pause" in out, "l'annulation ne dit pas que les corrections sont en pause")
+
+    t("secret-reste-masque")
+    # Undoing a night never puts back a secret it masked (#37): only `annuler S1-... --remettre-le-secret` does.
+    t.check(motdepasse not in read(vault, "Projects/acces-fournisseur.md"),
+            "annuler la nuit a remis en clair le mot de passe qu'elle avait masqué")
+    t.check(motdepasse not in git_log_all(vault), "le mot de passe masqué la nuit 4 est dans l'historique git")
+    t.check("restent masqués" in out, "l'annulation ne dit pas que les secrets masqués restent masqués")
 
     encore = user_note("Projects/encore.md", "# Encore\n\n```sh\nrm -rf ~/cache-ancien\n```\n")
     e, _ = night("nuit-5-pause", 4)
@@ -420,7 +430,8 @@ def nuits(t, opts):
     places = {"l'historique git du coffre": git_log_all(vault), "le rapport Profile/controle.md":
               read(vault, "Profile/controle.md"), "les sorties de controle et du hook": "\n".join(outputs)}
     sweep(t, places)
-    sweep(t, dict(state_places(etat), **{k: v for k, v in places.items() if "historique" not in k}), also=[jeton])
+    sweep(t, dict(state_places(etat), **{k: v for k, v in places.items() if "historique" not in k}),
+          also=[jeton, motdepasse])
     quarantine_private(t, etat)
     t.resume = "7 nuits et J+20 : annulations, pause, reprise, secret à changer, archivage, aucune fuite"
 

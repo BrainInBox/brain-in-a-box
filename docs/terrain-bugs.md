@@ -21,7 +21,7 @@ Une entrée :
 ```
 
 ## 2026-10-14 · local, macOS · M1 n'archive pas le dernier bloc d'un memory.md qui finit par une ligne vide
-- Symptôme : scénario `nuits`, étape `memoire-j20` : à J+20, la correction M1 finit en échec
+- Symptôme : scénario `nuits`, étape `nuit-j20` : à J+20, la correction M1 finit en échec
   (« 1 ligne(s) perdue(s) »), le fichier est remis comme avant, alerte rouge « contrat » à chaque nuit,
   et les blocs de plus de 15 jours restent dans memory.md.
 - Cause : quand les blocs à archiver vont jusqu'à la fin du fichier et que le fichier finit par une
@@ -32,7 +32,7 @@ Une entrée :
   d'archive déjà en place et un dernier bloc à archiver (environ 15 jours sans nouvelle entrée).
 - Correctif : à faire. Piste vérifiée hors dépôt : dans `memory_blocks`, ne pas prendre les lignes vides
   finales d'un bloc qui va jusqu'à la fin du fichier ; le scénario `nuits` passe alors en entier.
-- Test de non-régression : `terrain.py nuits` (étape `memoire-j20`) ; un test unitaire à ajouter dans
+- Test de non-régression : `terrain.py nuits` (étape `nuit-j20`) ; un test unitaire à ajouter dans
   `engine/tests/test_controle.py` (deux nuits, la seconde archive le dernier bloc).
 - Catégorie à surveiller : plusieurs nuits.
 
@@ -70,7 +70,8 @@ Une entrée :
 - Correctif : #37. Une nuit annulée laisse les secrets masqués ; un secret ne revient que par son
   identifiant, avec `--remettre-le-secret`.
 - Test de non-régression : `test_controle.SecretsLifecycle.test_a_nights_undo_leaves_secrets_masked` ;
-  job `windows` de `test.yml` (« undoing the night put a secret back ») ; scénario `nuits`.
+  job `windows` de `test.yml` (« undoing the night put a secret back ») ; scénario `nuits`, étape
+  `secret-reste-masque` (la nuit 4 masque un mot de passe, puis elle est annulée).
 - Catégorie à surveiller : secrets.
 
 ## 2026-10-14 · macOS et Windows · D1 et D2 supprimaient des notes qui avaient du contenu
