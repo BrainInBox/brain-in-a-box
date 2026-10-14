@@ -269,7 +269,7 @@ class Lock:
                 except OSError:
                     pass
                 continue
-            with os.fdopen(fd, "w") as f:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
                 f.write("%d %d\n" % (os.getpid(), int(time.time())))
             self.held = True
             return True
@@ -759,10 +759,10 @@ class Run:
         if not dossier.excerpts and not dossier.lessons:
             return None, "saute:rien-de-neuf"
         git_path = self.git.binary
-        ok, why = judge.available(str(home()), self.judge_command, git_path)
+        command = self.judge_command or judge.default_command()
+        ok, why = judge.available(command, git_path)
         if not ok:
             return None, "saute:" + why
-        command = self.judge_command or [judge.find_claude(str(home()))]
         if self.writes:
             state["appels"] = {"jour": self.today.isoformat(), "n": n_calls + 1}
             self.state.save("juge.json", state)
@@ -770,7 +770,7 @@ class Run:
             write_private(run_dir / "dossier.txt", dossier.text.encode("utf-8"))
             os.chmod(str(run_dir), 0o700)
             self.judge_info["dossier_garde"] = True
-        out = judge.ask(dossier.text, judge.schema(dossier.excerpts, dossier.lessons), str(home()), command,
+        out = judge.ask(dossier.text, judge.schema(dossier.excerpts, dossier.lessons), command,
                         timeout=self.judge_timeout, git_path=git_path)
         self.judge_info.update(version=out.version, cout=None if out.cost is None else round(out.cost, 4),
                                tours=out.turns, duree_s=out.secs,

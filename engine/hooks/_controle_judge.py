@@ -1,42 +1,34 @@
 """The Claude review of the night check (controle.py).
 
 Builds a bounded, masked dossier of the notes, asks `claude -p` with no tool at
-all, watches how it started and what it does, and checks every field of its
-answer. Claude only points at excerpts and quotes them: controle.py checks each
-quote against the notes, dates both sides itself and picks the fix.
+all, and checks every field of its answer. Claude only points at excerpts and
+quotes them: controle.py checks each quote against the notes, dates both sides
+itself and picks the fix.
 
-Ported from the app's repair (app/src-tauri/src/repair.rs and redact.rs): the
-same command but for the budget and the effort, the same reduced environment,
-the same fail-closed reading of the stream. engine/tests/test_judge.py keeps
-the two in step.
+Claude is asked through _headless_claude.py, as the daily reflection is: the
+command of the app's repair (app/src-tauri/src/repair.rs) but for the budget and
+the effort, a reduced environment, a fresh private folder, a fail-closed reading
+of the stream. engine/tests/test_judge.py keeps the two in step.
 
 Not a hook: installed next to them, never registered in settings.json.
 """
 import hashlib
-import json
 import math
 import os
-import queue
 import re
-import shutil
-import signal
-import subprocess
 import sys
-import tempfile
-import threading
 import time
-import unicodedata
 from collections import Counter, defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _controle_rules as rules  # noqa: E402
+import _headless_claude as headless  # noqa: E402
 from _redact import find_secrets, redact as redact_common  # noqa: E402
 
-MIN_CLAUDE = (2, 1, 296)
-# The review depends on each of these: a Claude Code that lacks one is not used.
-REQUIRED_FLAGS = ["--restricted", "--safe-mode", "--tools", "--permission-prompts", "--json-schema",
-                  "--max-budget-usd", "--no-session-persistence", "--strict-mcp-config"]
-PROBE_TIMEOUT = 20
+MIN_CLAUDE = headless.MIN_CLAUDE
+REQUIRED_FLAGS = headless.REQUIRED_FLAGS
+LIMIT_RE = headless.LIMIT_RE
+MODEL, EFFORT, BUDGET_USD, MAX_TURNS = "sonnet", "medium", 0.40, 3
 ASK_TIMEOUT = 300
 CALLS_PER_DAY = 3
 LIMIT_WINDOW = 6 * 3600
@@ -58,19 +50,11 @@ SOURCES_SHARE = 0.55
 MAX_FINDINGS = 15
 QUOTE_MAX = 240
 MIN_QUOTE = 15
-LINE_BYTES = 4 << 20
-STREAM_BYTES = 16 << 20
 MASK = "[REDACTED]"
-NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-NEW_GROUP = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-LIMIT_RE = re.compile(r"hit your .*limit|session limit|usage limit", re.I)
 FINDING_TYPES = ["contradiction", "decision_remplacee", "proche_doublon", "perime"]
 CONFIDENCE = ["haute", "moyenne", "basse"]
 FINDING_KEYS = {"type", "a", "b", "citation_a", "citation_b", "actuel", "confiance", "explication"}
 LESSON_KEYS = {"id", "verdict", "doublon_de", "confiance"}
-PROXY_VARS = ("HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY", "https_proxy", "http_proxy", "no_proxy")
-WINDOWS_VARS = ("USERPROFILE", "HOMEDRIVE", "HOMEPATH", "APPDATA", "LOCALAPPDATA", "SystemRoot", "SystemDrive",
-                "windir", "PATHEXT", "COMSPEC")
 
 SYSTEM_PROMPT = "\n".join([
     "Tu relis, la nuit, des extraits du carnet de notes (second cerveau) d'une personne non technicienne. Tu ne "
@@ -162,17 +146,10 @@ def flat(text):
 # --------------------------------------------------------------------------- the command
 
 def argv(schema_obj):
-    """No shell: each element is one argument. The dossier goes through stdin,
-    after every option (a variadic option would swallow a prompt placed last)."""
-    return ["-p", "--restricted", "--safe-mode", "--tools", "",
-            "--disallowedTools", "Bash", "Edit", "Write", "NotebookEdit", "WebFetch", "WebSearch", "Agent", "Task",
-            "Skill",
-            "--strict-mcp-config", "--disable-slash-commands", "--no-chrome",
-            "--settings", '{"disableAllHooks":true}',
-            "--permission-mode", "dontAsk", "--permission-prompts", "none", "--no-session-persistence",
-            "--max-turns", "3", "--max-budget-usd", "0.40", "--model", "sonnet", "--effort", "medium",
-            "--json-schema", json.dumps(schema_obj, ensure_ascii=False, separators=(",", ":")),
-            "--append-system-prompt", SYSTEM_PROMPT, "--output-format", "stream-json", "--verbose"]
+    """claude's options, as _headless_claude.run gives them for the review: no
+    shell, one argument each, the dossier through stdin after every option."""
+    return headless.base_argv(schema_obj, SYSTEM_PROMPT, budget_usd=BUDGET_USD, max_turns=MAX_TURNS, model=MODEL,
+                              effort=EFFORT)
 
 
 def schema(excerpt_ids, lesson_ids):
@@ -208,426 +185,60 @@ def schema(excerpt_ids, lesson_ids):
             "properties": {"suspect": {"type": "boolean"}, "constats": findings, "lecons": lessons}}
 
 
-def _get(environ, name):
-    if name in environ:
-        return environ[name]
-    low = name.lower()
-    return next((v for k, v in environ.items() if k.lower() == low), None) if os.name == "nt" else None
+# --------------------------------------------------------------------------- asking
+
+# What the report says (controle.py CLAUDE_SKIP), from _headless_claude's errors.
+CAUSES = {"start": "lancement", "unsupported": "version", "auth": "connexion", "init": "demarrage",
+          "timeout": "delai", "quota": "limite", "api": "erreur", "invalid": "reponse"}
+REASONS = {"version": "version", "flags": "options", "logged_out": "connexion", "billed": "abonnement"}
 
 
-def login_name(home, environ=None):
-    environ = os.environ if environ is None else environ
-    for k in ("USER", "LOGNAME", "USERNAME"):
-        if environ.get(k):
-            return environ[k]
-    return os.path.basename(str(home).rstrip("/\\"))
+def default_command():
+    """CLAUDE_BIN when set, and then only it; else None: _headless_claude finds the user's claude."""
+    return [os.environ["CLAUDE_BIN"]] if os.environ.get("CLAUDE_BIN") else None
 
 
-def child_env(home, user, claude_dir, tmp, git_dir=None, environ=None, windows=None):
-    """The child's whole environment, as (name, value) pairs. USER is required:
-    without it Claude Code misses its login in the keychain. Never a key nor a
-    token: an API key would also be billed instead of the subscription."""
-    environ = os.environ if environ is None else environ
-    windows = os.name == "nt" if windows is None else windows
-    if windows:
-        root = _get(environ, "SystemRoot") or r"C:\Windows"
-        path = ";".join(p for p in (claude_dir, root.rstrip("\\") + "\\System32", git_dir) if p)
-    else:
-        path = ":".join(p for p in (claude_dir, "/usr/bin", "/bin") if p)
-    env = [("HOME", str(home)), ("USER", user), ("LOGNAME", user), ("TMPDIR", str(tmp)), ("LANG", "fr_FR.UTF-8"),
-           ("PATH", path), ("DISABLE_AUTOUPDATER", "1"), ("CLAUDE_CODE_DISABLE_ADVISOR_TOOL", "1")]
-    if windows:
-        env += [(k, _get(environ, k)) for k in WINDOWS_VARS if _get(environ, k)]
-        env += [("TEMP", str(tmp)), ("TMP", str(tmp))]
-        if _get(environ, "CLAUDE_CODE_GIT_BASH_PATH"):
-            env.append(("CLAUDE_CODE_GIT_BASH_PATH", _get(environ, "CLAUDE_CODE_GIT_BASH_PATH")))
-    env += [(k, environ[k]) for k in PROXY_VARS if environ.get(k)]
-    return env
+def cause(error, probing=False):
+    """The report's word for a HeadlessError. A claude that cannot even answer --version is absent."""
+    if probing and error.kind == "start":
+        return "absent"
+    return REASONS.get(error.reason) or CAUSES.get(error.kind, "erreur")
 
 
-def find_claude(home, environ=None):
-    """CLAUDE_BIN when set (and then only it), else ~/.local/bin/claude, else PATH.
-    On Windows only a real .exe: cmd.exe would read the prompt's < and > in a .cmd."""
-    environ = os.environ if environ is None else environ
-    exe = ".exe" if os.name == "nt" else ""
-    if environ.get("CLAUDE_BIN"):
-        candidates = [environ["CLAUDE_BIN"]]
-    else:
-        candidates = [os.path.join(str(home), ".local", "bin", "claude" + exe), shutil.which("claude")]
-    for c in candidates:
-        if not c or not os.path.isfile(c) or not os.access(c, os.X_OK):
-            continue
-        if os.name == "nt" and not c.lower().endswith(".exe"):
-            continue
-        return os.path.abspath(c)
-    return None
-
-
-def parse_version(text):
-    """(major, minor, patch) of the first word that starts with a digit."""
-    for word in (text or "").split():
-        word = word.lstrip("v")
-        if word[:1].isdigit():
-            m = re.match(r"[\d.]+", word)
-            parts = [p for p in m.group(0).split(".") if p]
-            try:
-                nums = [int(p) for p in parts[:3]] + [0, 0]
-            except ValueError:
-                return None
-            return tuple(nums[:3])
-    return None
-
-
-def has_flags(help_text):
-    words = set(re.split(r"[^A-Za-z0-9-]", help_text or ""))
-    return all(f in words for f in REQUIRED_FLAGS)
-
-
-def auth_method(status):
-    """Only `authMethod` is read: the rest (email, organization) never leaves here."""
-    i = (status or "").find("{")
-    if i < 0:
-        return None
-    try:
-        v, _ = json.JSONDecoder().raw_decode(status[i:])
-    except ValueError:
-        return None
-    m = v.get("authMethod") if isinstance(v, dict) else None
-    return m if isinstance(m, str) else None
-
-
-# --------------------------------------------------------------------------- processes
-
-class WorkDir:
-    """Claude's working folder: private, fresh, empty but for tmp/, gone afterwards.
-    Neither the vault's CLAUDE.md nor its skills are anywhere near it."""
-
-    def __init__(self, root=None):
-        self.path = tempfile.mkdtemp(prefix="controle-juge-", dir=root)
-        os.chmod(self.path, 0o700)
-        self.tmp = os.path.join(self.path, "tmp")
-        os.mkdir(self.tmp, 0o700)
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        shutil.rmtree(self.path, ignore_errors=True)
-
-
-def _popen(cmd, env, cwd, stdin):
-    kw = dict(stdin=subprocess.PIPE if stdin else subprocess.DEVNULL, stdout=subprocess.PIPE,
-              stderr=subprocess.PIPE, cwd=cwd, env=env)
-    if os.name == "nt":
-        kw["creationflags"] = NEW_GROUP | NO_WINDOW
-    else:
-        kw["start_new_session"] = True
-    return subprocess.Popen(cmd, **kw)
-
-
-def _kill(proc):
-    """The whole tree: Claude may have started children of its own."""
-    if proc.poll() is not None:
-        return
-    try:
-        if os.name == "nt":
-            root = os.environ.get("SystemRoot") or r"C:\Windows"
-            subprocess.run([os.path.join(root, "System32", "taskkill.exe"), "/T", "/F", "/PID", str(proc.pid)],
-                           capture_output=True, timeout=20, creationflags=NO_WINDOW)
-        else:
-            os.killpg(proc.pid, signal.SIGKILL)
-    except (OSError, subprocess.SubprocessError):
-        pass
-    try:
-        proc.kill()
-    except OSError:
-        pass
-
-
-def _probe(cmd, env, cwd, timeout):
-    """(exit code, stdout) or (None, "") when it could not run in time."""
-    try:
-        proc = _popen(cmd, env, cwd, stdin=False)
-    except OSError:
-        return None, ""
-    try:
-        out, _ = proc.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        _kill(proc)
-        try:
-            proc.communicate(timeout=10)
-        except (subprocess.TimeoutExpired, ValueError):
-            pass
-        return None, ""
-    return proc.returncode, out.decode("utf-8", "replace")
-
-
-def available(home, command=None, git_path=None, timeout=PROBE_TIMEOUT, work_root=None, environ=None):
+def available(command=None, git_path=None, work_root=None):
     """(True, None) when Claude may be asked, else (False, cause): absent, version,
-    options, connexion (logged out) or abonnement (an API key or a cloud
-    provider would be billed). Each probe runs as the review will."""
-    if command:
-        prefix = list(command)
-    else:
-        claude = find_claude(home, environ)
-        if not claude:
-            return False, "absent"
-        prefix = [claude]
-    with WorkDir(work_root) as work:
-        env = dict(child_env(home, login_name(home, environ), os.path.dirname(prefix[0]), work.tmp,
-                             os.path.dirname(git_path) if git_path else None, environ))
-        rc, out = _probe(prefix + ["--version"], env, work.path, timeout)
-        version = parse_version(out) if rc == 0 else None
-        if version is None:
-            return False, "absent"
-        if version < MIN_CLAUDE:
-            return False, "version"
-        rc, out = _probe(prefix + ["--help"], env, work.path, timeout)
-        if rc != 0 or not has_flags(out):
-            return False, "options"
-        rc, out = _probe(prefix + ["auth", "status"], env, work.path, timeout)
-        method = auth_method(out) if rc == 0 else None
-        if method in (None, "none"):
-            return False, "connexion"
-        if method != "claude.ai":
-            return False, "abonnement"
+    options, connexion (logged out) or abonnement (an API key or a cloud provider
+    would be billed). Nothing is asked: --version, --help and auth status only."""
+    try:
+        headless.check(command, work_root=work_root, git=git_path)
+    except headless.HeadlessError as e:
+        return False, cause(e, probing=True)
     return True, None
-
-
-# --------------------------------------------------------------------------- the stream (repair.rs Watch)
-
-def check_init(v):
-    """("ok", version) when the start-up line shows Claude exactly as the options
-    ask: no tool but the answer, no MCP server, no skill nor command, no prompt
-    for permissions, no API key, built-in plugins only, a known version, Sonnet.
-    ("err", reason) otherwise."""
-    def s(k):
-        x = v.get(k)
-        return x if isinstance(x, str) else None
-
-    if v.get("tools") != ["StructuredOutput"]:
-        return "err", "outils"
-    if v.get("mcp_servers") != []:
-        return "err", "serveurs MCP"
-    # What --safe-mode and --disable-slash-commands turn off: the proof they did.
-    for field in ("skills", "slash_commands"):
-        if v.get(field) != []:
-            return "err", field
-    if s("output_style") != "default":
-        return "err", "output_style"
-    if s("permissionMode") != "dontAsk":
-        return "err", "permissionMode"
-    if s("apiKeySource") != "none":
-        return "err", "apiKeySource"
-    plugins = v.get("plugins")
-    if not isinstance(plugins, list) or not all(
-            isinstance(p, dict) and p.get("path") == "builtin" and isinstance(p.get("source"), str)
-            and p["source"].endswith("@builtin") for p in plugins):
-        return "err", "plugins"
-    version = s("claude_code_version") or ""
-    parsed = parse_version(version)
-    if parsed is None or parsed < MIN_CLAUDE:
-        return "err", "version"
-    if not (s("model") and "sonnet" in s("model")):
-        return "err", "modèle"
-    return "ok", version
-
-
-def foreign_tool(v):
-    """The first tool other than the answer itself in an assistant message, any
-    kind (tool_use, server_tool_use, mcp_tool_use...)."""
-    message = v.get("message")
-    content = message.get("content") if isinstance(message, dict) else None
-    if not isinstance(content, list):
-        return None
-    for block in content:
-        if not isinstance(block, dict) or not isinstance(block.get("type"), str):
-            continue
-        kind = block["type"]
-        name = block.get("name") if isinstance(block.get("name"), str) else "?"
-        if kind.endswith("tool_use") and not (kind == "tool_use" and name == "StructuredOutput"):
-            return name
-    return None
-
-
-def parse_result(result, api_errors):
-    """(answer, None) or (None, cause). The errors the service types on the
-    assistant message come first; the result's text is only a fallback."""
-    subtype = result.get("subtype") if isinstance(result.get("subtype"), str) else ""
-    is_error = result.get("is_error") if isinstance(result.get("is_error"), bool) else True
-    if subtype == "success" and not is_error:
-        out = result.get("structured_output")
-        return (out, None) if isinstance(out, dict) else (None, "reponse")
-    if subtype == "success":
-        said = result.get("result") if isinstance(result.get("result"), str) else ""
-        if {"rate_limit", "usage_limit_reached"} & set(api_errors) or ("hit your" in said and "limit" in said):
-            return None, "limite"
-        if "authentication_failed" in api_errors or "/login" in said or "Not logged in" in said:
-            return None, "connexion"
-        return None, "erreur"
-    # error_max_turns, error_max_budget_usd, error_max_structured_output_retries...
-    return None, "reponse"
-
-
-class Watch:
-    """Claude's stream, line by line: the start-up check first, then the errors
-    and the result. Fail closed: no init, no answer."""
-
-    def __init__(self):
-        self.init = None
-        self.api_errors = []
-        self.result = None
-
-    def line(self, line):
-        """False once the run must stop: Claude did not start or act as required."""
-        try:
-            v = json.loads(line)
-        except ValueError:
-            return self.ok_or_pending()
-        if not isinstance(v, dict):
-            return self.ok_or_pending()
-        kind = v.get("type") if isinstance(v.get("type"), str) else ""
-        if self.init is None:
-            if kind != "system":
-                self.init = ("err", "« %s » avant l'init" % kind[:40])
-            elif v.get("subtype") == "init":
-                self.init = check_init(v)
-            # Other system events may come first (ui_invalidate when logged out).
-            return self.ok_or_pending()
-        if kind == "assistant":
-            for key in ("error", "api_error"):
-                if isinstance(v.get(key), str):
-                    self.api_errors.append(v[key])
-            name = foreign_tool(v)
-            if name is not None:
-                self.init = ("err", "outil utilisé : %s" % name[:60])
-        elif kind == "result":
-            self.result = v
-        return self.ok_or_pending()
-
-    def ok_or_pending(self):
-        return not (self.init and self.init[0] == "err")
-
-    def version(self):
-        return self.init[1] if self.init and self.init[0] == "ok" else None
-
-    def conclude(self, timed_out=False):
-        if self.init and self.init[0] == "err":
-            return None, "demarrage"
-        if timed_out:
-            return None, "delai"
-        if self.init is None:
-            return None, "demarrage"
-        if self.result is None:
-            return None, "reponse"
-        return parse_result(self.result, self.api_errors)
 
 
 class Outcome:
     def __init__(self):
         self.answer = self.cause = self.detail = self.version = self.cost = self.turns = None
-        self.secs, self.launched = 0.0, False
+        self.secs = 0.0
 
 
-def _feed(pipe, data):
-    try:
-        pipe.write(data)
-    except (OSError, ValueError):
-        pass
-    finally:
-        try:
-            pipe.close()
-        except (OSError, ValueError):
-            pass
-
-
-def _pump(pipe, q):
-    try:
-        for line in iter(lambda: pipe.readline(LINE_BYTES), b""):
-            q.put(line)
-    except (OSError, ValueError):
-        pass
-    finally:
-        q.put(None)
-
-
-def _drain(pipe):
-    try:
-        while pipe.read(65536):
-            pass
-    except (OSError, ValueError):
-        pass
-
-
-def ask(dossier_text, schema_obj, home, command, timeout=ASK_TIMEOUT, git_path=None, work_root=None,
-        environ=None):
+def ask(dossier_text, schema_obj, command=None, timeout=ASK_TIMEOUT, git_path=None, work_root=None):
     """One review. `command` is the claude executable as a list (tests pass a stub
     there, never through the environment: a schema's quotes would not survive a
     .cmd). The stream is not kept, only what the journal needs."""
-    out = Outcome()
-    with WorkDir(work_root) as work:
-        env = dict(child_env(home, login_name(home, environ), os.path.dirname(command[0]), work.tmp,
-                             os.path.dirname(git_path) if git_path else None, environ))
-        try:
-            proc = _popen(list(command) + argv(schema_obj), env, work.path, stdin=True)
-        except OSError:
-            out.cause = "lancement"
-            return out
-        out.launched = True
-        start = time.monotonic()
-        lines = queue.Queue()
-        # On threads: a program that never reads its stdin must not keep us past the limit.
-        threads = [threading.Thread(target=_feed, args=(proc.stdin, dossier_text.encode("utf-8")), daemon=True),
-                   threading.Thread(target=_pump, args=(proc.stdout, lines), daemon=True),
-                   threading.Thread(target=_drain, args=(proc.stderr,), daemon=True)]
-        for t in threads:
-            t.start()
-        watch, timed_out, overflow, total = Watch(), False, False, 0
-        deadline = start + timeout
-        while True:
-            left = deadline - time.monotonic()
-            if left <= 0:
-                timed_out = True
-                break
-            try:
-                item = lines.get(timeout=min(left, 0.5))
-            except queue.Empty:
-                continue
-            if item is None:
-                break
-            total += len(item)
-            if total > STREAM_BYTES:
-                overflow = True
-                break
-            if not watch.line(item.decode("utf-8", "replace").rstrip("\r\n")):
-                break
-        if proc.poll() is None:
-            try:
-                proc.wait(timeout=0 if (timed_out or overflow or not watch.ok_or_pending())
-                          else max(1.0, min(10.0, deadline - time.monotonic())))
-            except subprocess.TimeoutExpired:
-                pass
-        _kill(proc)
-        try:
-            proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            pass
-        for t in threads:
-            t.join(timeout=5)
-        for pipe in (proc.stdout, proc.stderr):
-            try:
-                pipe.close()
-            except (OSError, ValueError):
-                pass
-        out.secs = round(time.monotonic() - start, 1)
-        out.version = watch.version()
-        if watch.result is not None:
-            turns, cost = watch.result.get("num_turns"), watch.result.get("total_cost_usd")
-            out.turns = turns if isinstance(turns, int) else None
-            out.cost = float(cost) if isinstance(cost, (int, float)) and not isinstance(cost, bool) else None
-        out.answer, out.cause = (None, "reponse") if overflow else watch.conclude(timed_out)
-        if watch.init and watch.init[0] == "err":
-            out.detail = watch.init[1]
+    out, start = Outcome(), time.monotonic()
+    try:
+        a = headless.run(dossier_text, schema_obj, SYSTEM_PROMPT, budget_usd=BUDGET_USD, timeout=timeout,
+                         max_turns=MAX_TURNS, model=MODEL, effort=EFFORT, command=command, work_root=work_root,
+                         git=git_path)
+    except headless.HeadlessError as e:
+        out.cause, out.detail = cause(e), e.detail
+    else:
+        out.answer, out.version = a.output, a.version
+        out.turns = a.num_turns if isinstance(a.num_turns, int) and not isinstance(a.num_turns, bool) else None
+        out.cost = float(a.cost_usd) if isinstance(a.cost_usd, (int, float)) and not isinstance(a.cost_usd, bool) \
+            else None
+    out.secs = round(time.monotonic() - start, 1)
     return out
 
 

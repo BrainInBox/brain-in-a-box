@@ -32,6 +32,7 @@ sys.path.insert(0, HERE)
 
 import _controle_judge as judge  # noqa: E402
 import _controle_rules as rules  # noqa: E402
+import _headless_claude as headless  # noqa: E402
 import controle  # noqa: E402
 import vault_piege  # noqa: E402
 from test_controle import ACTION_TRAILER, all_text_under, isolated_env, read  # noqa: E402
@@ -40,6 +41,9 @@ from vault_piege import age_files, git, write  # noqa: E402
 STUB = r'''
 import json, os, re, sys, time
 
+# Under -I, PYTHONIOENCODING is ignored: on Windows the pipe would be cp1252, and
+# "abandonné" would come back as something no quote matches.
+sys.stdout.reconfigure(encoding="utf-8")
 plan_path, args = sys.argv[1], sys.argv[2:]
 with open(plan_path, encoding="utf-8") as f:
     plan = json.load(f)
@@ -168,8 +172,7 @@ class StubCase(unittest.TestCase):
             return [json.loads(line) for line in f if line.strip()]
 
     def ask(self, command, text="Contrôle du 2026-10-14.\n", timeout=60, sch=None):
-        return judge.ask(text, sch or judge.schema(["E01"], []), self.tmp, command, timeout=timeout,
-                         work_root=self.tmp)
+        return judge.ask(text, sch or judge.schema(["E01"], []), command, timeout=timeout, work_root=self.tmp)
 
 
 # --------------------------------------------------------------------------- the command
@@ -218,14 +221,14 @@ class Command(unittest.TestCase):
         with open(REPAIR_RS, encoding="utf-8") as f:
             src = f.read()
         flags = re.search(r"const REQUIRED_FLAGS: &\[&str\] = &\[(.*?)\];", src, re.S).group(1)
-        self.assertEqual(judge.REQUIRED_FLAGS, re.findall(r'"([^"]+)"', flags))
+        self.assertEqual(list(judge.REQUIRED_FLAGS), re.findall(r'"([^"]+)"', flags))
         m = re.search(r"pub const MIN_CLAUDE: Version = \((\d+), (\d+), (\d+)\);", src)
         self.assertEqual(judge.MIN_CLAUDE, tuple(int(x) for x in m.groups()))
         with open(HELP, encoding="utf-8") as f:
-            self.assertTrue(judge.has_flags(f.read()))
-        self.assertFalse(judge.has_flags("--restricted --safe-mode --tools"))
+            self.assertEqual(headless.missing_flags(f.read()), [])
+        self.assertTrue(headless.missing_flags("--restricted --safe-mode --tools"))
         with open(os.path.join(FIXTURES, "claude-version.txt"), encoding="utf-8") as f:
-            self.assertEqual(judge.parse_version(f.read()), (2, 1, 296))
+            self.assertEqual(headless.parse_version(f.read()), (2, 1, 296))
 
     def test_system_prompt_is_the_reviewed_one(self):
         p = judge.SYSTEM_PROMPT
@@ -250,37 +253,46 @@ class Command(unittest.TestCase):
 class Environment(unittest.TestCase):
     def test_child_env_is_the_short_list(self):
         parent = dict(PARENT_SECRETS, HTTPS_PROXY="http://proxy.local:3128", SHELL="/bin/zsh", OLDPWD="/x")
-        env = judge.child_env("/Users/jo", "jo", "/Users/jo/.local/bin", "/t/tmp", environ=parent, windows=False)
-        keys = [k for k, _ in env]
-        self.assertEqual(keys, POSIX_KEYS + ["HTTPS_PROXY"])
-        d = dict(env)
-        self.assertEqual(d["PATH"], "/Users/jo/.local/bin:/usr/bin:/bin")
-        self.assertEqual((d["HOME"], d["TMPDIR"], d["LANG"]), ("/Users/jo", "/t/tmp", "fr_FR.UTF-8"))
+        with mock.patch.dict(os.environ, parent):
+            env = headless.child_env("/t/tmp", "/Users/jo/.local/bin:/usr/bin:/bin")
+        allowed = set(POSIX_KEYS) | set(headless.WINDOWS_VARS) | set(headless.PROXY_VARS) | {"TEMP", "TMP"}
+        self.assertLessEqual(set(env), allowed)
+        self.assertFalse(set(PARENT_SECRETS) & set(env))
+        self.assertEqual(env["HTTPS_PROXY"], "http://proxy.local:3128")
+        self.assertEqual(env["PATH"], "/Users/jo/.local/bin:/usr/bin:/bin")
+        self.assertEqual(env["DISABLE_AUTOUPDATER"], "1")
 
-    def test_child_env_on_windows(self):
-        parent = dict(PARENT_SECRETS, SystemRoot=r"C:\Windows", USERPROFILE=r"C:\Users\jo", APPDATA=r"C:\A",
-                      LOCALAPPDATA=r"C:\L", PATHEXT=".EXE", COMSPEC=r"C:\Windows\cmd.exe", windir=r"C:\Windows",
-                      SystemDrive="C:", HOMEDRIVE="C:", HOMEPATH=r"\Users\jo",
-                      CLAUDE_CODE_GIT_BASH_PATH=r"C:\Git\bin\bash.exe")
-        env = dict(judge.child_env(r"C:\Users\jo", "jo", r"C:\Users\jo\.local\bin", r"C:\t\tmp", r"C:\Git\cmd",
-                                   environ=parent, windows=True))
-        self.assertEqual(set(env), set(POSIX_KEYS) | set(judge.WINDOWS_VARS) | {"TEMP", "TMP",
-                                                                                  "CLAUDE_CODE_GIT_BASH_PATH"})
-        self.assertEqual(env["PATH"], r"C:\Users\jo\.local\bin;C:\Windows\System32;C:\Git\cmd")
-        self.assertEqual((env["TEMP"], env["TMP"]), (r"C:\t\tmp", r"C:\t\tmp"))
+    @unittest.skipUnless(os.name == "nt", "Windows: Claude Code needs Git Bash, found from git.exe")
+    def test_the_git_found_by_the_check_reaches_claude(self):
+        path = headless.child_path(r"C:\Users\jo\.local\bin\claude.exe", r"D:\Outils\Git\cmd\git.exe")
+        self.assertIn(r"D:\Outils\Git\cmd", path.split(os.pathsep))
 
     def test_claude_bin_when_set_is_the_only_one(self):
         home = tempfile.mkdtemp(prefix="juge-home-")
         self.addCleanup(shutil.rmtree, home, True)
-        self.assertIsNone(judge.find_claude(home, {"CLAUDE_BIN": os.path.join(home, "absent")}))
-        self.assertEqual(judge.login_name("/Users/jo.doe", {}), "jo.doe")
+        absent = os.path.join(home, "absent")
+        with mock.patch.dict(os.environ, {"CLAUDE_BIN": absent}):
+            self.assertEqual(judge.default_command(), [absent])
+            self.assertEqual(judge.available(judge.default_command(), work_root=home), (False, "absent"))
+        with mock.patch.dict(os.environ, {"CLAUDE_BIN": ""}):
+            self.assertIsNone(judge.default_command())
 
 
 # --------------------------------------------------------------------------- the stream
 
+def told(watch, timed_out=False):
+    """(answer, None) or (None, the report's cause), as judge.ask tells a run."""
+    try:
+        return watch.conclude(timed_out).output, None
+    except headless.HeadlessError as e:
+        return None, judge.cause(e)
+
+
 class Stream(unittest.TestCase):
+    """_headless_claude reads the stream (engine/tests/test_reflection.py): here, what the review asks of it."""
+
     def watch(self, name):
-        w, went_on = judge.Watch(), True
+        w, went_on = headless.Watch(judge.MODEL), True
         with open(os.path.join(FIXTURES, name), encoding="utf-8") as f:
             for line in f:
                 went_on &= w.line(line.rstrip("\n"))
@@ -288,62 +300,71 @@ class Stream(unittest.TestCase):
 
     def test_init_must_match_the_options(self):
         ok = OK_STREAM[0]
-        self.assertEqual(judge.check_init(ok), ("ok", "2.1.296"))
+        self.assertEqual(headless.check_init(ok, judge.MODEL), "2.1.296")
         for bad in ("init-bash", "init-mcp", "init-api-key", "init-old-version", "init-opus", "init-plugin"):
-            self.assertEqual(judge.check_init(events(bad + ".jsonl")[0])[0], "err", bad)
+            with self.assertRaises(headless.HeadlessError, msg=bad):
+                headless.check_init(events(bad + ".jsonl")[0], judge.MODEL)
         for field in ("tools", "mcp_servers", "permissionMode", "apiKeySource", "plugins", "claude_code_version",
                       "model", "skills", "slash_commands", "output_style"):
             v = dict(ok)
             del v[field]
-            self.assertEqual(judge.check_init(v)[0], "err", "without " + field)
+            with self.assertRaises(headless.HeadlessError, msg="without " + field):
+                headless.check_init(v, judge.MODEL)
         for field, value in (("skills", ["brain-boost"]), ("slash_commands", ["controle"]),
                              ("output_style", "Explanatory"), ("permissionMode", "bypassPermissions"),
                              ("claude_code_version", "2.1.200"), ("model", "claude-opus-5"),
                              ("apiKeySource", "ANTHROPIC_API_KEY"), ("mcp_servers", [{"name": "gbrain"}]),
                              ("tools", ["Bash", "StructuredOutput"]),
                              ("plugins", [{"name": "x", "path": "/Users/jo/.claude/plugins/x", "source": "x@local"}])):
-            self.assertEqual(judge.check_init(dict(ok, **{field: value}))[0], "err", field)
+            with self.assertRaises(headless.HeadlessError, msg=field):
+                headless.check_init(dict(ok, **{field: value}), judge.MODEL)
 
     def test_the_stream_gives_an_answer_or_a_reason(self):
         cases = {
             "plan-ok.jsonl": None, "plan-suspect.jsonl": None, "plan-round2-effort-high.jsonl": None,
-            "no-structured-output.jsonl": "reponse", "broken-json.jsonl": "reponse",
+            "no-structured-output.jsonl": "reponse", "broken-json.jsonl": "erreur",
             "budget-exceeded.jsonl": "reponse", "max-turns.jsonl": "reponse", "quota.jsonl": "limite",
             "auth-expired.jsonl": "connexion", "not-logged-in.jsonl": "connexion",
             "init-bash.jsonl": "demarrage", "init-mcp.jsonl": "demarrage", "init-api-key.jsonl": "demarrage",
             "init-old-version.jsonl": "demarrage", "init-opus.jsonl": "demarrage", "init-plugin.jsonl": "demarrage",
         }
-        for name, cause in cases.items():
+        for name, want in cases.items():
             w, went_on = self.watch(name)
-            answer, got = w.conclude()
-            self.assertEqual(got, cause, name)
-            self.assertEqual(answer is not None, cause is None, name)
-            self.assertEqual(went_on, cause != "demarrage", name)
+            answer, got = told(w)
+            self.assertEqual(got, want, name)
+            self.assertEqual(answer is not None, want is None, name)
+            self.assertEqual(went_on, want != "demarrage", name)
         w, _ = self.watch("plan-ok.jsonl")
-        self.assertEqual(w.conclude(timed_out=True), (None, "delai"))
-        self.assertEqual(judge.Watch().conclude(), (None, "demarrage"))
-        early = judge.Watch()
+        self.assertEqual(told(w, timed_out=True), (None, "delai"))
+        self.assertEqual(told(headless.Watch(judge.MODEL)), (None, "lancement"))
+        early = headless.Watch(judge.MODEL)
         self.assertFalse(early.line('{"type":"assistant","message":{}}'), "an answer before the init")
 
     def test_a_tool_mid_stream_stops_the_run(self):
-        w = judge.Watch()
+        w = headless.Watch(judge.MODEL)
         self.assertTrue(w.line(json.dumps(OK_STREAM[0])))
         for kind, name in (("tool_use", "Bash"), ("server_tool_use", "web_search"), ("mcp_tool_use", "x")):
-            w2 = judge.Watch()
+            w2 = headless.Watch(judge.MODEL)
             w2.line(json.dumps(OK_STREAM[0]))
             event = {"type": "assistant", "message": {"content": [{"type": kind, "name": name}]}}
             self.assertFalse(w2.line(json.dumps(event)), kind)
-            self.assertEqual(w2.conclude()[1], "demarrage")
+            self.assertEqual(told(w2)[1], "demarrage")
         self.assertTrue(w.line(json.dumps(OK_STREAM[1])), "StructuredOutput is the answer itself")
 
     def test_limits_fall_back_on_the_text(self):
+        def said(result, api_errors=()):
+            try:
+                headless.parse_result(result, list(api_errors))
+            except headless.HeadlessError as e:
+                return judge.cause(e)
+
         def r(text):
             return {"type": "result", "subtype": "success", "is_error": True, "result": text}
-        self.assertEqual(judge.parse_result(r("You've hit your weekly limit · resets Mon"), []), (None, "limite"))
-        self.assertEqual(judge.parse_result(r("Not logged in · Please run /login"), []), (None, "connexion"))
-        self.assertEqual(judge.parse_result(r("Overloaded"), []), (None, "erreur"))
-        self.assertEqual(judge.parse_result(r(""), ["usage_limit_reached"]), (None, "limite"))
-        self.assertEqual(judge.parse_result({"subtype": "success", "structured_output": {}}, []), (None, "erreur"))
+        self.assertEqual(said(r("You've hit your weekly limit · resets Mon")), "limite")
+        self.assertEqual(said(r("Not logged in · Please run /login")), "connexion")
+        self.assertEqual(said(r("Overloaded")), "erreur")
+        self.assertEqual(said(r(""), ["usage_limit_reached"]), "limite")
+        self.assertEqual(said({"subtype": "success", "structured_output": {}}), "erreur")
 
 
 # --------------------------------------------------------------------------- masking
@@ -393,7 +414,8 @@ class Isolation(StubCase):
         rec = rec[0]
         self.assertEqual(rec["argv"], judge.argv(sch))
         self.assertEqual(rec["stdin"], dossier)
-        allowed = {k.upper() for k in POSIX_KEYS + list(judge.WINDOWS_VARS) + ["TEMP", "TMP"]} | OS_ADDED
+        allowed = {k.upper() for k in POSIX_KEYS + list(headless.WINDOWS_VARS) + list(headless.PROXY_VARS)
+                   + ["TEMP", "TMP"]} | OS_ADDED
         got = {k.upper() for k in rec["env"]}
         self.assertTrue(got <= allowed, got - allowed)
         self.assertTrue(set(POSIX_KEYS) <= set(rec["env"]) or os.name == "nt")
@@ -403,7 +425,8 @@ class Isolation(StubCase):
         self.assertEqual(rec["listing"], ["tmp"])
         self.assertTrue(rec["cwd"].startswith(os.path.realpath(self.tmp)) or rec["cwd"].startswith(self.tmp))
         self.assertFalse(os.path.exists(rec["cwd"]), "the working folder is removed")
-        self.assertEqual(os.path.realpath(os.path.dirname(rec["env"]["TMPDIR"])), os.path.realpath(rec["cwd"]))
+        tmp = rec["env"].get("TMPDIR") or rec["env"].get("TEMP")
+        self.assertEqual(os.path.realpath(os.path.dirname(tmp)), os.path.realpath(rec["cwd"]))
 
     def test_a_tool_used_mid_stream_kills_claude(self):
         t0 = time.monotonic()
@@ -429,7 +452,7 @@ class Isolation(StubCase):
         self.assertEqual((out.answer, out.cause), (None, "demarrage"))
 
     def test_availability_probes(self):
-        avail = lambda **plan: judge.available(self.tmp, self.command(**plan), work_root=self.tmp)  # noqa: E731
+        avail = lambda **plan: judge.available(self.command(**plan), work_root=self.tmp)  # noqa: E731
         self.assertEqual(avail(), (True, None))
         self.assertEqual(avail(version="2.1.200 (Claude Code)"), (False, "version"))
         self.assertEqual(avail(version="pas de version"), (False, "absent"))
@@ -439,8 +462,8 @@ class Isolation(StubCase):
         self.assertEqual(avail(help=short_help), (False, "options"))
         self.assertEqual(avail(auth={"loggedIn": False, "authMethod": "none"}), (False, "connexion"))
         self.assertEqual(avail(auth={"loggedIn": True, "authMethod": "apiKey"}), (False, "abonnement"))
-        self.assertEqual(judge.available(self.tmp, None, environ={"CLAUDE_BIN": os.path.join(self.tmp, "x")}),
-                         (False, "absent"))
+        self.assertEqual(avail(auth={"loggedIn": False}), (False, "connexion"))
+        self.assertEqual(self.records(), [], "nothing was asked")
 
 
 # --------------------------------------------------------------------------- the answer
