@@ -65,6 +65,11 @@ the next scheduled night.
 5. `vrai-claude` spends the maintainer's Claude subscription: never more than one run started by
    hand a day (on master; elsewhere it is skipped). A run that hit the usage limit says "quota
    atteint" and is skipped, not failed: wait for the next night, never retry it to reproduce.
+6. `vrai-claude` failing at `relecture` with `saute:connexion (... 401 ...)` is the token, not the code:
+   the `CLAUDE_CODE_OAUTH_TOKEN` of the `terrain-claude` environment is refused (expired, revoked or
+   pasted wrong). Change nothing: say on the issue that the maintainer must set it again
+   (`claude setup-token`, then `gh secret set CLAUDE_CODE_OAUTH_TOKEN --env terrain-claude`), and
+   leave it red.
 
 ## Never merge these yourself
 
