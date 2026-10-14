@@ -155,6 +155,11 @@ class StubCase(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="juge-test-")
         self.addCleanup(shutil.rmtree, self.tmp, True)
+        # The probes read claude's settings: never the user's, nor this machine's managed ones.
+        for patch in (mock.patch.dict(os.environ, {"HOME": self.tmp, "USERPROFILE": self.tmp}),
+                      mock.patch.object(headless, "MANAGED_DIR", os.path.join(self.tmp, "managed"))):
+            patch.start()
+            self.addCleanup(patch.stop)
         self.stub = os.path.join(self.tmp, "stub.py")
         with open(self.stub, "w", encoding="utf-8") as f:
             f.write(STUB)
@@ -489,7 +494,10 @@ class Isolation(StubCase):
         self.assertEqual(avail(help=short_help), (False, "options"))
         self.assertEqual(avail(auth={"loggedIn": False, "authMethod": "none"}), (False, "connexion"))
         self.assertEqual(avail(auth={"loggedIn": True, "authMethod": "apiKey"}), (False, "abonnement"))
-        self.assertEqual(avail(auth={"loggedIn": True, "authMethod": "oauth_token"}), (True, None))
+        # oauth_token is the subscription only with the setup-token given: else a gateway's token.
+        self.assertEqual(avail(auth={"loggedIn": True, "authMethod": "oauth_token"}), (False, "abonnement"))
+        with mock.patch.dict(os.environ, {headless.TOKEN_VAR: "sk-ant-oat01-factice"}):
+            self.assertEqual(avail(auth={"loggedIn": True, "authMethod": "oauth_token"}), (True, None))
         self.assertEqual(avail(auth={"loggedIn": False}), (False, "connexion"))
         self.assertEqual(self.records(), [], "nothing was asked")
 

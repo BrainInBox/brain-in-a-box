@@ -5,8 +5,8 @@ skill, no CLAUDE.md, none of the user's settings files, in a fresh private
 folder, with a short allow-list for environment: whatever the text it reads
 says, all it can do is answer. Its stream is checked line by line against that
 (fail closed: no valid start-up line, no answer), and a claude logged in any
-other way than a claude.ai subscription is never started, since an API key
-would be billed. A subscription reaches it two ways: the login `claude auth
+other way than a claude.ai subscription, or whose settings send it to a gateway
+or a cloud provider, is never started, since an API key would be billed. A subscription reaches it two ways: the login `claude auth
 login` stores, or on a machine without a browser the token `claude setup-token`
 prints, in CLAUDE_CODE_OAUTH_TOKEN (the one credential the child is given;
 its value is never written anywhere). Same contract as the Mac app's repair
@@ -26,6 +26,7 @@ import re
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -46,11 +47,18 @@ STREAM_CAP = 32_000_000
 # left behind holding the pipes is not waited for.
 DRAIN = 2.0
 LIMIT_RE = re.compile(r"hit your .*limit|session limit|usage limit", re.I)
-# What `claude auth status` says of a claude.ai subscription: the stored login, or the
-# CLAUDE_CODE_OAUTH_TOKEN of `claude setup-token`. An API key or a cloud provider is billed.
-SUBSCRIPTION = ("claude.ai", "oauth_token")
-# The setup-token itself, passed on when set: nothing else of its kind is.
+# The setup-token of `claude setup-token`, passed on when set: nothing else of its kind is.
+# `claude auth status` says "claude.ai" for the stored login, and "oauth_token" for any other
+# token: this one, but also a gateway's ANTHROPIC_AUTH_TOKEN. So "oauth_token" is the
+# subscription only when the child was given this variable.
 TOKEN_VAR = "CLAUDE_CODE_OAUTH_TOKEN"
+# What claude's settings files may add to its environment ("env") that sends the question
+# elsewhere or bills it, whatever `auth status` says: an API key, a gateway token or URL, a
+# cloud provider (CLAUDE_CODE_USE_*), or an apiKeyHelper.
+REROUTE_VARS = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "AWS_BEARER_TOKEN_BEDROCK",
+                "ANTHROPIC_FOUNDRY_API_KEY", "ANTHROPIC_FOUNDRY_AUTH_TOKEN", "ANTHROPIC_AWS_API_KEY")
+# Where an administrator's settings live (None: this OS's folder; tests point it elsewhere).
+MANAGED_DIR = None
 PROXY_VARS = ("HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "NO_PROXY",
               "https_proxy", "http_proxy", "all_proxy", "no_proxy", "NODE_EXTRA_CA_CERTS")
 WINDOWS_VARS = ("USERPROFILE", "HOMEDRIVE", "HOMEPATH", "APPDATA", "LOCALAPPDATA", "SystemRoot",
@@ -317,6 +325,46 @@ def auth_method(status):
     return v.get("authMethod") if isinstance(v, dict) else None
 
 
+def _managed_dir():
+    if MANAGED_DIR is not None:
+        return Path(MANAGED_DIR)
+    if WINDOWS:
+        return Path(os.environ.get("ProgramFiles") or r"C:\Program Files") / "ClaudeCode"
+    return Path("/Library/Application Support/ClaudeCode" if sys.platform == "darwin" else "/etc/claude-code")
+
+
+def settings_files():
+    """The settings files whose "env" claude applies to itself here: the user's (the child's HOME,
+    no CLAUDE_CONFIG_DIR) and an administrator's. The child's folder is fresh: no project ones."""
+    user, managed = Path.home() / ".claude", _managed_dir()
+    return ([user / "settings.json", user / "settings.local.json", managed / "managed-settings.json"]
+            + sorted(managed.glob("managed-settings.d/*.json")))
+
+
+def _reroutes(name):
+    n = name.upper()
+    return (n in REROUTE_VARS or n.startswith("CLAUDE_CODE_USE_")
+            or (n.startswith("ANTHROPIC_") and n.endswith("BASE_URL")))
+
+
+def rerouted():
+    """Names (never values) of what claude's settings set that sends the question elsewhere or bills it."""
+    found = set()
+    for path in settings_files():
+        try:
+            with open(path, encoding="utf-8-sig") as f:
+                v = json.load(f)
+        except (OSError, ValueError):
+            continue
+        if not isinstance(v, dict):
+            continue
+        env = v.get("env") if isinstance(v.get("env"), dict) else {}
+        found.update(_label(k) for k, val in env.items() if isinstance(k, str) and val and _reroutes(k))
+        if v.get("apiKeyHelper"):
+            found.add("apiKeyHelper")
+    return sorted(found)
+
+
 def check_cli(argv0, env, cwd):
     """Version, flags and login of this claude, checked before any question is asked.
     Returns the version; raises HeadlessError (unsupported, auth, start)."""
@@ -331,9 +379,16 @@ def check_cli(argv0, env, cwd):
     missing = missing_flags(out)
     if missing:
         raise HeadlessError("unsupported", "this claude lacks " + ", ".join(missing), "flags")
+    elsewhere = rerouted()
+    if elsewhere:
+        raise HeadlessError("auth", f"Claude Code's settings set {', '.join(elsewhere[:5])}: its answers would "
+                                    "go elsewhere or be billed, and only a claude.ai subscription is used.", "billed")
     _, out, _ = _capture(argv0 + ["auth", "status"], env, cwd)
     method = auth_method(out)
-    if method not in SUBSCRIPTION:
+    if method == "oauth_token" and not env.get(TOKEN_VAR):
+        raise HeadlessError("auth", "Claude Code is logged in with a token that is not the setup-token (a gateway's "
+                                    "ANTHROPIC_AUTH_TOKEN?), and only a claude.ai subscription is used.", "billed")
+    if method not in ("claude.ai", "oauth_token"):
         raise HeadlessError("auth", f"Claude Code login is {_label(method) if method else 'missing'}, and only "
                                     "a claude.ai subscription is used (an API key would be billed). "
                                     "Run `claude auth login` (no browser: `claude setup-token`, then "

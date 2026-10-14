@@ -160,8 +160,12 @@ class Isolated(unittest.TestCase):
         (self.fake / "answer.json").write_text(json.dumps(ANSWER), encoding="utf-8")
         self.saved = dict(os.environ)
         os.environ.update(CANARIES, HOME=str(self.home), USERPROFILE=str(self.home))
+        # Never this machine's own managed settings.
+        self.managed = self.home / "managed"
+        self.saved_managed, hc.MANAGED_DIR = hc.MANAGED_DIR, str(self.managed)
 
     def tearDown(self):
+        hc.MANAGED_DIR = self.saved_managed
         os.environ.clear()
         os.environ.update(self.saved)
         shutil.rmtree(self.home, ignore_errors=True)
@@ -220,6 +224,40 @@ class Isolated(unittest.TestCase):
             self.assertEqual((e.exception.kind, e.exception.reason),
                              ("auth", "logged_out" if method == "none" else "billed"), method)
         self.assertEqual(self.calls(), 1)
+
+    def test_a_token_that_is_not_the_setup_token_is_refused(self):
+        # A gateway's ANTHROPIC_AUTH_TOKEN (settings "env", or a proxy setup) reads as oauth_token too.
+        (self.fake / "auth").write_text("oauth_token", encoding="utf-8")
+        os.environ.pop(hc.TOKEN_VAR)
+        with self.assertRaises(hc.HeadlessError) as e:
+            self.run_fake()
+        self.assertEqual((e.exception.kind, e.exception.reason), ("auth", "billed"))
+        self.assertEqual(self.calls(), 0)
+
+    def test_settings_that_send_claude_elsewhere_are_refused(self):
+        settings = self.home / ".claude" / "settings.json"
+        cases = [(settings, {"env": {"ANTHROPIC_AUTH_TOKEN": "gw-canari", "ANTHROPIC_BASE_URL": "http://127.0.0.1:9"}}),
+                 (settings, {"env": {"CLAUDE_CODE_USE_BEDROCK": "1"}}),
+                 (settings, {"apiKeyHelper": "echo canari"}),
+                 (self.home / ".claude" / "settings.local.json", {"env": {"ANTHROPIC_API_KEY": "canari"}}),
+                 (self.managed / "managed-settings.json", {"env": {"ANTHROPIC_BEDROCK_BASE_URL": "https://x"}}),
+                 (self.managed / "managed-settings.d" / "10-gw.json", {"env": {"ANTHROPIC_AUTH_TOKEN": "canari"}})]
+        for auth in ("oauth_token", "claude.ai"):
+            (self.fake / "auth").write_text(auth, encoding="utf-8")
+            for path, content in cases:
+                with self.subTest(auth=auth, path=path.name, content=sorted(content)):
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text(json.dumps(content), encoding="utf-8")
+                    with self.assertRaises(hc.HeadlessError) as e:
+                        self.run_fake()
+                    path.unlink()
+                    self.assertEqual((e.exception.kind, e.exception.reason), ("auth", "billed"))
+                    self.assertNotIn("canari", str(e.exception))
+        self.assertEqual(self.calls(), 0)
+        # Settings that send nothing elsewhere change nothing.
+        settings.write_text(json.dumps({"env": {"ANTHROPIC_BASE_URL": "", "DISABLE_TELEMETRY": "1"}, "model": "x"}),
+                            encoding="utf-8")
+        self.assertEqual(self.run_fake().output, ANSWER)
 
     def test_no_token_no_token_variable(self):
         os.environ.pop(hc.TOKEN_VAR)
