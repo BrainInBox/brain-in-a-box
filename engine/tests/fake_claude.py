@@ -3,7 +3,8 @@
 Driven by files in $HOME/.claude/fake/ (HOME is one of the few variables the
 reflection passes on):
     fixtures     folder of the real stream-json captures (app/src-tauri/tests/fixtures/repair)
-    scenario     a capture to replay (default plan-ok), or tool-bash, or hang
+    scenario     a capture to replay (default plan-ok), or tool-bash, second-init (a start-up line
+                 with Bash after a clean one), orphan (leaves a child that let go of the pipes), hang
     answer.json  the structured answer put in place of the capture's one
     auth         authMethod `claude auth status` reports (default claude.ai)
     version      what `claude --version` prints (default 2.1.296 (Claude Code))
@@ -68,9 +69,16 @@ def main(args):
         return 0
     with open(os.path.join(FAKE, "answer.json"), encoding="utf-8") as f:
         answer = json.load(f)
-    name = "plan-ok" if scenario == "tool-bash" else scenario
+    if scenario == "orphan":
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], stdin=subprocess.DEVNULL,
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        record("grandchild.pid", str(child.pid))
+    name = "plan-ok" if scenario in ("tool-bash", "second-init", "orphan") else scenario
     with open(os.path.join(setting("fixtures"), name + ".jsonl"), encoding="utf-8") as f:
         lines = f.read().splitlines()
+    if scenario == "second-init":
+        with open(os.path.join(setting("fixtures"), "init-bash.jsonl"), encoding="utf-8") as f:
+            lines.insert(1, f.readline().strip())
     for line in lines:
         try:
             event = json.loads(line)

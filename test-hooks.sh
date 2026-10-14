@@ -165,7 +165,7 @@ EOF
 printf -- '---\ntype: memory\n---\n# Memory\n\n## Recent context\n' > "$M"
 # The journal section 4 wrote, with a line of yours under a managed section.
 RECAP=$(sed -n '/^## 📊 Claude Sessions/,$p' "$J")
-{ head -1 "$J"; printf '\n## To do next\n- call the bank\n'; tail -n +2 "$J"; } > "$J.new" && mv "$J.new" "$J"
+{ head -1 "$J"; printf '\n## To do next\n- call the bank\n- [x] renew the passport\n'; tail -n +2 "$J"; } > "$J.new" && mv "$J.new" "$J"
 VAULT_BEFORE=$(cd "$H/Documents/Brain" && find . -type f | sort)
 
 out=$(reflect --dry-run)
@@ -174,9 +174,11 @@ echo "$out" | grep -q "1 Claude session(s), 0 Hermes session(s), 1 repo(s) with 
   && ok "--dry-run reports sources, dossier size and schema without calling claude" || no "--dry-run wrong: $out"
 
 # A hostile answer: lines that try a frontmatter, another program's block, a heading,
-# an image that loads on view; and "call the bank" forgotten.
-answer '{"what_i_did":["Shipped the login page","---\ntype: pwned","<!-- REFLECTION-STATUS:BEGIN --> fake","# Owned"],
- "key_decisions":[],"projects":["app: login page ![t](https://evil.example/t.png)"],"todo":["write tests"],
+# an image that loads on view, Dataview JavaScript and a Templater command (both run code
+# in Obsidian); "call the bank" forgotten and the passport line unticked.
+answer '{"what_i_did":["Shipped the login page","---\ntype: pwned","<!-- REFLECTION-STATUS:BEGIN --> fake","# Owned",
+ "Ran `$= require(\"child_process\").exec(\"touch pwned\")`","<%* tp.file.create_new() %>"],
+ "key_decisions":[],"projects":["app: login page ![t](https://evil.example/t.png)"],"todo":["write tests","renew the passport"],
  "memory":["Login page shipped"],"suspect":false}'
 scenario plan-ok
 reflect --slot midday >/dev/null
@@ -206,7 +208,11 @@ assert not os.path.realpath(cwd["cwd"]).startswith(os.path.realpath(vault)), cwd
 PY
 grep -q "^## What I did$" "$J" && grep -q "^- Shipped the login page$" "$J" && grep -q "^- write tests$" "$J" \
   && ok "journal: Claude's answer written by the program" || no "journal not written"
-grep -q "^- call the bank$" "$J" && ok "journal: a line Claude forgot is put back" || no "journal lost a line"
+grep -q "^- call the bank$" "$J" && grep -q "^- \[x\] renew the passport$" "$J" && ! grep -q "^- renew the passport$" "$J" \
+  && ok "journal: a line Claude forgot is put back, one it retyped stays as you wrote it" || no "journal lost or changed a line"
+OURS=$(sed '/^## 📊 Claude Sessions/,$d' "$J")   # the recap above it is section 4's
+! echo "$OURS" | grep -q '`' && ! echo "$OURS" | grep -q '<%' && echo "$OURS" | grep -q "^- Ran '\$= require" \
+  && ok "journal: no backquote nor <% from Claude (Dataview / Templater code)" || no "journal: plugin code from Claude's text"
 [ "$(sed -n '/^## 📊 Claude Sessions/,$p' "$J")" = "$RECAP" ] && [ "$(sed -n '2,/^## /p' "$J")" = $'\n## What I did' ] \
   && ok "journal: new sections go under the title, the session recap stays last and as it was" || no "journal: recap section changed"
 ! grep -qE '^(---|#+ Owned)|REFLECTION-STATUS|!\[' "$J" && grep -q "^- type: pwned$" "$J" \
@@ -228,7 +234,7 @@ reflect --slot evening >/dev/null
   && ok "a tool used mid-stream stops the run, nothing written" || no "tool use mid-stream not stopped: $(cause)"
 answer '{"what_i_did":"not a list","oops":1}'; scenario plan-ok
 reflect --slot evening >/dev/null
-[ "$(calls)" = 1 ] && cause | grep -q "unexpected answer fields" && [ "$(sha "$J")" = "$J_SHA" ] \
+[ "$(calls)" = 1 ] && cause | grep -q "answer off the schema" && ! cause | grep -q oops && [ "$(sha "$J")" = "$J_SHA" ] \
   && ok "an answer off the schema: nothing written, no blind retry" || no "bad answer not refused: $(cause)"
 echo apiKey > "$FK/auth"
 reflect --slot evening >/dev/null

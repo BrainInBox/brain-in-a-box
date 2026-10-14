@@ -18,11 +18,12 @@ Claude only answers: it runs with no tool at all (_headless_claude.py) and
 returns a JSON object. This program writes it, in two places and nowhere else:
 the four sections it manages in the day's journal (What I did, Key decisions,
 Projects I worked on, To do next) and the day's entry under "Recent context"
-in memory.md. Every line already in those places survives (a line Claude drops
-is put back), the rest of both files is kept byte for byte, and Claude's text
-is cleaned before it lands: one line per item, no heading, frontmatter, HTML,
-image or marker block, secrets masked. Nothing is ever removed from memory.md:
-archiving old entries is another program's job.
+in memory.md. Every line already in those places survives byte for byte (Claude
+can add and reorder, a line it drops or retypes is the one kept), the rest of
+both files is untouched, and Claude's text is cleaned before it lands: one line
+per item, no heading, frontmatter, HTML, image, marker block, backquote or
+Templater command (Obsidian plugins run those), secrets masked. Nothing is ever
+removed from memory.md: archiving old entries is another program's job.
 
 Environment: BRAIN_DIR (vault, default ~/Documents/Brain), BRAIN_GIT_ROOTS
 (extra repos to scan, os.pathsep-separated), HERMES_DB, CLAUDE_BIN,
@@ -32,7 +33,7 @@ For tests and trials: --projects DIR reads the transcripts from DIR instead of
 instead of ~/.claude/logs.
 """
 import argparse, glob, hashlib, json, os, re, sqlite3, stat, subprocess, sys, tempfile, time, unicodedata
-from collections import Counter, namedtuple
+from collections import namedtuple
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -97,7 +98,7 @@ SYSTEM = """You write the daily journal of a personal notes vault from one day o
 2. what_i_did, key_decisions, projects and todo are the complete new content of the journal sections "What I did", "Key decisions", "Projects I worked on" and "To do next". <journal_now> shows what they hold now: copy every existing line, word for word, into the same field, then add what is new. Never reword, merge or drop an existing line.
 3. memory: the day's salient points for an assistant reading memory.md in the coming days (decisions, state of projects, open problems), 3 to 8 short items. <memory_now> shows the day's current entry, if any: keep its lines word for word and add what is new.
 4. The git digest is the authoritative record of what was produced: every repo in it shows up under projects and what_i_did, grouped by theme (feature, fix, security, docs), not one line per commit.
-5. One item is one line of plain text: no leading dash, heading, HTML, image or code block. Terse, no filler. Never copy a password, key, token or other secret.
+5. One item is one line of plain text: no leading dash, heading, HTML, image, backquote or code block. Terse, no filler. Never copy a password, key, token or other secret.
 6. Write in the vault's language: the one <soul> names, else the language of <journal_now> and <memory_now>, else English."""
 
 
@@ -115,6 +116,8 @@ configure()
 
 
 def log_error(msg):
+    if redact:  # what claude or its service said can carry a key
+        msg = redact(msg)[0]
     try:
         LOGS.mkdir(parents=True, exist_ok=True)
         with (LOGS / "daily-reflection-errors.log").open("a", encoding="utf-8") as f:
@@ -149,7 +152,7 @@ def _trim(text, budget):
 
 
 def _tool_summary(name, inp):
-    inp = inp or {}
+    inp = inp if isinstance(inp, dict) else {}
     if name == "Bash":
         return (inp.get("command") or "")[:300]
     for key in ("file_path", "path", "pattern", "url", "query"):
@@ -158,12 +161,21 @@ def _tool_summary(name, inp):
     return json.dumps(inp, ensure_ascii=False)[:200]
 
 
+def _content(d):
+    """message.content of a record: a string, or its blocks that are objects, text blocks with a string."""
+    message = d.get("message")
+    content = message.get("content") if isinstance(message, dict) else None
+    if isinstance(content, list):
+        return [c for c in content if isinstance(c, dict) and isinstance(c.get("text", ""), str)]
+    return content if isinstance(content, str) else None
+
+
 def _render(d, hhmm):
     """Readable lines for one transcript record. Tool results are dropped: they
     are most of the volume and the git digest says what was produced."""
     if d.get("isMeta"):  # system reminders and command caveats injected into the chat
         return []
-    content = (d.get("message") or {}).get("content")
+    content = _content(d)
     out = []
     if d.get("type") == "user":
         if isinstance(content, str):
@@ -180,6 +192,17 @@ def _render(d, hhmm):
     return out
 
 
+def _own_prompt(d):
+    """True for the prompt of one of our own past runs: it starts with SENTINEL. Text that only
+    mentions it (a page, a chat about this script) does not hide a session."""
+    if d.get("type") != "user":
+        return False
+    content = _content(d)
+    if isinstance(content, list):
+        content = next((c.get("text", "") for c in content if c.get("type") == "text"), "")
+    return isinstance(content, str) and content.lstrip().startswith(SENTINEL)
+
+
 def day_session(path, day):
     """(text, cwd, n_messages) of one transcript, restricted to the records of
     `day` (local date). Streams the file: memory is O(day), not O(file)."""
@@ -187,16 +210,18 @@ def day_session(path, day):
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as f:
             for raw in f:
-                if SENTINEL in raw:
-                    return ("", None, 0)
                 try:
                     d = json.loads(raw)
                 except Exception:
                     continue
+                if not isinstance(d, dict):
+                    continue
+                if SENTINEL in raw and _own_prompt(d):
+                    return ("", None, 0)
                 when = _local(d.get("timestamp"))
                 if not when or when.strftime("%Y-%m-%d") != day:
                     continue
-                cwd = d.get("cwd") or cwd
+                cwd = d["cwd"] if isinstance(d.get("cwd"), str) and d["cwd"] else cwd
                 rendered = _render(d, when.strftime("%H:%M"))
                 n += sum(1 for l in rendered if " user: " in l or " assistant: " in l)
                 lines += rendered
@@ -294,8 +319,9 @@ def git_digest(day, roots):
     authors = [a for a in (_git("config", "--global", "user.email"), _git("config", "--global", "user.name")) if a]
     out = []
     for root in roots:
-        log = _git("-C", root, "log", "--all", "--no-merges", "--fixed-strings", *[f"--author={a}" for a in authors],
-                   f"--since={day} 00:00", f"--until={nxt} 00:00",
+        # --no-show-signature: a repo's own config could turn on signature checks, which run its gpg.program.
+        log = _git("-C", root, "log", "--no-show-signature", "--all", "--no-merges", "--fixed-strings",
+                   *[f"--author={a}" for a in authors], f"--since={day} 00:00", f"--until={nxt} 00:00",
                    "--date=format:%H:%M", "--pretty=format:%ad | %s")
         seen, uniq = set(), []
         for l in log.splitlines():
@@ -335,7 +361,7 @@ MARKER_RE = re.compile(r"<!--\s*([A-Za-z][A-Za-z0-9_-]*):(BEGIN|END)\s*-->")
 DATE_RE = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
 BULLET_DATE = re.compile(r"^[-*+][ \t]+(?:\*\*|__)?[ \t]*\[?\[?(\d{4}-\d{2}-\d{2})")
 RECENT_RE = re.compile(r"^(recent context|contexte r[ée]cent)")
-LIST_MARK = re.compile(r"^(?:[-*+]|\d{1,3}[.)])\s+(?:\[[ xX]\]\s+)?")
+LIST_MARK = re.compile(r"^(?:(?:[-*+]|\d{1,3}[.)])\s+)?(?:\[[ xX]\]\s+)?")  # Claude writes "[x] a" for "- [x] a"
 LEAD_DATE = re.compile(r"^\[?\[?\d{4}-\d{2}-\d{2}\]?\]?\s*[—–:-]*\s*")
 TITLE_KEYS = {title.casefold(): key for key, title in SECTIONS}
 
@@ -447,7 +473,8 @@ class Doc:
 
 
 def _norm(line):
-    """What a line says, for "is it still there": no list mark, emphasis, leading date, case or spacing."""
+    """What a line says, to pair Claude's items with the lines already there: no list mark, emphasis,
+    leading date, case or spacing. A pair keeps the existing line, so this loses nothing."""
     s = "".join(" " if unicodedata.category(c) == "Cc" else c for c in unicodedata.normalize("NFKC", line)
                 if unicodedata.category(c) != "Cf")
     s = LIST_MARK.sub("", s.strip())
@@ -455,21 +482,32 @@ def _norm(line):
     return re.sub(r"\s+", " ", s).strip().casefold() or line.strip()
 
 
-def _missing(existing, written):
-    """The existing non-blank lines (raw) that none of `written` carries: the ones to put back.
-    A long line also survives inside a longer one (Claude completed it)."""
-    pool = Counter(_norm(w) for w in written)
-    longer = [_norm(w) for w in written]
-    out = []
-    for raw in existing:
-        if _blank(raw):
-            continue
-        n = _norm(_c(raw))
-        if pool[n] > 0:
-            pool[n] -= 1
-        elif not (len(n) >= 20 and any(n in w for w in longer)):
-            out.append(raw)
-    return out
+def _merge_lines(existing, items, prefix, nl, fenced=()):
+    """A section's new body: Claude's items in its order, then every existing non-blank line no item
+    matched, in file order. An item that matches an existing line IS that line, byte for byte, so
+    Claude can reorder and add but never reword, untick, redate or drop what is there. Lines whose
+    index is in `fenced` (code blocks) are never matched: they stay together. Returns (lines, new)."""
+    free = {}
+    for k, raw in enumerate(existing):
+        if k not in fenced and not _blank(raw):
+            free.setdefault(_norm(_c(raw)), []).append(k)
+    out, taken, new = [], set(), 0
+    for it in items:
+        ks = free.get(_norm(it))
+        if ks:
+            k = ks.pop(0)
+            taken.add(k)
+            out.append(_ended(existing[k], nl))
+        else:
+            out.append(prefix + it + nl)
+            new += 1
+    out += [_ended(raw, nl) for k, raw in enumerate(existing) if k not in taken and not _blank(raw)]
+    return out, new
+
+
+def _fenced(doc, start, end):
+    """Indices, relative to start, of the code-fence lines in [start, end)."""
+    return {k - start for k in range(start, end) if doc.fenced[k]}
 
 
 def _ended(line, nl):
@@ -501,11 +539,6 @@ def _keep_items(items, deleted):
 
 def _norms(lines):
     return {_norm(_c(l)) for l in lines if not _blank(l)}
-
-
-def _nothing_new(written, existing):
-    """True when every written line is already carried by the existing ones: no rewrite, no churn."""
-    return not _missing([w + "\n" for w in written], [_c(l) for l in existing])
 
 
 # ── Journal/<day>.md ────────────────────────────────────────────────────────
@@ -560,23 +593,21 @@ def merge_journal(note, base, day, draft):
         if key == "what_i_did" and draft["suspect"]:
             items = [SUSPECT_LINE] + items
         items = _keep_items(items, deleted)
+        if not items:
+            continue
         doc = Doc(lines)
         sec = journal_sections(doc)
-        written = ["- " + it for it in items]
-        if key in sec and written:
+        if key in sec:
             i = sec[key]
             end = doc.extent(i, doc.level_at[i])
             last = doc.trim(i + 1, end)
-            if _nothing_new(written, lines[i + 1:last]):
+            body, new = _merge_lines(lines[i + 1:last], items, "- ", nl, _fenced(doc, i + 1, last))
+            if not new:  # Claude only repeated what is there: no rewrite, no churn
                 continue
-            back = _missing(lines[i + 1:last], written)
-            block = [_ended(lines[i], nl)] + [w + nl for w in written] + [_ended(l, nl) for l in back] + lines[last:end]
-            if block != lines[i:end]:
-                lines[i:end] = block
-                changed = True
-        elif key not in sec and written:
-            _insert(lines, _section_slot(doc, sec, key), [f"## {title}{nl}"] + [w + nl for w in written], nl)
-            changed = True
+            lines[i:end] = [_ended(lines[i], nl)] + body + lines[last:end]
+        else:
+            _insert(lines, _section_slot(doc, sec, key), [f"## {title}{nl}"] + [f"- {it}{nl}" for it in items], nl)
+        changed = True
     return lines if changed else None
 
 
@@ -643,17 +674,6 @@ def dated_entries(doc, start, end):
     return out
 
 
-def _entry_block(day, kind, level, items, existing, head, nl):
-    """An entry: heading + bullets, or a dated bullet + indented bullets, then the lines put back."""
-    if kind == "heading":
-        first = head if head is not None else f"{'#' * level} {day}{nl}"
-        written = ["- " + it for it in items]
-        return [_ended(first, nl)] + [w + nl for w in written] + [_ended(l, nl) for l in _missing(existing, written)]
-    written = [f"- **{day}**"] + ["  - " + it for it in items]
-    back = [l if l[:1].isspace() else "  " + l for l in _missing(existing, written)]
-    return [w + nl for w in written] + [_ended(l, nl) for l in back]
-
-
 def merge_memory(note, base, day, draft):
     """New lines of memory.md with the day's entry added or completed, or None. Only that entry
     changes; it goes at its date's place among the others, newest first unless the file is
@@ -681,14 +701,15 @@ def merge_memory(note, base, day, draft):
     entries = dated_entries(doc, hi + 1, end)
     cur = next((e for e in entries if e.date == day), None)
     if cur:
-        head = lines[cur.start] if cur.kind == "heading" else None
-        existing = lines[cur.start + 1:cur.end] if cur.kind == "heading" else lines[cur.start:cur.end]
-        if _nothing_new(items, existing):
+        # The entry's first line (its dated heading or bullet) stays; what it already says is not repeated.
+        head = lines[cur.start]
+        items = [it for it in items if _norm(it) != _norm(_c(head))]
+        prefix = "- " if cur.kind == "heading" else "  - "
+        body, new = _merge_lines(lines[cur.start + 1:cur.end], items, prefix, nl,
+                                 _fenced(doc, cur.start + 1, cur.end))
+        if not new:
             return None
-        block = _entry_block(day, cur.kind, cur.level, items, existing, head, nl)
-        if block == lines[cur.start:cur.end]:
-            return None
-        lines[cur.start:cur.end] = block
+        lines[cur.start:cur.end] = [_ended(head, nl)] + body
         return lines
     ascending = len(entries) >= 2 and entries[0].date < entries[-1].date
     after = next((e for e in entries if (e.date > day if ascending else e.date < day)), None)
@@ -700,7 +721,11 @@ def merge_memory(note, base, day, draft):
     else:
         pos = doc.trim(hi + 1, end)
     kind, lvl = (near.kind, near.level) if near else ("heading", min(level + 1, 4))
-    _insert(lines, pos, _entry_block(day, kind, lvl, items, [], None, nl), nl, spaced=kind == "heading")
+    if kind == "heading":
+        block = [f"{'#' * lvl} {day}{nl}"] + [f"- {it}{nl}" for it in items]
+    else:
+        block = [f"- **{day}**{nl}"] + [f"  - {it}{nl}" for it in items]
+    _insert(lines, pos, block, nl, spaced=kind == "heading")
     return lines
 
 
@@ -720,10 +745,13 @@ def clean_item(text, limit):
     s = "".join(" " if unicodedata.category(c) in ("Cc", "Zl", "Zp")
                 else "" if unicodedata.category(c) in ("Cf", "Cs", "Co") else c for c in text)
     s = re.sub(r"<!--.*?-->", " ", s).replace("<!--", " ").replace("-->", "->")  # no marker block of anyone
-    s = re.sub(r"<(?=[A-Za-z/!?])", "‹", s)   # no HTML: Obsidian renders it, <img> loads on view
+    # No HTML (Obsidian renders it, <img> loads on view) nor Templater command (<% %>, run when a new
+    # note is created, JavaScript included).
+    s = re.sub(r"<(?=[A-Za-z/!?%])", "‹", s)
     s = s.replace("![", "[")                   # no image or embed: they load on view too
-    # No code fence nor Obsidian comment: either would hide the lines after it.
-    s = re.sub(r"`{3,}", "``", re.sub(r"~{3,}", "~~", s)).replace("%%", "%")
+    # No backquote: an inline `$= ...` is Dataview JavaScript, run on view; a fence would hide what
+    # follows. No ~~~ fence nor Obsidian comment (%%) either.
+    s = re.sub(r"~{3,}", "~~", s.replace("`", "'")).replace("%%", "%")
     s = re.sub(r"\s+", " ", s).strip()
     while True:  # our own "- " comes first: no list mark, heading, rule, frontmatter fence or quote
         t = re.sub(r"^(?:[-*+]\s+|\d{1,3}[.)]\s+|#+(?:\s+|$)|-{3,}\s*|={3,}\s*|>+\s*)", "", s)
@@ -751,11 +779,16 @@ def _clean_list(value, count, limit, total):
 def clean_answer(out):
     """Claude's object, checked and cleaned. ValueError when it is not what the schema says."""
     keys = [k for k, _ in SECTIONS] + ["memory", "suspect"]
-    if not isinstance(out, dict) or sorted(out) != sorted(keys) or not isinstance(out["suspect"], bool):
-        raise ValueError(f"unexpected answer fields {sorted(out) if isinstance(out, dict) else type(out).__name__}")
+    got = set(out) if isinstance(out, dict) else set()
+    if got != set(keys):
+        # Only our own field names in the message: Claude's would reach memory.md through the warning.
+        raise ValueError(f"answer off the schema: missing {sorted(set(keys) - got) or 'nothing'}, "
+                         f"{len(got - set(keys))} unknown field(s)")
+    if not isinstance(out["suspect"], bool):
+        raise ValueError("answer off the schema: suspect is not a boolean")
     draft = {k: _clean_list(out[k], MAX_ITEMS, MAX_ITEM, MAX_SECTION) for k, _ in SECTIONS}
     draft["memory"] = _clean_list(out["memory"], MEMORY_ITEMS, MEMORY_ITEM, MEMORY_ITEMS * MEMORY_ITEM)
-    draft["suspect"] = out["suspect"] or any(INJECTION.search(m) for m in draft["memory"])
+    draft["suspect"] = out["suspect"] or any(INJECTION.search(it) for k in keys[:-1] for it in draft[k])
     return draft
 
 
@@ -788,30 +821,33 @@ def update(path, merge, base):
     rel = os.path.relpath(path, BRAIN)
     if path.is_symlink():
         raise Refused(f"{rel} is a link: left as it is")
-    for attempt in (1, 2):
-        note = read_note(path)
-        if note and abs(time.time() - note.mtime) < QUIET:
-            if attempt == 2:
-                raise Refused(f"{rel} is being edited: not written")
-            time.sleep(QUIET)
-            continue
+    for _ in (1, 2):
+        note = _settled(path, rel)
         lines = merge(note, base)
         if lines is None:
             return False
-        if _sha(path) != (note.sha if note else None):
-            if attempt == 2:
-                raise Refused(f"{rel} kept changing: not written")
-            continue
-        write_atomic(path, lines, note)
-        return True
-    return False
+        if _sha(path) == (note.sha if note else None):
+            write_atomic(path, lines, note)
+            return True
+    raise Refused(f"{rel} kept changing: not written")
+
+
+def _settled(path, rel):
+    """The file once no one has touched it for QUIET seconds (waited for once), or None if absent."""
+    note = read_note(path)
+    if note and abs(time.time() - note.mtime) < QUIET:
+        time.sleep(QUIET)
+        note = read_note(path)
+        if note and abs(time.time() - note.mtime) < QUIET:
+            raise Refused(f"{rel} is being edited: not written")
+    return note
 
 
 # ── The run ─────────────────────────────────────────────────────────────────
 
 def _data(text):
     """Text for inside one of the prompt's tags: it cannot open or close one of them."""
-    return re.sub(r"<(/?)(soul|journal_now|memory_now|git_digest|sessions)\b", r"‹\1\2", text, flags=re.I)
+    return re.sub(r"<\s*(/?)\s*(soul|journal_now|memory_now|git_digest|sessions)\b", r"‹\1\2", text, flags=re.I)
 
 
 def _read_text(path, cap):
@@ -906,6 +942,9 @@ def reflect_once(day, slot, sessions, gitlog, command=None):
         return str(e)
     except OSError as e:
         return f"{type(e).__name__}: {e}"[:300]
+    except Exception as e:  # a bug of ours: still a failure the state, memory.md and a notification show
+        log_error(f"{day} {slot}: {type(e).__name__}: {e}")
+        return f"internal error ({type(e).__name__}), see daily-reflection-errors.log"
     print(f"{day} {slot}: Claude Code {answer.version}, {answer.num_turns} turn(s), "
           f"${answer.cost_usd or 0:.2f} at list price; journal {'updated' if wrote else 'unchanged'}, "
           f"memory.md {'updated' if wrote_m else 'unchanged'}" + (", suspect text flagged" if draft["suspect"] else ""))
@@ -944,7 +983,7 @@ def set_status_block(text):
         # the title (never inside a YAML frontmatter: it would corrupt it).
         m = re.search(r"<!-- LINT:END -->\n+", new) or re.search(r"\A(?:---\n.*?\n---\n)?\s*(?:# [^\n]*\n)?\n*", new, re.S)
         new = new[:m.end()] + block + new[m.end():]
-    if new != src:
+    if new != src and _sha(MEMORY) == note.sha:  # never over an edit made since the read
         if note.crlf:
             new = new.replace("\n", "\r\n")
         write_atomic(MEMORY, [new], note)
@@ -973,7 +1012,7 @@ def reflect(day, slot, dry_run=False, command=None):
     masked, n_masked = [], 0
     for label, text, _ in found:
         text, n = redact(text)
-        masked.append((label, text))
+        masked.append((redact(label)[0], text))  # a Hermes title is free text
         n_masked += n
     gitlog = redact(gitlog)[0]
 
@@ -998,9 +1037,21 @@ def reflect(day, slot, dry_run=False, command=None):
         return
 
     lock = Path(tempfile.gettempdir()) / f"brain-daily-reflection-{day}-{slot}.lock"
-    if lock.exists() and (time.time() - lock.stat().st_mtime) < 3600:
+    try:
+        if time.time() - lock.lstat().st_mtime < 3600:
+            return
+    except OSError:
+        pass  # absent; anything else, the open below says
+    # A shared /tmp: never follow a link someone left under that name.
+    try:
+        fd = os.open(str(lock), os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        try:
+            os.write(fd, str(time.time()).encode())
+        finally:
+            os.close(fd)
+    except OSError as e:
+        log_error(f"{day} {slot}: lock {lock}: {e}")
         return
-    lock.write_text(str(time.time()))
 
     LOGS.mkdir(parents=True, exist_ok=True)
     # One run at a time: two runs merging into memory.md together would race
@@ -1038,7 +1089,7 @@ def parse_args():
     p.add_argument("--projects", help="read the transcripts from this folder instead of ~/.claude/projects")
     p.add_argument("--logs", help="keep state, error log and run lock here instead of ~/.claude/logs")
     a = p.parse_args()
-    datetime.strptime(a.day, "%Y-%m-%d")
+    a.day = datetime.strptime(a.day, "%Y-%m-%d").strftime("%Y-%m-%d")  # 2026-1-5 is Journal/2026-01-05.md
     if not a.slot:
         if a.day != time.strftime("%Y-%m-%d"):
             a.slot = "backfill"
