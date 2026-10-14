@@ -18,6 +18,7 @@ import unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 TERRAIN = os.path.join(HERE, "terrain.py")
 REF_GUARD = os.path.join(HERE, "..", "..", ".github", "ci", "terrain-ref.sh")
+MERGE_GUARD = os.path.join(HERE, "..", "..", ".github", "ci", "terrain-garde.sh")
 WORKFLOW = os.path.join(HERE, "..", "..", ".github", "workflows", "terrain.yml")
 TOKEN = "secrets.CLAUDE_CODE_OAUTH_TOKEN"
 sys.path.insert(0, HERE)
@@ -368,6 +369,59 @@ class Workflow(unittest.TestCase):
             self.assertTrue(st["run"].startswith(". .github/ci/poste-neuf.ps1\n"), st["name"])
         self.assertEqual((len(fresh), len(terrain_fresh)), (1, 1))
         self.assertNotIn("hostedtoolcache", json.dumps(tests), "a second copy of the fresh PC in test.yml")
+
+
+class MergeGuard(unittest.TestCase):
+    """.github/ci/terrain-garde.sh: the check that keeps the agent's merges out of the maintainer's paths."""
+
+    ROOT = os.path.normpath(os.path.join(HERE, "..", ".."))
+
+    def garde(self, files, head="claude/terrain-m1", repo="BrainInBox/brain-in-a-box"):
+        tmp = tempfile.mkdtemp(prefix="terrain-garde-")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        rows = "".join("%s\t%s\t%d\n" % (n, prev or "-", d) for n, prev, d in files)
+        with open(os.path.join(tmp, "rows"), "w", encoding="utf-8", newline="") as f:
+            f.write(rows)
+        # A stand-in for gh: prints the rows the real `gh api --jq ... @tsv` would.
+        with open(os.path.join(tmp, "gh"), "w", encoding="utf-8", newline="") as f:
+            f.write('#!/bin/sh\ncat "%s"\n' % os.path.join(tmp, "rows"))
+        os.chmod(os.path.join(tmp, "gh"), 0o755)
+        env = dict(os.environ, PATH=tmp + os.pathsep + os.environ["PATH"], PR="7", HEAD_REF=head,
+                   HEAD_REPO=repo, GITHUB_REPOSITORY="BrainInBox/brain-in-a-box")
+        p = subprocess.run(["bash", MERGE_GUARD], cwd=self.ROOT, env=env, capture_output=True)
+        return p.returncode, p.stdout.decode() + p.stderr.decode()
+
+    @unittest.skipIf(sys.platform == "win32", "the check runs on ubuntu-latest")
+    def test_a_fix_of_the_night_check_with_a_new_test_passes(self):
+        rc, said = self.garde([("engine/hooks/_controle_rules.py", "", 3), ("engine/tests/test_controle.py", "", 0),
+                               ("docs/terrain-bugs.md", "", 0)])
+        self.assertEqual(rc, 0, said)
+
+    @unittest.skipIf(sys.platform == "win32", "the check runs on ubuntu-latest")
+    def test_the_maintainers_paths_or_a_weakened_test_go_red(self):
+        for files in ([("install.ps1", "", 1)], [(".github/workflows/terrain.yml", "", 0)],
+                      [("engine/nightly/gbrain-nightly.sh", "", 0)], [("engine/hooks/_redact.py", "", 2)],
+                      [("docs/terrain-agent.md", "", 1)], [("engine/hooks/x.py", "engine/hooks/_headless_claude.py", 0)],
+                      [("engine/tests/test_controle.py", "", 1)], [("test-hooks.sh", "", 4)]):
+            with self.subTest(files=files):
+                rc, said = self.garde(files)
+                self.assertEqual(rc, 1, said)
+                self.assertIn("::error::terrain-garde", said)
+
+    @unittest.skipIf(sys.platform == "win32", "the check runs on ubuntu-latest")
+    def test_other_branches_pass_and_a_forks_agent_branch_fails(self):
+        self.assertEqual(self.garde([("install.ps1", "", 9)], head="feat/x")[0], 0)
+        rc, said = self.garde([("README.md", "", 0)], repo="someone/brain-in-a-box")
+        self.assertEqual(rc, 1, said)
+
+    def test_the_check_judges_from_master_and_never_runs_the_pr(self):
+        with open(os.path.join(self.ROOT, ".github", "workflows", "terrain-garde.yml"), encoding="utf-8") as f:
+            wf = f.read()
+        self.assertIn("pull_request_target:", wf)
+        self.assertNotIn("head.sha", wf)
+        self.assertNotIn("ref:", wf.split("actions/checkout@v4", 1)[1].split("- name:", 1)[0])
+        self.assertIn("contents: read", wf)
+        self.assertNotIn(": write", wf)
 
 
 class RepairAgentLimits(unittest.TestCase):

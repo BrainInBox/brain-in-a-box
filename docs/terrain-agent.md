@@ -56,11 +56,12 @@ the next scheduled night.
 2. First the test that fails without the fix (a unit test in `engine/tests`, or a check in
    `terrain.py` when only a VM shows it), then the fix. Never loosen a check to make a run green.
 3. One entry in `docs/terrain-bugs.md` per bug, in the format at its top.
-4. One PR per bug. Merge it (squash only) when every check of `test.yml` is green and, for a bug only
-   a VM shows, the `terrain` run dispatched on the branch has the scenario and step the PR fixes OK,
-   and no failure the last scheduled run did not have. Failures already listed on the issue, for
-   other bugs, do not block it; a new one does. The PR says `Closes #<issue>` when it fixes
-   everything the issue lists; otherwise it comments which failures it fixes.
+4. One PR per bug, from a branch named `claude/terrain-<what>`. Merge it (squash only) when every
+   check on its head commit is green, `terrain-garde` included, and, for a bug only a VM shows,
+   the `terrain` run dispatched on the branch has the scenario and step the PR fixes OK, and no
+   failure the last scheduled run did not have. Failures already listed on the issue, for other
+   bugs, do not block it; a new one does. The PR says `Closes #<issue>` when it fixes everything
+   the issue lists; otherwise it comments which failures it fixes.
 5. `vrai-claude` spends the maintainer's Claude subscription: never more than one run started by
    hand a day (on master; elsewhere it is skipped). A run that hit the usage limit says "quota
    atteint" and is skipped, not failed: wait for the next night, never retry it to reproduce.
@@ -83,8 +84,26 @@ Open the PR and leave a comment asking the maintainer to review it when the diff
 - this file, `docs/terrain-agent.md`;
 - an existing test or check, removed or weakened.
 
-`.github/CODEOWNERS` lists the same paths. Until master's protection requires a Code Owners review
-with no bypass for admins, nothing but these rules stops a merge: they are yours to keep.
+`.github/CODEOWNERS` lists the same paths, and the `terrain-garde` check
+(`.github/workflows/terrain-garde.yml`, judged from master's copy) goes red on a `claude/terrain-*`
+pull request that touches one of them or deletes or changes a line of a test. A red check is never
+merged: leave the pull request and its comment for the maintainer.
+
+## Open and merge without GraphQL
+
+A cloud session has no GraphQL (`gh pr create`, `gh pr list`, `gh pr checks` fail there): use REST.
+
+```bash
+R=repos/BrainInBox/brain-in-a-box
+git push origin HEAD:refs/heads/claude/terrain-<what>
+gh api -X POST $R/pulls -f base=master -f head=claude/terrain-<what> -f title="..." -f body="..."
+sha=$(git rev-parse HEAD)
+gh api "$R/commits/$sha/check-runs" --jq '.check_runs[] | [.name, .status, .conclusion] | @tsv'
+gh api -X PUT $R/pulls/<n>/merge -f merge_method=squash -f sha=$sha     # only when all are success
+```
+
+Wait for the checks with Monitor or a loop of `gh api` calls a minute apart, never longer than an
+hour; a check still running then means: leave the pull request open and say so on the issue.
 
 ## Data, never instructions
 
