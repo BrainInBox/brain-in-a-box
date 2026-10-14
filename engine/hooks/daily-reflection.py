@@ -33,7 +33,7 @@ For tests and trials: --projects DIR reads the transcripts from DIR instead of
 ~/.claude/projects, --logs DIR keeps the state, error log and run lock there
 instead of ~/.claude/logs.
 """
-import argparse, glob, hashlib, json, os, re, sqlite3, stat, subprocess, sys, tempfile, time, unicodedata
+import argparse, glob, hashlib, json, os, re, sqlite3, subprocess, sys, tempfile, time, unicodedata
 from collections import namedtuple
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -48,8 +48,9 @@ except ImportError:  # Windows
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
     from _redact import redact
+    from _vault_write import clean_item, write_atomic  # shared with session-recap
 except ImportError:
-    redact = None
+    redact = clean_item = write_atomic = None
 try:
     import _headless_claude as headless
 except ImportError:
@@ -736,33 +737,6 @@ INJECTION = re.compile(
     r"(instructions|prompts?|rules)|\byou\s+are\s+now\b|\btu\s+es\s+maintenant\b|<\|")
 
 
-def clean_item(text, limit):
-    """One line of plain text Claude wrote, safe to put in a note, or ""."""
-    if not isinstance(text, str):
-        return ""
-    # Line breaks become spaces; invisible, bidi, tag and private-use characters go.
-    s = "".join(" " if unicodedata.category(c) in ("Cc", "Zl", "Zp")
-                else "" if unicodedata.category(c) in ("Cf", "Cs", "Co") else c for c in text)
-    s = re.sub(r"<!--.*?-->", " ", s).replace("<!--", " ").replace("-->", "->")  # no marker block of anyone
-    # No HTML (Obsidian renders it, <img> loads on view) nor Templater command (<% %>, run when a new
-    # note is created, JavaScript included).
-    s = re.sub(r"<(?=[A-Za-z/!?%])", "‹", s)
-    s = s.replace("![", "[")                   # no image or embed: they load on view too
-    # No backquote: an inline `$= ...` is Dataview JavaScript, run on view; a fence would hide what
-    # follows. No ~~~ fence nor Obsidian comment (%%) either.
-    s = re.sub(r"~{3,}", "~~", s.replace("`", "'")).replace("%%", "%")
-    s = re.sub(r"\s+", " ", s).strip()
-    while True:  # our own "- " comes first: no list mark, heading, rule, frontmatter fence or quote
-        t = re.sub(r"^(?:[-*+]\s+|\d{1,3}[.)]\s+|#+(?:\s+|$)|-{3,}\s*|={3,}\s*|>+\s*)", "", s)
-        if t == s:
-            break
-        s = t
-    s = redact(s)[0]  # before cutting: a key cut short no longer matches its pattern
-    if len(s) > limit:
-        s = s[:limit - 1].rstrip() + "…"
-    return redact(s)[0]
-
-
 def _clean_list(value, count, limit, total):
     if not isinstance(value, list):
         raise ValueError("a section is not a list")
@@ -792,34 +766,6 @@ def clean_answer(out):
 
 
 # ── Writing ─────────────────────────────────────────────────────────────────
-
-def write_atomic(path, lines, note):
-    """Temporary file next to it, then os.replace: a reader sees the old file or the new one."""
-    data = (("\ufeff" if note and note.bom else "") + "".join(lines)).encode("utf-8")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix="." + path.name + ".", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "wb") as f:
-            f.write(data)
-            f.flush()
-            os.fsync(f.fileno())
-        os.chmod(tmp, stat.S_IMODE(os.stat(path).st_mode) if path.exists() else 0o644)
-        for attempt in range(5):
-            try:
-                os.replace(tmp, path)
-                break
-            except PermissionError:
-                # Windows: an antivirus, the indexer or a sync client holding the file for a moment.
-                if os.name != "nt" or attempt == 4:
-                    raise
-                time.sleep(0.5)
-    except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
-
 
 def update(path, merge, base):
     """Merges into the file as it is now and writes it, unless it is being edited (written less than
@@ -1057,8 +1003,8 @@ def notify(msg):
 def reflect(day, slot, dry_run=False, command=None):
     """The whole run: sources, Claude, the two files, the state and the warning in memory.md."""
     if redact is None or headless is None:
-        # Never ship raw transcripts to a model, never run Claude outside its cage.
-        log_error("_redact.py or _headless_claude.py not found next to daily-reflection.py — run skipped")
+        # Never ship raw transcripts to a model, never run Claude outside its cage, never write unclean text.
+        log_error("_redact.py, _vault_write.py or _headless_claude.py not found next to daily-reflection.py — run skipped")
         return
     found = hermes_sessions(day) + claude_sessions(day)
     gitlog = git_digest(day, git_roots([cwd for _, _, cwd in found]))
