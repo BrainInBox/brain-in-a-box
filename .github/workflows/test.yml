@@ -121,31 +121,6 @@ jobs:
           $again = (& app\src-tauri\target\debug\brain-in-a-box.exe --run-step brain) -join "`n"; $again
           if ($LASTEXITCODE -or $again -notmatch 'Ton cerveau est d\S+ install') { throw 'a second run did something' }
 
-  # The Windows installer (NSIS, for the user alone, no administrator), as a preview to try.
-  app-windows-bundle:
-    runs-on: windows-latest
-    timeout-minutes: 40
-    defaults:
-      run:
-        shell: pwsh
-        working-directory: app/src-tauri
-    steps:
-      - uses: actions/checkout@v4
-      - name: Tauri CLI
-        run: cargo install tauri-cli --version "=2.11.5" --locked
-      - name: Build the installer
-        run: cargo tauri build --bundles nsis
-      - name: One per-user installer, French
-        run: |
-          $exe = @(Get-ChildItem target\release\bundle\nsis\*-setup.exe)
-          if ($exe.Count -ne 1) { throw "installers: $($exe.Name -join ', ')" }
-          $exe | Format-Table Name, Length
-      - uses: actions/upload-artifact@v4
-        with:
-          name: brain-in-a-box-windows-preview
-          path: app/src-tauri/target/release/bundle/nsis/*-setup.exe
-          retention-days: 7
-
   # A real install on a real Windows, the way a user runs it: no Python but the
   # Microsoft Store stub (what broke installs in the field), so Python comes from winget.
   # The memory is gbrain, as on macOS, at the release engine/gbrain-pin.json pins: this job

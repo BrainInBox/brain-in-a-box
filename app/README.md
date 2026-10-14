@@ -16,6 +16,10 @@ cargo install tauri-cli --version "=2.11.5" --locked
 cd app/src-tauri
 cargo tauri dev                          # run it
 CI=true cargo tauri build --bundles dmg  # Mac: target/release/bundle/dmg/*.dmg
+
+# what the release ships for a Mac: one DMG for Apple Silicon and Intel, ad-hoc signed
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
+APPLE_SIGNING_IDENTITY=- cargo tauri build --ci --target universal-apple-darwin --bundles dmg -- --locked
 ```
 
 On Windows (PowerShell, with the MSVC build tools and WebView2, which Windows 11 has):
@@ -25,9 +29,18 @@ cd app\src-tauri
 cargo tauri build --bundles nsis         # target\release\bundle\nsis\*-setup.exe
 ```
 
-`tauri.windows.conf.json` makes it an NSIS installer for the current user only (no administrator), in French, with `icons/icon.ico`. The CI builds it on every pull request (artifact `brain-in-a-box-windows-preview`).
+`tauri.windows.conf.json` makes it an NSIS installer for the current user only (no administrator), in French, with `icons/icon.ico`.
 
-Neither build is signed yet. On another Mac, macOS blocks it: open it once from System Settings → Privacy & Security → "Open Anyway". On Windows, SmartScreen warns: "Informations complémentaires" → "Exécuter quand même". Signed builds need an Apple Developer account and a code signing certificate.
+Every push to master that touches `app/` publishes the Mac DMG and the Windows installer as a pre-release on GitHub (`app-v<version>-preview.<n>`, the 5 newest kept, with `SHA256SUMS`), and a pull request gets them as artifacts of its run (not a fork's): `.github/workflows/release.yml`.
+
+The build that publishes uses no cache, and GitHub attests each file it publishes. A file of a preview was built by that workflow from master if this passes:
+
+```bash
+gh attestation verify <file> -R BrainInBox/brain-in-a-box \
+  --signer-workflow BrainInBox/brain-in-a-box/.github/workflows/release.yml --source-ref refs/heads/master
+```
+
+Neither build is signed yet. The Mac one is only ad-hoc signed (an app with no signature at all would read as "damaged" once downloaded): on another Mac, macOS blocks it, open it once from System Settings → Privacy & Security → "Open Anyway". On Windows, SmartScreen warns: "Informations complémentaires" → "Exécuter quand même". Signed builds need an Apple Developer account and a code signing certificate.
 
 On a Mac, `cargo check --target x86_64-pc-windows-msvc` works once the target is added with rustup, given a stand-in for `llvm-rc` (tauri-build compiles the Windows resources): any script named in `RC` that writes an empty file at its `/fo` argument. Linking needs Windows.
 

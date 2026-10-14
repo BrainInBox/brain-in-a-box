@@ -1,0 +1,312 @@
+name: app-release
+
+# The app as people download it: an unsigned preview on GitHub Releases.
+#
+# - pull_request touching the app: builds it and leaves the installers as an artifact of the
+#   run. Nothing is published; the token reads only and no secret is used. A fork's pull
+#   request builds and checks the same way but leaves no installer behind: it would sit in
+#   this repository's Actions tab under the app's own name.
+# - push to master touching the app, or a run by hand on master: builds without any cache
+#   (the default branch's caches can be written by any of its jobs), then a job of its own,
+#   the only one allowed to write, attests the installers (gh attestation verify) and
+#   publishes a pre-release tagged app-v<version>-preview.<run number> (version from
+#   app/src-tauri/tauri.conf.json) with them and SHA256SUMS, and deletes the app previews
+#   beyond the 5 newest. A tag that already exists is never moved. A run by hand on another
+#   branch only builds.
+#
+# Actions are pinned to a commit (a tag can be moved), and engine/tests/test_release_workflow.py
+# holds all of the above, since the publishing part only ever runs after the merge.
+#
+# macOS: one universal DMG (Apple Silicon and Intel), ad-hoc signed: unsigned by Apple, macOS
+# offers "Open Anyway" for it, while an app with no signature at all reads as "damaged".
+# Windows: built once the Tauri config declares an NSIS installer ("nsis" or "all" in
+# bundle.targets of tauri.windows.conf.json, or of tauri.conf.json), see
+# .github/ci/app-release-plan.py. Until then the matrix is macOS only and nothing else changes.
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - "app/**"
+      - ".github/workflows/release.yml"
+      - ".github/ci/app-release-plan.py"
+  push:
+    branches: [master]
+    paths:
+      - "app/**"
+      - ".github/workflows/release.yml"
+      - ".github/ci/app-release-plan.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to a pull request replaces its build; master's builds each get their turn.
+concurrency:
+  group: app-release-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  plan:
+    name: What to build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      label: ${{ steps.plan.outputs.label }}
+      publish: ${{ steps.plan.outputs.publish }}
+      upload: ${{ steps.plan.outputs.upload }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - id: plan
+        env:
+          PUBLISH: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/master' }}
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          python3 -I .github/ci/app-release-plan.py | tee -a "$GITHUB_OUTPUT"
+
+  build:
+    name: Build (${{ matrix.platform }})
+    needs: plan
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    env:
+      TAURI_CLI_VERSION: "2.11.5"
+      TARGET: ${{ matrix.target }}
+      BUNDLES: ${{ matrix.bundles }}
+      PLATFORM: ${{ matrix.platform }}
+      LABEL: ${{ needs.plan.outputs.label }}
+      APPLE_SIGNING_IDENTITY: "-"
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Rust targets
+        run: |
+          if [ "$TARGET" = universal-apple-darwin ]; then
+            rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          else
+            rustup target add "$TARGET"
+          fi
+          rustc --version
+
+      # Caches speed up pull requests only. The build that publishes starts clean: whatever a
+      # job of master put in a cache (a cargo-tauri, a target/) would end up in the preview.
+      - name: Tauri CLI, cached
+        id: tauri-cli
+        if: needs.plan.outputs.publish != 'true'
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ runner.os == 'Windows' && '~/.cargo/bin/cargo-tauri.exe' || '~/.cargo/bin/cargo-tauri' }}
+          key: tauri-cli-${{ env.TAURI_CLI_VERSION }}-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Tauri CLI, pinned as in app/README.md
+        if: steps.tauri-cli.outputs.cache-hit != 'true'
+        run: cargo install tauri-cli --version "=$TAURI_CLI_VERSION" --locked
+
+      - name: Cargo cache
+        if: needs.plan.outputs.publish != 'true'
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            app/src-tauri/target
+          key: app-release-${{ runner.os }}-${{ matrix.target }}-${{ hashFiles('app/src-tauri/Cargo.lock') }}
+          restore-keys: app-release-${{ runner.os }}-${{ matrix.target }}-
+
+      # A bundle left in the cache never passes for this build's. bundle_dmg.sh sometimes
+      # finds hdiutil busy on a runner: one more try, the compiled code is reused.
+      - name: Build (${{ matrix.target }}, ${{ matrix.bundles }})
+        working-directory: app/src-tauri
+        run: |
+          build() {
+            rm -rf "target/$TARGET/release/bundle"
+            cargo tauri build --ci --target "$TARGET" --bundles "$BUNDLES" -- --locked
+          }
+          build || { echo "::warning::bundling failed once, trying again"; build; }
+
+      - name: The DMG verifies, mounts, holds Brain in a Box.app for both architectures, and runs
+        if: runner.os == 'macOS'
+        timeout-minutes: 10
+        run: |
+          shopt -s nullglob
+          dmgs=(app/src-tauri/target/"$TARGET"/release/bundle/dmg/*.dmg)
+          [ "${#dmgs[@]}" -eq 1 ] || { echo "::error::expected one DMG, found ${#dmgs[@]}"; exit 1; }
+          mkdir -p dist
+          dmg="dist/Brain-in-a-Box_${LABEL}_macos-universal.dmg"
+          cp "${dmgs[0]}" "$dmg"
+
+          hdiutil verify "$dmg"
+          mnt="$RUNNER_TEMP/dmg"
+          mkdir -p "$mnt"
+          hdiutil attach -nobrowse -readonly -noautoopen -mountpoint "$mnt" "$dmg"
+          trap 'hdiutil detach "$mnt" -force >/dev/null 2>&1 || true' EXIT
+          ls -la "$mnt"
+
+          app="$mnt/Brain in a Box.app"
+          [ -d "$app" ] || { echo "::error::Brain in a Box.app is not in the DMG"; exit 1; }
+          [ -L "$mnt/Applications" ] || { echo "::error::no Applications shortcut to drag the app onto"; exit 1; }
+          codesign --verify --deep --strict --verbose=2 "$app"
+
+          bin="$app/Contents/MacOS/brain-in-a-box"
+          archs=$(lipo -archs "$bin")
+          echo "architectures: $archs"
+          for a in arm64 x86_64; do
+            case " $archs " in *" $a "*) ;; *) echo "::error::no $a in the app"; exit 1 ;; esac
+          done
+
+          # --diagnose reads the machine and prints JSON: each slice must start and answer.
+          check='import json, sys; d = json.load(sys.stdin); assert d["arch"] == sys.argv[1], d["arch"]; print(sys.argv[1], "ok:", d["os"], len(d["checks"]), "checks")'
+          native=$(uname -m)
+          "$bin" --diagnose | python3 -I -c "$check" "$native"
+          if [ "$native" = x86_64 ]; then
+            echo "::notice::Intel runner: the arm64 slice was checked with lipo only"
+          elif arch -x86_64 /usr/bin/true 2>/dev/null; then
+            arch -x86_64 "$bin" --diagnose | python3 -I -c "$check" x86_64
+          else
+            echo "::notice::no Rosetta on this runner: the x86_64 slice was checked with lipo only"
+          fi
+
+      - name: The Windows installer is there
+        if: runner.os == 'Windows'
+        run: |
+          shopt -s nullglob
+          exes=(app/src-tauri/target/"$TARGET"/release/bundle/nsis/*-setup.exe)
+          [ "${#exes[@]}" -eq 1 ] || { echo "::error::expected one NSIS installer, found ${#exes[@]}"; exit 1; }
+          mkdir -p dist
+          exe="dist/Brain-in-a-Box_${LABEL}_windows-x64-setup.exe"
+          cp "${exes[0]}" "$exe"
+          [ "$(head -c 2 "$exe")" = MZ ] || { echo "::error::$exe is not a Windows program"; exit 1; }
+
+      - name: Summary
+        run: |
+          sha256() { if command -v sha256sum >/dev/null; then sha256sum "$1"; else shasum -a 256 "$1"; fi; }
+          {
+            echo "### $PLATFORM: $LABEL"
+            echo
+            echo '| File | Size | SHA-256 |'
+            echo '|---|---|---|'
+            for f in dist/*; do
+              size=$(wc -c < "$f" | tr -d ' ')
+              sum=$(sha256 "$f" | cut -d' ' -f1)
+              echo "| \`$(basename "$f")\` | $((size / 1024)) KiB | \`$sum\` |"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: needs.plan.outputs.upload == 'true'
+        with:
+          name: app-${{ matrix.platform }}
+          path: dist/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+  publish:
+    name: Publish the preview
+    needs: [plan, build]
+    if: needs.plan.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      id-token: write # the attestation's signing certificate (Sigstore)
+      attestations: write
+    # One publication at a time: two runs never prune each other's release.
+    concurrency:
+      group: app-release-publish
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: app-v${{ needs.plan.outputs.label }}
+      VERSION: ${{ needs.plan.outputs.version }}
+      LABEL: ${{ needs.plan.outputs.label }}
+    steps:
+      # No checkout: this job runs no code of the repository, only gh on the files built above.
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: app-*
+          path: dist
+          merge-multiple: true
+
+      - name: SHA256SUMS
+        working-directory: dist
+        run: |
+          sums=$(sha256sum -- *)
+          printf '%s\n' "$sums" > SHA256SUMS
+          cat SHA256SUMS
+
+      # Signed proof, kept by GitHub outside the release, that each file was built by this
+      # workflow from this commit of master: a file swapped in the release afterwards, with
+      # its SHA256SUMS line, fails gh attestation verify.
+      - name: Attest the installers
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-checksums: dist/SHA256SUMS
+
+      - name: Release notes
+        run: |
+          short=${GITHUB_SHA:0:7}
+          dmg=$(cd dist && ls -- *.dmg)
+          {
+            echo "Préversion **non signée** de l'app Brain in a Box, construite automatiquement depuis \`master\` (commit [$short]($GITHUB_SERVER_URL/$GH_REPO/commit/$GITHUB_SHA)). Elle peut changer ou disparaître : seules les 5 dernières préversions sont gardées."
+            echo
+            echo "**Mac** (macOS 13 ou plus récent, puces Apple et Intel)"
+            echo
+            echo "1. Téléchargez \`$dmg\`, ouvrez-le et glissez **Brain in a Box** dans **Applications**."
+            echo "2. Ouvrez l'app. macOS la bloque, car elle n'est pas encore signée par Apple : fermez le message, sans la placer dans la corbeille."
+            echo "3. Allez dans **Réglages Système > Confidentialité et sécurité**, descendez jusqu'à « Sécurité » et cliquez sur **« Ouvrir quand même »** à côté de Brain in a Box, puis confirmez. Les fois suivantes, elle s'ouvre normalement."
+            if exe=$(cd dist && ls -- *-setup.exe 2>/dev/null); then
+              echo
+              echo "**Windows** (10 ou 11, 64 bits)"
+              echo
+              echo "1. Téléchargez \`$exe\` et lancez-le (aucun droit administrateur demandé)."
+              echo "2. Si Windows affiche « Windows a protégé votre ordinateur », cliquez sur **Informations complémentaires**, puis **Exécuter quand même**."
+            fi
+            echo
+            echo "Vérifier un téléchargement : \`shasum -a 256 <fichier>\` (Mac) ou \`certutil -hashfile <fichier> SHA256\` (Windows) doit donner la ligne du fichier dans \`SHA256SUMS\`. Vérifier qu'il a bien été construit ici, depuis \`master\` : \`gh attestation verify <fichier> -R $GH_REPO --signer-workflow $GH_REPO/.github/workflows/release.yml --source-ref refs/heads/master\`."
+          } > "$RUNNER_TEMP/notes.md"
+          cat "$RUNNER_TEMP/notes.md"
+
+      - name: Publish the pre-release (a tag is never moved)
+        run: |
+          if gh api "repos/$GH_REPO/git/ref/tags/$TAG" --silent 2>/dev/null; then
+            echo "::error::tag $TAG already exists: a preview tag is never moved or reused"
+            exit 1
+          fi
+          # A draft left by an attempt that failed half-way is replaced.
+          if [ "$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null)" = true ]; then
+            gh release delete "$TAG" --yes
+          fi
+          gh release create "$TAG" dist/* \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --title "App Brain in a Box $VERSION — préversion ${LABEL##*.} (non signée)" \
+            --notes-file "$RUNNER_TEMP/notes.md"
+          echo "Published: $GITHUB_SERVER_URL/$GH_REPO/releases/tag/$TAG" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Keep the 5 newest app previews
+        run: |
+          gh release list --limit 200 --json tagName,createdAt,isPrerelease,isDraft \
+            --jq '[.[] | select(.isPrerelease and (.isDraft | not) and (.tagName | test("^app-v[0-9]+\\.[0-9]+\\.[0-9]+-preview\\.[0-9]+$")))]
+                  | sort_by(.createdAt) | reverse | .[5:] | .[].tagName' |
+          while IFS= read -r old; do
+            echo "deleting $old"
+            gh release delete "$old" --cleanup-tag --yes
+          done
