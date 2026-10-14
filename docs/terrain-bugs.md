@@ -20,6 +20,32 @@ Une entrée :
   suppression de notes · plusieurs nuits · montée de version · …
 ```
 
+## 2026-10-14 · macOS (VM) · `gbq` échouait (code 127) dans un terminal ouvert avant l'installation
+- Symptôme : premier run du terrain, parcours `neuf`, scénario `installation`, étape `lanceurs` :
+  « gbq query ne trouve pas Profile/lessons.md (code 127) ». L'installation elle-même avait réussi.
+- Cause : gbrain est un script `#!/usr/bin/env bun`. `gbq` l'appelait par son chemin complet, mais
+  sans `~/.bun/bin` dans le PATH, `env` ne trouve pas Bun. C'est le cas d'un terminal (ou d'un
+  Claude Code) ouvert avant l'installation de Bun : la recherche semblait cassée juste après
+  l'installation. La tâche de nuit, elle, fixe son PATH.
+- Pourquoi les tests ne l'avaient pas vu : `test-hooks.sh` remplaçait gbrain par un script
+  `#!/usr/bin/env bash`, et la CI lançait gbq depuis un shell qui avait déjà Bun dans son PATH.
+- Correctif : `engine/bin/gbq` ajoute `~/.bun/bin` à son PATH (PR des tests de terrain).
+- Test de non-régression : `test-hooks.sh`, « gbq: finds Bun without ~/.bun/bin on the PATH »
+  (faux gbrain en `#!/usr/bin/env bun`, PATH sans Bun ; rouge avant : `env: bun: No such file`).
+- Catégorie à surveiller : PATH et premier lancement.
+
+## 2026-10-14 · macOS (VM) · L'installeur v0.2.0 ne s'installe plus sur un Mac
+- Symptôme : premier run du terrain, parcours `montee`, étape `installeur-v0.2.0` : l'installeur
+  s'arrête à « GBrain init + import » sans message (sa sortie était masquée).
+- Cause : v0.2.0 initialise gbrain avec ZeroEntropy, que gbrain a retiré le 2026-09-24
+  (v0.56.2.0), avant la sortie de v0.2.0. Aucun Mac n'a donc pu installer v0.2.0 tel quel ; le
+  passage à Voyage (#27) l'a réparé. Ce n'est pas un bug du kit actuel.
+- Pourquoi les tests ne l'avaient pas vu : rien ne réinstallait une ancienne version.
+- Correctif : la montée macOS du terrain part de #27 (`ca8382a`), la première version qu'un Mac
+  installe encore ; Windows part toujours de v0.2.0.
+- Test de non-régression : le parcours `montee` du terrain sur macOS.
+- Catégorie à surveiller : montée de version, dépendances en amont.
+
 ## 2026-10-14 · local, macOS · M1 n'archive pas le dernier bloc d'un memory.md qui finit par une ligne vide
 - Symptôme : scénario `nuits`, étape `nuit-j20` : à J+20, la correction M1 finit en échec
   (« 1 ligne(s) perdue(s) »), le fichier est remis comme avant, alerte rouge « contrat » à chaque nuit,
