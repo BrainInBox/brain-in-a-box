@@ -13,7 +13,9 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
+from pathlib import Path
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TERRAIN = os.path.join(HERE, "terrain.py")
@@ -118,6 +120,22 @@ class Sandbox(unittest.TestCase):
 
 
 class OffAVm(Sandbox):
+    def test_a_scenario_killed_mid_step_leaves_a_failed_row_naming_the_step(self):
+        # A job step's timeout kills the harness before it records: the row it left says where.
+        seen = []
+        opts = types.SimpleNamespace(json=self.json, home=Path(self.home), parcours="app", vm=True)
+
+        def scenario(t, o):
+            t("app-etape-brain")
+            seen.append(self.results()["app"])
+            t.check(False, "x")
+        self.assertEqual(terrain.play("app", scenario, opts), "echec")
+        self.assertEqual((seen[0]["statut"], seen[0]["etape"]), ("echec", "app-etape-brain"))
+        self.assertIn("interrompu pendant l'étape « app-etape-brain » : délai de l'étape du job dépassé", seen[0]["raison"])
+        self.assertEqual((self.results()["app"]["etape"], self.results()["app"]["raison"]), ("app-etape-brain", "x"))
+        rows = terrain.load_reports([self.json], [])[0][2]["scenarios"]
+        self.assertEqual([r["etape"] for r in rows], ["app-etape-brain"])
+
     def test_vm_scenarios_are_skipped_and_say_so(self):
         for name in terrain.VM_ONLY:
             rc, out = self.terrain(name, "--home", self.home, "--json", self.json)

@@ -114,14 +114,17 @@ class Saute(Exception):
 
 
 class Etapes:
-    """Where a scenario is: a failure names its step."""
+    """Where a scenario is: a failure names its step. suivre(nom): told of each step as it starts."""
 
-    def __init__(self):
+    def __init__(self, suivre=None):
         self.nom, self.details, self.resume, self.notes = None, {}, None, []
+        self.suivre = suivre
 
     def __call__(self, nom):
         self.nom = nom
         print("  · " + nom, flush=True)
+        if self.suivre:
+            self.suivre(nom)
 
     @staticmethod
     def check(ok, raison):
@@ -1093,9 +1096,17 @@ def record(opts, entry):
 
 
 def play(name, fn, opts):
-    t = Etapes()
     started = time.monotonic()
+
+    def provisoire(step):
+        # Killed by its job step's timeout, a scenario still leaves a failed row naming where it was.
+        record(opts, {"scenario": name, "statut": "echec", "etape": step, "duree_s": int(time.monotonic() - started),
+                      "raison": "interrompu pendant l'étape « %s » : délai de l'étape du job dépassé, ou job annulé" % step,
+                      "details": {}, "reproduire": repro(name)})
+
+    t = Etapes(provisoire)
     print("TERRAIN %s : début (%s, %s)" % (name, OS_NAME, opts.parcours), flush=True)
+    provisoire("debut")
     try:
         if name in VM_ONLY and not opts.vm:
             raise Saute("seulement sur une VM GitHub jetable (--vm)")
