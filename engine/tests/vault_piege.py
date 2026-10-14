@@ -4,10 +4,13 @@ Fake secrets are assembled in memory: no secret shape is written literally in
 the repository. Every file is backdated (git history and mtime) so the
 10-minute guard and the 30-day rules see an old vault; the secrets are left
 uncommitted, so they must never reach git history.
+
+    python -I vault_piege.py <folder>     builds it there (the Windows CI does)
 """
 import base64
 import os
 import subprocess
+import sys
 import time
 from datetime import date, timedelta
 
@@ -178,3 +181,7 @@ def build(root, today=None):
           % (s["aws"], s["github"], s["jwt"], "password: " + s["password"], s["url"]))
     age_files(root)
     return {"canary": canary, "case_sensitive": sensitive}
+
+
+if __name__ == "__main__":
+    build(sys.argv[1])

@@ -23,7 +23,7 @@ jobs:
       # used to be checked with bash, and new scripts were easy to forget.
       - name: Syntax-check every script with its own shell
         run: |
-          for f in *.sh engine/nightly/*.sh engine/bin/gbq skills/*/scripts/*.sh; do
+          for f in *.sh engine/nightly/*.sh engine/bin/* skills/*/scripts/*.sh; do
             sh=$(head -1 "$f" | sed -E 's@^#! *@@; s@^/usr/bin/env +@@; s@^.*/@@; s@ .*@@')
             echo "$sh -n $f" && "$sh" -n "$f"
           done
@@ -111,7 +111,14 @@ jobs:
           $uc = @(@($j.hooks.SessionStart.hooks) | Where-Object { "$($_.args)" -like '*gbrain-update-check.py*' })
           if ($uc.Count -ne 1) { throw "gbrain-update-check wired $($uc.Count) times under SessionStart" }
           if ($uc[0].command -notlike '*python.exe') { throw "SessionStart hook is not in exec form: $($uc[0].command)" }
+          $cs = @(@($j.hooks.SessionStart.hooks) | Where-Object { "$($_.args)" -like '*controle-sessionstart.py*' })
+          if ($cs.Count -ne 1) { throw "controle-sessionstart wired $($cs.Count) times under SessionStart" }
+          if ($cs[0].command -notlike '*python.exe') { throw "controle-sessionstart is not in exec form: $($cs[0].command)" }
           if (-not (Test-Path "$H\.claude\hooks\brain\gbrain_update.py")) { throw 'gbrain_update.py not installed next to the hooks' }
+          if (-not (Test-Path "$H\.claude\hooks\brain\controle.py")) { throw 'controle.py not installed next to the hooks' }
+          foreach ($f in 'controle.cmd', 'controle') {
+            if (-not (Test-Path "$H\.local\bin\$f")) { throw "$f not installed in ~\.local\bin" }
+          }
           if (-not (Test-Path "$H\Documents\Brain\Profile")) { throw 'vault skeleton missing' }
           if (-not (Test-Path "$H\Documents\Brain\.git")) { throw 'vault is not a git repo' }
           Get-ScheduledTask -TaskName BrainNightly, BrainReflection | Format-Table TaskName, State
@@ -160,12 +167,15 @@ jobs:
           '{"prompt": "hello", "session_id": "ci", "transcript_path": ""}' | & $h.command @($h.args)
           if ($LASTEXITCODE) { throw "correction-detector exited $LASTEXITCODE" }
 
-      - name: gbq works from Git Bash (Claude Code's Bash tool), onboarding commands included
+      - name: gbq and controle work from Git Bash (Claude Code's Bash tool), onboarding commands included
         shell: bash
         run: |
           out=$(~/.local/bin/gbq query "captured corrections") && echo "$out" && echo "$out" | grep -qi 'profile/lessons'
           ~/.local/bin/gbq sync --repo ~/Documents/Brain --no-pull --no-embed
           ~/.local/bin/gbq embed --stale --max-usd 0.10
+          # What the /controle skill runs; statut only reads the state, the check itself runs below.
+          out=$(~/.local/bin/controle --help) && echo "$out" | grep -q 'annuler'
+          ~/.local/bin/controle statut
 
       - name: The 7-day gbrain update, dry run against the real GitHub (reads, decides, changes nothing)
         run: |
@@ -199,14 +209,64 @@ jobs:
           Get-Content "$H\.gbrain\nightly.log"
           if ($info.LastTaskResult -ne 0) { throw "BrainNightly LastTaskResult $($info.LastTaskResult)" }
           $log = Get-Content "$H\.gbrain\nightly.log" -Raw
-          foreach ($want in '[gbrain-update] exit 0', '[git] vault committed', '[sync] exit 0', '[embed] exit 0', '[brain_search] exit 0', 'nightly done') {
+          foreach ($want in '[gbrain-update] exit 0', '[controle] exit 0', '[sync] exit 0', '[embed] exit 0', '[brain_search] exit 0', 'nightly done') {
             if (-not $log.Contains($want)) { throw "nightly.log lacks '$want'" }
           }
-          if ($log.IndexOf('[gbrain-update] exit') -gt $log.IndexOf('[git] vault committed')) { throw 'the update ran after the vault commit' }
+          $at = '[gbrain-update] exit', '[controle] exit', '[sync] exit' | ForEach-Object { $log.IndexOf($_) }
+          if ($at[0] -gt $at[1] -or $at[1] -gt $at[2]) { throw "update, night check and sync out of order: $($at -join ', ')" }
+          # The night check commits the day's notes itself ("nightly <date>"), before its fixes;
+          # the vault commit after it only catches what is left.
+          if ((git -C "$H\Documents\Brain" log -1 --format=%s -- Journal/lighthouse.md) -notmatch '^nightly ') { throw "today's note was not committed by the nightly" }
           $lu = Get-Content "$H\.gbrain\last-update.json" -Raw | ConvertFrom-Json
           if ($lu.status -ne 'paused' -or -not $lu.derniere_verif_ok) { throw "update step: status $($lu.status), last check $($lu.derniere_verif_ok)" }
           $q = (& "$H\.local\bin\gbq.cmd" query "lighthouse keeper storm") -join "`n"; $q
           if ($q -notmatch '(?i)lighthouse' -or $q -match '#chunk') { throw 'the note written today is not in gbrain after the nightly' }
+          # The session's first line, spawned the way Claude Code does: its JSON or nothing, and never twice for one run.
+          $cs = @(@((Get-Content "$H\.claude\settings.json" -Raw | ConvertFrom-Json).hooks.SessionStart.hooks) | Where-Object { "$($_.args)" -like '*controle-sessionstart.py*' })[0]
+          $first = ('{"source": "startup", "session_id": "ci"}' | & $cs.command @($cs.args)) -join "`n"; $first
+          if ($LASTEXITCODE) { throw "controle-sessionstart exited $LASTEXITCODE" }
+          if ($first -and ($first | ConvertFrom-Json).hookSpecificOutput.hookEventName -ne 'SessionStart') { throw 'controle-sessionstart printed something else than its JSON' }
+          $etat = Get-Content "$H\.brain-in-a-box\controle\etat.json" -Raw | ConvertFrom-Json
+          if ($etat.rapport_reecrit -and ($etat.corrections -or $etat.a_voir) -and -not $first) { throw 'the night check wrote a report, the session would not hear of it' }
+          $again = ('{"source": "startup", "session_id": "ci"}' | & $cs.command @($cs.args)) -join "`n"
+          if ($again) { throw "the same line came twice: $again" }
+
+      - name: The night check fixes a trapped vault, undoing the night puts every note back, a vault without git is left alone
+        run: |
+          $H = $env:USERPROFILE
+          $py = (@((Get-Content "$H\.claude\settings.json" -Raw | ConvertFrom-Json).hooks.UserPromptSubmit.hooks)[0]).command
+          $ctl = "$H\.local\bin\controle.cmd"
+          $T = "$env:RUNNER_TEMP\controle"
+          $V = "$T\Brain"
+          function Snap($root) {
+            Get-ChildItem -LiteralPath $root -Recurse -File -Force | Where-Object { $_.FullName -notlike "$root\.git\*" } |
+              ForEach-Object { "$($_.FullName.Substring($root.Length)) $((Get-FileHash -LiteralPath $_.FullName).Hash)" } | Sort-Object
+          }
+          & $py -I engine\tests\vault_piege.py $V
+          if ($LASTEXITCODE) { throw "vault_piege.py exited $LASTEXITCODE" }
+          $before = Snap $V
+          $out = (& $ctl nuit --sans-claude --brain $V --etat "$T\etat" 2>&1) -join "`n"; $out
+          if ($LASTEXITCODE) { throw "controle nuit exited $LASTEXITCODE" }
+          $etat = Get-Content "$T\etat\etat.json" -Raw | ConvertFrom-Json
+          if ($etat.corrections -lt 5) { throw "only $($etat.corrections) fixes on the trapped vault" }
+          $pw = 'hunter2-ci-' + 'canari'
+          if ((Get-Content "$V\Projects\api-notes.md" -Raw).Contains($pw)) { throw 'a password was left in clear' }
+          if ((git -C $V log -p --all) -match [regex]::Escape($pw)) { throw 'a password reached git history' }
+          $out = (& $ctl annuler derniere-nuit --brain $V --etat "$T\etat" 2>&1) -join "`n"; $out
+          if ($LASTEXITCODE) { throw "controle annuler exited $LASTEXITCODE" }
+          $diff = @(Compare-Object $before (Snap $V) | ForEach-Object { $_.InputObject -replace ' [0-9A-F]{64}$', '' } | Sort-Object -Unique)
+          if ("$diff" -ne '\Profile\controle.md') { throw "undoing the night left these files changed: $diff" }
+          if ((Get-Content "$V\Profile\controle.md" -Raw) -notmatch '## Annul') { throw 'the report does not say the night was undone' }
+          # No git, no fix: nothing in the vault changes, the cause is in etat.json.
+          $N = "$T\sans-git"
+          New-Item -ItemType Directory "$N\Projects" -Force | Out-Null
+          Copy-Item "$V\Projects\deploy.md", "$V\Projects\api-notes.md" "$N\Projects\"
+          $before = Snap $N
+          & $ctl nuit --sans-claude --brain $N --etat "$T\etat-sans-git"
+          if ($LASTEXITCODE) { throw "controle nuit exited $LASTEXITCODE on a vault without git" }
+          if (Compare-Object $before (Snap $N)) { throw 'a vault without git was changed' }
+          $etat = Get-Content "$T\etat-sans-git\etat.json" -Raw | ConvertFrom-Json
+          if ($etat.cause -ne 'pas_de_git' -or $etat.corrections -ne 0) { throw "vault without git: cause $($etat.cause), $($etat.corrections) fixes" }
 
       - name: A second run is idempotent, and an existing user loses nothing
         run: |
@@ -237,7 +297,7 @@ jobs:
           if ($q -notmatch '(?i)lighthouse' -or $q -match '#chunk') { throw 'gbrain lost the note on a second run' }
           $j = Get-Content "$env:USERPROFILE\.claude\settings.json" -Raw | ConvertFrom-Json
           $all = @(@($j.hooks.UserPromptSubmit.hooks) + @($j.hooks.Stop.hooks) + @($j.hooks.SessionStart.hooks))
-          foreach ($h in 'correction-detector', 'session-logger', 'session-indexer', 'session-recap', 'gbrain-update-check') {
+          foreach ($h in 'correction-detector', 'session-logger', 'session-indexer', 'session-recap', 'gbrain-update-check', 'controle-sessionstart') {
             $n = @($all | Where-Object { "$($_.command) $($_.args)" -like "*$h.py*" }).Count
             if ($n -ne 1) { throw "$h wired $n times after a second run" }
           }
