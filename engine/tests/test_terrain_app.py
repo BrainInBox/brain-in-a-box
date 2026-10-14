@@ -616,10 +616,19 @@ def page_uia(statut="StatusBar", p_texte=False, boutons=(("Vérifier mon PC", Tr
     main = uia("Group", "", [uia("List", "", [uia("ListItem", "", [uia("Text", "Je regarde ce qui manque sur ton PC.")])]),
                              uia("Text", "Il te faut un abonnement Claude Pro ou Max.", l=1)], lt="main")
     footer = uia("Group", "", [uia("Button", b, [uia("Text", b)], e=on) for b, on in boutons], lt="content info")
-    doc = uia("Document", "Brain in a Box", [uia("Group", "", [hero, main, footer])])
+    doc = uia("Document", "Brain in a Box", [uia("Group", "", [hero, main, footer])], a="RootWebArea")
+    # WebView2's browser frame, as a GitHub VM showed it: its own buttons, and empty views that are
+    # documents too, before the page.
+    frame = uia("Pane", "", [
+        uia("Pane", "", [uia("Button", "Minimize", c="EdgeWindowsCaptionButton"), uia("Button", "Close", c="EdgeWindowsCaptionButton")],
+            c="BrowserCaptionButtonContainer"),
+        uia("Text", "", lt="alert", c="AXVirtualView", l=2),
+        uia("Document", "", [uia("Pane", "", c="NativeViewHost")], c="WebView", a="view_1059"),
+        uia("Pane", "Chrome Legacy Window", [doc], c="Chrome_RenderWidgetHostHWND"),
+        uia("Document", "", [uia("Pane", "", c="NativeViewHost")], c="ContentsWebView")], c="EmbeddedBrowserFrameView")
     return uia("Window", "Brain in a Box", [
-        uia("TitleBar", "", [uia("Button", "Minimize"), uia("Button", "Close")]),
-        uia("Pane", "", [uia("Pane", "Chrome Legacy Window", [doc], c="Chrome_RenderWidgetHostHWND")])], c="Tauri Window")
+        uia("Pane", "", [uia("Pane", "Brain in a Box", [frame], c="Chrome_WidgetWin_1")], c="WRY_WEBVIEW"),
+        uia("TitleBar", "", [uia("Button", "Minimize"), uia("Button", "Close")])], c="Tauri Window")
 
 
 class WindowsReading(unittest.TestCase):
@@ -848,8 +857,12 @@ class WindowsApp(Base):
         def outil(args, timeout=120):
             calls.append([str(a) for a in args])
             if args[0] == "lire":
-                return {"ok": True, "fenetres": [{"h": 5, "classe": "Tauri Window", "titre": "Brain in a Box",
-                                                  "arbre": page_uia()}], "devant": outil.devant}
+                # Tauri's event window first: 16 x 16, visible, nothing a user sees.
+                return {"ok": True, "fenetres": [
+                    {"h": 6, "classe": "Tao Thread Event Target", "titre": "", "rect": [0, 0, 16, 16],
+                     "arbre": uia("Pane", "", c="Tao Thread Event Target")},
+                    {"h": 5, "classe": "Tauri Window", "titre": "Brain in a Box", "rect": [130, 49, 796, 719],
+                     "arbre": page_uia()}], "devant": outil.devant}
             return {"ok": True, "comment": "Invoke"}
         p._outil = outil
         outil.devant = devant

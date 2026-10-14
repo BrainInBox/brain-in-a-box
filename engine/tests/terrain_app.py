@@ -708,9 +708,10 @@ def arbre_uia(node):
     x toggle state, l aria-live, k children), in the shape of PiloteMac's (r, s, n, v, e, k). A text
     with a name is a leaf, as a button is; Bibo's region gets the subrole macOS gives it."""
     out = _uia(node)
-    if not any(n.get("s") for _, n in _aplatir(out)):
+    page = next((n for _, n in _aplatir(out) if n["r"] == "AXWebArea"), out)
+    if not any(n.get("s") for _, n in _aplatir(page)):
         # No status bar: the first live region of the page (aria-live) is Bibo's, it comes first.
-        live = next((n for _, n in _aplatir(out) if n.get("l") and n.get("r") not in ("AXStaticText", "AXButton")),
+        live = next((n for _, n in _aplatir(page) if n.get("l") and n.get("r") not in ("AXStaticText", "AXButton")),
                     None)
         if live is not None:
             live["s"] = "AXApplicationStatus"
@@ -722,6 +723,10 @@ def _uia(node):
     t = str(node.get("t") or "")
     name = str(node.get("n") or "")
     role = UIA_ROLES.get(t, "AXGroup")
+    if role == "AXWebArea" and node.get("c") and node.get("a") != "RootWebArea":
+        # WebView2's own browser frame holds empty views that call themselves documents (class
+        # WebView, ContentsWebView, HubWebView); the page is Chromium's root, which has no class.
+        role = "AXGroup"
     if role == "AXStaticText" and not name.strip():
         role = "AXGroup"     # a paragraph without a name of its own: its texts are below
     statut = t == "StatusBar" or norm(node.get("lt")).lower() in STATUTS_UIA
@@ -1146,6 +1151,9 @@ class PiloteWindows(Pilote):
         for f in res.get("fenetres") or []:
             if not isinstance(f, dict):
                 continue
+            rect = f.get("rect") if isinstance(f.get("rect"), list) and len(f["rect"]) == 4 else [0, 0, 100, 100]
+            if rect[2] < 50 or rect[3] < 50:
+                continue    # the event window Tauri keeps (16 x 16): nothing a user sees
             arbre = arbre_uia(f.get("arbre"))
             if f.get("classe") == "#32770":
                 # A message box of the app itself.
@@ -1159,7 +1167,8 @@ class PiloteWindows(Pilote):
             self.dialogues_h[name] = d.get("h")
             dialogues.append(dialogue_depuis_arbre(name, arbre_uia(d.get("arbre"))))
         if fen:
-            self.hwnd = fen[0]["h"]
+            page = [f for f in fen if any(n.get("r") == "AXWebArea" for _, n in _aplatir(f["arbre"]))]
+            self.hwnd = (page or fen)[0]["h"]
             self._devant(self.hwnd)
         return ecran_depuis_arbre(fen, [d for d in dialogues if d["textes"] or d["boutons"]])
 
