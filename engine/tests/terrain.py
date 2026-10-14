@@ -12,7 +12,8 @@ Scenarios:
   montee-avant   on a v0.2.0 install, what a user changed since                 (VM only)
   montee         the tested version installed over it: nothing of the user lost, all the new there (VM only)
   nuits          seven nights of the night check on the trapped vault, then J+20, in time travel
-  vrai-claude    the real Claude on a synthetic corpus, then the daily reflection (CLAUDE_CODE_OAUTH_TOKEN)
+  vrai-claude    the real Claude on a synthetic corpus, then the daily reflection (CLAUDE_CODE_OAUTH_TOKEN),
+                 with the repository's scripts: on a VM, a job where nothing of the kit was installed
 Tools of the workflow:
   etape <name> --resultat <outcome>   records how a workflow step (an installer) ended
   rapport FILE...                     the results as Markdown ($GITHUB_STEP_SUMMARY)
@@ -54,11 +55,11 @@ STATUTS = {"ok": "OK", "echec": "ÉCHEC", "saute": "SAUTÉ"}
 SCENARIOS = ("installation", "montee-avant", "montee", "nuits", "vrai-claude")
 INSTALLEURS = ("installeur", "installeur-v0.2.0", "installeur-montee")
 VM_ONLY = ("installation", "montee-avant", "montee")
-PARCOURS = ("neuf", "montee", "local")
+PARCOURS = ("neuf", "montee", "claude", "local")
 OSES = ("macos", "windows", "linux")
 ETAPE_RE = re.compile(r"^[a-z0-9][a-z0-9.-]{0,40}$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
-REPRO_VM = "gh workflow run terrain.yml -f ref=<branche> (VM GitHub seulement)"
+REPRO_VM = "gh workflow run terrain.yml --ref <branche> (VM GitHub seulement)"
 REPRO = {
     "nuits": "python3 -I engine/tests/terrain.py nuits --home <dossier vide>",
     "vrai-claude": "CLAUDE_CODE_OAUTH_TOKEN=<jeton> python3 -I engine/tests/terrain.py vrai-claude --home <dossier vide>",
@@ -199,11 +200,11 @@ def base_env(opts, work, claude=False):
 
 
 class Controle:
-    """`controle` as the user types it: the installed launcher on a VM, else the repository's script."""
+    """`controle` as the user types it: the installed launcher on a VM (kit), else the repository's script."""
 
-    def __init__(self, opts, env, vault, etat, outputs):
+    def __init__(self, opts, env, vault, etat, outputs, kit=True):
         launcher = opts.home / ".local" / "bin" / ("controle.cmd" if WINDOWS else "controle")
-        if opts.vm and launcher.is_file():
+        if kit and opts.vm and launcher.is_file():
             self.argv0, self.via = [str(launcher)], "lanceur installé"
         else:
             self.argv0, self.via = [sys.executable, "-I", str(SRC_HOOKS / "controle.py")], "controle.py du dépôt"
@@ -550,7 +551,11 @@ def find_claude(opts):
 
 
 def vrai_claude(t, opts):
+    """With the token, only the repository's scripts run: never an installed launcher or hook,
+    which code that ran on this machine before (an installer, gbrain) could have changed."""
     if not os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"):
+        if os.environ.get("TERRAIN_JETON") == "reserve":
+            raise Saute("jeton réservé au workflow de master qui teste master (run planifié, ou lancé sur master)")
         raise Saute("pas de jeton (CLAUDE_CODE_OAUTH_TOKEN)")
     t("claude")
     t.check(find_claude(opts), "Claude Code introuvable (~/.local/bin/claude ou PATH)")
@@ -558,7 +563,7 @@ def vrai_claude(t, opts):
     vault, etat = work / "Brain", work / "etat"
     env = base_env(opts, work, claude=True)
     outputs = []
-    ctl = Controle(opts, env, vault, etat, outputs)
+    ctl = Controle(opts, env, vault, etat, outputs, kit=False)
     t.details["controle"] = ctl.via
     secrets = vault_piege.fake_secrets()
 
@@ -617,8 +622,7 @@ def vrai_claude(t, opts):
     logs, tmp = work / "logs", work / "tmp"
     tmp.mkdir()
     renv = dict(env, BRAIN_DIR=str(rv), TMPDIR=str(tmp), TEMP=str(tmp), TMP=str(tmp))
-    script = (opts.home / ".claude" / "hooks" / "brain" / "daily-reflection.py") if opts.vm else None
-    script = script if script and script.is_file() else SRC_HOOKS / "daily-reflection.py"
+    script = SRC_HOOKS / "daily-reflection.py"
     rc, out = run([sys.executable, "-I", "-c", REFLECTION_CAP, script, "--day", day, "--slot", "evening",
                    "--projects", projects, "--logs", logs], env=renv, timeout=1900)
     outputs.append(out)

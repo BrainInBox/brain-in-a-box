@@ -29,7 +29,11 @@ python3 -I -m unittest discover -s engine/tests     # and: bash test-hooks.sh
 
 (`python` instead of `python3` on Windows.) `installation`, `montee-avant`, `montee` and the
 `installeur*` steps change the installed kit: they only run on a GitHub VM. Push your branch, then
-`gh workflow run terrain.yml -f ref=<branch>` and read that run.
+`gh workflow run terrain.yml --ref <branch>` (the branch's own workflow, testing that branch; never
+`-f ref=` alone, which runs master's workflow) and read that run. Only commits of this
+repository's branches can be tested: never a fork's pull request. Off master, `vrai-claude` says
+"jeton réservé" and is skipped: check a fix of it with `engine/tests` (a stand-in for claude), and on
+the next scheduled night.
 
 ## Rules
 
