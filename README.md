@@ -23,6 +23,14 @@ It all runs inside Claude Code (terminal/IDE). No bot, no server, no shared clou
 
 ## Install (per person)
 
+### Download the app (preview)
+
+No terminal: a window checks your Mac, installs what is missing and sets up your brain (the interface is in French). Every change to the app publishes an **unsigned preview** on the [Releases page](https://github.com/BrainInBox/brain-in-a-box/releases?q=app-v&expanded=true) (tags `app-v<version>-preview.<n>`, the 5 newest are kept), with a `SHA256SUMS` file and a build attestation (how to check one: `app/README.md`). Mac for now (macOS 13+, Apple Silicon and Intel); Windows comes next.
+
+1. Download `Brain-in-a-Box_<version>-preview.<n>_macos-universal.dmg`, open it and drag **Brain in a Box** to **Applications**.
+2. Open the app. macOS blocks it because Apple has not signed it yet: close the message (do not move it to the Bin).
+3. Go to **System Settings → Privacy & Security**, scroll to *Security*, click **Open Anyway** (« Ouvrir quand même » on a Mac in French) next to Brain in a Box, and confirm. From then on it opens normally.
+
 ### Windows
 
 Press **Win + R**, paste this line, press **Enter** (it works the same pasted in PowerShell or the Command Prompt):
