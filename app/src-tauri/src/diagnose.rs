@@ -633,7 +633,7 @@ mod tests {
     fn old_bun_gets_reinstalled() {
         assert_eq!(check_bun(&Found::Version("1.4.0".into())).detail, "Bun 1.4.0");
         let old = check_bun(&Found::Version("1.3.9".into()));
-        assert_eq!((old.status, old.fix.as_deref()), (Status::Missing, Some("bun")));
+        assert_eq!((old.status, old.fix.as_deref()), (Status::Missing, Some(OWN_STEP_OR_BRAIN[0])));
         assert!(old.detail.contains("1.3.9") && old.detail.contains("1.4.0"), "{}", old.detail);
         assert_eq!(check_bun(&Found::Absent).detail, "Pas encore installé.");
         assert!(check_bun(&Found::NoVersion).detail.contains("ne répond pas"));

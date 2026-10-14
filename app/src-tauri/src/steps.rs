@@ -616,7 +616,7 @@ const SECTIONS: &[(&str, &str)] = &[
     ("CLAUDE.md global", "J'ajoute tes consignes pour Claude"),
     ("Skills Claude Code", "J'installe les compétences de Claude"),
     ("Historique du vault", "Je garde l'historique de tes notes"),
-    ("Memoire gbrain", "J'installe la mémoire (2 à 5 minutes)"),
+    ("Memoire gbrain", "J'installe la mémoire, 2 à 5 minutes"),
     ("Task Scheduler", "Je programme l'entretien de nuit"),
     ("Claude Code + Obsidian", "J'installe Obsidian"),
     ("Verification", "Je vérifie que tout répond"),

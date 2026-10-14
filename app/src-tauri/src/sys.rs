@@ -290,7 +290,20 @@ pub fn run_isolated(program: &Path, args: &[&str], iso: &Isolated, on_line: &mut
 fn command(program: &Path) -> Command {
     let mut cmd = Command::new(program);
     cmd.env("PATH", tool_path());
+    #[cfg(windows)]
+    if program == powershell() {
+        without_ps7_modules(&mut cmd);
+    }
     cmd
+}
+
+/// An app started from PowerShell 7 inherits its PSModulePath, PowerShell 7's own module
+/// folders first: Windows PowerShell would load those and lose its own commands
+/// (Get-FileHash, which Claude Code's installer needs). Without the variable, Windows
+/// PowerShell uses its defaults.
+#[cfg(windows)]
+fn without_ps7_modules(cmd: &mut Command) {
+    cmd.env_remove("PSModulePath");
 }
 
 #[derive(Clone, Copy)]
@@ -463,8 +476,11 @@ pub fn open_console(script: &Path, env: Option<&[(String, OsString)]>) -> Result
     );
     let mut cmd = Command::new(system32("cmd.exe"));
     cmd.raw_arg(line).creation_flags(CREATE_NO_WINDOW).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
-    if let Some(env) = env {
-        cmd.env_clear().envs(env.iter().map(|(k, v)| (k, v)));
+    match env {
+        Some(env) => {
+            cmd.env_clear().envs(env.iter().map(|(k, v)| (k, v)));
+        }
+        None => without_ps7_modules(&mut cmd),
     }
     match cmd.status() {
         Ok(s) if s.success() => Ok(()),
@@ -858,8 +874,13 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let pidfile = dir.path().join("pid");
         let pidfile_s = pidfile.to_string_lossy().into_owned();
-        let root = system_root().to_string_lossy().into_owned();
-        let env = [("SystemRoot", root.as_str()), ("BIAB_PIDFILE", pidfile_s.as_str())];
+        // What PowerShell itself needs to start, and the pid file.
+        let kept: Vec<(String, String)> = ["SystemRoot", "windir", "USERPROFILE", "TEMP", "TMP", "LOCALAPPDATA", "APPDATA"]
+            .iter()
+            .filter_map(|k| std::env::var(k).ok().map(|v| (k.to_string(), v)))
+            .chain([("PATH".to_string(), system32("").to_string_lossy().into_owned()), ("BIAB_PIDFILE".to_string(), pidfile_s)])
+            .collect();
+        let env: Vec<(&str, &str)> = kept.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
         let cancel = AtomicBool::new(false);
         let iso = Isolated { env: &env, cwd: dir.path(), stdin: "", limit: Duration::from_secs(120), cancel: &cancel };
         let code = thread::scope(|s| {
@@ -907,6 +928,15 @@ mod tests {
         let mut said = Vec::new();
         assert_eq!(run_isolated(&dir.path().join("missing.exe"), &[], &iso, &mut |l| said.push(l)), -1);
         assert!(said[0].starts_with("impossible de lancer"), "{said:?}");
+    }
+
+    /// Run from PowerShell 7 (the CI's shell, or a user's), the app must still give
+    /// Windows PowerShell its own commands: Claude Code's installer uses Get-FileHash.
+    #[cfg(windows)]
+    #[test]
+    fn windows_powershell_keeps_its_own_commands() {
+        let o = run(&powershell(), &["-NoProfile", "-NonInteractive", "-Command", "(Get-Command Get-FileHash).Name"], Duration::from_secs(60));
+        assert_eq!((o.code, o.stdout.trim()), (0, "Get-FileHash"), "{}", o.stderr);
     }
 
     #[cfg(windows)]
