@@ -319,6 +319,7 @@ jobs:
             python: python
     env:
       PARCOURS: claude
+      TERRAIN_OS: ${{ matrix.os }}
       TERRAIN_SHA: ${{ needs.ref.outputs.sha }}
       TERRAIN_JETON: ${{ github.ref == 'refs/heads/master' && (inputs.ref || 'master') == 'master' && 'master' || 'reserve' }}
     defaults:
@@ -326,7 +327,7 @@ jobs:
         shell: bash
     steps:
       - name: Where the results go
-        run: echo "TERRAIN_JSON=$RUNNER_TEMP/terrain-${{ matrix.os }}-claude.json" >> "$GITHUB_ENV"
+        run: echo "TERRAIN_JSON=$RUNNER_TEMP/terrain-$TERRAIN_OS-claude.json" >> "$GITHUB_ENV"
 
       - uses: actions/checkout@v4
         with:
@@ -337,7 +338,7 @@ jobs:
         continue-on-error: true
         timeout-minutes: 10
         run: |
-          if [ "${{ matrix.os }}" = windows ]; then
+          if [ "$TERRAIN_OS" = windows ]; then
             pwsh -NoProfile -Command 'irm https://claude.ai/install.ps1 | iex'
           else
             curl -fsSL https://claude.ai/install.sh | bash
