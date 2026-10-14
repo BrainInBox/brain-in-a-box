@@ -24,7 +24,7 @@ gh run download <run-id> --pattern 'terrain-*' --dir "$(mktemp -d)"
 gh issue list --label terrain --state open --author app/github-actions
 ```
 
-One JSON per OS and path (`terrain-macos-neuf.json`, `terrain-windows-montee.json`...):
+One JSON per OS and path (`terrain-macos-neuf.json`, `terrain-windows-montee.json`, `terrain-macos-app.json`...):
 `{os, parcours, ref, run_url, scenarios: [{scenario, statut, etape, raison, details, reproduire}]}`,
 `statut` being `ok`, `echec` or `saute`. `etape` names the step that failed, `details` holds the
 measures and log tails. The issue only lists OS, path, scenario and step: the reasons are in the JSON.
@@ -48,6 +48,45 @@ python3 -I -m unittest discover -s engine/tests     # and: bash test-hooks.sh
 repository's branches can be tested: never a fork's pull request. Off master, `vrai-claude` says
 "jeton réservé" and is skipped: check a fix of it with `engine/tests` (a stand-in for claude), and on
 the next scheduled night.
+
+## Read a failure of the app scenario
+
+The job `app-macos` gets the desktop app as a user does (master: the newest `app-v*-preview.*`,
+SHA256SUMS and attestation checked; a branch: built from the branch), installs it, opens it and
+clicks through its real window to the final screen, then checks the kit like `installation` does
+and opens the app a second time, which must say « Tout est déjà installé ».
+(`engine/tests/terrain_app.py`; the robot skips the Voyage key and clicks « Plus tard » at the
+Claude login.)
+
+```bash
+gh run download <run-id> --name terrain-macos-app --dir "$(mktemp -d)"     # the JSON
+gh run download <run-id> --name captures-macos-app --dir "$(mktemp -d)"    # the captures
+```
+
+- `etape` says where: `app-preparation`, `app-telechargement`, `app-verification` or
+  `app-construction` (getting the app), `app-installation` (DMG, Gatekeeper), `app-lancement`, then
+  one per screen of the window (`app-bienvenue`, `app-diagnostic`, `app-voyage`,
+  `app-connexion-installation`, `app-connexion`, `app-fini`), `app-etape-<id>` for an install step
+  running in the app (`claude`, `bun`, `obsidian`, `brain`), `app-outils`, `app-sources`, the
+  checks of `installation` (`hooks` to `planificateur`), and `app-relance-*` for the second launch.
+- `raison` ends with `Bibo : « … »`: the last thing the window said (title, then text). « Oups, ça
+  a coincé. » with the step's own sentence is a failure of the app or the kit, not of the robot;
+  `dialogue système ouvert (...)` names a macOS dialog that stayed over the window.
+- The captures, in order: `NN-<screen>.png` at every new screen or install step,
+  `NN-<screen>-<m>min.png` every 2 minutes of waiting, `NN-dialogue-<process>.png` for a system
+  dialog (the robot accepts only one naming the app, as the app tells users to), `NN-echec.png`
+  and `NN-echec-arbre.json` (what the robot read in the window) at the failure. Look at the
+  capture before the failure: it shows what a user would have seen.
+- `details`: `ecrans` (each screen and how long it stayed), `dialogues_systeme`, `dernier_ecran`
+  (title, text, buttons, texts), `release` or `sources_du_cerveau`, `duree_parcours_s`.
+- The robot finds screens and buttons by the app's words (`ECRANS`, `ETAPES` in
+  `terrain_app.py`). Reworded in `app/src/app.js` without them: « écran inconnu », « n'offre pas
+  le bouton ». Fix both together; `test_terrain_app.py` checks every word the robot looks for is
+  in the app. Never make the robot click past a screen it does not understand.
+
+A capture is public (an artifact): it shows the VM's screen only. Reproduce on a VM only:
+`gh workflow run terrain.yml --ref <branch>` (the app is built from the branch, and installs the
+branch's kit).
 
 ## Rules
 
@@ -83,9 +122,9 @@ Open the PR and leave a comment asking the maintainer to review it when the diff
 - secret detection: `engine/hooks/_redact.py`, and any change to how the S1 fix masks, quarantines
   or puts back a secret, wherever that code lives (the rest of the night check is yours to fix);
 - the Claude token: `engine/hooks/_headless_claude.py` (environment, login and start-up checks),
-  anything that reads `CLAUDE_CODE_OAUTH_TOKEN`, and `engine/tests/terrain.py` and
-  `engine/tests/vault_piege.py`, which run with the token the next night and write the run's
-  artifacts (public, and not masked by GitHub);
+  anything that reads `CLAUDE_CODE_OAUTH_TOKEN`, and `engine/tests/terrain.py`,
+  `engine/tests/terrain_app.py` and `engine/tests/vault_piege.py`, which run with a token the next
+  night and write the run's artifacts and captures (public, and not masked by GitHub);
 - this file, `docs/terrain-agent.md`;
 - an existing test or check, removed or weakened.
 

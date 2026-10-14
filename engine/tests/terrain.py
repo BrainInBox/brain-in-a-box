@@ -14,6 +14,8 @@ Scenarios:
   nuits          seven nights of the night check on the trapped vault, then J+20, in time travel
   vrai-claude    the real Claude on a synthetic corpus, then the daily reflection (CLAUDE_CODE_OAUTH_TOKEN),
                  with the repository's scripts: on a VM, a job where nothing of the kit was installed
+  app            the desktop app downloaded (or built), installed and clicked through in its real
+                 window to the brain, a capture of every screen, then opened again (VM only, terrain_app.py)
 Tools of the workflow:
   etape <name> --resultat <outcome>   records how a workflow step (an installer) ended
   rapport FILE...                     the results as Markdown ($GITHUB_STEP_SUMMARY)
@@ -48,26 +50,31 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
 SRC_HOOKS = REPO / "engine" / "hooks"
 sys.path.insert(0, str(HERE))
+import terrain_app  # noqa: E402
 import vault_piege  # noqa: E402
 from vault_piege import age_files, git, init_repo, write  # noqa: E402
 
 WINDOWS = os.name == "nt"
 OS_NAME = "windows" if WINDOWS else "macos" if sys.platform == "darwin" else "linux"
 STATUTS = {"ok": "OK", "echec": "ÉCHEC", "saute": "SAUTÉ"}
-SCENARIOS = ("installation", "montee-avant", "montee", "nuits", "vrai-claude")
+SCENARIOS = ("installation", "montee-avant", "montee", "nuits", "vrai-claude", "app")
 INSTALLEURS = ("installeur", "installeur-v0.2.0", "installeur-montee")
-VM_ONLY = ("installation", "montee-avant", "montee")
-PARCOURS = ("neuf", "montee", "claude", "local")
+VM_ONLY = ("installation", "montee-avant", "montee", "app")
+PARCOURS = ("neuf", "montee", "claude", "app", "local")
 OSES = ("macos", "windows", "linux")
 # The rows each path of terrain.yml writes. One missing is a failure: a step killed by its
 # timeout before it recorded, a cancelled job, a guard that refused to run.
 ATTENDUS = {"neuf": ("installeur", "installation", "nuits"),
             "montee": ("installeur-v0.2.0", "montee-avant", "installeur-montee", "montee"),
-            "claude": ("vrai-claude",)}
+            "claude": ("vrai-claude",),
+            "app": ("app",)}
+# The systems each path runs on, when not both (the app's window: a driver per system, macOS first).
+ATTENDUS_OS = {"app": ("macos",)}
 # terrain.yml's jobs, and the result files each one writes ("tous": the commit to test, for all).
 JOBS = {"ref": ("tous", ()), "macos": ("macos", ("macos-neuf", "macos-montee")),
         "windows": ("windows", ("windows-neuf", "windows-montee")),
-        "claude": ("macos+windows", ("macos-claude", "windows-claude"))}
+        "claude": ("macos+windows", ("macos-claude", "windows-claude")),
+        "app-macos": ("macos", ("macos-app",))}
 JOB_RESULTS = ("success", "failure", "cancelled", "skipped")
 ETAPE_RE = re.compile(r"^[a-z0-9][a-z0-9.-]{0,40}$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -1215,7 +1222,9 @@ def parser():
     common.add_argument("--parcours", choices=PARCOURS, default="local")
     common.add_argument("--vm", action="store_true", help="cette machine est une VM GitHub jetable")
     for name in SCENARIOS:
-        sub.add_parser(name, parents=[common])
+        s = sub.add_parser(name, parents=[common])
+        if name == "app":
+            terrain_app.arguments(s)
     e = sub.add_parser("etape", parents=[common])
     e.add_argument("nom", choices=INSTALLEURS)
     e.add_argument("--resultat", required=True)
@@ -1251,7 +1260,7 @@ def main(argv=None):
     if opts.cmd == "etape":
         return cmd_etape(opts)
     fn = {"installation": installation, "montee-avant": montee_avant, "montee": montee, "nuits": nuits,
-          "vrai-claude": vrai_claude}[opts.cmd]
+          "vrai-claude": vrai_claude, "app": lambda t, o: terrain_app.scenario(t, o, sys.modules[__name__])}[opts.cmd]
     return 1 if play(opts.cmd, fn, opts) == "echec" else 0
 
 

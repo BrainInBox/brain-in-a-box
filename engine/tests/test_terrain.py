@@ -378,13 +378,40 @@ class Workflow(unittest.TestCase):
         self.assertEqual(sorted(rapport["env"]["JOBS"].split(",")),
                          sorted("%s=${{ needs.%s.result }}" % (n, n) for n in terrain.JOBS))
         self.assertEqual(sorted(terrain.JOBS), sorted(n for n in self.jobs if n != "rapport"))
-        want = sorted("%s-%s" % (o, pa) for o in ("macos", "windows") for pa in terrain.ATTENDUS)
+        want = sorted("%s-%s" % (o, pa) for pa in terrain.ATTENDUS for o in terrain.ATTENDUS_OS.get(pa, ("macos", "windows")))
         self.assertEqual(sorted(rapport["env"]["ATTENDUS"].split(",")), want)
         runs = json.dumps(rapport["steps"])
         self.assertEqual(runs.count('--jobs \\"$JOBS\\"'), 2, "rapport and issue both get the jobs' results")
         # Green again on a scheduled night: the issue is closed, not left open with a comment.
         self.assertIn('gh issue close \\"$open\\"', runs)
 
+
+    def test_the_app_job_gets_the_app_as_a_user_and_never_a_claude_token(self):
+        job = self.jobs["app-macos"]
+        steps = job["steps"]
+        text = json.dumps(steps)
+        # A fresh VM: nothing of the kit, nor Claude Code, before the app installs them itself.
+        for kit in ("./install.sh", "install.ps1", "claude.ai/install", "terrain-install", "gbrain", "CLAUDE_CODE_OAUTH_TOKEN"):
+            self.assertNotIn(kit, text)
+        source = [st for st in steps if st.get("id") == "source"]
+        self.assertEqual(len(source), 1)
+        self.assertIn('terrain_app.py source --ref "$TERRAIN_REF"', source[0]["run"])
+        builds = [st for st in steps if "cargo" in json.dumps(st)]
+        self.assertGreaterEqual(len(builds), 2)
+        for st in builds:
+            self.assertEqual(st["if"], "steps.source.outputs.source == 'build'", st.get("name"))
+        # The read-only token reaches the scenario step only, and only to download a release.
+        holders = [st for st in steps if "github.token" in json.dumps(st)]
+        self.assertEqual(len(holders), 1)
+        self.assertEqual(holders[0]["env"]["GH_TOKEN"], "${{ steps.source.outputs.source == 'release' && github.token || '' }}")
+        self.assertIn("terrain.py app", holders[0]["run"])
+        self.assertEqual(job["permissions"], {"contents": "read", "attestations": "read"})
+        # The JSON joins the report's artifacts (terrain-*); the captures stay out of its download.
+        names = [st["with"]["name"] for st in steps if str(st.get("uses", "")).startswith("actions/upload-artifact@")]
+        self.assertEqual(sorted(names), ["captures-macos-app", "terrain-macos-app"])
+        self.assertIn("pattern: terrain-*", "pattern: " + self.jobs["rapport"]["steps"][1]["with"]["pattern"])
+        self.assertEqual(job["env"]["PARCOURS"], "app")
+        self.assertIn("app", terrain.ATTENDUS["app"])
 
     def test_a_fresh_windows_has_no_python_in_both_workflows(self):
         # One description of a fresh PC (.github/ci/poste-neuf.ps1), used by both installs: the
