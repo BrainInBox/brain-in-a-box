@@ -750,7 +750,8 @@ def norm_win(text):
 # The installer's buttons (NSIS, in French as tauri.windows.conf.json asks; English in case).
 BOUTONS_NSIS = {"suivant": ("Suivant >", "Next >"), "installer": ("Installer", "Install"),
                 "fermer": ("Fermer", "Terminer", "Finish"), "annuler": ("Annuler", "Cancel"),
-                "parcourir": ("Parcourir...", "Browse..."), "details": ("Afficher les détails", "Show details"),
+                "parcourir": ("Parcourir...", "Browse..."),
+                "details": ("Plus d'infos", "Afficher les détails", "Show details"),
                 "precedent": ("< Précédent", "< Back")}
 # The finish page's box that starts the app: the robot starts it itself, from the Start menu.
 LANCER = ("Lancer", "Exécuter", "Run", "Launch")
@@ -766,7 +767,7 @@ def page_installeur(fenetres):
                 boutons[label] = boutons.get(label, False) or n["e"]
             elif n["r"] == "AXCheckBox" and label:
                 cases[label] = n.get("x")
-            elif n["r"] == "AXStaticText" and label:
+            elif n["r"] == "AXStaticText" and label and not label.startswith("Nullsoft Install System"):
                 textes.append(label)
     page = {"boutons": boutons, "cases": cases, "textes": textes}
     page["cle"] = cle_installeur(page)
@@ -871,6 +872,7 @@ def env_session():
 
 PRODUIT = "Brain in a Box"
 DELAI_INSTALLEUR = 10 * 60
+DELAI_FERMETURE = 3 * 60    # « Fermer » clicked once, as a user does: the installer then quits by itself
 DESINSTALLATION = (r"Software\Microsoft\Windows\CurrentVersion\Uninstall",
                    r"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall")
 
@@ -1007,6 +1009,8 @@ class PiloteWindows(Pilote):
         menu, with a session's environment). Then: installed for this user alone, no administrator."""
         if self.desinstallations():
             raise ErreurPilote("%s est déjà installé : la VM n'est pas neuve" % PRODUIT)
+        # A user's desktop: the windows already open there (the runner's own console) minimized.
+        details["bureau_range"] = self._outil(["ranger"]).get("fenetres")
         try:
             proc = subprocess.Popen([str(fichier)], env=self.environnement(Path.home()), cwd=str(Path(fichier).parent),
                                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -1025,7 +1029,7 @@ class PiloteWindows(Pilote):
     def assistant(self, proc, pages, capturer=None):
         """The installer's pages until it quits. pages: what each showed and what was clicked."""
         start = self.horloge()
-        prev, clic, message = None, None, None
+        prev, clic, message, ferme = None, None, None, None
         while proc.poll() is None:
             now = self.horloge()
             if now - start >= DELAI_INSTALLEUR:
@@ -1046,7 +1050,13 @@ class PiloteWindows(Pilote):
                               "cases": page["cases"], "textes": page["textes"][:12], "clics": [],
                               "capture": capturer("installeur-" + page["cle"]) if capturer else None})
             act = action_installeur(page)
-            if act and act[0] == "message":
+            if ferme is not None and act == ("cliquer", _nsis(page, "fermer")):
+                # Clicked once: the installer makes the desktop shortcut and quits, a user waits for it.
+                if now - ferme >= DELAI_FERMETURE:
+                    raise ErreurPilote("l'installeur est toujours ouvert %d s après « %s »" % (now - ferme, act[1]))
+                if capturer and not pages[-1].get("attente") and now - ferme >= 30:
+                    pages[-1]["attente"] = capturer("installeur-fermeture")
+            elif act and act[0] == "message":
                 # A message box of the installer (an error): it gets a few seconds to go away.
                 message = message if message is not None else now
                 if now - message >= 10:
@@ -1060,7 +1070,11 @@ class PiloteWindows(Pilote):
                     raise ErreurPilote("pas de clic sur « %s » dans l'installeur (%s)" % (act[1], done.get("pourquoi")))
                 pages[-1]["clics"].append(act[1] if act[0] == "cliquer" else "%s : %s" % (act[1], "coché" if act[2] else "décoché"))
                 clic = (now, (clic[1] if clic else 0) + 1)
+                if page["cle"] == "fin" and act[0] == "cliquer":
+                    ferme = now
             self.dormir(POLL)
+        if ferme is not None and pages:
+            pages[-1]["quitte_apres_s"] = int(self.horloge() - ferme)
         return pages
 
     def verifier_installation(self, details):

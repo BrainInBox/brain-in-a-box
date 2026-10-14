@@ -12,6 +12,7 @@
 //   pilote-windows.exe fermer <hwnd>               the window closed, as its X does
 //   pilote-windows.exe devant <hwnd>               the window brought to the front
 //   pilote-windows.exe capturer <file.png>         the whole screen
+//   pilote-windows.exe ranger                      the windows already open minimized (a user's desktop)
 //   pilote-windows.exe raccourci <file.lnk>        where a shortcut points
 //
 // Every answer is one line of JSON, ASCII only (\uXXXX escapes): the console's code page never
@@ -56,6 +57,8 @@ static class PiloteWindows
     [DllImport("user32.dll")] static extern bool AttachThreadInput(uint a, uint b, bool attach);
     [DllImport("user32.dll")] static extern bool PostMessage(IntPtr h, uint msg, IntPtr w, IntPtr l);
     [DllImport("user32.dll")] static extern int GetSystemMetrics(int i);
+    [DllImport("user32.dll")] static extern IntPtr GetWindow(IntPtr h, uint cmd);
+    [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr h, int attr, out int value, int size);
     [DllImport("user32.dll")] static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")] static extern void mouse_event(uint f, uint dx, uint dy, uint d, UIntPtr e);
     [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
@@ -95,8 +98,9 @@ static class PiloteWindows
         if (op == "devant" && a.Length == 2) return Devant(Fenetre(a[1]));
         if (op == "capturer" && a.Length == 2) return Capturer(a[1]);
         if (op == "raccourci" && a.Length == 2) return Raccourci(a[1]);
+        if (op == "ranger" && a.Length == 1) return Ranger();
         return Echec("usage : lire <pid> | cliquer <hwnd> <libelle> | cocher <hwnd> <libelle> 0|1 | fermer <hwnd> | "
-                     + "devant <hwnd> | capturer <png> | raccourci <lnk>");
+                     + "devant <hwnd> | capturer <png> | raccourci <lnk> | ranger");
     }
 
     // ------------------------------------------------------------------ windows
@@ -433,6 +437,31 @@ static class PiloteWindows
         Thread.Sleep(300);
         Dictionary<string, object> res = Ok();
         res["devant"] = GetForegroundWindow() == h;
+        return res;
+    }
+
+    // The windows a user would not have on a fresh desktop (on a GitHub VM: the runner's console),
+    // minimized: they would hide the app in the captures. Not the shell, nor a cloaked or owned window.
+    static Dictionary<string, object> Ranger()
+    {
+        List<IntPtr> vues = new List<IntPtr>();
+        EnumWindows(delegate (IntPtr h, IntPtr l) { if (IsWindowVisible(h)) vues.Add(h); return true; }, IntPtr.Zero);
+        string[] coquille = { "Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd" };
+        List<object> rangees = new List<object>();
+        foreach (IntPtr h in vues)
+        {
+            int cache;
+            if (Array.IndexOf(coquille, Classe(h)) >= 0 || Texte(h).Length == 0 || IsIconic(h)
+                || GetWindow(h, 4) != IntPtr.Zero   // GW_OWNER
+                || (DwmGetWindowAttribute(h, 14, out cache, 4) == 0 && cache != 0)) continue;   // DWMWA_CLOAKED
+            ShowWindow(h, 6);   // SW_MINIMIZE
+            Dictionary<string, object> d = new Dictionary<string, object>();
+            d["titre"] = Texte(h);
+            d["classe"] = Classe(h);
+            rangees.Add(d);
+        }
+        Dictionary<string, object> res = Ok();
+        res["fenetres"] = rangees;
         return res;
     }
 

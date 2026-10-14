@@ -652,24 +652,33 @@ class WindowsReading(unittest.TestCase):
 
 
 def nsis(page, lancer=1):
-    """The installer's pages (NSIS, French, tauri-bundler's template) as UI Automation shows them."""
-    b = lambda n, on=True: uia("Button", n, e=on)
-    pages = {
-        "bienvenue": [uia("Text", "Bienvenue dans le programme d'installation de Brain in a Box"), b("Suivant >"), b("Annuler")],
-        "dossier": [uia("Text", "Choisissez le dossier d'installation"), uia("Edit", "Dossier de destination"),
-                    b("Parcourir..."), b("< Précédent"), b("Installer"), b("Annuler")],
-        "installation": [uia("Text", "Installation en cours"), b("Afficher les détails"), b("< Précédent", False),
-                         b("Suivant >", False), b("Annuler", False)],
-        "installe": [uia("Text", "Installation terminée"), b("Afficher les détails"), b("< Précédent", False),
-                     b("Suivant >"), b("Annuler", False)],
-        "fin": [uia("Text", "Fin de l'installation de Brain in a Box"),
-                uia("CheckBox", "Créer un raccourci sur le bureau.", x=1), uia("CheckBox", "Lancer Brain in a Box", x=lancer),
-                b("< Précédent", False), b("Fermer"), b("Annuler", False)],
-        "message": [uia("Text", "Erreur : le téléchargement de WebView2 a échoué"), b("OK")],
+    """The installer's pages (NSIS, French, tauri-bundler's template) as UI Automation showed them on a
+    GitHub VM: the wizard's buttons, then the page's own dialog, then the title bar."""
+    b = lambda n, on=True: uia("Button", n, e=on, c="Button")
+    t = lambda n: uia("Text", n, c="Static")
+    boutons, page_ = {
+        "bienvenue": ([b("Suivant >"), b("Annuler")],
+                      [t("Bienvenue dans le programme d'installation de Brain in a Box"), t("Cliquez sur Suivant pour continuer.")]),
+        "dossier": ([b("< Précédent"), b("Suivant >"), b("Annuler")],
+                    [t("Choisissez le dossier d'installation"), uia("Edit", ""), b("Parcourir..."), t("Espace requis : 11.4 Mo")]),
+        "installation": ([b("< Précédent", False), b("Suivant >", False), b("Annuler", False)],
+                         [t("Installation en cours"), b("Plus d'infos"), uia("ProgressBar", "")]),
+        "installe": ([b("< Précédent", False), b("Suivant >"), b("Annuler", False)],
+                     [t("Installation terminée"), b("Plus d'infos"), t("Terminé")]),
+        "fin": ([b("< Précédent", False), b("Fermer"), b("Annuler", False)],
+                [uia("Image", ""), t("Fin de l'installation de Brain in a Box"),
+                 uia("CheckBox", "Lancer Brain in a Box", x=lancer, c="Button"),
+                 uia("CheckBox", "Créer un raccourci sur le bureau.", x=1, c="Button")]),
+        "message": ([b("OK")], [t("Erreur : le téléchargement de WebView2 a échoué")]),
     }[page]
-    return [{"h": 7, "pid": 41, "titre": "Installation de Brain in a Box", "classe": "#32770",
-             "arbre": uia("Window", "Installation de Brain in a Box", [uia("TitleBar", "", [uia("Button", "Close")]),
-                                                                       uia("Pane", "", pages)])}]
+    frame = uia("TitleBar", "Installation de Brain in a Box ", [
+        uia("MenuBar", "System Menu Bar", [uia("MenuItem", "System")]), uia("Button", "Minimize"), uia("Button", "Close")])
+    if page == "message":
+        window = uia("Window", "Installation de Brain in a Box ", page_ + boutons + [frame], lt="Dialog")
+    else:
+        window = uia("Window", "Installation de Brain in a Box ", boutons + [t("Nullsoft Install System v3.11"),
+                                                                             uia("Pane", "", page_, lt="Dialog"), frame], lt="Dialog")
+    return [{"h": 7, "pid": 41, "titre": "Installation de Brain in a Box ", "classe": "#32770", "arbre": window}]
 
 
 class FauxSetup:
@@ -694,8 +703,9 @@ class FauxWindows(ta.PiloteWindows):
         self.setup = FauxSetup(h)
         self.page, self.lancer, self.depuis, self.duree = "bienvenue", 1, 0.0, 40
         self.suite = pages if pages is not None else {
-            ("bienvenue", "Suivant >"): "dossier", ("dossier", "Installer"): "installation", ("installe", "Suivant >"): "fin"}
+            ("bienvenue", "Suivant >"): "dossier", ("dossier", "Suivant >"): "installation", ("installe", "Suivant >"): "fin"}
         self.appels = []
+        self.quitte = 1     # seconds the installer takes to quit once « Fermer » is clicked
 
     def aller(self, page):
         self.page, self.depuis = page, self.h.now
@@ -707,16 +717,18 @@ class FauxWindows(ta.PiloteWindows):
         if self.page == "installation" and self.h.now - self.depuis >= self.duree:
             self.aller("installe")
         if args[0] == "lire":
-            gone = self.setup.fini is not None
+            gone = self.setup.poll() is not None
             return {"ok": True, "fenetres": [] if gone else nsis(self.page, self.lancer), "devant": None}
         if args[0] == "devant":
             return {"ok": True, "devant": True}
+        if args[0] == "ranger":
+            return {"ok": True, "fenetres": [{"titre": "C:\\ProgramData\\GitHub\\HostedComputeAgent", "classe": "CASCADIA_HOSTING_WINDOW_CLASS"}]}
         if args[0] == "cocher":
             self.lancer = int(args[3])
             return {"ok": True, "coche": bool(self.lancer)}
         if args[0] == "cliquer":
-            if self.page == "fin" and args[2] == "Fermer":
-                self.setup.fini = self.h.now + 1
+            if self.page == "fin" and args[2] == "Fermer" and self.setup.fini is None:
+                self.setup.fini = self.h.now + self.quitte
             nxt = self.suite.get((self.page, args[2]))
             if nxt:
                 self.aller(nxt)
@@ -731,12 +743,28 @@ class WindowsInstaller(Base):
         pages = p.assistant(p.setup, [], capturer=lambda name: shots.append(name) or name)
         self.assertEqual([x["page"] for x in pages], ["bienvenue", "dossier", "installation", "installe", "fin", "fin"])
         self.assertEqual([c for x in pages for c in x["clics"]],
-                         ["Suivant >", "Installer", "Suivant >", "Lancer Brain in a Box : décoché", "Fermer"])
+                         ["Suivant >", "Suivant >", "Suivant >", "Lancer Brain in a Box : décoché", "Fermer"])
         self.assertEqual(shots, ["installeur-" + x["page"] for x in pages])
         # The desktop shortcut is left as the installer offers it.
         self.assertFalse([a for a in p.appels if a[0] == "cocher" and "bureau" in a[2]])
         self.assertEqual(p.lancer, 0)
         self.assertEqual(p.setup.poll(), 0)
+
+    def test_fermer_is_clicked_once_and_the_installer_given_time_to_quit(self):
+        # On a GitHub VM, the installer took a minute to quit after « Fermer »: clicking again would not help.
+        p = FauxWindows(self.h, self.tmp)
+        p.quitte = 75
+        shots = []
+        pages = p.assistant(p.setup, [], capturer=lambda name: shots.append(name) or name)
+        self.assertEqual(pages[-1]["clics"], ["Fermer"])
+        self.assertGreaterEqual(pages[-1]["quitte_apres_s"], 75)
+        self.assertEqual(shots[-1], "installeur-fermeture")
+        p = FauxWindows(Horloge(), self.tmp)
+        p.quitte = 10 ** 9
+        with self.assertRaises(ta.ErreurPilote) as cm:
+            p.assistant(p.setup, [])
+        self.assertIn("l'installeur est toujours ouvert 180 s après « Fermer »", str(cm.exception))
+        self.assertEqual(len([a for a in p.appels if a[:3] == ["cliquer", "7", "Fermer"]]), 1)
 
     def test_pages_as_data(self):
         keys = {k: ta.page_installeur(nsis(k))["cle"] for k in ("bienvenue", "dossier", "installation", "installe", "fin", "message")}
@@ -866,7 +894,7 @@ class WindowsEnvironment(unittest.TestCase):
         with open(ta.__file__, encoding="utf-8") as f:
             py = f.read()
         asked = set(re.findall(r'_outil\(\[\s*"([a-z]+)"', py)) | {"cocher", "cliquer"}
-        self.assertEqual(asked, {"lire", "cliquer", "cocher", "fermer", "devant", "capturer", "raccourci"})
+        self.assertEqual(asked, {"lire", "cliquer", "cocher", "fermer", "devant", "capturer", "raccourci", "ranger"})
         for op in asked:
             self.assertIn('op == "%s"' % op, src.decode("ascii"))
 
