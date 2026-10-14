@@ -34,6 +34,7 @@ runner, and --home is never the real home folder anywhere else.
 """
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -49,10 +50,23 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
 SRC_HOOKS = REPO / "engine" / "hooks"
-sys.path.insert(0, str(HERE))
-import terrain_app  # noqa: E402
-import vault_piege  # noqa: E402
-from vault_piege import age_files, git, init_repo, write  # noqa: E402
+
+
+def voisin(name):
+    """engine/tests/<name>.py, loaded from its path. This folder never goes on sys.path (python -I
+    leaves it out): a file added there would stand for a module of the standard library, in the
+    job that holds the Claude token."""
+    if name not in sys.modules:
+        spec = importlib.util.spec_from_file_location(name, str(HERE / (name + ".py")))
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module
+        spec.loader.exec_module(module)
+    return sys.modules[name]
+
+
+terrain_app = voisin("terrain_app")
+vault_piege = voisin("vault_piege")
+age_files, git, init_repo, write = vault_piege.age_files, vault_piege.git, vault_piege.init_repo, vault_piege.write
 
 WINDOWS = os.name == "nt"
 OS_NAME = "windows" if WINDOWS else "macos" if sys.platform == "darwin" else "linux"

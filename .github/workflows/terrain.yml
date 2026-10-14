@@ -414,24 +414,31 @@ jobs:
         id: source
         run: python3 -I engine/tests/terrain_app.py source --ref "$TERRAIN_REF" | tee -a "$GITHUB_OUTPUT"
 
+      # A branch's build only, from caches of the terrain's own (release.yml restores none of
+      # them), saved right after the build: nothing the app and what it starts later (Claude
+      # Code, Bun, gbrain and their dependencies, run as this user) ever gets into a cache.
+      # Never saved on master, whose caches every branch restores. (Keys the old post-job save
+      # wrote, after the app had run, are never read again.)
       - name: Tauri CLI, cached (branch build)
+        id: tauri-cli
         if: steps.source.outputs.source == 'build'
-        uses: actions/cache@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.cargo/bin/cargo-tauri
-          key: tauri-cli-2.11.5-${{ runner.os }}-${{ runner.arch }}
+          key: terrain-tauri-cli-2.11.5-${{ runner.os }}-${{ runner.arch }}
 
       - name: Cargo cache (branch build)
+        id: cargo
         if: steps.source.outputs.source == 'build'
-        uses: actions/cache@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             app/src-tauri/target
-          key: terrain-app-${{ runner.os }}-universal-${{ hashFiles('app/src-tauri/Cargo.lock') }}
-          restore-keys: terrain-app-${{ runner.os }}-universal-
+          key: terrain-build-${{ runner.os }}-universal-${{ hashFiles('app/src-tauri/Cargo.lock') }}
+          restore-keys: terrain-build-${{ runner.os }}-universal-
 
       # The command of release.yml: one universal DMG, ad-hoc signed.
       - name: Build the app from the tested commit (branch)
@@ -458,6 +465,24 @@ jobs:
           dmg="$RUNNER_TEMP/app/Brain-in-a-Box_${version}-terrain.${TERRAIN_SHA:0:7}_macos-universal.dmg"
           cp "${dmgs[0]}" "$dmg"
           echo "APP_FICHIER=$dmg" >> "$GITHUB_ENV"
+
+      - name: Tauri CLI saved, before anything of the app runs (branch build)
+        if: steps.source.outputs.source == 'build' && github.ref != 'refs/heads/master' && steps.tauri-cli.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cargo/bin/cargo-tauri
+          key: ${{ steps.tauri-cli.outputs.cache-primary-key }}
+
+      - name: Cargo cache saved, before anything of the app runs (branch build)
+        if: steps.source.outputs.source == 'build' && github.ref != 'refs/heads/master' && steps.cargo.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            app/src-tauri/target
+          key: ${{ steps.cargo.outputs.cache-primary-key }}
 
       - name: "Scenario: the app installed and clicked through to the brain, then opened again"
         if: ${{ !cancelled() }}
@@ -528,24 +553,31 @@ jobs:
           $out
           $out | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
+      # A branch's build only, from caches of the terrain's own (release.yml restores none of
+      # them), saved right after the build: nothing the app and what it starts later (Claude
+      # Code, Bun, gbrain and their dependencies, run as this user) ever gets into a cache.
+      # Never saved on master, whose caches every branch restores. (Keys the old post-job save
+      # wrote, after the app had run, are never read again.)
       - name: Tauri CLI, cached (branch build)
+        id: tauri-cli
         if: steps.source.outputs.source == 'build'
-        uses: actions/cache@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.cargo/bin/cargo-tauri.exe
-          key: tauri-cli-2.11.5-${{ runner.os }}-${{ runner.arch }}
+          key: terrain-tauri-cli-2.11.5-${{ runner.os }}-${{ runner.arch }}
 
       - name: Cargo cache (branch build)
+        id: cargo
         if: steps.source.outputs.source == 'build'
-        uses: actions/cache@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             app/src-tauri/target
-          key: terrain-app-${{ runner.os }}-x86_64-pc-windows-msvc-${{ hashFiles('app/src-tauri/Cargo.lock') }}
-          restore-keys: terrain-app-${{ runner.os }}-x86_64-pc-windows-msvc-
+          key: terrain-build-${{ runner.os }}-x86_64-pc-windows-msvc-${{ hashFiles('app/src-tauri/Cargo.lock') }}
+          restore-keys: terrain-build-${{ runner.os }}-x86_64-pc-windows-msvc-
 
       # The command of release.yml: one NSIS installer, for the user alone.
       - name: Build the app from the tested commit (branch)
@@ -576,6 +608,24 @@ jobs:
           $exe = "$env:RUNNER_TEMP\app\Brain-in-a-Box_$version-terrain.$($env:TERRAIN_SHA.Substring(0, 7))_windows-x64-setup.exe"
           Copy-Item $exes[0].FullName $exe
           "APP_FICHIER=$exe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Tauri CLI saved, before anything of the app runs (branch build)
+        if: steps.source.outputs.source == 'build' && github.ref != 'refs/heads/master' && steps.tauri-cli.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cargo/bin/cargo-tauri.exe
+          key: ${{ steps.tauri-cli.outputs.cache-primary-key }}
+
+      - name: Cargo cache saved, before anything of the app runs (branch build)
+        if: steps.source.outputs.source == 'build' && github.ref != 'refs/heads/master' && steps.cargo.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            app/src-tauri/target
+          key: ${{ steps.cargo.outputs.cache-primary-key }}
 
       # A PC as users have it: no Python but the Microsoft Store's stub (.github/ci/poste-neuf.ps1,
       # the description the other Windows jobs use). The robot puts the stub's folder first on the
