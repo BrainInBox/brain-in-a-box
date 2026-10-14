@@ -9,12 +9,14 @@ Everyone gets the **same engine**, with **their own data** — everything stays 
 | Layer | What |
 |---|---|
 | **Vault** (`~/Documents/Brain`) | Your markdown notes: Profile · **Team · Agents · Decisions · Skills** · Journal · Projects · Clients · Resources |
-| **Skills** (`~/.claude/skills`) | `brain-boost` (what the setup does, how to grow it safely) · `quick-research` · `html-artifact` · `convert-documents-to-markdown`. Installed with the box; a skill of yours with the same name, or one you edited, is never overwritten |
+| **Skills** (`~/.claude/skills`) | `brain-boost` (what the setup does, how to grow it safely) · `controle` (the night check: what it fixed, undo, GBrain updates) · `quick-research` · `html-artifact` · `convert-documents-to-markdown`. Installed with the box; a skill of yours with the same name, or one you edited, is never overwritten |
 | **Hooks** (`~/.claude/hooks/brain`) | Auto-capture: corrections → `lessons.md`, sessions → `Journal/`, summaries → `memory.md` |
 | **GBrain** (`~/.gbrain`) | Search over the vault (`gbq query "..."`): by meaning with a Voyage AI key, by keywords without one |
-| **Nightly** (launchd 04:00) | commit vault → sync → dream cycle (dedup, facts, consolidation) → self-update GBrain (auto-rollback if broken). Windows (Task Scheduler 04:00, catches up when the PC wakes): commit vault → sync → embed |
-| **Self-update catch-up** (SessionStart) | if the machine missed the 04:00 run, the first Claude Code session of the day checks in the background — you're never more than a day behind |
-| **Reflection** (launchd 12:00 + 23:00) | LLM summary of the day's sessions and your git commits → `Journal/` + rolling 15-day `memory.md`. Secrets masked before sending; a failing run pins a warning in `memory.md`. Missed a day? `daily-reflection.py --day YYYY-MM-DD` (`--dry-run` to preview) |
+| **Nightly** (launchd 04:00) | update GBrain → night check → commit vault → sync → dream cycle (dedup, facts, consolidation). Windows (Task Scheduler 04:00, catches up when the PC wakes): update GBrain → night check → commit vault → sync → embed |
+| **GBrain updates** (in the nightly) | the newest release this machine has known for at least 7 days: never master, never lower, with the exact Bun gbrain's release uses (checksum verified). Code, Bun, config and brain are snapshotted first; if `gbrain doctor` fails after the switch, all of it is restored. A new install starts at the release CI tests (`engine/gbrain-pin.json`) |
+| **Night check** (in the nightly, `/controle`) | Fixes what is safe by itself, one git commit per fix: masks passwords and keys written in clear (the value stays 30 days in a local quarantine, outside the vault, never pushed), puts a warning above commands that erase things, removes hidden characters, moves `memory.md` entries older than 15 days to `Profile/Archive/`, sets aside duplicate or pasted lessons, deletes exact copies and empty notes, repairs broken frontmatter. With Claude Code logged in, Claude (no tools, masked excerpts) also points out contradictions and replaced decisions; the script checks its quotes and writes the warnings. The rest is listed in `Profile/controle.md`. A vault without git, or in the middle of a merge or rebase, is left untouched |
+| **Session start** (SessionStart) | one line on what the night check did, or on a job that stopped (no check for 48 h, no update check for 72 h). If no GBrain update check succeeded for 36 h (machine off at 04:00), one starts in the background |
+| **Reflection** (launchd 12:00 + 23:00) | LLM summary of the day's sessions and your git commits → `Journal/` + the day's entry in `memory.md` (the night check archives entries older than 15 days). Claude answers with no tool; the script writes. Secrets masked before sending; a failing run pins a warning in `memory.md`. Missed a day? `daily-reflection.py --day YYYY-MM-DD` (`--dry-run` to preview) |
 | **Weekly lint** (launchd Monday 08:00) | Verifies the whole pipeline (doctor, lint, orphans, nightly freshness) → 🟢/🟠/🔴 verdict pinned in `memory.md` + report in `Profile/lint.md` |
 
 It all runs inside Claude Code (terminal/IDE). No bot, no server, no shared cloud.
@@ -33,7 +35,7 @@ That's all. It installs what's missing (Python, Git, Bun, Claude Code, Obsidian 
 
 Prefer to read the code first? Download the repository (**Code → Download ZIP**), extract it, read it, then run `powershell -ExecutionPolicy Bypass -File install.ps1` from the extracted folder: it uses those files and downloads nothing else from this repo. Started without a console (from an app, a script), it asks nothing: set `VOYAGE_API_KEY` in that process to give the key.
 
-GBrain is installed at the commit the Windows CI tests (`$GBRAIN_REF` in `install.ps1`) and updates when you run the install line again. If it cannot be installed (no network, a locked-down PC), or stops answering, `gbq query` answers from a local keyword index instead: search never goes away. Details in [the port notes](docs/proposals/windows-port.md); the install log is `~\.brain-in-a-box\install.log`.
+GBrain starts at the release the Windows CI tests (`engine/gbrain-pin.json`), then the nightly moves it to the newest release at least 7 days old, as on macOS; running the install line again never moves it back down. If it cannot be installed (no network, a locked-down PC), or stops answering, `gbq query` answers from a local keyword index instead: search never goes away. Details in [the port notes](docs/proposals/windows-port.md); the install log is `~\.brain-in-a-box\install.log`.
 
 ### macOS
 
@@ -108,7 +110,7 @@ Each member's nightly pulls the team's contributions + re-indexes. The dream cyc
 - **Recall**: `gbq query "what did we decide about X?"` → answer from your memory, with the source.
 - **Skillify**: `gbq skillify <url-or-file>` extracts a SKILL.md draft from a tweet, article, or doc (via [gbrain](https://github.com/garrytan/gbrain)). Keep it in `~/Documents/Brain/Skills/` (searchable), and copy it to `~/.claude/skills/<name>/SKILL.md` when Claude Code should use it on its own. The `brain-boost` skill walks you through it.
 - **Brainstorm / code search**: `gbq brainstorm "<question>"` (idea generation), `gbq code-def <symbol>` / `code-refs <symbol>` (when you indexed a code repo as a source). All gbrain commands are safe through `gbq` — it routes reads through the lock-safe path and writes via clean wait.
-- **In the morning**: the dream cycle deduped/consolidated overnight.
+- **In the morning**: the dream cycle deduped/consolidated overnight, and Claude's first line says what the night check did. `/controle` explains it; `/controle annuler <ID>` undoes one fix (the IDs are in `Profile/controle.md`), `/controle annuler derniere-nuit` the whole night, `/controle pause` stops the fixes and keeps the report.
 
 ## Get the most out of it
 
@@ -132,7 +134,8 @@ Read [PHILOSOPHY.md](PHILOSOPHY.md): nine habits that turn Claude from an adviso
 
 ## Security / privacy
 - Everything is **local**: your vault, your index, your key. Nothing goes to a third party (except, with a Voyage key, the text sent to Voyage AI to compute embeddings: in the Voyage dashboard, set Organization → Terms of Service to "Opted Out" so it is not used for training). Installs from before 0.3 keep ZeroEntropy.
-- Never a secret in the vault. The global `CLAUDE.md` directives tell your agents so, but nothing scans the vault for you: keep secrets in your password manager or Keychain and write down where they live, never the value.
+- Never a secret in the vault. The global `CLAUDE.md` directives tell your agents so, and the night check masks the passwords and keys it recognises before your notes are committed. One that was already committed stays in git history, and wherever the vault was pushed: the report tells you to change it. Keep secrets in your password manager or Keychain and write down where they live, never the value.
+- The night check never pushes, never rewrites git history, never follows a link out of the vault, and never lets Claude write: Claude only points at quotes, the script checks them and writes fixed sentences.
 - **Found a security issue?** See [SECURITY.md](SECURITY.md) — please use GitHub Security Advisories, not public Issues.
 
 ## Contributing
