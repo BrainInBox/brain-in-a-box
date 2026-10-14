@@ -320,22 +320,28 @@ class JournalMerge(unittest.TestCase):
         n = note(src, crlf=True, bom=True)
         out = "".join(dr.merge_journal(n, n, DAY, draft(what_i_did=["did it"], todo=["write tests"])))
         self.assertTrue(out.startswith("---\r\ntags: [daily]\r\n---\r\n# Day\r\n\r\nfree text\r\n"))
-        self.assertIn("## To do next\r\n- write tests\r\n- call the bank\r\n\r\n## 📊", out)
+        self.assertIn("## To do next\r\n- call the bank\r\n- write tests\r\n\r\n## 📊", out)
         self.assertTrue(out.endswith("## 📊 Claude Sessions\r\n\r\n- **12:00** sid:`abc`\r\n"
                                      "<!-- X:BEGIN -->\r\n## What I did\r\n<!-- X:END -->\r\n"))
         self.assertIn("free text\r\n\r\n## What I did\r\n- did it\r\n\r\n## To do next", out)
         self.assertNotIn("\n\n\n", out.replace("\r", ""))
 
-    def test_every_existing_line_survives(self):
-        src = "# D\n\n## What I did\n- **Fixed** the login bug\n- a long line that Claude completed later on\n- [ ] tiny\n```\ncode\n```\n"
+    def test_existing_lines_stay_as_they_are_where_they_are(self):
+        src = ("# D\n\n## What I did\n### Morning\n- **Fixed** the login bug\n  - in the auth module\n"
+               "1. ran:\n```\nmake\n```\n### Afternoon\n- a long line that Claude shortened later on, then more\n\n"
+               "## To do next\n- [x] call the bank\n- [ ] buy milk\n")
         n = note(src)
-        out = "".join(dr.merge_journal(n, n, DAY, draft(what_i_did=[
-            "Fixed the login bug", "A long line that Claude completed later on, and more", "code"])))
-        self.assertEqual(out.count("Fixed"), 1)
-        self.assertIn("\n- a long line that Claude completed later on\n", out)
-        self.assertIn("\n- A long line that Claude completed later on, and more\n", out)
-        for kept in ("- **Fixed** the login bug\n", "- [ ] tiny\n", "```\ncode\n```\n"):
-            self.assertIn(kept, out)
+        out = "".join(dr.merge_journal(n, n, DAY, draft(
+            what_i_did=["Morning", "Fixed the login bug", "in the auth module", "ran:", "make",
+                        "a long line that Claude shortened later on", "Deployed"],
+            todo=["call the bank", "[ ] buy milk", "book the train"])))
+        self.assertEqual(out, src.replace("then more\n\n", "then more\n- Deployed\n\n") + "- book the train\n")
+
+    def test_a_longer_wording_is_added_the_original_stays(self):
+        src = "# D\n\n## What I did\n- a long line that Claude completed later on\n"
+        n = note(src)
+        out = "".join(dr.merge_journal(n, n, DAY, draft(what_i_did=["A long line that Claude completed later on, and more"])))
+        self.assertEqual(out, src + "- A long line that Claude completed later on, and more\n")
 
     def test_claude_cannot_reword_untick_or_redate_a_line(self):
         src = ("# D\n\n## To do next\n- [x] pay the bank\n- ~~call Bob~~\n- 2026-10-15: renew passport\n"
@@ -375,6 +381,42 @@ class JournalMerge(unittest.TestCase):
         out = "".join(dr.merge_journal(n, n, DAY, draft(what_i_did=["a"])))
         self.assertIn("```\n## What I did\n```\n\n## What I did\n- a\n", out)
 
+    def test_midday_then_evening_then_nothing_new(self):
+        midday = "".join(dr.merge_journal(None, None, DAY, draft(what_i_did=["a"], todo=["t"])))
+        n = note(midday)
+        evening = "".join(dr.merge_journal(n, n, DAY, draft(what_i_did=["a", "b"], todo=["t"])))
+        self.assertEqual(evening, midday.replace("- a\n", "- a\n- b\n"))
+        again = note(evening)
+        self.assertIsNone(dr.merge_journal(again, again, DAY, draft(what_i_did=["b", "a"], todo=["T"])))
+
+    def test_what_claude_writes_cleaned_still_matches_the_raw_line(self):
+        src = "# D\n\n## What I did\n- see ![[diagram.png]] and <u>this</u> %%x%%\n"
+        n = note(src)
+        said = dr.clean_item("see ![[diagram.png]] and <u>this</u> %%x%%", 500)
+        self.assertIsNone(dr.merge_journal(n, n, DAY, draft(what_i_did=[said])))
+
+    def test_warning_first_without_taking_a_paragraph_with_it(self):
+        n = note("# D\n\n## What I did\nWorked all day.\n")
+        out = "".join(dr.merge_journal(n, n, DAY, draft(what_i_did=["Worked all day."], suspect=True)))
+        self.assertEqual(out, f"# D\n\n## What I did\n- {dr.SUSPECT_LINE}\n\nWorked all day.\n")
+
+    def test_sections_named_in_the_vaults_language_or_shortened(self):
+        src = "# J\n\n## Ce que j’ai fait\n- a\n\n## 🎯 Décisions clés :\n- d\n\n## TODO\n- [ ] b\n"
+        n = note(src)
+        out = "".join(dr.merge_journal(n, n, DAY, draft(what_i_did=["a", "c"], key_decisions=["d"], todo=["b", "e"])))
+        self.assertEqual(out, src.replace("- a\n", "- a\n- c\n") + "- e\n")
+
+    def test_a_missing_section_takes_its_neighbours_level(self):
+        src = "# D\n\n## Summary\n### What I did\n- a\n\n## 📊 Claude Sessions\n- s\n"
+        n = note(src)
+        out = "".join(dr.merge_journal(n, n, DAY, draft(key_decisions=["k"])))
+        self.assertEqual(out, src.replace("- a\n\n", "- a\n\n### Key decisions\n- k\n\n"))
+
+    def test_empty_file_and_no_final_newline(self):
+        self.assertEqual("".join(dr.merge_journal(note(""), None, DAY, draft(todo=["b"]))), "## To do next\n- b\n")
+        n = note("# D\n\n## To do next\n- a")
+        self.assertEqual("".join(dr.merge_journal(n, n, DAY, draft(todo=["b"]))), "# D\n\n## To do next\n- a\n- b\n")
+
 
 class MemoryMerge(unittest.TestCase):
     SKELETON = ("---\ntype: memory\n---\n# Memory\n\n<!-- LINT:BEGIN -->\n> lint\n<!-- LINT:END -->\n\n"
@@ -404,15 +446,21 @@ class MemoryMerge(unittest.TestCase):
     def test_the_days_entry_is_completed_never_shortened(self):
         src = "## Recent context\n\n### 2026-10-14 (big day)\n- first run said this\n- and this\n\n### 2026-10-13\n- b\n"
         out = self.merged(src, DAY, ["first run said this", "evening adds that"])
-        self.assertIn("### 2026-10-14 (big day)\n- first run said this\n- evening adds that\n- and this\n\n### 2026-10-13", out)
+        self.assertIn("### 2026-10-14 (big day)\n- first run said this\n- and this\n- evening adds that\n\n### 2026-10-13", out)
         self.assertIsNone(self.merged(out, DAY, ["evening adds that", "and this"]))
 
     def test_entries_as_dated_bullets_get_a_dated_bullet(self):
         src = "## Recent context\n- **2026-10-13** — b\n  - detail\n- **2026-10-01** — a\n"
         out = self.merged(src, DAY, ["c"])
         self.assertTrue(out.startswith("## Recent context\n- **2026-10-14**\n  - c\n- **2026-10-13** — b\n  - detail\n"))
-        again = self.merged(src, "2026-10-13", ["b", "new"])
-        self.assertIn("- **2026-10-13** — b\n  - new\n  - detail\n- **2026-10-01**", again)
+        again = self.merged(src, "2026-10-13", ["b", "detail", "new"])
+        self.assertEqual(again, src.replace("  - detail\n", "  - detail\n  - new\n"))
+
+    def test_a_day_spread_over_several_dated_bullets(self):
+        src = "## Recent context\n- 2026-10-14: A\n- 2026-10-14: B\n- 2026-10-13: C\n"
+        out = self.merged(src, DAY, ["A", "B", "new"])
+        self.assertEqual(out, src.replace("A\n", "A\n  - new\n"))
+        self.assertEqual(dr.memory_now(note(src), DAY), "- 2026-10-14: A\n- 2026-10-14: B")
 
     def test_level_two_dated_headings_count_as_entries(self):
         src = "# M\n\n## Recent context\n\n## 🟠 2026-10-13 point du jour\n- b\n\n## Active decisions\n- k\n"
@@ -433,6 +481,41 @@ class MemoryMerge(unittest.TestCase):
         out = self.merged(src, DAY, ["c"])
         self.assertTrue(out.startswith(src))
         self.assertTrue(out.endswith("<!-- A:END -->\n\n### 2026-10-14\n- c\n"))
+
+    def test_without_recent_context_the_dated_level_two_headings_hold_the_days(self):
+        src = "# Memory\n\n## 🟠 2026-10-13 big day\n- b\n\n## 2026-10-01\n- a\n\n## Active decisions\n- k\n"
+        out = self.merged(src, DAY, ["c"])
+        self.assertEqual(out, src.replace("## 🟠", "## 2026-10-14\n- c\n\n## 🟠"))
+
+    def test_lines_changed_while_claude_thought(self):
+        base = "## Recent context\n\n### 2026-10-14\n- x\n- y\n"
+        now = "## Recent context\n\n### 2026-10-14\n- x\n- z\n"
+        out = self.merged(now, DAY, ["x", "y", "w"], base=note(base))
+        self.assertEqual(out, now + "- w\n")
+
+
+class StatusBlock(unittest.TestCase):
+    """The REFLECTION-STATUS warning: in and out, every other byte as it was."""
+
+    def round_trip(self, src, crlf=False):
+        n = dr.Note(lines_of(src), False, crlf, "x", 0)
+        pinned = "".join(dr.merge_status(n, "> failing"))
+        back = dr.merge_status(dr.Note(lines_of(pinned), False, crlf, "x", 0), None)
+        self.assertEqual("".join(back), src)
+        return pinned
+
+    def test_under_frontmatter_and_title_crlf_no_final_newline(self):
+        src = "---\r\ntype: m\r\n---\r\n# Memory\r\n\r\n## Recent context\r\n- x"
+        pinned = self.round_trip(src, crlf=True)
+        self.assertEqual(pinned, src.replace("# Memory\r\n\r\n", f"# Memory\r\n\r\n{dr.STATUS_BEGIN}\r\n"
+                                             f"> failing\r\n{dr.STATUS_END}\r\n\r\n"))
+
+    def test_after_the_lint_block(self):
+        src = "# M\n\n<!-- LINT:BEGIN -->\n> lint\n<!-- LINT:END -->\n\n## Recent context\n"
+        self.assertIn(f"<!-- LINT:END -->\n\n{dr.STATUS_BEGIN}\n> failing\n{dr.STATUS_END}\n\n## Recent", self.round_trip(src))
+
+    def test_nothing_to_remove_writes_nothing(self):
+        self.assertIsNone(dr.merge_status(note("# M\n"), None))
 
 
 class Guards(unittest.TestCase):
@@ -513,6 +596,12 @@ class Guards(unittest.TestCase):
             self.assertEqual(self.path.stat().st_mode & 0o777, 0o640)
         self.assertEqual([p.name for p in self.dir.iterdir()], ["note.md"])
 
+    def test_nothing_to_write_waits_for_nothing(self):
+        self.path.write_text("a\n")
+        started = time.monotonic()
+        self.assertFalse(dr.update(self.path, lambda n, b: None, None))
+        self.assertLess(time.monotonic() - started, dr.QUIET)
+
     def test_links_and_non_utf8_files_are_not_written(self):
         target = self.dir / "elsewhere.md"
         target.write_text("t\n")
@@ -557,15 +646,15 @@ class Reflect(unittest.TestCase):
         self.saved_env, self.saved_tmp = dict(os.environ), tempfile.tempdir
         os.environ.update(HOME=str(self.home), USERPROFILE=str(self.home), BRAIN_NO_NOTIFY="1")
         tempfile.tempdir = str(self.root)
-        self.saved = (dr.HERMES_DB, dr.RETRY_DELAY)
-        dr.HERMES_DB, dr.RETRY_DELAY = self.root / "no-hermes.db", 0
+        self.saved = (dr.HERMES_DB, dr.RETRY_DELAY, dr.QUIET)
+        dr.HERMES_DB, dr.RETRY_DELAY, dr.QUIET = self.root / "no-hermes.db", 0, 0.2
         dr.configure(brain=self.vault, logs=self.root / "logs", projects=self.root / "projects")
 
     def tearDown(self):
         os.environ.clear()
         os.environ.update(self.saved_env)
         tempfile.tempdir = self.saved_tmp
-        dr.HERMES_DB, dr.RETRY_DELAY = self.saved
+        dr.HERMES_DB, dr.RETRY_DELAY, dr.QUIET = self.saved
         dr.configure()
         shutil.rmtree(self.root, ignore_errors=True)
 
@@ -600,7 +689,7 @@ class Reflect(unittest.TestCase):
         self.assertIsNone(st["last_error"])
         j = self.journal.read_text()
         self.assertIn("## What I did\n- Shipped the login page\n", j)
-        self.assertIn("## To do next\n- write the tests\n- call the bank\n", j)
+        self.assertIn("## To do next\n- call the bank\n- write the tests\n", j)
         self.assertTrue(j.endswith("## 📊 Claude Sessions\n\n- s1\n"))
         self.assertIn("## Recent context\n\n### 2026-10-14\n- Login page shipped\n\n### 2026-10-01\n- older\n",
                       self.memory.read_text())
@@ -678,6 +767,38 @@ class Reflect(unittest.TestCase):
             self.assertEqual(dr.parse_args().day, "2026-01-05")
         finally:
             sys.argv = saved
+
+    def test_no_vault_no_folder_made(self):
+        gone = self.root / "moved-vault"
+        dr.configure(brain=gone, logs=self.root / "logs", projects=self.root / "projects")
+        st = self.run_reflection()
+        self.assertIn("not found", st["last_error"])
+        self.assertFalse(gone.exists())
+        self.assertEqual(self.calls(), 0)
+
+    @unittest.skipUnless(POSIX, "symlinks")
+    def test_a_journal_not_written_does_not_cost_the_memory_entry(self):
+        target = self.root / "elsewhere.md"
+        target.write_text("# kept\n")
+        self.journal.unlink()
+        os.symlink(target, self.journal)
+        st = self.run_reflection()
+        self.assertIn("is a link", st["last_error"])
+        self.assertEqual(target.read_text(), "# kept\n")
+        self.assertIn("- Login page shipped\n", self.memory.read_text())
+
+    def test_a_failed_slot_runs_again_a_done_one_does_not(self):
+        lock = self.root / f"brain-daily-reflection-{DAY}-evening.lock"
+        self.run_reflection(scenario="init-bash")
+        self.assertEqual(self.calls(), 1)
+        self.assertFalse(lock.exists())
+        self.run_reflection()
+        self.assertTrue(lock.exists())
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            dr.reflect(DAY, "evening", command=[sys.executable, str(FAKE)])
+        self.assertEqual(self.calls(), 1)
+        self.assertIn("already run", out.getvalue())
 
     def test_suspect_day(self):
         self.answer({**ANSWER, "suspect": True})

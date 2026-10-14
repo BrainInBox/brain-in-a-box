@@ -43,7 +43,9 @@ LIMIT_RE = re.compile(r"hit your .*limit|session limit|usage limit", re.I)
 PROXY_VARS = ("HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "NO_PROXY",
               "https_proxy", "http_proxy", "all_proxy", "no_proxy", "NODE_EXTRA_CA_CERTS")
 WINDOWS_VARS = ("USERPROFILE", "HOMEDRIVE", "HOMEPATH", "APPDATA", "LOCALAPPDATA", "SystemRoot",
-                "SystemDrive", "windir", "PATHEXT", "COMSPEC", "USERNAME")
+                "SystemDrive", "windir", "PATHEXT", "COMSPEC", "USERNAME",
+                # Where Claude Code looks for Git Bash, which it needs to start on Windows.
+                "CLAUDE_CODE_GIT_BASH_PATH", "ProgramFiles", "ProgramW6432")
 
 Answer = namedtuple("Answer", "output version cost_usd num_turns")
 
@@ -108,6 +110,10 @@ def child_path(program):
     if WINDOWS:
         root = os.environ.get("SystemRoot") or r"C:\Windows"
         dirs += [os.path.join(root, "System32"), root, os.path.join(root, "System32", "Wbem")]
+        # Claude Code finds Git Bash from git.exe, and does not start without it.
+        git = shutil.which("git")
+        if git:
+            dirs.append(os.path.dirname(git))
     else:
         dirs += ["/usr/bin", "/bin", "/usr/sbin", "/sbin"]
     return os.pathsep.join(dict.fromkeys(dirs))
@@ -176,7 +182,8 @@ def _kill_tree(proc):
     if WINDOWS:
         taskkill = os.path.join(os.environ.get("SystemRoot") or r"C:\Windows", "System32", "taskkill.exe")
         try:
-            subprocess.run([taskkill, "/T", "/F", "/PID", str(proc.pid)], capture_output=True, timeout=30)
+            subprocess.run([taskkill, "/T", "/F", "/PID", str(proc.pid)], capture_output=True, timeout=30,
+                           stdin=subprocess.DEVNULL, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         except Exception:
             pass
     else:
