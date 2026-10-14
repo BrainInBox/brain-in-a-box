@@ -57,10 +57,10 @@ fi
 sweep_git_lock "$VAULT"
 [ -d "$VAULT_CO/.git" ] && sweep_git_lock "$VAULT_CO"
 
-# 0. Self-update GBrain — pull, install, migrate, smoke-test, auto-rollback on
-# a broken build. Extracted to gbrain-selfupdate.sh (also invoked by the
-# SessionStart catch-up hook on days the machine missed this 04:00 run).
-# Resilient: a failure must never block the rest of the cycle.
+# 0. Update GBrain to its newest release that is at least 7 days old, with a
+# full rollback on a broken one: gbrain-selfupdate.sh relays to gbrain_update.py
+# (also started by the SessionStart catch-up hook when no check succeeded for
+# 36 h). Resilient: a failure must never block the rest of the cycle.
 "$(dirname "$0")/gbrain-selfupdate.sh" "$LOG"
 
 # 0bis. Self-update gstack (if installed via --with-gstack). Same shape: pull + re-setup if HEAD moved.

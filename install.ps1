@@ -11,7 +11,8 @@
 .NOTES
   Scheduler = Task Scheduler (vs launchd). gbq.cmd et gbq (Git Bash) passent par
   engine/search/gbq.py : gbrain, ou brain_search en repli. CLAUDE.md inchange.
-  gbrain est epingle sur un commit teste en CI ($GBRAIN_REF) ; relancer l'installation le met a jour.
+  Une installation neuve de gbrain part de la version testee en CI (engine\gbrain-pin.json). Ensuite la
+  tache de nuit le met a jour (gbrain_update.py : version publiee depuis au moins 7 jours, jamais plus bas).
   Pre-requis : Windows 10 (1809+) ou 11. Le reste s'installe tout seul.
   Lance par `irm | iex`, le script telecharge le repo dans ~\.brain-in-a-box\src
   (BIAB_ARCHIVE = autre archive .zip, URL ou chemin local).
@@ -48,10 +49,6 @@ $SRC = "$H\.brain-in-a-box\src"
 $LOG = "$H\.brain-in-a-box\install.log"
 $GREPO = "$H\DEV\gbrain"
 $GBRAIN_URL = "https://github.com/garrytan/gbrain.git"
-# Le commit gbrain et la version de Bun que le job windows de la CI installe et teste.
-# gbrain bouge tous les jours : on monte ces deux valeurs ensemble, par une PR dont la CI passe.
-$GBRAIN_REF = "9d154bf5394b6dd448de670487e3d7a3cf3c2734"
-$BUN_VERSION = "1.4.3"
 $GDATA = Join-Path $(if ($env:GBRAIN_HOME) { $env:GBRAIN_HOME.Trim() } else { $H }) ".gbrain"
 $BUNBIN = if ($env:BUN_INSTALL) { "$env:BUN_INSTALL\bin" } else { "$H\.bun\bin" }
 
@@ -234,6 +231,14 @@ function Test-VoyageKey([string]$Key, [string]$Base) {
     } catch { return $false }
 }
 
+# "v0.60.210.0" ou "0.60.212" -> [version] a 4 nombres (0 si absent), comme gbrain_update.py ; $null sinon.
+function Get-GbrainVersion([string]$Text) {
+    if ($Text -cmatch '^v?([0-9]+)\.([0-9]+)\.([0-9]+)(?:\.([0-9]+))?$') {
+        try { return [version]::new([int]$Matches[1], [int]$Matches[2], [int]$Matches[3], [int]("0" + $Matches[4])) } catch {}
+    }
+    return $null
+}
+
 function Get-BunVersion([string]$Bun) {
     $ErrorActionPreference = "Continue"
     if (-not (Test-Path -LiteralPath $Bun)) { return $null }
@@ -269,6 +274,17 @@ if (-not $REPO -or -not (Test-Path -LiteralPath (Join-Path $REPO "vault-skeleton
     $REPO = $SRC
     Ok "sources dans $SRC"
 }
+
+# La version de gbrain d'une installation neuve et sa version de Bun : celles que le job windows de la CI
+# installe et teste. On les monte ensemble dans engine\gbrain-pin.json, par une PR dont la CI passe.
+try { $pin = [IO.File]::ReadAllText("$REPO\engine\gbrain-pin.json") | ConvertFrom-Json } catch { $pin = $null }
+# Valeurs verifiees : $BUN_VERSION entre dans une commande PowerShell (installeur de Bun).
+if (-not $pin -or "$($pin.tag)" -cnotmatch '^v[0-9]+(\.[0-9]+){2,3}$' -or "$($pin.sha)" -cnotmatch '^[0-9a-f]{40}$' -or "$($pin.bun)" -cnotmatch '^[0-9]+\.[0-9]+\.[0-9]+$') {
+    Fail "engine\gbrain-pin.json illisible. Retelecharge brain-in-a-box puis relance."
+}
+$GBRAIN_TAG = [string]$pin.tag
+$GBRAIN_REF = [string]$pin.sha
+$BUN_VERSION = [string]$pin.bun
 
 # 1. Preflight : Python (obligatoire), Git (historique du vault, et Git Bash pour l'outil Bash de Claude Code)
 Say "Preflight"
@@ -424,6 +440,7 @@ def ensure(evt, names):
             grp["hooks"].append(entry(n))
 ensure("UserPromptSubmit", ["correction-detector.py"])
 ensure("Stop", ["session-logger.py", "session-indexer.py", "session-recap.py"])
+ensure("SessionStart", ["gbrain-update-check.py"])
 if json.dumps(d, sort_keys=True) == before:
     print("ok settings.json (unchanged)")
     sys.exit(0)
@@ -439,7 +456,7 @@ print("ok settings.json")
 # -I : mode isole, le dossier courant n'entre pas dans sys.path (un json.py qui y traine ne serait pas importe).
 Invoke-Native { $merge | & $Py -I - $settings $Py $HOOKS }
 switch ($LASTEXITCODE) {
-    0 { Ok "hooks UserPromptSubmit/Stop cables" }
+    0 { Ok "hooks UserPromptSubmit/Stop/SessionStart cables" }
     3 { Warn "settings.json n'est pas du JSON valide : laisse tel quel, hooks NON cables. Corrige-le puis relance." }
     default { Warn "settings.json : echec (code $LASTEXITCODE), hooks NON cables" }
 }
@@ -514,8 +531,18 @@ function Install-Gbrain {
         if ((Invoke-Logged $Git @("init", "-q", $GREPO)) -ne 0) { Warn "git init $GREPO a echoue (details : $LOG)"; return $false }
         $fresh = $true
     }
-    # Deja sur ce commit, ou plus loin (un clone de dev a jour) : rien a telecharger.
-    if (-not $fresh -and (Invoke-Logged $Git @("-C", $GREPO, "merge-base", "--is-ancestor", $GBRAIN_REF, "HEAD")) -eq 0) {
+    # Jamais plus bas : un gbrain a la version epinglee ou plus loin (la tache de nuit l'a mis a jour,
+    # sa base a peut-etre ete migree) reste ou il est. Sur un clone superficiel, merge-base ne le voit pas.
+    $installed = ""
+    if (-not $fresh) {
+        $pj = Invoke-Native { & $Git -C $GREPO show HEAD:package.json 2>$null }
+        if ($LASTEXITCODE -eq 0) { try { $installed = [string](($pj -join "`n") | ConvertFrom-Json).version } catch {} }
+    }
+    $iv = Get-GbrainVersion $installed
+    if ($iv -and $iv -ge (Get-GbrainVersion $GBRAIN_TAG)) {
+        Ok "gbrain deja a jour (v$installed)"
+    } elseif (-not $fresh -and (Invoke-Logged $Git @("-C", $GREPO, "merge-base", "--is-ancestor", $GBRAIN_REF, "HEAD")) -eq 0) {
+        # Deja sur ce commit, ou plus loin (un clone de dev a jour) : rien a telecharger.
         Ok "gbrain deja a jour"
     } else {
         Write-Host "  ... gbrain : telechargement"
@@ -537,7 +564,14 @@ function Install-Gbrain {
         }
     }
     Write-Host "  ... gbrain : installation (1 a 3 minutes)"
-    if ((Invoke-Logged $bun @("install") $GREPO) -ne 0) { Warn "gbrain : bun install a echoue (details : $LOG)"; return $false }
+    # --frozen-lockfile : exactement les dependances que nomme le fichier de verrouillage de gbrain.
+    # Un clone d'une ancienne installation peut etre sur un master dont le verrou est en retard :
+    # il garde l'installation simple d'avant, jusqu'a ce que la nuit le passe sur une version publiee.
+    if ((Invoke-Logged $bun @("install", "--frozen-lockfile") $GREPO) -ne 0) {
+        if ($fresh) { Warn "gbrain : bun install a echoue (details : $LOG)"; return $false }
+        Warn "gbrain : le verrou des dependances ne correspond pas, installation simple"
+        if ((Invoke-Logged $bun @("install") $GREPO) -ne 0) { Warn "gbrain : bun install a echoue (details : $LOG)"; return $false }
+    }
     if ((Invoke-Logged $bun @("link") $GREPO) -ne 0) { Warn "gbrain : bun link a echoue (details : $LOG)"; return $false }
     $gb = Join-Path $BUNBIN "gbrain.exe"
     if ((Invoke-Logged $gb @("--version")) -ne 0) { Warn "gbrain ne demarre pas (details : $LOG)"; return $false }
@@ -593,7 +627,7 @@ os.replace(p + ".tmp", p)
     $null = Invoke-Logged $gb @("config", "set", "search.mode", "balanced")
     # Sans ca, les [[liens]] entre dossiers du squelette (Team/, Decisions/...) sont ignores : voir install.sh.
     $null = Invoke-Logged $gb @("config", "set", "link_resolution.global_basename", "true")
-    # La version de gbrain est celle que la CI a testee : c'est relancer l'installation qui la monte, pas `gbrain upgrade`.
+    # La version est choisie par la mise a jour a 7 jours de la tache de nuit : `gbrain upgrade` irait sur master.
     $null = Invoke-Logged $gb @("config", "set", "self_upgrade.mode", "off")
 
     # gbrain lit le vault a travers git : une note pas encore commitee est invisible.
