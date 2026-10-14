@@ -787,6 +787,8 @@ class WindowsInstaller(Base):
         with self.assertRaises(ta.ErreurPilote) as cm:
             p.assistant(p.setup, [])
         self.assertIn("le clic sur « Suivant > » ne change rien dans l'installeur (3 essais)", str(cm.exception))
+        # The mouse, as a user clicks; then Invoke, as a screen reader presses it; then the mouse again.
+        self.assertEqual([a[3] for a in p.appels if a[0] == "cliquer"], ["souris", "invoke", "souris"])
         p = FauxWindows(Horloge(), self.tmp, pages={("bienvenue", "Suivant >"): "installation"})
         p.duree = 10 ** 9
         with self.assertRaises(ta.ErreurPilote) as cm:
@@ -857,7 +859,8 @@ class WindowsApp(Base):
         self.assertEqual(ta.bouton_autoriser(e.dialogues[0]), "Autoriser")
         p.cliquer("Autoriser", processus="SmartScreen")
         p.cliquer("Vérifier mon PC")
-        self.assertEqual([c for c in calls if c[0] == "cliquer"], [["cliquer", "9", "Autoriser"], ["cliquer", "5", "Vérifier mon PC"]])
+        self.assertEqual([c for c in calls if c[0] == "cliquer"], [["cliquer", "9", "Autoriser", "souris"],
+                                                                   ["cliquer", "5", "Vérifier mon PC", "souris"]])
         # Brought to the front once, the first time the window was seen.
         p.lire()
         self.assertEqual([c for c in calls if c[0] == "devant"], [["devant", "5"]])

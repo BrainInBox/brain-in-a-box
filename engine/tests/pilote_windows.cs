@@ -7,7 +7,9 @@
 // captures the whole screen.
 //
 //   pilote-windows.exe lire <pid>                  the windows of <pid>, and the one in front
-//   pilote-windows.exe cliquer <hwnd> <label>      the enabled button with that label
+//   pilote-windows.exe cliquer <hwnd> <label> [souris|invoke]
+//                                                  the enabled button with that label: the mouse on it
+//                                                  as a user clicks, or Invoke as a screen reader does
 //   pilote-windows.exe cocher <hwnd> <label> 0|1   a check box, unchecked or checked
 //   pilote-windows.exe fermer <hwnd>               the window closed, as its X does
 //   pilote-windows.exe devant <hwnd>               the window brought to the front
@@ -41,6 +43,9 @@ static class PiloteWindows
     [StructLayout(LayoutKind.Sequential)]
     struct RECT { public int Left, Top, Right, Bottom; }
 
+    [StructLayout(LayoutKind.Sequential)]
+    struct POINT { public int X, Y; }
+
     [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
     [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc f, IntPtr l);
     [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
@@ -57,6 +62,9 @@ static class PiloteWindows
     [DllImport("user32.dll")] static extern bool AttachThreadInput(uint a, uint b, bool attach);
     [DllImport("user32.dll")] static extern bool PostMessage(IntPtr h, uint msg, IntPtr w, IntPtr l);
     [DllImport("user32.dll")] static extern int GetSystemMetrics(int i);
+    [DllImport("user32.dll")] static extern IntPtr WindowFromPoint(POINT p);
+    [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr h, uint flags);
+    [DllImport("user32.dll")] static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
     [DllImport("user32.dll")] static extern IntPtr GetWindow(IntPtr h, uint cmd);
     [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr h, int attr, out int value, int size);
     [DllImport("user32.dll")] static extern bool SetCursorPos(int x, int y);
@@ -92,7 +100,7 @@ static class PiloteWindows
     {
         string op = a.Length > 0 ? a[0] : "";
         if (op == "lire" && a.Length == 2) return Lire(uint.Parse(a[1], CultureInfo.InvariantCulture));
-        if (op == "cliquer" && a.Length == 3) return Cliquer(Fenetre(a[1]), a[2]);
+        if (op == "cliquer" && (a.Length == 3 || a.Length == 4)) return Cliquer(Fenetre(a[1]), a[2], a.Length == 4 ? a[3] : "souris");
         if (op == "cocher" && a.Length == 4) return Cocher(Fenetre(a[1]), a[2], a[3] == "1");
         if (op == "fermer" && a.Length == 2) return Fermer(Fenetre(a[1]));
         if (op == "devant" && a.Length == 2) return Devant(Fenetre(a[1]));
@@ -350,34 +358,65 @@ static class PiloteWindows
         return null;
     }
 
-    static Dictionary<string, object> Cliquer(IntPtr h, string libelle)
+    // The window made active first, as a click makes it: a dialog that is not active may ignore a
+    // button's click (BM_CLICK), which a GitHub VM showed on the installer's last page.
+    static Dictionary<string, object> Cliquer(IntPtr h, string libelle, string mode)
     {
         AutomationElement b = Trouver(h, libelle, ControlType.Button);
         if (b == null) return Echec("absent");
         if (!b.Current.IsEnabled) return Echec("inactif");
-        object p;
-        if (b.TryGetCurrentPattern(InvokePattern.Pattern, out p))
+        bool actif = Activer(h);
+        string sans = "";
+        if (mode != "invoke")
         {
-            try
+            string pourquoi = Souris(h, b);
+            if (pourquoi == null)
             {
-                ((InvokePattern)p).Invoke();
+                Dictionary<string, object> clic = Ok();
+                clic["comment"] = "clic souris";
+                clic["active"] = actif;
+                return clic;
             }
-            catch (ElementNotAvailableException)
-            {
-                // The window went away with the click (the installer's last button).
-            }
-            Dictionary<string, object> ok = Ok();
-            ok["comment"] = "Invoke";
-            return ok;
+            sans = " (pas de clic souris : " + pourquoi + ")";
         }
+        object p;
+        if (!b.TryGetCurrentPattern(InvokePattern.Pattern, out p)) return Echec("ni souris ni Invoke" + sans);
+        try
+        {
+            ((InvokePattern)p).Invoke();
+        }
+        catch (ElementNotAvailableException)
+        {
+            // The window went away with the click.
+        }
+        Dictionary<string, object> ok = Ok();
+        ok["comment"] = "Invoke" + sans;
+        ok["active"] = actif;
+        return ok;
+    }
+
+    // The mouse on the middle of the element, pressed and released, when nothing else covers it there.
+    static string Souris(IntPtr h, AutomationElement e)
+    {
         System.Windows.Point pt;
-        if (!b.TryGetClickablePoint(out pt)) return Echec("ni Invoke ni point cliquable");
-        SetCursorPos((int)pt.X, (int)pt.Y);
+        if (!e.TryGetClickablePoint(out pt))
+        {
+            System.Windows.Rect r = e.Current.BoundingRectangle;
+            if (r.IsEmpty || r.Width <= 0 || r.Height <= 0) return "pas de point cliquable";
+            pt = new System.Windows.Point(r.Left + r.Width / 2, r.Top + r.Height / 2);
+        }
+        POINT q;
+        q.X = (int)pt.X;
+        q.Y = (int)pt.Y;
+        IntPtr dessous = WindowFromPoint(q);
+        if (dessous == IntPtr.Zero || GetAncestor(dessous, 2) != h)   // GA_ROOT
+            return "une autre fenetre est sur le bouton (" + Classe(GetAncestor(dessous, 2)) + ")";
+        SetCursorPos(q.X, q.Y);
+        Thread.Sleep(80);
         mouse_event(0x0002, 0, 0, 0, UIntPtr.Zero);   // left down
+        Thread.Sleep(60);
         mouse_event(0x0004, 0, 0, 0, UIntPtr.Zero);   // left up
-        Dictionary<string, object> clic = Ok();
-        clic["comment"] = "clic souris";
-        return clic;
+        return null;
     }
 
     static Dictionary<string, object> Cocher(IntPtr h, string libelle, bool voulu)
@@ -386,6 +425,7 @@ static class PiloteWindows
         if (c == null) return Echec("absent");
         object p;
         if (!c.TryGetCurrentPattern(TogglePattern.Pattern, out p)) return Echec("pas une case a cocher");
+        Activer(h);
         TogglePattern tp = (TogglePattern)p;
         for (int i = 0; i < 3 && (tp.Current.ToggleState == ToggleState.On) != voulu; i++)
         {
@@ -419,25 +459,39 @@ static class PiloteWindows
     // front. Windows lets a program hand the foreground over only from the thread that has it.
     static Dictionary<string, object> Devant(IntPtr h)
     {
-        if (IsIconic(h)) ShowWindow(h, 9);   // SW_RESTORE
-        IntPtr avant = GetForegroundWindow();
-        uint pid;
-        uint lui = avant == IntPtr.Zero ? 0 : GetWindowThreadProcessId(avant, out pid);
-        uint moi = GetCurrentThreadId();
-        bool lie = lui != 0 && lui != moi && AttachThreadInput(moi, lui, true);
-        try
-        {
-            BringWindowToTop(h);
-            SetForegroundWindow(h);
-        }
-        finally
-        {
-            if (lie) AttachThreadInput(moi, lui, false);
-        }
-        Thread.Sleep(300);
         Dictionary<string, object> res = Ok();
-        res["devant"] = GetForegroundWindow() == h;
+        res["devant"] = Activer(h);
         return res;
+    }
+
+    static bool Activer(IntPtr h)
+    {
+        if (IsIconic(h)) ShowWindow(h, 9);   // SW_RESTORE
+        for (int essai = 0; essai < 2 && GetForegroundWindow() != h; essai++)
+        {
+            if (essai == 1)
+            {
+                // Windows hands the foreground to the program that sent the last input: an Alt tap.
+                keybd_event(0x12, 0, 0, UIntPtr.Zero);
+                keybd_event(0x12, 0, 2, UIntPtr.Zero);
+            }
+            IntPtr avant = GetForegroundWindow();
+            uint pid;
+            uint lui = avant == IntPtr.Zero ? 0 : GetWindowThreadProcessId(avant, out pid);
+            uint moi = GetCurrentThreadId();
+            bool lie = lui != 0 && lui != moi && AttachThreadInput(moi, lui, true);
+            try
+            {
+                BringWindowToTop(h);
+                SetForegroundWindow(h);
+            }
+            finally
+            {
+                if (lie) AttachThreadInput(moi, lui, false);
+            }
+            Thread.Sleep(150);
+        }
+        return GetForegroundWindow() == h;
     }
 
     // The windows a user would not have on a fresh desktop (on a GitHub VM: the runner's console),

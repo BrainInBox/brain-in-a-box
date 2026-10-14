@@ -306,10 +306,10 @@ class Pilote:
     machine = "?"
     suffixe = None
 
-    def _run(self, argv, timeout=120, env=None):
+    def _run(self, argv, timeout=120, env=None, creationflags=0):
         try:
             p = subprocess.run([str(a) for a in argv], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                               timeout=timeout, env=env)
+                               timeout=timeout, env=env, creationflags=creationflags)
         except subprocess.TimeoutExpired:
             raise ErreurPilote("%s n'a pas fini en %d s" % (Path(str(argv[0])).name, timeout))
         except OSError as e:
@@ -871,6 +871,7 @@ def env_session():
 
 
 PRODUIT = "Brain in a Box"
+SANS_CONSOLE = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 DELAI_INSTALLEUR = 10 * 60
 DELAI_FERMETURE = 3 * 60    # « Fermer » clicked once, as a user does: the installer then quits by itself
 DESINSTALLATION = (r"Software\Microsoft\Windows\CurrentVersion\Uninstall",
@@ -918,6 +919,7 @@ class PiloteWindows(Pilote):
         self.vues = set()           # windows already brought to the front once
         self.dialogues_h = {}       # process of a dialog -> its window
         self.dernier_arbre = None
+        self.clic_prec = (None, 0)  # ((window, label), attempts in a row)
 
     def _compiler(self):
         fw = Path(os.environ.get("WINDIR") or r"C:\Windows") / "Microsoft.NET" / "Framework64" / "v4.0.30319"
@@ -938,7 +940,8 @@ class PiloteWindows(Pilote):
         return exe
 
     def _outil(self, args, timeout=120):
-        rc, out = self._run([self.outil] + [str(a) for a in args], timeout=timeout)
+        # No console window of its own: it would take the foreground from the window to click.
+        rc, out = self._run([self.outil] + [str(a) for a in args], timeout=timeout, creationflags=SANS_CONSOLE)
         try:
             res = json.loads(out.strip().splitlines()[-1])
         except (ValueError, IndexError):
@@ -1065,7 +1068,7 @@ class PiloteWindows(Pilote):
                 if clic is not None and clic[1] >= CLIC_ESSAIS:
                     raise ErreurPilote("le clic sur « %s » ne change rien dans l'installeur (%d essais)" % (act[1], clic[1]))
                 h = fen[0].get("h")
-                done = self._outil(["cocher", h, act[1], act[2]] if act[0] == "cocher" else ["cliquer", h, act[1]])
+                done = self._outil(["cocher", h, act[1], act[2]]) if act[0] == "cocher" else self._clic(h, act[1])
                 if not done.get("ok"):
                     raise ErreurPilote("pas de clic sur « %s » dans l'installeur (%s)" % (act[1], done.get("pourquoi")))
                 pages[-1]["clics"].append(act[1] if act[0] == "cliquer" else "%s : %s" % (act[1], "coché" if act[2] else "décoché"))
@@ -1163,11 +1166,19 @@ class PiloteWindows(Pilote):
     def exe_nom(self):
         return nom_programme(self.exe or "brain-in-a-box.exe")
 
+    def _clic(self, h, libelle):
+        """The mouse on the button, as a user clicks; a second try in a row by Invoke, as a screen
+        reader presses it, a third by the mouse again."""
+        key = (h, libelle)
+        n = self.clic_prec[1] + 1 if self.clic_prec[0] == key else 1
+        self.clic_prec = (key, n)
+        return self._outil(["cliquer", h, libelle, "invoke" if n % 2 == 0 else "souris"])
+
     def cliquer(self, libelle, processus=None):
         h = self.dialogues_h.get(processus) if processus else self.hwnd
         if not h:
             raise ErreurPilote("pas de fenêtre où cliquer « %s »" % libelle)
-        res = self._outil(["cliquer", h, libelle])
+        res = self._clic(h, libelle)
         if not res.get("ok"):
             raise ErreurPilote("pas de clic sur « %s » (%s)" % (libelle, res.get("pourquoi")))
         return res.get("comment")
@@ -1182,7 +1193,7 @@ class PiloteWindows(Pilote):
 
     def ecarter_la_nuit(self):
         rc, out = self._run(["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
-                             "-Command", PS_NUIT], timeout=25 * 60)
+                             "-Command", PS_NUIT], timeout=25 * 60, creationflags=SANS_CONSOLE)
         try:
             res = json.loads(out[out.index("{"):])
         except ValueError:
