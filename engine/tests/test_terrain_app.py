@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import types
 import unittest
 import zipfile
@@ -99,9 +100,15 @@ class FauxPilote(ta.Pilote):
         self.etat = None
         self.depuis = 0.0
         self.clics, self.captures, self.envs, self.fermetures = [], [], [], 0
-        self.dialogue = None        # {"processus", "textes", "boutons", "part_sur": button that closes it}
+        # {"processus", "textes", "boutons", "part_sur": button that closes it, "suite": {button: next
+        # dialog or None}, "apres": (seconds, next dialog)}
+        self.dialogue = None
+        self.dialogue_depuis = 0.0
         self.vite = False           # offers quick reads of Bibo's words
         self.pleines = 0
+        self.comment = ta.CLIC_SOURIS   # how its clicks are done
+        self.ecrans_vus = 0             # nouvel_ecran() calls
+        self.nuit = []
 
     def aller(self, etat):
         self.etat = etat() if callable(etat) else etat
@@ -140,11 +147,30 @@ class FauxPilote(ta.Pilote):
         return "Cmd+Q"
 
     def spec(self):
+        d = self.dialogue
+        if d and "apres" in d and self.h.now - self.dialogue_depuis >= d["apres"][0]:
+            self.montrer(d["apres"][1])
         spec = self.ecrans[self.etat]
         if "apres" in spec and self.h.now - self.depuis >= spec["apres"][0]:
             self.aller(spec["apres"][1])
             spec = self.ecrans[self.etat]
+        elif "sans_dialogue" in spec and self.dialogue is None and self.h.now - self.depuis >= 5:
+            self.aller(spec["sans_dialogue"])     # Apple's window closed: the app's step moves on
+            spec = self.ecrans[self.etat]
         return spec
+
+    def montrer(self, dialogue):
+        self.dialogue, self.dialogue_depuis = dialogue, self.h.now
+
+    def nouvel_ecran(self):
+        self.ecrans_vus += 1
+
+    def ecarter_la_nuit(self):
+        self.nuit.append("ecartee")
+
+    def rendre_la_nuit(self):
+        self.nuit.append("rendue")
+        return {"taches": [{"nom": "BrainNightly", "etat": "Ready"}]}
 
     def rapide(self):
         if not self.vite or self.etat is None:
@@ -167,14 +193,17 @@ class FauxPilote(ta.Pilote):
 
     def cliquer(self, libelle, processus=None):
         self.clics.append((processus, libelle) if processus else libelle)
+        how = self.comment(libelle) if callable(self.comment) else self.comment
         if processus:
             if self.dialogue and libelle == self.dialogue.get("part_sur"):
                 self.dialogue = None
-            return "AXPress"
+            elif self.dialogue and libelle in self.dialogue.get("suite", {}):
+                self.montrer(self.dialogue["suite"][libelle])
+            return how
         nxt = self.ecrans[self.etat].get("boutons", {}).get(libelle)
         if nxt:
             self.aller(nxt)
-        return "AXPress"
+        return how
 
     def capturer(self, chemin):
         Path(chemin).write_bytes(b"\x89PNG")
@@ -191,6 +220,75 @@ class FauxPilote(ta.Pilote):
 
     def arbre(self):
         return {"app": [], "faux": True}
+
+
+class FauxMac(ta.PiloteMac):
+    """PiloteMac with its commands played: Gatekeeper's dialog, which a click on « Terminé » closes."""
+
+    def __init__(self, h, travail, refus=True, ouvre=False):
+        super().__init__(travail)
+        self.h = h
+        self.refus_visible, self.ouvre, self.lance = refus, ouvre, False
+        self.cmds, self.clics = [], []
+
+    def attendre(self, predicat, delai, horloge=None, dormir=None, pas=1.0):
+        return super().attendre(predicat, delai, self.h, self.h.dormir, pas)
+
+    def _run(self, argv, timeout=120, env=None, creationflags=0):
+        argv = [str(a) for a in argv]
+        self.cmds.append(argv)
+        if argv[:2] == ["/usr/bin/open", str(self.app)]:
+            self.lance = True
+        return 0, ""
+
+    def vivante(self):
+        return self.lance and self.ouvre
+
+    def lire(self):
+        self.h.now += 0.5
+        d = [{"processus": "CoreServicesUIAgent", "boutons": ["?", "Done", "Move to Trash"],
+              "textes": ["“Brain in a Box” Not Opened", "Apple could not verify “Brain in a Box” is free of malware."]}]
+        return ta.Ecran(dialogues=d if self.lance and self.refus_visible and not self.ouvre else [])
+
+    def cliquer(self, libelle, processus=None):
+        self.clics.append((processus, libelle))
+        self.refus_visible = False
+        return ta.CLIC_SOURIS
+
+
+class MacInstall(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="terrain-mac-")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.h = Horloge()
+
+    def test_gatekeeper_refuses_on_screen_and_the_dialog_is_captured_then_closed(self):
+        p = FauxMac(self.h, self.tmp)
+        details, shots = {}, []
+        self.assertEqual(p.refus(details, capturer=lambda n: shots.append(n) or n), [])
+        self.assertEqual(shots, ["gatekeeper"])
+        self.assertEqual(p.clics, [("CoreServicesUIAgent", "Done")])
+        self.assertEqual(p.clics_installation, [{"ecran": "gatekeeper", "bouton": "Done", "comment": ta.CLIC_SOURIS}])
+        self.assertEqual(details["gatekeeper_dialogue"]["textes"][0], "“Brain in a Box” Not Opened")
+
+    def test_an_app_gatekeeper_lets_run_fails_and_no_dialog_is_said(self):
+        with self.assertRaises(ta.ErreurPilote) as cm:
+            FauxMac(self.h, self.tmp, ouvre=True).refus({})
+        self.assertIn("pas de refus de Gatekeeper", str(cm.exception))
+        notes = FauxMac(self.h, self.tmp, refus=False).refus({})
+        self.assertIn("aucun dialogue de refus de Gatekeeper en 60 s", notes[0])
+
+    def test_where_the_finder_mounted_the_dmg(self):
+        p = ta.PiloteMac(self.tmp)
+        dmg = Path(self.tmp) / "Brain-in-a-Box.dmg"
+        dmg.write_bytes(b"x")
+        info = {"images": [{"image-path": "/autre.dmg", "system-entities": [{"mount-point": "/Volumes/Autre"}]},
+                           {"image-path": str(dmg), "system-entities": [{"content-hint": "GUID_partition_scheme"},
+                                                                        {"mount-point": "/Volumes/Brain in a Box"}]}]}
+        with mock.patch.object(p, "_run", lambda argv, timeout=120: (0, "noise\n" + __import__("plistlib").dumps(info).decode())):
+            self.assertEqual(p.monte(dmg), Path("/Volumes/Brain in a Box"))
+        with mock.patch.object(p, "_run", lambda argv, timeout=120: (0, __import__("plistlib").dumps({"images": []}).decode())):
+            self.assertIsNone(p.monte(dmg))
 
 
 class Noms(terrain.Etapes):
@@ -261,16 +359,31 @@ class Walk(Base):
         self.assertGreater(reads[1], reads[0])
 
     def test_a_step_over_in_a_second_still_gets_its_capture(self):
-        # Bun installs in about a second on a GitHub VM: a full read of the window (2 s) misses it.
-        short = {"bun": {"titre": "J’installe Bun.", "apres": (1.0, "obsidian")}}
+        # Bun installs in about a second on a GitHub VM: a full read of the window (2 s) misses it,
+        # and a step of the plan without its screen fails the walk (it passed, silently, before).
+        short = {"bun": {"titre": "J’installe Bun.", "texte": "Étape 2 sur 4. C’est le moteur de ta mémoire.",
+                         "apres": (1.0, "obsidian")}}
         slow, quick = FauxPilote(self.h, change=short), FauxPilote(Horloge(), change=short)
         quick.vite = True
-        self.parcours(slow).premier_lancement({})
+        with self.assertRaises(terrain.Echec) as cm:
+            self.parcours(slow).premier_lancement({})
+        self.assertIn("1 étape(s) sur 4 jamais vue(s) à l'écran, donc sans capture (vues : etape-brain, etape-claude, "
+                      "etape-obsidian)", str(cm.exception))
         self.assertFalse([n for n in slow.captures if "etape-bun" in n])
         pa = ta.Parcours(Noms(), quick, self.shots, horloge=quick.h, dormir=quick.h.dormir)
         pa.premier_lancement({})
         self.assertEqual(len([n for n in quick.captures if n.endswith("-etape-bun.png")]), 1)
         self.assertEqual(quick.clics, slow.clics)
+
+    def test_every_step_of_the_plan_is_counted(self):
+        vus = lambda *etapes: {cle: ta.Ecran(True, "x", texte) for cle, texte in etapes}
+        self.assertIsNone(ta.etapes_manquees(vus(("etape-claude", "Étape 1 sur 2. L’outil."), ("etape-brain", "Étape 2 sur 2."))))
+        # Apple's tools have no « Étape i sur n » of their own, and count all the same.
+        self.assertIsNone(ta.etapes_manquees(vus(("etape-claude", "Étape 1 sur 3."), ("etape-clt", "Je t’attends."),
+                                                 ("etape-brain", "Étape 3 sur 3."))))
+        self.assertIn("1 étape(s) sur 3", ta.etapes_manquees(vus(("etape-claude", "Étape 1 sur 3."), ("etape-brain", "Étape 3 sur 3."))))
+        self.assertIn("aucun écran d'étape", ta.etapes_manquees(vus(("diagnostic", "J’ai fait le tour."))))
+        self.assertIsNone(ta.etapes_manquees(vus(("etape-brain", "C’est l’étape la plus longue."))))
 
     def test_buttons_late_in_the_tree_are_read_again_at_once(self):
         p = FauxPilote(self.h)
@@ -353,10 +466,18 @@ class Walk(Base):
         pa = self.parcours(p)
         with self.assertRaises(terrain.Echec) as cm:
             pa.premier_lancement({})
-        self.assertIn("toujours sur l'écran « etape-brain » après 55 min", str(cm.exception))
+        self.assertIn("toujours sur l'écran « etape-brain » après 75 min", str(cm.exception))
         waits = [s for s in p.captures if re.match(r"^\d\d-etape-brain-\d+min\.png$", s)]
-        self.assertGreaterEqual(len(waits), 25)
+        self.assertGreaterEqual(len(waits), 35)
         self.assertLessEqual(self.h.now, ta.DELAI_PREMIER + 600)
+
+    def test_the_walk_ends_by_itself_before_its_job_step_is_killed(self):
+        p = FauxPilote(self.h, change={"brain": {"titre": "Je prépare ton cerveau.", "apres": (10 ** 9, "installe")}})
+        pa = ta.Parcours(self.t, p, self.shots, horloge=self.h, dormir=self.h.dormir, echeance=20 * 60)
+        with self.assertRaises(terrain.Echec) as cm:
+            pa.premier_lancement({})
+        self.assertRegex(str(cm.exception), r"toujours sur l'écran « etape-brain » après 1\d min \(fin du temps du scénario\)")
+        self.assertLess(self.h.now, 21 * 60)
 
     def test_no_window_fails_with_a_capture(self):
         p = FauxPilote(self.h)
@@ -398,13 +519,70 @@ class Dialogs(Base):
         self.parcours(p).premier_lancement({})
         self.assertEqual(len([c for c in p.clics if isinstance(c, tuple)]), ta.CLIC_ESSAIS)
 
-    def test_only_a_request_naming_the_app(self):
+    def test_only_the_request_the_app_announces(self):
         self.assertEqual(ta.bouton_autoriser({"textes": ["“Brain in a Box” would like to access files in your Documents folder."],
                                               "boutons": ["Don’t Allow", "Allow"]}), "Allow")
-        self.assertEqual(ta.bouton_autoriser({"textes": ["“brain-in-a-box” souhaite accéder"], "boutons": ["Autoriser"]}),
-                         "Autoriser")
+        self.assertEqual(ta.bouton_autoriser({"textes": ["« brain-in-a-box » souhaite accéder aux fichiers de ton dossier Documents."],
+                                              "boutons": ["Autoriser"]}), "Autoriser")
         self.assertIsNone(ta.bouton_autoriser({"textes": ["“Terminal” would like to control"], "boutons": ["Allow"]}))
         self.assertIsNone(ta.bouton_autoriser({"textes": ["“Brain in a Box” is damaged"], "boutons": ["Move to Trash"]}))
+        # Anything else asked on the app's behalf is never accepted, and fails the night with its words.
+        for d in ({"processus": "UserNotificationCenter", "boutons": ["Don’t Allow", "OK"],
+                   "textes": ["« Brain in a Box » souhaite accéder à vos contacts."]},
+                  {"processus": "UserNotificationCenter", "boutons": ["Don’t Allow", "Allow"],
+                   "textes": ["“Brain in a Box” wants access to control “System Events”."]},
+                  {"processus": "SecurityAgent", "boutons": ["Annuler", "OK"],
+                   "textes": ["Brain in a Box tente d'installer un outil auxiliaire. Documents"]}):
+            with self.subTest(d=d["textes"][0]):
+                self.assertIsNone(ta.bouton_autoriser(d))
+                what = ta.reponse_dialogue(d)
+                self.assertEqual(what[0], "echec")
+                self.assertIn("demande système inattendue au nom de l'app (%s)" % d["processus"], what[1])
+        self.assertIsNone(ta.reponse_dialogue({"processus": "CoreServicesUIAgent", "boutons": ["OK"], "textes": ["“Autre” x"]}))
+
+    def test_a_request_for_something_else_fails_and_is_never_answered(self):
+        p = FauxPilote(self.h)
+        p.dialogue = {"processus": "UserNotificationCenter", "part_sur": "OK", "boutons": ["Don’t Allow", "OK"],
+                      "textes": ["“Brain in a Box” would like to access your contacts."]}
+        with self.assertRaises(terrain.Echec) as cm:
+            self.parcours(p).premier_lancement({})
+        self.assertIn("demande système inattendue au nom de l'app (UserNotificationCenter) : « “Brain in a Box” would "
+                      "like to access your contacts. »", str(cm.exception))
+        self.assertFalse([c for c in p.clics if isinstance(c, tuple)])
+        self.assertEqual(p.captures, ["01-dialogue-usernotificationcenter.png"])
+
+    def test_apple_tools_window_is_clicked_through_with_a_capture_of_each_state(self):
+        fini = {"processus": ta.OUTILS_APPLE, "textes": ["The software was installed."], "boutons": ["Done"], "suite": {"Done": None}}
+        progres = {"processus": ta.OUTILS_APPLE, "textes": ["Downloading the software", "About 7 minutes remaining"],
+                   "boutons": ["Cancel"], "apres": (300, fini)}
+        licence = {"processus": ta.OUTILS_APPLE, "textes": ["Command Line Tools License Agreement"],
+                   "boutons": ["Disagree", "Agree"], "suite": {"Agree": progres}}
+        fenetre = {"processus": ta.OUTILS_APPLE, "boutons": ["Get Xcode", "Not Now", "Install"], "suite": {"Install": licence},
+                   "textes": ["The “xcode-select” command requires the command line developer tools."]}
+        p = FauxPilote(self.h, change={"claude": dict(neuf(lambda: False)["claude"], texte="Étape 1 sur 5. L’outil.")})
+        p.ecrans["login-inline"]["boutons"]["Plus tard"] = "clt"
+        p.ecrans["clt"] = {"titre": "Une fenêtre Apple va s’ouvrir" + NB + ": clique sur Installer.",
+                           "texte": "Je t’attends. Tu ne la vois pas" + NB + "? Regarde dans le Dock.", "sans_dialogue": "bun"}
+        p.ecrans["bun"] = dict(p.ecrans["bun"], texte="Étape 3 sur 5. C’est le moteur de ta mémoire.")
+        p.ecrans["brain"] = dict(p.ecrans["brain"], texte="Étape 5 sur 5.")
+        real = p.aller
+        p.aller = lambda etat: (real(etat), p.montrer(fenetre) if p.etat == "clt" else None)
+        pa = self.parcours(p)
+        pa.premier_lancement({})
+        self.assertEqual([c for c in p.clics if isinstance(c, tuple)],
+                         [(ta.OUTILS_APPLE, "Install"), (ta.OUTILS_APPLE, "Agree"), (ta.OUTILS_APPLE, "Done")])
+        shots = [c for c in p.captures if "install-command-line" in c]
+        self.assertEqual(len(shots), 4, p.captures)
+        self.assertIn("app-etape-clt", self.t.vus)
+        self.assertEqual([c["comment"] for c in pa.clics if c["ecran"].startswith("dialogue-")], [ta.CLIC_SOURIS] * 3)
+
+    def test_apple_saying_it_cannot_install_fails_with_its_words(self):
+        d = {"processus": ta.OUTILS_APPLE, "boutons": ["Done"],
+             "textes": ["Can’t install the software because it is not currently available from the Software Update server."]}
+        what = ta.reponse_dialogue(d)
+        self.assertEqual(what[0], "echec")
+        self.assertIn("la fenêtre d'Apple pour ses outils dit : « Can't install the software", ta.norm(what[1]))
+        self.assertIsNone(ta.reponse_dialogue(dict(d, boutons=["Cancel"], textes=["Finding software"])))
 
 
 def tree(subrole=True, texte=True):
@@ -592,6 +770,36 @@ class Release(Base):
         with self.assertRaises(terrain.Echec) as cm:
             self.download(b"dmg bytes", attestation=1)
         self.assertIn("l'attestation", str(cm.exception))
+
+
+    def retard(self, statut, quand, commits=True):
+        def api(path, token):
+            self.assertEqual(token, "ghs_token")
+            if path.startswith("commits?"):
+                self.assertIn("sha=" + "a" * 40, path)
+                if not commits or "path=app&" not in path:
+                    return []
+                return [{"sha": "d" * 40, "commit": {"committer": {"date": quand}}}]
+            self.assertEqual(path, "compare/%s...app-v0.1.0-preview.7" % ("d" * 40))
+            return {"status": statut}
+        rel = release("app-v0.1.0-preview.7", "2026-10-14T00:00:00Z")
+        with mock.patch.object(ta, "_api", api):
+            return ta.retard_preview(self.t, "ghs_token", rel, "a" * 40,
+                                     maintenant=ta.datetime(2026, 10, 15, 1, 17, tzinfo=ta.timezone.utc))
+
+    def test_the_preview_holds_masters_last_change_to_the_app(self):
+        self.assertIsNone(self.retard("ahead", "2026-10-14T20:00:00Z"))
+        self.assertIsNone(self.retard("identical", "2026-10-14T20:00:00Z"))
+        self.assertIsNone(self.retard("behind", "2026-10-14T20:00:00Z", commits=False))
+        # Published within the day: release.yml may still be at it.
+        late = self.retard("behind", "2026-10-14T22:00:00Z")
+        self.assertIn("la préversion app-v0.1.0-preview.7 n'a pas le dernier changement de l'app sur master (ddddddd, il y a 3 h)", late)
+        # A day later, the night tests an older app than master's: a failure.
+        with self.assertRaises(terrain.Echec) as cm:
+            self.retard("behind", "2026-10-13T20:00:00Z")
+        self.assertIn("il y a 29 h) : release.yml ne l'a pas publié", str(cm.exception))
+        with self.assertRaises(terrain.Echec):
+            self.retard("diverged", "2026-10-13T20:00:00Z")
 
 
 # --------------------------------------------------------------------------- Windows
@@ -828,8 +1036,7 @@ class WindowsInstaller(Base):
         p, details, notes, exe = self.installed()
         self.assertEqual(p.exe, str(exe))
         self.assertEqual((details["app"], details["raccourci_bureau"]), ("brain-in-a-box.exe", False))
-        self.assertIn("SmartScreen ne s'est pas affiché", notes[0])
-        self.assertIn("constat, pas un échec", notes[0])
+        self.assertEqual(notes, [])
         with self.assertRaises(ta.ErreurPilote) as cm:
             self.installed(ruche="HKLM")
         self.assertIn("pour tous les utilisateurs", str(cm.exception))
@@ -849,7 +1056,7 @@ class WindowsApp(Base):
         p.proc = FauxSetup(self.h)
         p.exe = r"C:\Users\r\AppData\Local\Brain in a Box\brain-in-a-box.exe"
         devant = {"h": 9, "pid": 77, "classe": "#32770", "exe": r"C:\Windows\System32\SmartScreen.exe",
-                  "arbre": uia("Window", "Windows", [uia("Text", "Brain in a Box souhaite accéder à tes fichiers"),
+                  "arbre": uia("Window", "Windows", [uia("Text", "Brain in a Box souhaite accéder à ton dossier Documents"),
                                                      uia("Button", "Autoriser"), uia("Button", "Refuser")])}
         console = dict(devant, classe="ConsoleWindowClass")
         calls = []
@@ -885,10 +1092,92 @@ class WindowsApp(Base):
         f.machine = "PC"
         f.ecrans["bienvenue"] = dict(f.ecrans["bienvenue"], boutons={"Vérifier mon PC": "diag-en-cours"})
         f.ecrans["login-inline"]["boutons"]["Plus tard"] = "brain"     # Windows: Claude Code, then install.ps1
+        f.ecrans["claude"]["texte"] = "Étape 1 sur 2. L’outil officiel d’Anthropic."
+        f.ecrans["brain"] = dict(f.ecrans["brain"], texte="Étape 2 sur 2. C’est l’étape la plus longue : 10 à 20 minutes.")
         self.parcours(f).premier_lancement({})
         self.assertEqual(f.clics, ["Vérifier mon PC", "Tout installer", "Passer (recherche par mots-clés)",
                                    "Plus tard", "Plus tard"])
         self.assertFalse([c for c in f.captures if "etape-bun" in c or "etape-obsidian" in c])
+
+
+def smartscreen(plus=False):
+    """SmartScreen's window as UI Automation shows it: a link « More info », then « Run anyway »."""
+    k = [uia("Text", "Windows protected your PC"),
+         uia("Text", "Microsoft Defender SmartScreen prevented an unrecognized app from starting.")]
+    k += [uia("Text", "App: Brain-in-a-Box_0.1.0_windows-x64-setup.exe"), uia("Button", "Run anyway")] if plus else \
+        [uia("Hyperlink", "More info")]
+    return {"h": 21, "pid": 90, "classe": "Windows.UI.Core.CoreWindow", "exe": r"C:\Windows\System32\smartscreen.exe",
+            "arbre": uia("Window", "Windows Defender SmartScreen", k + [uia("Button", "Don't run")])}
+
+
+class WindowsShell(Base):
+    def lancer(self, montre):
+        """lancer_setup with SmartScreen on the screen while `montre` says so, a click on « Run anyway » ending it."""
+        p = FauxWindows(self.h, self.tmp)
+        etat = {"plus": False, "fini": threading.Event()}
+        calls = []
+
+        def outil(args, timeout=120):
+            args = [str(a) for a in args]
+            calls.append(args)
+            self.h.now += 0.3
+            if args[0] == "lire":
+                return {"ok": True, "fenetres": [], "devant": smartscreen(etat["plus"]) if montre and not etat["fini"].is_set() else None}
+            if args[0] == "cliquer":
+                if args[2] == "More info":
+                    etat["plus"] = True
+                if args[2] == "Run anyway":
+                    etat["fini"].set()
+                return {"ok": True, "comment": "clic souris"}
+            return {"ok": True}
+        p._outil = outil
+
+        def ouvrir(fichier, out):
+            # ShellExecuteEx holds until SmartScreen's question is answered.
+            if montre:
+                etat["fini"].wait(10)
+            out.update(ok=True, erreur=0, handle=1234)
+        shots, details = [], {}
+        out, notes = p.lancer_setup(Path(self.tmp) / "setup.exe", details, capturer=lambda n: shots.append(n) or n, ouvrir=ouvrir)
+        return p, out, notes, details, shots, calls
+
+    def test_setup_opened_by_the_shell_and_smartscreen_answered_as_a_user_does(self):
+        p, out, notes, details, shots, calls = self.lancer(montre=True)
+        self.assertEqual(out["handle"], 1234)
+        self.assertEqual(notes, [])
+        self.assertEqual([c[2] for c in calls if c[0] == "cliquer"], ["More info", "Run anyway"])
+        self.assertEqual(shots, ["smartscreen", "smartscreen"])
+        self.assertEqual([c["comment"] for c in p.clics_installation], [ta.CLIC_SOURIS] * 2)
+        self.assertEqual(details["avant_installeur"][1]["boutons"], ["Run anyway", "Don't run"])
+
+    def test_no_smartscreen_is_said_never_hidden(self):
+        p, out, notes, details, shots, calls = self.lancer(montre=False)
+        self.assertEqual(shots, [])
+        self.assertIn("SmartScreen ne s'est pas affiché : setup.exe porte pourtant la Mark of the Web", notes[0])
+
+    def test_the_mark_of_the_web_a_browser_leaves(self):
+        p = FauxWindows(self.h, self.tmp)
+        f = Path(self.tmp) / "setup.exe"
+        f.write_bytes(b"MZ")
+        self.assertEqual(p.marquer_telecharge(f), "Zone.Identifier : ZoneId=3 (Internet)")
+        with open(str(f) + ":Zone.Identifier", encoding="ascii", newline="") as z:
+            self.assertTrue(z.read().startswith("[ZoneTransfer]\r\nZoneId=3\r\n"))
+
+    def test_a_new_screen_starts_its_clicks_with_the_mouse(self):
+        # The same label on two screens in a row (« Plus tard ») is two first clicks, not a retry.
+        p = FauxWindows(self.h, self.tmp)
+        modes = []
+        p._outil = lambda args, timeout=120: modes.append(str(args[3])) or {"ok": True, "comment": "clic souris"}
+        p.hwnd = 5
+        p.cliquer("Plus tard")
+        p.nouvel_ecran()
+        p.cliquer("Plus tard")
+        p.cliquer("Plus tard")
+        self.assertEqual(modes, ["souris", "souris", "invoke"])
+        f = FauxPilote(self.h)
+        pa = self.parcours(f)
+        pa.premier_lancement({})
+        self.assertEqual(f.ecrans_vus, len(pa.ecrans))
 
 
 class WindowsEnvironment(unittest.TestCase):
@@ -921,17 +1210,20 @@ class Scenario(Base):
 
     def run_it(self, pilote=None, check=None):
         home = Path(self.tmp) / "home"
-        home.mkdir()
+        home.mkdir(exist_ok=True)
         dmg = Path(self.tmp) / "Brain-in-a-Box_0.1.0-terrain.abc_macos-universal.dmg"
         dmg.write_bytes(b"dmg")
         sha = subprocess.run(["git", "-C", REPO, "rev-parse", "HEAD"], capture_output=True).stdout.decode().strip()
         opts = types.SimpleNamespace(home=home, json=str(Path(self.tmp) / "r.json"), parcours="app", vm=True,
                                      source="build", fichier=str(dmg), captures=str(self.shots))
         checked = []
+        self.nights = []
         kit = types.SimpleNamespace(Echec=terrain.Echec, workdir=terrain.workdir, run=terrain.run, REPO=terrain.REPO,
                                     tested_ref=lambda: sha,
-                                    check_install=check or (lambda t, o: (t("hooks"), checked.append(o.home))))
+                                    check_install=check or (lambda t, o: (t("hooks"), checked.append(o.home))),
+                                    run_nightly=lambda t, o: (t("nuit-reelle"), self.nights.append(list(p.nuit))))
         p = pilote or FauxPilote(self.h, home=home)
+        p.home = home
         secrets = {"GH_TOKEN": "ghs_x", "GITHUB_TOKEN": "ghs_y", "CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-z"}
         with mock.patch.dict(os.environ, secrets):
             terrain.play("app", lambda t, o: ta.scenario(t, o, kit, pilote=p, horloge=self.h, dormir=self.h.dormir), opts)
@@ -956,6 +1248,47 @@ class Scenario(Base):
         self.assertEqual(d["captures"], sorted(os.listdir(self.shots)))
         self.assertTrue(any(c.endswith("-relance-deja-installe.png") for c in d["captures"]))
         self.assertGreater(d["duree_parcours_s"], 500)
+        # The nightly the app registered, given back to the scheduler and started, once all is checked.
+        self.assertEqual(self.nights, [["ecartee", "rendue"]])
+        self.assertIn("une nuit lancée par le planificateur", row["raison"])
+        self.assertNotIn("install_log", d)
+
+    def test_a_click_no_user_could_do_fails_the_night(self):
+        p = FauxPilote(self.h, home=Path(self.tmp) / "home")
+        p.comment = lambda label: "AXPress (pas de clic souris : une autre app est devant (Finder))" if label == "Tout installer" \
+            else ta.CLIC_SOURIS
+        row, _, _, _, _, _ = self.run_it(pilote=p)
+        self.assertEqual((row["statut"], row["etape"]), ("echec", "app-clics"))
+        self.assertIn("1 clic(s) sans la souris, qu'un utilisateur n'aurait pas pu faire", row["raison"])
+        self.assertIn("« Tout installer » (diagnostic) : AXPress (pas de clic souris : une autre app est devant (Finder))",
+                      row["raison"])
+        self.assertEqual(self.nights, [])
+
+    def test_a_failure_keeps_the_end_of_the_install_log(self):
+        home = Path(self.tmp) / "home"
+        p = FauxPilote(self.h, home=home)
+        log = home / ".brain-in-a-box" / "install.log"
+        log.parent.mkdir(parents=True)
+        log.write_text("".join("ligne %d\n" % i for i in range(200)) + "bun install: error: ENOSPC\n", encoding="utf-8")
+        p.ecrans["brain"] = {"titre": "Je prépare ton cerveau.", "apres": (90, "oups")}
+        p.ecrans["oups"] = {"titre": "Oups, ça a coincé.", "boutons": {"Copier le rapport": None, "Réessayer": "brain"}}
+        row, _, _, _, _, _ = self.run_it(pilote=p)
+        self.assertEqual((row["statut"], row["etape"]), ("echec", "app-etape-brain"))
+        self.assertEqual(len(row["details"]["install_log"]), 80)
+        self.assertEqual(row["details"]["install_log"][-1], "bun install: error: ENOSPC")
+
+    def test_what_the_vm_had_before_the_app_is_said(self):
+        p = FauxPilote(self.h, home=Path(self.tmp) / "home")
+        p.neufs = ("Outils Apple (git, python3)",)
+        p.ecrans["diag"]["textes"] = ["Version de macOS", ": OK", "macOS 26.6.2", "Outils Apple (git, python3)", ": OK",
+                                      "git et python3 sont là.", "Bun (le moteur de la mémoire)", ": À installer", "Pas encore installé."]
+        row, _, _, _, _, _ = self.run_it(pilote=p)
+        self.assertEqual(row["statut"], "ok", row["raison"])
+        self.assertIn("à noter : déjà sur la VM avant l'app : Outils Apple (git, python3) (git et python3 sont là.), "
+                      "son installation par l'app n'est pas testée", row["raison"])
+        self.assertEqual(ta.deja_presents(["Python (pour les automatismes)", ": OK", "Python 3.14.7", "Git (l'historique de tes notes)",
+                                           ": À installer", "x"], ta.PiloteWindows.neufs),
+                         [("Python (pour les automatismes)", "Python 3.14.7")])
 
     def test_a_failure_after_the_window_still_quotes_bibo(self):
         def check(t, o):

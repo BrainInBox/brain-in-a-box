@@ -34,15 +34,18 @@ always terrain.py's own Echec, even when terrain.py runs as __main__.
 import hashlib
 import json
 import os
+import plistlib
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unicodedata
 import urllib.request
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 REPO_SLUG = "BrainInBox/brain-in-a-box"
@@ -59,8 +62,11 @@ CLIC_RELANCE = 20           # a click that changed nothing is tried again after 
 CLIC_ESSAIS = 3
 INCONNU_MAX = 180           # a screen the robot does not know, for this long: a failure
 DELAI_FENETRE = 120
-DELAI_PREMIER = 55 * 60     # Bienvenue to the final screen (the brain step alone may take 40 min)
+DELAI_PREMIER = 75 * 60     # Bienvenue to the final screen (Apple's tools up to 45 min, the brain step 40)
 DELAI_RELANCE = 5 * 60
+# How every click is done: the mouse on the button, as a user clicks. Anything else (AXPress,
+# Invoke) proves no user could have clicked there: the scenario fails, once the walk is over.
+CLIC_SOURIS = "clic souris"
 
 # Bibo's titles (app/src/app.js), after norm(): the screen they stand for.
 ECRANS = (
@@ -225,16 +231,77 @@ def dialogue_depuis_arbre(processus, arbre):
                         and (n.get("n") or n.get("d"))]}
 
 
-# The system asks on the app's behalf (its folder Documents, mostly): the app's own window tells the
-# user to accept (« clique sur « Autoriser » »). The robot accepts only a request naming the app.
+# The one request the app announces (« macOS va peut-être demander l'accès à ton dossier Documents :
+# clique sur « Autoriser » »): its folder Documents, where the brain lives. The robot accepts that
+# one only. Any other dialog naming the app (Contacts, Automation, a password, a refusal) is a new
+# thing asked of users: the night fails on it, with its words, and never answers it.
 AUTORISER = ("Allow", "Autoriser", "OK")
+NOMME_APP = re.compile(r"Brain in a Box|brain-in-a-box")
+DOCUMENTS = re.compile(r"\bDocuments\b")
+JAMAIS = ("SecurityAgent",)     # a password asked: never typed, never clicked
+# Apple's window for its command line tools (the app's step « Outils Apple »): the user clicks
+# « Installer », accepts the license, and closes it once the tools are in (« Terminé »).
+OUTILS_APPLE = "Install Command Line Developer Tools"
+APPLE_SUITE = (("Install", "Installer"), ("Agree", "Accepter"))
+APPLE_FIN = ("Done", "Terminé", "OK")
+APPLE_FAIT = re.compile(r"(?i)\binstall(ed|é)\b|a été installé")
+
+
+def _texte_dialogue(dialogue):
+    return " ".join(dialogue.get("textes") or [])
 
 
 def bouton_autoriser(dialogue):
-    texte = " ".join(dialogue.get("textes") or [])
-    if not re.search(r"Brain in a Box|brain-in-a-box", texte):
+    """The button that accepts the request the app announces (its folder Documents), or None."""
+    texte = _texte_dialogue(dialogue)
+    if dialogue.get("processus") in JAMAIS or not NOMME_APP.search(texte) or not DOCUMENTS.search(texte):
         return None
     return next((b for b in AUTORISER if b in (dialogue.get("boutons") or [])), None)
+
+
+def reponse_dialogue(dialogue):
+    """What a user does with a system dialog: ("cliquer", label), ("echec", why) or None (leave it)."""
+    texte, boutons = _texte_dialogue(dialogue), dialogue.get("boutons") or []
+    if dialogue.get("processus") == OUTILS_APPLE:
+        for labels in APPLE_SUITE:
+            label = next((b for b in labels if b in boutons), None)
+            if label:
+                return ("cliquer", label)
+        fin = next((b for b in APPLE_FIN if b in boutons), None)
+        if fin and APPLE_FAIT.search(texte):
+            return ("cliquer", fin)
+        if fin:
+            return ("echec", "la fenêtre d'Apple pour ses outils dit : « %s »" % texte[:300])
+        return None     # downloading, installing: the user waits
+    bouton = bouton_autoriser(dialogue)
+    if bouton:
+        return ("cliquer", bouton)
+    if NOMME_APP.search(texte):
+        return ("echec", "demande système inattendue au nom de l'app (%s) : « %s »" % (dialogue.get("processus"), texte[:300]))
+    return None
+
+
+def deja_presents(textes, labels):
+    """[(label, detail)] of the diagnosis' lines in `labels` that say OK: on the VM before the app."""
+    out = []
+    for i, x in enumerate(textes or []):
+        if x in labels and i + 1 < len(textes) and textes[i + 1] == ": OK":
+            out.append((x, textes[i + 2] if i + 2 < len(textes) else ""))
+    return out
+
+
+def etapes_manquees(vus):
+    """Why the install plan was not all seen, or None: every step gets a screen of its own and its
+    capture. Bibo says « Étape i sur n » on each step but Apple's tools, which counts in n all the same."""
+    etapes = sorted(cle for cle in vus if cle.startswith("etape-"))
+    if not etapes:
+        return "aucun écran d'étape d'installation n'a été vu (pas de capture)"
+    totals = [int(m.group(1)) for cle in etapes for m in [re.search(r"Étape \d+ sur (\d+)", vus[cle].texte)] if m]
+    total = max(totals) if totals else len(etapes)
+    if len(etapes) >= total:
+        return None
+    return "%d étape(s) sur %d jamais vue(s) à l'écran, donc sans capture (vues : %s)" % (
+        total - len(etapes), total, ", ".join(etapes))
 
 
 # --------------------------------------------------------------------------- the release, as data
@@ -305,6 +372,9 @@ class Pilote:
 
     machine = "?"
     suffixe = None
+    # The diagnosis' lines for what a fresh machine lacks and the app installs: OK on the VM, the
+    # app's step for it went untested, and the results say so.
+    neufs = ()
 
     def _run(self, argv, timeout=120, env=None, creationflags=0):
         try:
@@ -336,6 +406,17 @@ class Pilote:
     def ecarter_la_nuit(self):
         """Keeps the nightly the install registered out of the checks' way; returns what it did, or None."""
         return None
+
+    def rendre_la_nuit(self):
+        """Gives the nightly back to the scheduler (what ecarter_la_nuit did, undone); returns what it did."""
+        return None
+
+    def nouvel_ecran(self):
+        """A new screen in the app's window: nothing of the last one's clicks counts for it."""
+
+    def noter_clic(self, ecran, bouton, comment):
+        """A click outside the app's window (an installer, a system dialog), kept as Parcours keeps its own."""
+        self.__dict__.setdefault("clics_installation", []).append({"ecran": ecran, "bouton": bouton, "comment": comment})
 
     def ouvrir(self, env):
         raise NotImplementedError
@@ -513,6 +594,40 @@ function chercher(el, label, depth) {
   return null;
 }
 
+// The mouse on the middle of the button, pressed and released, as a user clicks: its app made
+// active, the button scrolled into view (as a user scrolls), inside its window, and nothing of
+// another program over it there (the accessibility hit test, as WindowFromPoint on Windows). A
+// null when done, else why not.
+function souris(se, p, w, b) {
+  try { p.frontmost = true; } catch (e) {}
+  try { b.actions.byName('AXScrollToVisible').perform(); } catch (e) {}
+  delay(0.3);
+  var pos = prop(b, 'position'), size = prop(b, 'size'), wp = prop(w, 'position'), wsz = prop(w, 'size');
+  if (!pos || !size || !(size[0] > 0 && size[1] > 0)) return 'pas de position';
+  var x = pos[0] + size[0] / 2, y = pos[1] + size[1] / 2;
+  if (wp && wsz && (x < wp[0] || y < wp[1] || x > wp[0] + wsz[0] || y > wp[1] + wsz[1])) return 'hors de sa fenetre';
+  ObjC.import('ApplicationServices');
+  var hit = Ref(), pid = Ref();
+  if ($.AXUIElementCopyElementAtPosition($.AXUIElementCreateSystemWide(), x, y, hit) !== 0 ||
+      $.AXUIElementGetPid(hit[0], pid) !== 0) return 'rien sous le point du bouton';
+  if (pid[0] !== p.unixId()) {
+    var dessus = '?';
+    try { dessus = se.processes.whose({unixId: pid[0]}).name()[0] || '?'; } catch (e) {}
+    return 'un autre programme est sur le bouton (' + dessus + ')';
+  }
+  ObjC.import('CoreGraphics');
+  var pt = $.CGPointMake(x, y);
+  // kCGEventMouseMoved, kCGEventLeftMouseDown, kCGEventLeftMouseUp (a single click: field
+  // kCGMouseEventClickState 1), at the HID level (kCGHIDEventTap).
+  [5, 1, 2].forEach(function (type) {
+    var ev = $.CGEventCreateMouseEvent($(), type, pt, 0);
+    if (type !== 5) $.CGEventSetIntegerValueField(ev, 1, 1);
+    $.CGEventPost(0, ev);
+    delay(type === 5 ? 0.15 : 0.08);
+  });
+  return null;
+}
+
 function cliquer(se, req) {
   var running = [];
   try { running = se.processes.name(); } catch (e) {}
@@ -526,8 +641,11 @@ function cliquer(se, req) {
     var b = chercher(ws[i], label, 0);
     if (!b) continue;
     if (prop(b, 'enabled') === false) return {ok: false, pourquoi: 'inactif'};
-    try { b.actions.byName('AXPress').perform(); return {ok: true, comment: 'AXPress'}; } catch (e) {}
-    try { se.click(b); return {ok: true, comment: 'click'}; } catch (e) { return {ok: false, pourquoi: String(e)}; }
+    var pourquoi = souris(se, p, ws[i], b);
+    if (!pourquoi) return {ok: true, comment: 'clic souris'};
+    // Pressed through accessibility so the walk goes on and shows the rest: the scenario fails all the same.
+    try { b.actions.byName('AXPress').perform(); return {ok: true, comment: 'AXPress (pas de clic souris : ' + pourquoi + ')'}; } catch (e) {}
+    return {ok: false, pourquoi: 'ni souris ni AXPress (' + pourquoi + ')'};
   }
   return {ok: false, pourquoi: 'absent'};
 }
@@ -540,9 +658,12 @@ class PiloteMac(Pilote):
 
     machine = "Mac"
     suffixe = "_macos-universal.dmg"
+    neufs = ("Outils Apple (git, python3)",)
     processus = "brain-in-a-box"
     app = Path("/Applications/Brain in a Box.app")
-    DIALOGUES = ("UserNotificationCenter", "CoreServicesUIAgent", "SecurityAgent", "universalAccessAuthWarn")
+    DIALOGUES = ("UserNotificationCenter", "CoreServicesUIAgent", "SecurityAgent", "universalAccessAuthWarn", OUTILS_APPLE)
+    GATEKEEPER = "CoreServicesUIAgent"
+    FERMER_REFUS = ("Done", "Terminé", "OK")
     # In front, yet no dialog: the desktop itself.
     IGNORER = ("Finder", "Dock", "SystemUIServer", "WindowManager", "ControlCenter", "loginwindow")
 
@@ -574,18 +695,45 @@ class PiloteMac(Pilote):
         rc, out = self._run(["/usr/bin/xattr", "-p", "com.apple.quarantine", chemin], timeout=60)
         return out.strip() if rc == 0 else None
 
+    def monte(self, fichier):
+        """Where the image of fichier is mounted, or None."""
+        rc, out = self._run(["/usr/bin/hdiutil", "info", "-plist"], timeout=60)
+        try:
+            info = plistlib.loads(out.encode("utf-8")[out.encode("utf-8").index(b"<?xml"):]) if rc == 0 else {}
+        except (ValueError, plistlib.InvalidFileException):
+            return None
+        want = os.path.realpath(str(fichier))
+        for image in info.get("images") or []:
+            if os.path.realpath(str(image.get("image-path") or "")) != want:
+                continue
+            for entity in image.get("system-entities") or []:
+                if entity.get("mount-point"):
+                    return Path(entity["mount-point"])
+        return None
+
+    def fenetres_finder(self):
+        rc, out = self._run(["/usr/bin/osascript", "-e", 'tell application "System Events" to get name of windows of '
+                             'process "Finder"'], timeout=30)
+        return out.strip() if rc == 0 else ""
+
     def installer(self, fichier, details, capturer=None):
-        """The DMG opened, the app dragged into Applications, then Gatekeeper: macOS refuses the
-        unsigned preview (seen, expected), and the user opens it anyway (quarantine lifted)."""
+        """The DMG opened as a double click opens it (the Finder shows its window, captured), the app
+        copied into Applications, then Gatekeeper: macOS refuses the unsigned preview (its dialog
+        captured and closed, as a user reads it), and the robot lifts the quarantine where a user
+        clicks « Ouvrir quand même » in Réglages."""
         notes = []
         if self.app.exists():
             raise ErreurPilote("%s existe déjà : la VM n'est pas neuve" % self.app)
-        mnt = Path(tempfile.mkdtemp(prefix="dmg-", dir=str(self.travail)))
-        rc, out = self._run(["/usr/bin/hdiutil", "attach", "-nobrowse", "-readonly", "-noautoopen",
-                             "-mountpoint", mnt, fichier], timeout=300)
-        if rc != 0:
-            raise ErreurPilote("le DMG ne s'ouvre pas (hdiutil attach : %s)" % out.strip()[-200:])
+        rc, out = self._run(["/usr/bin/open", fichier], timeout=120)
+        mnt = self.attendre(lambda: self.monte(fichier), 120)
+        if not mnt:
+            raise ErreurPilote("le DMG ne s'ouvre pas (open code %d : %s)" % (rc, out.strip()[-200:]))
+        details["dmg_monte"] = str(mnt)
         try:
+            if not self.attendre(lambda: mnt.name in self.fenetres_finder(), 30):
+                notes.append("le Finder n'a pas montré la fenêtre du DMG (capture du bureau quand même)")
+            if capturer:
+                details["capture_dmg"] = capturer("dmg")
             dans = mnt / self.app.name
             if not dans.is_dir():
                 raise ErreurPilote("le DMG ne contient pas %s" % self.app.name)
@@ -622,6 +770,7 @@ class PiloteMac(Pilote):
             if rc == 0 or "rejected" not in out:
                 raise ErreurPilote("Gatekeeper accepte l'app (spctl code %d) : une préversion non signée doit être "
                                    "refusée, le terrain est à mettre à jour si l'app est signée" % rc)
+            notes.extend(self.refus(details, capturer))
         else:
             notes.append("Gatekeeper désactivé sur la VM : refus de l'app non constaté (%s)" % status.strip())
 
@@ -629,7 +778,29 @@ class PiloteMac(Pilote):
         rc, out = self._run(["/usr/bin/xattr", "-dr", "com.apple.quarantine", self.app], timeout=60)
         if rc != 0 or self.quarantaine(self.app):
             raise ErreurPilote("la quarantaine de l'app ne s'enlève pas : %s" % out.strip()[-200:])
+        notes.append("quarantaine levée par le robot, là où l'utilisateur clique « Ouvrir quand même » dans Réglages")
         return notes
+
+    def refus(self, details, capturer=None):
+        """The app opened once as a double click opens it, still quarantined: macOS must refuse it
+        with its dialog, which is captured and closed (« Terminé »), and the app must not start."""
+        self._run(["/usr/bin/open", self.app], timeout=120, env=env_utilisateur(Path.home()))
+        refus = lambda: next((d for d in self.lire().dialogues if d["processus"] == self.GATEKEEPER), None)
+        dialogue = self.attendre(refus, 60)
+        if self.vivante():
+            raise ErreurPilote("macOS a laissé s'ouvrir la préversion non signée (pas de refus de Gatekeeper)")
+        if not dialogue:
+            return ["aucun dialogue de refus de Gatekeeper en 60 s : refus constaté par spctl seulement"]
+        details["gatekeeper_dialogue"] = {"textes": dialogue["textes"][:6], "boutons": dialogue["boutons"]}
+        if capturer:
+            details["capture_gatekeeper"] = capturer("gatekeeper")
+        bouton = next((b for b in self.FERMER_REFUS if b in dialogue["boutons"]), None)
+        if not bouton:
+            raise ErreurPilote("le refus de Gatekeeper n'offre pas « Terminé » : %s" % ", ".join(dialogue["boutons"]))
+        self.noter_clic("gatekeeper", bouton, self.cliquer(bouton, processus=self.GATEKEEPER))
+        if not self.attendre(lambda: refus() is None, 30):
+            raise ErreurPilote("le refus de Gatekeeper reste à l'écran après « %s »" % bouton)
+        return []
 
     def outils(self, home):
         home = Path(home)
@@ -899,6 +1070,87 @@ $out.attente_s = [int]((Get-Date) - $start).TotalSeconds
 $out.tournent_encore = @(Running)
 $out | ConvertTo-Json -Depth 4 -Compress
 '''
+PS_RENDRE = r'''
+$ErrorActionPreference = 'Stop'
+Get-ScheduledTask -TaskName 'Brain*' | Enable-ScheduledTask | Out-Null
+@{ taches = @(Get-ScheduledTask -TaskName 'Brain*' | ForEach-Object { [ordered]@{ nom = $_.TaskName; etat = [string]$_.State } }) } |
+  ConvertTo-Json -Depth 4 -Compress
+'''
+
+# What a user clicks to open a downloaded setup.exe all the same: SmartScreen's window, or the
+# Attachment Manager's question when SmartScreen is off.
+SMARTSCREEN_PLUS = ("More info", "Informations complémentaires", "Plus d'infos", "Plus d'informations")
+SMARTSCREEN_OUVRIR = ("Run anyway", "Exécuter quand même")
+AVERTISSEMENT_OUVRIR = ("Run", "Exécuter")
+DELAI_SHELL = 5 * 60
+
+
+def ouvrir_par_le_shell(fichier, out):
+    """fichier opened as a double click opens it (ShellExecuteEx): the shell reads its Mark of the
+    Web and asks SmartScreen first, holding the call until the question is answered, hence a thread
+    of its own. out gets ok, erreur and handle (the process). The installer gets this process's
+    environment: the job's tokens were taken out of it before (scenario)."""
+    import ctypes
+    from ctypes import wintypes
+
+    class Info(ctypes.Structure):
+        _fields_ = [("cbSize", wintypes.DWORD), ("fMask", ctypes.c_ulong), ("hwnd", wintypes.HWND),
+                    ("lpVerb", wintypes.LPCWSTR), ("lpFile", wintypes.LPCWSTR), ("lpParameters", wintypes.LPCWSTR),
+                    ("lpDirectory", wintypes.LPCWSTR), ("nShow", ctypes.c_int), ("hInstApp", wintypes.HINSTANCE),
+                    ("lpIDList", ctypes.c_void_p), ("lpClass", wintypes.LPCWSTR), ("hkeyClass", wintypes.HKEY),
+                    ("dwHotKey", wintypes.DWORD), ("hIconOrMonitor", wintypes.HANDLE), ("hProcess", wintypes.HANDLE)]
+
+    shell32 = ctypes.WinDLL("shell32", use_last_error=True)
+    shell32.ShellExecuteExW.argtypes = [ctypes.POINTER(Info)]
+    shell32.ShellExecuteExW.restype = wintypes.BOOL
+    ctypes.WinDLL("ole32").CoInitializeEx(None, 0x2 | 0x4)     # apartment threaded, no OLE1 DDE
+    info = Info(cbSize=ctypes.sizeof(Info), fMask=0x40 | 0x100, lpVerb="open", lpFile=str(fichier),
+                lpDirectory=str(Path(fichier).parent), nShow=1)     # NOCLOSEPROCESS | NOASYNC, SW_SHOWNORMAL
+    out["ok"] = bool(shell32.ShellExecuteExW(ctypes.byref(info)))
+    out["erreur"] = ctypes.get_last_error()
+    out["handle"] = info.hProcess
+
+
+class ProcessusShell:
+    """A process the shell started, as subprocess.Popen shows one: pid, poll(), kill(), returncode."""
+
+    def __init__(self, handle):
+        import ctypes
+        from ctypes import wintypes
+        self.ctypes, self.wintypes = ctypes, wintypes
+        self.k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        self.k32.GetProcessId.argtypes = [wintypes.HANDLE]
+        self.k32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+        self.k32.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+        self.handle, self.returncode = handle, None
+        self.pid = self.k32.GetProcessId(handle)
+
+    def poll(self):
+        if self.returncode is None:
+            code = self.wintypes.DWORD()
+            if self.k32.GetExitCodeProcess(self.handle, self.ctypes.byref(code)) and code.value != 259:    # STILL_ACTIVE
+                self.returncode = code.value
+        return self.returncode
+
+    def kill(self):
+        self.k32.TerminateProcess(self.handle, 1)
+
+
+def question_securite(res, moi):
+    """(window, who, buttons, links, texts) of the question Windows asks before opening a downloaded
+    file: SmartScreen's window in front, or the Attachment Manager's dialog, which the shell shows
+    from the process that opened the file (moi). None when there is none."""
+    d = res.get("devant") if isinstance(res.get("devant"), dict) else {}
+    fen = [f for f in res.get("fenetres") or [] if isinstance(f, dict) and f.get("classe") == "#32770"]
+    if nom_programme(d.get("exe")).lower() == "smartscreen":
+        h, qui, arbre = d.get("h"), "SmartScreen", d.get("arbre")
+    elif fen:
+        h, qui, arbre = fen[0].get("h"), nom_programme(moi), fen[0].get("arbre")
+    else:
+        return None
+    flat = [n for _, n in _aplatir(arbre_uia(arbre))]
+    noms = lambda role: [norm_win(n["n"]) for n in flat if n["r"] == role and norm_win(n["n"])]
+    return h, qui, noms("AXButton"), noms("AXLink"), noms("AXStaticText")
 
 
 class PiloteWindows(Pilote):
@@ -908,6 +1160,7 @@ class PiloteWindows(Pilote):
 
     machine = "PC"
     suffixe = "_windows-x64-setup.exe"
+    neufs = ("Python (pour les automatismes)", "Git (l'historique de tes notes)")
     # In front, yet no dialog: the desktop, the taskbar, a console.
     IGNORER = ("Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd", "ConsoleWindowClass",
                "CASCADIA_HOSTING_WINDOW_CLASS", "Windows.UI.Core.CoreWindow")
@@ -969,8 +1222,18 @@ class PiloteWindows(Pilote):
                 ("Python de winget", python or [local / "Programs" / "Python" / "Python3xx" / "python.exe"])]
 
     def marquer_telecharge(self, fichier):
-        # No Mark of the Web: the robot fetched the file, not a browser (SmartScreen: see installer).
-        return "aucune (téléchargé par le robot, pas de Mark of the Web)"
+        # What a browser writes on a download: the Mark of the Web (zone 3, Internet), which the
+        # shell and SmartScreen read when the file is opened.
+        mark = "[ZoneTransfer]\r\nZoneId=3\r\nHostUrl=https://github.com/%s/releases\r\n" % REPO_SLUG
+        try:
+            with open(str(fichier) + ":Zone.Identifier", "w", encoding="ascii", newline="") as f:
+                f.write(mark)
+        except OSError as e:
+            raise ErreurPilote("pas de Mark of the Web sur %s (%s)" % (Path(fichier).name, e.strerror or type(e).__name__))
+        return "Zone.Identifier : ZoneId=3 (Internet)"
+
+    def nouvel_ecran(self):
+        self.clic_prec = (None, 0)
 
     @staticmethod
     def desinstallations():
@@ -1012,18 +1275,16 @@ class PiloteWindows(Pilote):
                 pass
 
     def installer(self, fichier, details, capturer=None):
-        """setup.exe started as a double click starts it, every page captured and clicked as a user
-        does, the defaults kept but the box that starts the app (the robot opens it from the Start
-        menu, with a session's environment). Then: installed for this user alone, no administrator."""
+        """setup.exe opened as a double click opens it (SmartScreen's question answered as a user
+        does, if Windows asks it), every page captured and clicked as a user does, the defaults kept
+        but the box that starts the app (the robot opens it from the Start menu, with a session's
+        environment). Then: installed for this user alone, no administrator."""
         if self.desinstallations():
             raise ErreurPilote("%s est déjà installé : la VM n'est pas neuve" % PRODUIT)
         # A user's desktop: the windows already open there (the runner's own console) minimized.
         details["bureau_range"] = self._outil(["ranger"]).get("fenetres")
-        try:
-            proc = subprocess.Popen([str(fichier)], env=self.environnement(Path.home()), cwd=str(Path(fichier).parent),
-                                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        except OSError as e:
-            raise ErreurPilote("l'installeur ne se lance pas (%s)" % (e.strerror or type(e).__name__))
+        lance, notes = self.lancer_setup(fichier, details, capturer)
+        proc = ProcessusShell(lance["handle"])
         pages = details["installeur"] = []
         try:
             self.assistant(proc, pages, capturer)
@@ -1032,7 +1293,49 @@ class PiloteWindows(Pilote):
                 proc.kill()
         if proc.returncode != 0:
             raise ErreurPilote("l'installeur a fini avec le code %s" % proc.returncode)
-        return self.verifier_installation(details)
+        return notes + self.verifier_installation(details)
+
+    def lancer_setup(self, fichier, details, capturer=None, ouvrir=ouvrir_par_le_shell):
+        """setup.exe opened by the shell, in a thread; meanwhile the question Windows asks first
+        (SmartScreen), captured and answered: « Informations complémentaires », then « Exécuter quand
+        même ». Returns (what ShellExecuteEx gave, notes)."""
+        out = {}
+        th = threading.Thread(target=ouvrir, args=(fichier, out), daemon=True)
+        th.start()
+        start = self.horloge()
+        vues = details["avant_installeur"] = []
+        essais = {}
+        while th.is_alive():
+            if self.horloge() - start >= DELAI_SHELL:
+                raise ErreurPilote("setup.exe ne s'ouvre pas en %d min (%s)" % (DELAI_SHELL // 60, "question de sécurité "
+                                   "sans réponse : « %s »" % " ".join(vues[-1]["textes"])[:200] if vues else "rien à l'écran"))
+            q = question_securite(self._outil(["lire", os.getpid()]), sys.executable)
+            if q:
+                h, qui, boutons, liens, textes = q
+                cle = [qui, sorted(boutons + liens)]
+                if not vues or vues[-1]["cle"] != cle:
+                    self._devant(h)
+                    vues.append({"cle": cle, "qui": qui, "textes": textes[:8], "boutons": boutons, "liens": liens,
+                                 "capture": capturer(qui.lower()) if capturer else None})
+                label = next((b for b in SMARTSCREEN_OUVRIR + AVERTISSEMENT_OUVRIR if b in boutons), None) or \
+                    next((b for b in SMARTSCREEN_PLUS if b in liens + boutons), None)
+                n, at = essais.get(label, (0, None))
+                if label and (at is None or self.horloge() - at >= CLIC_RELANCE):
+                    if n >= CLIC_ESSAIS:
+                        raise ErreurPilote("le clic sur « %s » (%s) ne change rien (%d essais)" % (label, qui, n))
+                    done = self._clic(h, label)
+                    if not done.get("ok"):
+                        raise ErreurPilote("pas de clic sur « %s » (%s : %s)" % (label, qui, done.get("pourquoi")))
+                    self.noter_clic(qui.lower(), label, done.get("comment"))
+                    essais[label] = (n + 1, self.horloge())
+            th.join(0.05)
+            self.dormir(POLL)
+        if not out.get("ok") or not out.get("handle"):
+            raise ErreurPilote("setup.exe ne s'ouvre pas par le shell (ShellExecuteEx, erreur %s)" % out.get("erreur"))
+        if vues:
+            return out, []
+        return out, ["SmartScreen ne s'est pas affiché : setup.exe porte pourtant la Mark of the Web et a été ouvert "
+                     "par le shell (désactivé sur cette image ? constat, pas un échec)"]
 
     def assistant(self, proc, pages, capturer=None):
         """The installer's pages until it quits. pages: what each showed and what was clicked."""
@@ -1077,6 +1380,7 @@ class PiloteWindows(Pilote):
                 if not done.get("ok"):
                     raise ErreurPilote("pas de clic sur « %s » dans l'installeur (%s)" % (act[1], done.get("pourquoi")))
                 pages[-1]["clics"].append(act[1] if act[0] == "cliquer" else "%s : %s" % (act[1], "coché" if act[2] else "décoché"))
+                self.noter_clic("installeur-" + page["cle"], act[1], done.get("comment"))
                 clic = (now, (clic[1] if clic else 0) + 1)
                 if page["cle"] == "fin" and act[0] == "cliquer":
                     ferme = now
@@ -1086,8 +1390,7 @@ class PiloteWindows(Pilote):
         return pages
 
     def verifier_installation(self, details):
-        notes = ["SmartScreen ne s'est pas affiché : setup.exe sans Mark of the Web, lancé hors de l'Explorateur "
-                 "(constat, pas un échec)"]
+        notes = []
         mine = self.desinstallations()
         details["desinstallation"] = [{k: v for k, v in e.items() if k != "desinstalleur"} for e in mine]
         if [e for e in mine if e["ruche"] == "HKLM"]:
@@ -1211,6 +1514,14 @@ class PiloteWindows(Pilote):
             raise ErreurPilote("la vraie nuit tourne encore après 20 min : %s" % ", ".join(res["tournent_encore"]))
         return res
 
+    def rendre_la_nuit(self):
+        rc, out = self._run(["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+                             "-Command", PS_RENDRE], timeout=120, creationflags=SANS_CONSOLE)
+        try:
+            return json.loads(out[out.index("{"):])
+        except ValueError:
+            raise ErreurPilote("les tâches Brain* ne se réactivent pas (code %d : %s)" % (rc, out.strip()[-300:]))
+
 
 # --------------------------------------------------------------------------- the walk through the window
 
@@ -1219,9 +1530,12 @@ class Parcours:
     key and the Claude login. Every new screen, or install step, gets a capture and a step name
     (t), every 2 min of waiting another capture. A failure names the screen and quotes Bibo."""
 
-    def __init__(self, t, pilote, dossier, horloge=time.monotonic, dormir=time.sleep):
+    def __init__(self, t, pilote, dossier, horloge=time.monotonic, dormir=time.sleep, echeance=None):
         self.t, self.p, self.dossier = t, pilote, Path(dossier)
         self.horloge, self.dormir = horloge, dormir
+        # The scenario's own end (horloge's time), before its job step's timeout kills it: a walk
+        # still going then fails by itself, naming its screen, with a capture.
+        self.echeance = echeance
         self.n = 0
         self.captures = []
         self.ecrans = []        # [{"ecran", "debut_s", "duree_s"}]
@@ -1274,25 +1588,30 @@ class Parcours:
         return e
 
     def dialogue(self, d):
-        """A system dialog: captured once; accepted (at most CLIC_ESSAIS times, CLIC_RELANCE apart)
-        when it asks on the app's behalf, as the app's own window tells the user to."""
-        key = (d.get("processus"), tuple(d.get("textes") or ())[:2])
-        seen = next((x for x in self.dialogues if (x["processus"], tuple(x["textes"])[:2]) == key), None)
+        """A system dialog: captured once per state (its first words and its buttons); answered as a
+        user does (reponse_dialogue), a button at most CLIC_ESSAIS times, CLIC_RELANCE apart."""
+        key = (d.get("processus"), tuple(d.get("textes") or ())[:1], tuple(sorted(d.get("boutons") or ())))
+        seen = next((x for x in self.dialogues if x["cle"] == key), None)
         if not seen:
-            seen = {"processus": d.get("processus"), "textes": (d.get("textes") or [])[:10],
+            seen = {"cle": key, "processus": d.get("processus"), "textes": (d.get("textes") or [])[:10],
                     "boutons": d.get("boutons") or [], "reponse": None, "essais": 0, "clic_a": None}
             self.dialogues.append(seen)
             seen["capture"] = self.capturer("dialogue-" + str(d.get("processus") or "systeme"))
-        bouton = bouton_autoriser(d)
+        what = reponse_dialogue(d)
+        if what and what[0] == "echec":
+            self.echouer(what[1])
         now = self.horloge()
-        if not bouton or seen["essais"] >= CLIC_ESSAIS or (seen["clic_a"] is not None and now - seen["clic_a"] < CLIC_RELANCE):
+        if not what or seen["essais"] >= CLIC_ESSAIS or (seen["clic_a"] is not None and now - seen["clic_a"] < CLIC_RELANCE):
             return
+        bouton = what[1]
         seen["essais"] += 1
         seen["clic_a"] = now
         self.forcer = True
         try:
-            self.p.cliquer(bouton, processus=d.get("processus"))
+            how = self.p.cliquer(bouton, processus=d.get("processus"))
             seen["reponse"] = bouton
+            self.clics.append({"a_s": self.secondes(), "ecran": "dialogue-" + str(d.get("processus")), "bouton": bouton,
+                               "comment": how})
         except ErreurPilote as e:
             seen["reponse"] = "échec du clic : %s" % e
 
@@ -1300,6 +1619,7 @@ class Parcours:
         if self.ecrans and self.ecrans[-1]["duree_s"] is None:
             self.ecrans[-1]["duree_s"] = self.secondes() - self.ecrans[-1]["debut_s"]
         self.ecrans.append({"ecran": prefixe + cle, "debut_s": self.secondes(), "duree_s": None})
+        self.p.nouvel_ecran()
         # A failure keeps the step it happened in (app-etape-brain, not app-echec).
         if cle not in ARRETS:
             self.t("app-" + prefixe + cle)
@@ -1341,7 +1661,8 @@ class Parcours:
     def avancer(self, but, delai, relance=False):
         """Until the screen `but`, within delai seconds. Returns {screen: first Ecran of it}."""
         prefixe = "relance-" if relance else ""
-        fin = self.horloge() + delai
+        debut = self.horloge()
+        fin = debut + delai if self.echeance is None else min(debut + delai, self.echeance)
         cle_prec, depuis, capture_prec, clic = None, 0.0, 0.0, None
         vus = {}
         while True:
@@ -1376,7 +1697,8 @@ class Parcours:
             if cle in ("inconnu", "chargement", "sans-fenetre") and now - depuis >= INCONNU_MAX:
                 self.echouer("écran « %s » depuis %d s" % (cle, int(now - depuis)))
             if now >= fin:
-                self.echouer("toujours sur l'écran « %s » après %d min" % (cle, int(delai // 60)))
+                self.echouer("toujours sur l'écran « %s » après %d min%s" % (
+                    cle, int((now - debut) // 60), "" if fin == debut + delai else " (fin du temps du scénario)"))
             self.dormir(POLL)
 
     def lancer(self, env, prefixe=""):
@@ -1396,8 +1718,12 @@ class Parcours:
             self.t.check(must in vus, "le parcours n'est pas passé par l'écran « %s »" % must)
         for b in ("Personnaliser mon cerveau (15 min)", "Ouvrir mon cerveau dans Obsidian"):
             self.t.check(vus["fini"].bouton(b) is not None, "l'écran final n'a pas le bouton « %s »" % b)
-        if "diagnostic" in vus:
-            self.t.details["diagnostic"] = {"bibo": vus["diagnostic"].texte, "textes": vus["diagnostic"].textes[:40]}
+        self.t.details["diagnostic"] = {"bibo": vus["diagnostic"].texte, "textes": vus["diagnostic"].textes[:60]}
+        for label, detail in deja_presents(vus["diagnostic"].textes, self.p.neufs):
+            self.t.notes.append("déjà sur la VM avant l'app : %s (%s), son installation par l'app n'est pas testée"
+                                % (label, detail))
+        manque = etapes_manquees(vus)
+        self.t.check(not manque, manque)
         return int(self.horloge() - start)
 
     def relance(self, env):
@@ -1449,8 +1775,43 @@ def telecharger(url, dest, timeout=600):
         shutil.copyfileobj(r, f, 1 << 20)
 
 
-def depuis_release(t, pilote, dossier, token, details):
-    """The newest preview, its SHA256SUMS and its attestation, as a careful user checks them."""
+# What makes release.yml publish a preview (its `on.push.paths`): the newest commit touching one
+# of them on the tested master must be in the preview the night downloads.
+PUBLIE = ("app", ".github/workflows/release.yml", ".github/ci/app-release-plan.py")
+RETARD_MAX_H = 24
+
+
+def _api(path, token):
+    with _get("https://api.github.com/repos/%s/%s" % (REPO_SLUG, path), token) as r:
+        return json.loads(r.read().decode("utf-8"))
+
+
+def retard_preview(t, token, rel, sha, maintenant=None):
+    """None when the preview holds master's last change to the app; else what it misses. Fails when
+    that change is older than RETARD_MAX_H: release.yml did not publish it, the night tests an old app."""
+    if not sha:
+        return "commit testé inconnu : fraîcheur de la préversion non vérifiée"
+    try:
+        derniers = [c for path in PUBLIE for c in _api("commits?sha=%s&path=%s&per_page=1" % (sha, path), token)[:1]]
+        if not derniers:
+            return None
+        dernier = max(derniers, key=lambda c: c["commit"]["committer"]["date"])
+        etat = _api("compare/%s...%s" % (dernier["sha"], rel["tag_name"]), token).get("status")
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        t.check(False, "l'API ne dit pas si la préversion est à jour (%s)" % type(e).__name__)
+    if etat in ("identical", "ahead"):
+        return None
+    quand = datetime.strptime(dernier["commit"]["committer"]["date"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    heures = ((maintenant or datetime.now(timezone.utc)) - quand).total_seconds() / 3600
+    pourquoi = "la préversion %s n'a pas le dernier changement de l'app sur master (%s, il y a %d h) : release.yml " \
+               "ne l'a pas publié" % (rel["tag_name"], dernier["sha"][:7], heures)
+    t.check(heures < RETARD_MAX_H, pourquoi)
+    return pourquoi + " (pas encore ?)"
+
+
+def depuis_release(t, pilote, dossier, token, details, sha=None):
+    """The newest preview, its SHA256SUMS and its attestation, as a careful user checks them; and it
+    must hold the tested master's last change to the app."""
     t("app-telechargement")
     t.check(token, "pas de GH_TOKEN pour lire les releases et vérifier l'attestation")
     try:
@@ -1462,6 +1823,9 @@ def depuis_release(t, pilote, dossier, token, details):
     t.check(rel, "aucune préversion app-v*-preview.* publiée")
     tag = rel["tag_name"]
     details.update(release=tag, release_commit=rel.get("target_commitish"), release_creee=rel.get("created_at"))
+    retard = retard_preview(t, token, rel, sha)
+    if retard:
+        t.notes.append(retard)
     fichier = asset(rel, pilote.suffixe, tag)
     sums = asset(rel, "SHA256SUMS", tag)
     t.check(fichier, "la préversion %s n'a pas de fichier *%s" % (tag, pilote.suffixe))
@@ -1529,6 +1893,8 @@ def arguments(p):
     p.add_argument("--captures", default="", help="le dossier des captures (défaut : <home>/terrain-captures)")
     p.add_argument("--stub", default="", help="Windows : le dossier du faux python.exe du Microsoft Store "
                                               "(.github/ci/poste-neuf.ps1), en tête du PATH de l'app")
+    p.add_argument("--delai-min", type=int, default=0, help="le temps du scénario, en minutes, avant que le délai "
+                                                            "de son étape du job ne le tue (0 : sans limite)")
 
 
 def pilote_du_systeme(travail, opts):
@@ -1547,6 +1913,26 @@ def outils(t, home, pilote):
         t.check(any(Path(p).exists() for p in places), "%s n'est pas installé (%s)" % (name, shown))
 
 
+def journal_installation(home, lignes=80):
+    """The end of the kit's install log (install.sh, install.ps1): why the brain step stopped, which
+    the app shows in its « Détails » only and the VM takes away with it."""
+    path = Path(home) / ".brain-in-a-box" / "install.log"
+    try:
+        with open(path, "rb") as f:
+            return f.read().decode("utf-8", "replace").splitlines()[-lignes:]
+    except OSError:
+        return ["(pas de %s)" % path.name]
+
+
+def clics_sans_souris(clics):
+    """A reason when a click was not the mouse's (AXPress, Invoke, Toggle), else None."""
+    autres = [c for c in clics if c.get("comment") != CLIC_SOURIS]
+    if not autres:
+        return None
+    return "%d clic(s) sans la souris, qu'un utilisateur n'aurait pas pu faire (bouton couvert ? fenêtre derrière ?) : %s" % (
+        len(autres), " ; ".join("« %s » (%s) : %s" % (c.get("bouton"), c.get("ecran"), c.get("comment")) for c in autres[:5]))
+
+
 def scenario(t, opts, kit, pilote=None, horloge=time.monotonic, dormir=time.sleep):
     """terrain.py's scenario `app` (VM only). pilote, horloge, dormir: the tests' stand-ins."""
     # Read-only, for the releases and the attestation: never for the app nor anything after.
@@ -1556,6 +1942,7 @@ def scenario(t, opts, kit, pilote=None, horloge=time.monotonic, dormir=time.slee
     captures = Path(opts.captures) if getattr(opts, "captures", "") else home / "terrain-captures"
     captures.mkdir(parents=True, exist_ok=True)
     source = getattr(opts, "source", "")
+    delai = getattr(opts, "delai_min", 0) or 0
     details = t.details
     details["source"] = source
     parcours = None
@@ -1563,12 +1950,12 @@ def scenario(t, opts, kit, pilote=None, horloge=time.monotonic, dormir=time.slee
         t("app-preparation")
         t.check(source in SOURCES, "source inconnue « %s » (release ou build)" % source)
         pilote = pilote or pilote_du_systeme(kit.workdir(opts, "app"), opts)
-        parcours = Parcours(t, pilote, captures, horloge, dormir)
+        parcours = Parcours(t, pilote, captures, horloge, dormir, echeance=horloge() + delai * 60 if delai else None)
         downloads = home / "Downloads"
         downloads.mkdir(exist_ok=True)
         extra = {}
         if source == "release":
-            fichier = depuis_release(t, pilote, downloads, token, details)
+            fichier = depuis_release(t, pilote, downloads, token, details, kit.tested_ref())
             details["sources_du_cerveau"] = "zip master de GitHub (comme un utilisateur)"
         else:
             fichier = depuis_build(t, opts.fichier, downloads, details)
@@ -1604,21 +1991,35 @@ def scenario(t, opts, kit, pilote=None, horloge=time.monotonic, dormir=time.slee
         parcours.relance(env)
         t("app-fermeture-relance")
         pilote.fermer()
-        t.resume = "app %s installée, %d écrans cliqués jusqu'au cerveau en %d min, vérifications conformes, " \
-                   "deuxième lancement : déjà installé" % (
+        t("app-clics")
+        sans = clics_sans_souris(getattr(pilote, "clics_installation", []) + parcours.clics)
+        t.check(not sans, sans)
+
+        # The nightly the app's install registered, started by the scheduler as on the first night.
+        t("app-nuit-rendue")
+        rendue = pilote.rendre_la_nuit()
+        if rendue:
+            details["nuit_rendue"] = rendue
+        kit.run_nightly(t, opts)
+        t.resume = "app %s installée, %d écrans cliqués à la souris jusqu'au cerveau en %d min, vérifications conformes, " \
+                   "deuxième lancement : déjà installé, une nuit lancée par le planificateur" % (
                        details.get("release") or "construite", len(parcours.ecrans), details["duree_parcours_s"] // 60)
     except ErreurPilote as e:
         if parcours:
             parcours.sur_echec()
+            details["install_log"] = journal_installation(home)
         t.check(False, parcours.raison(str(e)) if parcours else str(e))
     except kit.Echec as e:
         if parcours:
             parcours.sur_echec()
+            details["install_log"] = journal_installation(home)
             raise kit.Echec(parcours.raison(str(e))) from None
         raise
     finally:
         if parcours:
             details.update(parcours.bilan())
+        if getattr(pilote, "clics_installation", None):
+            details["clics_installation"] = pilote.clics_installation
 
 
 def main(argv=None):

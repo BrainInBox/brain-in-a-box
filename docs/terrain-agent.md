@@ -56,9 +56,13 @@ The jobs `app-macos` and `app-windows` get the desktop app as a user does (maste
 it, open it and click through its real window to the final screen, then check the kit like
 `installation` does and open the app a second time, which must say « Tout est déjà installé ».
 (`engine/tests/terrain_app.py`; the robot skips the Voyage key and clicks « Plus tard » at the
-Claude login.) On Windows the PC has no Python but the Store's stub (`poste-neuf.ps1`), the
-installer's pages are clicked too, and the window is read through UI Automation by
-`engine/tests/pilote_windows.cs`, compiled on the VM.
+Claude login.) Every click is the mouse's, as a user clicks. On a Mac, Xcode and Apple's command
+line tools are set aside first: the app's step « Outils Apple » opens Apple's window, which the
+robot clicks through. On Windows the PC has no Python but the Store's stub (`poste-neuf.ps1`),
+`setup.exe` carries the Mark of the Web and is opened by the shell (SmartScreen answered if it
+asks), the installer's pages are clicked too, and the window is read through UI Automation by
+`engine/tests/pilote_windows.cs`, compiled on the VM. Once all is checked, the nightly the app
+registered is started by the scheduler (`nuit-reelle`).
 
 ```bash
 gh run download <run-id> --name terrain-macos-app --dir "$(mktemp -d)"     # the JSON (terrain-windows-app)
@@ -66,25 +70,35 @@ gh run download <run-id> --name captures-macos-app --dir "$(mktemp -d)"    # the
 ```
 
 - `etape` says where: `app-preparation`, `app-telechargement`, `app-verification` or
-  `app-construction` (getting the app), `app-installation` (DMG and Gatekeeper; on Windows the
-  setup's pages, then: installed for the user alone, Start menu shortcut), `app-lancement`, then
-  one per screen of the window (`app-bienvenue`, `app-diagnostic`, `app-voyage`,
-  `app-connexion-installation`, `app-connexion`, `app-fini`), `app-etape-<id>` for an install step
-  running in the app (`claude`, `bun`, `obsidian`, `brain`), `app-nuit` (Windows: the `Brain*`
-  tasks disabled, a nightly already started waited for), `app-outils`, `app-sources`, the checks
-  of `installation` (`hooks` to `planificateur`), and `app-relance-*` for the second launch.
+  `app-construction` (getting the app; on master the preview must hold master's last change to
+  the app, a day late is a failure), `app-installation` (the DMG's window and Gatekeeper's refusal;
+  on Windows SmartScreen, the setup's pages, then: installed for the user alone, Start menu
+  shortcut), `app-lancement`, then one per screen of the window (`app-bienvenue`, `app-diagnostic`,
+  `app-voyage`, `app-connexion-installation`, `app-connexion`, `app-fini`), `app-etape-<id>` for an
+  install step running in the app (`claude`, `clt`, `bun`, `obsidian`, `brain`; every step of the
+  plan must get its screen), `app-nuit` (Windows: the `Brain*` tasks disabled, a nightly already
+  started waited for), `app-outils`, `app-sources`, the checks of `installation` (`hooks` to
+  `planificateur`), `app-relance-*` for the second launch, `app-clics` (a click that was not the
+  mouse's: AXPress, Invoke, Toggle), `app-nuit-rendue` and `nuit-reelle`.
+- `raison` « interrompu pendant l'étape … »: the job step's timeout killed the scenario there; the
+  walk itself stops 5 minutes before (« fin du temps du scénario »).
 - `raison` ends with `Bibo : « … »`: the last thing the window said (title, then text). « Oups, ça
   a coincé. » with the step's own sentence is a failure of the app or the kit, not of the robot;
   `dialogue système ouvert (...)` names a macOS dialog that stayed over the window.
 - The captures, in order: `NN-installeur-<page>.png` for the Windows setup's pages,
   `NN-<screen>.png` at every new screen or install step,
-  `NN-<screen>-<m>min.png` every 2 minutes of waiting, `NN-dialogue-<process>.png` for a system
-  dialog (the robot accepts only one naming the app, as the app tells users to), `NN-echec.png`
-  and `NN-echec-arbre.json` (what the robot read in the window) at the failure. Look at the
-  capture before the failure: it shows what a user would have seen.
-- `details`: `ecrans` (each screen and how long it stayed), `clics`, `dialogues_systeme`, `dernier_ecran`
-  (title, text, buttons, texts), `release` or `sources_du_cerveau`, `duree_parcours_s`; on Windows
-  `installeur` (each page of the setup, its buttons, what was clicked) and `nuit_reelle`.
+  `NN-<screen>-<m>min.png` every 2 minutes of waiting, `NN-dmg.png` and `NN-gatekeeper.png` (Mac),
+  `NN-smartscreen.png` (Windows, when it asks), `NN-dialogue-<process>.png` for a system dialog
+  (Apple's window for its tools; the robot accepts only the request the app announces, its folder
+  Documents: any other dialog naming the app fails the night, « demande système inattendue »),
+  `NN-echec.png` and `NN-echec-arbre.json` (what the robot read in the window) at the failure.
+  Look at the capture before the failure: it shows what a user would have seen.
+- `details`: `ecrans` (each screen and how long it stayed), `clics` and `clics_installation` (how
+  each was done), `dialogues_systeme`, `dernier_ecran` (title, text, buttons, texts), `install_log`
+  (on a failure: the end of `~/.brain-in-a-box/install.log`, why the brain step stopped),
+  `release` or `sources_du_cerveau`, `duree_parcours_s`, `nightly_log`; on Windows `installeur`
+  (each page of the setup, its buttons, what was clicked), `avant_installeur` (SmartScreen) and
+  `nuit_reelle`. `a_noter` says what the VM had before the app (its install then went untested).
 - The robot finds screens and buttons by the app's words (`ECRANS`, `ETAPES` in
   `terrain_app.py`). Reworded in `app/src/app.js` without them: « écran inconnu », « n'offre pas
   le bouton ». Fix both together; `test_terrain_app.py` checks every word the robot looks for is

@@ -392,7 +392,7 @@ jobs:
     name: The app, clicked through (macOS)
     needs: ref
     runs-on: macos-latest
-    timeout-minutes: 140
+    timeout-minutes: 185
     permissions:
       contents: read
       attestations: read
@@ -484,15 +484,38 @@ jobs:
             app/src-tauri/target
           key: ${{ steps.cargo.outputs.cache-primary-key }}
 
+      # A Mac as users get it: no Apple command line tools (the image has Xcode and the tools, set
+      # aside here, never deleted): the app's step « Outils Apple » opens Apple's window and the
+      # robot clicks it through. The harness keeps Homebrew's python3 and git, none of /usr/bin's.
+      - name: No Apple command line tools, before the app
+        timeout-minutes: 5
+        run: |
+          aside="$RUNNER_TEMP/outils-apple"
+          sudo mkdir -p "$aside"
+          for d in /Applications/Xcode*.app /Library/Developer/CommandLineTools; do
+            if [ -e "$d" ]; then sudo mv "$d" "$aside/"; fi
+          done
+          { pkgutil --pkgs | grep -i 'CLTools' || true; } | while read -r pkg; do sudo pkgutil --forget "$pkg" >/dev/null; done
+          sudo xcode-select --reset || true
+          dev=$(env -u DEVELOPER_DIR xcode-select -p 2>/dev/null || true)
+          if [ -n "$dev" ] && [ -f "$dev/usr/bin/git" ]; then
+            echo "::error::the command line tools are still there ($dev)"; exit 1
+          fi
+          for tool in python3 git; do
+            where=$(command -v "$tool")
+            case "$where" in /usr/bin/*|"") echo "::error::no $tool for the harness but /usr/bin's"; exit 1 ;; esac
+            echo "$tool for the harness: $where"
+          done
+
       - name: "Scenario: the app installed and clicked through to the brain, then opened again"
         if: ${{ !cancelled() }}
-        timeout-minutes: 90
+        timeout-minutes: 130
         env:
           SOURCE: ${{ steps.source.outputs.source }}
           GH_TOKEN: ${{ steps.source.outputs.source == 'release' && github.token || '' }}
         run: |
           python3 -I engine/tests/terrain.py app --parcours "$PARCOURS" --vm --json "$TERRAIN_JSON" \
-            --source "$SOURCE" --fichier "${APP_FICHIER:-}" --captures "$TERRAIN_CAPTURES"
+            --source "$SOURCE" --fichier "${APP_FICHIER:-}" --captures "$TERRAIN_CAPTURES" --delai-min 125
 
       - name: Summary
         if: always()
@@ -524,7 +547,7 @@ jobs:
     name: The app, clicked through (Windows)
     needs: ref
     runs-on: windows-latest
-    timeout-minutes: 150
+    timeout-minutes: 185
     permissions:
       contents: read
       attestations: read
@@ -659,13 +682,14 @@ jobs:
 
       - name: "Scenario: the app installed and clicked through to the brain, then opened again"
         if: ${{ !cancelled() }}
-        timeout-minutes: 90
+        timeout-minutes: 130
         env:
           SOURCE: ${{ steps.source.outputs.source }}
           GH_TOKEN: ${{ steps.source.outputs.source == 'release' && github.token || '' }}
         run: |
           python -I engine/tests/terrain.py app --parcours $env:PARCOURS --vm --json $env:TERRAIN_JSON `
-            "--source=$env:SOURCE" "--fichier=$env:APP_FICHIER" --captures $env:TERRAIN_CAPTURES "--stub=$env:TERRAIN_STUB"
+            "--source=$env:SOURCE" "--fichier=$env:APP_FICHIER" --captures $env:TERRAIN_CAPTURES "--stub=$env:TERRAIN_STUB" `
+            --delai-min 125
 
       - name: Summary
         if: always()

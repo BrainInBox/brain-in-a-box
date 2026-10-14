@@ -8,9 +8,9 @@
 //
 //   pilote-windows.exe lire <pid>                  the windows of <pid>, and the one in front
 //   pilote-windows.exe cliquer <hwnd> <label> [souris|invoke]
-//                                                  the enabled button with that label: the mouse on it
-//                                                  as a user clicks, or Invoke as a screen reader does
-//   pilote-windows.exe cocher <hwnd> <label> 0|1   a check box, unchecked or checked
+//                                                  the enabled button (or link) with that label: the mouse
+//                                                  on it as a user clicks, or Invoke as a screen reader does
+//   pilote-windows.exe cocher <hwnd> <label> 0|1   a check box, unchecked or checked, with the mouse
 //   pilote-windows.exe fermer <hwnd>               the window closed, as its X does
 //   pilote-windows.exe devant <hwnd>               the window brought to the front
 //   pilote-windows.exe capturer <file.png>         the whole screen
@@ -362,7 +362,7 @@ static class PiloteWindows
     // button's click (BM_CLICK), which a GitHub VM showed on the installer's last page.
     static Dictionary<string, object> Cliquer(IntPtr h, string libelle, string mode)
     {
-        AutomationElement b = Trouver(h, libelle, ControlType.Button);
+        AutomationElement b = Trouver(h, libelle, ControlType.Button) ?? Trouver(h, libelle, ControlType.Hyperlink);
         if (b == null) return Echec("absent");
         if (!b.Current.IsEnabled) return Echec("inactif");
         bool actif = Activer(h);
@@ -427,14 +427,21 @@ static class PiloteWindows
         if (!c.TryGetCurrentPattern(TogglePattern.Pattern, out p)) return Echec("pas une case a cocher");
         Activer(h);
         TogglePattern tp = (TogglePattern)p;
+        string comment = "clic souris";
         for (int i = 0; i < 3 && (tp.Current.ToggleState == ToggleState.On) != voulu; i++)
         {
-            tp.Toggle();
+            string pourquoi = Souris(h, c);
+            if (pourquoi != null)
+            {
+                comment = "Toggle (pas de clic souris : " + pourquoi + ")";
+                tp.Toggle();
+            }
             Thread.Sleep(200);
         }
         bool coche = tp.Current.ToggleState == ToggleState.On;
         Dictionary<string, object> res = coche == voulu ? Ok() : Echec("la case ne change pas");
         res["coche"] = coche;
+        res["comment"] = comment;
         return res;
     }
 
