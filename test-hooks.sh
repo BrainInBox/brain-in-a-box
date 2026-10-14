@@ -36,8 +36,9 @@ PAYLOAD="{\"session_id\":\"$SID\",\"cwd\":\"/Users/builder/proj\",\"transcript_p
 echo "════ 1) correction-detector ════"
 verdict() {   # $1 prompt, $2 hook (default: installed one) → CORRECTION | CONFUSION | SILENT
   local out
+  # env -u: run from a claude -p (sdk-cli), the hook would rightly say nothing.
   out=$(printf '%s' "$1" | python3 -c 'import json,sys; print(json.dumps({"prompt": sys.stdin.read()}))' \
-        | HOME="$H" python3 "${2:-$HB/correction-detector.py}" 2>/dev/null)
+        | env -u CLAUDE_CODE_ENTRYPOINT HOME="$H" python3 "${2:-$HB/correction-detector.py}" 2>/dev/null)
   case "$out" in "") echo SILENT;; *"CONFUSION DETECTED"*) echo CONFUSION;; *"CORRECTION DETECTED"*) echo CORRECTION;; *) echo "?";; esac
 }
 expect_all() {   # $1 label, $2 expected verdict, then one prompt per argument
@@ -96,6 +97,8 @@ rm -f "$GT/_paste_guard.py"
 [ "$(verdict "no, actually the other way" "$GT/correction-detector.py")" = CORRECTION ] || bad="$bad | missing module"
 [ -z "$bad" ] && ok "relay guard broken or missing: corrections still fire" || no "guard failure swallowed corrections:$bad"
 rm -rf "$GT"
+out=$(printf '{"prompt": "no, actually do it the other way"}' | CLAUDE_CODE_ENTRYPOINT=sdk-cli HOME="$H" python3 "$HB/correction-detector.py")
+[ $? = 0 ] && [ -z "$out" ] && ok "headless run (claude -p, sdk-cli): silent, a correction included" || no "fired in a headless run: $out"
 
 echo "════ 2) session-logger ════"
 echo "$PAYLOAD" | HOME="$H" python3 "$HB/session-logger.py" 2>/dev/null
