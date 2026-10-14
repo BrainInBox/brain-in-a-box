@@ -26,6 +26,12 @@ CONTROLE = os.path.join(HOOKS, "controle.py")
 sys.path.insert(0, HOOKS)
 sys.path.insert(0, HERE)
 
+# Under -I, PYTHONIOENCODING is ignored: a failure message with an accent or an
+# emoji must not crash the runner on a cp1252 console or CI log (Windows).
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 import _controle_rules as rules  # noqa: E402
 import _redact  # noqa: E402
 import controle  # noqa: E402

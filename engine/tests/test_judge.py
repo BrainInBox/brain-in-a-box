@@ -30,6 +30,12 @@ HELP = os.path.join(FIXTURES, "claude-help-2.1.296.txt")
 sys.path.insert(0, HOOKS)
 sys.path.insert(0, HERE)
 
+# Under -I, PYTHONIOENCODING is ignored: a failure message with an accent or an
+# emoji must not crash the runner on a cp1252 console or CI log (Windows).
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 import _controle_judge as judge  # noqa: E402
 import _controle_rules as rules  # noqa: E402
 import _headless_claude as headless  # noqa: E402
