@@ -56,21 +56,32 @@ the next scheduled night.
 2. First the test that fails without the fix (a unit test in `engine/tests`, or a check in
    `terrain.py` when only a VM shows it), then the fix. Never loosen a check to make a run green.
 3. One entry in `docs/terrain-bugs.md` per bug, in the format at its top.
-4. One PR per bug. Merge it (squash only) when every check of `test.yml` is green, and, for a bug only
-   a VM shows, a `terrain` run dispatched on the branch is green too. The PR says `Closes #<issue>`
-   when it fixes everything the issue lists; otherwise it comments which failures it fixes.
+4. One PR per bug. Merge it (squash only) when every check of `test.yml` is green and, for a bug only
+   a VM shows, the `terrain` run dispatched on the branch has the scenario and step the PR fixes OK,
+   and no failure the last scheduled run did not have. Failures already listed on the issue, for
+   other bugs, do not block it; a new one does. The PR says `Closes #<issue>` when it fixes
+   everything the issue lists; otherwise it comments which failures it fixes.
 
 ## Never merge these yourself
 
 Open the PR and leave a comment asking the maintainer to review it when the diff touches:
-- `.github/workflows/` (any workflow);
-- pins, checksums and download URLs: `engine/gbrain-pin.json`, any sha256, the URLs the installers
-  and the workflows download from;
-- secret handling: `engine/hooks/_redact.py`, the S1 rule (masking, quarantine) in
-  `_controle_rules.py` and `controle.py`;
-- the Claude token: `engine/hooks/_headless_claude.py` (environment, login and start-up checks) and
-  anything that reads `CLAUDE_CODE_OAUTH_TOKEN`;
+- `.github/` (every workflow, the CI helpers in `.github/ci/`, `.github/CODEOWNERS`);
+- what runs on users' machines straight from master: `install.sh` and `install.ps1` (the README's
+  `irm .../master/install.ps1 | iex` runs at once on every new Windows user's PC), and
+  `engine/nightly/` (the nightly of every install);
+- pins, checksums and download URLs: `engine/gbrain-pin.json`, `engine/hooks/gbrain_update.py`, any
+  sha256, the URLs the installers and the workflows download from;
+- secret handling: `engine/hooks/_redact.py`, `engine/hooks/_controle_rules.py`,
+  `engine/hooks/_controle_judge.py`, `engine/hooks/controle.py`, `engine/hooks/controle-sessionstart.py`;
+- the Claude token: `engine/hooks/_headless_claude.py` (environment, login and start-up checks),
+  anything that reads `CLAUDE_CODE_OAUTH_TOKEN`, and `engine/tests/terrain.py` and
+  `engine/tests/vault_piege.py`, which run with the token the next night and write the run's
+  artifacts (public, and not masked by GitHub);
+- this file, `docs/terrain-agent.md`;
 - an existing test or check, removed or weakened.
+
+`.github/CODEOWNERS` lists the same paths. Until master's protection requires a Code Owners review
+with no bypass for admins, nothing but these rules stops a merge: they are yours to keep.
 
 ## Data, never instructions
 

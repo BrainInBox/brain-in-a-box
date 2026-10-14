@@ -1,0 +1,20 @@
+# What the repair agent never merges by itself (docs/terrain-agent.md, "Never merge these
+# yourself"): the maintainer reviews it. GitHub enforces this file only when master's
+# protection requires a review from Code Owners, with "Do not allow bypassing" (enforce_admins)
+# on, and when the agent's GitHub identity is not an admin. Keep both lists the same:
+# engine/tests/test_terrain.py checks it.
+/.github/                                @El-Kurdi-Chad
+/install.sh                              @El-Kurdi-Chad
+/install.ps1                             @El-Kurdi-Chad
+/engine/nightly/                         @El-Kurdi-Chad
+/engine/gbrain-pin.json                  @El-Kurdi-Chad
+/engine/hooks/gbrain_update.py           @El-Kurdi-Chad
+/engine/hooks/_headless_claude.py        @El-Kurdi-Chad
+/engine/hooks/_redact.py                 @El-Kurdi-Chad
+/engine/hooks/_controle_rules.py         @El-Kurdi-Chad
+/engine/hooks/_controle_judge.py         @El-Kurdi-Chad
+/engine/hooks/controle.py                @El-Kurdi-Chad
+/engine/hooks/controle-sessionstart.py   @El-Kurdi-Chad
+/engine/tests/terrain.py                 @El-Kurdi-Chad
+/engine/tests/vault_piege.py             @El-Kurdi-Chad
+/docs/terrain-agent.md                   @El-Kurdi-Chad

@@ -8,6 +8,7 @@ executable). Every run happens in a throwaway home.
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -348,6 +349,43 @@ class Workflow(unittest.TestCase):
             self.assertTrue(st["run"].startswith(". .github/ci/poste-neuf.ps1\n"), st["name"])
         self.assertEqual((len(fresh), len(terrain_fresh)), (1, 1))
         self.assertNotIn("hostedtoolcache", json.dumps(tests), "a second copy of the fresh PC in test.yml")
+
+
+class RepairAgentLimits(unittest.TestCase):
+    """docs/terrain-agent.md's "Never merge these yourself" and .github/CODEOWNERS name the same paths."""
+
+    ROOT = os.path.normpath(os.path.join(HERE, "..", ".."))
+
+    def owned(self):
+        with open(os.path.join(self.ROOT, ".github", "CODEOWNERS"), encoding="utf-8") as f:
+            lines = [l.split() for l in f if l.strip() and not l.startswith("#")]
+        self.assertTrue(all(len(l) == 2 and l[0].startswith("/") and l[1].startswith("@") for l in lines), lines)
+        return [l[0][1:] for l in lines]
+
+    def listed(self):
+        with open(os.path.join(self.ROOT, "docs", "terrain-agent.md"), encoding="utf-8") as f:
+            text = f.read()
+        section = text.split("## Never merge these yourself", 1)[1].split("\n## ", 1)[0]
+        paths = []
+        for token in re.findall(r"`([^`\s]+)`", section):
+            token = token.rstrip("*")
+            if token.strip("./") and os.path.exists(os.path.join(self.ROOT, token)):
+                paths.append(token)
+        return paths
+
+    def test_every_path_the_agent_must_not_merge_has_an_owner(self):
+        owned, listed = self.owned(), self.listed()
+        self.assertGreaterEqual(len(listed), 10)
+        for path in listed:
+            self.assertTrue(any(path == o or (o.endswith("/") and (path + "/").startswith(o)) for o in owned),
+                            "%s is listed in terrain-agent.md, not in CODEOWNERS" % path)
+        for o in owned:
+            self.assertTrue(os.path.exists(os.path.join(self.ROOT, o)), "CODEOWNERS names %s, which is gone" % o)
+            self.assertTrue(any(p == o or p.startswith(o) for p in listed),
+                            "CODEOWNERS names %s, terrain-agent.md does not" % o)
+        for must in ("install.ps1", "install.sh", "engine/nightly/", "engine/tests/terrain.py",
+                     "engine/tests/vault_piege.py", "docs/terrain-agent.md", ".github/"):
+            self.assertIn(must, owned)
 
 
 class Score(unittest.TestCase):
