@@ -26,6 +26,10 @@ pub struct Check {
     pub detail: String,
     /// Id of the install step that fixes it (see steps::ORDER), if any.
     pub fix: Option<String>,
+    /// Where it was found, for `--diagnose` and its tests (which Python, of the Store's stub
+    /// and the others). The window does not show it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
 }
 
 #[derive(Serialize, Clone, Debug)]

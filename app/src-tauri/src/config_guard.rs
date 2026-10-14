@@ -8,18 +8,18 @@
 //! ours) is what this is for: no installer is trusted, ours included.
 
 use std::collections::{HashMap, HashSet};
+use std::ffi::OsStr;
 use std::fmt;
 use std::fs;
 use std::io;
-use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Component, Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{Map, Value};
+use sha2::{Digest, Sha256};
 
+use crate::perms;
 use crate::steps::write_atomic;
-use crate::sys;
 
 const SETTINGS: &str = ".claude/settings.json";
 /// The old bytes must stay at the start: install.sh appends to CLAUDE.md, Bun's
@@ -44,8 +44,17 @@ const MAX_TREE: usize = 64 << 20;
 /// failed is never pruned (KEEP_MARK).
 const SNAPSHOTS_KEPT: usize = 3;
 
-/// What install.sh wrote (path -> sha256), once it keeps that list.
+/// What install.sh and install.ps1 wrote (path -> sha256).
 const INSTALLED: &str = ".brain-in-a-box/installed.json";
+/// The kit's sources the last install ran from. install.ps1 copies their hooks as they are:
+/// one still exactly like its source there is ours, from before installed.json.
+const SOURCES: &str = ".brain-in-a-box/src/engine";
+const SOURCE_DIRS: &[&str] = &["hooks", "nightly"];
+/// Where the installers put the kit's hooks, and what settings.json runs them from.
+const KIT_HOOKS: &str = ".claude/hooks/brain";
+/// install.ps1's gbq for Git Bash holds this PC's paths (Python, the brain), so no source
+/// matches it: its first lines say it is ours.
+const GBQ_MARK: (&str, &[u8]) = (".local/bin/gbq", b"#!/bin/sh\n# brain-in-a-box : gbq pour Git Bash");
 /// install_skills.py's list: skill name -> hash of the whole folder.
 const SKILLS_MANIFEST: &str = ".brain-in-a-box/skills.json";
 /// The guard's own list of what a guarded run wrote, next to the snapshots.
@@ -130,9 +139,15 @@ impl Report {
 /// `~/rel` for a path under `home`, the path as is otherwise.
 pub(crate) fn tilde(p: &Path, home: &Path) -> String {
     match p.strip_prefix(home) {
-        Ok(rel) => format!("~/{}", rel.display()),
+        Ok(rel) => format!("~/{}", slashed(rel)),
         Err(_) => p.display().to_string(),
     }
+}
+
+/// A path from the home folder written with '/', on Windows too: the same file always
+/// has the same name in the lists and in what the user reads.
+fn slashed(rel: &Path) -> String {
+    rel.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/")
 }
 
 // ── Before ──────────────────────────────────────────────────────────────────
@@ -154,7 +169,9 @@ pub fn take(home: &Path, store: &Path) -> Result<Snapshot, String> {
     }
     let mut ours: HashSet<(String, String)> = hashes(home, &home.join(INSTALLED)).into_iter().collect();
     ours.extend(hashes(home, &store.join(WRITTEN)));
-    let our_skills = untouched_skills(home, &dir);
+    ours.extend(shipped(home));
+    ours.extend(marked(home));
+    let our_skills = untouched_skills(home);
     Ok(Snapshot { store: store.to_path_buf(), dir, saved, ours, our_skills })
 }
 
@@ -219,7 +236,7 @@ fn save(home: &Path, rel: &Path, rule: Rule, dir: &Path, n: usize) -> io::Result
         Ok(m) if m.is_file() => {
             let file = dir.join(format!("{n:05}"));
             write_private(&file, &fs::read(&path)?)?;
-            Some(Kept { file, mode: m.permissions().mode() & 0o7777 })
+            Some(Kept { file, mode: perms::mode(&m) })
         }
         // A folder, or a link to nothing: only the link itself is compared.
         _ => None,
@@ -229,14 +246,14 @@ fn save(home: &Path, rel: &Path, rule: Rule, dir: &Path, n: usize) -> io::Result
 
 /// A fresh private folder under `store`, named "<seconds>-<n>". The oldest go.
 fn new_dir(store: &Path) -> io::Result<PathBuf> {
-    fs::DirBuilder::new().recursive(true).mode(0o700).create(store)?;
+    perms::create_dir_all(store)?;
     if !fs::symlink_metadata(store)?.is_dir() {
         return Err(io::Error::other("ce n'est pas un vrai dossier"));
     }
     let secs = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
     for n in 1..100 {
         let dir = store.join(format!("{secs}-{n}"));
-        match fs::DirBuilder::new().mode(0o700).create(&dir) {
+        match perms::create_dir(&dir) {
             Ok(()) => {
                 prune(store);
                 return Ok(dir);
@@ -273,7 +290,7 @@ fn snapshot_order(name: &str) -> Option<(u64, u64)> {
 
 fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
     use std::io::Write;
-    fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(path)?.write_all(bytes)
+    perms::create_new(path, 0o600)?.write_all(bytes)
 }
 
 /// (path from home, sha256) pairs of a flat JSON object. Paths may be absolute,
@@ -286,11 +303,40 @@ fn hashes(home: &Path, file: &Path) -> Vec<(String, String)> {
             let sha = sha.as_str()?.to_ascii_lowercase();
             let rel = match path.strip_prefix("~/") {
                 Some(r) => r.to_string(),
-                None => Path::new(&path).strip_prefix(home).map_or(path.clone(), |r| r.to_string_lossy().into_owned()),
+                None => Path::new(&path).strip_prefix(home).map_or(path.clone(), slashed),
             };
             is_sha256(&sha).then_some((rel, sha))
         })
         .collect()
+}
+
+/// (path from home, sha256) of the kit's hooks as the last install's sources hold them, at
+/// the place install.ps1 copies them to. Every Windows install made before installed.json
+/// existed is told apart from the user's edit that way; on a Mac install.sh fills paths
+/// into its hooks, so this matches nothing there and its manifest does the job.
+fn shipped(home: &Path) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for dir in SOURCE_DIRS {
+        let dir = home.join(SOURCES).join(dir);
+        for name in names_in(&dir) {
+            let file = dir.join(&name);
+            if !fs::symlink_metadata(&file).is_ok_and(|m| m.is_file()) {
+                continue;
+            }
+            if let Some(sha) = sha256_file(&file) {
+                out.push((slashed(&Path::new(KIT_HOOKS).join(&name)), sha));
+            }
+        }
+    }
+    out
+}
+
+/// install.ps1's gbq, as it wrote it (see GBQ_MARK).
+fn marked(home: &Path) -> Option<(String, String)> {
+    let (rel, mark) = GBQ_MARK;
+    let file = home.join(rel);
+    let bytes = fs::read(&file).ok().filter(|b| b.starts_with(mark))?;
+    fs::symlink_metadata(&file).is_ok_and(|m| m.is_file()).then(|| (rel.to_string(), hex(&Sha256::digest(&bytes))))
 }
 
 fn is_sha256(s: &str) -> bool {
@@ -298,7 +344,7 @@ fn is_sha256(s: &str) -> bool {
 }
 
 /// The skills listed by install_skills.py whose folder still hashes as it wrote it.
-fn untouched_skills(home: &Path, scratch: &Path) -> HashSet<String> {
+fn untouched_skills(home: &Path) -> HashSet<String> {
     let Ok(text) = fs::read_to_string(home.join(SKILLS_MANIFEST)) else { return HashSet::new() };
     let Ok(Value::Object(map)) = serde_json::from_str::<Value>(&text) else { return HashSet::new() };
     map.into_iter()
@@ -306,7 +352,7 @@ fn untouched_skills(home: &Path, scratch: &Path) -> HashSet<String> {
         .filter(|(name, hash)| {
             let root = home.join(SKILLS).join(name);
             fs::symlink_metadata(&root).is_ok_and(|m| m.is_dir())
-                && tree_hash(&root, &scratch.join("arbre")).is_some_and(|h| hash.as_str() == Some(h.as_str()))
+                && tree_hash(&root).is_some_and(|h| hash.as_str() == Some(h.as_str()))
         })
         .map(|(name, _)| name)
         .collect()
@@ -317,35 +363,45 @@ fn is_plain_name(name: &str) -> bool {
     matches!((parts.next(), parts.next()), (Some(Component::Normal(_)), None))
 }
 
-/// install_skills.py's `tree_hash`: sha256 over each file's path from `root` and its
-/// bytes, both followed by a NUL, files sorted by path components; linked folders
-/// are not entered, linked files are read.
-fn tree_hash(root: &Path, scratch: &Path) -> Option<String> {
+/// install_skills.py's `tree_hash`: sha256 over each file's path from `root` (with '/',
+/// `as_posix()`) and its bytes, both followed by a NUL, files sorted as Python sorts
+/// paths (by parts; on Windows without regard to case); linked folders are not entered,
+/// linked files are read.
+fn tree_hash(root: &Path) -> Option<String> {
     let mut files = Vec::new();
     tree_files(root, Path::new(""), &mut files);
-    files.sort_by(|a, b| a.components().cmp(b.components()));
-    let mut stream = Vec::new();
+    files.sort_by_cached_key(|p| sort_key(p));
+    let mut hash = Sha256::new();
+    let mut size = 0;
     for rel in &files {
-        stream.extend_from_slice(rel.as_os_str().as_bytes());
-        stream.push(0);
-        stream.extend(fs::read(root.join(rel)).ok()?);
-        stream.push(0);
-        if stream.len() > MAX_TREE {
+        let bytes = fs::read(root.join(rel)).ok()?;
+        size += bytes.len();
+        if size > MAX_TREE {
             return None;
         }
+        hash.update(slashed(rel).as_bytes());
+        hash.update([0]);
+        hash.update(&bytes);
+        hash.update([0]);
     }
-    let _ = fs::remove_file(scratch);
-    write_private(scratch, &stream).ok()?;
-    let hash = sha256_file(scratch);
-    let _ = fs::remove_file(scratch);
-    hash
+    Some(hex(&hash.finalize()))
+}
+
+#[cfg(not(windows))]
+fn sort_key(rel: &Path) -> Vec<std::ffi::OsString> {
+    rel.components().map(|c| c.as_os_str().to_os_string()).collect()
+}
+
+#[cfg(windows)]
+fn sort_key(rel: &Path) -> Vec<String> {
+    rel.components().map(|c| c.as_os_str().to_string_lossy().to_lowercase()).collect()
 }
 
 fn tree_files(root: &Path, rel: &Path, out: &mut Vec<PathBuf>) {
     let Ok(entries) = fs::read_dir(root.join(rel)) else { return };
     for e in entries.filter_map(Result::ok) {
         let name = e.file_name();
-        if SKILL_JUNK.iter().any(|j| name.as_bytes() == j.as_bytes()) {
+        if SKILL_JUNK.iter().any(|j| name == OsStr::new(j)) {
             continue;
         }
         let child = rel.join(&name);
@@ -357,13 +413,20 @@ fn tree_files(root: &Path, rel: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// Through the system's shasum, like the dossier's hash: a few files per run do not
-/// justify a crate. Only the first word is read, so an odd file name cannot confuse it.
 pub(crate) fn sha256_file(path: &Path) -> Option<String> {
-    let p = path.to_string_lossy();
-    let out = sys::run(Path::new("/usr/bin/shasum"), &["-a", "256", "--", &p], Duration::from_secs(60));
-    let hex = out.stdout.split_whitespace().next()?.trim_start_matches('\\').to_ascii_lowercase();
-    (out.ok() && is_sha256(&hex)).then_some(hex)
+    let mut file = fs::File::open(path).ok()?;
+    let mut hash = Sha256::new();
+    io::copy(&mut file, &mut hash).ok()?;
+    Some(hex(&hash.finalize()))
+}
+
+/// Lowercase hexadecimal, as shasum and hashlib write it.
+pub(crate) fn hex(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+    bytes.iter().fold(String::with_capacity(bytes.len() * 2), |mut out, b| {
+        let _ = write!(out, "{b:02x}");
+        out
+    })
 }
 
 // ── After ───────────────────────────────────────────────────────────────────
@@ -374,7 +437,7 @@ impl Snapshot {
         if skill_of(&s.rel).is_some_and(|name| self.our_skills.contains(name)) {
             return true;
         }
-        let key = s.rel.to_string_lossy().into_owned();
+        let key = slashed(&s.rel);
         self.ours.iter().any(|(p, _)| *p == key)
             && sha256_file(&k.file).is_some_and(|h| self.ours.contains(&(key.clone(), h)))
     }
@@ -396,7 +459,7 @@ pub fn check(snap: &Snapshot, home: &Path) -> Vec<Violation> {
         .saved
         .iter()
         .enumerate()
-        .filter_map(|(i, s)| Some(Violation { path: format!("~/{}", s.rel.display()), what: changed(snap, home, s)?, at: Some(i) }))
+        .filter_map(|(i, s)| Some(Violation { path: format!("~/{}", slashed(&s.rel)), what: changed(snap, home, s)?, at: Some(i) }))
         .collect();
     let had_settings = snap.saved.iter().any(|s| s.rel == Path::new(SETTINGS));
     if !had_settings {
@@ -437,14 +500,14 @@ fn changed(snap: &Snapshot, home: &Path, s: &Saved) -> Option<&'static str> {
         Rule::Same => Some("réécrit"),
         Rule::Append if after.starts_with(&before) => None,
         Rule::Append => Some("début modifié"),
-        Rule::Settings => settings_change(&before, &after),
+        Rule::Settings => settings_change(&before, &after, home),
     };
     // A file of ours rewritten as allowed may change mode too; nothing else may.
-    let mode_kept = now.permissions().mode() & 0o7777 == k.mode || (s.rule == Rule::Same && before != after);
+    let mode_kept = perms::mode(&now) == k.mode || (s.rule == Rule::Same && before != after);
     content.or((!mode_kept).then_some("droits modifiés"))
 }
 
-fn settings_change(before: &[u8], after: &[u8]) -> Option<&'static str> {
+fn settings_change(before: &[u8], after: &[u8], home: &Path) -> Option<&'static str> {
     let Ok(Value::Object(old)) = serde_json::from_slice::<Value>(before) else {
         // Unreadable before: nothing tells what may change, so nothing may.
         return (before != after).then_some("réécrit alors qu'il était illisible");
@@ -459,10 +522,37 @@ fn settings_change(before: &[u8], after: &[u8]) -> Option<&'static str> {
         return Some("réglages modifiés");
     }
     let kept = hook_list(&new);
-    if hook_list(&old).iter().any(|h| !kept.contains(h)) {
+    // One of the kit's hooks may be re-pointed (another Python, the exec form instead of the
+    // shell one) or lose a second copy: install.ps1 does both. Still run for the same event,
+    // it is still there.
+    let kit_kept: HashSet<(&str, String)> =
+        kept.iter().filter_map(|(event, _, h)| Some((event.as_str(), kit_hook(h, home)?))).collect();
+    let still_run = |event: &str, h: &Value| kit_hook(h, home).is_some_and(|name| kit_kept.contains(&(event, name)));
+    if hook_list(&old).iter().any(|(event, matcher, h)| !kept.contains(&(event.clone(), matcher.clone(), h.clone())) && !still_run(event, h)) {
         return Some("hooks retirés");
     }
     None
+}
+
+/// The kit's hook a settings entry runs ("correction-detector.py"), whatever runs it: the
+/// shell form ("python3 /Users/jo/.claude/hooks/brain/x.py", "~/.claude/hooks/brain/x.py") or
+/// the exec form (python.exe, the script in "args"), with any Python. None for anything else.
+fn kit_hook(hook: &Value, home: &Path) -> Option<String> {
+    let mut text = hook.get("command")?.as_str()?.to_string();
+    for arg in hook.get("args").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str) {
+        text.push(' ');
+        text.push_str(arg);
+    }
+    // Windows paths have either slash and any case.
+    let plain = |s: &str| s.replace('\\', "/").to_lowercase();
+    let text = plain(&text);
+    let home = plain(&home.to_string_lossy());
+    let rest = [home.as_str(), "~", "$home", "${home}", "%userprofile%"].iter().find_map(|root| {
+        let at = format!("{}/{KIT_HOOKS}/", root.trim_end_matches('/'));
+        text.find(&at).map(|i| &text[i + at.len()..])
+    })?;
+    let name: String = rest.chars().take_while(|c| !c.is_whitespace() && !matches!(c, '"' | '\'' | '/')).collect();
+    (!name.is_empty()).then_some(name)
 }
 
 /// (event, matcher, hook) for every hook. Anything not shaped as expected counts as
@@ -535,7 +625,7 @@ fn put_back(home: &Path, s: &Saved) -> io::Result<()> {
             if let Some(parent) = path.parent() {
                 fs::create_dir_all(parent)?;
             }
-            std::os::unix::fs::symlink(target, &path)?;
+            perms::symlink(target, &path)?;
         }
         None if now.as_ref().is_some_and(|m| m.file_type().is_symlink()) => fs::remove_file(&path)?,
         _ => {}
@@ -567,7 +657,7 @@ fn resolve(link: &Path) -> io::Result<PathBuf> {
 }
 
 /// After a clean run: the files it created or rewrote are ours as written, so the
-/// next run may replace them (until install.sh keeps its own list, installed.json).
+/// next run may replace them (the installers' own list is installed.json).
 fn remember(snap: &Snapshot, home: &Path) {
     let before: HashMap<&Path, &Saved> = snap.saved.iter().map(|s| (s.rel.as_path(), s)).collect();
     let file = snap.store.join(WRITTEN);
@@ -583,7 +673,7 @@ fn remember(snap: &Snapshot, home: &Path) {
             None => true,
         };
         if let Some(hash) = new.then(|| sha256_file(&path)).flatten() {
-            written.insert(rel.to_string_lossy().into_owned(), Value::String(hash));
+            written.insert(slashed(&rel), Value::String(hash));
             grew = true;
         }
     }
@@ -595,10 +685,17 @@ fn remember(snap: &Snapshot, home: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::fs::symlink;
+    #[cfg(unix)]
+    use std::os::unix::fs::{symlink, PermissionsExt};
+    #[cfg(not(windows))]
+    use std::time::Duration;
+
+    #[cfg(not(windows))]
+    use crate::sys;
 
     struct Home {
         _tmp: tempfile::TempDir,
+        #[cfg(not(windows))]
         root: PathBuf,
         home: PathBuf,
         store: PathBuf,
@@ -611,7 +708,13 @@ mod tests {
             let home = root.join("home");
             fs::create_dir_all(&home).unwrap();
             let store = home.join(".brain-in-a-box/garde");
-            Home { _tmp: tmp, root, home, store }
+            Home {
+                _tmp: tmp,
+                #[cfg(not(windows))]
+                root,
+                home,
+                store,
+            }
         }
 
         fn write(&self, rel: &str, content: &str) {
@@ -629,6 +732,7 @@ mod tests {
         }
 
         /// Runs `script` with bash, HOME set to this home: a fake installer.
+        #[cfg(not(windows))]
         fn install(&self, script: &str) {
             let file = self.root.join("fake-install.sh");
             fs::write(&file, format!("set -e\nH=\"$HOME\"\n{script}\n")).unwrap();
@@ -660,7 +764,7 @@ mod tests {
         h.write(".claude/hooks/brain/correction-detector.py", USER_HOOK);
         h.write(".claude/hooks/brain/my-own.py", "print('only mine')\n");
         h.write(".claude/hooks/guard.sh", "#!/bin/sh\nexit 0\n");
-        fs::set_permissions(h.home.join(".claude/hooks/guard.sh"), fs::Permissions::from_mode(0o755)).unwrap();
+        perms::set_mode(&h.home.join(".claude/hooks/guard.sh"), 0o755).unwrap();
         h.write(".claude/settings.json", USER_SETTINGS);
         h.write(".claude/CLAUDE.md", "# Mes règles\n");
         h.write(".zshrc", "export PATH=$HOME/bin:$PATH\n");
@@ -687,6 +791,7 @@ mod tests {
         fs::write(h.home.join(SETTINGS), text).unwrap();
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn a_clean_install_passes_and_leaves_nothing_behind() {
         let h = Home::new();
@@ -715,6 +820,7 @@ mod tests {
         assert!(!written.contains("correction-detector"), "{written}");
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn rewritten_or_deleted_hooks_come_back_byte_for_byte() {
         let h = Home::new();
@@ -784,6 +890,79 @@ mod tests {
         }
     }
 
+    /// What install.ps1 makes of an older install's settings: the Python it finds now, the
+    /// exec form, one copy of each hook. The same hooks still run: nothing to put back.
+    #[test]
+    fn a_kit_hook_may_change_python_or_form_but_not_go() {
+        use serde_json::json;
+        let home = Path::new(if cfg!(windows) { r"C:\Users\Jo Doe" } else { "/Users/Jo Doe" });
+        let script = |name: &str| home.join(".claude").join("hooks").join("brain").join(name).to_string_lossy().into_owned();
+        let exec = |py: &str, name: &str| json!({ "type": "command", "command": py, "args": [script(name)] });
+        let settings = |hooks: Value| serde_json::to_vec(&json!({ "env": { "A": "1" }, "hooks": hooks })).unwrap();
+        let mine = json!([{ "matcher": "Bash", "hooks": [{ "type": "command", "command": "~/.claude/hooks/guard.sh" }] }]);
+        let old_py = r"C:\Python311\python.exe";
+        let new_py = r"C:\Users\Jo Doe\AppData\Local\Programs\Python\Python312\python.exe";
+        let before = settings(json!({
+            "UserPromptSubmit": [{ "matcher": "", "hooks": [exec(old_py, "correction-detector.py")] }],
+            "Stop": [
+                { "matcher": "", "hooks": [{ "type": "command", "command": format!("\"{old_py}\" \"{}\"", script("session-logger.py")) }] },
+                { "matcher": "x", "hooks": [exec(old_py, "session-logger.py")] }
+            ],
+            "SessionStart": [{ "hooks": [{ "type": "command", "command": "python3 ~/.claude/hooks/brain/gbrain-update-check.py" }] }],
+            "PreToolUse": mine
+        }));
+        let after = |ups: Value, stop: Value, pre: Value| {
+            settings(json!({
+                "UserPromptSubmit": ups,
+                "Stop": stop,
+                "SessionStart": [{ "hooks": [exec(new_py, "gbrain-update-check.py")] }],
+                "PreToolUse": pre
+            }))
+        };
+        let ups = json!([{ "matcher": "", "hooks": [exec(new_py, "correction-detector.py")] }]);
+        let stop = json!([{ "matcher": "", "hooks": [exec(new_py, "session-logger.py")] }]);
+        assert_eq!(settings_change(&before, &after(ups.clone(), stop.clone(), mine.clone()), home), None);
+
+        let cases = [
+            ("a kit hook gone", after(json!([]), stop.clone(), mine.clone())),
+            ("a kit hook under another event", after(json!([]), json!([{ "hooks": [exec(new_py, "session-logger.py"), exec(new_py, "correction-detector.py")] }]), mine.clone())),
+            ("the user's own hook gone", after(ups.clone(), stop.clone(), json!([]))),
+        ];
+        for (label, now) in cases {
+            assert_eq!(settings_change(&before, &now, home), Some("hooks retirés"), "{label}");
+        }
+        // Another script in the same folder is another hook.
+        assert_eq!(kit_hook(&exec(new_py, "correction-detector.py"), home).as_deref(), Some("correction-detector.py"));
+        assert_eq!(kit_hook(&json!({ "type": "command", "command": "~/.claude/hooks/guard.sh" }), home), None);
+    }
+
+    /// An install made before installed.json (every Windows one until then): a hook still
+    /// exactly like the sources it was copied from is the kit's to update; one the user
+    /// changed stays theirs.
+    #[test]
+    fn a_hook_as_the_last_install_left_it_may_be_updated() {
+        let h = Home::new();
+        h.write(".brain-in-a-box/src/engine/hooks/correction-detector.py", "v1\n");
+        h.write(".brain-in-a-box/src/engine/hooks/session-logger.py", "v1\n");
+        h.write(".brain-in-a-box/src/engine/nightly/windows-nightly.py", "n1\n");
+        h.write(".claude/hooks/brain/correction-detector.py", "v1\n");
+        h.write(".claude/hooks/brain/windows-nightly.py", "n1\n");
+        h.write(".claude/hooks/brain/session-logger.py", "v1, adapted on this PC\n");
+        // install.ps1's Git Bash gbq names the Python and the brain of the day.
+        h.write(".local/bin/gbq", "#!/bin/sh\n# brain-in-a-box : gbq pour Git Bash, meme logique que gbq.cmd\nexec '/c/Py311/python'\n");
+        let snap = h.take();
+        for f in ["correction-detector.py", "windows-nightly.py", "session-logger.py"] {
+            h.write(&format!(".claude/hooks/brain/{f}"), "v2\n");
+        }
+        h.write(".local/bin/gbq", "#!/bin/sh\n# brain-in-a-box : gbq pour Git Bash, meme logique que gbq.cmd\nexec '/c/Py312/python'\n");
+        let found: Vec<String> = check(&snap, &h.home).iter().map(ToString::to_string).collect();
+        assert_eq!(found, ["~/.claude/hooks/brain/session-logger.py (réécrit)"]);
+        settle(snap, &h.home);
+        assert_eq!(h.read(".claude/hooks/brain/session-logger.py"), b"v1, adapted on this PC\n");
+        assert_eq!(h.read(".claude/hooks/brain/correction-detector.py"), b"v2\n");
+    }
+
+    #[cfg(not(windows))]
     #[test]
     fn an_unreadable_settings_file_is_never_replaced() {
         // install.sh: `except Exception: d = {}`, then a rewrite.
@@ -824,6 +1003,7 @@ mod tests {
         }
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn links_are_kept_and_written_through() {
         let h = Home::new();
@@ -857,6 +1037,7 @@ mod tests {
         assert_eq!(fs::read_link(h.home.join(".claude/hooks/brain")).unwrap(), dotfiles.join("hooks"));
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn our_own_files_may_be_updated() {
         let h = Home::new();
@@ -894,6 +1075,7 @@ mod tests {
         assert_eq!(h.read(".claude/hooks/brain/x.py"), b"edited\n");
     }
 
+    #[cfg(not(windows))]
     fn python_tree_hash(dir: &Path) -> Option<String> {
         // Without Apple's tools, /usr/bin/python3 opens their install window.
         crate::detect::clt_dir()?;
@@ -908,6 +1090,7 @@ mod tests {
         Some(out.stdout.trim().to_string())
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn skill_folders_hash_like_install_skills() {
         let h = Home::new();
@@ -920,11 +1103,10 @@ mod tests {
         h.write(".claude/skills/brain-boost/Z.md", "capital first");
         symlink(skill.join("Z.md"), skill.join("link.md")).unwrap();
         symlink(h.root.clone(), skill.join("linked-dir")).unwrap();
-        let ours = tree_hash(&skill, &h.root.join("scratch")).unwrap();
+        let ours = tree_hash(&skill).unwrap();
         if let Some(theirs) = python_tree_hash(&skill) {
             assert_eq!(ours, theirs);
         }
-        assert!(!h.root.join("scratch").exists());
 
         h.write(SKILLS_MANIFEST, &format!(r#"{{"brain-boost":"{ours}","../evil":"{ours}"}}"#));
         h.write(".claude/skills/mine/SKILL.md", "# mine\n");
@@ -936,6 +1118,7 @@ mod tests {
         settle(snap, &h.home);
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn volatile_files_are_not_watched() {
         let h = Home::new();
@@ -949,6 +1132,7 @@ mod tests {
         assert!(settle(snap, &h.home).clean());
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn a_file_it_cannot_read_stops_the_step() {
         let h = Home::new();
@@ -961,6 +1145,7 @@ mod tests {
         assert_eq!(fs::read_dir(&h.store).unwrap().count(), 0, "no copy left behind");
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn a_failed_restore_keeps_the_copies() {
         let h = Home::new();
@@ -1027,6 +1212,7 @@ mod tests {
     /// gbq and LaunchAgents named like ours (after a backup): the guard puts every one of
     /// them back. An unreadable settings.json stops install.sh before it writes anything.
     /// Either way the user's files come out byte for byte.
+    #[cfg(not(windows))]
     #[test]
     fn the_real_install_sh_cannot_damage_the_users_files() {
         if crate::detect::clt_dir().is_none() {
@@ -1104,11 +1290,118 @@ mod tests {
                     ".claude/CLAUDE.md" => assert!(now.is_some_and(|b| b.starts_with(&claude_md)), "{rel}"),
                     // A valid settings.json may gain our hooks, and nothing else.
                     SETTINGS if !broken_settings => {
-                        assert_eq!(now.map(|b| settings_change(bytes, b)), Some(None), "{rel}");
+                        assert_eq!(now.map(|b| settings_change(bytes, b, &h.home)), Some(None), "{rel}");
                     }
                     _ => assert_eq!(now, Some(bytes), "{rel} changed"),
                 }
             }
         }
+    }
+
+    // ── Windows: the same promises, the installer's writes done by hand ─────
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_a_rewritten_hook_or_a_removed_one_comes_back() {
+        let h = Home::new();
+        personal(&h);
+        let before = snapshot_of(&h);
+        let snap = h.take();
+        // What install.ps1 does on a clean run: our hooks next to the user's, CLAUDE.md
+        // appended, our hooks added to settings.json.
+        h.write(".claude/hooks/brain/session-logger.py", "ours\n");
+        fs::write(h.home.join(".claude/CLAUDE.md"), "# Mes règles\n\r\n<!-- brain-in-a-box -->\r\nnos règles\n").unwrap();
+        edit_settings(&h, |d| {
+            let stop = serde_json::json!([{ "hooks": [{ "type": "command", "command": "python.exe", "args": ["x\\session-logger.py"] }] }]);
+            d["hooks"].as_object_mut().unwrap().insert("Stop".into(), stop);
+        });
+        let report = settle(snap, &h.home);
+        assert!(report.clean(), "{report:?}");
+        let written = fs::read_to_string(h.store.join(WRITTEN)).unwrap();
+        assert!(written.contains(".claude/hooks/brain/session-logger.py"), "keys use '/': {written}");
+
+        // What it must not do: rewrite the user's hook, remove one, rewrite CLAUDE.md, mark one read-only.
+        let snap = h.take();
+        fs::write(h.home.join(".claude/hooks/brain/correction-detector.py"), "ours").unwrap();
+        fs::remove_file(h.home.join(".claude/hooks/brain/my-own.py")).unwrap();
+        fs::write(h.home.join(".claude/CLAUDE.md"), "nouveau").unwrap();
+        perms::set_mode(&h.home.join(".claude/hooks/guard.sh"), 0o444).unwrap();
+        let mut named: Vec<String> = check(&snap, &h.home).iter().map(ToString::to_string).collect();
+        named.sort();
+        assert_eq!(
+            named,
+            [
+                "~/.claude/CLAUDE.md (début modifié)",
+                "~/.claude/hooks/brain/correction-detector.py (réécrit)",
+                "~/.claude/hooks/brain/my-own.py (supprimé)",
+                "~/.claude/hooks/guard.sh (droits modifiés)",
+            ]
+        );
+        let report = settle(snap, &h.home);
+        assert_eq!((report.restored.len(), report.failed.len()), (4, 0), "{report:?}");
+        assert_eq!(perms::mode(&fs::metadata(h.home.join(".claude/hooks/guard.sh")).unwrap()), 0o600);
+        for (rel, bytes) in before {
+            if rel != ".claude/CLAUDE.md" && rel != SETTINGS {
+                assert_eq!(fs::read(h.home.join(&rel)).unwrap(), bytes, "{rel}");
+            }
+        }
+    }
+
+    /// install.ps1's installed.json names its files as Place-File writes them: absolute
+    /// Windows paths, hashes in any case.
+    #[cfg(windows)]
+    #[test]
+    fn windows_install_ps1_manifest_names_its_files() {
+        let h = Home::new();
+        h.write(".claude/hooks/brain/x.py", "v1\n");
+        let v1 = sha256_file(&h.home.join(".claude/hooks/brain/x.py")).unwrap();
+        let key = h.home.join(r".claude\hooks\brain\x.py").display().to_string();
+        h.write(INSTALLED, &serde_json::json!({ key: v1.to_uppercase() }).to_string());
+        let snap = h.take();
+        h.write(".claude/hooks/brain/x.py", "v2\n");
+        assert!(settle(snap, &h.home).clean());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_a_settings_file_it_creates_holds_hooks_only() {
+        let h = Home::new();
+        let snap = h.take();
+        h.write(".claude/settings.json", r#"{"hooks": {}, "permissions": {"defaultMode": "bypassPermissions"}}"#);
+        assert!(settle(snap, &h.home).failed.is_empty());
+        assert!(!h.home.join(SETTINGS).exists());
+        let snap = h.take();
+        h.write(".claude/settings.json", r#"{"hooks": {}}"#);
+        assert!(settle(snap, &h.home).clean());
+    }
+
+    /// The hash must be install_skills.py's own, or a skill update would look like the
+    /// user's edit: Python sorts Windows paths without regard to case.
+    #[cfg(windows)]
+    #[test]
+    fn windows_skill_folders_hash_like_install_skills() {
+        let h = Home::new();
+        let skill = h.home.join(".claude/skills/brain-boost");
+        h.write(".claude/skills/brain-boost/SKILL.md", "# boost\n");
+        h.write(".claude/skills/brain-boost/a/b.md", "b");
+        h.write(".claude/skills/brain-boost/a.b", "dot");
+        h.write(".claude/skills/brain-boost/Z.md", "capital");
+        h.write(".claude/skills/brain-boost/b.md", "lower after capital Z in bytes, before it without case");
+        h.write(".claude/skills/brain-boost/__pycache__/x.pyc", "junk");
+        h.write(".claude/skills/brain-boost/Thumbs.db", "junk");
+        let ours = tree_hash(&skill).unwrap();
+        let Some(python) = crate::detect::python() else {
+            eprintln!("no Python: compared with nothing");
+            return;
+        };
+        let engine = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../engine");
+        let code = "import sys; sys.path.insert(0, sys.argv[1]); import install_skills as m; print(m.tree_hash(sys.argv[2]))";
+        let out = crate::sys::run(
+            &python.exe,
+            &["-B", "-I", "-c", code, &engine.to_string_lossy(), &skill.to_string_lossy()],
+            std::time::Duration::from_secs(60),
+        );
+        assert!(out.ok(), "{}", out.stderr);
+        assert_eq!(ours, out.stdout.trim());
     }
 }

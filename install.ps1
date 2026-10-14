@@ -19,6 +19,8 @@
   Lance par `irm | iex`, le script telecharge le repo dans ~\.brain-in-a-box\src
   (BIAB_ARCHIVE = autre archive .zip, URL ou chemin local).
   Cle Voyage : demandee si une console est la, sinon lue dans VOYAGE_API_KEY. Jamais en argument, jamais dans un log.
+  Le cerveau va dans -BrainDir, sinon BRAIN_DIR, sinon Documents\Brain ; un cerveau neuf va dans
+  %USERPROFILE%\Brain quand l'acces controle aux dossiers de Windows protege Documents.
 
 .EXAMPLE
   # Rien a installer avant : Win+R (ou PowerShell, ou l'invite de commandes), colle, Entree
@@ -30,7 +32,7 @@
 #>
 
 [CmdletBinding()]
-param([string]$BrainDir = $(if ($env:BRAIN_DIR) { $env:BRAIN_DIR } else { "$env:USERPROFILE\Documents\Brain" }))
+param([string]$BrainDir = "")
 
 $ErrorActionPreference = "Stop"
 if ($ExecutionContext.SessionState.LanguageMode -ne "FullLanguage") {
@@ -83,16 +85,34 @@ function Hide-Keys([string]$s) {
 # est copie dans ~\.brain-in-a-box\backups\<date>\ avant d'etre remplace, comme install.sh.
 $BACKUP = "$H\.brain-in-a-box\backups\$(Get-Date -Format 'yyyyMMdd-HHmmss')"
 $BackedUp = @()
+# Ce que l'installeur a ecrit (chemin -> sha256), comme le installed.json d'install.sh : l'app (sa garde
+# de configuration) sait ainsi qu'un fichier que la prochaine installation remplace etait le sien, intact.
+$MANIFEST = "$H\.brain-in-a-box\installed.json"
+function Save-Installed([string]$Path, [byte[]]$Bytes) {
+    try {
+        $hex = ([BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($Bytes)) -replace '-', '').ToLowerInvariant()
+        $m = [ordered]@{}
+        $j = $null
+        try { $j = [IO.File]::ReadAllText($MANIFEST) | ConvertFrom-Json } catch {}   # absent ou abime : on repart de zero
+        if ($j) { foreach ($p in @($j.PSObject.Properties)) { $m[$p.Name] = [string]$p.Value } }
+        if ($m[$Path] -eq $hex) { return }
+        $m[$Path] = $hex
+        New-Item -ItemType Directory -Path (Split-Path -Parent $MANIFEST) -Force | Out-Null
+        [IO.File]::WriteAllText("$MANIFEST.tmp", (ConvertTo-Json $m), (New-Object Text.UTF8Encoding $false))
+        Move-Item -LiteralPath "$MANIFEST.tmp" -Destination $MANIFEST -Force
+    } catch { Warn "installed.json : $($_.Exception.Message)" }
+}
 function Place-File([string]$Dest, [byte[]]$Bytes) {
     if (Test-Path -LiteralPath $Dest -PathType Leaf) {
         $old = [IO.File]::ReadAllBytes($Dest)
-        if ([Convert]::ToBase64String($old) -eq [Convert]::ToBase64String($Bytes)) { return }
+        if ([Convert]::ToBase64String($old) -eq [Convert]::ToBase64String($Bytes)) { Save-Installed $Dest $Bytes; return }
         $dir = Join-Path $BACKUP (Split-Path -Leaf (Split-Path -Parent $Dest))
         New-Item -ItemType Directory -Path $dir -Force | Out-Null
         [IO.File]::WriteAllBytes((Join-Path $dir (Split-Path -Leaf $Dest)), $old)
         $script:BackedUp += $Dest
     }
     [IO.File]::WriteAllBytes($Dest, $Bytes)
+    Save-Installed $Dest $Bytes
 }
 
 if ($psISE) { Fail "tu es dans PowerShell ISE. Ouvre 'Windows PowerShell' (pas ISE), puis recolle la commande." }
@@ -183,6 +203,16 @@ function Test-Interactive {
     if (-not [Environment]::UserInteractive) { return $false }
     if (@([Environment]::GetCommandLineArgs() | Where-Object { $_ -match '^-noni' }).Count) { return $false }
     try { return -not [Console]::IsInputRedirected } catch { return $false }
+}
+# Lance par l'app (sans fenetre) ou la CI, la sortie part dans un tuyau, que Windows PowerShell ecrit
+# dans la page de code OEM (437, 850) : un chemin accentue (un profil C:\Users\Helene accentue) y
+# arriverait abime, et l'app ne le reconnaitrait plus pour le masquer. En UTF-8, comme l'app la lit.
+if (-not (Test-Interactive)) { try { [Console]::OutputEncoding = New-Object Text.UTF8Encoding $false } catch {} }
+
+# L'acces controle aux dossiers de Windows (protection contre les ransomwares) actif : Documents est
+# ferme aux programmes qu'il ne connait pas, PowerShell, git et Python compris.
+function Test-FolderGuard {
+    try { return ((Get-MpPreference -ErrorAction Stop).EnableControlledFolderAccess -eq 1) } catch { return $false }   # pas de Defender
 }
 
 # Lance un outil natif, sa sortie va dans le journal d'installation (pas a l'ecran). Les
@@ -351,7 +381,17 @@ if ($VoyageKey) {
 }
 
 # 2. Vault skeleton (jamais ecrase)
+# Le dossier : -BrainDir, sinon BRAIN_DIR, sinon Documents\Brain. Quand Windows protege Documents, un
+# cerveau neuf va dans le dossier personnel : y autoriser PowerShell, git ou Python ouvrirait Documents
+# a tout script qu'ils lancent, rancongiciels compris.
+$GuardMoved = $false
+if (-not $BrainDir) { $BrainDir = $env:BRAIN_DIR }
+if (-not $BrainDir) {
+    $BrainDir = "$H\Documents\Brain"
+    if (-not (Test-Path -LiteralPath $BrainDir) -and (Test-FolderGuard)) { $BrainDir = "$H\Brain"; $GuardMoved = $true }
+}
 Say "Brain vault ($BrainDir)"
+if ($GuardMoved) { Ok "Windows protege Documents (acces controle aux dossiers) : ton cerveau va dans ton dossier personnel" }
 $hasContent = (Test-Path -LiteralPath $BrainDir) -and (@(Get-ChildItem -LiteralPath $BrainDir -Force -ErrorAction SilentlyContinue).Count -gt 0)
 if ($hasContent) {
     Warn "vault deja present -> skeleton NON copie (on garde ton contenu)"
@@ -360,7 +400,8 @@ if ($hasContent) {
         New-Item -ItemType Directory -Path $BrainDir -Force | Out-Null
         Copy-Item "$REPO\vault-skeleton\*" $BrainDir -Recurse -Force
     } catch {
-        Fail "impossible d'ecrire dans $BrainDir ($($_.Exception.Message)). Si la protection contre les ransomwares est active : Securite Windows > Protection contre les virus > Gerer la protection contre les ransomwares > Autoriser une application > ajoute PowerShell, puis relance."
+        # Jamais "autorise PowerShell" : tout script lance par PowerShell pourrait ensuite chiffrer Documents.
+        Fail "impossible d'ecrire dans $BrainDir ($($_.Exception.Message)). Un antivirus ou l'acces controle aux dossiers protege sans doute ce dossier : n'y autorise pas PowerShell, mets plutot ton cerveau ailleurs. Dans PowerShell, tape  `$env:BRAIN_DIR = `"`$env:USERPROFILE\Brain`"  puis relance la commande d'installation."
     }
     Ok "skeleton place"
 }

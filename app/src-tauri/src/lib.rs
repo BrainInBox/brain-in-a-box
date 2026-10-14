@@ -2,6 +2,7 @@ mod config_guard;
 mod detect;
 mod diagnose;
 mod model;
+mod perms;
 mod redact;
 mod remedies;
 mod repair;

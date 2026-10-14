@@ -4,10 +4,19 @@
 //! nothing the user installed is on it. Every command goes through `tool_path()`,
 //! which adds the places our installers put things. Arguments are passed as a
 //! vector, never through a shell, and secrets go through stdin or env, never argv.
+//!
+//! On Windows the PATH is the one Explorer had when the session opened: what an
+//! installer adds later is missing from it, so `tool_path()` adds those places too.
+//! Every program starts without a console window (CREATE_NO_WINDOW), and stopping one
+//! stops the whole tree it started (taskkill /T), as a process group does on a Mac.
 
 use std::collections::HashSet;
+use std::ffi::OsString;
 use std::io::{self, BufRead, BufReader, Read, Write};
+#[cfg(unix)]
 use std::os::unix::process::CommandExt;
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -20,20 +29,62 @@ const TICK: Duration = Duration::from_millis(50);
 /// whatever still holds the pipes open (a job it left in the background) is not waited for.
 const DRAIN: Duration = Duration::from_millis(500);
 
+/// "Mac" or "PC", for the sentences that name the computer ("ton Mac", "ce PC").
+#[cfg(not(windows))]
+pub const MACHINE: &str = "Mac";
+#[cfg(windows)]
+pub const MACHINE: &str = "PC";
+
+#[cfg(not(windows))]
 pub fn home() -> PathBuf {
     std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/"))
 }
 
+/// The profile folder (C:\Users\<name>), where install.ps1 and Claude Code put everything.
+#[cfg(windows)]
+pub fn home() -> PathBuf {
+    std::env::var_os("USERPROFILE").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(r"C:\"))
+}
+
+/// Where the app's work folders go: a downloaded installer, the folder Claude reads.
+/// A Mac's temporary folder (/var/folders/…) is the user's own, and they are 0700 in it.
+#[cfg(not(windows))]
+pub fn work_root() -> io::Result<PathBuf> {
+    Ok(std::env::temp_dir())
+}
+
+/// Windows' TEMP may point outside the profile (C:\Temp, on many company PCs), where every
+/// account can write: another one could swap an installer before it runs. A folder of the
+/// profile instead, private like the rest of it (see perms.rs).
+#[cfg(windows)]
+pub fn work_root() -> io::Result<PathBuf> {
+    let root = home().join(".brain-in-a-box").join("tmp");
+    crate::perms::create_dir_all(&root)?;
+    Ok(root)
+}
+
+/// `name` as a program file: "claude" on a Mac, "claude.exe" on Windows.
+pub fn exe(name: &str) -> String {
+    format!("{name}{}", std::env::consts::EXE_SUFFIX)
+}
+
 /// The inherited PATH first (a test can put stubs in front), then our install locations.
-pub fn tool_path() -> String {
-    let h = home();
-    let mut dirs: Vec<String> = std::env::var("PATH")
+pub fn tool_path() -> OsString {
+    let mut dirs: Vec<PathBuf> = std::env::var_os("PATH")
+        .map(|p| std::env::split_paths(&p).filter(|d| !d.as_os_str().is_empty()).collect())
+        .unwrap_or_default();
+    dirs.extend(install_dirs(&home()));
+    let mut seen = HashSet::new();
+    dirs.retain(|d| seen.insert(d.clone()));
+    // Only a folder holding the separator cannot be joined: such a one is left out.
+    std::env::join_paths(&dirs)
+        .or_else(|_| std::env::join_paths(dirs.iter().filter(|d| std::env::join_paths([d]).is_ok())))
         .unwrap_or_default()
-        .split(':')
-        .filter(|d| !d.is_empty())
-        .map(String::from)
-        .collect();
-    for d in [
+}
+
+#[cfg(not(windows))]
+fn install_dirs(h: &Path) -> Vec<PathBuf> {
+    vec![
         h.join(".local/bin"),
         h.join(".bun/bin"),
         PathBuf::from("/opt/homebrew/bin"),
@@ -42,26 +93,83 @@ pub fn tool_path() -> String {
         PathBuf::from("/bin"),
         PathBuf::from("/usr/sbin"),
         PathBuf::from("/sbin"),
-    ] {
-        dirs.push(d.to_string_lossy().into_owned());
+    ]
+}
+
+/// Where install.ps1 and the official installers put things: Claude Code and gbq in
+/// ~\.local\bin, Bun, Git for one user or for all (winget picks), then Windows itself.
+#[cfg(windows)]
+fn install_dirs(h: &Path) -> Vec<PathBuf> {
+    let mut dirs = vec![h.join(".local").join("bin"), h.join(".bun").join("bin")];
+    if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+        dirs.push(Path::new(&local).join(r"Programs\Git\cmd"));
     }
-    let mut seen = HashSet::new();
-    dirs.retain(|d| seen.insert(d.clone()));
-    dirs.join(":")
+    if let Some(pf) = std::env::var_os("ProgramFiles") {
+        dirs.push(Path::new(&pf).join(r"Git\cmd"));
+    }
+    let root = system_root();
+    dirs.extend([root.join("System32"), root.clone(), root.join(r"System32\WindowsPowerShell\v1.0")]);
+    dirs
 }
 
-/// First executable named `name` on `tool_path()`.
+/// First executable named `name` on `tool_path()` (name.exe on Windows).
 pub fn find_tool(name: &str) -> Option<PathBuf> {
-    tool_path()
-        .split(':')
-        .map(|d| Path::new(d).join(name))
-        .find(|p| is_executable(p))
+    which_all(name).into_iter().next()
 }
 
+/// Every executable named `name` on `tool_path()`, in order (`which -a`).
+pub fn which_all(name: &str) -> Vec<PathBuf> {
+    let file = exe(name);
+    std::env::split_paths(&tool_path()).map(|d| d.join(&file)).filter(|p| is_executable(p)).collect()
+}
+
+#[cfg(unix)]
 pub fn is_executable(p: &Path) -> bool {
     use std::os::unix::fs::PermissionsExt;
     std::fs::metadata(p).map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0).unwrap_or(false)
 }
+
+/// A program file: a .exe. Scripts (.cmd, .bat, .ps1) are never run as tools: a command
+/// line handed to cmd.exe is a shell again.
+#[cfg(windows)]
+pub fn is_executable(p: &Path) -> bool {
+    p.extension().is_some_and(|e| e.eq_ignore_ascii_case("exe")) && std::fs::metadata(p).is_ok_and(|m| m.is_file())
+}
+
+/// C:\Windows, where the system's own programs are found by their full path, never by PATH.
+#[cfg(windows)]
+pub fn system_root() -> PathBuf {
+    std::env::var_os("SystemRoot").map_or_else(|| PathBuf::from(r"C:\Windows"), PathBuf::from)
+}
+
+/// A program of Windows itself: C:\Windows\System32\<name>.
+#[cfg(windows)]
+pub fn system32(name: &str) -> PathBuf {
+    system_root().join("System32").join(name)
+}
+
+/// Windows PowerShell 5.1, there on every Windows 10 and 11.
+#[cfg(windows)]
+pub fn powershell() -> PathBuf {
+    system32(r"WindowsPowerShell\v1.0\powershell.exe")
+}
+
+/// The system's curl: macOS's, or the one Windows 10 (1803) and later ship.
+#[cfg(not(windows))]
+pub fn curl() -> PathBuf {
+    PathBuf::from("/usr/bin/curl")
+}
+
+#[cfg(windows)]
+pub fn curl() -> PathBuf {
+    system32("curl.exe")
+}
+
+/// Where curl writes what nobody reads.
+#[cfg(not(windows))]
+pub const NULL_DEVICE: &str = "/dev/null";
+#[cfg(windows)]
+pub const NULL_DEVICE: &str = "NUL";
 
 pub struct Output {
     /// Exit code; -1 when killed (timeout) or when the program could not start.
@@ -199,7 +307,20 @@ pub fn run_isolated(program: &Path, args: &[&str], iso: &Isolated, on_line: &mut
 fn command(program: &Path) -> Command {
     let mut cmd = Command::new(program);
     cmd.env("PATH", tool_path());
+    #[cfg(windows)]
+    if program == powershell() {
+        without_ps7_modules(&mut cmd);
+    }
     cmd
+}
+
+/// An app started from PowerShell 7 inherits its PSModulePath, PowerShell 7's own module
+/// folders first: Windows PowerShell would load those and lose its own commands
+/// (Get-FileHash, which Claude Code's installer needs). Without the variable, Windows
+/// PowerShell uses its defaults.
+#[cfg(windows)]
+fn without_ps7_modules(cmd: &mut Command) {
+    cmd.env_remove("PSModulePath");
 }
 
 #[derive(Clone, Copy)]
@@ -214,7 +335,8 @@ type Lines = Receiver<(Pipe, Vec<u8>)>;
 /// Spawns the program in a process group of its own, so that a timeout stops it with
 /// everything it started, and reads both pipes on threads that send each line on.
 fn start(cmd: &mut Command) -> io::Result<(Child, Lines)> {
-    cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).process_group(0);
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    detach(cmd);
     let mut child = cmd.spawn()?;
     let (tx, rx) = mpsc::channel();
     if let Some(out) = child.stdout.take() {
@@ -288,7 +410,22 @@ fn supervise(
     None
 }
 
+#[cfg(unix)]
+fn detach(cmd: &mut Command) {
+    cmd.process_group(0);
+}
+
+/// No console window flashes up, and none is shared with the app.
+#[cfg(windows)]
+fn detach(cmd: &mut Command) {
+    cmd.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
 /// The program is not reaped yet, so its pid still names its group (see `start`).
+#[cfg(unix)]
 fn kill_group(child: &mut Child) {
     let group = format!("-{}", child.id());
     let _ = Command::new("/bin/kill")
@@ -300,6 +437,89 @@ fn kill_group(child: &mut Child) {
     // If /bin/kill could not run, at least the program itself goes.
     let _ = child.kill();
     let _ = child.wait();
+}
+
+/// Windows has no process groups: taskkill /T follows the tree from the program down.
+/// The program is not reaped yet, so its pid still names it (the app holds its handle).
+#[cfg(windows)]
+fn kill_group(child: &mut Child) {
+    let _ = Command::new(system32("taskkill.exe"))
+        .args(["/T", "/F", "/PID", &child.id().to_string()])
+        .creation_flags(CREATE_NO_WINDOW)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+/// Hands a link (https://, a Settings page) to the system, which opens it with the
+/// right program: `open` on a Mac, Explorer on Windows (which answers 1 even when it
+/// worked: only its start counts).
+#[cfg(not(windows))]
+pub fn open_with_system(target: &str) -> bool {
+    run(Path::new("/usr/bin/open"), &[target], Duration::from_secs(15)).ok()
+}
+
+#[cfg(windows)]
+pub fn open_with_system(target: &str) -> bool {
+    spawn_detached(&system_root().join("explorer.exe"), &[target]).is_ok()
+}
+
+/// Starts a program that lives on by itself (Obsidian, a browser) and does not wait for it.
+#[cfg(windows)]
+pub fn spawn_detached(program: &Path, args: &[&str]) -> io::Result<()> {
+    Command::new(program)
+        .args(args)
+        .env("PATH", tool_path())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map(drop)
+}
+
+/// Opens a PowerShell window on `script`, a .ps1 in the profile folder, and does not
+/// wait for it: the Terminal of a Mac. `start` gives the window a console of its own.
+/// The command line is fixed but for the script's place in the profile, named from
+/// %USERPROFILE%: no path of the user's goes through cmd.exe's parsing. With `env`,
+/// the window gets that environment and nothing else.
+#[cfg(windows)]
+pub fn open_console(script: &Path, env: Option<&[(String, OsString)]>) -> Result<(), String> {
+    let rel = console_script(script, &home()).ok_or("Ce script n'est pas l'un des miens.")?;
+    let line = format!(
+        r#"/d /v:off /c start "" "%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -NoExit -File "%USERPROFILE%\{rel}""#
+    );
+    let mut cmd = Command::new(system32("cmd.exe"));
+    cmd.raw_arg(line).creation_flags(CREATE_NO_WINDOW).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    match env {
+        Some(env) => {
+            cmd.env_clear().envs(env.iter().map(|(k, v)| (k, v)));
+        }
+        None => without_ps7_modules(&mut cmd),
+    }
+    match cmd.status() {
+        Ok(s) if s.success() => Ok(()),
+        _ => Err("Je n'ai pas pu ouvrir PowerShell.".into()),
+    }
+}
+
+/// The script's place in `home`, if it is plainly there: letters, digits, . - _ only.
+#[cfg(windows)]
+fn console_script(script: &Path, home: &Path) -> Option<String> {
+    let rel = script.strip_prefix(home).ok()?;
+    let parts: Vec<String> = rel
+        .components()
+        .map(|c| match c {
+            std::path::Component::Normal(n) => n.to_str().map(String::from),
+            _ => None,
+        })
+        .collect::<Option<_>>()?;
+    let plain = |p: &String| {
+        !p.is_empty() && !p.starts_with("..") && p.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_'))
+    };
+    (!parts.is_empty() && parts.iter().all(plain) && rel.extension().is_some_and(|e| e == "ps1")).then(|| parts.join("\\"))
 }
 
 /// "30 s", "2 min".
@@ -336,10 +556,20 @@ pub fn strip_ansi(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use std::fs;
 
+    #[cfg(unix)]
     fn alive(pid: &str) -> bool {
         Command::new("/bin/kill").args(["-0", pid]).stderr(Stdio::null()).status().is_ok_and(|s| s.success())
+    }
+
+    /// Whatever TEMP says (C:\Temp, open to every account), the work folders stay in the profile.
+    #[cfg(windows)]
+    #[test]
+    fn work_folders_live_in_the_profile() {
+        let root = work_root().unwrap();
+        assert!(root.starts_with(home()) && root.is_dir(), "{}", root.display());
     }
 
     #[test]
@@ -347,6 +577,7 @@ mod tests {
         assert_eq!(strip_ansi("\u{1b}[1;32m✓\u{1b}[0m ok\r"), "✓ ok");
     }
 
+    #[cfg(unix)]
     #[test]
     fn run_captures_output_and_exit_code() {
         let o = run(Path::new("/bin/sh"), &["-c", "echo hi; echo err >&2; exit 3"], Duration::from_secs(5));
@@ -355,6 +586,7 @@ mod tests {
         assert_eq!(output_text(Path::new("/bin/sh"), &["-c", "echo 1.2; exit 1"], Duration::from_secs(5)), None);
     }
 
+    #[cfg(unix)]
     #[test]
     fn run_kills_on_timeout() {
         let t = Instant::now();
@@ -363,6 +595,7 @@ mod tests {
         assert!(t.elapsed() < Duration::from_secs(2));
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_background_job_does_not_hold_the_pipes_past_the_timeout() {
         // `sleep` keeps stdout and stderr open long after the shell is gone.
@@ -374,6 +607,7 @@ mod tests {
         assert!(took < Duration::from_secs(2), "{took:?}");
     }
 
+    #[cfg(unix)]
     #[test]
     fn timeout_kills_what_the_program_started() {
         let dir = tempfile::tempdir().unwrap();
@@ -392,12 +626,14 @@ mod tests {
         assert!(!alive(pid.trim()), "sleep {} survived", pid.trim());
     }
 
+    #[cfg(unix)]
     #[test]
     fn stdin_reaches_the_program() {
         let o = run_with(Path::new("/bin/cat"), &[], &[], Some("secret"), Duration::from_secs(5));
         assert_eq!(o.stdout, "secret");
     }
 
+    #[cfg(unix)]
     #[test]
     fn streaming_hands_over_every_line() {
         let mut lines = Vec::new();
@@ -413,6 +649,7 @@ mod tests {
         assert_eq!((code, lines), (2, vec!["a".to_string(), "b".to_string()]));
     }
 
+    #[cfg(unix)]
     #[test]
     fn streaming_stops_at_its_limit() {
         let mut lines = Vec::new();
@@ -431,6 +668,7 @@ mod tests {
         assert_eq!(lines.last().map(String::as_str), Some("Toujours pas fini au bout de 0 s : j'arrête."));
     }
 
+    #[cfg(unix)]
     #[test]
     fn streaming_sets_and_removes_variables() {
         let mut lines = Vec::new();
@@ -445,6 +683,7 @@ mod tests {
         assert_eq!((code, lines), (0, vec!["unset x".to_string()]));
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_line_that_is_not_utf8_does_not_stop_the_stream() {
         let mut lines = Vec::new();
@@ -459,10 +698,12 @@ mod tests {
         assert_eq!((code, lines), (0, vec!["a\u{fffd}".to_string(), "b".to_string()]));
     }
 
+    #[cfg(unix)]
     fn isolated<'a>(env: &'a [(&'a str, &'a str)], cwd: &'a Path, stdin: &'a str, cancel: &'a AtomicBool) -> Isolated<'a> {
         Isolated { env, cwd, stdin, limit: Duration::from_secs(5), cancel }
     }
 
+    #[cfg(unix)]
     #[test]
     fn isolated_programs_get_only_the_given_environment() {
         let dir = tempfile::tempdir().unwrap();
@@ -474,6 +715,7 @@ mod tests {
         assert_eq!((code, lines), (0, vec!["BIAB_T=x y".to_string(), "HOME=/nowhere".to_string()]));
     }
 
+    #[cfg(unix)]
     #[test]
     fn isolated_programs_read_stdin_in_their_folder() {
         let dir = tempfile::tempdir().unwrap();
@@ -486,6 +728,7 @@ mod tests {
         assert_eq!(lines, [cwd.to_string_lossy().as_ref(), "le dossier", "sur deux lignes"]);
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_program_that_ignores_a_big_stdin_does_not_block() {
         let dir = tempfile::tempdir().unwrap();
@@ -497,6 +740,7 @@ mod tests {
         assert!(t.elapsed() < Duration::from_secs(3), "{:?}", t.elapsed());
     }
 
+    #[cfg(unix)]
     #[test]
     fn cancel_kills_the_program_and_what_it_started() {
         let dir = tempfile::tempdir().unwrap();
@@ -521,6 +765,7 @@ mod tests {
         assert!(!alive(pid.trim()), "sleep {} survived", pid.trim());
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_line_can_stop_the_program() {
         let dir = tempfile::tempdir().unwrap();
@@ -542,6 +787,7 @@ mod tests {
         assert!(t.elapsed() < Duration::from_secs(3));
     }
 
+    #[cfg(unix)]
     #[test]
     fn isolated_stops_at_its_limit_and_says_when_it_cannot_start() {
         let dir = tempfile::tempdir().unwrap();
@@ -559,5 +805,182 @@ mod tests {
     fn durations_read_well() {
         assert_eq!(minutes(Duration::from_secs(30)), "30 s");
         assert_eq!(minutes(Duration::from_secs(150)), "2 min");
+    }
+
+    #[test]
+    fn program_names_follow_the_system() {
+        assert_eq!(exe("claude"), if cfg!(windows) { "claude.exe" } else { "claude" });
+        let path = tool_path();
+        let dirs: Vec<PathBuf> = std::env::split_paths(&path).collect();
+        assert!(dirs.contains(&home().join(".local").join("bin")) && dirs.contains(&home().join(".bun").join("bin")));
+        let mut seen = HashSet::new();
+        assert!(dirs.iter().all(|d| seen.insert(d.clone())), "no folder twice");
+    }
+
+    // ── Windows: the same promises, with Windows' own programs ──────────────
+
+    #[cfg(windows)]
+    fn cmd(script: &str) -> (PathBuf, Vec<String>) {
+        (system32("cmd.exe"), vec!["/d".into(), "/c".into(), script.into()])
+    }
+
+    #[cfg(windows)]
+    fn alive(pid: &str) -> bool {
+        let filter = format!("PID eq {pid}");
+        let o = run(&system32("tasklist.exe"), &["/FI", &filter, "/NH"], Duration::from_secs(20));
+        o.stdout.split_whitespace().any(|w| w == pid)
+    }
+
+    /// PowerShell starts a ping that outlives it unless the whole tree is stopped,
+    /// and writes the ping's pid to $env:BIAB_PIDFILE.
+    #[cfg(windows)]
+    const TREE: &str = "$p = Start-Process -FilePath ping.exe -ArgumentList '-n','60','127.0.0.1' -PassThru -WindowStyle Hidden; \
+                        Set-Content -LiteralPath $env:BIAB_PIDFILE -Value $p.Id; $p.WaitForExit()";
+
+    #[cfg(windows)]
+    fn wait_for_pid(file: &Path) -> String {
+        let t = Instant::now();
+        while t.elapsed() < Duration::from_secs(60) {
+            if let Ok(pid) = std::fs::read_to_string(file) {
+                if !pid.trim().is_empty() {
+                    return pid.trim().to_string();
+                }
+            }
+            thread::sleep(TICK);
+        }
+        panic!("the ping never started");
+    }
+
+    #[cfg(windows)]
+    fn gone(pid: &str) -> bool {
+        let t = Instant::now();
+        while alive(pid) && t.elapsed() < Duration::from_secs(10) {
+            thread::sleep(Duration::from_millis(200));
+        }
+        !alive(pid)
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_run_captures_output_and_exit_code() {
+        let (c, a) = cmd("echo hi& echo err 1>&2& exit /b 3");
+        let a: Vec<&str> = a.iter().map(String::as_str).collect();
+        let o = run(&c, &a, Duration::from_secs(20));
+        assert_eq!((o.code, o.stdout.trim(), o.stderr.trim()), (3, "hi", "err"));
+        let o = run_with(&system32("sort.exe"), &[], &[], Some("secret\r\n"), Duration::from_secs(20));
+        assert_eq!(o.stdout.trim(), "secret");
+        assert!(find_tool("cmd").is_some_and(|p| p.ends_with("cmd.exe")));
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("x.cmd"), "@echo hi").unwrap();
+        assert!(!is_executable(&dir.path().join("x.cmd")), "a script is never a tool");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_timeout_kills_the_whole_tree() {
+        let dir = tempfile::tempdir().unwrap();
+        let pidfile = dir.path().join("pid");
+        let pidfile_s = pidfile.to_string_lossy().into_owned();
+        let watcher = thread::spawn({
+            let pidfile = pidfile.clone();
+            move || wait_for_pid(&pidfile)
+        });
+        let t = Instant::now();
+        let o = run_with(&powershell(), &["-NoProfile", "-Command", TREE], &[("BIAB_PIDFILE", &pidfile_s)], None, Duration::from_secs(20));
+        assert_eq!(o.code, -1, "{}", o.stderr);
+        assert!(t.elapsed() < Duration::from_secs(30));
+        let pid = watcher.join().unwrap();
+        assert!(gone(&pid), "ping {pid} survived");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_cancel_kills_the_whole_tree() {
+        let dir = tempfile::tempdir().unwrap();
+        let pidfile = dir.path().join("pid");
+        let pidfile_s = pidfile.to_string_lossy().into_owned();
+        // What PowerShell itself needs to start, and the pid file.
+        let kept: Vec<(String, String)> = ["SystemRoot", "windir", "USERPROFILE", "TEMP", "TMP", "LOCALAPPDATA", "APPDATA"]
+            .iter()
+            .filter_map(|k| std::env::var(k).ok().map(|v| (k.to_string(), v)))
+            .chain([("PATH".to_string(), system32("").to_string_lossy().into_owned()), ("BIAB_PIDFILE".to_string(), pidfile_s)])
+            .collect();
+        let env: Vec<(&str, &str)> = kept.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+        let cancel = AtomicBool::new(false);
+        let iso = Isolated { env: &env, cwd: dir.path(), stdin: "", limit: Duration::from_secs(120), cancel: &cancel };
+        let code = thread::scope(|s| {
+            s.spawn(|| {
+                wait_for_pid(&pidfile);
+                cancel.store(true, Ordering::SeqCst);
+            });
+            run_isolated(&powershell(), &["-NoProfile", "-Command", TREE], &iso, &mut |_| {})
+        });
+        assert_eq!(code, -1);
+        let pid = std::fs::read_to_string(&pidfile).unwrap();
+        assert!(gone(pid.trim()), "ping {} survived", pid.trim());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_streaming_sets_and_removes_variables() {
+        let (c, a) = cmd("echo a& (echo b)1>&2& echo [%USERNAME%] [%BIAB_T%]& exit /b 2");
+        let a: Vec<&str> = a.iter().map(String::as_str).collect();
+        let mut lines = Vec::new();
+        let code = run_streaming(&c, &a, &[("USERNAME", None), ("BIAB_T", Some("x"))], None, Duration::from_secs(20), &mut |l| {
+            lines.push(l)
+        });
+        lines.sort();
+        assert_eq!((code, lines), (2, vec!["[%USERNAME%] [x]".to_string(), "a".to_string(), "b".to_string()]));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_isolated_programs_get_only_the_given_environment() {
+        let dir = tempfile::tempdir().unwrap();
+        let cancel = AtomicBool::new(false);
+        let root = system_root().to_string_lossy().into_owned();
+        let env = [("SystemRoot", root.as_str()), ("BIAB_T", "x y")];
+        let iso = Isolated { env: &env, cwd: dir.path(), stdin: "", limit: Duration::from_secs(20), cancel: &cancel };
+        let (c, a) = cmd("set");
+        let a: Vec<&str> = a.iter().map(String::as_str).collect();
+        let mut lines = Vec::new();
+        assert_eq!(run_isolated(&c, &a, &iso, &mut |l| lines.push(l)), 0);
+        let keys: Vec<String> = lines.iter().filter_map(|l| l.split_once('=')).map(|(k, _)| k.to_ascii_uppercase()).collect();
+        assert!(keys.contains(&"BIAB_T".to_string()) && keys.contains(&"SYSTEMROOT".to_string()), "{lines:?}");
+        for inherited in ["USERNAME", "USERPROFILE", "PATH", "APPDATA"] {
+            assert!(!keys.contains(&inherited.to_string()), "{inherited} passed through: {lines:?}");
+        }
+        let mut said = Vec::new();
+        assert_eq!(run_isolated(&dir.path().join("missing.exe"), &[], &iso, &mut |l| said.push(l)), -1);
+        assert!(said[0].starts_with("impossible de lancer"), "{said:?}");
+    }
+
+    /// Run from PowerShell 7 (the CI's shell, or a user's), the app must still give
+    /// Windows PowerShell its own commands: Claude Code's installer uses Get-FileHash.
+    #[cfg(windows)]
+    #[test]
+    fn windows_powershell_keeps_its_own_commands() {
+        let o = run(&powershell(), &["-NoProfile", "-NonInteractive", "-Command", "(Get-Command Get-FileHash).Name"], Duration::from_secs(60));
+        assert_eq!((o.code, o.stdout.trim()), (0, "Get-FileHash"), "{}", o.stderr);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_consoles_open_only_our_scripts() {
+        let home = Path::new(r"C:\Users\Jo Doe");
+        let ok = console_script(&home.join(r".brain-in-a-box\claude-login.ps1"), home);
+        assert_eq!(ok.as_deref(), Some(r".brain-in-a-box\claude-login.ps1"));
+        for bad in [
+            r"C:\Users\Jo Doe\..\x.ps1",
+            r"C:\Users\Jo Doe\a b.ps1",
+            r"C:\Users\Jo Doe\x&calc.ps1",
+            r"C:\Users\Jo Doe\%TEMP%.ps1",
+            r"C:\Users\Jo Doe\x.cmd",
+            r"C:\Users\Jo Doe",
+            r"C:\Temp\x.ps1",
+        ] {
+            assert_eq!(console_script(Path::new(bad), home), None, "{bad}");
+        }
+        assert!(open_console(Path::new(r"C:\Temp\x.ps1"), None).is_err());
     }
 }

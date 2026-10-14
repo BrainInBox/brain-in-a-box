@@ -5,19 +5,20 @@
 
 use std::fs;
 use std::io;
-use std::os::unix::fs::{DirBuilderExt, MetadataExt};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
 use crate::detect::{self, Found};
+use crate::perms;
 use crate::steps::{self, write_atomic};
 
 pub const SET_ASIDE_DIR: &str = ".brain-in-a-box/mis-de-cote";
 const MANIFEST: &str = "manifest.json";
-/// EXDEV: not on the same disk. A copy instead of a rename is never tried.
-const CROSS_DEVICE: i32 = 18;
+/// Not on the same disk (EXDEV; ERROR_NOT_SAME_DEVICE on Windows). A copy instead of a
+/// rename is never tried.
+const CROSS_DEVICE: i32 = if cfg!(windows) { 17 } else { 18 };
 
 /// The only folders a remedy may set aside: (remedy, step, path from home). None is
 /// the user's data (Documents/Brain, ~/.gbrain, ~/.claude, the shell files, the
@@ -28,10 +29,19 @@ const TARGETS: &[(&str, &str, &str)] = &[
     ("mettre_de_cote_sources", "brain", ".brain-in-a-box/src"),
     ("mettre_de_cote_gbrain", "brain", "DEV/gbrain"),
 ];
-/// What says an install works: the real probes in the app, fakes in tests.
+/// Where the brain goes when Documents is out of reach (controlled folder access on
+/// Windows): the profile's own Brain folder, which no default protection covers.
+const OUT_OF_DOCUMENTS: &str = "Brain";
+
+/// What says an install works, and where the brain goes: the real probes in the app,
+/// fakes in tests.
 pub struct Probes {
     pub bun_ok: fn(&Path) -> bool,
     pub obsidian_installed: fn(&Path) -> bool,
+    /// The folder install.ps1 would put the brain in now.
+    pub brain_dir: fn(&Path) -> PathBuf,
+    /// Saves the folder for install.ps1's next run (the user's BRAIN_DIR).
+    pub save_brain_dir: fn(&Path) -> io::Result<()>,
 }
 
 fn real_bun_ok(home: &Path) -> bool {
@@ -42,7 +52,20 @@ fn real_obsidian_installed(home: &Path) -> bool {
     detect::obsidian(home) != Found::Absent
 }
 
-pub const REAL_PROBES: Probes = Probes { bun_ok: real_bun_ok, obsidian_installed: real_obsidian_installed };
+/// A BRAIN_DIR the app was started with wins over the saved one: saving would change nothing.
+fn real_save_brain_dir(dir: &Path) -> io::Result<()> {
+    if std::env::var_os("BRAIN_DIR").is_some_and(|d| !d.is_empty()) {
+        return Err(io::Error::other("BRAIN_DIR est déjà choisi pour cette app"));
+    }
+    detect::save_brain_dir(dir)
+}
+
+pub const REAL_PROBES: Probes = Probes {
+    bun_ok: real_bun_ok,
+    obsidian_installed: real_obsidian_installed,
+    brain_dir: detect::brain_dir,
+    save_brain_dir: real_save_brain_dir,
+};
 
 pub struct Ctx<'a> {
     pub home: &'a Path,
@@ -64,6 +87,8 @@ pub enum Done {
     SetAside(PathBuf),
     /// The step runs again without the Voyage key.
     WithoutKey,
+    /// The brain goes in this folder from now on.
+    BrainDir(PathBuf),
 }
 
 /// One folder set aside, as manifest.json records it.
@@ -96,6 +121,7 @@ pub fn apply(id: &str, step: &str, ctx: &Ctx, key_given: bool) -> Result<Done, S
                 Err("aucune clé Voyage n'avait été donnée".into())
             }
         }
+        "cerveau_hors_documents" if step == "brain" => out_of_documents(ctx),
         _ => {
             let Some(&(_, owner, rel)) = TARGETS.iter().find(|t| t.0 == id) else { return Err("remède inconnu".into()) };
             if owner != step {
@@ -104,6 +130,33 @@ pub fn apply(id: &str, step: &str, ctx: &Ctx, key_given: bool) -> Result<Done, S
             let from = may_set_aside(id, rel, ctx)?;
             set_aside(id, &from, ctx).map(Done::SetAside)
         }
+    }
+}
+
+/// The brain goes to ~/Brain instead of a folder Windows protects. Nothing moves: only while
+/// the folder it was meant for holds nothing yet (no note left behind) and ~/Brain is free.
+/// Instead of letting one more program write in protected folders, which any ransomware
+/// written for it would then share.
+fn out_of_documents(ctx: &Ctx) -> Result<Done, String> {
+    let to = ctx.home.join(OUT_OF_DOCUMENTS);
+    let now = (ctx.probes.brain_dir)(ctx.home);
+    if now == to {
+        return Err("ton cerveau va déjà dans ~/Brain".into());
+    }
+    if !empty_or_absent(&now) {
+        return Err("le dossier de ton cerveau contient déjà quelque chose : je ne le change pas".into());
+    }
+    if !empty_or_absent(&to) {
+        return Err("~/Brain existe déjà et n'est pas vide : je n'y touche pas".into());
+    }
+    (ctx.probes.save_brain_dir)(&to).map_err(|e| format!("je n'ai pas pu choisir ~/Brain ({e})"))?;
+    Ok(Done::BrainDir(to))
+}
+
+fn empty_or_absent(dir: &Path) -> bool {
+    match fs::read_dir(dir) {
+        Ok(mut entries) => entries.next().is_none(),
+        Err(e) => e.kind() == io::ErrorKind::NotFound,
     }
 }
 
@@ -117,8 +170,8 @@ fn may_set_aside(id: &str, rel: &str, ctx: &Ctx) -> Result<PathBuf, String> {
     if !meta.is_dir() {
         return Err(format!("~/{rel} n'est pas un dossier"));
     }
-    if meta.uid() != ctx.me {
-        return Err(format!("~/{rel} appartient à un autre compte du Mac"));
+    if perms::owner(&meta) != ctx.me {
+        return Err(format!("~/{rel} appartient à un autre compte du {}", crate::sys::MACHINE));
     }
     if !in_place(ctx.home, rel) {
         return Err(format!("le chemin de ~/{rel} passe par un lien"));
@@ -143,7 +196,7 @@ fn in_place(home: &Path, rel: &str) -> bool {
 
 /// install.sh marks the gbrain clone it made; a clone without the mark is the user's.
 fn ours(gbrain: &Path, me: u32) -> bool {
-    fs::symlink_metadata(gbrain.join(".biab-owned")).is_ok_and(|m| m.is_file() && m.uid() == me)
+    fs::symlink_metadata(gbrain.join(".biab-owned")).is_ok_and(|m| m.is_file() && perms::owner(&m) == me)
 }
 
 fn set_aside(id: &str, from: &Path, ctx: &Ctx) -> Result<PathBuf, String> {
@@ -172,10 +225,10 @@ fn set_aside(id: &str, from: &Path, ctx: &Ctx) -> Result<PathBuf, String> {
 /// mis-de-cote and the plan's folder in it: real private folders of the user's.
 fn prepare(aside: &Path, me: u32) -> io::Result<()> {
     let base = aside.parent().ok_or_else(|| io::Error::other("chemin inattendu"))?;
-    fs::DirBuilder::new().recursive(true).mode(0o700).create(aside)?;
+    perms::create_dir_all(aside)?;
     for dir in [base, aside] {
         let m = fs::symlink_metadata(dir)?;
-        if !m.is_dir() || m.uid() != me {
+        if !m.is_dir() || perms::owner(&m) != me {
             return Err(io::Error::other(format!("{} n'est pas un vrai dossier à toi", dir.display())));
         }
     }
@@ -212,7 +265,7 @@ pub fn undo(home: &Path, me: u32, aside: &Path) -> Result<Vec<String>, String> {
             return Err("manifeste inattendu".into());
         }
         let kept = fs::symlink_metadata(&m.to).map_err(|_| format!("~/{rel} n'est plus dans mis-de-cote"))?;
-        if kept.file_type().is_symlink() || kept.uid() != me {
+        if kept.file_type().is_symlink() || perms::owner(&kept) != me {
             return Err(format!("ce qui est mis de côté pour ~/{rel} a changé"));
         }
         let mut apres = None;
@@ -258,10 +311,11 @@ pub fn intact(aside: &Path) -> bool {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use std::os::unix::fs::{symlink, PermissionsExt};
+    #[cfg(unix)]
+    use std::os::unix::fs::symlink;
 
     /// The remedies that need nothing on disk.
-    const OTHERS: &[&str] = &["relancer", "nettoyer_dossiers_travail", "relancer_sans_cle_voyage"];
+    const OTHERS: &[&str] = &["relancer", "nettoyer_dossiers_travail", "relancer_sans_cle_voyage", "cerveau_hors_documents"];
 
     /// Whether `apply` knows this remedy.
     pub(crate) fn known(id: &str) -> bool {
@@ -276,8 +330,21 @@ pub(crate) mod tests {
         false
     }
 
-    const BROKEN: Probes = Probes { bun_ok: broken, obsidian_installed: broken };
-    const WORKING: Probes = Probes { bun_ok: works, obsidian_installed: works };
+    fn documents_brain(home: &Path) -> PathBuf {
+        home.join("Documents").join("Brain")
+    }
+
+    /// Leaves the saved folder next to it, in the fake home.
+    fn save_in_home(dir: &Path) -> io::Result<()> {
+        fs::write(dir.parent().unwrap().join("saved-brain-dir"), dir.to_string_lossy().as_bytes())
+    }
+
+    fn cannot_save(_: &Path) -> io::Result<()> {
+        Err(io::ErrorKind::PermissionDenied.into())
+    }
+
+    const BROKEN: Probes = Probes { bun_ok: broken, obsidian_installed: broken, brain_dir: documents_brain, save_brain_dir: save_in_home };
+    const WORKING: Probes = Probes { bun_ok: works, obsidian_installed: works, brain_dir: documents_brain, save_brain_dir: save_in_home };
 
     struct Home {
         _tmp: tempfile::TempDir,
@@ -294,7 +361,7 @@ pub(crate) mod tests {
             let root = fs::canonicalize(tmp.path()).unwrap();
             let home = root.join("home");
             fs::create_dir_all(&home).unwrap();
-            let me = fs::metadata(&home).unwrap().uid();
+            let me = perms::owner(&fs::metadata(&home).unwrap());
             let aside = home.join(SET_ASIDE_DIR).join("20261013-184455-bun");
             let work = vec![root.join("tmp"), home.join("Applications"), home.join(".brain-in-a-box")];
             Home { _tmp: tmp, root, home, aside, me, work }
@@ -308,7 +375,7 @@ pub(crate) mod tests {
             let p = self.home.join(rel);
             fs::create_dir_all(p.join("bin")).unwrap();
             fs::write(p.join("bin/tool"), format!("{rel} v1")).unwrap();
-            fs::set_permissions(p.join("bin/tool"), fs::Permissions::from_mode(0o751)).unwrap();
+            perms::set_mode(&p.join("bin/tool"), 0o751).unwrap();
         }
     }
 
@@ -321,7 +388,7 @@ pub(crate) mod tests {
                 let m = fs::symlink_metadata(e.path()).unwrap();
                 let rel = e.path().strip_prefix(dir).unwrap().to_string_lossy().into_owned();
                 let bytes = if m.is_file() { fs::read(e.path()).unwrap() } else { Vec::new() };
-                out.push((rel, m.permissions().mode(), bytes));
+                out.push((rel.replace('\\', "/"), perms::mode(&m), bytes));
                 if m.is_dir() {
                     stack.push(e.path());
                 }
@@ -343,8 +410,10 @@ pub(crate) mod tests {
         assert_eq!(listing(&to), before);
         let manifest: Vec<Moved> = serde_json::from_str(&fs::read_to_string(h.aside.join(MANIFEST)).unwrap()).unwrap();
         assert_eq!((manifest[0].from.clone(), manifest[0].to.clone(), manifest[0].uid), (h.home.join(".bun"), to.clone(), h.me));
-        assert_eq!(fs::metadata(h.aside.join(MANIFEST)).unwrap().permissions().mode() & 0o777, 0o600);
-        assert_eq!(fs::metadata(&h.aside).unwrap().permissions().mode() & 0o777, 0o700);
+        #[cfg(unix)]
+        assert_eq!(perms::mode(&fs::metadata(h.aside.join(MANIFEST)).unwrap()), 0o600);
+        #[cfg(unix)]
+        assert_eq!(perms::mode(&fs::metadata(&h.aside).unwrap()), 0o700);
         assert!(pending(&h.aside) && intact(&h.aside));
 
         // The relaunch put a new one in its place: it is set aside in turn.
@@ -357,6 +426,7 @@ pub(crate) mod tests {
         assert!(undo(&h.home, h.me, &h.aside).unwrap().is_empty(), "a second undo has nothing to do");
     }
 
+    #[cfg(unix)]
     #[test]
     fn nothing_moves_that_is_not_a_broken_install_of_ours() {
         let h = Home::new();
@@ -401,6 +471,18 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn working_installs_stay_where_they_are() {
+        let h = Home::new();
+        h.tree(".bun");
+        let err = apply("mettre_de_cote_bun", "bun", &h.ctx(&WORKING), false).unwrap_err();
+        assert!(err.contains("Bun marche"), "{err}");
+        h.tree("DEV/gbrain");
+        let err = apply("mettre_de_cote_gbrain", "brain", &h.ctx(&WORKING), false).unwrap_err();
+        assert!(err.contains("pas été installé par Brain in a Box"), "the user's own clone: {err}");
+        assert!(h.home.join(".bun/bin/tool").is_file() && h.home.join("DEV/gbrain/bin/tool").is_file());
+    }
+
+    #[test]
     fn the_same_target_is_set_aside_once_per_plan() {
         let h = Home::new();
         h.tree(".brain-in-a-box/src");
@@ -424,9 +506,12 @@ pub(crate) mod tests {
             assert!(!dir.join(".biab-0123456789abcdef").exists());
             assert!(dir.join(".biab-notours/x").exists() && dir.join("mine").exists());
         }
-        let other = Ctx { me: h.me.wrapping_add(1), ..h.ctx(&BROKEN) };
-        fs::create_dir_all(h.work[0].join(".biab-fedcba9876543210")).unwrap();
-        assert_eq!(apply("nettoyer_dossiers_travail", "bun", &other, false), Ok(Done::Cleaned(0)));
+        #[cfg(unix)]
+        {
+            let other = Ctx { me: h.me.wrapping_add(1), ..h.ctx(&BROKEN) };
+            fs::create_dir_all(h.work[0].join(".biab-fedcba9876543210")).unwrap();
+            assert_eq!(apply("nettoyer_dossiers_travail", "bun", &other, false), Ok(Done::Cleaned(0)));
+        }
     }
 
     #[test]
@@ -456,8 +541,37 @@ pub(crate) mod tests {
         }
         assert!(precious.is_dir() && !h.home.join(".bun").exists());
         write_manifest(&h.aside, &good).unwrap();
+        #[cfg(unix)]
         assert!(undo(&h.home, h.me.wrapping_add(1), &h.aside).is_err(), "kept by someone else");
         assert_eq!(undo(&h.home, h.me, &h.aside).unwrap(), ["~/.bun"]);
+    }
+
+    #[test]
+    fn the_brain_goes_out_of_documents_only_while_nothing_is_there() {
+        let saved = |h: &Home| fs::read_to_string(h.home.join("saved-brain-dir")).ok();
+        let h = Home::new();
+        let to = h.home.join("Brain");
+        assert_eq!(apply("cerveau_hors_documents", "brain", &h.ctx(&BROKEN), false), Ok(Done::BrainDir(to.clone())));
+        assert_eq!(saved(&h), Some(to.to_string_lossy().into_owned()));
+        assert!(apply("cerveau_hors_documents", "bun", &h.ctx(&BROKEN), false).is_err(), "the brain step's only");
+
+        // An empty Documents/Brain left by the failed run is not a note.
+        let h = Home::new();
+        fs::create_dir_all(documents_brain(&h.home)).unwrap();
+        assert!(apply("cerveau_hors_documents", "brain", &h.ctx(&BROKEN), false).is_ok());
+
+        // A note in the old folder, something in ~/Brain, or no way to save: nothing changes.
+        for setup in ["Documents/Brain/Journal/note.md", "Brain/mine.txt"] {
+            let h = Home::new();
+            let p = h.home.join(setup);
+            fs::create_dir_all(p.parent().unwrap()).unwrap();
+            fs::write(&p, "mine").unwrap();
+            assert!(apply("cerveau_hors_documents", "brain", &h.ctx(&BROKEN), false).is_err(), "{setup}");
+            assert_eq!(saved(&h), None, "{setup}");
+        }
+        let h = Home::new();
+        let unsaved = Probes { save_brain_dir: cannot_save, ..BROKEN };
+        assert!(apply("cerveau_hors_documents", "brain", &h.ctx(&unsaved), false).is_err());
     }
 
     #[test]

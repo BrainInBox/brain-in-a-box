@@ -47,9 +47,13 @@
   // &at=<css> stops the driving on &go's screen only once that element is there, &nth=<n> only on its n-th arrival there,
   // &click=<act>[,<act>…] clicks those buttons in that order, once each, and &go's screen counts only after the last.
   // Bibo: &sleep=3 makes it doze off after 3 s without activity instead of 45.
+  // Windows: &os=windows shows the PC's words and checks (manque, installe, motscles, echec with &fail=brain):
+  // Python and Git instead of Apple's tools, install.ps1's sections under the brain step.
   (() => {
     const P = new URLSearchParams(location.search);
     if (P.get('sleep')) window.BIBO_SLEEP_MS = Number(P.get('sleep')) * 1000;
+    const WIN = P.get('os') === 'windows';
+    if (WIN) window.BIBO_OS = 'windows';
     const scenario = P.get('s') || 'manque';
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     // Driven runs must reach their screen within the screenshot's 3 s budget.
@@ -59,17 +63,24 @@
     const emit = (event, payload) => (listeners[event] || []).forEach((cb) => cb({ event, payload }));
     // Same labels and wording as src-tauri/src/diagnose.rs.
     const LABELS = {
-      macos: 'Version de macOS', disk: 'Espace disque', network: 'Connexion internet',
+      macos: 'Version de macOS', windows: 'Version de Windows', python: 'Python (pour les automatismes)',
+      git: 'Git (l’historique de tes notes)', disk: 'Espace disque', network: 'Connexion internet',
       clt: 'Outils Apple (git, python3)', bun: 'Bun (le moteur de la mémoire)', claude: 'Claude Code',
       claude_auth: 'Connexion à Claude', obsidian: 'Obsidian (pour lire tes notes)',
       brain_vault: 'Ton dossier Brain', brain_hooks: 'Les automatismes de Claude',
       brain_skills: 'Les compétences de Claude', brain_memory: 'La mémoire de recherche', voyage: 'Recherche par le sens',
     };
     const FIX = { clt: 'clt', bun: 'bun', claude: 'claude', obsidian: 'obsidian', brain_vault: 'brain', brain_hooks: 'brain', brain_skills: 'brain', brain_memory: 'brain' };
+    // install.ps1 brings all of them with the brain.
+    if (WIN) Object.assign(FIX, { python: 'brain', git: 'brain', bun: 'brain', obsidian: 'brain' });
     const C = (id, status, detail) => ({ id, label: LABELS[id], status, detail, fix: FIX[id] || null });
-    const ALL_STEPS = ['claude', 'clt', 'bun', 'obsidian', 'brain'];
+    const ALL_STEPS = WIN ? ['claude', 'brain'] : ['claude', 'clt', 'bun', 'obsidian', 'brain'];
+    const TOOLS_MISSING = WIN
+      ? [C('python', 'missing', 'Pas encore installé. Je le prends chez Microsoft (winget).'),
+        C('git', 'missing', 'Pas encore installé. Je le prends chez Microsoft (winget).')]
+      : [C('clt', 'missing', 'Pas encore installés. Apple s’en charge, il suffit de cliquer.')];
     const MISSING = [
-      C('clt', 'missing', 'Pas encore installés. Apple s’en charge, il suffit de cliquer.'),
+      ...TOOLS_MISSING,
       C('bun', 'missing', 'Pas encore installé.'),
       C('claude', 'missing', 'Pas encore installé.'),
       C('claude_auth', 'warn', 'Tu te connecteras une fois Claude Code installé.'),
@@ -82,6 +93,8 @@
     ];
     const OK = {
       clt: C('clt', 'ok', 'git et python3 sont là.'),
+      python: C('python', 'ok', 'Python 3.12.10'),
+      git: C('git', 'ok', 'Git 2.51.0'),
       bun: C('bun', 'ok', 'Bun 1.4.2'),
       claude: C('claude', 'ok', 'Claude Code 2.1.296'),
       claude_auth: C('claude_auth', 'ok', 'Tu es connecté.'),
@@ -92,7 +105,9 @@
       brain_memory: C('brain_memory', 'ok', 'Prête.'),
       voyage: C('voyage', 'ok', 'Activée (Voyage AI)'),
     };
-    const ONLINE = [C('macos', 'ok', 'macOS 15.4'), C('disk', 'ok', '182 Go libres'), C('network', 'ok', 'github.com et claude.ai répondent.')];
+    const SYSTEM = WIN ? 'Windows 11 (24H2)' : 'macOS 15.4';
+    const ARCH = WIN ? 'x86_64' : 'arm64';
+    const ONLINE = [C(WIN ? 'windows' : 'macos', 'ok', SYSTEM), C('disk', 'ok', '182 Go libres'), C('network', 'ok', 'github.com et claude.ai répondent.')];
     // Claude Code installed but not connected, the steps in `todo` still to run.
     const CLAUDE_ONLY = {
       'login-early': ['clt', 'bun', 'obsidian', 'brain'],
@@ -103,7 +118,7 @@
     function diagnosis() {
       if (scenario === 'installe' || scenario === 'motscles') {
         return {
-          os: 'macOS 15.4', arch: 'arm64', ram_gb: 16, disk_free_gb: 182.4, online: true, todo: [], can_install: true,
+          os: SYSTEM, arch: ARCH, ram_gb: 16, disk_free_gb: 182.4, online: true, todo: [], can_install: true,
           checks: [
             ...ONLINE,
             ...MISSING.map((c) => (scenario === 'motscles' && c.id === 'voyage' ? c : OK[c.id])),
@@ -112,7 +127,7 @@
       }
       if (REPAIR) {
         const checks = MISSING.map((c) => (c.id === 'voyage' || REPAIR.todo.includes(c.fix) ? c : OK[c.id]));
-        return { os: 'macOS 15.4', arch: 'arm64', ram_gb: 16, disk_free_gb: 182.4, online: true, todo: REPAIR.todo, can_install: true, checks: [...ONLINE, ...checks] };
+        return { os: SYSTEM, arch: ARCH, ram_gb: 16, disk_free_gb: 182.4, online: true, todo: REPAIR.todo, can_install: true, checks: [...ONLINE, ...checks] };
       }
       if (Object.hasOwn(CLAUDE_ONLY, scenario)) {
         const todo = CLAUDE_ONLY[scenario];
@@ -120,7 +135,7 @@
           if (c.id === 'claude_auth') return C('claude_auth', 'warn', 'Pas encore connecté. Tu le feras en un clic.');
           return c.id === 'voyage' || todo.includes(c.fix) ? c : OK[c.id];
         });
-        return { os: 'macOS 15.4', arch: 'arm64', ram_gb: 16, disk_free_gb: 182.4, online: true, todo, can_install: true, checks: [...ONLINE, ...checks] };
+        return { os: SYSTEM, arch: ARCH, ram_gb: 16, disk_free_gb: 182.4, online: true, todo, can_install: true, checks: [...ONLINE, ...checks] };
       }
       if (scenario === 'bloque') {
         return {
@@ -134,7 +149,7 @@
         };
       }
       return {
-        os: 'macOS 15.4', arch: 'arm64', ram_gb: 16, disk_free_gb: 182.4, online: true, todo: ALL_STEPS, can_install: true,
+        os: SYSTEM, arch: ARCH, ram_gb: 16, disk_free_gb: 182.4, online: true, todo: ALL_STEPS, can_install: true,
         checks: [...ONLINE, ...MISSING],
       };
     }
@@ -144,7 +159,14 @@
       bun: ['Téléchargement de https://bun.sh/install', '######################################################################## 100,0%', 'bun was installed successfully to ~/.bun/bin/bun', 'bun 1.4.2'],
       claude: ['Téléchargement de l’installeur de Claude Code', 'Setting up Claude Code...', '✔ Claude Code successfully installed!', 'Version: 2.1.296', 'Location: /Users/camille/.local/bin/claude'],
       obsidian: ['Téléchargement d’Obsidian 1.14.4 (233 Mo)', '  12 %', '  47 %', '  83 %', '  100 %', 'Copie dans /Users/camille/Applications/Obsidian.app', 'Signature vérifiée (6JSW4SJWN9)'],
-      brain: ['Téléchargement de brain-in-a-box', 'Extraction dans ~/.brain-in-a-box/src', '▸ Dependencies', '  ✓ deps OK', '▸ Search by meaning (Voyage AI key, optional)', '  ✓ key taken from VOYAGE_API_KEY', '▸ GBrain', '  ✓ cloned', '  ✓ deps + link', '▸ Vault', '  ✓ ~/Documents/Brain created', '▸ Hooks', '  ✓ 5 hooks installed', '▸ GBrain init + import', '  ✓ brain initialized (Voyage: search by meaning)', '  ✓ vault imported', '  ✓ embedded', 'Done.'],
+      brain: WIN ? [
+        'Je télécharge le moteur du cerveau…', 'Je mets en place ton cerveau, avec Python, Git, la mémoire et Obsidian (10 à 20 minutes)…',
+        '▸ Je vérifie Python et Git, et je les installe s’il le faut (1 sur 13)…', '=== Preflight ===', '  ... Python : installation (winget)', '  [OK] python (~\\AppData\\Local\\Programs\\Python\\Python312\\python.exe)',
+        '▸ Je crée ton dossier Brain (3 sur 13)…', '=== Brain vault (~\\Documents\\Brain) ===', '  [OK] skeleton place',
+        '▸ J’installe la mémoire, 2 à 5 minutes (10 sur 13)…', '=== Memoire gbrain (2 a 5 minutes la premiere fois) ===', '  [OK] bun 1.4.3',
+        '▸ J’installe Obsidian (12 sur 13)…', '=== Claude Code + Obsidian ===', '  ... Obsidian : installation (winget)',
+        '▸ Je vérifie que tout répond (13 sur 13)…', '=== Verification ===', '  [OK] memoire : recherche par mots-cles (gbrain)',
+      ] : ['Téléchargement de brain-in-a-box', 'Extraction dans ~/.brain-in-a-box/src', '▸ Dependencies', '  ✓ deps OK', '▸ Search by meaning (Voyage AI key, optional)', '  ✓ key taken from VOYAGE_API_KEY', '▸ GBrain', '  ✓ cloned', '  ✓ deps + link', '▸ Vault', '  ✓ ~/Documents/Brain created', '▸ Hooks', '  ✓ 5 hooks installed', '▸ GBrain init + import', '  ✓ brain initialized (Voyage: search by meaning)', '  ✓ vault imported', '  ✓ embedded', 'Done.'],
     };
     const FAILS = {
       obsidian: {

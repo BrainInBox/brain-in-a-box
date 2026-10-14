@@ -25,6 +25,14 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Already in the build through tauri-utils: masking the dossier sent to Claude.
 regex = "1"
+# Already in the build through tauri-codegen: the dossier's and the guard's hashes,
+# the same on a Mac and on Windows (which has no shasum).
+sha2 = "0.10"
+
+# Already in the build through tauri-build (embed-resource): the brain folder install.ps1
+# saved for the user (HKCU\Environment), read and written without a PowerShell.
+[target.'cfg(windows)'.dependencies]
+winreg = "0.56"
 
 [dev-dependencies]
 tempfile = "3"

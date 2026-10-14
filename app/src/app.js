@@ -11,6 +11,13 @@ const HAPPY_MS = 4500;
 const FIXED_PAUSE_MS = 2500;
 const VOYAGE_DASHBOARD = 'https://dashboard.voyageai.com';
 
+// The same window on a Mac and on Windows: only the words for the machine, its
+// settings and its command window differ. dev/mock.html sets window.BIBO_OS.
+const WINDOWS = (window.BIBO_OS || (/Windows/.test(navigator.userAgent) ? 'windows' : 'macos')) === 'windows';
+const OS = WINDOWS
+  ? { machine: 'PC', terminal: 'PowerShell', inTerminal: 'dans PowerShell', window: 'fenêtre PowerShell', settings: 'Paramètres' }
+  : { machine: 'Mac', terminal: 'le Terminal', inTerminal: 'dans le Terminal', window: 'fenêtre Terminal', settings: 'Réglages' };
+
 const STEPS = {
   clt: {
     name: 'Outils Apple',
@@ -28,7 +35,7 @@ const STEPS = {
   claude: {
     name: 'Claude Code',
     short: 'Claude Code',
-    what: 'Claude, directement sur ton Mac.',
+    what: `Claude, directement sur ton ${OS.machine}.`,
     say: ['J’installe Claude Code.', 'L’outil officiel d’Anthropic.'],
   },
   obsidian: {
@@ -40,8 +47,9 @@ const STEPS = {
   brain: {
     name: 'Ton cerveau',
     short: 'ton cerveau',
-    what: 'Tes notes, ta mémoire et tes automatismes.',
-    say: ['Je prépare ton cerveau.', 'C’est l’étape la plus longue.'],
+    // On Windows, install.ps1 brings Python, Git, Bun and Obsidian too.
+    what: WINDOWS ? 'Tes notes, ta mémoire, tes automatismes, et Obsidian.' : 'Tes notes, ta mémoire et tes automatismes.',
+    say: ['Je prépare ton cerveau.', WINDOWS ? 'C’est l’étape la plus longue : 10 à 20 minutes.' : 'C’est l’étape la plus longue.'],
   },
   // Not a step of its own: the brain step again, with a key, upgrades a brain that
   // only searches by keywords.
@@ -262,7 +270,7 @@ function clock(ms) {
 
 // The app's sentences start with a capital; after « Il pense que : » they read on.
 function lowerFirst(text) {
-  return /^(Voyage|Bun|Obsidian|Claude|Apple|Mac)\b/.test(text) ? text : text.charAt(0).toLowerCase() + text.slice(1);
+  return /^(Voyage|Bun|Obsidian|Claude|Apple|Mac|PC|Windows|PowerShell)\b/.test(text) ? text : text.charAt(0).toLowerCase() + text.slice(1);
 }
 
 // No space inside: the patterns that keep a label (« token: … ») mask a mask into itself.
@@ -290,7 +298,7 @@ function scrub(text) {
   let out = text;
   if (state.key) out = out.split(state.key).join(MASKED);
   for (const [re, by] of SECRET_PATTERNS) out = out.replace(re, by);
-  return out.replace(/\/Users\/[^/\s:'"<>]+/g, '~');
+  return out.replace(/\b[A-Za-z]:[\\/]+Users[\\/]+[^\\/\s:'"<>]+/gi, '~').replace(/\/Users\/[^/\s:'"<>]+/g, '~');
 }
 
 // ── Frame: Bibo, the message, the screen, the buttons ──────────────────────
@@ -494,19 +502,19 @@ function showWelcome() {
   say('idle', 'Salut, moi c’est Bibo !', 'Je vais installer ton second cerveau pour Claude. 10 à 20 minutes, tu n’as aucune commande à taper.');
   ui.screen.append(
     h('ol', { class: 'plan' },
-      h('li', {}, 'Je regarde ce qui manque sur ton Mac.'),
+      h('li', {}, `Je regarde ce qui manque sur ton ${OS.machine}.`),
       h('li', {}, 'J’installe Claude, puis tu connectes ton compte (2 min).'),
       h('li', {}, 'J’installe le reste tout seul. Si ça coince, Claude m’aide à réparer.')),
     h('p', { class: 'note' }, 'Il te faut un abonnement Claude Pro ou Max.'));
   // No autofocus here: a focus ring on the very first screen looks like a glitch.
-  ui.actions.append(button('Vérifier mon Mac', runDiagnosis, { act: 'next' }));
+  ui.actions.append(button(`Vérifier mon ${OS.machine}`, runDiagnosis, { act: 'next' }));
 }
 
 // ── 2. Diagnosis ───────────────────────────────────────────────────────────
 
 async function runDiagnosis() {
   const gen = screen('diag');
-  say('thinking', 'Je regarde ton Mac…', 'Ça prend quelques secondes.');
+  say('thinking', `Je regarde ton ${OS.machine}…`, 'Ça prend quelques secondes.');
   ui.screen.append(h('p', { class: 'loading' }, h('span', { class: 'spinner', 'aria-hidden': 'true' }), 'Vérification en cours'));
   let diag;
   try {
@@ -514,7 +522,7 @@ async function runDiagnosis() {
   } catch (e) {
     if (gen !== view.gen) return;
     screen('diag');
-    say('worried', 'Je n’ai pas réussi à examiner ton Mac.', errText(e));
+    say('worried', `Je n’ai pas réussi à examiner ton ${OS.machine}.`, errText(e));
     ui.actions.append(button('Réessayer', runDiagnosis, { act: 'next' }));
     focusMain();
     return;
@@ -528,7 +536,9 @@ async function runDiagnosis() {
 }
 
 function sysLine(d) {
-  const arch = d.arch === 'arm64' ? 'Puce Apple' : d.arch === 'x86_64' ? 'Intel' : d.arch;
+  const mac = d.arch === 'arm64' ? 'Puce Apple' : d.arch === 'x86_64' ? 'Intel' : d.arch;
+  // On a PC the processor only matters when it is not the usual one.
+  const arch = WINDOWS ? (d.arch === 'arm64' ? 'Processeur ARM' : '') : mac;
   const parts = [d.os, arch];
   if (d.ram_gb > 0) parts.push(`${gb(d.ram_gb)} Go de mémoire`);
   if (d.disk_free_gb > 0) parts.push(`${gb(d.disk_free_gb)} Go libres`);
@@ -561,7 +571,7 @@ function showDiagnosis() {
       button('Activer la recherche par le sens', () => addMeaning(showDiagnosis), { kind: 'secondary', act: 'voyage' }),
       button('Continuer', checkLogin, { act: 'next' }));
   } else if (d.todo.length === 0) {
-    say('happy', 'Tout est déjà installé !', 'Ton Mac a tout ce qu’il faut.');
+    say('happy', 'Tout est déjà installé !', `Ton ${OS.machine} a tout ce qu’il faut.`);
     ui.actions.append(button('Continuer', checkLogin, { act: 'next' }));
   } else {
     say('idle', 'J’ai fait le tour.', `Il manque ${listFr(d.todo.map((id) => stepInfo(id).short))}. Je m’en occupe.`);
@@ -777,8 +787,11 @@ function renderInstall(name = 'install') {
   view.bar = h('span', { class: 'bar-fill' });
   ui.screen.append(h('div', { class: 'bar', 'aria-hidden': 'true' }, view.bar), list);
   // The brain lives in Documents, a folder macOS guards: refusing breaks the step.
+  // On Windows, winget may need an administrator's yes for Git or Python.
   if (state.plan.some((id) => stepRun(id) === 'brain')) {
-    ui.screen.append(h('p', { class: 'note' }, 'macOS va peut-être demander l’accès à ton dossier Documents : clique sur « Autoriser ».'));
+    ui.screen.append(h('p', { class: 'note' }, WINDOWS
+      ? 'Windows va peut-être demander une autorisation pour installer Git ou Python : clique sur « Oui ».'
+      : 'macOS va peut-être demander l’accès à ton dossier Documents : clique sur « Autoriser ».'));
   }
   ui.screen.append(logPanel());
   paintProgress();
@@ -861,7 +874,7 @@ async function askLoginInline(gen) {
     const connect = button('Connecter mon compte Claude', open, { act: 'next' });
     const card = h('div', { class: 'login-card card' },
       h('ol', { class: 'plan' },
-        h('li', {}, 'Clique sur le bouton : une fenêtre Terminal s’ouvre.'),
+        h('li', {}, `Clique sur le bouton : une ${OS.window} s’ouvre.`),
         h('li', {}, 'Ton navigateur te demande de te connecter à Claude.'),
         h('li', {}, 'Reviens ici : je continue tout seul.')),
       h('p', { class: 'note' }, 'Tu te connectes directement chez Anthropic : je ne vois jamais ton mot de passe.'),
@@ -889,7 +902,7 @@ async function askLoginInline(gen) {
         return;
       }
       if (over || gen !== view.gen) return;
-      say('thinking', 'J’attends que tu te connectes…', 'Suis les étapes dans la fenêtre Terminal.');
+      say('thinking', 'J’attends que tu te connectes…', `Suis les étapes ${OS.inTerminal}.`);
       waiting.hidden = false;
       connect.textContent = 'Rouvrir la fenêtre';
       connect.className = 'btn btn-secondary';
@@ -930,10 +943,10 @@ const REPAIR_NOTES = {
 };
 // Where Claude in Terminal (plan B) is offered on the failure screen.
 const TERMINAL_STATES = ['exhausted', 'unsupported', 'disabled'];
-const TERMINAL_NOTE = 'Claude peut t’aider dans le Terminal : je t’explique comment avant de l’ouvrir.';
+const TERMINAL_NOTE = `Claude peut t’aider ${OS.inTerminal} : je t’explique comment avant de l’ouvrir.`;
 
 const REPAIR_STAGES = {
-  collecting: 'Je rassemble ce qu’il lui faut sur ton Mac…',
+  collecting: `Je rassemble ce qu’il lui faut sur ton ${OS.machine}…`,
   asking: 'Claude lit le dossier…',
 };
 
@@ -969,7 +982,7 @@ function addNote(el) {
 }
 
 function terminalButton(index) {
-  return button('Réparer dans le Terminal avec Claude', () => showTerminalHelp(index), { kind: 'secondary', act: 'terminal' });
+  return button(`Réparer ${OS.inTerminal} avec Claude`, () => showTerminalHelp(index), { kind: 'secondary', act: 'terminal' });
 }
 
 // `intro`: [mood, title, text] instead of « Oups », when coming back from a repair.
@@ -1056,7 +1069,7 @@ async function connectForRepair(index, btn) {
     return;
   }
   if (gen !== view.gen) return;
-  say('thinking', 'J’attends que tu te connectes…', 'Suis les étapes dans la fenêtre Terminal.');
+  say('thinking', 'J’attends que tu te connectes…', `Suis les étapes ${OS.inTerminal}.`);
   btn.textContent = 'Rouvrir la fenêtre';
   btn.className = 'btn btn-secondary';
   btn.disabled = false;
@@ -1098,7 +1111,7 @@ async function runRepair(index) {
       h('ul', { class: 'bullets' },
         h('li', {}, `L’étape « ${stepInfo(id).name} » et son message d’erreur.`),
         h('li', {}, 'Les dernières lignes du journal, clés masquées.'),
-        h('li', {}, 'L’état de ton Mac : versions, place libre, connexion.'))),
+        h('li', {}, `L’état de ton ${OS.machine} : versions, place libre, connexion.`))),
     h('div', { class: 'chrono card' },
       h('span', { class: 'spinner', 'aria-hidden': 'true' }),
       h('span', { class: 'chrono-text' }, time, view.progress)));
@@ -1172,12 +1185,12 @@ function said(text) {
 
 function settingsButton(pane) {
   const gen = view.gen;
-  const btn = button('Ouvrir les Réglages', async () => {
+  const btn = button(`Ouvrir les ${OS.settings}`, async () => {
     btn.disabled = true;
     try {
       await invoke('open_settings', { pane });
     } catch (e) {
-      if (gen === view.gen) say('worried', 'Les Réglages ne se sont pas ouverts.', errText(e));
+      if (gen === view.gen) say('worried', `Les ${OS.settings} ne se sont pas ouverts.`, errText(e));
     }
     later(() => { btn.disabled = false; }, 2000);
   }, { kind: 'secondary', small: true, act: 'settings' });
@@ -1371,18 +1384,18 @@ function showTerminalHelp(index) {
   const { id } = state.failed;
   const step = stepRun(id);
   const gen = screen('terminal');
-  say('idle', 'Claude peut t’aider dans le Terminal', 'Avant de l’ouvrir, voici comment ça va se passer.');
+  say('idle', `Claude peut t’aider ${OS.inTerminal}`, 'Avant de l’ouvrir, voici comment ça va se passer.');
   // Claude Code's own questions are in English: a French non-technician needs the two words.
   ui.screen.append(
     h('ol', { class: 'plan' },
-      h('li', {}, 'Une fenêtre Terminal s’ouvre, avec Claude dedans.'),
+      h('li', {}, `Une ${OS.window} s’ouvre, avec Claude dedans.`),
       h('li', {}, 'Claude lit ce qui s’est passé, t’explique le problème avec des mots simples et te propose des étapes.'),
       h('li', {}, 'Avant chaque commande, il te demande ton accord. Lis ce qu’il propose, puis réponds. Tu peux toujours dire non.'),
       h('li', {}, 'Suis ses étapes. Quand il a fini, reviens ici et clique sur « Vérifier ».')),
     h('p', { class: 'note' }, 'Ses questions s’affichent en anglais : « Yes » veut dire oui, « No » veut dire non. Choisis avec les flèches du clavier, puis appuie sur Entrée. Évite « Yes, and don’t ask again… » : il ne te demanderait plus ton accord.'),
     h('p', { class: 'note' }, 'Ça utilise ton abonnement Claude. Ne lui donne jamais de mot de passe ni de clé.'));
   const back = button('Retour', () => backToFailure(index), { kind: 'ghost', act: 'back' });
-  const open = button('Ouvrir le Terminal avec Claude', () => start(open), { act: 'next' });
+  const open = button(`Ouvrir ${OS.terminal} avec Claude`, () => start(open), { act: 'next' });
   ui.actions.append(back, open);
   focusMain();
 
@@ -1394,14 +1407,14 @@ function showTerminalHelp(index) {
     } catch (e) {
       if (gen !== view.gen) return;
       // Refused too when the log looks written to steer Claude: then the team should see the report.
-      say('worried', 'Je n’ai pas ouvert le Terminal.', errText(e));
+      say('worried', `Je n’ai pas ouvert ${OS.terminal}.`, errText(e));
       if (!ui.actions.querySelector('[data-act="copy"]')) btn.before(copyButton());
       btn.disabled = false;
       return;
     }
     if (gen !== view.gen) return;
-    say('idle', 'Claude t’attend dans le Terminal', 'Suis ses étapes. Quand il a fini, reviens ici et clique sur « Vérifier ».');
-    const again = button('Rouvrir le Terminal', () => start(again), { kind: 'secondary', act: 'reopen' });
+    say('idle', `Claude t’attend ${OS.inTerminal}`, 'Suis ses étapes. Quand il a fini, reviens ici et clique sur « Vérifier ».');
+    const again = button(`Rouvrir ${OS.terminal}`, () => start(again), { kind: 'secondary', act: 'reopen' });
     ui.actions.replaceChildren(back, again, button('Vérifier', () => runInstall(index), { act: 'next' }));
     later(() => { again.disabled = false; }, 3000);
     again.disabled = true;
@@ -1431,11 +1444,22 @@ function paintLog(force) {
 
 let logQueued = false;
 
+// On Windows, install.ps1's sections arrive as « ▸ … » lines (steps.rs): the running
+// row says the latest. A Mac's installers print nothing of the kind.
+function showSection(step, line) {
+  if (!WINDOWS || !line.startsWith('▸ ')) return;
+  for (const [id, row] of Object.entries(view.rows)) {
+    if (stepRun(id) === step && state.steps[id] === 'running') row.what.textContent = nbsp(line.slice(2));
+  }
+}
+
 function onLog(event) {
   const p = event && event.payload;
   if (!p) return;
   const line = scrub(String(p.line ?? ''));
-  state.logs.push({ step: String(p.step ?? ''), line });
+  const step = String(p.step ?? '');
+  state.logs.push({ step, line });
+  showSection(step, line);
   if (view.onLine) view.onLine(line);
   if (state.logs.length > MAX_LOG_LINES) state.logs.splice(0, state.logs.length - MAX_LOG_LINES);
   if (logQueued) return;
@@ -1450,7 +1474,7 @@ function buildReport() {
   const d = state.diag;
   const out = ['Brain in a Box : rapport d’installation', `Date : ${new Date().toISOString()}`];
   if (d) {
-    out.push(`Mac : ${d.os} (${d.arch}), ${gb(d.ram_gb)} Go de mémoire, ${gb(d.disk_free_gb)} Go libres, en ligne : ${d.online ? 'oui' : 'non'}`);
+    out.push(`${OS.machine} : ${d.os} (${d.arch}), ${gb(d.ram_gb)} Go de mémoire, ${gb(d.disk_free_gb)} Go libres, en ligne : ${d.online ? 'oui' : 'non'}`);
     out.push('', 'Diagnostic :');
     for (const c of d.checks) out.push(`- [${c.status}] ${c.label} : ${c.detail}`);
     const steps = state.plan.map((id) => `${id} ${state.steps[id] || 'pending'}`);
@@ -1478,7 +1502,7 @@ async function copyReport(btn) {
     later(() => { btn.textContent = 'Copier le rapport'; }, 2500);
     return;
   }
-  // Last resort: show it, selected, for Cmd+C. A second click reuses the same box.
+  // Last resort: show it, selected, for Cmd+C (Ctrl+C). A second click reuses the same box.
   let area = ui.screen.querySelector('textarea.report');
   if (!area) {
     area = h('textarea', { class: 'report', readonly: true, 'aria-label': 'Rapport d’installation' });
@@ -1541,7 +1565,7 @@ function showLogin() {
       return;
     }
     if (gen !== view.gen) return;
-    say('thinking', 'J’attends que tu te connectes…', 'Suis les étapes dans la fenêtre Terminal.');
+    say('thinking', 'J’attends que tu te connectes…', `Suis les étapes ${OS.inTerminal}.`);
     waiting.hidden = false;
     connect.textContent = 'Rouvrir la fenêtre';
     connect.className = 'btn btn-secondary';
@@ -1551,7 +1575,7 @@ function showLogin() {
 
   ui.screen.append(
     h('ol', { class: 'plan' },
-      h('li', {}, 'Clique sur le bouton : une fenêtre Terminal s’ouvre.'),
+      h('li', {}, `Clique sur le bouton : une ${OS.window} s’ouvre.`),
       h('li', {}, 'Suis ses étapes. Ton navigateur te demande de te connecter à Claude.'),
       h('li', {}, 'Reviens ici : je vois tout seul quand c’est bon.')),
     h('p', { class: 'note' }, 'Tu te connectes directement chez Anthropic : je ne vois jamais ton mot de passe. Il faut un abonnement Claude Pro ou Max.'),
@@ -1621,7 +1645,7 @@ function showDone() {
   }
 
   const vault = button('Ouvrir mon cerveau dans Obsidian', () => act(vault, 'open_vault', 'J’ouvre Obsidian…', 'Ton cerveau est dans Documents › Brain.'), { kind: 'secondary', act: 'vault' });
-  const onboard = button('Personnaliser mon cerveau (15 min)', () => act(onboard, 'start_onboarding', 'C’est parti !', 'Une fenêtre Terminal s’ouvre : réponds aux questions de Claude.'), { act: 'next' });
+  const onboard = button('Personnaliser mon cerveau (15 min)', () => act(onboard, 'start_onboarding', 'C’est parti !', `Une ${OS.window} s’ouvre : réponds aux questions de Claude.`), { act: 'next' });
   ui.actions.append(vault, onboard);
   focusMain();
 }

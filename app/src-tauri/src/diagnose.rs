@@ -1,18 +1,32 @@
-//! Looks at the Mac: what is there, what is missing, what blocks the install.
+//! Looks at the Mac (or the PC): what is there, what is missing, what blocks the install.
 //!
 //! `probe()` runs the system commands and gathers raw facts; `decide()` turns
 //! them, plus the files under a given home, into checks. All the logic sits in
 //! `decide()` and the `check_*` functions, so tests drive them with a fake home.
+//!
+//! On Windows, install.ps1 installs Python, Git, Bun and Obsidian along with the brain:
+//! their checks point to the brain step.
 
 use std::path::Path;
 use std::thread;
 use std::time::Duration;
 
-use crate::detect::{self, fmt_version, parse_version, Brain, Found, Version};
+#[cfg(not(windows))]
+use crate::detect::parse_version;
+#[cfg(not(windows))]
+use crate::detect::Version;
+use crate::detect::{self, fmt_version, Brain, Found};
 use crate::model::{Check, Diagnosis, Status};
 use crate::{steps, sys};
 
+#[cfg(not(windows))]
 const MIN_MACOS: Version = (13, 0, 0);
+/// Windows 10 version 1809: install.ps1's floor (winget, curl, tar).
+#[cfg(windows)]
+const MIN_WINDOWS_BUILD: u32 = 17763;
+/// Windows 11 kept the 10 in its version number: the build tells them apart.
+#[cfg(windows)]
+const WINDOWS_11_BUILD: u32 = 22000;
 const DISK_BLOCKING_GB: f64 = 3.0;
 const DISK_TIGHT_GB: f64 = 10.0;
 const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -21,15 +35,25 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 #[derive(Clone, Copy)]
 struct Item(&'static str, &'static str, Option<&'static str>);
 
+#[cfg(not(windows))]
 const MACOS: Item = Item("macos", "Version de macOS", None);
+#[cfg(windows)]
+const WINDOWS: Item = Item("windows", "Version de Windows", None);
 const DISK: Item = Item("disk", "Espace disque", None);
 const NETWORK: Item = Item("network", "Connexion internet", None);
+#[cfg(not(windows))]
 const CLT: Item = Item("clt", "Outils Apple (git, python3)", Some("clt"));
-const BUN: Item = Item("bun", "Bun (le moteur de la mémoire)", Some("bun"));
+#[cfg(windows)]
+const PYTHON: Item = Item("python", "Python (pour les automatismes)", Some("brain"));
+#[cfg(windows)]
+const GIT: Item = Item("git", "Git (l'historique de tes notes)", Some("brain"));
+/// The step that installs Bun and Obsidian: their own on a Mac, install.ps1's on Windows.
+const OWN_STEP_OR_BRAIN: [&str; 2] = if cfg!(windows) { ["brain", "brain"] } else { ["bun", "obsidian"] };
+const BUN: Item = Item("bun", "Bun (le moteur de la mémoire)", Some(OWN_STEP_OR_BRAIN[0]));
 const CLAUDE: Item = Item("claude", "Claude Code", Some("claude"));
 /// No fix step: the window offers a login button and the user logs in to the official CLI themselves.
 const CLAUDE_AUTH: Item = Item("claude_auth", "Connexion à Claude", None);
-const OBSIDIAN: Item = Item("obsidian", "Obsidian (pour lire tes notes)", Some("obsidian"));
+const OBSIDIAN: Item = Item("obsidian", "Obsidian (pour lire tes notes)", Some(OWN_STEP_OR_BRAIN[1]));
 const BRAIN_VAULT: Item = Item("brain_vault", "Ton dossier Brain", Some("brain"));
 const BRAIN_HOOKS: Item = Item("brain_hooks", "Les automatismes de Claude", Some("brain"));
 const BRAIN_SKILLS: Item = Item("brain_skills", "Les compétences de Claude", Some("brain"));
@@ -46,6 +70,7 @@ impl Item {
             status,
             detail: detail.into(),
             fix: fix.map(String::from),
+            path: None,
         }
     }
 }
@@ -54,17 +79,45 @@ impl Item {
 #[derive(Debug)]
 struct Facts {
     /// `sw_vers -productVersion`, e.g. "26.3.1".
+    #[cfg(not(windows))]
     macos: Option<String>,
+    #[cfg(windows)]
+    windows: Option<WindowsVersion>,
     arch: String,
     ram_bytes: Option<u64>,
     disk_free_kb: Option<u64>,
     github: bool,
     claude_ai: bool,
+    #[cfg(not(windows))]
     clt: bool,
+    #[cfg(windows)]
+    python: Option<detect::Python>,
+    #[cfg(windows)]
+    git: Found,
     bun: Found,
     claude: Found,
     claude_logged_in: bool,
     obsidian: Found,
+}
+
+#[cfg(windows)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WindowsVersion {
+    build: u32,
+    /// "23H2", when Windows says.
+    release: Option<String>,
+}
+
+#[cfg(windows)]
+impl WindowsVersion {
+    /// "Windows 11 (23H2)".
+    fn name(&self) -> String {
+        let n = if self.build >= WINDOWS_11_BUILD { 11 } else { 10 };
+        match &self.release {
+            Some(r) => format!("Windows {n} ({r})"),
+            None => format!("Windows {n}"),
+        }
+    }
 }
 
 pub fn run() -> Diagnosis {
@@ -75,20 +128,21 @@ pub fn run() -> Diagnosis {
 /// What the window gets when the diagnosis itself broke: one red line, nothing to install.
 pub fn failed(why: &str) -> Diagnosis {
     Diagnosis {
-        os: "macOS".into(),
+        os: if cfg!(windows) { "Windows" } else { "macOS" }.into(),
         arch: String::new(),
         ram_gb: 0.0,
         disk_free_gb: 0.0,
         online: false,
         checks: vec![INTERNAL.is(
             Status::Error,
-            format!("Je n'ai pas pu finir l'examen de ton Mac ({why}). Clique sur Revérifier."),
+            format!("Je n'ai pas pu finir l'examen de ton {} ({why}). Clique sur Revérifier.", sys::MACHINE),
         )],
         todo: Vec::new(),
         can_install: false,
     }
 }
 
+#[cfg(not(windows))]
 fn probe(home: &Path) -> Facts {
     thread::scope(|s| {
         // The slow probes (network, `claude auth status`) run alongside the rest.
@@ -114,14 +168,104 @@ fn probe(home: &Path) -> Facts {
     })
 }
 
+#[cfg(windows)]
+fn probe(home: &Path) -> Facts {
+    thread::scope(|s| {
+        let github = s.spawn(|| answers("https://github.com"));
+        let claude_ai = s.spawn(|| answers("https://claude.ai"));
+        let logged_in = s.spawn(detect::claude_logged_in);
+        // PowerShell takes a second or two to start: alongside the rest too.
+        let system = s.spawn(|| {
+            let out = sys::run(
+                &sys::powershell(),
+                &["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", WINDOWS_PROBE],
+                SYSTEM_PROBE_TIMEOUT,
+            );
+            parse_windows_probe(&out.stdout)
+        });
+
+        let python = detect::python();
+        let git = detect::git();
+        let bun = detect::bun(home);
+        let claude = detect::claude();
+        let obsidian = detect::obsidian(home);
+        let system = system.join().unwrap_or_default();
+        Facts {
+            windows: system.version,
+            arch: system.arch,
+            ram_bytes: system.ram_bytes,
+            disk_free_kb: system.free_bytes.map(|b| b / 1024),
+            github: github.join().unwrap_or(false),
+            claude_ai: claude_ai.join().unwrap_or(false),
+            python,
+            git,
+            bun,
+            claude,
+            claude_logged_in: logged_in.join().unwrap_or(false),
+            obsidian,
+        }
+    })
+}
+
+#[cfg(windows)]
+const SYSTEM_PROBE_TIMEOUT: Duration = Duration::from_secs(25);
+
+/// One PowerShell for the facts Windows only gives to programs: the build and release
+/// (registry), the processor of the machine (not of this process, which an ARM PC may
+/// emulate), the memory and the free space on the profile's drive. Single quotes only:
+/// the script travels as one argument.
+#[cfg(windows)]
+const WINDOWS_PROBE: &str = "$ErrorActionPreference = 'SilentlyContinue'; \
+$k = Get-ItemProperty -LiteralPath 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion'; \
+$e = Get-ItemProperty -LiteralPath 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment'; \
+$rel = if ($k.DisplayVersion) { $k.DisplayVersion } else { $k.ReleaseId }; \
+$ram = (Get-CimInstance -ClassName Win32_ComputerSystem).TotalPhysicalMemory; \
+$free = (New-Object System.IO.DriveInfo -ArgumentList ([IO.Path]::GetPathRoot($env:USERPROFILE))).AvailableFreeSpace; \
+'build=' + $k.CurrentBuildNumber; 'release=' + $rel; 'arch=' + $e.PROCESSOR_ARCHITECTURE; 'ram=' + $ram; 'free=' + $free";
+
+#[cfg(windows)]
+#[derive(Debug, Default, PartialEq, Eq)]
+struct WindowsFacts {
+    version: Option<WindowsVersion>,
+    arch: String,
+    ram_bytes: Option<u64>,
+    free_bytes: Option<u64>,
+}
+
+/// The probe's key=value lines; anything missing or odd stays unknown.
+#[cfg(windows)]
+fn parse_windows_probe(out: &str) -> WindowsFacts {
+    let value = |key: &str| {
+        out.lines()
+            .filter_map(|l| l.trim().split_once('='))
+            .find(|(k, _)| *k == key)
+            .map(|(_, v)| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+    };
+    let number = |key: &str| value(key).and_then(|v| v.parse::<u64>().ok()).filter(|n| *n > 0);
+    let release = value("release").filter(|r| r.len() <= 8 && r.bytes().all(|b| b.is_ascii_alphanumeric()));
+    WindowsFacts {
+        version: value("build").and_then(|b| b.parse().ok()).map(|build| WindowsVersion { build, release }),
+        arch: match value("arch").as_deref() {
+            Some("AMD64") => "x86_64".into(),
+            Some("ARM64") => "arm64".into(),
+            Some(other) => other.to_ascii_lowercase(),
+            None => String::new(),
+        },
+        ram_bytes: number("ram"),
+        free_bytes: value("free").and_then(|v| v.parse::<u64>().ok()),
+    }
+}
+
+#[cfg(not(windows))]
 fn command_text(program: &str, args: &[&str]) -> Option<String> {
     sys::output_text(Path::new(program), args, PROBE_TIMEOUT)
 }
 
 /// Any HTTP status counts: claude.ai answers 403 to curl, which still proves the network works.
 pub(crate) fn answers(url: &str) -> bool {
-    let args = ["-sS", "-o", "/dev/null", "-m", "8", "-w", "%{http_code}", url];
-    http_answered(&sys::run(Path::new("/usr/bin/curl"), &args, PROBE_TIMEOUT).stdout)
+    let args = ["-sS", "-o", sys::NULL_DEVICE, "-m", "8", "-w", "%{http_code}", url];
+    http_answered(&sys::run(&sys::curl(), &args, PROBE_TIMEOUT).stdout)
 }
 
 /// curl prints "000" when nothing answered.
@@ -131,17 +275,24 @@ fn http_answered(code: &str) -> bool {
 
 fn decide(home: &Path, f: &Facts) -> Diagnosis {
     let disk_free_gb = f.disk_free_kb.map(kb_to_gb);
-    let mut checks = vec![
-        check_macos(f.macos.as_deref()),
-        check_disk(disk_free_gb),
-        check_network(f.github, f.claude_ai),
-        check_clt(f.clt),
+    #[cfg(not(windows))]
+    let system = [check_macos(f.macos.as_deref())];
+    #[cfg(windows)]
+    let system = [check_windows(f.windows.as_ref())];
+    #[cfg(not(windows))]
+    let tools = vec![check_clt(f.clt)];
+    #[cfg(windows)]
+    let tools = vec![check_python(f.python.as_ref()), check_git(&f.git)];
+    let mut checks = Vec::from(system);
+    checks.extend([check_disk(disk_free_gb), check_network(f.github, f.claude_ai)]);
+    checks.extend(tools);
+    checks.extend([
         check_bun(&f.bun),
         check_claude(&f.claude),
         check_claude_auth(f.claude.answers(), f.claude_logged_in),
         check_obsidian(&f.obsidian),
-    ];
-    checks.extend(check_brain(detect::brain(home)));
+    ]);
+    checks.extend(check_brain(detect::brain(home), &detect::brain_dir_shown(home)));
     checks.push(check_voyage(detect::embedding_model(home).as_deref()));
 
     let missing = |step: &str| {
@@ -156,10 +307,14 @@ fn decide(home: &Path, f: &Facts) -> Diagnosis {
         .collect();
     let can_install = checks.iter().all(|c| c.status != Status::Error);
 
+    #[cfg(not(windows))]
+    let os = f.macos.as_ref().map_or("macOS".into(), |v| format!("macOS {v}"));
+    #[cfg(windows)]
+    let os = f.windows.as_ref().map_or("Windows".into(), WindowsVersion::name);
     Diagnosis {
-        os: f.macos.as_ref().map_or("macOS".into(), |v| format!("macOS {v}")),
+        os,
         arch: f.arch.clone(),
-        // Apple counts RAM in binary gigabytes: "24 Go" is 24 GiB.
+        // Apple (and Windows) count RAM in binary gigabytes: "24 Go" is 24 GiB.
         ram_gb: f.ram_bytes.map_or(0.0, |b| round1(b as f64 / (1u64 << 30) as f64)),
         // Rounded down like the detail text, so both read "2,9" when 3 are needed.
         disk_free_gb: disk_free_gb.map_or(0.0, floor1),
@@ -170,6 +325,7 @@ fn decide(home: &Path, f: &Facts) -> Diagnosis {
     }
 }
 
+#[cfg(not(windows))]
 fn check_macos(version: Option<&str>) -> Check {
     match version.and_then(|v| Some((v, parse_version(v)?))) {
         Some((v, parsed)) if parsed >= MIN_MACOS => MACOS.is(Status::Ok, format!("macOS {v}")),
@@ -180,6 +336,21 @@ fn check_macos(version: Option<&str>) -> Check {
             ),
         ),
         None => MACOS.is(Status::Warn, "Je n'ai pas pu lire la version de macOS."),
+    }
+}
+
+#[cfg(windows)]
+fn check_windows(version: Option<&WindowsVersion>) -> Check {
+    match version {
+        Some(v) if v.build >= MIN_WINDOWS_BUILD => WINDOWS.is(Status::Ok, v.name()),
+        Some(v) => WINDOWS.is(
+            Status::Error,
+            format!(
+                "{} est trop ancien. Il faut Windows 10 version 1809 ou plus : mets ton PC à jour dans Windows Update.",
+                v.name()
+            ),
+        ),
+        None => WINDOWS.is(Status::Warn, "Je n'ai pas pu lire la version de Windows."),
     }
 }
 
@@ -213,6 +384,7 @@ fn check_network(github: bool, claude_ai: bool) -> Check {
     }
 }
 
+#[cfg(not(windows))]
 fn check_clt(found: bool) -> Check {
     if found {
         CLT.is(Status::Ok, "git et python3 sont là.")
@@ -221,6 +393,28 @@ fn check_clt(found: bool) -> Check {
             Status::Missing,
             "Pas encore installés. Apple s'en charge, il suffit de cliquer.",
         )
+    }
+}
+
+/// The Microsoft Store's python.exe does not count: it runs nothing.
+#[cfg(windows)]
+fn check_python(found: Option<&detect::Python>) -> Check {
+    match found {
+        Some(p) => Check {
+            path: Some(p.exe.to_string_lossy().into_owned()),
+            ..PYTHON.is(Status::Ok, format!("Python {}", fmt_version(p.version)))
+        },
+        None => PYTHON.is(Status::Missing, "Pas encore installé. Je le prends chez Microsoft (winget)."),
+    }
+}
+
+/// Found is installed, as for install.ps1, even when it does not tell its version.
+#[cfg(windows)]
+fn check_git(found: &Found) -> Check {
+    match found {
+        Found::Absent => GIT.is(Status::Missing, "Pas encore installé. Je le prends chez Microsoft (winget)."),
+        _ if found.version().is_some() => GIT.is(Status::Ok, found.label("Git")),
+        _ => GIT.is(Status::Ok, "Git est installé."),
     }
 }
 
@@ -271,7 +465,8 @@ fn check_obsidian(found: &Found) -> Check {
     }
 }
 
-fn check_brain(brain: Brain) -> [Check; 4] {
+/// `at`: the brain's folder as the window says it (detect::brain_dir_shown).
+fn check_brain(brain: Brain, at: &str) -> [Check; 4] {
     let piece = |item: Item, present: bool, ok: &str, missing: &str| {
         if present {
             item.is(Status::Ok, ok)
@@ -283,7 +478,7 @@ fn check_brain(brain: Brain) -> [Check; 4] {
         piece(
             BRAIN_VAULT,
             brain.vault,
-            "Il est dans Documents/Brain.",
+            &format!("Il est dans {at}."),
             "Pas encore créé.",
         ),
         piece(
@@ -321,6 +516,7 @@ fn check_voyage(model: Option<&str>) -> Check {
 
 /// "Available" column of `df -k`: the field just before the first "NN%", which
 /// still holds when the filesystem name has spaces ("map auto_home").
+#[cfg(not(windows))]
 fn parse_df_available_kb(output: &str) -> Option<u64> {
     let fields: Vec<&str> = output.lines().skip(1).flat_map(str::split_whitespace).collect();
     let capacity = fields.iter().position(|f| f.ends_with('%'))?;
@@ -364,13 +560,21 @@ mod tests {
 
     fn healthy_facts() -> Facts {
         Facts {
+            #[cfg(not(windows))]
             macos: Some("26.3.1".into()),
+            #[cfg(windows)]
+            windows: Some(WindowsVersion { build: 26100, release: Some("24H2".into()) }),
             arch: "arm64".into(),
             ram_bytes: Some(25_769_803_776),
             disk_free_kb: Some(169_941_844),
             github: true,
             claude_ai: true,
+            #[cfg(not(windows))]
             clt: true,
+            #[cfg(windows)]
+            python: Some(detect::Python { exe: r"C:\Users\jo\AppData\Local\Programs\Python\Python312\python.exe".into(), version: (3, 12, 10) }),
+            #[cfg(windows)]
+            git: Found::Version("git version 2.51.0.windows.1".into()),
             bun: Found::Version("1.4.2".into()),
             claude: Found::Version("2.1.296 (Claude Code)".into()),
             claude_logged_in: true,
@@ -378,6 +582,7 @@ mod tests {
         }
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn macos_13_is_the_floor() {
         assert_eq!(check_macos(Some("12.7.6")).status, Status::Error);
@@ -399,6 +604,7 @@ mod tests {
         assert_eq!(check_disk(Some(174.02)).detail, "174 Go libres");
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn reads_free_space_from_df() {
         let mac = "Filesystem   1024-blocks      Used Available Capacity iused      ifree %iused  Mounted on\n\
@@ -422,6 +628,7 @@ mod tests {
         assert!(!http_answered(""));
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn missing_apple_tools_are_installed_by_their_step() {
         assert_eq!(check_clt(true).status, Status::Ok);
@@ -433,7 +640,7 @@ mod tests {
     fn old_bun_gets_reinstalled() {
         assert_eq!(check_bun(&Found::Version("1.4.0".into())).detail, "Bun 1.4.0");
         let old = check_bun(&Found::Version("1.3.9".into()));
-        assert_eq!((old.status, old.fix.as_deref()), (Status::Missing, Some("bun")));
+        assert_eq!((old.status, old.fix.as_deref()), (Status::Missing, Some(OWN_STEP_OR_BRAIN[0])));
         assert!(old.detail.contains("1.3.9") && old.detail.contains("1.4.0"), "{}", old.detail);
         assert_eq!(check_bun(&Found::Absent).detail, "Pas encore installé.");
         assert!(check_bun(&Found::NoVersion).detail.contains("ne répond pas"));
@@ -458,14 +665,14 @@ mod tests {
     #[test]
     fn brain_pieces_point_to_the_brain_step() {
         let none = Brain { vault: false, hooks: false, skills: false, memory: false };
-        for c in check_brain(none) {
+        for c in check_brain(none, "Documents/Brain") {
             assert_eq!((c.status, c.fix.as_deref()), (Status::Missing, Some("brain")), "{}", c.id);
         }
         let all = Brain { vault: true, hooks: true, skills: true, memory: true };
-        for c in check_brain(all) {
+        for c in check_brain(all, "Documents/Brain") {
             assert_eq!(c.status, Status::Ok, "{}", c.id);
         }
-        let [_, hooks, _, _] = check_brain(Brain { hooks: false, ..all });
+        let [_, hooks, _, _] = check_brain(Brain { hooks: false, ..all }, "Documents/Brain");
         assert_eq!((hooks.id.as_str(), hooks.status), ("brain_hooks", Status::Missing));
     }
 
@@ -477,6 +684,7 @@ mod tests {
         assert_eq!((off.status, off.fix), (Status::Warn, None));
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn nothing_to_do_on_a_complete_mac() {
         let tmp = tempfile::tempdir().unwrap();
@@ -491,6 +699,7 @@ mod tests {
         assert!(!format!("{d:?}").contains("SECRET"));
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn todo_follows_the_install_order() {
         let tmp = tempfile::tempdir().unwrap();
@@ -513,11 +722,14 @@ mod tests {
     fn an_error_blocks_the_install() {
         let tmp = tempfile::tempdir().unwrap();
         fake_brain(tmp.path());
-        let old_mac = Facts {
+        let old_system = Facts {
+            #[cfg(not(windows))]
             macos: Some("12.7.6".into()),
+            #[cfg(windows)]
+            windows: Some(WindowsVersion { build: 17134, release: Some("1803".into()) }),
             ..healthy_facts()
         };
-        assert!(!decide(tmp.path(), &old_mac).can_install);
+        assert!(!decide(tmp.path(), &old_system).can_install);
         let offline = Facts {
             github: false,
             claude_ai: false,
@@ -558,9 +770,80 @@ mod tests {
         );
         assert_eq!(check_obsidian(&Found::NoVersion).status, Status::Ok);
         let absent = check_obsidian(&Found::Absent);
+        let step = if cfg!(windows) { "brain" } else { "obsidian" };
+        assert_eq!((absent.status, absent.fix.as_deref()), (Status::Missing, Some(step)));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn nothing_to_do_on_a_complete_pc() {
+        let tmp = tempfile::tempdir().unwrap();
+        fake_brain(tmp.path());
+        let d = decide(tmp.path(), &healthy_facts());
+        assert!(d.todo.is_empty(), "{:?}", d.todo);
+        assert!(d.can_install && d.online);
+        assert_eq!((d.os.as_str(), d.ram_gb, d.disk_free_gb), ("Windows 11 (24H2)", 24.0, 174.0));
+        assert!(d.checks.iter().all(|c| c.status == Status::Ok), "{:?}", d.checks);
+        let ids: Vec<&str> = d.checks.iter().map(|c| c.id.as_str()).collect();
         assert_eq!(
-            (absent.status, absent.fix.as_deref()),
-            (Status::Missing, Some("obsidian"))
+            ids,
+            [
+                "windows", "disk", "network", "python", "git", "bun", "claude", "claude_auth", "obsidian", "brain_vault",
+                "brain_hooks", "brain_skills", "brain_memory", "voyage"
+            ]
         );
+        assert_eq!(by_id(&d, "python").detail, "Python 3.12.10");
+        assert!(by_id(&d, "python").path.as_deref().is_some_and(|p| p.ends_with(r"Python312\python.exe")));
+        assert_eq!(by_id(&d, "git").path, None);
+        assert_eq!(by_id(&d, "git").detail, "Git 2.51.0");
+        assert!(!format!("{d:?}").contains("SECRET"));
+    }
+
+    /// install.ps1 brings Python, Git, Bun and Obsidian along with the brain.
+    #[cfg(windows)]
+    #[test]
+    fn install_ps1_is_the_brain_step() {
+        let tmp = tempfile::tempdir().unwrap();
+        let facts = Facts {
+            python: None,
+            git: Found::Absent,
+            bun: Found::Version("1.2.0".into()),
+            claude: Found::Absent,
+            claude_logged_in: false,
+            obsidian: Found::Absent,
+            ..healthy_facts()
+        };
+        let d = decide(tmp.path(), &facts);
+        assert_eq!(d.todo, ["claude", "brain"]);
+        for id in ["python", "git", "bun", "obsidian", "brain_vault"] {
+            let c = by_id(&d, id);
+            assert_eq!((c.status, c.fix.as_deref()), (Status::Missing, Some("brain")), "{id}");
+        }
+        assert_eq!(by_id(&d, "claude").fix.as_deref(), Some("claude"));
+        assert_eq!(check_git(&Found::NoVersion).status, Status::Ok, "found is installed, as for install.ps1");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_10_1809_is_the_floor() {
+        let v = |build, release: Option<&str>| WindowsVersion { build, release: release.map(String::from) };
+        assert_eq!(check_windows(Some(&v(17134, Some("1803")))).status, Status::Error);
+        assert_eq!(check_windows(Some(&v(17763, Some("1809")))).detail, "Windows 10 (1809)");
+        assert_eq!(check_windows(Some(&v(22631, Some("23H2")))).detail, "Windows 11 (23H2)");
+        assert_eq!(check_windows(Some(&v(26100, None))).detail, "Windows 11");
+        assert_eq!(check_windows(None).status, Status::Warn);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn the_powershell_probe_is_read_strictly() {
+        let out = "build=22631\r\nrelease=23H2\r\narch=ARM64\r\nram=17179869184\r\nfree=120000000000\r\n";
+        let f = parse_windows_probe(out);
+        assert_eq!(f.version, Some(WindowsVersion { build: 22631, release: Some("23H2".into()) }));
+        assert_eq!((f.arch.as_str(), f.ram_bytes, f.free_bytes), ("arm64", Some(17_179_869_184), Some(120_000_000_000)));
+        let odd = parse_windows_probe("build=\nrelease=<b>x</b>\narch=AMD64\nram=lots\nfree=-1\n");
+        assert_eq!(odd, WindowsFacts { version: None, arch: "x86_64".into(), ram_bytes: None, free_bytes: None });
+        assert_eq!(parse_windows_probe(""), WindowsFacts::default());
+        assert!(!WINDOWS_PROBE.contains('"'), "the script travels as one argument");
     }
 }

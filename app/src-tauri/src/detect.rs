@@ -2,6 +2,10 @@
 //!
 //! The probes run a program or look at the disk; the rules behind them take a home
 //! folder or a program's output, so tests drive them with fakes.
+//!
+//! On Windows the answer is the one install.ps1 would give: it finds Python, Git,
+//! Claude Code and Obsidian where its Find-* functions look, and leaves the brain where
+//! this file looks for it.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -51,6 +55,7 @@ impl Found {
 // ── Apple command line tools ────────────────────────────────────────────────
 
 /// The tools folder, when it is really there.
+#[cfg(not(windows))]
 pub fn clt_dir() -> Option<PathBuf> {
     let dir = PathBuf::from(sys::output_text(Path::new("/usr/bin/xcode-select"), &["-p"], TIMEOUT)?);
     has_clt(&dir).then_some(dir)
@@ -58,14 +63,109 @@ pub fn clt_dir() -> Option<PathBuf> {
 
 /// Without the tools, /usr/bin/git and /usr/bin/python3 are decoys that open Apple's
 /// install window. So we look for the real git inside the selected folder, and never run it.
+#[cfg(not(windows))]
 fn has_clt(dir: &Path) -> bool {
     dir.is_absolute() && dir.join("usr/bin/git").is_file()
+}
+
+// ── Python and Git (Windows: install.ps1 installs them) ─────────────────────
+
+/// Python, as install.ps1's Find-Python finds it.
+#[cfg(windows)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Python {
+    /// What it says sys.executable is.
+    pub exe: PathBuf,
+    pub version: Version,
+}
+
+/// install.ps1 refuses older ones.
+#[cfg(windows)]
+const MIN_PYTHON: Version = (3, 8, 0);
+
+/// The first Python that really runs code: python.exe and python3.exe on the PATH,
+/// then where its installers put it, then the py launcher. The Microsoft Store's
+/// python.exe is on the PATH of every Windows but runs nothing (exit 9009): asked
+/// to run code, it fails, and is passed over like install.ps1 passes it over.
+#[cfg(windows)]
+pub fn python() -> Option<Python> {
+    let mut found: Vec<PathBuf> = Vec::new();
+    for name in ["python.exe", "python3.exe"] {
+        // An app alias (the Store's) is a link that cannot be read: it exists all the same.
+        found.extend(
+            std::env::split_paths(&sys::tool_path())
+                .map(|d| d.join(name))
+                .filter(|p| fs::symlink_metadata(p).is_ok()),
+        );
+    }
+    let roots = [
+        std::env::var_os("LOCALAPPDATA").map(|l| Path::new(&l).join("Programs").join("Python")),
+        std::env::var_os("ProgramFiles").map(PathBuf::from),
+    ];
+    for root in roots.into_iter().flatten() {
+        found.extend(python_folders(&root).into_iter().map(|d| d.join("python.exe")));
+    }
+    found
+        .iter()
+        .find_map(|exe| python_at(exe, &[]))
+        .or_else(|| sys::find_tool("py").and_then(|py| python_at(&py, &["-3"])))
+}
+
+/// Python3*\ folders under `root`, in the order Get-ChildItem lists them for install.ps1.
+#[cfg(windows)]
+fn python_folders(root: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = fs::read_dir(root) else { return Vec::new() };
+    let mut dirs: Vec<(String, PathBuf)> = entries
+        .filter_map(Result::ok)
+        .map(|e| (e.file_name().to_string_lossy().to_lowercase(), e.path()))
+        .filter(|(name, _)| name.starts_with("python3"))
+        .collect();
+    dirs.sort();
+    dirs.into_iter().map(|(_, p)| p).collect()
+}
+
+/// The code install.ps1's Test-Python runs: version, then sys.executable in hex (UTF-8),
+/// which no code page can garble.
+#[cfg(windows)]
+const PYTHON_PROBE: &str = "import sys; print('%d.%d.%d' % tuple(sys.version_info[:3])); print(sys.executable.encode('utf-8').hex())";
+
+#[cfg(windows)]
+fn python_at(exe: &Path, pre: &[&str]) -> Option<Python> {
+    let mut args = pre.to_vec();
+    args.extend(["-I", "-c", PYTHON_PROBE]);
+    let out = sys::run(exe, &args, TIMEOUT);
+    if !out.ok() {
+        return None;
+    }
+    let found = python_answer(&out.stdout)?;
+    found.exe.is_file().then_some(found)
+}
+
+/// The probe's two lines, if they show a Python recent enough.
+#[cfg(windows)]
+fn python_answer(stdout: &str) -> Option<Python> {
+    let mut lines = stdout.lines().map(str::trim).filter(|l| !l.is_empty());
+    let version = parse_version(lines.next()?).filter(|v| *v >= MIN_PYTHON)?;
+    let hex = lines.next()?;
+    if hex.len() % 2 != 0 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    let bytes: Option<Vec<u8>> = (0..hex.len()).step_by(2).map(|i| u8::from_str_radix(&hex[i..i + 2], 16).ok()).collect();
+    let exe = PathBuf::from(String::from_utf8(bytes?).ok()?);
+    exe.is_absolute().then_some(Python { exe, version })
+}
+
+/// Git, as install.ps1's Find-Git finds it: on the PATH, or in Git's own folders
+/// (both are on sys::tool_path()).
+#[cfg(windows)]
+pub fn git() -> Found {
+    sys::find_tool("git").map_or(Found::Absent, |bin| version_of(&bin, TIMEOUT))
 }
 
 // ── Bun ─────────────────────────────────────────────────────────────────────
 
 pub fn bun(home: &Path) -> Found {
-    version_of(&home.join(".bun/bin/bun"), TIMEOUT)
+    version_of(&home.join(".bun").join("bin").join(sys::exe("bun")), TIMEOUT)
 }
 
 /// Recent enough for gbrain.
@@ -113,10 +213,12 @@ fn auth_method(status: &str) -> Option<String> {
 
 /// In /Applications or ~/Applications, with its program inside: an empty or
 /// half-copied Obsidian.app folder is not an installed Obsidian.
+#[cfg(not(windows))]
 pub fn obsidian_app(home: &Path) -> Option<PathBuf> {
     app_in(&[PathBuf::from("/Applications"), home.join("Applications")], "Obsidian")
 }
 
+#[cfg(not(windows))]
 fn app_in(dirs: &[PathBuf], name: &str) -> Option<PathBuf> {
     dirs.iter()
         .map(|d| d.join(format!("{name}.app")))
@@ -124,6 +226,7 @@ fn app_in(dirs: &[PathBuf], name: &str) -> Option<PathBuf> {
 }
 
 /// Installed once the app is there, even if its version cannot be read.
+#[cfg(not(windows))]
 pub fn obsidian(home: &Path) -> Found {
     let Some(app) = obsidian_app(home) else { return Found::Absent };
     let plist = app.join("Contents/Info.plist");
@@ -136,9 +239,28 @@ pub fn obsidian(home: &Path) -> Found {
     .map_or(Found::NoVersion, Found::Version)
 }
 
+/// Obsidian.exe where install.ps1's Find-Obsidian looks: winget's per-user install,
+/// the older per-user one, then the one for all users.
+#[cfg(windows)]
+pub fn obsidian_exe(home: &Path) -> Option<PathBuf> {
+    let local = std::env::var_os("LOCALAPPDATA").map_or_else(|| home.join("AppData").join("Local"), PathBuf::from);
+    let mut places = vec![local.join(r"Programs\Obsidian\Obsidian.exe"), local.join(r"Obsidian\Obsidian.exe")];
+    if let Some(pf) = std::env::var_os("ProgramFiles") {
+        places.push(Path::new(&pf).join(r"Obsidian\Obsidian.exe"));
+    }
+    places.into_iter().find(|p| sys::is_executable(p))
+}
+
+/// Installed once Obsidian.exe is there. Its version sits in the file's resources,
+/// which only PowerShell would read: it is not worth a PowerShell per diagnosis.
+#[cfg(windows)]
+pub fn obsidian(home: &Path) -> Found {
+    obsidian_exe(home).map_or(Found::Absent, |_| Found::NoVersion)
+}
+
 // ── The brain ───────────────────────────────────────────────────────────────
 
-/// What install.sh leaves behind once it went through.
+/// What install.sh (install.ps1 on Windows) leaves behind once it went through.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Brain {
     /// ~/Documents/Brain
@@ -146,7 +268,8 @@ pub struct Brain {
     /// Claude Code's hooks, in ~/.claude/settings.json.
     pub hooks: bool,
     pub skills: bool,
-    /// gbrain's database.
+    /// gbrain's database. On Windows also the keyword index install.ps1 falls back on
+    /// when gbrain does not install: the brain finds notes by keywords then.
     pub memory: bool,
 }
 
@@ -160,16 +283,79 @@ pub fn brain(home: &Path) -> Brain {
     let settings = fs::read_to_string(home.join(".claude/settings.json")).unwrap_or_default();
     Brain {
         vault: vault(home).is_some(),
+        // The shell form on a Mac, the exec form (python.exe + the hook in "args") on Windows.
         hooks: settings.contains("correction-detector.py"),
         skills: home.join(".claude/skills/brain-boost/SKILL.md").is_file(),
-        memory: home.join(".gbrain/brain.pglite").exists(),
+        memory: home.join(".gbrain/brain.pglite").exists() || keyword_index(home),
     }
+}
+
+#[cfg(not(windows))]
+fn keyword_index(_: &Path) -> bool {
+    false
+}
+
+/// install.ps1 writes which search answers (gbrain or brain_search) once one is ready.
+#[cfg(windows)]
+fn keyword_index(home: &Path) -> bool {
+    home.join(".brain-search").join("engine").is_file()
 }
 
 /// The notes folder, once install.sh created it.
 pub fn vault(home: &Path) -> Option<PathBuf> {
-    let dir = home.join("Documents/Brain");
+    let dir = brain_dir(home);
     dir.is_dir().then_some(dir)
+}
+
+#[cfg(not(windows))]
+pub fn brain_dir(home: &Path) -> PathBuf {
+    home.join("Documents/Brain")
+}
+
+/// Where install.ps1 puts the brain: the folder chosen for it, else Documents\Brain in the
+/// profile (never the Documents OneDrive may have moved).
+#[cfg(windows)]
+pub fn brain_dir(home: &Path) -> PathBuf {
+    chosen_brain_dir().unwrap_or_else(|| home.join("Documents").join("Brain"))
+}
+
+/// BRAIN_DIR of this process, else the one install.ps1 saved for the user (HKCU\Environment):
+/// an app started before the install does not have it in its environment, and install.ps1
+/// may have chosen it itself (out of Documents, which controlled folder access protects).
+/// None: install.ps1 chooses.
+#[cfg(windows)]
+pub fn chosen_brain_dir() -> Option<PathBuf> {
+    std::env::var_os("BRAIN_DIR").filter(|d| !d.is_empty()).or_else(saved_brain_dir).map(PathBuf::from)
+}
+
+#[cfg(windows)]
+fn saved_brain_dir() -> Option<std::ffi::OsString> {
+    use winreg::{enums::HKEY_CURRENT_USER, RegKey};
+    let dir: std::ffi::OsString = RegKey::predef(HKEY_CURRENT_USER).open_subkey("Environment").ok()?.get_value("BRAIN_DIR").ok()?;
+    (!dir.is_empty()).then_some(dir)
+}
+
+/// Saves `dir` as the user's BRAIN_DIR, where install.ps1 saves it: its next run puts the brain there.
+#[cfg(windows)]
+pub fn save_brain_dir(dir: &Path) -> std::io::Result<()> {
+    use winreg::{enums::HKEY_CURRENT_USER, RegKey};
+    let (env, _) = RegKey::predef(HKEY_CURRENT_USER).create_subkey("Environment")?;
+    env.set_value("BRAIN_DIR", &dir.as_os_str())
+}
+
+#[cfg(not(windows))]
+pub fn save_brain_dir(_: &Path) -> std::io::Result<()> {
+    Err(std::io::ErrorKind::Unsupported.into())
+}
+
+/// The brain's folder as the window says it: "Documents/Brain" on a Mac; on Windows the
+/// whole path, since install.ps1 may have put it elsewhere.
+pub fn brain_dir_shown(home: &Path) -> String {
+    if cfg!(windows) {
+        brain_dir(home).display().to_string()
+    } else {
+        "Documents/Brain".into()
+    }
 }
 
 /// Set once search by meaning works ("voyage:voyage-4"). The file also holds API
@@ -213,6 +399,7 @@ pub fn fmt_version((major, minor, patch): Version) -> String {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
 
     /// Everything install.sh leaves, with search by meaning on.
@@ -231,6 +418,7 @@ pub(crate) mod tests {
         fs::write(home.join(".gbrain/config.json"), config).unwrap();
     }
 
+    #[cfg(unix)]
     fn write_exec(path: &Path, content: &str) {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, content).unwrap();
@@ -271,6 +459,7 @@ pub(crate) mod tests {
         assert!(!Found::NoVersion.answers() && !Found::Absent.answers());
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_program_counts_once_it_tells_its_version() {
         let tmp = tempfile::tempdir().unwrap();
@@ -285,6 +474,7 @@ pub(crate) mod tests {
         assert_eq!(bun(home), Found::Absent);
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn clt_needs_the_real_git_in_the_selected_folder() {
         let tmp = tempfile::tempdir().unwrap();
@@ -296,6 +486,7 @@ pub(crate) mod tests {
         assert!(!has_clt(Path::new("")));
     }
 
+    #[cfg(unix)]
     #[test]
     fn obsidian_counts_only_with_its_program_inside() {
         let tmp = tempfile::tempdir().unwrap();
@@ -338,7 +529,7 @@ pub(crate) mod tests {
         fs::remove_file(h.join("Documents/Brain")).unwrap();
         fake_brain(h);
         assert!(brain(h).complete());
-        assert_eq!(vault(h), Some(h.join("Documents/Brain")));
+        assert_eq!(vault(h), Some(brain_dir(h)));
         fs::write(h.join(".claude/settings.json"), r#"{"hooks":{}}"#).unwrap();
         assert_eq!(brain(h), Brain { vault: true, hooks: false, skills: true, memory: true });
         assert!(!brain(h).complete());
@@ -364,5 +555,49 @@ pub(crate) mod tests {
         fs::write(h.join(".gbrain/config.json"), r#"{"embedding_model":" voyage:voyage-4 ","voyage_api_key":"pa-SECRET"}"#)
             .unwrap();
         assert_eq!(embedding_model(h).as_deref(), Some("voyage:voyage-4"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_keyword_index_is_a_memory_on_windows() {
+        let tmp = tempfile::tempdir().unwrap();
+        let h = tmp.path();
+        assert!(!brain(h).memory);
+        fs::create_dir_all(h.join(".brain-search")).unwrap();
+        fs::write(h.join(".brain-search/engine"), "brain_search\n").unwrap();
+        assert!(brain(h).memory);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn python_is_the_one_that_runs_code() {
+        let exe = std::env::current_exe().unwrap();
+        let hex = crate::config_guard::hex(exe.to_string_lossy().as_bytes());
+        let found = python_answer(&format!("3.12.4\r\n{hex}\r\n")).unwrap();
+        assert_eq!((found.exe, found.version), (exe.clone(), (3, 12, 4)));
+        for refused in [
+            "Python was not found; run without arguments to install from the Microsoft Store\r\n".to_string(),
+            format!("3.7.9\n{hex}\n"),
+            format!("2.7.18\n{hex}\n"),
+            "3.12.4\n".into(),
+            "3.12.4\nzz\n".into(),
+            "3.12.4\n616263\n".into(),
+            String::new(),
+        ] {
+            assert_eq!(python_answer(&refused), None, "{refused}");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn python_folders_in_listing_order() {
+        let tmp = tempfile::tempdir().unwrap();
+        for d in ["Python310", "Python312", "Python27", "python311", "Other"] {
+            fs::create_dir_all(tmp.path().join(d)).unwrap();
+        }
+        let names: Vec<String> =
+            python_folders(tmp.path()).iter().map(|p| p.file_name().unwrap().to_string_lossy().into_owned()).collect();
+        assert_eq!(names, ["Python310", "python311", "Python312"]);
+        assert!(python_folders(&tmp.path().join("missing")).is_empty());
     }
 }

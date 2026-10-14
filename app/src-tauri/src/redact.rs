@@ -42,6 +42,13 @@ static SECRETS: LazyLock<Vec<(Regex, &'static str)>> = LazyLock::new(|| {
 });
 
 static USER_HOME: LazyLock<Option<Regex>> = LazyLock::new(|| Regex::new(r#"/Users/[^/\s"'<>:]+"#).ok());
+/// A Windows profile, written with either slash, or doubled as JSON writes it.
+static WINDOWS_HOME: LazyLock<Option<Regex>> =
+    LazyLock::new(|| Regex::new(r#"(?i)\b[a-z]:[\\/]+users[\\/]+[^\\/\s"'<>:]+"#).ok());
+/// This user's own profile, which may hold a space ("C:\Users\Jo Doe") where the
+/// general pattern stops.
+#[cfg(windows)]
+static OWN_HOME: LazyLock<Option<Regex>> = LazyLock::new(|| home_pattern(&sys::home()));
 
 static BLOCK_TAG: LazyLock<Option<Regex>> =
     LazyLock::new(|| Regex::new(&format!(r"(?i)<\s*(/?)\s*({BLOCKS})\b[^<>]*>")).ok());
@@ -91,10 +98,36 @@ pub fn redact_lines(text: &str, known: &[&str], max_line: usize) -> String {
     for (re, with) in SECRETS.iter() {
         s = re.replace_all(&s, *with).into_owned();
     }
-    if let Some(re) = &*USER_HOME {
+    #[cfg(windows)]
+    if let Some(re) = &*OWN_HOME {
+        s = re.replace_all(&s, "~$1").into_owned();
+    }
+    // The drive first: "C:/Users/jo" would otherwise lose only "/Users/jo".
+    for re in [&*WINDOWS_HOME, &*USER_HOME].into_iter().flatten() {
         s = re.replace_all(&s, "~").into_owned();
     }
     s.split('\n').map(|l| cut(l, max_line)).collect::<Vec<_>>().join("\n")
+}
+
+/// The profile folder however a program wrote it: either slash or a doubled one, any
+/// case, then the end of the name (what follows is kept).
+#[cfg(windows)]
+fn home_pattern(home: &std::path::Path) -> Option<Regex> {
+    use std::path::Component;
+    let mut drive = String::new();
+    let mut parts = Vec::new();
+    for c in home.components() {
+        match c {
+            Component::Prefix(p) => drive = regex::escape(&p.as_os_str().to_string_lossy()),
+            Component::Normal(n) => parts.push(regex::escape(&n.to_string_lossy())),
+            _ => {}
+        }
+    }
+    // A home at the root of a disk would mask every path on it.
+    if parts.len() < 2 {
+        return None;
+    }
+    Regex::new(&format!(r#"(?i){drive}[\\/]+{}([\\/\s"'<>:]|\z)"#, parts.join(r"[\\/]+"))).ok()
 }
 
 fn cut(line: &str, max: usize) -> String {
@@ -132,7 +165,7 @@ mod tests {
     #[test]
     fn every_pattern_compiles() {
         assert_eq!(SECRETS.len(), SECRET_PATTERNS.len());
-        assert!(USER_HOME.is_some() && BLOCK_TAG.is_some() && DOTTED.is_some() && DIGITS.is_some());
+        assert!(USER_HOME.is_some() && WINDOWS_HOME.is_some() && BLOCK_TAG.is_some() && DOTTED.is_some() && DIGITS.is_some());
     }
 
     #[test]
@@ -186,6 +219,18 @@ mod tests {
     fn the_user_name_never_leaves() {
         let out = redact("Cloning into '/Users/jo.doe/DEV/gbrain'... /Users/jo.doe", &[]);
         assert_eq!(out, "Cloning into '~/DEV/gbrain'... ~");
+        let out = redact(r#"[OK] python (C:\Users\Jo\AppData\Local\Programs\Python\Python312\python.exe) {"p":"c:\\users\\jo\\.bun"} C:/Users/jo/x"#, &[]);
+        assert_eq!(out, r#"[OK] python (~\AppData\Local\Programs\Python\Python312\python.exe) {"p":"~\\.bun"} ~/x"#);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_profile_name_with_a_space_never_leaves() {
+        let re = home_pattern(std::path::Path::new(r"C:\Users\Jo Doe")).unwrap();
+        let text = r#"C:\Users\Jo Doe\.bun "c:\\users\\jo doe\\x" C:/Users/Jo Doe C:\Users\Jo Doe2\y"#;
+        let out = re.replace_all(text, "~$1");
+        assert_eq!(out, r#"~\.bun "~\\x" ~ C:\Users\Jo Doe2\y"#);
+        assert!(home_pattern(std::path::Path::new(r"C:\")).is_none());
     }
 
     #[test]
