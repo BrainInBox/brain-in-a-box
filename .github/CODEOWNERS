@@ -11,10 +11,6 @@
 /engine/hooks/gbrain_update.py           @El-Kurdi-Chad
 /engine/hooks/_headless_claude.py        @El-Kurdi-Chad
 /engine/hooks/_redact.py                 @El-Kurdi-Chad
-/engine/hooks/_controle_rules.py         @El-Kurdi-Chad
-/engine/hooks/_controle_judge.py         @El-Kurdi-Chad
-/engine/hooks/controle.py                @El-Kurdi-Chad
-/engine/hooks/controle-sessionstart.py   @El-Kurdi-Chad
 /engine/tests/terrain.py                 @El-Kurdi-Chad
 /engine/tests/vault_piege.py             @El-Kurdi-Chad
 /docs/terrain-agent.md                   @El-Kurdi-Chad

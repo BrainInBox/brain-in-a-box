@@ -74,8 +74,8 @@ Open the PR and leave a comment asking the maintainer to review it when the diff
   `engine/nightly/` (the nightly of every install);
 - pins, checksums and download URLs: `engine/gbrain-pin.json`, `engine/hooks/gbrain_update.py`, any
   sha256, the URLs the installers and the workflows download from;
-- secret handling: `engine/hooks/_redact.py`, `engine/hooks/_controle_rules.py`,
-  `engine/hooks/_controle_judge.py`, `engine/hooks/controle.py`, `engine/hooks/controle-sessionstart.py`;
+- secret detection: `engine/hooks/_redact.py`, and any change to how the S1 fix masks, quarantines
+  or puts back a secret, wherever that code lives (the rest of the night check is yours to fix);
 - the Claude token: `engine/hooks/_headless_claude.py` (environment, login and start-up checks),
   anything that reads `CLAUDE_CODE_OAUTH_TOKEN`, and `engine/tests/terrain.py` and
   `engine/tests/vault_piege.py`, which run with the token the next night and write the run's
