@@ -692,7 +692,8 @@ class Parcours:
         self.rapides = []       # and each quick one (Bibo's words only)
         self.precedent = None   # the last full reading, kept while Bibo says the same
         self.plein_a = 0.0
-        self.forcer = True      # the next reading is a full one (after a click, a launch)
+        self.forcer = True      # the next reading is a full one (after a launch, a missing button)
+        self.clics = []         # [{"a_s", "ecran", "bouton", "comment"}]
 
     def secondes(self):
         return int(self.horloge() - self.debut)
@@ -819,11 +820,15 @@ class Parcours:
                 return vus
             label = None if e.partiel else self.reaction(cle, e, relance)
             state = e.bouton(label) if label else None
+            if label and not state:
+                # The page's accessibility tree may show the words before the buttons: read it all again.
+                self.forcer = True
             if state:
                 if clic is None or now - clic[0] >= CLIC_RELANCE:
                     if clic is not None and clic[1] >= CLIC_ESSAIS:
                         self.echouer("le clic sur « %s » ne change rien (%d essais)" % (label, clic[1]))
-                    self.p.cliquer(label)
+                    how = self.p.cliquer(label)
+                    self.clics.append({"a_s": self.secondes(), "ecran": prefixe + cle, "bouton": label, "comment": how})
                     clic = (now, (clic[1] if clic else 0) + 1)
             elif label and now - depuis >= CLIC_RELANCE * CLIC_ESSAIS:
                 self.echouer("l'écran « %s » n'offre pas le bouton « %s »%s" % (cle, label, " (désactivé)" if state is False else ""))
@@ -879,7 +884,7 @@ class Parcours:
         if self.ecrans and self.ecrans[-1]["duree_s"] is None:
             self.ecrans[-1]["duree_s"] = self.secondes() - self.ecrans[-1]["debut_s"]
         mean = lambda xs: int(sum(xs) / len(xs)) if xs else None
-        return {"captures": self.captures, "ecrans": self.ecrans,
+        return {"captures": self.captures, "ecrans": self.ecrans, "clics": self.clics,
                 "dialogues_systeme": [{k: v for k, v in d.items() if k != "clic_a"} for d in self.dialogues],
                 "bibo": {"titre": self.dernier.titre, "texte": self.dernier.texte},
                 "dernier_ecran": dict(self.dernier.resume(), lecture=self.dernier.lecture), "lecture_fenetre_ms": {"pleine": mean(self.lectures), "rapide": mean(self.rapides),

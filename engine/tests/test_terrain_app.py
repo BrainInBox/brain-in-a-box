@@ -160,8 +160,9 @@ class FauxPilote(ta.Pilote):
             return ta.Ecran()
         spec = self.spec()
         dialogues = [dict(self.dialogue)] if self.dialogue else []
+        late = self.h.now - self.depuis < spec.get("boutons_apres", 0)   # the tree shows the words first
         return ta.Ecran(fenetre=True, titre=spec["titre"], texte=spec.get("texte", ""),
-                        boutons=[(b, True) for b in spec.get("boutons", {})], textes=spec.get("textes", []),
+                        boutons=[] if late else [(b, True) for b in spec.get("boutons", {})], textes=spec.get("textes", []),
                         dialogues=dialogues)
 
     def cliquer(self, libelle, processus=None):
@@ -268,6 +269,19 @@ class Walk(Base):
         pa.premier_lancement({})
         self.assertEqual(len([n for n in quick.captures if n.endswith("-etape-bun.png")]), 1)
         self.assertEqual(quick.clics, slow.clics)
+
+    def test_buttons_late_in_the_tree_are_read_again_at_once(self):
+        p = FauxPilote(self.h)
+        p.vite = True
+        p.ecrans["login"] = dict(p.ecrans["login"], boutons_apres=3)
+        pa = self.parcours(p)
+        pa.premier_lancement({})
+        shown = next(e for e in pa.ecrans if e["ecran"] == "connexion")
+        click = next(c for c in pa.clics if c["ecran"] == "connexion")
+        self.assertEqual(click["bouton"], "Plus tard")
+        self.assertLessEqual(click["a_s"] - shown["debut_s"], 5, "not at the next periodic full read")
+        self.assertEqual([c["bouton"] for c in pa.clics], ["Vérifier mon Mac", "Tout installer",
+                                                           "Passer (recherche par mots-clés)", "Plus tard", "Plus tard"])
 
     def test_opened_again_it_says_all_is_installed(self):
         p = FauxPilote(self.h)

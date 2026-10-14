@@ -77,7 +77,7 @@ gh run download <run-id> --name captures-macos-app --dir "$(mktemp -d)"    # the
   dialog (the robot accepts only one naming the app, as the app tells users to), `NN-echec.png`
   and `NN-echec-arbre.json` (what the robot read in the window) at the failure. Look at the
   capture before the failure: it shows what a user would have seen.
-- `details`: `ecrans` (each screen and how long it stayed), `dialogues_systeme`, `dernier_ecran`
+- `details`: `ecrans` (each screen and how long it stayed), `clics`, `dialogues_systeme`, `dernier_ecran`
   (title, text, buttons, texts), `release` or `sources_du_cerveau`, `duree_parcours_s`.
 - The robot finds screens and buttons by the app's words (`ECRANS`, `ETAPES` in
   `terrain_app.py`). Reworded in `app/src/app.js` without them: « écran inconnu », « n'offre pas
