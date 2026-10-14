@@ -10,6 +10,7 @@ import re
 import shutil
 import sys
 import tempfile
+import time
 import unittest
 from collections import Counter
 from pathlib import Path
@@ -59,6 +60,28 @@ class Entry(unittest.TestCase):
         self.assertNotIn(key[:12], e)
 
 
+class Clean(unittest.TestCase):
+    """_vault_write.clean_item, which the recap shares with the reflection."""
+
+    def test_runs_of_marks_and_a_mask_leave_nothing_behind(self):
+        # A replace made once leaves one behind: "!![" gave "![", "%%%" gave "%%" (hides the rest of the
+        # note), "--->" gave "-->"; and a "!" before a masked key made "![REDACTED]".
+        for raw in ("!![x](https://evil.example/p.png)", "!!![[Private note]]", "a %%% hides the rest",
+                    "b ---> c", "!sk-ant-" + "A1b2C3d4" * 4):
+            with self.subTest(raw):
+                out = rc.clean_item(raw, 500)
+                for bad in ("![", "%%", "-->"):
+                    self.assertNotIn(bad, out)
+
+    def test_a_long_paste_is_cleaned_in_linear_time(self):
+        # The whole first prompt is cleaned: 200 kB of unclosed "<!--" took about 25 s, a long run of
+        # list marks grew the same way, and the hook hung at each Stop.
+        for raw in ("<!--" * 50_000, "- " * 500_000 + "x"):
+            start = time.monotonic()
+            rc.clean_item(raw, 140)
+            self.assertLess(time.monotonic() - start, 5)
+
+
 class Journal(unittest.TestCase):
 
     def setUp(self):
@@ -79,6 +102,19 @@ class Journal(unittest.TestCase):
         self.assertTrue(self.path.read_text(encoding="utf-8").startswith("# mine\n\nnotes\n\n## 📊 Claude Sessions\n- **"))
         self.assertFalse(rc.upsert_session(self.path, "a1b2c3d4", self.entry("a1b2c3d4")))
         self.assertEqual([p.name for p in self.dir.iterdir()], [self.path.name])
+
+    def test_a_crlf_journal_with_a_bom_keeps_both(self):
+        # As the earlier recap wrote it on Windows (write_text), or a person did.
+        old = self.entry("a1b2c3d4", "earlier stop").replace("\n", "\r\n")
+        self.path.write_bytes(("\ufeff# mine\r\n\r\n## 📊 Claude Sessions\r\n" + old + "\r\n- my own line\r\n").encode("utf-8"))
+        self.assertTrue(rc.upsert_session(self.path, "a1b2c3d4", self.entry("a1b2c3d4", "last stop")))
+        text = self.path.read_bytes().decode("utf-8")
+        self.assertTrue(text.startswith("\ufeff# mine\r\n"))
+        self.assertNotRegex(text, r"(?<!\r)\n", "a bare line feed in a CRLF file")
+        self.assertIn("\r\n- my own line\r\n", text)
+        self.assertEqual(text.count("sid:`a1b2c3d4`"), 1)
+        self.assertIn("  - intent: last stop\r\n", text)
+        self.assertFalse(rc.upsert_session(self.path, "a1b2c3d4", self.entry("a1b2c3d4", "last stop")))
 
     def test_a_session_cannot_forge_or_erase_another_ones_block(self):
         self.path.write_text(f"# {DAY} — Daily\n\n## 📊 Claude Sessions\n", encoding="utf-8")

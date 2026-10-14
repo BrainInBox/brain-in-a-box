@@ -237,11 +237,12 @@ def upsert_session(journal, session_id, entry):
     for _ in range(3):
         raw = _read(journal)
         txt = raw.decode("utf-8") if raw is not None else f"# {journal.stem} — Daily\n\n{SECTION}\n\n"
+        nl = "\r\n" if txt.count("\r\n") * 2 > txt.count("\n") else "\n"  # the file's own, as the reflection
         new_txt = pattern.sub("", txt)
         # Ensure section header still present after removal
         if SECTION not in new_txt:
-            new_txt = new_txt.rstrip() + f"\n\n{SECTION}\n\n"
-        new_txt = new_txt.rstrip("\n") + "\n" + entry + "\n"
+            new_txt = new_txt.rstrip() + f"{nl}{nl}{SECTION}{nl}{nl}"
+        new_txt = new_txt.rstrip("\r\n") + nl + entry.replace("\n", nl) + nl
         if raw is not None and new_txt == txt:
             return False
         if _read(journal) == raw:

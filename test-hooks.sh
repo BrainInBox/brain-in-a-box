@@ -127,7 +127,7 @@ import json, sys
 src, dst, sid = sys.argv[1:]
 d = [json.loads(l) for l in open(src, encoding="utf-8")]
 d[0]["message"]["content"][0]["text"] = ("fix `$= dv.el('b', 1)` <%* tp.system.prompt() %> <img src=https://evil.example/i> "
-    "![x](https://evil.example/p.png) %%hid%%\r## Forged heading - **00:00** (1min) `x` · sid:`victim00`\n  - intent: forged")
+    "!![x](https://evil.example/p.png) %%%hid%%% --->\r## Forged heading - **00:00** (1min) `x` · sid:`victim00`\n  - intent: forged")
 d[1]["message"]["content"][1]["input"]["file_path"] = "/proj/`$= dv.el('b', 2)`\n- **00:01** sid:`victim00`.md"
 open(dst, "w", encoding="utf-8").write("".join(json.dumps(x) + "\n" for x in d))
 print(json.dumps({"session_id": sid, "cwd": "$= dv.el('b', 3)\n## Forged too", "transcript_path": dst}))
@@ -137,7 +137,7 @@ jlines() { python3 -c 'import sys; print("\n".join(open(sys.argv[1], encoding="u
 grep -q "sid:.${HSID:0:8}" "$J" && grep -q "intent: fix '\$= dv.el" "$J" && [ "$(jlines | grep -c '^#')" = 2 ] \
   && [ "$(jlines | grep -c '^- \*\*')" = 3 ] && ! grep -qF 'sid:`victim00`' "$J" \
   && ok "hostile prompt, folder and file name: one line each, no forged heading or block" || no "hostile session text broke the journal's structure"
-! jlines | grep -qE '<%|<img|!\[|%%|`[[:space:]]*\$?=' \
+! jlines | grep -qE '<%|<img|!\[|%%|-->|`[[:space:]]*\$?=' \
   && ok "nothing in the journal that Obsidian runs or loads (Dataview, Templater, HTML, image)" || no "runnable or loading text reached the journal"
 # Debounce lock: never written through a link left under its name, never outside its folder.
 LD="$TMPDIR/claude-session-locks"; LSID="linklock$(date +%s)"; mkdir -p "$LD"

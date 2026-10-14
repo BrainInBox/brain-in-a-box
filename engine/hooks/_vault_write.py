@@ -27,24 +27,25 @@ def clean_item(text, limit):
     # Line breaks become spaces; invisible, bidi, tag and private-use characters go.
     s = "".join(" " if unicodedata.category(c) in ("Cc", "Zl", "Zp")
                 else "" if unicodedata.category(c) in ("Cf", "Cs", "Co") else c for c in text)
-    s = re.sub(r"<!--.*?-->", " ", s).replace("<!--", " ").replace("-->", "->")  # no marker block of anyone
+    # No marker block of anyone. Comments are looked for up to the last "-->" only, where each one can
+    # close: the same result, but a long paste of unclosed "<!--" no longer takes minutes.
+    end = s.rfind("-->") + 3
+    s = re.sub(r"<!--.*?-->", " ", s[:end]) + s[end:]
+    s = re.sub(r"-{2,}>", "->", s.replace("<!--", " "))
     # No HTML (Obsidian renders it, <img> loads on view) nor Templater command (<% %>, run when a new
     # note is created, JavaScript included).
     s = re.sub(r"<(?=[A-Za-z/!?%])", "‹", s)
-    s = s.replace("![", "[")                   # no image or embed: they load on view too
     # No backquote: an inline `$= ...` is Dataview JavaScript, run on view; a fence would hide what
-    # follows. No ~~~ fence nor Obsidian comment (%%) either.
-    s = re.sub(r"~{3,}", "~~", s.replace("`", "'")).replace("%%", "%")
+    # follows. No ~~~ fence nor Obsidian comment (%%) either. Runs as a whole: "%%%" must not leave "%%".
+    s = re.sub(r"%{2,}", "%", re.sub(r"~{3,}", "~~", s.replace("`", "'")))
     s = re.sub(r"\s+", " ", s).strip()
-    while True:  # our own "- " comes first: no list mark, heading, rule, frontmatter fence or quote
-        t = re.sub(r"^(?:[-*+]\s+|\d{1,3}[.)]\s+|#+(?:\s+|$)|-{3,}\s*|={3,}\s*|>+\s*)", "", s)
-        if t == s:
-            break
-        s = t
+    # Our own "- " comes first: no list mark, heading, rule, frontmatter fence or quote, however many.
+    s = re.sub(r"^(?:[-*+]\s+|\d{1,3}[.)]\s+|#+(?:\s+|$)|-{3,}\s*|={3,}\s*|>+\s*)+", "", s)
     s = redact(s)[0]  # before cutting: a key cut short no longer matches its pattern
     if len(s) > limit:
         s = s[:limit - 1].rstrip() + "…"
-    return redact(s)[0]
+    # No image or embed: they load on view too. Last, and whole runs: "!![" and "!" + "[REDACTED]" are ones.
+    return re.sub(r"!+\[", "[", redact(s)[0])
 
 
 def write_atomic(path, lines, note):
