@@ -183,9 +183,11 @@ class FauxPilote(ta.Pilote):
     def marquer_telecharge(self, fichier):
         return "0083;00000000;Safari;TEST"
 
-    def installer(self, fichier, details):
+    def installer(self, fichier, details, capturer=None):
         details["signature"] = "adhoc"
         return []
+
+    outils = ta.PiloteMac.outils
 
     def arbre(self):
         return {"app": [], "faux": True}
@@ -590,6 +592,283 @@ class Release(Base):
         with self.assertRaises(terrain.Echec) as cm:
             self.download(b"dmg bytes", attestation=1)
         self.assertIn("l'attestation", str(cm.exception))
+
+
+# --------------------------------------------------------------------------- Windows
+
+def uia(t, n="", k=(), **kw):
+    """A node as pilote_windows.cs dumps it (t control type, lt localized type, n name, e enabled...)."""
+    node = {"t": t, "lt": kw.pop("lt", t.lower()), "n": n, "e": kw.pop("e", True), "k": list(k)}
+    node.update(kw)
+    return node
+
+
+def page_uia(statut="StatusBar", p_texte=False, boutons=(("Vérifier mon PC", True), ("Plus tard", False))):
+    """The welcome screen as UI Automation gives WebView2's page (Chromium's roles), in the app's window."""
+    texte = lambda s: uia("Text", s) if not p_texte else uia("Text", "", [uia("Text", s)])
+    paragraphe = lambda s: uia("Group", "", [texte(s)], lt="paragraph") if not p_texte else texte(s)
+    region = {"StatusBar": lambda k: uia("StatusBar", "", k, lt="status bar"),
+              "lt": lambda k: uia("Group", "", k, lt="status"),
+              "live": lambda k: uia("Group", "", k, lt="group", l=1),
+              None: lambda k: uia("Group", "", k, lt="group")}[statut]
+    message = region([paragraphe("Salut, moi c’est Bibo" + NB + "!"), paragraphe("Je vais installer ton second cerveau.")])
+    hero = uia("Group", "", [uia("Image", "Bibo"), message], lt="banner")
+    main = uia("Group", "", [uia("List", "", [uia("ListItem", "", [uia("Text", "Je regarde ce qui manque sur ton PC.")])]),
+                             uia("Text", "Il te faut un abonnement Claude Pro ou Max.", l=1)], lt="main")
+    footer = uia("Group", "", [uia("Button", b, [uia("Text", b)], e=on) for b, on in boutons], lt="content info")
+    doc = uia("Document", "Brain in a Box", [uia("Group", "", [hero, main, footer])])
+    return uia("Window", "Brain in a Box", [
+        uia("TitleBar", "", [uia("Button", "Minimize"), uia("Button", "Close")]),
+        uia("Pane", "", [uia("Pane", "Chrome Legacy Window", [doc], c="Chrome_RenderWidgetHostHWND")])], c="Tauri Window")
+
+
+class WindowsReading(unittest.TestCase):
+    def ecran(self, arbre):
+        return ta.ecran_depuis_arbre([{"titre": "Brain in a Box", "arbre": ta.arbre_uia(arbre)}])
+
+    def test_bibo_in_the_status_region_whatever_ui_automation_calls_it(self):
+        for statut in ("StatusBar", "lt", "live"):
+            e = self.ecran(page_uia(statut))
+            self.assertEqual((e.lecture, e.titre, e.texte), ("statut", "Salut, moi c'est Bibo !",
+                                                             "Je vais installer ton second cerveau."), statut)
+            self.assertEqual(e.boutons, [("Vérifier mon PC", True), ("Plus tard", False)], statut)
+            self.assertEqual(ta.cle_ecran(e), ("bienvenue", None))
+            self.assertIn("Il te faut un abonnement Claude Pro ou Max.", e.textes)
+            # A button's own text is its label, never one more text of the page.
+            self.assertEqual(e.textes.count("Vérifier mon PC"), 0)
+        e = self.ecran(page_uia(None))
+        self.assertEqual((e.lecture, e.titre, e.texte), ("repli", "Salut, moi c'est Bibo !", "Je vais installer ton second cerveau."))
+
+    def test_a_paragraph_without_a_name_is_read_through(self):
+        e = self.ecran(page_uia("StatusBar", p_texte=True))
+        self.assertEqual((e.titre, e.texte), ("Salut, moi c'est Bibo !", "Je vais installer ton second cerveau."))
+
+    def test_the_window_frame_is_not_the_page(self):
+        e = self.ecran(page_uia())
+        self.assertIsNone(e.bouton("Close"))
+        self.assertIsNone(e.bouton("Minimize"))
+        loading = uia("Window", "Brain in a Box", [uia("TitleBar", "", [uia("Button", "Close")]), uia("Pane", "")])
+        self.assertEqual(ta.cle_ecran(self.ecran(loading)), ("chargement", None))
+
+
+def nsis(page, lancer=1):
+    """The installer's pages (NSIS, French, tauri-bundler's template) as UI Automation shows them."""
+    b = lambda n, on=True: uia("Button", n, e=on)
+    pages = {
+        "bienvenue": [uia("Text", "Bienvenue dans le programme d'installation de Brain in a Box"), b("Suivant >"), b("Annuler")],
+        "dossier": [uia("Text", "Choisissez le dossier d'installation"), uia("Edit", "Dossier de destination"),
+                    b("Parcourir..."), b("< Précédent"), b("Installer"), b("Annuler")],
+        "installation": [uia("Text", "Installation en cours"), b("Afficher les détails"), b("< Précédent", False),
+                         b("Suivant >", False), b("Annuler", False)],
+        "installe": [uia("Text", "Installation terminée"), b("Afficher les détails"), b("< Précédent", False),
+                     b("Suivant >"), b("Annuler", False)],
+        "fin": [uia("Text", "Fin de l'installation de Brain in a Box"),
+                uia("CheckBox", "Créer un raccourci sur le bureau.", x=1), uia("CheckBox", "Lancer Brain in a Box", x=lancer),
+                b("< Précédent", False), b("Fermer"), b("Annuler", False)],
+        "message": [uia("Text", "Erreur : le téléchargement de WebView2 a échoué"), b("OK")],
+    }[page]
+    return [{"h": 7, "pid": 41, "titre": "Installation de Brain in a Box", "classe": "#32770",
+             "arbre": uia("Window", "Installation de Brain in a Box", [uia("TitleBar", "", [uia("Button", "Close")]),
+                                                                       uia("Pane", "", pages)])}]
+
+
+class FauxSetup:
+    pid = 41
+
+    def __init__(self, h):
+        self.h, self.fini, self.code = h, None, 0
+
+    def poll(self):
+        return self.code if self.fini is not None and self.h.now >= self.fini else None
+
+    def kill(self):
+        self.fini = self.h.now
+
+
+class FauxWindows(ta.PiloteWindows):
+    """PiloteWindows with its helper played: the installer's pages, on a fake clock."""
+
+    def __init__(self, h, travail, pages=None):
+        super().__init__(travail, outil="pilote-windows.exe", horloge=h, dormir=h.dormir)
+        self.h = h
+        self.setup = FauxSetup(h)
+        self.page, self.lancer, self.depuis, self.duree = "bienvenue", 1, 0.0, 40
+        self.suite = pages if pages is not None else {
+            ("bienvenue", "Suivant >"): "dossier", ("dossier", "Installer"): "installation", ("installe", "Suivant >"): "fin"}
+        self.appels = []
+
+    def aller(self, page):
+        self.page, self.depuis = page, self.h.now
+
+    def _outil(self, args, timeout=120):
+        args = [str(a) for a in args]
+        self.appels.append(args)
+        self.h.now += 0.3
+        if self.page == "installation" and self.h.now - self.depuis >= self.duree:
+            self.aller("installe")
+        if args[0] == "lire":
+            gone = self.setup.fini is not None
+            return {"ok": True, "fenetres": [] if gone else nsis(self.page, self.lancer), "devant": None}
+        if args[0] == "devant":
+            return {"ok": True, "devant": True}
+        if args[0] == "cocher":
+            self.lancer = int(args[3])
+            return {"ok": True, "coche": bool(self.lancer)}
+        if args[0] == "cliquer":
+            if self.page == "fin" and args[2] == "Fermer":
+                self.setup.fini = self.h.now + 1
+            nxt = self.suite.get((self.page, args[2]))
+            if nxt:
+                self.aller(nxt)
+            return {"ok": True, "comment": "Invoke"}
+        raise AssertionError(args)
+
+
+class WindowsInstaller(Base):
+    def test_the_wizard_is_clicked_through_with_a_capture_of_every_page(self):
+        p = FauxWindows(self.h, self.tmp)
+        shots = []
+        pages = p.assistant(p.setup, [], capturer=lambda name: shots.append(name) or name)
+        self.assertEqual([x["page"] for x in pages], ["bienvenue", "dossier", "installation", "installe", "fin", "fin"])
+        self.assertEqual([c for x in pages for c in x["clics"]],
+                         ["Suivant >", "Installer", "Suivant >", "Lancer Brain in a Box : décoché", "Fermer"])
+        self.assertEqual(shots, ["installeur-" + x["page"] for x in pages])
+        # The desktop shortcut is left as the installer offers it.
+        self.assertFalse([a for a in p.appels if a[0] == "cocher" and "bureau" in a[2]])
+        self.assertEqual(p.lancer, 0)
+        self.assertEqual(p.setup.poll(), 0)
+
+    def test_pages_as_data(self):
+        keys = {k: ta.page_installeur(nsis(k))["cle"] for k in ("bienvenue", "dossier", "installation", "installe", "fin", "message")}
+        self.assertEqual(keys, {k: k for k in keys})
+        self.assertEqual(ta.action_installeur(ta.page_installeur(nsis("installation"))), None)
+        self.assertEqual(ta.action_installeur(ta.page_installeur(nsis("fin", lancer=0))), ("cliquer", "Fermer"))
+        self.assertEqual(ta.norm_win("&Suivant >"), "Suivant >")
+        # The title bar's Close is the window's, never the installer's last button.
+        self.assertNotIn("Close", ta.page_installeur(nsis("bienvenue"))["boutons"])
+
+    def test_an_error_box_of_the_installer_fails_with_its_words(self):
+        p = FauxWindows(self.h, self.tmp)
+        p.page = "message"
+        with self.assertRaises(ta.ErreurPilote) as cm:
+            p.assistant(p.setup, [])
+        self.assertIn("l'installeur affiche : « Erreur : le téléchargement de WebView2 a échoué »", str(cm.exception))
+
+    def test_a_click_that_changes_nothing_and_an_installer_that_never_ends(self):
+        p = FauxWindows(self.h, self.tmp, pages={})
+        with self.assertRaises(ta.ErreurPilote) as cm:
+            p.assistant(p.setup, [])
+        self.assertIn("le clic sur « Suivant > » ne change rien dans l'installeur (3 essais)", str(cm.exception))
+        p = FauxWindows(Horloge(), self.tmp, pages={("bienvenue", "Suivant >"): "installation"})
+        p.duree = 10 ** 9
+        with self.assertRaises(ta.ErreurPilote) as cm:
+            p.assistant(p.setup, [])
+        self.assertIn("l'installeur n'a pas fini en 10 min (page « installation »)", str(cm.exception))
+
+    def installed(self, ruche="HKCU", ailleurs=False, cible=None):
+        root = Path(tempfile.mkdtemp(dir=self.tmp))
+        local, roaming, profile = (root / n for n in ("Local", "Roaming", "Profile"))
+        folder = (root / "Programs" if ailleurs else local) / "Brain in a Box"
+        folder.mkdir(parents=True)
+        exe = folder / "brain-in-a-box.exe"
+        exe.write_bytes(b"MZ")
+        menu = roaming / "Microsoft" / "Windows" / "Start Menu" / "Programs"
+        menu.mkdir(parents=True)
+        (menu / "Brain in a Box.lnk").write_bytes(b"L")
+        (profile / "Desktop").mkdir(parents=True)
+        p = FauxWindows(self.h, self.tmp)
+        p._outil = lambda args, timeout=120: {"ok": True, "cible": str(cible or exe)}
+        entries = [{"ruche": ruche, "cle": "Brain in a Box", "desinstalleur": str(folder / "uninstall.exe")}]
+        details = {}
+        with mock.patch.dict(os.environ, {"LOCALAPPDATA": str(local), "APPDATA": str(roaming), "USERPROFILE": str(profile)}), \
+                mock.patch.object(ta.PiloteWindows, "desinstallations", staticmethod(lambda: entries)):
+            notes = p.verifier_installation(details)
+        return p, details, notes, exe
+
+    def test_installed_for_the_user_alone_and_opened_from_the_start_menu(self):
+        p, details, notes, exe = self.installed()
+        self.assertEqual(p.exe, str(exe))
+        self.assertEqual((details["app"], details["raccourci_bureau"]), ("brain-in-a-box.exe", False))
+        self.assertIn("SmartScreen ne s'est pas affiché", notes[0])
+        self.assertIn("constat, pas un échec", notes[0])
+        with self.assertRaises(ta.ErreurPilote) as cm:
+            self.installed(ruche="HKLM")
+        self.assertIn("pour tous les utilisateurs", str(cm.exception))
+
+    def test_installed_elsewhere_or_a_shortcut_elsewhere_fails(self):
+        with self.assertRaises(ta.ErreurPilote) as cm:
+            self.installed(ailleurs=True)
+        self.assertIn("hors des programmes de l'utilisateur", str(cm.exception))
+        with self.assertRaises(ta.ErreurPilote) as cm:
+            self.installed(cible=Path(self.tmp) / "autre" / "brain-in-a-box.exe")
+        self.assertIn("le raccourci du menu Démarrer mène à", str(cm.exception))
+
+
+class WindowsApp(Base):
+    def test_the_window_a_dialog_in_front_and_a_click_on_it(self):
+        p = FauxWindows(self.h, self.tmp)
+        p.proc = FauxSetup(self.h)
+        p.exe = r"C:\Users\r\AppData\Local\Brain in a Box\brain-in-a-box.exe"
+        devant = {"h": 9, "pid": 77, "classe": "#32770", "exe": r"C:\Windows\System32\SmartScreen.exe",
+                  "arbre": uia("Window", "Windows", [uia("Text", "Brain in a Box souhaite accéder à tes fichiers"),
+                                                     uia("Button", "Autoriser"), uia("Button", "Refuser")])}
+        console = dict(devant, classe="ConsoleWindowClass")
+        calls = []
+
+        def outil(args, timeout=120):
+            calls.append([str(a) for a in args])
+            if args[0] == "lire":
+                return {"ok": True, "fenetres": [{"h": 5, "classe": "Tauri Window", "titre": "Brain in a Box",
+                                                  "arbre": page_uia()}], "devant": outil.devant}
+            return {"ok": True, "comment": "Invoke"}
+        p._outil = outil
+        outil.devant = devant
+        e = p.lire()
+        self.assertEqual((e.titre, ta.cle_ecran(e)[0]), ("Salut, moi c'est Bibo !", "bienvenue"))
+        self.assertEqual(e.dialogues[0]["processus"], "SmartScreen")
+        self.assertEqual(ta.bouton_autoriser(e.dialogues[0]), "Autoriser")
+        p.cliquer("Autoriser", processus="SmartScreen")
+        p.cliquer("Vérifier mon PC")
+        self.assertEqual([c for c in calls if c[0] == "cliquer"], [["cliquer", "9", "Autoriser"], ["cliquer", "5", "Vérifier mon PC"]])
+        # Brought to the front once, the first time the window was seen.
+        p.lire()
+        self.assertEqual([c for c in calls if c[0] == "devant"], [["devant", "5"]])
+        outil.devant = console
+        self.assertEqual(p.lire().dialogues, [])
+
+    def test_a_pc_is_clicked_through_with_its_own_words(self):
+        f = FauxPilote(self.h)
+        f.machine = "PC"
+        f.ecrans["bienvenue"] = dict(f.ecrans["bienvenue"], boutons={"Vérifier mon PC": "diag-en-cours"})
+        f.ecrans["login-inline"]["boutons"]["Plus tard"] = "brain"     # Windows: Claude Code, then install.ps1
+        self.parcours(f).premier_lancement({})
+        self.assertEqual(f.clics, ["Vérifier mon PC", "Tout installer", "Passer (recherche par mots-clés)",
+                                   "Plus tard", "Plus tard"])
+        self.assertFalse([c for c in f.captures if "etape-bun" in c or "etape-obsidian" in c])
+
+
+class WindowsEnvironment(unittest.TestCase):
+    def test_a_session_s_environment_the_store_python_first_never_a_token(self):
+        block = ["=C:=C:\\", "Path=C:\\Windows\\system32;C:\\Users\\r\\AppData\\Local\\Microsoft\\WindowsApps",
+                 "USERPROFILE=C:\\Users\\r", "TEMP=C:\\Users\\r\\AppData\\Local\\Temp", "broken"]
+        session = ta.env_depuis_bloc(block)
+        self.assertEqual(sorted(session), ["Path", "TEMP", "USERPROFILE"])
+        with mock.patch.dict(os.environ, {"GH_TOKEN": "ghs_x", "GITHUB_TOKEN": "ghs_y", "CI": "true"}):
+            env = ta.env_app_windows(session, "C:\\stub", {"BIAB_ARCHIVE": "C:\\t\\k.zip"})
+        self.assertEqual(env["Path"], "C:\\stub;C:\\Windows\\system32;C:\\Users\\r\\AppData\\Local\\Microsoft\\WindowsApps")
+        self.assertEqual(sorted(env), ["BIAB_ARCHIVE", "Path", "TEMP", "USERPROFILE"])
+        self.assertEqual(ta.env_app_windows(session)["Path"], session["Path"])
+
+    def test_the_helper_source_is_ascii_and_answers_every_request(self):
+        with open(ta.PiloteWindows.SOURCE, "rb") as f:
+            src = f.read()
+        self.assertEqual([i for i, c in enumerate(src) if c > 0x7f][:3], [], "csc reads it in the ANSI code page")
+        with open(ta.__file__, encoding="utf-8") as f:
+            py = f.read()
+        asked = set(re.findall(r'_outil\(\[\s*"([a-z]+)"', py)) | {"cocher", "cliquer"}
+        self.assertEqual(asked, {"lire", "cliquer", "cocher", "fermer", "devant", "capturer", "raccourci"})
+        for op in asked:
+            self.assertIn('op == "%s"' % op, src.decode("ascii"))
 
 
 class Scenario(Base):

@@ -68,13 +68,13 @@ ATTENDUS = {"neuf": ("installeur", "installation", "nuits"),
             "montee": ("installeur-v0.2.0", "montee-avant", "installeur-montee", "montee"),
             "claude": ("vrai-claude",),
             "app": ("app",)}
-# The systems each path runs on, when not both (the app's window: a driver per system, macOS first).
-ATTENDUS_OS = {"app": ("macos",)}
+# The systems each path runs on, when not both.
+ATTENDUS_OS = {}
 # terrain.yml's jobs, and the result files each one writes ("tous": the commit to test, for all).
 JOBS = {"ref": ("tous", ()), "macos": ("macos", ("macos-neuf", "macos-montee")),
         "windows": ("windows", ("windows-neuf", "windows-montee")),
         "claude": ("macos+windows", ("macos-claude", "windows-claude")),
-        "app-macos": ("macos", ("macos-app",))}
+        "app-macos": ("macos", ("macos-app",)), "app-windows": ("windows", ("windows-app",))}
 JOB_RESULTS = ("success", "failure", "cancelled", "skipped")
 ETAPE_RE = re.compile(r"^[a-z0-9][a-z0-9.-]{0,40}$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")

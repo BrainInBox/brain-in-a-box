@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Field test "app": the desktop app as a user gets it, clicked through in its real window.
 
-On a fresh GitHub VM (terrain.yml, job app-macos), the robot gets the app the way a user does,
-installs it, opens it and clicks through its real window, Bienvenue to the final screen, with a
-capture of every screen. Then it checks the brain works and opens the app a second time: it must
-say everything is already installed.
+On a fresh GitHub VM (terrain.yml, jobs app-macos and app-windows), the robot gets the app the
+way a user does, installs it, opens it and clicks through its real window, Bienvenue to the final
+screen, with a capture of every screen. Then it checks the brain works and opens the app a second
+time: it must say everything is already installed.
 
     python3 -I engine/tests/terrain.py app --vm --parcours app --source release --captures DIR
     python3 -I engine/tests/terrain.py app --vm --parcours app --source build --fichier APP.dmg --captures DIR
+    python -I engine/tests/terrain.py app --vm --parcours app --source build --fichier SETUP.exe --stub DIR ...
     python3 -I engine/tests/terrain_app.py source --ref <ref>       # for the workflow: release or build
 
 Where the app comes from: on master (the scheduled night), the newest app-v*-preview.* release,
@@ -22,7 +23,10 @@ the job `claude`'s business.
 
 A driver (Pilote) reads the window (Bibo's title and text, the buttons), clicks a button by its
 label, captures the screen. PiloteMac: System Events (accessibility) and screencapture, which
-GitHub's macOS runners allow. Windows: later.
+GitHub's macOS runners allow. PiloteWindows: UI Automation and a capture of the screen, through
+pilote_windows.cs compiled on the VM by Windows' own .NET Framework; the installer's pages are
+clicked the same way. On Windows the VM is first made a PC without Python (poste-neuf.ps1): the
+app has to bring it.
 
 This module imports nothing of terrain.py: terrain.py passes itself in (kit), so a failure is
 always terrain.py's own Echec, even when terrain.py runs as __main__.
@@ -302,13 +306,36 @@ class Pilote:
     machine = "?"
     suffixe = None
 
+    def _run(self, argv, timeout=120, env=None):
+        try:
+            p = subprocess.run([str(a) for a in argv], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                               timeout=timeout, env=env)
+        except subprocess.TimeoutExpired:
+            raise ErreurPilote("%s n'a pas fini en %d s" % (Path(str(argv[0])).name, timeout))
+        except OSError as e:
+            raise ErreurPilote("%s ne se lance pas (%s)" % (Path(str(argv[0])).name, e.strerror or type(e).__name__))
+        return p.returncode, p.stdout.decode("utf-8", "replace")
+
     def marquer_telecharge(self, fichier):
         """Marks the file as a browser does once it downloaded it."""
         raise NotImplementedError
 
-    def installer(self, fichier, details):
-        """Installs the app from the downloaded file as a user does; returns notes (list)."""
+    def installer(self, fichier, details, capturer=None):
+        """Installs the app from the downloaded file as a user does; returns notes (list).
+        capturer(name): a capture of the screen now, for an installer with screens of its own."""
         raise NotImplementedError
+
+    def environnement(self, home, extra=None):
+        """What the app gets when the user opens it."""
+        return env_utilisateur(home, extra)
+
+    def outils(self, home):
+        """[(name, [places])]: what the app's steps install apart from the brain, found at one place."""
+        raise NotImplementedError
+
+    def ecarter_la_nuit(self):
+        """Keeps the nightly the install registered out of the checks' way; returns what it did, or None."""
+        return None
 
     def ouvrir(self, env):
         raise NotImplementedError
@@ -526,16 +553,6 @@ class PiloteMac(Pilote):
         self.dernier_arbre = None
         self.statut = None
 
-    def _run(self, argv, timeout=120, env=None):
-        try:
-            p = subprocess.run([str(a) for a in argv], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                               timeout=timeout, env=env)
-        except subprocess.TimeoutExpired:
-            raise ErreurPilote("%s n'a pas fini en %d s" % (Path(str(argv[0])).name, timeout))
-        except OSError as e:
-            raise ErreurPilote("%s ne se lance pas (%s)" % (Path(str(argv[0])).name, e.strerror or type(e).__name__))
-        return p.returncode, p.stdout.decode("utf-8", "replace")
-
     def _osa(self, req, timeout=90):
         rc, out = self._run(["/usr/bin/osascript", "-l", "JavaScript", self.script, json.dumps(req)], timeout=timeout)
         if rc != 0:
@@ -557,7 +574,7 @@ class PiloteMac(Pilote):
         rc, out = self._run(["/usr/bin/xattr", "-p", "com.apple.quarantine", chemin], timeout=60)
         return out.strip() if rc == 0 else None
 
-    def installer(self, fichier, details):
+    def installer(self, fichier, details, capturer=None):
         """The DMG opened, the app dragged into Applications, then Gatekeeper: macOS refuses the
         unsigned preview (seen, expected), and the user opens it anyway (quarantine lifted)."""
         notes = []
@@ -614,6 +631,11 @@ class PiloteMac(Pilote):
             raise ErreurPilote("la quarantaine de l'app ne s'enlève pas : %s" % out.strip()[-200:])
         return notes
 
+    def outils(self, home):
+        home = Path(home)
+        return [("Claude Code", [home / ".local" / "bin" / "claude"]), ("Bun", [home / ".bun" / "bin" / "bun"]),
+                ("Obsidian", [Path(d) / "Obsidian.app" / "Contents" / "MacOS" for d in ("/Applications", home / "Applications")])]
+
     def ouvrir(self, env):
         rc, out = self._run(["/usr/bin/open", self.app], timeout=120, env=env)
         if rc != 0:
@@ -669,6 +691,491 @@ class PiloteMac(Pilote):
 
     def arbre(self):
         return self.dernier_arbre
+
+
+# UI Automation's control types, as the roles of the tree ecran_depuis_arbre() reads (macOS's words).
+UIA_ROLES = {"Button": "AXButton", "Text": "AXStaticText", "Document": "AXWebArea", "Window": "AXWindow",
+             "CheckBox": "AXCheckBox", "List": "AXList", "Hyperlink": "AXLink", "Edit": "AXTextField",
+             "Image": "AXImage"}
+# Bibo's region (role=status): a status bar for UI Automation, or a group that says it is one.
+STATUTS_UIA = ("status", "statut", "status bar", "barre d'état", "barre d'etat")
+# The window's own controls (minimize, close, the system menu): never the app's buttons.
+UIA_CADRE = ("TitleBar", "MenuBar")
+
+
+def arbre_uia(node):
+    """The tree PiloteWindows' helper reads (t control type, lt its localized name, n name, e enabled,
+    x toggle state, l aria-live, k children), in the shape of PiloteMac's (r, s, n, v, e, k). A text
+    with a name is a leaf, as a button is; Bibo's region gets the subrole macOS gives it."""
+    out = _uia(node)
+    if not any(n.get("s") for _, n in _aplatir(out)):
+        # No status bar: the first live region of the page (aria-live) is Bibo's, it comes first.
+        live = next((n for _, n in _aplatir(out) if n.get("l") and n.get("r") not in ("AXStaticText", "AXButton")),
+                    None)
+        if live is not None:
+            live["s"] = "AXApplicationStatus"
+    return out
+
+
+def _uia(node):
+    node = node if isinstance(node, dict) else {}
+    t = str(node.get("t") or "")
+    name = str(node.get("n") or "")
+    role = UIA_ROLES.get(t, "AXGroup")
+    if role == "AXStaticText" and not name.strip():
+        role = "AXGroup"     # a paragraph without a name of its own: its texts are below
+    statut = t == "StatusBar" or norm(node.get("lt")).lower() in STATUTS_UIA
+    out = {"r": role, "s": "AXApplicationStatus" if statut else "", "n": name,
+           "v": name if role == "AXStaticText" else "", "d": "", "e": node.get("e", True) is not False, "k": []}
+    if node.get("l"):
+        out["l"] = node["l"]
+    if "x" in node:
+        out["x"] = node["x"]
+    if role not in ("AXStaticText", "AXButton", "AXCheckBox"):
+        out["k"] = [_uia(k) for k in node.get("k") or [] if isinstance(k, dict) and str(k.get("t")) not in UIA_CADRE]
+    return out
+
+
+def nom_programme(path):
+    """« SmartScreen » of C:\\Windows\\System32\\SmartScreen.exe, whatever system reads it."""
+    name = re.split(r"[\\/]", str(path or ""))[-1]
+    return re.sub(r"(?i)\.exe$", "", name) or "?"
+
+
+def norm_win(text):
+    """A Win32 label without its access key (« &Suivant > » shows « Suivant > »)."""
+    return norm(str(text or "").replace("&", ""))
+
+
+# The installer's buttons (NSIS, in French as tauri.windows.conf.json asks; English in case).
+BOUTONS_NSIS = {"suivant": ("Suivant >", "Next >"), "installer": ("Installer", "Install"),
+                "fermer": ("Fermer", "Terminer", "Finish"), "annuler": ("Annuler", "Cancel"),
+                "parcourir": ("Parcourir...", "Browse..."), "details": ("Afficher les détails", "Show details"),
+                "precedent": ("< Précédent", "< Back")}
+# The finish page's box that starts the app: the robot starts it itself, from the Start menu.
+LANCER = ("Lancer", "Exécuter", "Run", "Launch")
+
+
+def page_installeur(fenetres):
+    """{cle, boutons {label: enabled}, cases {label: state}, textes} of the installer's windows."""
+    boutons, cases, textes = {}, {}, []
+    for f in fenetres or []:
+        for _, n in _aplatir(_uia(f.get("arbre") or {})):
+            label = norm_win(n.get("n"))
+            if n["r"] == "AXButton" and label:
+                boutons[label] = boutons.get(label, False) or n["e"]
+            elif n["r"] == "AXCheckBox" and label:
+                cases[label] = n.get("x")
+            elif n["r"] == "AXStaticText" and label:
+                textes.append(label)
+    page = {"boutons": boutons, "cases": cases, "textes": textes}
+    page["cle"] = cle_installeur(page)
+    return page
+
+
+def _nsis(page, key):
+    return next((label for label in BOUTONS_NSIS[key] if label in page["boutons"]), None)
+
+
+def cle_installeur(page):
+    b = page["boutons"]
+    if _nsis(page, "fermer"):
+        return "fin"
+    if not any(_nsis(page, k) for k in ("suivant", "installer", "annuler")):
+        return "message"
+    if _nsis(page, "parcourir"):
+        return "dossier"
+    suivant = _nsis(page, "suivant")
+    if _nsis(page, "details") or (suivant and not b[suivant] and not _nsis(page, "installer")):
+        return "installe" if suivant and b[suivant] else "installation"
+    precedent = _nsis(page, "precedent")
+    if suivant and not (precedent and b[precedent]):
+        return "bienvenue"
+    return "page"
+
+
+def action_installeur(page):
+    """("cliquer", label), ("cocher", label, 0|1), ("message", text) or None (wait)."""
+    if page["cle"] == "message":
+        return ("message", " ".join(page["textes"])[:300])
+    if page["cle"] == "fin":
+        for label, state in page["cases"].items():
+            if label.startswith(LANCER) and state == 1:
+                return ("cocher", label, 0)
+        label = _nsis(page, "fermer")
+        return ("cliquer", label) if page["boutons"][label] else None
+    for key in ("installer", "suivant"):
+        label = _nsis(page, key)
+        if label and page["boutons"][label]:
+            return ("cliquer", label)
+    return None
+
+
+def env_depuis_bloc(entrees):
+    """{name: value} of an environment block's NAME=value strings (the =C: ones are cmd's, not variables)."""
+    out = {}
+    for e in entrees:
+        name, sep, value = e.partition("=")
+        if sep and name:
+            out[name] = value
+    return out
+
+
+def env_app_windows(session, stub=None, extra=None):
+    """The session's environment, the Microsoft Store's python.exe first on the PATH as on a PC
+    without Python (stub: poste-neuf.ps1's), plus extra (BIAB_ARCHIVE on a branch)."""
+    env = dict(session)
+    key = next((k for k in env if k.upper() == "PATH"), "Path")
+    if stub:
+        env[key] = str(stub) + (";" + env[key] if env.get(key) else "")
+    env.update(extra or {})
+    return env
+
+
+def env_session():
+    """What Windows gives a program started from the Start menu: the system's and the user's
+    variables as the registry holds them (CreateEnvironmentBlock, nothing of this process)."""
+    import ctypes
+    from ctypes import wintypes
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    adv = ctypes.WinDLL("advapi32", use_last_error=True)
+    uenv = ctypes.WinDLL("userenv", use_last_error=True)
+    k32.GetCurrentProcess.restype = wintypes.HANDLE
+    k32.CloseHandle.argtypes = [wintypes.HANDLE]
+    adv.OpenProcessToken.argtypes = [wintypes.HANDLE, wintypes.DWORD, ctypes.POINTER(wintypes.HANDLE)]
+    adv.OpenProcessToken.restype = wintypes.BOOL
+    uenv.CreateEnvironmentBlock.argtypes = [ctypes.POINTER(ctypes.c_void_p), wintypes.HANDLE, wintypes.BOOL]
+    uenv.CreateEnvironmentBlock.restype = wintypes.BOOL
+    uenv.DestroyEnvironmentBlock.argtypes = [ctypes.c_void_p]
+    token = wintypes.HANDLE()
+    if not adv.OpenProcessToken(k32.GetCurrentProcess(), 0x0008 | 0x0002, ctypes.byref(token)):   # QUERY | DUPLICATE
+        raise ErreurPilote("OpenProcessToken : erreur %d" % ctypes.get_last_error())
+    try:
+        block = ctypes.c_void_p()
+        if not uenv.CreateEnvironmentBlock(ctypes.byref(block), token, False):
+            raise ErreurPilote("CreateEnvironmentBlock : erreur %d" % ctypes.get_last_error())
+        try:
+            entrees, at = [], block.value
+            while True:
+                s = ctypes.wstring_at(at)
+                if not s:
+                    break
+                entrees.append(s)
+                at += len(s.encode("utf-16-le", "surrogatepass")) + 2
+            return env_depuis_bloc(entrees)
+        finally:
+            uenv.DestroyEnvironmentBlock(block)
+    finally:
+        k32.CloseHandle(token)
+
+
+PRODUIT = "Brain in a Box"
+DELAI_INSTALLEUR = 10 * 60
+DESINSTALLATION = (r"Software\Microsoft\Windows\CurrentVersion\Uninstall",
+                   r"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall")
+
+# Windows' scheduled tasks catch up a start missed before they existed: BrainNightly may start as
+# soon as the brain step registers it. Disabled, as the other Windows jobs do, and waited for.
+PS_NUIT = r'''
+$ErrorActionPreference = 'Stop'
+$t = @(Get-ScheduledTask -TaskName 'Brain*' -ErrorAction SilentlyContinue)
+$out = [ordered]@{ taches = @($t | ForEach-Object { [ordered]@{ nom = $_.TaskName; etat = [string]$_.State } }) }
+$t | Disable-ScheduledTask | Out-Null
+$svc = New-Object -ComObject Schedule.Service
+$svc.Connect()
+function Running { @($svc.GetRunningTasks(1) | Where-Object { $_.Name -like 'Brain*' } | ForEach-Object { $_.Name }) }
+$out.tournaient = @(Running)
+$start = Get-Date
+while (@(Running).Count -and ((Get-Date) - $start).TotalMinutes -lt 20) { Start-Sleep -Seconds 5 }
+$out.attente_s = [int]((Get-Date) - $start).TotalSeconds
+$out.tournent_encore = @(Running)
+$out | ConvertTo-Json -Depth 4 -Compress
+'''
+
+
+class PiloteWindows(Pilote):
+    """UI Automation (the accessibility tree Windows gives every window, WebView2's page included)
+    and a capture of the whole screen, through pilote_windows.cs, compiled on the VM by the .NET
+    Framework's own csc.exe. The installer: the NSIS setup.exe, clicked through page by page."""
+
+    machine = "PC"
+    suffixe = "_windows-x64-setup.exe"
+    # In front, yet no dialog: the desktop, the taskbar, a console.
+    IGNORER = ("Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd", "ConsoleWindowClass",
+               "CASCADIA_HOSTING_WINDOW_CLASS", "Windows.UI.Core.CoreWindow")
+    SOURCE = Path(__file__).resolve().with_name("pilote_windows.cs")
+
+    def __init__(self, travail, stub=None, outil=None, horloge=time.monotonic, dormir=time.sleep):
+        self.travail = Path(travail)
+        self.stub = stub
+        self.horloge, self.dormir = horloge, dormir
+        self.outil = outil or self._compiler()
+        self.proc = None            # the app, as the robot opened it
+        self.exe = None             # where the installer put it (the Start menu shortcut's target)
+        self.hwnd = None            # its window
+        self.vues = set()           # windows already brought to the front once
+        self.dialogues_h = {}       # process of a dialog -> its window
+        self.dernier_arbre = None
+
+    def _compiler(self):
+        fw = Path(os.environ.get("WINDIR") or r"C:\Windows") / "Microsoft.NET" / "Framework64" / "v4.0.30319"
+        csc = fw / "csc.exe"
+        if not csc.is_file():
+            raise ErreurPilote("csc.exe absent (%s) : pas de .NET Framework 4 sur ce PC" % csc)
+        refs = []
+        for name in ("UIAutomationClient.dll", "UIAutomationTypes.dll", "WindowsBase.dll", "System.Drawing.dll"):
+            found = next((d / name for d in (fw / "WPF", fw) if (d / name).is_file()), None)
+            if found is None:
+                raise ErreurPilote("%s absent du .NET Framework (%s)" % (name, fw))
+            refs.append(found)
+        exe = self.travail / "pilote-windows.exe"
+        rc, out = self._run([csc, "/nologo", "/target:exe", "/optimize+", "/out:%s" % exe]
+                            + ["/r:%s" % r for r in refs] + [self.SOURCE], timeout=300)
+        if rc != 0 or not exe.is_file():
+            raise ErreurPilote("le pilote Windows ne compile pas (csc code %d : %s)" % (rc, out.strip()[-500:]))
+        return exe
+
+    def _outil(self, args, timeout=120):
+        rc, out = self._run([self.outil] + [str(a) for a in args], timeout=timeout)
+        try:
+            res = json.loads(out.strip().splitlines()[-1])
+        except (ValueError, IndexError):
+            raise ErreurPilote("réponse illisible du pilote Windows (code %d) : %s" % (rc, out.strip()[-300:]))
+        if rc != 0 or not isinstance(res, dict):
+            raise ErreurPilote("le pilote Windows a fini avec le code %d : %s" % (rc, out.strip()[-300:]))
+        return res
+
+    def environnement(self, home, extra=None):
+        return env_app_windows(env_session(), self.stub, extra)
+
+    def outils(self, home):
+        home = Path(home)
+        local = Path(os.environ.get("LOCALAPPDATA") or home / "AppData" / "Local")
+        pf = Path(os.environ.get("ProgramFiles") or r"C:\Program Files")
+        python = sorted(local.glob("Programs/Python/Python3*/python.exe"))
+        return [("Claude Code", [home / ".local" / "bin" / "claude.exe"]), ("Bun", [home / ".bun" / "bin" / "bun.exe"]),
+                ("Obsidian", [local / "Programs" / "Obsidian" / "Obsidian.exe", local / "Obsidian" / "Obsidian.exe",
+                              pf / "Obsidian" / "Obsidian.exe"]),
+                ("Python de winget", python or [local / "Programs" / "Python" / "Python3xx" / "python.exe"])]
+
+    def marquer_telecharge(self, fichier):
+        # No Mark of the Web: the robot fetched the file, not a browser (SmartScreen: see installer).
+        return "aucune (téléchargé par le robot, pas de Mark of the Web)"
+
+    @staticmethod
+    def desinstallations():
+        """[{ruche, cle, desinstalleur}] of the uninstall entries named Brain in a Box."""
+        import winreg
+        out = []
+        for hive, ruche in ((winreg.HKEY_CURRENT_USER, "HKCU"), (winreg.HKEY_LOCAL_MACHINE, "HKLM")):
+            for path in DESINSTALLATION:
+                try:
+                    root = winreg.OpenKey(hive, path)
+                except OSError:
+                    continue
+                with root:
+                    i = 0
+                    while True:
+                        try:
+                            sub = winreg.EnumKey(root, i)
+                        except OSError:
+                            break
+                        i += 1
+                        try:
+                            with winreg.OpenKey(root, sub) as k:
+                                if winreg.QueryValueEx(k, "DisplayName")[0] != PRODUIT:
+                                    continue
+                                out.append({"ruche": ruche, "cle": sub,
+                                            "desinstalleur": str(winreg.QueryValueEx(k, "UninstallString")[0]).strip('"')})
+                        except OSError:
+                            continue
+        return out
+
+    def _devant(self, h):
+        """A window seen for the first time is brought to the front, once: opened from the robot's
+        process, it may sit behind the others, where a user would have it in front."""
+        if h and h not in self.vues:
+            self.vues.add(h)
+            try:
+                self._outil(["devant", h], timeout=30)
+            except ErreurPilote:
+                pass
+
+    def installer(self, fichier, details, capturer=None):
+        """setup.exe started as a double click starts it, every page captured and clicked as a user
+        does, the defaults kept but the box that starts the app (the robot opens it from the Start
+        menu, with a session's environment). Then: installed for this user alone, no administrator."""
+        if self.desinstallations():
+            raise ErreurPilote("%s est déjà installé : la VM n'est pas neuve" % PRODUIT)
+        try:
+            proc = subprocess.Popen([str(fichier)], env=self.environnement(Path.home()), cwd=str(Path(fichier).parent),
+                                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except OSError as e:
+            raise ErreurPilote("l'installeur ne se lance pas (%s)" % (e.strerror or type(e).__name__))
+        pages = details["installeur"] = []
+        try:
+            self.assistant(proc, pages, capturer)
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+        if proc.returncode != 0:
+            raise ErreurPilote("l'installeur a fini avec le code %s" % proc.returncode)
+        return self.verifier_installation(details)
+
+    def assistant(self, proc, pages, capturer=None):
+        """The installer's pages until it quits. pages: what each showed and what was clicked."""
+        start = self.horloge()
+        prev, clic, message = None, None, None
+        while proc.poll() is None:
+            now = self.horloge()
+            if now - start >= DELAI_INSTALLEUR:
+                raise ErreurPilote("l'installeur n'a pas fini en %d min (page « %s »)" % (
+                    DELAI_INSTALLEUR // 60, pages[-1]["page"] if pages else "aucune"))
+            res = self._outil(["lire", proc.pid])
+            self.dernier_arbre = res
+            fen = [f for f in res.get("fenetres") or [] if isinstance(f, dict)]
+            if not fen:
+                self.dormir(POLL)
+                continue
+            self._devant(fen[0].get("h"))
+            page = page_installeur(fen)
+            sig = (page["cle"], sorted(page["boutons"].items()), sorted(page["cases"].items()))
+            if sig != prev:
+                prev, clic, message = sig, None, None
+                pages.append({"page": page["cle"], "a_s": int(now - start), "boutons": sorted(page["boutons"]),
+                              "cases": page["cases"], "textes": page["textes"][:12], "clics": [],
+                              "capture": capturer("installeur-" + page["cle"]) if capturer else None})
+            act = action_installeur(page)
+            if act and act[0] == "message":
+                # A message box of the installer (an error): it gets a few seconds to go away.
+                message = message if message is not None else now
+                if now - message >= 10:
+                    raise ErreurPilote("l'installeur affiche : « %s »" % act[1])
+            elif act and (clic is None or now - clic[0] >= CLIC_RELANCE):
+                if clic is not None and clic[1] >= CLIC_ESSAIS:
+                    raise ErreurPilote("le clic sur « %s » ne change rien dans l'installeur (%d essais)" % (act[1], clic[1]))
+                h = fen[0].get("h")
+                done = self._outil(["cocher", h, act[1], act[2]] if act[0] == "cocher" else ["cliquer", h, act[1]])
+                if not done.get("ok"):
+                    raise ErreurPilote("pas de clic sur « %s » dans l'installeur (%s)" % (act[1], done.get("pourquoi")))
+                pages[-1]["clics"].append(act[1] if act[0] == "cliquer" else "%s : %s" % (act[1], "coché" if act[2] else "décoché"))
+                clic = (now, (clic[1] if clic else 0) + 1)
+            self.dormir(POLL)
+        return pages
+
+    def verifier_installation(self, details):
+        notes = ["SmartScreen ne s'est pas affiché : setup.exe sans Mark of the Web, lancé hors de l'Explorateur "
+                 "(constat, pas un échec)"]
+        mine = self.desinstallations()
+        details["desinstallation"] = [{k: v for k, v in e.items() if k != "desinstalleur"} for e in mine]
+        if [e for e in mine if e["ruche"] == "HKLM"]:
+            raise ErreurPilote("installée pour tous les utilisateurs du PC (HKLM), pas pour l'utilisateur seul")
+        if len(mine) != 1:
+            raise ErreurPilote("%d entrée(s) de désinstallation pour l'utilisateur, 1 attendue" % len(mine))
+        local = os.path.normcase(os.environ.get("LOCALAPPDATA") or "")
+        dossier = os.path.dirname(mine[0]["desinstalleur"])
+        if not local or not os.path.normcase(dossier).startswith(local + os.sep):
+            raise ErreurPilote("installée dans %s, hors des programmes de l'utilisateur" % dossier)
+        menu = Path(os.environ.get("APPDATA") or "") / "Microsoft" / "Windows" / "Start Menu" / "Programs"
+        lnk = next(iter(sorted(menu.rglob(PRODUIT + ".lnk"))), None) if menu.is_dir() else None
+        if lnk is None:
+            raise ErreurPilote("pas de raccourci %s dans le menu Démarrer" % PRODUIT)
+        cible = self._outil(["raccourci", lnk])
+        exe = str(cible.get("cible") or "")
+        if os.path.normcase(os.path.dirname(exe)) != os.path.normcase(dossier) or not os.path.isfile(exe):
+            raise ErreurPilote("le raccourci du menu Démarrer mène à « %s », pas à l'app installée" % exe)
+        self.exe = exe
+        bureau = Path(os.environ.get("USERPROFILE") or Path.home()) / "Desktop" / (PRODUIT + ".lnk")
+        details.update(installee_dans=dossier, raccourci_menu=str(lnk), raccourci_bureau=bureau.is_file(),
+                       app=os.path.basename(exe))
+        return notes
+
+    def ouvrir(self, env):
+        """As a click on its Start menu entry: the app, from its folder, with the session's environment."""
+        if not self.exe:
+            raise ErreurPilote("l'app n'est pas installée")
+        try:
+            self.proc = subprocess.Popen([self.exe], env=env, cwd=os.path.dirname(self.exe), stdin=subprocess.DEVNULL,
+                                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                         creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+        except OSError as e:
+            raise ErreurPilote("l'app ne se lance pas (%s)" % (e.strerror or type(e).__name__))
+        self.hwnd = None
+
+    def vivante(self):
+        return self.proc is not None and self.proc.poll() is None
+
+    def fermer(self):
+        """The window's X (WM_CLOSE), as a user quits; the process killed only if it stays."""
+        if self.vivante() and self.hwnd is None:
+            self.lire()
+        if self.vivante() and self.hwnd:
+            res = self._outil(["fermer", self.hwnd], timeout=60)
+            if self.attendre(lambda: not self.vivante(), 20, self.horloge, self.dormir):
+                return "fenêtre fermée (%s)" % res.get("comment")
+        if self.vivante():
+            self._run(["taskkill", "/PID", self.proc.pid, "/T", "/F"], timeout=60)
+            if self.attendre(lambda: not self.vivante(), 20, self.horloge, self.dormir):
+                return "taskkill (la fenêtre ne s'est pas fermée)"
+            raise ErreurPilote("l'app ne se ferme pas")
+        return "déjà fermée"
+
+    def lire(self):
+        if not self.vivante():
+            return Ecran()
+        res = self._outil(["lire", self.proc.pid])
+        self.dernier_arbre = res
+        fen, dialogues = [], []
+        for f in res.get("fenetres") or []:
+            if not isinstance(f, dict):
+                continue
+            arbre = arbre_uia(f.get("arbre"))
+            if f.get("classe") == "#32770":
+                # A message box of the app itself.
+                self.dialogues_h[self.exe_nom()] = f.get("h")
+                dialogues.append(dialogue_depuis_arbre(self.exe_nom(), arbre))
+            else:
+                fen.append({"titre": f.get("titre"), "arbre": arbre, "h": f.get("h")})
+        d = res.get("devant")
+        if isinstance(d, dict) and d.get("classe") not in self.IGNORER:
+            name = nom_programme(d.get("exe"))
+            self.dialogues_h[name] = d.get("h")
+            dialogues.append(dialogue_depuis_arbre(name, arbre_uia(d.get("arbre"))))
+        if fen:
+            self.hwnd = fen[0]["h"]
+            self._devant(self.hwnd)
+        return ecran_depuis_arbre(fen, [d for d in dialogues if d["textes"] or d["boutons"]])
+
+    def exe_nom(self):
+        return nom_programme(self.exe or "brain-in-a-box.exe")
+
+    def cliquer(self, libelle, processus=None):
+        h = self.dialogues_h.get(processus) if processus else self.hwnd
+        if not h:
+            raise ErreurPilote("pas de fenêtre où cliquer « %s »" % libelle)
+        res = self._outil(["cliquer", h, libelle])
+        if not res.get("ok"):
+            raise ErreurPilote("pas de clic sur « %s » (%s)" % (libelle, res.get("pourquoi")))
+        return res.get("comment")
+
+    def capturer(self, chemin):
+        res = self._outil(["capturer", chemin], timeout=60)
+        if not res.get("ok") or not Path(chemin).is_file() or Path(chemin).stat().st_size == 0:
+            raise ErreurPilote("pas de capture de l'écran (%s)" % (res.get("pourquoi") or "rien d'écrit"))
+
+    def arbre(self):
+        return self.dernier_arbre
+
+    def ecarter_la_nuit(self):
+        rc, out = self._run(["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+                             "-Command", PS_NUIT], timeout=25 * 60)
+        try:
+            res = json.loads(out[out.index("{"):])
+        except ValueError:
+            raise ErreurPilote("les tâches Brain* ne se désactivent pas (code %d : %s)" % (rc, out.strip()[-300:]))
+        if res.get("tournent_encore"):
+            raise ErreurPilote("la vraie nuit tourne encore après 20 min : %s" % ", ".join(res["tournent_encore"]))
+        return res
 
 
 # --------------------------------------------------------------------------- the walk through the window
@@ -944,7 +1451,10 @@ def depuis_release(t, pilote, dossier, token, details):
     details["sha256"] = got
     gh = shutil.which("gh")
     t.check(gh, "gh absent : l'attestation ne peut pas être vérifiée")
-    env = {"PATH": os.environ.get("PATH", ""), "HOME": os.environ.get("HOME", ""), "GH_TOKEN": token}
+    # What gh needs to start, and the token; nothing else of the job (Windows: its folders, its root).
+    env = {k: os.environ[k] for k in ("PATH", "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "SystemRoot", "TEMP", "TMP")
+           if os.environ.get(k)}
+    env["GH_TOKEN"] = token
     p = subprocess.run([gh, "attestation", "verify", str(dest), "-R", REPO_SLUG, "--signer-workflow",
                         REPO_SLUG + "/.github/workflows/release.yml", "--source-ref", "refs/heads/master"],
                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env, timeout=180)
@@ -983,22 +1493,24 @@ def arguments(p):
     p.add_argument("--source", default="", help="release (master) ou build (une branche)")
     p.add_argument("--fichier", default="", help="build : l'app construite par le workflow")
     p.add_argument("--captures", default="", help="le dossier des captures (défaut : <home>/terrain-captures)")
+    p.add_argument("--stub", default="", help="Windows : le dossier du faux python.exe du Microsoft Store "
+                                              "(.github/ci/poste-neuf.ps1), en tête du PATH de l'app")
 
 
-def pilote_du_systeme(travail):
+def pilote_du_systeme(travail, opts):
     if sys.platform == "darwin":
         return PiloteMac(travail)
+    if os.name == "nt":
+        return PiloteWindows(travail, stub=getattr(opts, "stub", "") or None)
     raise ErreurPilote("pas encore de pilote de fenêtre pour %s" % sys.platform)
 
 
-def outils(t, home):
-    """What the app's steps put on the Mac, apart from the brain."""
+def outils(t, home, pilote):
+    """What the app's steps put on the machine, apart from the brain."""
     t("app-outils")
-    claude = Path(home) / ".local" / "bin" / "claude"
-    t.check(claude.exists(), "Claude Code n'est pas installé (~/.local/bin/claude)")
-    t.check((Path(home) / ".bun" / "bin" / "bun").is_file(), "Bun n'est pas installé (~/.bun/bin/bun)")
-    t.check(any((Path(d) / "Obsidian.app" / "Contents" / "MacOS").is_dir()
-                for d in ("/Applications", Path(home) / "Applications")), "Obsidian n'est pas installé")
+    for name, places in pilote.outils(home):
+        shown = str(places[0]).replace(str(home), "~")
+        t.check(any(Path(p).exists() for p in places), "%s n'est pas installé (%s)" % (name, shown))
 
 
 def scenario(t, opts, kit, pilote=None, horloge=time.monotonic, dormir=time.sleep):
@@ -1016,7 +1528,7 @@ def scenario(t, opts, kit, pilote=None, horloge=time.monotonic, dormir=time.slee
     try:
         t("app-preparation")
         t.check(source in SOURCES, "source inconnue « %s » (release ou build)" % source)
-        pilote = pilote or pilote_du_systeme(kit.workdir(opts, "app"))
+        pilote = pilote or pilote_du_systeme(kit.workdir(opts, "app"), opts)
         parcours = Parcours(t, pilote, captures, horloge, dormir)
         downloads = home / "Downloads"
         downloads.mkdir(exist_ok=True)
@@ -1034,14 +1546,18 @@ def scenario(t, opts, kit, pilote=None, horloge=time.monotonic, dormir=time.slee
         details["quarantaine_posee"] = pilote.marquer_telecharge(fichier)
 
         t("app-installation")
-        t.notes.extend(pilote.installer(fichier, details))
-        env = env_utilisateur(home, extra)
+        t.notes.extend(pilote.installer(fichier, details, parcours.capturer))
+        env = pilote.environnement(home, extra)
 
         details["duree_parcours_s"] = parcours.premier_lancement(env)
         t("app-fermeture")
         details["fermeture"] = pilote.fermer()
+        t("app-nuit")
+        nuit = pilote.ecarter_la_nuit()
+        if nuit:
+            details["nuit_reelle"] = nuit
 
-        outils(t, home)
+        outils(t, home, pilote)
         t("app-sources")
         marker = home / ".brain-in-a-box" / "src" / MARQUEUR
         if source == "build":

@@ -51,34 +51,40 @@ the next scheduled night.
 
 ## Read a failure of the app scenario
 
-The job `app-macos` gets the desktop app as a user does (master: the newest `app-v*-preview.*`,
-SHA256SUMS and attestation checked; a branch: built from the branch), installs it, opens it and
-clicks through its real window to the final screen, then checks the kit like `installation` does
-and opens the app a second time, which must say « Tout est déjà installé ».
+The jobs `app-macos` and `app-windows` get the desktop app as a user does (master: the newest
+`app-v*-preview.*`, SHA256SUMS and attestation checked; a branch: built from the branch), install
+it, open it and click through its real window to the final screen, then check the kit like
+`installation` does and open the app a second time, which must say « Tout est déjà installé ».
 (`engine/tests/terrain_app.py`; the robot skips the Voyage key and clicks « Plus tard » at the
-Claude login.)
+Claude login.) On Windows the PC has no Python but the Store's stub (`poste-neuf.ps1`), the
+installer's pages are clicked too, and the window is read through UI Automation by
+`engine/tests/pilote_windows.cs`, compiled on the VM.
 
 ```bash
-gh run download <run-id> --name terrain-macos-app --dir "$(mktemp -d)"     # the JSON
-gh run download <run-id> --name captures-macos-app --dir "$(mktemp -d)"    # the captures
+gh run download <run-id> --name terrain-macos-app --dir "$(mktemp -d)"     # the JSON (terrain-windows-app)
+gh run download <run-id> --name captures-macos-app --dir "$(mktemp -d)"    # the captures (captures-windows-app)
 ```
 
 - `etape` says where: `app-preparation`, `app-telechargement`, `app-verification` or
-  `app-construction` (getting the app), `app-installation` (DMG, Gatekeeper), `app-lancement`, then
+  `app-construction` (getting the app), `app-installation` (DMG and Gatekeeper; on Windows the
+  setup's pages, then: installed for the user alone, Start menu shortcut), `app-lancement`, then
   one per screen of the window (`app-bienvenue`, `app-diagnostic`, `app-voyage`,
   `app-connexion-installation`, `app-connexion`, `app-fini`), `app-etape-<id>` for an install step
-  running in the app (`claude`, `bun`, `obsidian`, `brain`), `app-outils`, `app-sources`, the
-  checks of `installation` (`hooks` to `planificateur`), and `app-relance-*` for the second launch.
+  running in the app (`claude`, `bun`, `obsidian`, `brain`), `app-nuit` (Windows: the `Brain*`
+  tasks disabled, a nightly already started waited for), `app-outils`, `app-sources`, the checks
+  of `installation` (`hooks` to `planificateur`), and `app-relance-*` for the second launch.
 - `raison` ends with `Bibo : « … »`: the last thing the window said (title, then text). « Oups, ça
   a coincé. » with the step's own sentence is a failure of the app or the kit, not of the robot;
   `dialogue système ouvert (...)` names a macOS dialog that stayed over the window.
-- The captures, in order: `NN-<screen>.png` at every new screen or install step,
+- The captures, in order: `NN-installeur-<page>.png` for the Windows setup's pages,
+  `NN-<screen>.png` at every new screen or install step,
   `NN-<screen>-<m>min.png` every 2 minutes of waiting, `NN-dialogue-<process>.png` for a system
   dialog (the robot accepts only one naming the app, as the app tells users to), `NN-echec.png`
   and `NN-echec-arbre.json` (what the robot read in the window) at the failure. Look at the
   capture before the failure: it shows what a user would have seen.
 - `details`: `ecrans` (each screen and how long it stayed), `clics`, `dialogues_systeme`, `dernier_ecran`
-  (title, text, buttons, texts), `release` or `sources_du_cerveau`, `duree_parcours_s`.
+  (title, text, buttons, texts), `release` or `sources_du_cerveau`, `duree_parcours_s`; on Windows
+  `installeur` (each page of the setup, its buttons, what was clicked) and `nuit_reelle`.
 - The robot finds screens and buttons by the app's words (`ECRANS`, `ETAPES` in
   `terrain_app.py`). Reworded in `app/src/app.js` without them: « écran inconnu », « n'offre pas
   le bouton ». Fix both together; `test_terrain_app.py` checks every word the robot looks for is
@@ -123,8 +129,9 @@ Open the PR and leave a comment asking the maintainer to review it when the diff
   or puts back a secret, wherever that code lives (the rest of the night check is yours to fix);
 - the Claude token: `engine/hooks/_headless_claude.py` (environment, login and start-up checks),
   anything that reads `CLAUDE_CODE_OAUTH_TOKEN`, and `engine/tests/terrain.py`,
-  `engine/tests/terrain_app.py` and `engine/tests/vault_piege.py`, which run with a token the next
-  night and write the run's artifacts and captures (public, and not masked by GitHub);
+  `engine/tests/terrain_app.py`, `engine/tests/pilote_windows.cs` and `engine/tests/vault_piege.py`,
+  which run with a token the next night and write the run's artifacts and captures (public, and
+  not masked by GitHub);
 - this file, `docs/terrain-agent.md`;
 - an existing test or check, removed or weakened.
 

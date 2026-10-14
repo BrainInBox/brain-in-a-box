@@ -386,32 +386,42 @@ class Workflow(unittest.TestCase):
         self.assertIn('gh issue close \\"$open\\"', runs)
 
 
-    def test_the_app_job_gets_the_app_as_a_user_and_never_a_claude_token(self):
-        job = self.jobs["app-macos"]
-        steps = job["steps"]
-        text = json.dumps(steps)
-        # A fresh VM: nothing of the kit, nor Claude Code, before the app installs them itself.
-        for kit in ("./install.sh", "install.ps1", "claude.ai/install", "terrain-install", "gbrain", "CLAUDE_CODE_OAUTH_TOKEN"):
-            self.assertNotIn(kit, text)
-        source = [st for st in steps if st.get("id") == "source"]
-        self.assertEqual(len(source), 1)
-        self.assertIn('terrain_app.py source --ref "$TERRAIN_REF"', source[0]["run"])
-        builds = [st for st in steps if "cargo" in json.dumps(st)]
-        self.assertGreaterEqual(len(builds), 2)
-        for st in builds:
-            self.assertEqual(st["if"], "steps.source.outputs.source == 'build'", st.get("name"))
-        # The read-only token reaches the scenario step only, and only to download a release.
-        holders = [st for st in steps if "github.token" in json.dumps(st)]
-        self.assertEqual(len(holders), 1)
-        self.assertEqual(holders[0]["env"]["GH_TOKEN"], "${{ steps.source.outputs.source == 'release' && github.token || '' }}")
-        self.assertIn("terrain.py app", holders[0]["run"])
-        self.assertEqual(job["permissions"], {"contents": "read", "attestations": "read"})
-        # The JSON joins the report's artifacts (terrain-*); the captures stay out of its download.
-        names = [st["with"]["name"] for st in steps if str(st.get("uses", "")).startswith("actions/upload-artifact@")]
-        self.assertEqual(sorted(names), ["captures-macos-app", "terrain-macos-app"])
+    def test_the_app_jobs_get_the_app_as_a_user_and_never_a_claude_token(self):
+        for name, os_name, ref in (("app-macos", "macos", '"$TERRAIN_REF"'), ("app-windows", "windows", '"$env:TERRAIN_REF"')):
+            job = self.jobs[name]
+            steps = job["steps"]
+            text = json.dumps(steps)
+            # A fresh VM: nothing of the kit, nor Claude Code, before the app installs them itself.
+            for kit in ("./install.sh", "install.ps1", "claude.ai/install", "terrain-install", "gbrain", "CLAUDE_CODE_OAUTH_TOKEN"):
+                self.assertNotIn(kit, text, name)
+            source = [st for st in steps if st.get("id") == "source"]
+            self.assertEqual(len(source), 1, name)
+            self.assertIn("terrain_app.py source --ref " + ref, source[0]["run"])
+            builds = [st for st in steps if "cargo" in json.dumps(st)]
+            self.assertGreaterEqual(len(builds), 2, name)
+            for st in builds:
+                self.assertEqual(st["if"], "steps.source.outputs.source == 'build'", st.get("name"))
+            # The read-only token reaches the scenario step only, and only to download a release.
+            holders = [st for st in steps if "github.token" in json.dumps(st)]
+            self.assertEqual(len(holders), 1, name)
+            self.assertEqual(holders[0]["env"]["GH_TOKEN"], "${{ steps.source.outputs.source == 'release' && github.token || '' }}")
+            self.assertIn("terrain.py app", holders[0]["run"])
+            self.assertEqual(job["permissions"], {"contents": "read", "attestations": "read"})
+            # The JSON joins the report's artifacts (terrain-*); the captures stay out of its download.
+            names = [st["with"]["name"] for st in steps if str(st.get("uses", "")).startswith("actions/upload-artifact@")]
+            self.assertEqual(sorted(names), ["captures-%s-app" % os_name, "terrain-%s-app" % os_name])
+            self.assertEqual(job["env"]["PARCOURS"], "app")
+            self.assertEqual(terrain.JOBS[name], (os_name, ("%s-app" % os_name,)))
         self.assertIn("pattern: terrain-*", "pattern: " + self.jobs["rapport"]["steps"][1]["with"]["pattern"])
-        self.assertEqual(job["env"]["PARCOURS"], "app")
         self.assertIn("app", terrain.ATTENDUS["app"])
+        # Windows: a PC without Python before the app (the description the other jobs use), and the
+        # stub handed to the scenario, which puts it first on the app's PATH.
+        steps = self.jobs["app-windows"]["steps"]
+        fresh = [i for i, st in enumerate(steps) if st.get("run", "").startswith(". .github/ci/poste-neuf.ps1\n")]
+        scenario = [i for i, st in enumerate(steps) if "terrain.py app" in st.get("run", "")]
+        self.assertEqual(len(fresh), 1)
+        self.assertLess(fresh[0], scenario[0])
+        self.assertIn('"--stub=$env:TERRAIN_STUB"', steps[scenario[0]]["run"])
 
     def test_a_fresh_windows_has_no_python_in_both_workflows(self):
         # One description of a fresh PC (.github/ci/poste-neuf.ps1), used by both installs: the

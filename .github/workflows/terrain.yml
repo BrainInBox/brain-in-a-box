@@ -3,7 +3,8 @@ name: terrain
 # The kit as a user gets it, every night, on GitHub VMs nobody keeps (macOS and Windows):
 # a fresh install with its real nightly, an upgrade (Windows from v0.2.0, macOS from #27), seven nights of the night
 # check in time travel, the real Claude on a synthetic corpus (engine/tests/terrain.py), and the desktop app
-# downloaded, installed and clicked through in its real window, a capture of every screen (terrain_app.py).
+# downloaded, installed and clicked through in its real window on both systems, a capture of every screen
+# (terrain_app.py).
 # Each job leaves a table in its summary and a JSON artifact; the scheduled run keeps one
 # issue labelled "terrain" up to date, read by the repair agent (docs/terrain-agent.md).
 #
@@ -489,9 +490,146 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+  # The same on a PC: the NSIS setup.exe (master: the newest preview, checked; a branch: built as
+  # release.yml builds it), its pages clicked through, then the app's window, read and clicked
+  # through UI Automation (engine/tests/pilote_windows.cs, compiled on the VM by Windows' own .NET
+  # Framework: nothing downloaded for it). The PC has no Python but the Store's stub, as users'
+  # PCs (poste-neuf.ps1): the app has to bring it. No Claude token here either.
+  app-windows:
+    name: The app, clicked through (Windows)
+    needs: ref
+    runs-on: windows-latest
+    timeout-minutes: 150
+    permissions:
+      contents: read
+      attestations: read
+    env:
+      PARCOURS: app
+      TERRAIN_SHA: ${{ needs.ref.outputs.sha }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Where the results and the captures go
+        run: |
+          "TERRAIN_JSON=$env:RUNNER_TEMP\terrain-windows-app.json" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "TERRAIN_CAPTURES=$env:RUNNER_TEMP\captures-windows-app" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.ref.outputs.sha }}
+          persist-credentials: false
+
+      - name: Where the app comes from (master downloads the preview, a branch builds)
+        id: source
+        run: |
+          $out = python -I engine/tests/terrain_app.py source --ref "$env:TERRAIN_REF"
+          if ($LASTEXITCODE) { exit 1 }
+          $out
+          $out | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Tauri CLI, cached (branch build)
+        if: steps.source.outputs.source == 'build'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-tauri.exe
+          key: tauri-cli-2.11.5-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Cargo cache (branch build)
+        if: steps.source.outputs.source == 'build'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            app/src-tauri/target
+          key: terrain-app-${{ runner.os }}-x86_64-pc-windows-msvc-${{ hashFiles('app/src-tauri/Cargo.lock') }}
+          restore-keys: terrain-app-${{ runner.os }}-x86_64-pc-windows-msvc-
+
+      # The command of release.yml: one NSIS installer, for the user alone.
+      - name: Build the app from the tested commit (branch)
+        if: steps.source.outputs.source == 'build'
+        timeout-minutes: 45
+        working-directory: app/src-tauri
+        env:
+          TAURI_CLI_VERSION: "2.11.5"
+          TARGET: x86_64-pc-windows-msvc
+        run: |
+          rustup target add $env:TARGET
+          if (-not (Get-Command cargo-tauri -ErrorAction SilentlyContinue)) {
+            cargo install tauri-cli --version "=$env:TAURI_CLI_VERSION" --locked
+            if ($LASTEXITCODE) { exit 1 }
+          }
+          $bundle = "target\$env:TARGET\release\bundle"
+          foreach ($try in 1, 2) {
+            Remove-Item -Recurse -Force $bundle -ErrorAction SilentlyContinue
+            cargo tauri build --ci --target $env:TARGET --bundles nsis -- --locked
+            if (-not $LASTEXITCODE) { break }
+            if ($try -eq 2) { exit 1 }
+            "::warning::bundling failed once, trying again"
+          }
+          $exes = @(Get-ChildItem "$bundle\nsis\*-setup.exe")
+          if ($exes.Count -ne 1) { "::error::expected one NSIS installer, found $($exes.Count)"; exit 1 }
+          $version = (Get-Content tauri.conf.json -Raw | ConvertFrom-Json).version
+          New-Item -ItemType Directory "$env:RUNNER_TEMP\app" -Force | Out-Null
+          $exe = "$env:RUNNER_TEMP\app\Brain-in-a-Box_$version-terrain.$($env:TERRAIN_SHA.Substring(0, 7))_windows-x64-setup.exe"
+          Copy-Item $exes[0].FullName $exe
+          "APP_FICHIER=$exe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      # A PC as users have it: no Python but the Microsoft Store's stub (.github/ci/poste-neuf.ps1,
+      # the description the other Windows jobs use). The robot puts the stub's folder first on the
+      # app's PATH, as the Store's is on every PC.
+      - name: No Python but the Store stub, before the app
+        run: |
+          . .github/ci/poste-neuf.ps1
+          if (-not (Test-Path "$stub\python.exe")) { throw 'no Store stub' }
+          "TERRAIN_STUB=$stub" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      # Each step re-reads the Machine PATH, which poste-neuf.ps1 emptied of the runner's Python:
+      # the harness gets it back through GITHUB_PATH; the app gets a session's environment, without it.
+      - name: Python for the harness (the runner's, not the one the app sets up)
+        run: |
+          $tc = Get-ChildItem "$env:RUNNER_TOOL_CACHE\Python\*\x64\python.exe" -ErrorAction SilentlyContinue |
+            Sort-Object { [version]($_.Directory.Parent.Name -replace '[^0-9.].*$', '') } | Select-Object -Last 1
+          if (-not $tc) { throw 'no Python in the runner tool cache for the harness' }
+          Split-Path $tc.FullName | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          "harness Python: $($tc.FullName)"
+
+      - name: "Scenario: the app installed and clicked through to the brain, then opened again"
+        if: ${{ !cancelled() }}
+        timeout-minutes: 90
+        env:
+          SOURCE: ${{ steps.source.outputs.source }}
+          GH_TOKEN: ${{ steps.source.outputs.source == 'release' && github.token || '' }}
+        run: |
+          python -I engine/tests/terrain.py app --parcours $env:PARCOURS --vm --json $env:TERRAIN_JSON `
+            "--source=$env:SOURCE" "--fichier=$env:APP_FICHIER" --captures $env:TERRAIN_CAPTURES "--stub=$env:TERRAIN_STUB"
+
+      - name: Summary
+        if: always()
+        run: python -I engine/tests/terrain.py rapport $env:TERRAIN_JSON | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: terrain-windows-app
+          path: ${{ env.TERRAIN_JSON }}
+          if-no-files-found: warn
+          retention-days: 14
+
+      # Not "terrain-*": the report job downloads those, and needs the JSON only.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: captures-windows-app
+          path: ${{ env.TERRAIN_CAPTURES }}
+          if-no-files-found: warn
+          retention-days: 14
+
   rapport:
     name: Report (one issue "terrain")
-    needs: [ref, macos, windows, claude, app-macos]
+    needs: [ref, macos, windows, claude, app-macos, app-windows]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -499,9 +637,9 @@ jobs:
       contents: read
       issues: write
     env:
-      ATTENDUS: macos-neuf,macos-montee,windows-neuf,windows-montee,macos-claude,windows-claude,macos-app
+      ATTENDUS: macos-neuf,macos-montee,windows-neuf,windows-montee,macos-claude,windows-claude,macos-app,windows-app
       # A job that did not succeed is a failure even when its rows say nothing (terrain.py JOBS).
-      JOBS: ref=${{ needs.ref.result }},macos=${{ needs.macos.result }},windows=${{ needs.windows.result }},claude=${{ needs.claude.result }},app-macos=${{ needs.app-macos.result }}
+      JOBS: ref=${{ needs.ref.result }},macos=${{ needs.macos.result }},windows=${{ needs.windows.result }},claude=${{ needs.claude.result }},app-macos=${{ needs.app-macos.result }},app-windows=${{ needs.app-windows.result }}
     steps:
       # The workflow's own commit: the code that writes the issue is the one this file came with.
       - uses: actions/checkout@v4
