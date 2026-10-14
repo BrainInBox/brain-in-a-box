@@ -36,8 +36,10 @@ ACTION_TRAILER = re.compile(r"^Brain-Controle-Action: ([A-Z][0-9]-\d{4}-\d{2,3})
 
 
 def isolated_env(home):
+    # CLAUDE_BIN names a file that does not exist: the review can never reach the
+    # developer's own claude, even if a test forgets --sans-claude.
     env = dict(os.environ, HOME=home, USERPROFILE=home, GIT_CONFIG_NOSYSTEM="1",
-               GIT_CONFIG_GLOBAL=os.path.join(home, ".gitconfig"))
+               GIT_CONFIG_GLOBAL=os.path.join(home, ".gitconfig"), CLAUDE_BIN=os.path.join(home, "pas-de-claude"))
     for k in ("BRAIN_DIR", "BRAIN_CONTROLE_DIR", "GBRAIN_HOME", "CLAUDE_CODE_ENTRYPOINT", "XDG_CONFIG_HOME"):
         env.pop(k, None)
     return env
@@ -84,8 +86,10 @@ class Sandbox(unittest.TestCase):
         self.env = isolated_env(self.home)
 
     def cli(self, *args):
-        p = subprocess.run([sys.executable, "-I", CONTROLE] + list(args) + ["--brain", self.vault, "--etat", self.etat],
-                           env=self.env, capture_output=True, timeout=600)
+        # The Claude review has its own tests (test_judge.py), with a stub.
+        flags = ["--sans-claude"] if args[0] in ("nuit", "maintenant", "essai") else []
+        p = subprocess.run([sys.executable, "-I", CONTROLE] + list(args) + flags
+                           + ["--brain", self.vault, "--etat", self.etat], env=self.env, capture_output=True, timeout=600)
         out = p.stdout.decode("utf-8", "replace")
         self.assertEqual(p.returncode if args[0] != "annuler" else 0, 0, out + p.stderr.decode("utf-8", "replace"))
         return out
@@ -130,9 +134,10 @@ class Sandbox(unittest.TestCase):
     @contextmanager
     def in_process_home(self):
         saved = {k: os.environ.get(k) for k in ("HOME", "USERPROFILE", "BRAIN_DIR", "BRAIN_CONTROLE_DIR",
-                                                "GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_GLOBAL")}
+                                                "GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_GLOBAL", "CLAUDE_BIN")}
         os.environ.update(HOME=self.home, USERPROFILE=self.home, GIT_CONFIG_NOSYSTEM="1",
-                          GIT_CONFIG_GLOBAL=os.path.join(self.home, ".gitconfig"))
+                          GIT_CONFIG_GLOBAL=os.path.join(self.home, ".gitconfig"),
+                          CLAUDE_BIN=os.path.join(self.home, "pas-de-claude"))
         os.environ.pop("BRAIN_DIR", None)
         os.environ.pop("BRAIN_CONTROLE_DIR", None)
         try:
@@ -145,7 +150,7 @@ class Sandbox(unittest.TestCase):
                     os.environ[k] = v
 
     def run_in_process(self, mode="nuit", run_class=None):
-        opts = controle.parser().parse_args([mode, "--brain", self.vault, "--etat", self.etat])
+        opts = controle.parser().parse_args([mode, "--sans-claude", "--brain", self.vault, "--etat", self.etat])
         with self.in_process_home(), redirect_stdout(io.StringIO()):
             return (run_class or controle.Run)(opts, mode).execute()
 

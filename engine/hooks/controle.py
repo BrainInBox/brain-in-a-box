@@ -25,16 +25,18 @@ import subprocess
 import sys
 import tempfile
 import time
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _controle_rules as rules  # noqa: E402
+import _controle_judge as judge  # noqa: E402
 
 ENV_HELP = """environment (all optional):
   BRAIN_DIR            the vault (default ~/Documents/Brain); --brain wins
   BRAIN_CONTROLE_DIR   the state folder (default ~/.brain-in-a-box/controle); --etat wins
   GBRAIN_HOME          the folder that holds .gbrain (default the home folder)
+  CLAUDE_BIN           the claude executable of the review (default ~/.local/bin/claude, else PATH)
 """
 RUN_ID = re.compile(r"^\d{8}-\d{4}(-\d{1,2})?$")
 ACTION_ID = re.compile(r"^[A-Z][0-9]-\d{4}-\d{2,3}$")
@@ -72,6 +74,9 @@ REPORT_TEXT = {
     "D1": "J'ai supprimé une copie exacte de [[{canon}]].",
     "D2": "J'ai supprimé une note vide, sans lien vers elle depuis plus de 30 jours.",
     "F1": "J'ai réparé une ligne de l'en-tête qui empêchait de lire la note.",
+    "C1": "J'ai signalé une contradiction : cette note dit « {quote} », [[{new}]] (plus récente) dit le contraire.",
+    "C2": "J'ai marqué une décision comme remplacée par une plus récente.",
+    "C3": "J'ai mis de côté {n} leçon{s} que Claude a jugée{s} inutile{s} ou en double.",
     "echec": "Cette correction n'a pas donné le résultat prévu : j'ai remis le fichier comme avant.",
 }
 POINT_TEXT = {
@@ -95,6 +100,7 @@ POINT_TEXT = {
     "version_differente": "[[{n}]] dit {x}.",
     "plafond": "Il reste des corrections « {x} » : la suite la nuit prochaine.",
     "temps": "Le contrôle a atteint sa durée maximale : la suite la nuit prochaine.",
+    "juge_secret": "J'ai laissé [[{n}]] hors de la relecture par Claude : elle contient peut-être encore un secret.",
 }
 ALERT_TEXT = {
     "contrat": "La correction {x} n'a pas donné le résultat prévu : j'ai remis le fichier comme avant.",
@@ -111,6 +117,26 @@ ALERT_TEXT = {
     "partiel": "Plus de 10 000 notes : je n'ai regardé que les 10 000 premières.",
     "reflexion": "La réflexion du jour échoue depuis le {x}.",
     "gbrain": "{x}",
+    "claude": "{x}",
+}
+# Why the review was skipped, when the report should say it (orange).
+CLAUDE_SKIP = {
+    "absent": "Relecture par Claude impossible : Claude Code est introuvable sur cet ordinateur.",
+    "version": "Relecture par Claude impossible : Claude Code est trop ancien, mets-le à jour.",
+    "options": "Relecture par Claude impossible : cette version de Claude Code n'a pas les protections nécessaires.",
+    "connexion": "Relecture par Claude impossible : Claude Code n'est pas connecté à ton compte.",
+    "abonnement": "Relecture par Claude sautée : Claude Code est branché sur une clé payante, je ne l'utilise "
+                  "qu'avec ton abonnement.",
+    "limite": "Claude indisponible cette nuit (limite d'usage).",
+    "limite-reflexion": "Relecture par Claude sautée : la réflexion du jour a déjà touché la limite d'usage.",
+    "quota-jour": "Relecture par Claude sautée : déjà 3 relectures aujourd'hui.",
+    "demarrage": "Relecture par Claude ignorée : Claude n'a pas démarré avec les protections demandées.",
+    "reponse": "Relecture par Claude ignorée : sa réponse n'était pas conforme.",
+    "delai": "Relecture par Claude abandonnée : pas de réponse à temps.",
+    "erreur": "Relecture par Claude abandonnée : le service de Claude a renvoyé une erreur.",
+    "lancement": "Relecture par Claude impossible : Claude Code n'a pas pu être lancé.",
+    "erreur-interne": "Relecture par Claude abandonnée après une erreur du contrôle.",
+    "suspect": "Claude a repéré un texte qui lui donne des ordres : aucune correction venant de lui cette nuit.",
 }
 CAUSES = {
     "pas_de_git": "le cerveau n'est pas un dépôt git", "git_introuvable": "git est introuvable",
@@ -439,6 +465,9 @@ class State:
 # --------------------------------------------------------------------------- the run
 
 class Run:
+    judge_command = None              # tests: a stub instead of claude, as a list
+    judge_timeout = judge.ASK_TIMEOUT
+
     def __init__(self, opts, mode):
         self.opts, self.mode = opts, mode
         self.now = parse_now(opts.maintenant)
@@ -450,7 +479,10 @@ class Run:
         self.actions, self.would, self.skipped = [], [], []
         self.points, self.alerts = [], []
         self.touched, self.quarantine = set(), {}
-        self.cause, self.claude = None, "saute:juge-absent"
+        self.cause, self.claude = None, "saute:sans-claude"
+        self.judge_info, self.judge_updates = {}, {}
+        self.judge_verdict = self.judge_dossier = None
+        self.lessons_kept_open = set()
         self.secrets_in_history = 0
         self.leftover = set()
         self.notes_count = 0
@@ -539,10 +571,21 @@ class Run:
         for level, code, x in an.alerts:
             self.alert(level, code, x)
         self.extra_checks(scan, profile)
-        validated, self.claude = self.ask_judge(an)
-        an.plans.update(self.plan_judge_actions(validated))
+        try:
+            self.judge_verdict, self.claude = self.ask_judge(an, scan)
+            an.plans.update(self.plan_judge_actions(self.judge_verdict))
+        except Exception as e:  # the deterministic fixes still run
+            self.judge_info["erreur"] = type(e).__name__
+            self.judge_verdict, self.claude = None, "saute:erreur-interne"
+            an.plans.update({"C1": [], "C2": [], "C3": []})
+        why = self.claude.split(":", 1)[1] if self.claude.startswith("saute:") else None
+        if why in CLAUDE_SKIP:
+            self.alert("orange", "claude", CLAUDE_SKIP[why])
+        elif self.judge_verdict is not None and self.judge_verdict.suspect:
+            self.alert("orange", "claude", CLAUDE_SKIP["suspect"])
         self.demoted = self.demoted_types() if self.git_ok else set()
         self.apply_all(an)
+        self.after_judge()
         return self.finish(scan)
 
     def alert(self, level, code, x=None):
@@ -671,23 +714,243 @@ class Run:
             out["gbrain"] = pkg["version"]
         return out
 
-    # ---- the Claude judge (phase P5)
+    # ---- the Claude review (_controle_judge.py)
 
-    def ask_judge(self, an):
-        """Where _controle_judge.py plugs in: builds the dossier, asks Claude
-        without any tool, validates every quote. Returns (validated findings,
-        status). Not built yet: the deterministic fixes run alone."""
+    def ask_judge(self, an, scan):
+        """Builds the dossier, asks Claude without any tool, validates every
+        quote. Returns (verdict or None, status for etat.json)."""
         if self.opts.sans_claude:
-            return [], "saute:sans-claude"
-        if self.paused:
-            return [], "saute:pause"
-        return [], "saute:juge-absent"
+            return None, "saute:sans-claude"
+        if self.mode == "essai" and not self.opts.avec_claude:
+            return None, "saute:essai"
+        if self.paused or not self.git_ok:
+            return None, "saute:pause" if self.paused else "saute:sans-git"
+        state = self.state.load("juge.json", {})
+        calls = state.get("appels") if isinstance(state.get("appels"), dict) else {}
+        n_calls = calls.get("n") if calls.get("jour") == self.today.isoformat() and isinstance(calls.get("n"), int) \
+            else 0
+        reflection = home() / ".claude" / "logs" / "daily-reflection.state.json"
+        try:
+            age = time.time() - os.path.getmtime(str(reflection))
+        except OSError:
+            age = None
+        eligible = [n for n in scan.notes if judge.eligible(n)]
+        anchors = self.changed_since(state.get("dernier_commit_juge"))
+        lessons, left_out = self.lesson_pool(scan, an)
+        ok, why = judge.should_ask(
+            calls_today=n_calls, reflection_error=str(read_json(reflection, {}).get("last_error") or ""),
+            reflection_age=age, lessons_left=bool(lessons), sunday=self.today.weekday() == 6,
+            changed=any(anchors is None or rules.nfc(n.rel) in anchors for n in eligible))
+        if not ok:
+            return None, "saute:" + why
+        dossier = judge.build_dossier(eligible, self.ctx.profile, self.today, anchors, self.note_day,
+                                      self.known_values(), lessons, left_out)
+        self.judge_dossier = dossier
+        for rel, cause, sha in dossier.excluded:
+            if cause == "secret":
+                self.points.append(("juge_secret", rel, sha))
+        self.judge_info = {"extraits": len(dossier.excerpts), "lecons_envoyees": len(dossier.lessons),
+                           "notes_exclues": len(dossier.excluded), "dossier_sha256": dossier.sha256}
+        if not dossier.excerpts and not dossier.lessons:
+            return None, "saute:rien-de-neuf"
+        git_path = self.git.binary
+        ok, why = judge.available(str(home()), self.judge_command, git_path)
+        if not ok:
+            return None, "saute:" + why
+        command = self.judge_command or [judge.find_claude(str(home()))]
+        if self.writes:
+            state["appels"] = {"jour": self.today.isoformat(), "n": n_calls + 1}
+            self.state.save("juge.json", state)
+            run_dir = self.state.dir / "runs" / self.run
+            write_private(run_dir / "dossier.txt", dossier.text.encode("utf-8"))
+            os.chmod(str(run_dir), 0o700)
+            self.judge_info["dossier_garde"] = True
+        out = judge.ask(dossier.text, judge.schema(dossier.excerpts, dossier.lessons), str(home()), command,
+                        timeout=self.judge_timeout, git_path=git_path)
+        self.judge_info.update(version=out.version, cout=None if out.cost is None else round(out.cost, 4),
+                               tours=out.turns, duree_s=out.secs,
+                               cause=out.cause, detail=judge.mask_text(out.detail) if out.detail else None)
+        if out.cause:
+            return None, "saute:" + out.cause
+        try:
+            verdict = judge.validate(out.answer, dossier, self.refused_finding)
+        except judge.Rejected as e:
+            self.judge_info["rejet"] = str(e)
+            return None, "saute:reponse"
+        self.judge_info.update(constats=len(verdict.findings), lecons=len(verdict.lessons),
+                               abandons=dict(verdict.dropped), suspect=verdict.suspect)
+        return verdict, "fait"
 
-    def plan_judge_actions(self, validated):
+    def changed_since(self, sha):
+        """Paths changed since the last review (None: never reviewed, all of them)."""
+        if not (isinstance(sha, str) and re.match(r"^[0-9a-f]{40}$", sha)
+                and self.git.ok("cat-file", "-e", sha + "^{commit}")):
+            return None
+        rc, out, _ = self.git.run("-c", "core.quotepath=off", "diff", "--name-only", "-z", sha, "HEAD")
+        if rc != 0:
+            return None
+        names = {rules.nfc(p) for p in out.decode("utf-8", "surrogateescape").split("\0") if p}
+        return names | {rules.nfc(p) for p in status_paths(self.git) or []}
+
+    def lesson_key(self, text):
+        return self.fp("lecon", rules._norm_lesson(text))
+
+    def lesson_pool(self, scan, an):
+        note = scan.by_rel.get(rules.lessons_path(self.ctx))
+        if note is None:
+            return [], []
+        spans = [(t.data[1], t.data[2]) for rel, ts in an.plans.get("M2") or [] if rel == note.rel for t in ts]
+        return judge.lesson_candidates(note, spans, self.state.load("lecons-vues.json", {}), self.lesson_key)
+
+    def note_day(self, note):
+        d = rules.note_date(note)
+        ts = self.ctx.last_commit.get(rules.nfc(note.rel))
+        return d or (date.fromtimestamp(ts) if ts else None)
+
+    def known_values(self):
+        """Exact values masked in the dossier: gbrain's keys and what S1 quarantined."""
+        values = set()
+
+        def walk(v, key=""):
+            if isinstance(v, dict):
+                for k, x in v.items():
+                    walk(x, str(k))
+            elif isinstance(v, list):
+                for x in v:
+                    walk(x, key)
+            elif isinstance(v, str) and any(w in key.lower() for w in ("key", "token", "secret", "password")):
+                values.add(v)
+
+        walk(read_json(gbrain_dir() / "config.json", {}))
+        for p in (self.state.dir / "quarantaine").glob("*.json"):
+            actions = read_json(p, {}).get("actions")
+            for a in (actions.values() if isinstance(actions, dict) else ()):
+                for item in (a.get("lignes") or []) if isinstance(a, dict) else ():
+                    if isinstance(item, list) and len(item) == 3:
+                        values.update(judge.masked_values(str(item[1]), str(item[2])))
+        return sorted(values)
+
+    def refused_finding(self, f):
+        rels = [f.a.rel] + ([f.b.rel] if f.b else [])
+        return any(self.fp(t, rel, f.key) in self.refused for t in ("C1", "C2") for rel in rels)
+
+    def side_date(self, note, quote):
+        """The note's own date, else when the quoted paragraph was last committed."""
+        d = rules.note_date(note)
+        if d:
+            return d
+        span = rules.locate_quote(note, quote)
+        if span is None:
+            return None
+        out = self.git.text("blame", "--porcelain", "-L", "%d,%d" % (span[0] + 1, span[1] + 1), "--", note.rel)
+        times = [int(x) for x in re.findall(r"^committer-time (\d+)$", out or "", re.M)]
+        return date.fromtimestamp(max(times)) if times else None
+
+    def plan_judge_actions(self, verdict):
         """C1 (contradiction), C2 (decision replaced) and C3 (lesson set aside)
-        plans from the judge's validated findings: {type: [(rel, [Target])]}.
-        Phase P5; nothing until then."""
-        return {"C1": [], "C2": [], "C3": []}
+        from the review's validated findings; everything else goes to the report."""
+        self.ctx.judge = {"C1": {}, "C2": {}, "C3": {}}
+        if verdict is not None:
+            for f in verdict.findings:
+                self.plan_finding(f, verdict.suspect)
+            if not verdict.suspect:
+                self.plan_lessons(verdict.lessons)
+        return {t: sorted(self.ctx.judge[t].items()) for t in ("C1", "C2", "C3")}
+
+    def plan_finding(self, f, suspect):
+        if suspect or f.b is None or f.kind in ("proche_doublon", "perime") or f.current == "inconnu":
+            return self.judge_point(f)
+        new, old = (f.a, f.b) if f.current == "a" else (f.b, f.a)
+        q_new, q_old = (f.quote_a, f.quote_b) if f.current == "a" else (f.quote_b, f.quote_a)
+        n_old, n_new = self.snapshot.get(old.rel), self.snapshot.get(new.rel)
+        if n_old is None or n_new is None or old.rel == new.rel:
+            return self.judge_point(f)
+        if f.kind == "decision_remplacee":
+            t = "C2"
+            d_old, d_new = rules.note_date(n_old), rules.note_date(n_new)
+            ok = f.confidence == "haute" and rules.in_decisions(new.rel)
+        else:
+            t = "C1"
+            d_old, d_new = self.side_date(n_old, q_old), self.side_date(n_new, q_new)
+            ok = f.confidence in ("haute", "moyenne") and rules.locate_quote(n_new, q_new) is not None
+        if rules.annotated(n_old, q_old, t):
+            return  # flagged on an earlier night: the callout is already in the note
+        if ok and d_old and d_new and d_new > d_old:
+            target = rules.Target(f.key, {"new_rel": new.rel, "new_quote": q_new, "old_quote": q_old})
+            self.ctx.judge[t].setdefault(old.rel, []).append(target)
+            # The fix's own detector decides: a note it would not touch goes to the report.
+            if target in rules.DETECTORS[t](n_old, self.ctx):
+                return
+            self.ctx.judge[t][old.rel].remove(target)
+            if not self.ctx.judge[t][old.rel]:
+                del self.ctx.judge[t][old.rel]
+        self.judge_point(f)
+
+    def plan_lessons(self, verdicts):
+        rel = rules.lessons_path(self.ctx)
+        for v in verdicts:
+            if v.confidence != "haute":
+                continue
+            text = rules._norm_lesson(v.lesson.raw)
+            if v.verdict == "bruit":
+                if (self.today - v.lesson.day).days < 7:
+                    self.lessons_kept_open.add(v.lesson.key)
+                    continue
+                key, data = "bruit\0" + text, {"verdict": "bruit", "text": text, "other": None}
+            else:
+                other = rules._norm_lesson(v.other.raw)
+                key = "doublon\0" + "\0".join(sorted([text, other]))
+                data = {"verdict": "doublon", "text": text, "other": other}
+            self.ctx.judge["C3"].setdefault(rel, []).append(rules.Target(key, data))
+
+    def report_quote(self, text, limit=80):
+        return rules.inline_quote(judge.mask_text(text), limit)
+
+    def judge_point(self, f):
+        na, qa = link(f.a.rel), self.report_quote(f.quote_a)
+        nb, qb = (link(f.b.rel), self.report_quote(f.quote_b)) if f.b else ("", "")
+        if f.kind == "contradiction":
+            text = "%s dit « %s », %s dit « %s ». Laquelle est vraie ? Dis-le à Claude, il corrigera la note " \
+                   "avec toi." % (na, qa, nb, qb)
+        elif f.kind == "decision_remplacee":
+            text = "%s et %s : l'une des deux décisions semble remplacer l'autre (« %s », « %s »). À vérifier, " \
+                   "puis dis-le à Claude." % (na, nb, qa, qb)
+        elif f.kind == "proche_doublon":
+            text = "%s et %s disent presque la même chose (« %s »). Tu peux les regrouper." % (na, nb, qa)
+        else:
+            text = "%s dit « %s » : c'est peut-être dépassé.%s" % (
+                na, qa, " %s dit « %s »." % (nb, qb) if f.b else "")
+        if f.said:
+            text += " Claude : « %s »" % rules.inline_quote(f.said, 200)
+        self.points.append(("juge_" + f.kind, f.a.rel, {"key": f.key, "text": text}))
+
+    def after_judge(self):
+        """Lessons the review classified are not sent again; the next review
+        starts from what changed after this run's own commits."""
+        if self.judge_verdict is None or not self.writes:
+            return
+        self.judge_updates["dernier_commit_juge"] = (self.git.text("rev-parse", "HEAD") or "").strip() or None
+        if self.judge_verdict.suspect:
+            return
+        note = rules.read_note(str(self.vault), rules.lessons_path(self.ctx))
+        pending = set()
+        if note is not None:
+            for t in rules.detect_c3(note, self.ctx):
+                # One the user put back stays classified: it must not bring Claude back every night.
+                if self.fp("C3", note.rel, t.key) not in self.refused:
+                    pending.update(x for x in (t.data["text"], t.data["other"]) if x)
+        seen = self.state.load("lecons-vues.json", {})
+        day = self.today.isoformat()
+        for les in self.judge_dossier.lessons.values():
+            if les.key not in self.lessons_kept_open and rules._norm_lesson(les.raw) not in pending:
+                seen[les.key] = day
+        for key in self.judge_dossier.lessons_left_out:
+            seen[key] = day
+        if note is not None:
+            _, entries = rules.lessons_structure(note)
+            present = {self.lesson_key("\n".join(note.lines[s:e])) for s, e, _ in entries}
+            seen = {k: v for k, v in seen.items() if k in present}
+        self.state.save("lecons-vues.json", seen)
 
     # ---- phase 2: the catalogue
 
@@ -705,7 +968,7 @@ class Run:
                 self.alert("orange", "disjoncteur", rules.TYPE_NAMES[t])
                 continue
             for rel, targets in plans:
-                groups = [[x] for x in targets] if t == "F1" else [targets]
+                groups = [[x] for x in targets] if t in ("F1", "C1", "C2") else [targets]
                 for group in groups:
                     if not self.can_fix:
                         self.would.append((t, rel, len(group)))
@@ -745,10 +1008,11 @@ class Run:
         if not current:
             return self.skip(t, rel, "plus_rien_a_faire")
         aid = self.next_id(t)
-        change = rules.MAKERS[t](note, current, self.ctx, aid, limit=left if t in ("S1", "S2", "M2") else None)
+        change = rules.MAKERS[t](note, current, self.ctx, aid,
+                                 limit=left if t in ("S1", "S2", "M2", "C3") else None)
         if change is None:
             return self.skip(t, rel, "plus_rien_a_faire")
-        if t in ("S1", "S2") and len(current) > left:
+        if t in ("S1", "S2", "C3") and len(current) > left:
             self.leftover.add(t)
         new_files = len((set(change.writes) | set(change.deletes)) - self.touched)
         if len(self.touched) + new_files > FILES_PER_NIGHT:
@@ -930,6 +1194,13 @@ class Run:
             return {"court": "note vide supprimée"}
         if t == "F1":
             return {"court": "en-tête réparé"}
+        if t == "C1":
+            return {"court": "contradiction signalée", "new": rules.note_name(s["new_rel"]),
+                    "quote": self.report_quote(s["old_quote"])}
+        if t == "C2":
+            return {"court": "décision marquée remplacée", "new": rules.note_name(s["new_rel"])}
+        if t == "C3":
+            return {"court": "leçons écartées", "n": n, "doublons": s.get("doublons", 0)}
         return {"court": rules.TYPE_NAMES.get(t, t)}
 
     # ---- report, state, output
@@ -956,10 +1227,18 @@ class Run:
             why = " (limite d'usage de Claude)" if re.search(r"hit your .*limit|session limit|usage limit",
                                                              str(st.get("last_error") or ""), re.I) else ""
             self.alert("orange", "reflexion", "%s/%s%s" % (d[8:10], d[5:7], why))
-        if self.claude == "saute:sans-claude":
+        if self.claude == "fait":
+            i = self.judge_info
+            cost = i.get("cout")
+            money = (" (≈ %s $ décomptés sur ton abonnement)" % ("%.2f" % cost).replace(".", ",")
+                     if isinstance(cost, float) else "")
+            lines.append("🟢 Claude a relu %d extrait%s et %d leçon%s%s" % (
+                i.get("extraits", 0), plural(i.get("extraits", 0)), i.get("lecons_envoyees", 0),
+                plural(i.get("lecons_envoyees", 0)), money))
+        elif self.claude == "saute:sans-claude":
             lines.append("⚪ Relecture par Claude : désactivée pour ce contrôle.")
-        elif self.claude == "saute:juge-absent":
-            lines.append("⚪ Relecture par Claude : pas encore disponible.")
+        elif self.claude == "saute:rien-de-neuf":
+            lines.append("⚪ Relecture par Claude : rien de neuf depuis la dernière.")
         return lines
 
     def verdict(self):
@@ -973,13 +1252,16 @@ class Run:
         """(fingerprint, text, once) of each point to look at."""
         out = []
         for code, rel, x in self.points:
+            if code.startswith("juge_") and isinstance(x, dict):
+                out.append((self.fp("point", code, x["key"]), x["text"], True))
+                continue
             m = x if isinstance(x, str) and code in ("doublon_profil", "doublon_lie") else None
             text = POINT_TEXT[code].format(
                 n=safe_name(rules.note_name(rel)), m=safe_name(rules.note_name(m)) if m else "",
                 x=(rules.size_label(x) if code == "consignes_grosses" else safe_name(str(x)) if x is not None else ""),
                 s=plural(x) if isinstance(x, int) else "", rel=safe_name(rel))
-            key = x if code.startswith("piege_") else ""
-            out.append((self.fp("point", code, rel, str(key)), text, code.startswith("piege_")))
+            once = code.startswith(("piege_", "juge_"))
+            out.append((self.fp("point", code, rel, str(x if once else "")), text, once))
         for t in sorted(self.leftover):
             if t == "temps":
                 out.append((self.fp("point", "temps"), POINT_TEXT["temps"], False))
@@ -988,8 +1270,9 @@ class Run:
         return out
 
     def finish(self, scan):
-        judge = self.state.load("juge.json", {}) if self.writes else {}
-        signaled = judge.get("signales", {}) if isinstance(judge.get("signales"), dict) else {}
+        state = self.state.load("juge.json", {}) if self.writes else {}
+        state.update(self.judge_updates)
+        signaled = state.get("signales", {}) if isinstance(state.get("signales"), dict) else {}
         health = self.health() if scan is not None else []
         verdict = self.verdict() if scan is not None else "rouge"
         points = self.point_lines() if scan is not None else []
@@ -1005,8 +1288,8 @@ class Run:
             for fp, _, _ in points:
                 signaled.setdefault(fp, self.today.isoformat())
             limit = (self.today - timedelta(days=60)).isoformat()
-            judge["signales"] = {k: v for k, v in signaled.items() if v >= limit}
-            self.state.save("juge.json", judge)
+            state["signales"] = {k: v for k, v in signaled.items() if v >= limit}
+            self.state.save("juge.json", state)
             journal = self.journal(verdict, len(shown), end)
             write_json(self.state.dir / "runs" / (self.run + ".json"), journal)
             prev = self.state.load("etat.json", {})
@@ -1037,7 +1320,7 @@ class Run:
                 "alertes": [{"niveau": lv, "code": c} for lv, c, _ in self.alerts],
                 "claude": self.claude, "cause": self.cause, "gbrain": self.gbrain_version,
                 "notes_lues": self.notes_count, "exclusions": self.exclusions[:200],
-                "suite": sorted(self.leftover), "annule_le": None}
+                "suite": sorted(self.leftover), "juge": self.judge_info, "annule_le": None}
 
     def action_row(self, a):
         r, t = a["resume"], a["type"]
@@ -1075,6 +1358,13 @@ class Run:
             where = safe_name(rules.note_name(a["chemins"][0]))
         elif t == "D2":
             text, where = REPORT_TEXT["D2"], safe_name(rules.note_name(a["chemins"][0]))
+        elif t == "C1":
+            text = REPORT_TEXT["C1"].format(quote=r["quote"], new=safe_name(r["new"]))
+        elif t == "C2":
+            text, where = REPORT_TEXT["C2"], "%s → [[%s]]" % (where, safe_name(r["new"]))
+        elif t == "C3":
+            text = REPORT_TEXT["C3"].format(n=r["n"], s=plural(r["n"]))
+            where = "lessons.md → [[lessons-ecartees]]"
         else:
             text = REPORT_TEXT.get(t, rules.TYPE_NAMES.get(t, t))
         return "| %s | %s | %s |" % (a["id"], text.replace("|", "\\|"), where.replace("|", "\\|"))
@@ -1139,7 +1429,8 @@ class Run:
                 "run %s · %d notes lues · %d correction%s sautée%s · plafonds atteints : %s · journal : "
                 "~/.brain-in-a-box/controle/runs/%s.json" % (
                     self.run, self.notes_count, skipped, plural(skipped), plural(skipped),
-                    ", ".join(sorted(self.leftover)) or "aucun", self.run), "", "</details>", ""]
+                    ", ".join(sorted(self.leftover)) or "aucun", self.run) + self.judge_details(), "",
+                "</details>", ""]
         text = "\n".join(out)
         try:
             prev = rules.read_note(str(self.vault), rel)
@@ -1152,6 +1443,19 @@ class Run:
             self.unstage({rel: prev})
             return None
         return rel
+
+    def judge_details(self):
+        i = self.judge_info
+        if not i.get("dossier_garde"):
+            return ""
+        out = ""
+        if i.get("version"):
+            out += " · Claude Code %s" % i["version"]
+        dropped = sum((i.get("abandons") or {}).values())
+        if dropped:
+            out += " · %d constat%s de Claude écarté%s (citation introuvable ou incomplète)" % (
+                dropped, plural(dropped), plural(dropped))
+        return out + " · dossier envoyé : ~/.brain-in-a-box/controle/runs/%s/dossier.txt" % self.run
 
     def print_summary(self, verdict, shown, scan):
         done = [a for a in self.actions if a["statut"] == "fait"]
@@ -1507,7 +1811,7 @@ def parser():
                            formatter_class=argparse.RawDescriptionHelpFormatter)
         g = p.add_mutually_exclusive_group()
         g.add_argument("--sans-claude", action="store_true", help="no Claude review this time")
-        g.add_argument("--avec-claude", action="store_true", help="ask Claude even in essai (no effect yet)")
+        g.add_argument("--avec-claude", action="store_true", help="ask Claude in essai too (nothing is written)")
     p = sub.add_parser("annuler", parents=[common], help="undo one fix (ID) or a whole night (derniere-nuit)",
                        epilog=ENV_HELP, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("cible", nargs="?")

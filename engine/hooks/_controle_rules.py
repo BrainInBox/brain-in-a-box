@@ -271,6 +271,7 @@ class Context:
         self.allowed_secret = allowed_secret or (lambda value: False)
         self.incoming = {}
         self.d1_canon = {}
+        self.judge = {}   # C1 C2 C3 plans from the Claude review: {type: {rel: [Target]}}
         self.read = None  # set by the runner: rel -> current Note or None
 
     def date_fr(self):
@@ -1025,10 +1026,255 @@ def make_f1(note, targets, ctx, aid, limit=None):
     return None
 
 
+# --------------------------------------------------------------------------- C1 C2 C3 (from the Claude review)
+#
+# The review only names excerpts and quotes them. controle.py checks the quotes,
+# dates both sides and plans these fixes in ctx.judge = {type: {rel: [Target]}};
+# the detectors below re-check each plan on the note as it is right before writing.
+
+def flat(text):
+    """Text compared word for word: no invisible character, NFC, single spaces."""
+    return " ".join(unicodedata.normalize("NFC", HIDDEN.sub("", text).replace("‍", "")).split())
+
+
+def note_date(note):
+    """A note's own date: frontmatter date/created/updated, else AAAA-MM-JJ in its name."""
+    for key in ("date", "created", "updated"):
+        value = note.fm.get(key)
+        found = dates_in(value) if isinstance(value, str) else []
+        if found:
+            return found[0]
+    found = dates_in(note_name(note.rel))
+    return found[0] if found else None
+
+
+def paragraphs(note):
+    """(first, last) lines of each paragraph of the body; a heading is a paragraph
+    of its own, code blocks and our callouts are not paragraphs."""
+    lines = note.lines
+    mask = fence_mask(lines)
+    out, cur = [], None
+    for i in range(note.body_start, len(lines)):
+        ln = lines[i]
+        if mask[i] or not ln.strip() or OUR_MARK.search(ln) or HEADING.match(ln):
+            if cur:
+                out.append(cur)
+                cur = None
+            if HEADING.match(ln) and not mask[i]:
+                out.append((i, i))
+            continue
+        cur = (cur[0], i) if cur else (i, i)
+    if cur:
+        out.append(cur)
+    return out
+
+
+def locate_quote(note, quote):
+    """(first, last) of the paragraph that holds the quote word for word, or None."""
+    q = flat(quote)
+    if not q:
+        return None
+    lines = note.lines
+    for first, last in paragraphs(note):
+        if q in flat("\n".join(lines[first:last + 1])):
+            return first, last
+    return None
+
+
+def link_name(rel):
+    """A note's name as a [[link]], also inside a quoted YAML value."""
+    return re.sub(r"[\[\]|\n\r#^\"\\]", " ", HIDDEN.sub("", note_name(rel))).strip() or "?"
+
+
+def inline_quote(text, limit):
+    """A quote the vault may show inside a callout: one line, cut, no wiki link,
+    no comment that could hide or close a marker."""
+    t = flat(text)
+    if len(t) > limit:
+        t = t[:limit - 1].rstrip() + "…"
+    for a, b in (("[[", "[ ["), ("]]", "] ]"), ("<!--", "<! --"), ("-->", "-- >")):
+        while a in t:
+            t = t.replace(a, b)
+    return t
+
+
+def _annotatable(note, ctx):
+    low = [p.lower() for p in note.rel.split("/")]
+    return not (protected(note.rel, ctx) or is_external(note) or note.newline is None or note.fm_state == "unclosed"
+                or low[0] in ("journal", "clippings") or any(p in ("archive", "archives") for p in low[:-1]))
+
+
+def _callout_after(lines, last, kind):
+    for j in (last + 1, last + 2):
+        if j < len(lines) and "<!-- controle:%s-" % kind in lines[j]:
+            return True
+    return False
+
+
+def annotated(note, quote, kind):
+    """True when the note already carries this kind of callout for the quote."""
+    if kind == "C2":
+        return "<!-- controle:C2-" in note.text
+    span = locate_quote(note, quote)
+    return bool(span) and _callout_after(note.lines, span[1], kind)
+
+
+def detect_c1(note, ctx):
+    plans = ctx.judge.get("C1", {}).get(note.rel)
+    if not plans or not _annotatable(note, ctx):
+        return []
+    out = []
+    for t in plans:
+        span = locate_quote(note, t.data["old_quote"])
+        if span and not _callout_after(note.lines, span[1], "C1"):
+            out.append(t)
+    return out
+
+
+def make_c1(note, targets, ctx, aid, limit=None):
+    """After the paragraph that holds the outdated statement, in the same chunk
+    for gbrain: a callout quoting the newer note, word for word."""
+    t = targets[0]
+    span = locate_quote(note, t.data["old_quote"])
+    if span is None:
+        return None
+    lines, last = note.lines, span[1]
+    callout = ("> [!warning] Contrôle du %s : peut-être dépassé. [[%s]], plus récente, dit : « %s ». Si c'est "
+               "réglé, supprime ce bloc. <!-- controle:%s -->" % (
+                   ctx.date_fr(), link_name(t.data["new_rel"]), inline_quote(t.data["new_quote"], 120).rstrip("."),
+                   aid))
+    # Right after a quote block it would join that block: a blank line first.
+    block = ([""] if lines[last].lstrip().startswith(">") else []) + [callout]
+    if last + 1 < len(lines) and lines[last + 1].strip():
+        block.append("")
+    lines[last + 1:last + 1] = block
+    ch = Change()
+    ch.writes[note.rel] = "\n".join(lines)
+    ch.contract.append(("insertion", note.rel, {"blocks": [(last + 1, block)]}))
+    ch.units = 1
+    ch.summary = {"new_rel": t.data["new_rel"], "old_quote": t.data["old_quote"]}
+    return ch
+
+
+def _fm_key(line):
+    m = re.match(r"^([A-Za-z0-9_][\w.-]*)[ \t]*:", line)
+    return m.group(1).lower() if m else None
+
+
+def detect_c2(note, ctx):
+    if not ctx.judge.get("C2", {}).get(note.rel) or not in_decisions(note.rel) or not _annotatable(note, ctx) \
+            or note.fm_state != "ok":
+        return []
+    status = note.fm.get("status")
+    if (status if isinstance(status, str) else "").strip().strip("\"'").lower() not in ("", "active"):
+        return []
+    if any("<!-- controle:C2-" in ln for ln in note.lines[note.body_start:]):
+        return []
+    return [t for t in ctx.judge.get("C2", {}).get(note.rel, ())
+            if ctx.read is None or ctx.read(t.data["new_rel"]) is not None]
+
+
+def make_c2(note, targets, ctx, aid, limit=None):
+    """status: superseded and superseded_by in the frontmatter, a callout at the
+    head of the body. A value on several lines is left alone (report only)."""
+    t = targets[0]
+    name = link_name(t.data["new_rel"])
+    sets = {"status": "status: superseded", "superseded_by": 'superseded_by: "[[%s]]"' % name}
+    lines = note.lines
+    fm = list(note.fm_lines)
+    for key, line in sets.items():
+        at = next((i for i, ln in enumerate(fm) if _fm_key(ln) == key), None)
+        if at is None:
+            fm.append(line)
+        elif at + 1 < len(fm) and fm[at + 1][:1].isspace():
+            return None
+        else:
+            fm[at] = line
+    body = lines[note.body_start:]
+    at = next((i for i, ln in enumerate(body) if ln.strip()), len(body))
+    callout = ("> [!warning] Contrôle du %s : décision remplacée par [[%s]] (plus récente). À vérifier. "
+               "<!-- controle:%s -->" % (ctx.date_fr(), name, aid))
+    block = [callout, ""]
+    new = [lines[0]] + fm + [lines[note.body_start - 1]] + body[:at] + block + body[at:]
+    ch = Change()
+    ch.writes[note.rel] = "\n".join(new)
+    ch.contract.append(("decision", note.rel, {"set": sets, "at": at, "block": block}))
+    ch.units = 1
+    ch.summary = {"new_rel": t.data["new_rel"]}
+    return ch
+
+
+def detect_c3(note, ctx):
+    """Planned lessons still in lessons.md; for a duplicate, the OLDER of the two."""
+    plans = ctx.judge.get("C3", {}).get(note.rel)
+    if not plans or note.rel != lessons_path(ctx) or note.newline is None:
+        return []
+    lines = note.lines
+    _, entries = lessons_structure(note)
+    where = {}
+    for s, e, d in entries:
+        where.setdefault(_norm_lesson("\n".join(lines[s:e])), (s, e, d))
+    out = []
+    for t in plans:
+        one = where.get(t.data["text"])
+        if one is None:
+            continue
+        if t.data["verdict"] == "bruit":
+            if (ctx.today - one[2]).days >= 7:
+                out.append(Target(t.key, dict(t.data, span=one, label="bruit")))
+            continue
+        other = where.get(t.data["other"])
+        if other is None or other[0] == one[0]:
+            continue
+        older, newer = sorted((one, other), key=lambda x: (x[2], x[0]))
+        out.append(Target(t.key, dict(t.data, span=older,
+                                      label="doublon de la leçon du %s" % newer[2].isoformat())))
+    return out
+
+
+def make_c3(note, targets, ctx, aid, limit=None):
+    picked, seen = [], set()
+    for t in sorted(targets, key=lambda t: t.data["span"][:2]):
+        if t.data["span"][0] not in seen:
+            seen.add(t.data["span"][0])
+            picked.append(t)
+    picked = picked[:limit]
+    if not picked:
+        return None
+    lines = note.lines
+    drop = set()
+    for t in picked:
+        drop.update(range(t.data["span"][0], t.data["span"][1]))
+    rel = ctx.profile + "/Archive/lessons-ecartees.md"
+    header = _archive_header("Leçons écartées", "Mises de côté par le contrôle de nuit. Rien n'est supprimé.")
+    ch = Change()
+    chunks = []
+    for label in sorted({t.data["label"] for t in picked}):
+        title = "## Écartées le %s (%s)" % (ctx.today.isoformat(), label)
+        body = [title]
+        ch.extra_lines.add(title)
+        mine = [t for t in picked if t.data["label"] == label]
+        for d in sorted({t.data["span"][2] for t in mine}):
+            sub = "### du %s" % d.isoformat()
+            ch.extra_lines.add(sub)
+            body += ["", sub]
+            for t in (t for t in mine if t.data["span"][2] == d):
+                body += lines[t.data["span"][0]:t.data["span"][1]]
+        chunks.append("\n".join(body))
+    current = ctx.read(rel) if ctx.read else None
+    ch.writes[rel] = _append(current.text if current else None, header, chunks)
+    ch.extra_lines.update(header.split("\n"))
+    ch.writes[note.rel] = "\n".join(ln for i, ln in enumerate(lines) if i not in drop)
+    ch.contract.append(("deplacement", note.rel, {"dests": [rel]}))
+    ch.units = len(picked)
+    ch.summary = {"n": len(picked), "doublons": sum(1 for t in picked if t.data["verdict"] == "doublon")}
+    return ch
+
+
 DETECTORS = {"S1": detect_s1, "S2": detect_s2, "X1": detect_x1, "M1": detect_m1, "M2": detect_m2,
-             "D1": detect_d1, "D2": detect_d2, "F1": detect_f1}
+             "D1": detect_d1, "D2": detect_d2, "F1": detect_f1, "C1": detect_c1, "C2": detect_c2, "C3": detect_c3}
 MAKERS = {"S1": make_s1, "S2": make_s2, "X1": make_x1, "M1": make_m1, "M2": make_m2,
-          "D1": make_d1, "D2": make_d2, "F1": make_f1}
+          "D1": make_d1, "D2": make_d2, "F1": make_f1, "C1": make_c1, "C2": make_c2, "C3": make_c3}
 
 
 # --------------------------------------------------------------------------- contract
@@ -1089,6 +1335,21 @@ def check_contract(change, before, after, read_text=None):
                     return False, "ligne d'en-tête non déclarée changée"
             if _fm_problem_count(a) >= _fm_problem_count(b):
                 return False, "l'en-tête n'est pas plus lisible après"
+        elif kind == "decision":
+            if a is None:
+                return False, "fichier absent"
+            _, bfm, bstart, _ = parse_frontmatter(b)
+            _, afm, astart, astate = parse_frontmatter(a)
+            bl, al = _lines(b), _lines(a)
+            if astate != "ok" or al[0] != bl[0] or al[astart - 1] != bl[bstart - 1] or len(afm) < len(bfm):
+                return False, "en-tête cassé"
+            for x, y in zip(bfm, afm):
+                if x != y and (_fm_key(x) not in d["set"] or y != d["set"][_fm_key(x)]):
+                    return False, "ligne d'en-tête non déclarée changée"
+            if any(y not in d["set"].values() for y in afm[len(bfm):]):
+                return False, "ligne d'en-tête non déclarée ajoutée"
+            if _remove_blocks(al[astart:], [(d["at"], d["block"])]) != bl[bstart:]:
+                return False, "le corps de la note a changé"
         elif kind == "suppression":
             if a is not None or b is None:
                 return False, "fichier toujours là"
