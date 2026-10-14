@@ -3,7 +3,7 @@
 Stop hook: extracts lightweight stats from a Claude session and appends them to
 ~/Documents/Brain/Journal/YYYY-MM-DD.md under the "📊 Claude Sessions" section.
 
-Idempotent (skips if session_id already present). No LLM call.
+Idempotent (replaces the session's earlier block). No LLM call.
 """
 import json, sys, os, re, time, tempfile
 from pathlib import Path
@@ -13,19 +13,20 @@ from datetime import datetime
 BRAIN = Path.home() / "Documents" / "Brain"
 JOURNAL_DIR = BRAIN / "Journal"
 LOCK_DIR = Path(tempfile.gettempdir()) / "claude-session-locks"
+SECTION = "## 📊 Claude Sessions"
+# Claude Code's session ids are UUIDs. The id names the lock file and goes in the journal:
+# anything else is refused.
+SID_RE = re.compile(r"[A-Za-z0-9_-]{1,128}")
 
-# The first prompt lands in the journal, which is committed and pushed every
-# night: mask secrets BEFORE truncating (a key cut at 200 chars no longer
-# matches its pattern). Patterns live in _redact.py, shared with the reflection.
+# The first prompt, the folder and the file names land in the journal, which Obsidian
+# renders and the nightly pushes. They can come from a pasted page or be picked by the
+# model: _vault_write.py makes each one line of plain text, secrets masked, as it does for
+# the reflection. Without it (or _redact.py) nothing is written.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
-    from _redact import redact as _redact
-except ImportError:  # module missing next to the hook: drop the intent, never write it unmasked
-    _redact = None
-
-
-def redact(text):
-    return _redact(text)[0] if _redact else ""
+    from _vault_write import clean_item, write_atomic
+except ImportError:
+    clean_item = write_atomic = None
 
 
 SIGNAL_PATTERNS = [
@@ -102,10 +103,10 @@ def parse_transcript(path):
                 if isinstance(content, list):
                     for c in content:
                         if c.get("type") == "text":
-                            stats["first_prompt"] = redact(c.get("text", ""))[:200]
+                            stats["first_prompt"] = c.get("text", "")
                             break
                 elif isinstance(content, str):
-                    stats["first_prompt"] = redact(content)[:200]
+                    stats["first_prompt"] = content
 
             # Model name
             if d.get("type") == "assistant" and not stats["model"]:
@@ -184,7 +185,7 @@ def short_cwd(cwd):
 
 def short_files(files):
     """Shows up to 3 basenames + count of remaining."""
-    bases = [Path(f).name for f in sorted(files)]
+    bases = [clean_item(Path(f).name, 80) for f in sorted(files)]
     if len(bases) <= 3:
         return ", ".join(bases) if bases else "—"
     return ", ".join(bases[:3]) + f" (+{len(bases)-3})"
@@ -194,13 +195,12 @@ def render_entry(stats, session_id, cwd):
     end = fmt_time(stats["last_ts"])
     dur_str, resumed = fmt_duration(stats["first_ts"], stats["last_ts"])
     header_time = (f"~{end}" if resumed else f"{fmt_time(stats['first_ts'])}–{end}")
-    cwd_s = short_cwd(cwd)
-    model = (stats["model"] or "").replace("claude-", "")
-    top_tools = ", ".join(f"{n} {c}" for n, c in stats["tools"].most_common(5))
+    # In a code span: no leading "=" or "$=" either, Dataview would run it as a query.
+    cwd_s = clean_item(short_cwd(cwd), 200).lstrip("=$ ") or "?"
+    model = clean_item((stats["model"] or "").replace("claude-", ""), 30)
+    top_tools = ", ".join(f"{clean_item(n, 60)} {c}" for n, c in stats["tools"].most_common(5))
     files_s = short_files(stats["files"])
-    prompt = (stats["first_prompt"] or "").replace("\n", " ").strip()
-    if len(prompt) > 140:
-        prompt = prompt[:137] + "..."
+    prompt = clean_item(stats["first_prompt"], 140)
     signals = ", ".join(f"{s}×{n}" for s, n in stats["signals"].most_common(5))
 
     lines = [
@@ -216,35 +216,38 @@ def render_entry(stats, session_id, cwd):
     return "\n".join(lines)
 
 
-def ensure_journal(day):
-    f = JOURNAL_DIR / f"{day}.md"
-    if not f.exists():
-        JOURNAL_DIR.mkdir(parents=True, exist_ok=True)
-        f.write_text(f"# {day} — Daily\n\n## 📊 Claude Sessions\n\n", encoding="utf-8")
-    elif "## 📊 Claude Sessions" not in f.read_text(encoding="utf-8"):
-        with f.open("a", encoding="utf-8") as fh:
-            fh.write("\n## 📊 Claude Sessions\n\n")
-    return f
+def _read(path):
+    try:
+        return path.read_bytes()
+    except FileNotFoundError:
+        return None
 
 
 def upsert_session(journal, session_id, entry):
-    """Replace existing block for this sid (or append). True if changed."""
-    sid_short = session_id[:8]
-    txt = journal.read_text(encoding="utf-8")
+    """Writes this session's block into the day's journal, in place of its earlier one. True if changed.
+    Atomically, and re-read just before: a write made meanwhile (another session's recap, the
+    reflection, which writes the same file) is merged, not lost."""
+    if journal.is_symlink():
+        raise RuntimeError(f"{journal.name} is a link: left as it is")  # as the reflection does
     # Match existing block: header line + nested "  - ..." continuation lines
     pattern = re.compile(
-        rf"^- \*\*[^\n]+sid:`{re.escape(sid_short)}`[^\n]*\n(?:  - [^\n]+\n?)*",
+        rf"^- \*\*[^\n]+sid:`{re.escape(session_id[:8])}`[^\n]*\n(?:  - [^\n]+\n?)*",
         re.MULTILINE,
     )
-    new_txt = pattern.sub("", txt)
-    # Ensure section header still present after removal
-    if "## 📊 Claude Sessions" not in new_txt:
-        new_txt = new_txt.rstrip() + "\n\n## 📊 Claude Sessions\n\n"
-    new_txt = new_txt.rstrip("\n") + "\n" + entry + "\n"
-    if new_txt != txt:
-        journal.write_text(new_txt, encoding="utf-8")
-        return True
-    return False
+    for _ in range(3):
+        raw = _read(journal)
+        txt = raw.decode("utf-8") if raw is not None else f"# {journal.stem} — Daily\n\n{SECTION}\n\n"
+        new_txt = pattern.sub("", txt)
+        # Ensure section header still present after removal
+        if SECTION not in new_txt:
+            new_txt = new_txt.rstrip() + f"\n\n{SECTION}\n\n"
+        new_txt = new_txt.rstrip("\n") + "\n" + entry + "\n"
+        if raw is not None and new_txt == txt:
+            return False
+        if _read(journal) == raw:
+            write_atomic(journal, [new_txt], None)
+            return True
+    raise RuntimeError(f"{journal.name} kept changing: recap not written")
 
 
 def main():
@@ -253,19 +256,29 @@ def main():
     except Exception:
         sys.exit(0)
 
+    if clean_item is None:
+        raise RuntimeError("_vault_write.py or _redact.py not found next to session-recap.py: nothing written")
     sid = payload.get("session_id") or payload.get("sessionId") or "unknown"
+    if not isinstance(sid, str) or not SID_RE.fullmatch(sid):
+        raise ValueError("session_id is not a plain id: nothing written")
     cwd = payload.get("cwd") or os.getcwd()
     transcript_path = payload.get("transcript_path")
 
-    # Debounce: skip if the last recap for this sid was < DEBOUNCE_SECS ago
+    # Debounce: skip if the last recap for this sid was < DEBOUNCE_SECS ago.
+    # A shared /tmp: never follow a link someone left under that name.
     DEBOUNCE_SECS = 30
-    LOCK_DIR.mkdir(parents=True, exist_ok=True)
+    LOCK_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
     lock = LOCK_DIR / f"recap-{sid}.lock"
-    if lock.exists():
-        age = time.time() - lock.stat().st_mtime
-        if age < DEBOUNCE_SECS:
+    try:
+        if time.time() - lock.lstat().st_mtime < DEBOUNCE_SECS:
             sys.exit(0)
-    lock.write_text(str(time.time()))
+    except OSError:
+        pass  # absent; anything else, the open below says
+    fd = os.open(str(lock), os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    try:
+        os.write(fd, str(time.time()).encode())
+    finally:
+        os.close(fd)
 
     # Skip smoke tests / temp cwd (cross-platform)
     if cwd.startswith(tempfile.gettempdir()) or cwd.startswith("/tmp") or cwd.startswith("/private/tmp"):
@@ -277,9 +290,8 @@ def main():
         sys.exit(0)
 
     day = time.strftime("%Y-%m-%d")
-    journal = ensure_journal(day)
     entry = render_entry(stats, sid, cwd)
-    upsert_session(journal, sid, entry)
+    upsert_session(JOURNAL_DIR / f"{day}.md", sid, entry)
     sys.exit(0)
 
 

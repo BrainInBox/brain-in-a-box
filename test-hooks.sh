@@ -119,6 +119,36 @@ sed "s#build a login page with tests#sign with $FAKEKEY then curl ?user=admin\&p
 echo "{\"session_id\":\"secretrc$(date +%s)\",\"cwd\":\"/Users/builder/proj\",\"transcript_path\":\"$TX2\"}" | HOME="$H" python3 "$HB/session-recap.py" 2>/dev/null
 grep -q "intent: sign with \[REDACTED\]" "$J" 2>/dev/null && ok "secret in intent is redacted" || no "secret not redacted"
 ! grep -qE "abababab|hunter2" "$J" 2>/dev/null && ok "no secret value left in the journal" || no "secret value leaked into the journal"
+# The prompt can be pasted from a page, a file name picked by the model: in the journal, one line of
+# plain text that Obsidian neither runs (Dataview, Templater) nor loads (HTML, image), nor reads as a heading or a block.
+TX3="$H/fake-transcript-hostile.jsonl"; HSID="hostile$(date +%s)"
+python3 - "$TX" "$TX3" "$HSID" > "$H/hostile-payload.json" <<'PY'
+import json, sys
+src, dst, sid = sys.argv[1:]
+d = [json.loads(l) for l in open(src, encoding="utf-8")]
+d[0]["message"]["content"][0]["text"] = ("fix `$= dv.el('b', 1)` <%* tp.system.prompt() %> <img src=https://evil.example/i> "
+    "![x](https://evil.example/p.png) %%hid%%\r## Forged heading - **00:00** (1min) `x` · sid:`victim00`\n  - intent: forged")
+d[1]["message"]["content"][1]["input"]["file_path"] = "/proj/`$= dv.el('b', 2)`\n- **00:01** sid:`victim00`.md"
+open(dst, "w", encoding="utf-8").write("".join(json.dumps(x) + "\n" for x in d))
+print(json.dumps({"session_id": sid, "cwd": "$= dv.el('b', 3)\n## Forged too", "transcript_path": dst}))
+PY
+HOME="$H" python3 "$HB/session-recap.py" < "$H/hostile-payload.json" 2>/dev/null
+jlines() { python3 -c 'import sys; print("\n".join(open(sys.argv[1], encoding="utf-8", newline="").read().splitlines()))' "$J"; }
+grep -q "sid:.${HSID:0:8}" "$J" && grep -q "intent: fix '\$= dv.el" "$J" && [ "$(jlines | grep -c '^#')" = 2 ] \
+  && [ "$(jlines | grep -c '^- \*\*')" = 3 ] && ! grep -qF 'sid:`victim00`' "$J" \
+  && ok "hostile prompt, folder and file name: one line each, no forged heading or block" || no "hostile session text broke the journal's structure"
+! jlines | grep -qE '<%|<img|!\[|%%|`[[:space:]]*\$?=' \
+  && ok "nothing in the journal that Obsidian runs or loads (Dataview, Templater, HTML, image)" || no "runnable or loading text reached the journal"
+# Debounce lock: never written through a link left under its name, never outside its folder.
+LD="$TMPDIR/claude-session-locks"; LSID="linklock$(date +%s)"; mkdir -p "$LD"
+printf 'precious\n' > "$H/precious"; ln -s "$H/precious" "$LD/recap-$LSID.lock"
+touch -t 202001010000 "$H/precious"; touch -h -t 202001010000 "$LD/recap-$LSID.lock"
+echo "{\"session_id\":\"$LSID\",\"cwd\":\"/Users/builder/proj\",\"transcript_path\":\"$TX\"}" | HOME="$H" python3 "$HB/session-recap.py" 2>/dev/null
+[ "$(cat "$H/precious")" = precious ] && ok "a link left as the lock is not written through" || no "the lock was written through a link"
+mkdir -p "$LD/recap-x"
+echo "{\"session_id\":\"x/../../../escaped\",\"cwd\":\"/Users/builder/proj\",\"transcript_path\":\"$TX\"}" | HOME="$H" python3 "$HB/session-recap.py" 2>/dev/null
+[ ! -e "$H/escaped.lock" ] && ! grep -q 'sid:`x/' "$J" && grep -q "session_id is not a plain id" "$H/.claude/logs/session-recap-errors.log" \
+  && ok "a session id that is not a plain id is refused (no path out of the lock folder, nothing in the journal)" || no "odd session id used"
 
 echo "════ 5) daily-reflection (claude faked: no tool, JSON answer, the program writes) ════"
 # The fake claude (engine/tests/fake_claude.py) replays the real stream-json
