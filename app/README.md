@@ -13,9 +13,15 @@ cargo install tauri-cli --version "=2.11.5" --locked
 cd app/src-tauri
 cargo tauri dev                          # run it
 CI=true cargo tauri build --bundles dmg  # target/release/bundle/dmg/*.dmg
+
+# what the release ships: one DMG for Apple Silicon and Intel, ad-hoc signed
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
+APPLE_SIGNING_IDENTITY=- cargo tauri build --ci --target universal-apple-darwin --bundles dmg -- --locked
 ```
 
-The build is not signed yet. On another Mac, macOS blocks it: open it once from System Settings → Privacy & Security → "Open Anyway". A signed, notarized build needs an Apple Developer account.
+Every push to master that touches `app/` publishes that DMG as a pre-release on GitHub (`app-v<version>-preview.<n>`, the 5 newest kept, with `SHA256SUMS`), and a pull request gets it as an artifact of its run: `.github/workflows/release.yml`. The Windows installer joins the same release once the Tauri config declares an NSIS bundle.
+
+The build is not signed by Apple, only ad-hoc (an app with no signature at all would read as "damaged" once downloaded). On another Mac, macOS blocks it: open it once from System Settings → Privacy & Security → "Open Anyway". A signed, notarized build needs an Apple Developer account.
 
 ## Check without the window
 
