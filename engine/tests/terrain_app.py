@@ -114,7 +114,7 @@ def nom_capture(n, ecran):
 def choisir_source(ref):
     """master (the scheduled night, or a run by hand on master): the published preview. Elsewhere,
     no preview exists for that commit: the app is built from it."""
-    return "release" if ref in ("master", "feat/terrain-app") else "build"   # TEMP: try the release path once
+    return "release" if ref == "master" else "build"
 
 
 # --------------------------------------------------------------------------- the window, as data
