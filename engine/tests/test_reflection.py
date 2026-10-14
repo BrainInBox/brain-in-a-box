@@ -156,8 +156,8 @@ class Isolated(unittest.TestCase):
         self.home = Path(tempfile.mkdtemp(prefix="biab-refl-home-"))
         self.fake = self.home / ".claude" / "fake"
         self.fake.mkdir(parents=True)
-        (self.fake / "fixtures").write_text(str(FIXTURES))
-        (self.fake / "answer.json").write_text(json.dumps(ANSWER))
+        (self.fake / "fixtures").write_text(str(FIXTURES), encoding="utf-8")
+        (self.fake / "answer.json").write_text(json.dumps(ANSWER), encoding="utf-8")
         self.saved = dict(os.environ)
         os.environ.update(CANARIES, HOME=str(self.home), USERPROFILE=str(self.home))
 
@@ -172,22 +172,22 @@ class Isolated(unittest.TestCase):
 
     def calls(self):
         p = self.fake / "calls"
-        return p.read_text().count("-p") if p.exists() else 0
+        return p.read_text(encoding="utf-8").count("-p") if p.exists() else 0
 
     def test_claude_runs_caged(self):
         answer = self.run_fake()
         self.assertEqual(answer.output, ANSWER)
-        env = json.loads((self.fake / "env.json").read_text())
+        env = json.loads((self.fake / "env.json").read_text(encoding="utf-8"))
         allowed = {"HOME", "PATH", "LANG", "USER", "LOGNAME", "TMPDIR", "DISABLE_AUTOUPDATER",
                    "CLAUDE_CODE_DISABLE_ADVISOR_TOOL", "TEMP", "TMP", *hc.WINDOWS_VARS, *hc.PROXY_VARS}
         # Windows hands a child its variables upper-cased.
         self.assertLessEqual({k.upper() for k in env} - SYSTEM_ADDED, {k.upper() for k in allowed})
         self.assertFalse(set(CANARIES.values()) & set(env.values()))
-        where = json.loads((self.fake / "cwd.json").read_text())
+        where = json.loads((self.fake / "cwd.json").read_text(encoding="utf-8"))
         if POSIX:
             self.assertEqual(where["mode"], "0o700")
         self.assertFalse(os.path.exists(where["cwd"]), "Claude's folder outlives the run")
-        argv = json.loads((self.fake / "argv.json").read_text())
+        argv = json.loads((self.fake / "argv.json").read_text(encoding="utf-8"))
         self.assertEqual(argv[argv.index("--tools") + 1], "")
         for flag in ("--restricted", "--safe-mode", "--strict-mcp-config", "--disable-slash-commands",
                      "--no-session-persistence", "--no-chrome"):
@@ -198,14 +198,14 @@ class Isolated(unittest.TestCase):
         self.assertEqual(json.loads(argv[argv.index("--json-schema") + 1]), dr.SCHEMA)
 
     def test_no_question_without_a_claude_ai_login(self):
-        (self.fake / "auth").write_text("apiKey")
+        (self.fake / "auth").write_text("apiKey", encoding="utf-8")
         with self.assertRaises(hc.HeadlessError) as e:
             self.run_fake()
         self.assertEqual(e.exception.kind, "auth")
         self.assertEqual(self.calls(), 0)
 
     def test_no_question_to_an_old_claude(self):
-        (self.fake / "version").write_text("2.1.10 (Claude Code)")
+        (self.fake / "version").write_text("2.1.10 (Claude Code)", encoding="utf-8")
         with self.assertRaises(hc.HeadlessError) as e:
             self.run_fake()
         self.assertEqual(e.exception.kind, "unsupported")
@@ -222,12 +222,12 @@ class Isolated(unittest.TestCase):
 
     @unittest.skipUnless(POSIX, "process groups: POSIX")
     def test_a_child_left_behind_by_a_good_run_is_killed(self):
-        (self.fake / "scenario").write_text("orphan")
+        (self.fake / "scenario").write_text("orphan", encoding="utf-8")
         self.assertEqual(self.run_fake().output, ANSWER)
-        self.assertTrue(self.gone(int((self.fake / "grandchild.pid").read_text())), "the grandchild outlived claude")
+        self.assertTrue(self.gone(int((self.fake / "grandchild.pid").read_text(encoding="utf-8"))), "the grandchild outlived claude")
 
     def test_a_second_start_up_line_with_bash_is_refused(self):
-        (self.fake / "scenario").write_text("second-init")
+        (self.fake / "scenario").write_text("second-init", encoding="utf-8")
         with self.assertRaises(hc.HeadlessError) as e:
             self.run_fake()
         self.assertEqual(e.exception.kind, "init")
@@ -245,13 +245,13 @@ class Isolated(unittest.TestCase):
 
     @unittest.skipUnless(POSIX, "process groups: POSIX")
     def test_a_run_past_its_time_is_killed_with_its_children(self):
-        (self.fake / "scenario").write_text("hang")
+        (self.fake / "scenario").write_text("hang", encoding="utf-8")
         started = time.monotonic()
         with self.assertRaises(hc.HeadlessError) as e:
             self.run_fake(timeout=3)
         self.assertEqual(e.exception.kind, "timeout")
         self.assertLess(time.monotonic() - started, 20)
-        self.assertTrue(self.gone(int((self.fake / "grandchild.pid").read_text())), "the grandchild survived the group kill")
+        self.assertTrue(self.gone(int((self.fake / "grandchild.pid").read_text(encoding="utf-8"))), "the grandchild survived the group kill")
 
 
 class Clean(unittest.TestCase):
@@ -535,26 +535,26 @@ class Guards(unittest.TestCase):
         return lambda n, b: (n.lines if n else []) + [text]
 
     def test_a_file_being_edited_is_waited_for(self):
-        self.path.write_text("a\n")
+        self.path.write_text("a\n", encoding="utf-8")
         self.assertTrue(dr.update(self.path, self.append("b\n"), None))
-        self.assertEqual(self.path.read_text(), "a\nb\n")
+        self.assertEqual(self.path.read_text(encoding="utf-8"), "a\nb\n")
 
     def test_a_file_that_keeps_changing_is_left_alone(self):
-        self.path.write_text("a\n")
+        self.path.write_text("a\n", encoding="utf-8")
         old = time.time() - 60
         os.utime(self.path, (old, old))
 
         def racing(n, b):
-            with open(self.path, "a") as f:
+            with open(self.path, "a", encoding="utf-8") as f:
                 f.write("user\n")
             os.utime(self.path, (old, old))
             return n.lines + ["ours\n"]
         with self.assertRaises(dr.Refused):
             dr.update(self.path, racing, None)
-        self.assertNotIn("ours", self.path.read_text())
+        self.assertNotIn("ours", self.path.read_text(encoding="utf-8"))
 
     def test_a_change_between_read_and_write_is_merged_again(self):
-        self.path.write_text("a\n")
+        self.path.write_text("a\n", encoding="utf-8")
         old = time.time() - 60
         os.utime(self.path, (old, old))
         seen = []
@@ -562,15 +562,15 @@ class Guards(unittest.TestCase):
         def once(n, b):
             seen.append("".join(n.lines))
             if len(seen) == 1:
-                with open(self.path, "a") as f:
+                with open(self.path, "a", encoding="utf-8") as f:
                     f.write("user\n")
                 os.utime(self.path, (old, old))
             return n.lines + ["ours\n"]
         self.assertTrue(dr.update(self.path, once, None))
-        self.assertEqual(self.path.read_text(), "a\nuser\nours\n")
+        self.assertEqual(self.path.read_text(encoding="utf-8"), "a\nuser\nours\n")
 
     def test_an_edit_made_while_merging_is_waited_for_and_merged(self):
-        self.path.write_text("a\n")
+        self.path.write_text("a\n", encoding="utf-8")
         old = time.time() - 60
         os.utime(self.path, (old, old))
         seen = []
@@ -578,11 +578,11 @@ class Guards(unittest.TestCase):
         def once(n, b):
             seen.append("".join(n.lines))
             if len(seen) == 1:
-                with open(self.path, "a") as f:  # the user types: mtime is now
+                with open(self.path, "a", encoding="utf-8") as f:  # the user types: mtime is now
                     f.write("user\n")
             return n.lines + ["ours\n"]
         self.assertTrue(dr.update(self.path, once, None))
-        self.assertEqual(self.path.read_text(), "a\nuser\nours\n")
+        self.assertEqual(self.path.read_text(encoding="utf-8"), "a\nuser\nours\n")
 
     def test_bom_crlf_and_mode_are_kept(self):
         self.path.write_bytes("\ufeff# T\r\n".encode("utf-8"))
@@ -597,19 +597,19 @@ class Guards(unittest.TestCase):
         self.assertEqual([p.name for p in self.dir.iterdir()], ["note.md"])
 
     def test_nothing_to_write_waits_for_nothing(self):
-        self.path.write_text("a\n")
+        self.path.write_text("a\n", encoding="utf-8")
         started = time.monotonic()
         self.assertFalse(dr.update(self.path, lambda n, b: None, None))
         self.assertLess(time.monotonic() - started, dr.QUIET)
 
     def test_links_and_non_utf8_files_are_not_written(self):
         target = self.dir / "elsewhere.md"
-        target.write_text("t\n")
+        target.write_text("t\n", encoding="utf-8")
         if POSIX:
             os.symlink(target, self.path)
             with self.assertRaises(dr.Refused):
                 dr.update(self.path, self.append("x\n"), None)
-            self.assertEqual(target.read_text(), "t\n")
+            self.assertEqual(target.read_text(encoding="utf-8"), "t\n")
             self.path.unlink()
         self.path.write_bytes(b"caf\xe9\n")
         with self.assertRaises(dr.Refused):
@@ -625,14 +625,14 @@ class Reflect(unittest.TestCase):
         self.home, self.vault = self.root / "home", self.root / "vault"
         self.fake = self.home / ".claude" / "fake"
         self.fake.mkdir(parents=True)
-        (self.fake / "fixtures").write_text(str(FIXTURES))
+        (self.fake / "fixtures").write_text(str(FIXTURES), encoding="utf-8")
         self.answer(ANSWER)
         for d in ("Journal", "Profile"):
             (self.vault / d).mkdir(parents=True)
         self.memory = self.vault / "Profile" / "memory.md"
-        self.memory.write_text("# Memory\n\n## Recent context\n\n### 2026-10-01\n- older\n")
+        self.memory.write_text("# Memory\n\n## Recent context\n\n### 2026-10-01\n- older\n", encoding="utf-8")
         self.journal = self.vault / "Journal" / f"{DAY}.md"
-        self.journal.write_text(f"# {DAY} — Daily\n\n## To do next\n- call the bank\n\n## 📊 Claude Sessions\n\n- s1\n")
+        self.journal.write_text(f"# {DAY} — Daily\n\n## To do next\n- call the bank\n\n## 📊 Claude Sessions\n\n- s1\n", encoding="utf-8")
         self.age()
         proj = self.root / "projects" / "-w"
         proj.mkdir(parents=True)
@@ -641,7 +641,7 @@ class Reflect(unittest.TestCase):
             {"type": "user", "timestamp": ts, "cwd": str(self.root), "message": {"content": "ship it"}},
             {"type": "assistant", "timestamp": ts, "message": {"content": [{"type": "text", "text": "On it."}]}},
             {"type": "assistant", "timestamp": ts, "message": {"content": [{"type": "text", "text": "Shipped."}]}},
-        ]) + "\n")
+        ]) + "\n", encoding="utf-8")
         os.utime(proj / "s.jsonl", (time.time(), time.time()))
         self.saved_env, self.saved_tmp = dict(os.environ), tempfile.tempdir
         os.environ.update(HOME=str(self.home), USERPROFILE=str(self.home), BRAIN_NO_NOTIFY="1")
@@ -665,20 +665,20 @@ class Reflect(unittest.TestCase):
                 os.utime(p, (old, old))
 
     def answer(self, a):
-        (self.fake / "answer.json").write_text(json.dumps(a))
+        (self.fake / "answer.json").write_text(json.dumps(a), encoding="utf-8")
 
     def run_reflection(self, slot="evening", scenario="plan-ok", day=DAY):
-        (self.fake / "scenario").write_text(scenario)
+        (self.fake / "scenario").write_text(scenario, encoding="utf-8")
         for lock in self.root.glob("brain-daily-reflection-*.lock"):
             lock.unlink()
         with contextlib.redirect_stdout(io.StringIO()):
             dr.reflect(day, slot, command=[sys.executable, str(FAKE)])
         self.age()
-        return json.loads((self.root / "logs" / "daily-reflection.state.json").read_text())
+        return json.loads((self.root / "logs" / "daily-reflection.state.json").read_text(encoding="utf-8"))
 
     def calls(self):
         p = self.fake / "calls"
-        n = p.read_text().count("-p") if p.exists() else 0
+        n = p.read_text(encoding="utf-8").count("-p") if p.exists() else 0
         if p.exists():
             p.unlink()
         return n
@@ -687,15 +687,15 @@ class Reflect(unittest.TestCase):
         before = {p: p.read_bytes() for p in self.vault.rglob("*") if p.is_file()}
         st = self.run_reflection()
         self.assertIsNone(st["last_error"])
-        j = self.journal.read_text()
+        j = self.journal.read_text(encoding="utf-8")
         self.assertIn("## What I did\n- Shipped the login page\n", j)
         self.assertIn("## To do next\n- call the bank\n- write the tests\n", j)
         self.assertTrue(j.endswith("## 📊 Claude Sessions\n\n- s1\n"))
         self.assertIn("## Recent context\n\n### 2026-10-14\n- Login page shipped\n\n### 2026-10-01\n- older\n",
-                      self.memory.read_text())
+                      self.memory.read_text(encoding="utf-8"))
         after = {p for p in self.vault.rglob("*") if p.is_file()}
         self.assertEqual(after, set(before))
-        prompt = (self.fake / "prompt.txt").read_text()
+        prompt = (self.fake / "prompt.txt").read_text(encoding="utf-8")
         self.assertIn("<journal_now>\n## To do next\n- call the bank\n</journal_now>", prompt)
 
     def test_a_refused_start_writes_nothing_but_the_warning(self):
@@ -703,11 +703,11 @@ class Reflect(unittest.TestCase):
         st = self.run_reflection(scenario="init-bash")
         self.assertTrue(st["last_error"].startswith("init: tools"))
         self.assertEqual(self.journal.read_bytes(), before)
-        self.assertIn("REFLECTION-STATUS:BEGIN", self.memory.read_text())
+        self.assertIn("REFLECTION-STATUS:BEGIN", self.memory.read_text(encoding="utf-8"))
         self.assertEqual(self.calls(), 1)
         st = self.run_reflection(slot="midday")
         self.assertIsNone(st["last_error"])
-        self.assertNotIn("REFLECTION-STATUS", self.memory.read_text())
+        self.assertNotIn("REFLECTION-STATUS", self.memory.read_text(encoding="utf-8"))
 
     def test_retry_only_what_a_retry_can_fix(self):
         self.run_reflection(scenario="broken-json")
@@ -721,12 +721,12 @@ class Reflect(unittest.TestCase):
         st = self.run_reflection()
         self.assertEqual(self.calls(), 1)
         self.assertIn("answer off the schema", st["last_error"])
-        self.assertIn("REFLECTION-STATUS", self.memory.read_text())
-        self.assertNotIn("curl", self.memory.read_text())
+        self.assertIn("REFLECTION-STATUS", self.memory.read_text(encoding="utf-8"))
+        self.assertNotIn("curl", self.memory.read_text(encoding="utf-8"))
 
     def test_the_error_log_is_masked(self):
         dr.log_error("api: proxy said Bearer " + "A" * 40 + " is refused")
-        log = (self.root / "logs" / "daily-reflection-errors.log").read_text()
+        log = (self.root / "logs" / "daily-reflection-errors.log").read_text(encoding="utf-8")
         self.assertNotIn("A" * 40, log)
         self.assertIn("[REDACTED]", log)
 
@@ -739,14 +739,14 @@ class Reflect(unittest.TestCase):
             {"type": "assistant", "timestamp": ts, "message": "junk"},
             [1, 2],
             {"type": "assistant", "timestamp": ts, "message": {"content": [{"type": "text", "text": "b"}]}},
-        ]) + "\n")
+        ]) + "\n", encoding="utf-8")
         (proj / "own.jsonl").write_text("\n".join(json.dumps(r) for r in [
             {"type": "user", "timestamp": ts, "message": {"content": [{"type": "text", "text": f"{dr.SENTINEL}\nSELF"}]}},
             {"type": "assistant", "timestamp": ts, "message": {"content": [{"type": "text", "text": "SELF a"}]}},
             {"type": "assistant", "timestamp": ts, "message": {"content": [{"type": "text", "text": "SELF b"}]}},
-        ]) + "\n")
+        ]) + "\n", encoding="utf-8")
         self.run_reflection()
-        prompt = (self.fake / "prompt.txt").read_text()
+        prompt = (self.fake / "prompt.txt").read_text(encoding="utf-8")
         self.assertIn("KEEP-ME", prompt)
         self.assertNotIn("SELF", prompt)
 
@@ -758,7 +758,7 @@ class Reflect(unittest.TestCase):
         finally:
             dr.merge_journal = saved
         self.assertEqual(st["last_error"], "internal error (KeyError), see daily-reflection-errors.log")
-        self.assertIn("REFLECTION-STATUS", self.memory.read_text())
+        self.assertIn("REFLECTION-STATUS", self.memory.read_text(encoding="utf-8"))
 
     def test_day_is_written_the_way_the_journal_names_it(self):
         saved = sys.argv
@@ -779,13 +779,13 @@ class Reflect(unittest.TestCase):
     @unittest.skipUnless(POSIX, "symlinks")
     def test_a_journal_not_written_does_not_cost_the_memory_entry(self):
         target = self.root / "elsewhere.md"
-        target.write_text("# kept\n")
+        target.write_text("# kept\n", encoding="utf-8")
         self.journal.unlink()
         os.symlink(target, self.journal)
         st = self.run_reflection()
         self.assertIn("is a link", st["last_error"])
-        self.assertEqual(target.read_text(), "# kept\n")
-        self.assertIn("- Login page shipped\n", self.memory.read_text())
+        self.assertEqual(target.read_text(encoding="utf-8"), "# kept\n")
+        self.assertIn("- Login page shipped\n", self.memory.read_text(encoding="utf-8"))
 
     def test_a_failed_slot_runs_again_a_done_one_does_not(self):
         lock = self.root / f"brain-daily-reflection-{DAY}-evening.lock"
@@ -803,8 +803,8 @@ class Reflect(unittest.TestCase):
     def test_suspect_day(self):
         self.answer({**ANSWER, "suspect": True})
         self.run_reflection()
-        self.assertIn(f"## What I did\n- {dr.SUSPECT_LINE}\n", self.journal.read_text())
-        mem = self.memory.read_text()
+        self.assertIn(f"## What I did\n- {dr.SUSPECT_LINE}\n", self.journal.read_text(encoding="utf-8"))
+        mem = self.memory.read_text(encoding="utf-8")
         self.assertIn(dr.MEMORY_SUSPECT.format(day=DAY), mem)
         self.assertNotIn("Login page shipped", mem)
 

@@ -1235,11 +1235,14 @@ def parse_args(argv):
 
 
 def main(argv=None):
-    if sys.stdout is not None and hasattr(sys.stdout, "reconfigure"):
-        try:
-            sys.stdout.reconfigure(errors="replace")
-        except (OSError, ValueError):
-            pass
+    # UTF-8 whatever the console: the Windows nightly copies this output byte for byte into its
+    # UTF-8 log, where the ANSI code page would garble every accent.
+    for stream in (sys.stdout, sys.stderr):
+        if stream is not None and hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except (OSError, ValueError):
+                pass
     up = Updater(parse_args(argv))
     if up.dry:
         return up.go()
