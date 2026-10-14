@@ -30,10 +30,11 @@ Une entrée :
   La première nuit ne le montre pas : la ligne vide posée sous le pointeur d'archive compense.
 - Pourquoi les tests ne l'avaient pas vu : les tests de M1 font une seule nuit ; il faut un pointeur
   d'archive déjà en place et un dernier bloc à archiver (environ 15 jours sans nouvelle entrée).
-- Correctif : à faire. Piste vérifiée hors dépôt : dans `memory_blocks`, ne pas prendre les lignes vides
-  finales d'un bloc qui va jusqu'à la fin du fichier ; le scénario `nuits` passe alors en entier.
-- Test de non-régression : `terrain.py nuits` (étape `nuit-j20`) ; un test unitaire à ajouter dans
-  `engine/tests/test_controle.py` (deux nuits, la seconde archive le dernier bloc).
+- Correctif : `memory_blocks` laisse dans memory.md les lignes vides de fin d'un bloc qui va jusqu'à
+  la fin du fichier (branche `feat/terrain`, PR des tests de terrain).
+- Test de non-régression : `test_controle.CalibrationDecisions.test_m1_archives_the_last_block_on_a_later_night`
+  (rouge avant le correctif : nuit à J+4 qui met les deux mois dans le pointeur, puis J+20) et `terrain.py nuits`.
+  Il a fallu le mois de l'archive déjà dans le pointeur : sinon la réécriture du pointeur compense.
 - Catégorie à surveiller : plusieurs nuits.
 
 ## 2026-10-14 · Windows · Les tests et la mise à jour de gbrain cassaient sur la console cp1252

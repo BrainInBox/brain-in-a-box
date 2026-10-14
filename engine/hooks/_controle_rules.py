@@ -735,6 +735,11 @@ def memory_blocks(note, ctx):
         end = extent(hs, k, n)
         for j in range(i, end):
             taken[j] = True
+        # The file's last blank lines stay in memory.md: the archive drops a block's trailing blank
+        # lines, and the contract would count them as lost.
+        if end == n:
+            while end > i + 1 and not lines[end - 1].strip():
+                end -= 1
         block = "\n".join(lines[i:end])
         if any(blocked[i:end]) or KEEP_MARK in block or POINTER_MARK in block:
             continue
