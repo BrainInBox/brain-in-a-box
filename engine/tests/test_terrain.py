@@ -57,6 +57,11 @@ if args[:2] == ["auth", "status"]:
 stdin = sys.stdin.buffer.read().decode("utf-8")
 with open(os.path.join(here, "calls"), "a", encoding="utf-8") as f:
     f.write("%%s\n" %% ("token" if os.environ.get("CLAUDE_CODE_OAUTH_TOKEN") else "sans-jeton"))
+if plan.get("refuse"):   # what Claude Code prints when the service refuses the token
+    emit(plan["init"])
+    emit({"type": "result", "subtype": "success", "is_error": True,
+          "result": "Failed to authenticate. API Error: 401 OAuth access token is invalid \u00b7 Please run /login"})
+    sys.exit(1)
 schema = args[args.index("--json-schema") + 1]
 if ("constats" if '"constats"' in schema else "reflexion") in plan.get("quota_on", []):
     with open(plan["quota"], encoding="utf-8") as f:   # what Claude Code prints at the usage limit
@@ -145,12 +150,12 @@ class OffAVm(Sandbox):
 
 @unittest.skipIf(os.name == "nt", "CLAUDE_BIN must be an executable: a script stands in for claude on POSIX only")
 class RealClaudeScenario(Sandbox):
-    def stub(self, constats, quota_on=()):
+    def stub(self, constats, quota_on=(), refuse=False):
         here = os.path.join(self.home, ".terrain-stub")
         os.makedirs(here)
         plan = {"help": HELP, "init": OK_STREAM[0], "assistant": OK_STREAM[1], "user": OK_STREAM[2],
                 "result": OK_STREAM[-1], "constats": constats, "reflexion": REFLEXION,
-                "quota": os.path.join(FIXTURES, "quota.jsonl"), "quota_on": list(quota_on)}
+                "quota": os.path.join(FIXTURES, "quota.jsonl"), "quota_on": list(quota_on), "refuse": refuse}
         with open(os.path.join(here, "plan.json"), "w", encoding="utf-8") as f:
             json.dump(plan, f, ensure_ascii=False)
         path = os.path.join(self.tmp, "claude")
@@ -206,6 +211,18 @@ class RealClaudeScenario(Sandbox):
                 self.assertEqual(r["statut"], "saute", out)
                 self.assertIn("quota de l'abonnement atteint", r["raison"])
                 self.assertIn(where, r["raison"])
+
+    def test_a_refused_token_says_what_claude_said(self):
+        # First run with the real token (2026-10-14): "saute:connexion" alone, nothing to tell a
+        # refused token from a missing login or a launcher bug.
+        self.stub([constat(p, "contradiction") for p in terrain.PAIRES], refuse=True)
+        rc, out = self.terrain("vrai-claude", "--home", self.home, "--json", self.json)
+        self.assertEqual(rc, 1, out)
+        r = self.results()["vrai-claude"]
+        self.assertEqual((r["statut"], r["etape"]), ("echec", "relecture"))
+        self.assertIn("saute:connexion (Failed to authenticate. API Error: 401 OAuth access token is invalid", r["raison"])
+        self.assertIn("401", r["details"]["juge"]["detail"])
+        self.assertNotIn("factice-pas-un-secret", json.dumps(r) + out)
 
     def test_an_annotation_on_a_decoy_fails(self):
         self.stub([constat(terrain.PAIRES[2], "contradiction"), constat(terrain.LEURRES[0], "contradiction")])

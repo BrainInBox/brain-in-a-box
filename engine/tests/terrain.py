@@ -608,10 +608,13 @@ def vrai_claude(t, opts):
     j = journal(etat)
     info = j.get("juge") or {}
     t.details["juge"] = {k: info.get(k) for k in ("version", "cout", "tours", "duree_s", "extraits", "notes_exclues",
-                                                   "constats", "abandons", "suspect", "cause", "rejet")}
+                                                   "constats", "abandons", "suspect", "cause", "rejet", "detail")}
     if j.get("claude") in ("saute:limite", "saute:limite-reflexion"):
         raise Saute(QUOTA + " (relecture)")
-    t.check(j.get("claude") == "fait", "la relecture par Claude n'a pas eu lieu : %s" % j.get("claude"))
+    # What Claude Code said (masked by the night check): without it, "connexion" could be a missing
+    # login, a refused token or a launcher bug, and nobody can tell which from the results.
+    said = " (%s)" % info["detail"] if isinstance(info.get("detail"), str) and info["detail"] else ""
+    t.check(j.get("claude") == "fait", "la relecture par Claude n'a pas eu lieu : %s%s" % (j.get("claude"), said))
 
     t("note-piege")
     dossier = read(etat / "runs" / j["run"] / "dossier.txt")
