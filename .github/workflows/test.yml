@@ -121,6 +121,8 @@ jobs:
           }
           if (-not (Test-Path "$H\Documents\Brain\Profile")) { throw 'vault skeleton missing' }
           if (-not (Test-Path "$H\Documents\Brain\.git")) { throw 'vault is not a git repo' }
+          # Git for Windows' autocrlf would turn LF notes into CRLF whenever the night check undoes a fix.
+          if ((git -C "$H\Documents\Brain" config core.autocrlf) -ne 'false') { throw 'the vault repo rewrites line ends' }
           Get-ScheduledTask -TaskName BrainNightly, BrainReflection | Format-Table TaskName, State
           if (Get-ScheduledTask -TaskName BrainSearchReindex -ErrorAction SilentlyContinue) { throw 'the old BrainSearchReindex task is still there' }
           if (-not (Get-ScheduledTask -TaskName BrainNightly).Settings.StartWhenAvailable) { throw 'a missed nightly would not catch up' }

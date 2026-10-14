@@ -173,6 +173,10 @@ function To-CmdPath($p) {
     return $p
 }
 
+# Lanceurs Git Bash : un chemin entre apostrophes, ' ecrit '\'' . Un profil nomme a$HOME, avec un
+# accent grave ou une accolade, ne lance rien et reste un seul mot.
+function ShQuote([string]$s) { return "'" + ($s -replace "'", "'\''") + "'" }
+
 # Quelqu'un devant une console peut repondre a une question. Lance par une appli, la CI
 # ou avec -NonInteractive, l'entree est redirigee : pas de question qui bloquerait.
 function Test-Interactive {
@@ -386,16 +390,16 @@ Place-File "$BIN\gbq.cmd" $oem.GetBytes($gbq)
 # gbq (sans extension) pour Git Bash, ou tourne l'outil Bash de Claude Code : ~/.local/bin/gbq du CLAUDE.md.
 $fwd = { param($p) $p -replace "\\", "/" }
 $gbqSh = "#!/bin/sh`n# brain-in-a-box : gbq pour Git Bash, meme logique que gbq.cmd`n" +
-         "export BRAIN_DIR=`"`${BRAIN_DIR:-$(& $fwd $BrainDir)}`"`n" +
-         "exec `"$(& $fwd $Py)`" `"$(& $fwd "$BSDIR\gbq.py")`" `"`$@`"`n"
+         "[ -n `"`$BRAIN_DIR`" ] || BRAIN_DIR=$(ShQuote (& $fwd $BrainDir))`nexport BRAIN_DIR`n" +
+         "exec $(ShQuote (& $fwd $Py)) $(ShQuote (& $fwd "$BSDIR\gbq.py")) `"`$@`"`n"
 Place-File "$BIN\gbq" (New-Object Text.UTF8Encoding $false).GetBytes($gbqSh)
 # controle.cmd et controle (Git Bash) -> controle.py : le controle de nuit a la demande (skill /controle).
 $ctl = "@echo off`r`nsetlocal`r`nset `"BRAIN_DIR=$(To-CmdPath $BrainDir)`"`r`n" +
        "`"$pyCmd`" -I `"$(To-CmdPath "$HOOKS\controle.py")`" %*`r`nexit /b %ERRORLEVEL%`r`n"
 Place-File "$BIN\controle.cmd" $oem.GetBytes($ctl)
 $ctlSh = "#!/bin/sh`n# brain-in-a-box : controle pour Git Bash, meme logique que controle.cmd`n" +
-         "export BRAIN_DIR=`"`${BRAIN_DIR:-$(& $fwd $BrainDir)}`"`n" +
-         "exec `"$(& $fwd $Py)`" -I `"$(& $fwd "$HOOKS\controle.py")`" `"`$@`"`n"
+         "[ -n `"`$BRAIN_DIR`" ] || BRAIN_DIR=$(ShQuote (& $fwd $BrainDir))`nexport BRAIN_DIR`n" +
+         "exec $(ShQuote (& $fwd $Py)) -I $(ShQuote (& $fwd "$HOOKS\controle.py")) `"`$@`"`n"
 Place-File "$BIN\controle" (New-Object Text.UTF8Encoding $false).GetBytes($ctlSh)
 $userPath = [Environment]::GetEnvironmentVariable("PATH","User")
 if ($userPath -notlike "*$BIN*") { [Environment]::SetEnvironmentVariable("PATH","$userPath;$BIN","User") }
@@ -502,6 +506,9 @@ if (-not $Git) {
         if (-not (Test-Path -LiteralPath ".gitignore")) { ".obsidian/`n.DS_Store`n" | Set-Content .gitignore -Encoding ascii }
         Invoke-Native {
             & $Git init -q
+            # Git pour Windows reecrit les fins de ligne a chaque checkout (core.autocrlf=true) :
+            # annuler un controle passerait des notes LF en CRLF. Le vault garde ses octets.
+            & $Git config core.autocrlf false
             & $Git -c core.safecrlf=false add -A   # sans ca : un avertissement LF/CRLF par fichier
             & $Git -c user.email="brain@local" -c user.name="brain" commit -q --allow-empty -m "brain init"
         }

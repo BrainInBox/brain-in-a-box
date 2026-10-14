@@ -73,7 +73,7 @@ def init_repo(root):
     os.makedirs(str(root), exist_ok=True)
     git(root, "init", "-q")
     git(root, "config", "commit.gpgsign", "false")
-    git(root, "config", "core.autocrlf", "false")
+    git(root, "config", "core.autocrlf", "false")   # as install.ps1 sets it on the vault it creates
     git(root, "checkout", "-q", "-b", "main", check=False)
 
 
