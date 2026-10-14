@@ -13,7 +13,9 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
+from pathlib import Path
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TERRAIN = os.path.join(HERE, "terrain.py")
@@ -118,6 +120,22 @@ class Sandbox(unittest.TestCase):
 
 
 class OffAVm(Sandbox):
+    def test_a_scenario_killed_mid_step_leaves_a_failed_row_naming_the_step(self):
+        # A job step's timeout kills the harness before it records: the row it left says where.
+        seen = []
+        opts = types.SimpleNamespace(json=self.json, home=Path(self.home), parcours="app", vm=True)
+
+        def scenario(t, o):
+            t("app-etape-brain")
+            seen.append(self.results()["app"])
+            t.check(False, "x")
+        self.assertEqual(terrain.play("app", scenario, opts), "echec")
+        self.assertEqual((seen[0]["statut"], seen[0]["etape"]), ("echec", "app-etape-brain"))
+        self.assertIn("interrompu pendant l'étape « app-etape-brain » : délai de l'étape du job dépassé", seen[0]["raison"])
+        self.assertEqual((self.results()["app"]["etape"], self.results()["app"]["raison"]), ("app-etape-brain", "x"))
+        rows = terrain.load_reports([self.json], [])[0][2]["scenarios"]
+        self.assertEqual([r["etape"] for r in rows], ["app-etape-brain"])
+
     def test_vm_scenarios_are_skipped_and_say_so(self):
         for name in terrain.VM_ONLY:
             rc, out = self.terrain(name, "--home", self.home, "--json", self.json)
@@ -378,13 +396,83 @@ class Workflow(unittest.TestCase):
         self.assertEqual(sorted(rapport["env"]["JOBS"].split(",")),
                          sorted("%s=${{ needs.%s.result }}" % (n, n) for n in terrain.JOBS))
         self.assertEqual(sorted(terrain.JOBS), sorted(n for n in self.jobs if n != "rapport"))
-        want = sorted("%s-%s" % (o, pa) for o in ("macos", "windows") for pa in terrain.ATTENDUS)
+        want = sorted("%s-%s" % (o, pa) for pa in terrain.ATTENDUS for o in terrain.ATTENDUS_OS.get(pa, ("macos", "windows")))
         self.assertEqual(sorted(rapport["env"]["ATTENDUS"].split(",")), want)
         runs = json.dumps(rapport["steps"])
         self.assertEqual(runs.count('--jobs \\"$JOBS\\"'), 2, "rapport and issue both get the jobs' results")
         # Green again on a scheduled night: the issue is closed, not left open with a comment.
         self.assertIn('gh issue close \\"$open\\"', runs)
 
+
+    def test_the_app_jobs_get_the_app_as_a_user_and_never_a_claude_token(self):
+        for name, os_name, ref in (("app-macos", "macos", '"$TERRAIN_REF"'), ("app-windows", "windows", '"$env:TERRAIN_REF"')):
+            job = self.jobs[name]
+            steps = job["steps"]
+            text = json.dumps(steps)
+            # A fresh VM: nothing of the kit, nor Claude Code, before the app installs them itself.
+            for kit in ("./install.sh", "install.ps1", "claude.ai/install", "terrain-install", "gbrain", "CLAUDE_CODE_OAUTH_TOKEN"):
+                self.assertNotIn(kit, text, name)
+            source = [st for st in steps if st.get("id") == "source"]
+            self.assertEqual(len(source), 1, name)
+            self.assertIn("terrain_app.py source --ref " + ref, source[0]["run"])
+            builds = [st for st in steps if "cargo" in json.dumps(st)]
+            self.assertGreaterEqual(len(builds), 2, name)
+            for st in builds:
+                self.assertTrue(st["if"].startswith("steps.source.outputs.source == 'build'"), st.get("name"))
+            # The read-only token reaches the scenario step only, and only to download a release.
+            holders = [st for st in steps if "github.token" in json.dumps(st)]
+            self.assertEqual(len(holders), 1, name)
+            self.assertEqual(holders[0]["env"]["GH_TOKEN"], "${{ steps.source.outputs.source == 'release' && github.token || '' }}")
+            self.assertIn("terrain.py app", holders[0]["run"])
+            self.assertEqual(job["permissions"], {"contents": "read", "attestations": "read"})
+            # The JSON joins the report's artifacts (terrain-*); the captures stay out of its download.
+            names = [st["with"]["name"] for st in steps if str(st.get("uses", "")).startswith("actions/upload-artifact@")]
+            self.assertEqual(sorted(names), ["captures-%s-app" % os_name, "terrain-%s-app" % os_name])
+            self.assertEqual(job["env"]["PARCOURS"], "app")
+            self.assertEqual(terrain.JOBS[name], (os_name, ("%s-app" % os_name,)))
+        self.assertIn("pattern: terrain-*", "pattern: " + self.jobs["rapport"]["steps"][1]["with"]["pattern"])
+        self.assertIn("app", terrain.ATTENDUS["app"])
+        # Windows: a PC without Python before the app (the description the other jobs use), and the
+        # stub handed to the scenario, which puts it first on the app's PATH.
+        steps = self.jobs["app-windows"]["steps"]
+        fresh = [i for i, st in enumerate(steps) if st.get("run", "").startswith(". .github/ci/poste-neuf.ps1\n")]
+        scenario = [i for i, st in enumerate(steps) if "terrain.py app" in st.get("run", "")]
+        self.assertEqual(len(fresh), 1)
+        self.assertLess(fresh[0], scenario[0])
+        self.assertIn('"--stub=$env:TERRAIN_STUB"', steps[scenario[0]]["run"])
+
+    def test_nothing_the_app_touched_gets_into_a_cache(self):
+        # The app, then Claude Code, Bun and gbrain's dependencies run as the job's user: a cache
+        # saved after them could carry a binary they rewrote to the next build, release.yml's
+        # included. So: the terrain's own keys, saved right after the build, never on master.
+        with open(WORKFLOW.replace("terrain.yml", "release.yml"), encoding="utf-8") as f:
+            release = f.read()
+        release_keys = re.findall(r"(?:key|restore-keys): ([a-z-]+)", release)
+        self.assertEqual(sorted(set(release_keys)), ["app-release-", "tauri-cli-"])
+        pinned = re.compile(r"^actions/cache/(restore|save)@[0-9a-f]{40}$")
+        for name, job in self.jobs.items():
+            steps = job["steps"]
+            caches = [(i, st) for i, st in enumerate(steps) if str(st.get("uses", "")).startswith("actions/cache")]
+            if name not in ("app-macos", "app-windows"):
+                self.assertEqual(caches, [], name)
+                continue
+            app = min(i for i, st in enumerate(steps) if "terrain.py app" in st.get("run", "")
+                      or "poste-neuf.ps1" in st.get("run", ""))
+            kinds = []
+            for i, st in caches:
+                m = pinned.match(st["uses"])
+                self.assertTrue(m, "%s: %s saves in a post step, or is not pinned" % (name, st["uses"]))
+                kinds.append(m.group(1))
+                key = st["with"]["key"]
+                if m.group(1) == "restore":
+                    self.assertTrue(key.startswith("terrain-"), key)
+                    for prefix in release_keys:
+                        self.assertFalse(key.startswith(prefix), key)
+                else:
+                    self.assertLess(i, app, "%s: saved after the app ran" % st["name"])
+                    self.assertIn("github.ref != 'refs/heads/master'", st["if"])
+                    self.assertRegex(key, r"^\$\{\{ steps\.[a-z-]+\.outputs\.cache-primary-key \}\}$")
+            self.assertEqual(sorted(kinds), ["restore", "restore", "save", "save"], name)
 
     def test_a_fresh_windows_has_no_python_in_both_workflows(self):
         # One description of a fresh PC (.github/ci/poste-neuf.ps1), used by both installs: the
@@ -406,7 +494,8 @@ class MergeGuard(unittest.TestCase):
     def garde(self, files, head="claude/terrain-m1", repo="BrainInBox/brain-in-a-box"):
         tmp = tempfile.mkdtemp(prefix="terrain-garde-")
         self.addCleanup(shutil.rmtree, tmp, True)
-        rows = "".join("%s\t%s\t%d\n" % (n, prev or "-", d) for n, prev, d in files)
+        # (name, previous name, deletions[, status]): GitHub's status, "modified" when not given.
+        rows = "".join("%s\t%s\t%d\t%s\n" % (f[0], f[1] or "-", f[2], f[3] if len(f) > 3 else "modified") for f in files)
         with open(os.path.join(tmp, "rows"), "w", encoding="utf-8", newline="") as f:
             f.write(rows)
         # A stand-in for gh: prints the rows the real `gh api --jq ... @tsv` would.
@@ -421,8 +510,19 @@ class MergeGuard(unittest.TestCase):
     @unittest.skipIf(sys.platform == "win32", "the check runs on ubuntu-latest")
     def test_a_fix_of_the_night_check_with_a_new_test_passes(self):
         rc, said = self.garde([("engine/hooks/_controle_rules.py", "", 3), ("engine/tests/test_controle.py", "", 0),
-                               ("docs/terrain-bugs.md", "", 0)])
+                               ("engine/tests/test_nouveau.py", "", 0, "added"), ("docs/terrain-bugs.md", "", 0),
+                               ("engine/tests/fake_claude.py", "", 0)])
         self.assertEqual(rc, 0, said)
+
+    @unittest.skipIf(sys.platform == "win32", "the check runs on ubuntu-latest")
+    def test_a_new_module_beside_the_tests_goes_red(self):
+        # engine/tests/uuid.py would be the uuid of whatever puts engine/tests on its path.
+        for files in ([("engine/tests/uuid.py", "", 0, "added")], [("engine/tests/uuid/__init__.py", "", 0, "added")],
+                      [("engine/tests/textwrap.py", "engine/tests/test_x.py", 0, "renamed")]):
+            with self.subTest(files=files):
+                rc, said = self.garde(files)
+                self.assertEqual(rc, 1, said)
+                self.assertIn("is a new module beside the tests", said)
 
     @unittest.skipIf(sys.platform == "win32", "the check runs on ubuntu-latest")
     def test_the_maintainers_paths_or_a_weakened_test_go_red(self):
@@ -486,6 +586,26 @@ class RepairAgentLimits(unittest.TestCase):
         for must in ("install.ps1", "install.sh", "engine/nightly/", "engine/tests/terrain.py",
                      "engine/tests/vault_piege.py", "docs/terrain-agent.md", ".github/"):
             self.assertIn(must, owned)
+
+
+class Imports(unittest.TestCase):
+    def test_no_file_beside_the_harness_stands_for_the_standard_library(self):
+        # The job `claude` runs terrain.py with the token in its environment: a uuid.py or a
+        # textwrap.py dropped in engine/tests must never run in place of the standard library's.
+        tmp = tempfile.mkdtemp(prefix="terrain-imports-")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        tests = os.path.join(tmp, "engine", "tests")
+        os.makedirs(tests)
+        for name in ("terrain.py", "terrain_app.py", "vault_piege.py"):
+            shutil.copy(os.path.join(HERE, name), tests)
+        marks = os.path.join(tmp, "ran")
+        for name in ("uuid", "textwrap", "urllib", "unicodedata", "hashlib", "argparse", "json", "pwd", "winreg"):
+            with open(os.path.join(tests, name + ".py"), "w", encoding="utf-8") as f:
+                f.write("open(%r, 'a').write(%r)\n" % (marks, name + " "))
+        p = subprocess.run([sys.executable, "-I", os.path.join(tests, "terrain.py"), "rapport"], capture_output=True)
+        self.assertEqual(p.returncode, 0, p.stderr.decode("utf-8", "replace"))
+        self.assertFalse(os.path.exists(marks), "ran in place of the standard library: " + (
+            open(marks).read() if os.path.exists(marks) else ""))
 
 
 class Score(unittest.TestCase):

@@ -4,7 +4,7 @@
 # The runner's own Python sits on the Machine PATH, which the installer re-reads: it is dropped
 # from it and from this process's PATH. The next steps keep the runner's Python (their PATH
 # comes from the runner, not from the Machine PATH), which is what runs the test harnesses.
-# Used by test.yml (windows, app-windows-install) and terrain.yml (windows, neuf).
+# Used by test.yml (windows, app-windows-install) and terrain.yml (windows, neuf; app-windows).
 $tc = '*\hostedtoolcache\windows\Python\*'
 $m = ([Environment]::GetEnvironmentVariable('Path', 'Machine') -split ';') | Where-Object { $_ -notlike $tc }
 [Environment]::SetEnvironmentVariable('Path', ($m -join ';'), 'Machine')

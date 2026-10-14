@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # The check "terrain-garde" (.github/workflows/terrain-garde.yml): a pull request of the repair
-# agent (a claude/terrain-* branch) goes red when it touches a path of .github/CODEOWNERS, or
-# deletes or changes a line of a test. The agent merges green pull requests only
+# agent (a claude/terrain-* branch) goes red when it touches a path of .github/CODEOWNERS,
+# deletes or changes a line of a test, or adds a Python module beside the tests that is not a
+# test_*.py (a file there could stand for a module the field test imports, in a job that holds
+# the Claude token). The agent merges green pull requests only
 # (docs/terrain-agent.md): those wait for the maintainer. Any other pull request passes.
 # Reads the pull request's file list through the API; its code is never checked out here.
 #
@@ -20,11 +22,11 @@ fi
 owned=$(grep -v '^#' .github/CODEOWNERS | awk 'NF { sub("^/", "", $1); print $1 }')
 [ -n "$owned" ] || { echo "::error::terrain-garde: .github/CODEOWNERS lists nothing"; exit 1; }
 files=$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" \
-  --jq '.[] | [.filename, (.previous_filename // "-"), (.deletions | tostring)] | @tsv')
+  --jq '.[] | [.filename, (.previous_filename // "-"), (.deletions | tostring), .status] | @tsv')
 
 # "-" for no previous name: a tab is whitespace to read, an empty field would vanish.
 bad=0
-while IFS=$'\t' read -r name prev deletions; do
+while IFS=$'\t' read -r name prev deletions status; do
   [ -n "$name" ] || continue
   for f in "$name" "$prev"; do
     [ -n "$f" ] && [ "$f" != "-" ] || continue
@@ -41,6 +43,15 @@ while IFS=$'\t' read -r name prev deletions; do
         echo "::error::terrain-garde: $name loses or changes $deletions line(s) of a test, the maintainer reviews it"
         bad=1
       fi ;;
+  esac
+  # A package too (engine/tests/<name>/__init__.py): only a new test_*.py passes.
+  case "$name:$status" in
+    engine/tests/*.py:added|engine/tests/*.py:renamed|engine/tests/*.py:copied)
+      case "${name##*/}" in
+        test_*.py) ;;
+        *) echo "::error::terrain-garde: $name is a new module beside the tests, the maintainer reviews it"
+           bad=1 ;;
+      esac ;;
   esac
 done <<< "$files"
 

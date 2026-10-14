@@ -12,5 +12,7 @@
 /engine/hooks/_headless_claude.py        @El-Kurdi-Chad
 /engine/hooks/_redact.py                 @El-Kurdi-Chad
 /engine/tests/terrain.py                 @El-Kurdi-Chad
+/engine/tests/terrain_app.py             @El-Kurdi-Chad
+/engine/tests/pilote_windows.cs          @El-Kurdi-Chad
 /engine/tests/vault_piege.py             @El-Kurdi-Chad
 /docs/terrain-agent.md                   @El-Kurdi-Chad
