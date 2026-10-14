@@ -557,6 +557,16 @@ t0=$(date +%s); out=$(HOME="$GQ" zsh "$REPO/engine/bin/gbq" query pricing 2>&1);
   && ok "gbq: a read that never exits is cut once its output settles (${took}s)" || no "gbq: hung read not handled (rc=$rc, ${took}s)"
 HOME="$GQ" GBQ_STUB_RC=2 zsh "$REPO/engine/bin/gbq" query pricing >/dev/null 2>&1; rc=$?
 [ "$rc" = 2 ] && ok "gbq: a read that fails on its own reports the failure" || no "gbq: failing read returned $rc, want 2"
+# The real gbrain is a script run by `#!/usr/bin/env bun`: a shell opened before Bun was installed
+# (or Claude Code started then) has no ~/.bun/bin on its PATH, and gbq used to fail with 127.
+GB="$H/gbq-bun-home"; mkdir -p "$GB/.bun/bin" "$GB/.gbrain"
+printf '#!/bin/sh\necho "bun ran $(basename "$1") $2"\n' > "$GB/.bun/bin/bun"
+printf '#!/usr/bin/env bun\n' > "$GB/.bun/bin/gbrain"
+chmod +x "$GB/.bun/bin/bun" "$GB/.bun/bin/gbrain"
+out=$(HOME="$GB" PATH="/usr/bin:/bin" zsh "$REPO/engine/bin/gbq" sync 2>&1); rc=$?
+[ "$rc" = 0 ] && echo "$out" | grep -q "bun ran gbrain sync" \
+  && ok "gbq: finds Bun without ~/.bun/bin on the PATH (a terminal opened before the install)" \
+  || no "gbq: without ~/.bun/bin on the PATH: rc=$rc, $out"
 
 BV="$H/bs-vault"; BSI="$H/bs-index.json"; BS="$REPO/engine/search/brain_search.py"
 mkdir -p "$BV/Decisions"

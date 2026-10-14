@@ -17,6 +17,9 @@
 # Usage: gbq query "question"  · gbq search "kw"  · gbq skillify <url>  · gbq <any>
 
 GBRAIN="$HOME/.bun/bin/gbrain"
+# gbrain is a `#!/usr/bin/env bun` script: a shell opened before Bun was installed (or Claude Code
+# started from it) has no ~/.bun/bin on its PATH, and every call failed with 127.
+export PATH="$HOME/.bun/bin:$PATH"
 TMP=$(mktemp -t gbq)
 LOCK="$HOME/.gbrain/brain.pglite/.gbrain-lock"
 
