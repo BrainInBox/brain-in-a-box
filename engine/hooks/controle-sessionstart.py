@@ -11,8 +11,11 @@ from Claude, can reach the session through it.
 The dead man's switches are computed here, from the time of each job's last
 success: a job that stopped running is seen even when nothing runs to say so.
 For a job that never succeeded, the time its script was installed next to this
-hook counts. The update's switch is off without a gbrain clone in ~/DEV/gbrain
-or beside a gbrain-selfupdate.sh of the user's own, as in gbrain-update-check.py.
+hook counts. When the cause is known, the line says it: the vault folder is
+missing (etat.json), or the user's own nightly is kept and the kit's waits in
+~/.brain-in-a-box/pending (only its presence is looked at). The update's
+switch is off without a gbrain clone in ~/DEV/gbrain or beside a
+gbrain-selfupdate.sh of the user's own, as in gbrain-update-check.py.
 
 A green or orange line is shown once per run, a red one once a day while its
 cause lasts (shown.json, next to etat.json). Silent in a headless run
@@ -92,26 +95,36 @@ def own_updater():
         return False
 
 
-def check_lines(etat, now):
+def check_lines(etat, now, home):
     """(reds, line of the run or None, run id) from etat.json."""
     reds, report = [], (etat or {}).get("rapport")
     report = report if report in REPORTS else REPORTS[0]
     last = parsed((etat or {}).get("dernier_succes"), "%Y-%m-%dT%H:%M:%S") if etat else None
+    codes = {a.get("code") for a in (etat or {}).get("alertes") or [] if isinstance(a, dict)}
     base = last or mtime("controle.py")
-    if base and (now - base).total_seconds() > CHECK_DEAD_H * 3600:
-        n = days_since(base, now)
-        reds.append(("controle", "Le contrôle de nuit n'a pas tourné depuis %d jour%s (ordinateur éteint la nuit ?)"
-                                 " — tape /controle maintenant." % (n, s(n))))
+    n = days_since(base, now) if base else 0
+    if "vault_absent" in codes:
+        reds.append(("controle", "Le contrôle de nuit ne trouve pas le dossier du cerveau : il ne vérifie plus rien "
+                                 "— tape /controle."))
+    elif base and (now - base).total_seconds() > CHECK_DEAD_H * 3600:
+        if os.path.isfile(os.path.join(home, ".brain-in-a-box", "pending", "gbrain-nightly.sh")):
+            reds.append(("controle", "Le contrôle de nuit n'a pas tourné depuis %d jour%s : le script de nuit que tu "
+                                     "as modifié est gardé, la nouvelle version attend — relance l'installation."
+                         % (n, s(n))))
+        else:
+            reds.append(("controle", "Le contrôle de nuit n'a pas tourné depuis %d jour%s (ordinateur éteint la "
+                                     "nuit ?) — tape /controle maintenant." % (n, s(n))))
     if not etat:
         return reds, None, None
     who = "Contrôle de cette nuit" if etat.get("mode") == "nuit" else "Dernier contrôle"
+    # Said every day until it is done, not only the night it was found.
     secrets = num(etat.get("secrets_a_changer"))
     if secrets == 1:
-        reds.insert(0, ("secret", "%s : un mot de passe ou une clé était écrit en clair et déjà enregistré. Je l'ai "
-                                  "masqué, mais change-le (détail : %s)." % (who, report)))
+        reds.insert(0, ("secret", "Contrôle du cerveau : un mot de passe ou une clé était écrit en clair et déjà "
+                                  "enregistré. Je l'ai masqué, mais change-le (détail : %s)." % report))
     elif secrets > 1:
-        reds.insert(0, ("secret", "%s : %d mots de passe ou clés étaient écrits en clair et déjà enregistrés. Je les "
-                                  "ai masqués, mais change-les (détail : %s)." % (who, secrets, report)))
+        reds.insert(0, ("secret", "Contrôle du cerveau : %d mots de passe ou clés étaient écrits en clair et déjà "
+                                  "enregistrés. Je les ai masqués, mais change-les (détail : %s)." % (secrets, report)))
     run = etat.get("run") if isinstance(etat.get("run"), str) and RUN_ID.fullmatch(etat["run"]) else None
     if not run or etat.get("rapport_reecrit") is not True or any(k == "controle" for k, _ in reds):
         return reds, None, None   # a quiet night rewrites no report, and says nothing
@@ -187,7 +200,7 @@ def main():
     gbrain = os.path.join(os.environ.get("GBRAIN_HOME", "").strip() or home, ".gbrain")
     etat = read_json(os.path.join(state, "etat.json"))
     info = read_json(os.path.join(gbrain, "last-update.json"))
-    reds, line, run = check_lines(etat, datetime.now())
+    reds, line, run = check_lines(etat, datetime.now(), home)
     reds += update_lines(info, datetime.now(timezone.utc))
 
     shown_path = os.path.join(state, "shown.json")

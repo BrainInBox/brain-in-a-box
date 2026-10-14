@@ -23,7 +23,7 @@ from collections import Counter, defaultdict
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _controle_rules as rules  # noqa: E402
 import _headless_claude as headless  # noqa: E402
-from _redact import find_secrets, redact as redact_common  # noqa: E402
+from _redact import find_doubtful_secrets, find_secrets, redact as redact_common  # noqa: E402
 
 MIN_CLAUDE = headless.MIN_CLAUDE
 REQUIRED_FLAGS = headless.REQUIRED_FLAGS
@@ -108,7 +108,8 @@ def mask_text(text, known=()):
     # Invisible characters go first: a zero-width joiner must not split a key
     # past the patterns, then come back together once removed.
     text = neutralize(text)
-    for s, e, _ in reversed(find_secrets(text)):
+    # The doubtful ones too (« mdp: Kx7!q2 »): left in the note, never sent.
+    for s, e, _ in sorted(find_secrets(text) + find_doubtful_secrets(text), reverse=True):
         text = text[:s] + MASK + text[e:]
     text = redact_common(text)[0]
     for value in sorted({k.strip() for k in known if len(k.strip()) >= 8}, key=len, reverse=True):
@@ -364,7 +365,7 @@ def _sections(note):
     out = []
     for k, (b, title) in enumerate(starts):
         e = starts[k + 1][0] if k + 1 < len(starts) else len(lines)
-        out.append((title, [ln for ln in lines[b:e] if not rules.OUR_MARK.search(ln)]))
+        out.append((title, [ln for ln in lines[b:e] if not rules.our_callout(ln)]))
     return out
 
 
@@ -381,7 +382,7 @@ def _memory_sections(note):
     # undated too, and often the newest decisions.
     first = next((i for i, level, _ in hs if level >= 2), len(lines))
     head = [ln for j, ln in enumerate(lines[note.body_start:first], note.body_start)
-            if j not in blocked and not rules.HEADING.match(ln) and not rules.OUR_MARK.search(ln)
+            if j not in blocked and not rules.HEADING.match(ln) and not rules.our_callout(ln)
             and rules.POINTER_MARK not in ln]
     out = [(None, head)] if any(ln.strip() for ln in head) else []
     for k, (i, level, title) in enumerate(hs):
@@ -390,7 +391,7 @@ def _memory_sections(note):
             continue
         end = rules.extent(hs, k, len(lines))
         out.append((title, [ln for j, ln in enumerate(lines[i:end], i)
-                            if j not in blocked and not rules.OUR_MARK.search(ln)]))
+                            if j not in blocked and not rules.our_callout(ln)]))
     return out
 
 
@@ -690,7 +691,7 @@ def build_dossier(notes, profile, today, anchors=None, note_date=None, known=(),
 
 def masked_values(original, masked):
     """The exact values S1 replaced in a line, read back from the quarantine."""
-    parts = re.split(r"\[secret masqué par le contrôle · [A-Z][0-9]-\d{4}-\d{2,3}\]", masked)
+    parts = re.split(r"\[secret masqué par le contrôle · [A-Z][0-9]-\d{6}-\d{2,3}\]", masked)
     if len(parts) < 2:
         return []
     m = re.fullmatch("(.+?)".join(re.escape(p) for p in parts), original, re.S)

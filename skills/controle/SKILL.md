@@ -1,7 +1,7 @@
 ---
 name: controle
 description: The brain's night check (notes vault + gbrain memory) - what it fixed by itself last night, what needs the user's opinion, whether gbrain is up to date, and undoing one fix or a whole night. Use when the user types /controle, says "contrôle mon cerveau", "vérifie mes notes", "qu'est-ce que le contrôle a fait", "annule le contrôle (de cette nuit)", "c'est un faux positif", "gbrain est à jour ?", "pourquoi gbrain n'est pas à jour", "regroupe mes leçons", "check my brain", "undo last night's check", or when the first line of the session mentions the night check.
-allowed-tools: Bash(~/.local/bin/controle:*)
+allowed-tools: Bash(~/.local/bin/controle statut), Bash(~/.local/bin/controle essai), Bash(~/.local/bin/controle maintenant), Bash(~/.local/bin/controle gbrain), Bash(~/.local/bin/controle lecons)
 ---
 
 # Contrôle - the night check of the brain
@@ -10,7 +10,7 @@ Every night at 04:00 a script checks the brain: secrets written in clear, comman
 erase things, an old memory.md, duplicate or noisy lessons, exact duplicate or empty
 notes, broken frontmatter, contradictions between notes, decisions replaced by newer
 ones. It fixes what is safe, one git commit per fix, and writes Profile/controle.md
-(what it fixed, with an ID such as `S2-1014-02`, and what it left for the user).
+(what it fixed, with an ID such as `S2-261014-02`, and what it left for the user).
 The same night, gbrain updates itself to the newest release this computer has known
 for at least 7 days, and rolls back by itself if the new one does not work.
 
@@ -26,7 +26,9 @@ in 3 short lines. The script is the only one that fixes: never edit a note yours
 | a check now | `~/.local/bin/controle maintenant`, with a 10-minute timeout (it usually takes 1 to 5 minutes) |
 | to see what a check would do, without changing anything | `~/.local/bin/controle essai` |
 | to undo one fix | `~/.local/bin/controle annuler <ID> --essai`, show the result, then `~/.local/bin/controle annuler <ID>` |
-| to undo last night | `~/.local/bin/controle annuler derniere-nuit --essai`, then the same without `--essai` |
+| to undo last night | `~/.local/bin/controle annuler derniere-nuit --essai`, then the same without `--essai` (masked secrets stay masked) |
+| to put a masked secret back in its note | `~/.local/bin/controle annuler <S1-ID> --essai`, then, after an explicit yes, `~/.local/bin/controle annuler <S1-ID> --remettre-le-secret` |
+| they changed a secret the report says to change | `~/.local/bin/controle secret-change <S1-ID>` |
 | to stop the fixes for a while / resume | `~/.local/bin/controle pause` / `~/.local/bin/controle reprendre` (paused, it still reports) |
 | gbrain's version, delay, blocked versions | `~/.local/bin/controle gbrain` |
 | to update gbrain now (same 7-day rule) | `~/.local/bin/controle gbrain maintenant`, in the background: it can take 45 minutes |
@@ -40,10 +42,11 @@ without Git Bash, `controle.cmd` takes the same arguments. Never stop a running
 ## Rules
 
 1. Run `annuler` only when the user asked for it in their last message. Run it with
-   `--essai` first and show what will be undone.
-2. Undoing a masked secret (an ID starting with S1) puts the secret back in the note:
-   say first that it will then be saved in the brain's history and online backup,
-   and ask for an explicit yes.
+   `--essai` first and show what will be undone. Undoing, resuming and updating gbrain
+   ask for the user's permission every time: that is on purpose.
+2. A masked secret (an ID starting with S1) is never put back by undoing a night. Its
+   own command puts it back in the note: say first that it will then be saved in the
+   brain's history and online backup, and run it only after an explicit yes.
 3. "C'est un faux positif" about one fix = `annuler <ID>`: the check will never redo it.
 4. For a point "À regarder": show both quotes, ask which one is true, then edit the
    note normally with the user. Remove the matching "Contrôle" callout once settled.

@@ -6,6 +6,8 @@ rest in Profile/controle.md for the user to look at.
     controle.py nuit|maintenant [--brain DIR] [--git GIT] [--sans-claude|--avec-claude]
     controle.py essai [--brain DIR]           what a check would do; writes nothing
     controle.py annuler <ID>|derniere-nuit [--nuit RUN] [--essai]
+    controle.py annuler S1-... --remettre-le-secret    puts a masked secret back in its note
+    controle.py secret-change S1-...          the user changed that secret: stop saying so
     controle.py statut | pause | reprendre | lecons
     controle.py gbrain [maintenant|reprendre]
 
@@ -39,14 +41,16 @@ ENV_HELP = """environment (all optional):
   CLAUDE_BIN           the claude executable of the review (default ~/.local/bin/claude, else PATH)
 """
 RUN_ID = re.compile(r"^\d{8}-\d{4}(-\d{1,2})?$")
-ACTION_ID = re.compile(r"^[A-Z][0-9]-\d{4}-\d{2,3}$")
+# S2-261014-02: type, day (with its year: an id never comes back), rank in the day.
+ACTION_ID = re.compile(r"^[A-Z][0-9]-\d{6}-\d{2,3}$")
 TRAILER = re.compile(r"^Brain-Controle-(Run|Action|Masque|Annule): (\S+)$", re.M)
+MASK_ID = re.compile(r"\[secret masqué par le contrôle · (S1-\d{6}-\d{2,3})\]")
 IDENT = ["-c", "user.email=brain@local", "-c", "user.name=brain"]
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-LOCK_STALE = 2 * 3600
 EDIT_GUARD = 600
 RUN_BUDGET = 20 * 60
 KEEP_RUNS = 30
+INDEX_DAYS = 400
 QUARANTINE_DAYS = 30
 FILES_PER_NIGHT = 40
 CAPS = {"S1": 100, "S2": 30, "X1": 20, "M2": 200, "D1": 20, "D2": 20, "F1": 20, "C1": 10, "C2": 3, "C3": 50}
@@ -107,7 +111,9 @@ POINT_TEXT = {
 }
 ALERT_TEXT = {
     "contrat": "La correction {x} n'a pas donné le résultat prévu : j'ai remis le fichier comme avant.",
-    "secret_historique": "{x} secret{s} étai{ent} déjà enregistré{s} dans l'historique du cerveau : change-le{s}.",
+    "secret_historique": "{x} secret{s} masqué{s} étai{ent} déjà enregistré{s} dans l'historique du cerveau ({ids}) : "
+                         "change-le{s} là où il{s} {a} été créé{s}. Quand c'est fait, dis-le à Claude (/controle) et "
+                         "je n'en parlerai plus.",
     "memoire_grosse": "memory.md fait encore {x} : il faut l'alléger.",
     "lecons_grosses": "lessons.md reste gros ({x}) : tape « /controle leçons » pour regrouper tes leçons en "
                       "quelques règles.",
@@ -193,6 +199,19 @@ def parse_now(value):
     return (d.astimezone().replace(tzinfo=None) if d.tzinfo else d).replace(microsecond=0)
 
 
+def run_key(run):
+    """Runs in the order they ran: 20261014-0400-2 after 20261014-0400."""
+    return run[:13], int(run[14:] or 1)
+
+
+def older_than(entry, limit):
+    """True when a quarantine entry was made before limit (or says nothing of when)."""
+    try:
+        return datetime.fromisoformat(str(entry["le"])) < limit
+    except (KeyError, TypeError, ValueError):
+        return True
+
+
 def read_json(path, default):
     try:
         with open(path, encoding="utf-8") as f:
@@ -224,64 +243,42 @@ def write_json(path, data):
     write_private(path, (json.dumps(data, ensure_ascii=False, indent=1) + "\n").encode("utf-8"))
 
 
-def pid_alive(pid):
-    if pid <= 0:
-        return False
-    if os.name == "nt":
-        import ctypes
-        k = ctypes.windll.kernel32
-        h = k.OpenProcess(0x1000, False, pid)
-        if not h:
-            return False
-        code = ctypes.c_ulong()
-        ok = k.GetExitCodeProcess(h, ctypes.byref(code))
-        k.CloseHandle(h)
-        return bool(ok) and code.value == 259
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
-
-
 class Lock:
-    """run.lock created with O_EXCL; stale after 2 h or when its pid is gone."""
+    """run.lock held with the system's file lock (flock, or msvcrt on Windows): it
+    goes with its holder, killed or crashed, and two runs can never both take it
+    over. The file stays; it says who holds it, for the user."""
 
     def __init__(self, path):
-        self.path, self.held = str(path), False
+        self.path, self.held, self.f = str(path), False, None
 
     def acquire(self):
-        for _ in range(3):
-            try:
-                fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-            except FileExistsError:
-                try:
-                    with open(self.path, encoding="utf-8") as f:
-                        pid, ts = (int(x) for x in f.read().split()[:2])
-                except (OSError, ValueError):
-                    pid, ts = 0, 0
-                if time.time() - ts < LOCK_STALE and pid_alive(pid):
-                    return False
-                try:
-                    os.replace(self.path, self.path + ".stale")
-                except OSError:
-                    pass
-                continue
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write("%d %d\n" % (os.getpid(), int(time.time())))
-            self.held = True
-            return True
-        return False
+        try:
+            f = open(self.path, "a+b")
+            os.chmod(self.path, 0o600)
+        except OSError:
+            return False
+        try:
+            if os.name == "nt":
+                import msvcrt
+                f.seek(0)
+                msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            f.close()
+            return False
+        f.seek(0)
+        f.truncate()
+        f.write(b"%d %d\n" % (os.getpid(), int(time.time())))
+        f.flush()
+        self.f, self.held = f, True
+        return True
 
     def release(self):
         if self.held:
-            try:
-                os.unlink(self.path)
-            except OSError:
-                pass
-            self.held = False
+            self.f.close()
+            self.f, self.held = None, False
 
 
 class Git:
@@ -438,28 +435,52 @@ class State:
             return self.key(create=False)
         return key
 
+    def runs(self):
+        return sorted((p for p in (self.dir / "runs").glob("*.json") if RUN_ID.match(p.stem)),
+                      key=lambda p: run_key(p.stem))
+
     def journals(self):
         """Run journals, oldest first."""
         out = []
-        for p in sorted((self.dir / "runs").glob("*.json")):
-            if RUN_ID.match(p.stem):
-                j = read_json(p, {})
-                if j.get("run") == p.stem:
-                    out.append(j)
+        for p in self.runs():
+            j = read_json(p, {})
+            if j.get("run") == p.stem:
+                out.append(j)
         return out
 
-    def purge(self, now):
-        runs = sorted(p for p in (self.dir / "runs").glob("*.json") if RUN_ID.match(p.stem))
-        for p in runs[:-KEEP_RUNS]:
+    def quarantined(self):
+        """(file, {id: entry}) of each quarantine file."""
+        for p in sorted((self.dir / "quarantaine").glob("*.json")):
+            actions = read_json(p, {}).get("actions")
+            yield p, {k: v for k, v in actions.items() if isinstance(v, dict)} if isinstance(actions, dict) else {}
+
+    def purge(self, now, live=()):
+        """Keeps 30 run journals; the fingerprints of their fixes outlive them in
+        empreintes.json, so that an undo stays an undo. A masked value stays in
+        quarantine 30 days, and as long as its mask is in a note: never committed,
+        it may be the only copy left (`live`: the ids of the masks in the vault)."""
+        old = self.runs()[:-KEEP_RUNS]
+        if old:
+            index = self.load("empreintes.json", {})
+            for p in old:
+                for a in read_json(p, {}).get("actions") or []:
+                    if isinstance(a, dict) and a.get("statut") == "fait" and ACTION_ID.match(str(a.get("id"))):
+                        index[a["id"]] = {"type": a.get("type"), "run": p.stem, "empreintes": a.get("empreintes") or []}
+            cutoff = (now - timedelta(days=INDEX_DAYS)).strftime("%y%m%d")
+            self.save("empreintes.json", {k: v for k, v in index.items() if k.split("-")[1] >= cutoff})
+        for p in old:
             try:
                 p.unlink()
             except OSError:
                 pass
             shutil.rmtree(str(p.with_suffix("")), ignore_errors=True)
-        limit = now.timestamp() - QUARANTINE_DAYS * 86400
-        for p in (self.dir / "quarantaine").glob("*.json"):
+        limit = now - timedelta(days=QUARANTINE_DAYS)
+        for p, actions in self.quarantined():
+            keep = {aid: q for aid, q in actions.items() if aid in live or not older_than(q, limit)}
             try:
-                if p.stat().st_mtime < limit:
+                if keep and keep != actions:
+                    write_json(p, {"run": p.stem, "actions": keep})
+                elif not keep and (actions or p.stat().st_mtime < limit.timestamp()):
                     p.unlink()
             except OSError:
                 pass
@@ -486,7 +507,8 @@ class Run:
         self.judge_info, self.judge_updates = {}, {}
         self.judge_verdict = self.judge_dossier = None
         self.lessons_kept_open = set()
-        self.secrets_in_history = 0
+        self.to_change = []
+        self.explanations = []
         self.leftover = set()
         self.notes_count = 0
         self.exclusions = []
@@ -507,7 +529,7 @@ class Run:
         return run
 
     def first_seq(self):
-        day = self.today.strftime("%m%d")
+        day = self.today.strftime("%y%m%d")
         used = [0]
         for j in self.state.journals():
             if str(j.get("run", "")).startswith(self.now.strftime("%Y%m%d")):
@@ -522,7 +544,7 @@ class Run:
         return max(used) + 1
 
     def next_id(self, t):
-        aid = "%s-%s-%02d" % (t, self.today.strftime("%m%d"), self.seq)
+        aid = "%s-%s-%02d" % (t, self.today.strftime("%y%m%d"), self.seq)
         self.seq += 1
         return aid
 
@@ -928,8 +950,10 @@ class Run:
         else:
             text = "%s dit « %s » : c'est peut-être dépassé.%s" % (
                 na, qa, " %s dit « %s »." % (nb, qb) if f.b else "")
+        # Claude's own words never reach the vault (a note can dictate them): the
+        # run's journal keeps them, outside it.
         if f.said:
-            text += " Claude : « %s »" % rules.inline_quote(f.said, 200)
+            self.explanations.append({"chemin": f.a.rel, "texte": f.said})
         self.points.append(("juge_" + f.kind, f.a.rel, {"key": f.key, "text": text}))
 
     def after_judge(self):
@@ -1166,10 +1190,10 @@ class Run:
             head = self.git.run("show", "HEAD:" + rel)[1].decode("utf-8", "replace") if \
                 self.git.ok("cat-file", "-e", "HEAD:" + rel) else None
         in_history = sum(1 for x in targets if head and x.key in head)
-        self.secrets_in_history += in_history
         self.quarantine[aid] = {"chemin": rel, "le": self.now.isoformat(),
                                 "lignes": [[i, a, b] for i, (a, b) in sorted(lines.items())],
                                 "valeurs": [self.fp("valeur", x.key) for x in targets],
+                                "empreintes": [self.fp("S1", rel, x.key) for x in targets],
                                 "historique": in_history}
         self.save_quarantine()
 
@@ -1249,8 +1273,21 @@ class Run:
             lines.append("⚪ Relecture par Claude : rien de neuf depuis la dernière.")
         return lines
 
+    def secrets_to_change(self):
+        """S1 ids whose value git already had (and the remote): "change-le" in every
+        report and at every session start until the user says it is done
+        (secret-change), undoes it, or 30 days have gone by."""
+        done = self.state.load("secrets-changes.json", {})
+        limit = self.now - timedelta(days=QUARANTINE_DAYS)
+        ids = {aid for _, actions in self.state.quarantined() for aid, q in actions.items()
+               if q.get("historique") and aid not in done and not older_than(q, limit)}
+        if ids and self.git_ok:
+            log = self.git.text("log", "--format=%B", "--grep=^Brain-Controle-Annule: S1-") or ""
+            ids -= {v for k, v in TRAILER.findall(log) if k == "Annule"}
+        return sorted(ids)
+
     def verdict(self):
-        if any(level == "rouge" for level, _, _ in self.alerts) or self.secrets_in_history:
+        if any(level == "rouge" for level, _, _ in self.alerts) or self.to_change:
             return "rouge"
         if self.points or self.alerts:
             return "orange"
@@ -1282,13 +1319,14 @@ class Run:
         state.update(self.judge_updates)
         signaled = state.get("signales", {}) if isinstance(state.get("signales"), dict) else {}
         health = self.health() if scan is not None else []
+        self.to_change = self.secrets_to_change() if scan is not None else []
         verdict = self.verdict() if scan is not None else "rouge"
         points = self.point_lines() if scan is not None else []
         new = [p for p in points if p[0] not in signaled]
         shown = [p for p in points if not p[2] or p[0] not in signaled]
         done = [a for a in self.actions if a["statut"] == "fait"]
         report_rel = None
-        useful = bool(self.actions or new or self.alerts)
+        useful = bool(self.actions or new or self.alerts or self.to_change)
         end = datetime.now()
         if self.writes and scan is not None and useful and self.git_ok and self.cause != "commit_refuse":
             report_rel = self.write_report(verdict, shown, health)
@@ -1303,12 +1341,13 @@ class Run:
             prev = self.state.load("etat.json", {})
             etat = {"run": self.run, "mode": self.mode, "fin": end.replace(microsecond=0).isoformat(),
                     "dernier_succes": end.replace(microsecond=0).isoformat(), "verdict": verdict,
-                    "corrections": len(done), "a_voir": len(shown), "secrets_a_changer": self.secrets_in_history,
+                    "corrections": len(done), "a_voir": len(shown), "secrets_a_changer": len(self.to_change),
+                    "secrets_ids": self.to_change,
                     "rapport": report_rel or prev.get("rapport"), "rapport_reecrit": bool(report_rel),
                     "claude": self.claude, "cause": self.cause,
                     "alertes": [{"niveau": lv, "code": code} for lv, code, _ in self.alerts]}
             self.state.save("etat.json", etat)
-            self.state.purge(self.now)
+            self.state.purge(self.now, {i for n in scan.notes for i in MASK_ID.findall(n.text)})
         elif self.writes:
             self.state.ensure()
             prev = self.state.load("etat.json", {})
@@ -1328,7 +1367,8 @@ class Run:
                 "alertes": [{"niveau": lv, "code": c} for lv, c, _ in self.alerts],
                 "claude": self.claude, "cause": self.cause, "gbrain": self.gbrain_version,
                 "notes_lues": self.notes_count, "exclusions": self.exclusions[:200],
-                "suite": sorted(self.leftover), "juge": self.judge_info, "annule_le": None}
+                "suite": sorted(self.leftover), "juge": self.judge_info, "explications": self.explanations,
+                "annule_le": None}
 
     def action_row(self, a):
         r, t = a["resume"], a["type"]
@@ -1418,9 +1458,10 @@ class Run:
                 continue
             text = text.format(x=x if not isinstance(x, int) else rules.size_label(x), s="", ent="t")
             out.append("- %s %s" % ("🔴" if level == "rouge" else "🟠", text))
-        if self.secrets_in_history:
-            n = self.secrets_in_history
-            out.append("- 🔴 " + ALERT_TEXT["secret_historique"].format(x=n, s=plural(n), ent="ent" if n > 1 else "t"))
+        if self.to_change:
+            n = len(self.to_change)
+            out.append("- 🔴 " + ALERT_TEXT["secret_historique"].format(
+                x=n, s=plural(n), ent="ent" if n > 1 else "t", a="ont" if n > 1 else "a", ids=", ".join(self.to_change)))
         out += ["- " + h for h in health]
         out += ["", "## Historique", "", "| Nuit | Verdict | Corrigé | À regarder | gbrain |", "|---|---|---|---|---|"]
         rows = [j for j in self.state.journals() if j.get("mode") in ("nuit", "maintenant")][-13:]
@@ -1440,6 +1481,11 @@ class Run:
                     ", ".join(sorted(self.leftover)) or "aucun", self.run) + self.judge_details(), "",
                 "</details>", ""]
         text = "\n".join(out)
+        # What the user wrote in the report since its last commit (answers, notes) goes
+        # into git first: rewriting it must not lose a line (in pause too).
+        if rel in (status_paths(self.git) or []) and not (
+                self.git.ok("add", "--", rel) and self.git.commit("notes avant rapport\n", [rel])):
+            return None
         try:
             prev = rules.read_note(str(self.vault), rel)
             atomic_write(self.vault, rel, (prev.encode(text) if prev else rules.encode_text(text)))
@@ -1489,6 +1535,7 @@ class Undo:
         self.state = State(state_dir(opts))
         self.now = parse_now(opts.maintenant)
         self.essai = opts.essai
+        self.put_back = opts.remettre_le_secret
         binary = find_git(opts)
         self.git = Git(binary, self.vault) if binary else None
 
@@ -1496,11 +1543,14 @@ class Undo:
         print(text)
 
     def find_action(self, aid):
+        """The fix's record: in its run's journal, else in empreintes.json once the
+        journal is gone (30 runs later), else None."""
         for j in reversed(self.state.journals()):
             for a in j.get("actions", []):
                 if a.get("id") == aid:
-                    return j, a
-        return None, None
+                    return a
+        kept = self.state.load("empreintes.json", {}).get(aid)
+        return dict(kept, id=aid) if isinstance(kept, dict) else None
 
     def undone(self, aid):
         return bool(self.git.text("log", "-n", "1", "--format=%H", "--grep=^Brain-Controle-Annule: %s$" % aid))
@@ -1524,9 +1574,9 @@ class Undo:
         return self.git.ok("add", "-A") and self.git.commit("notes avant annulation\n")
 
     def run_one(self, aid):
-        journal, action = self.find_action(aid)
-        if action and action.get("type") == "S1":
-            return self.undo_secret(journal, action)
+        action = self.find_action(aid)
+        if aid.startswith("S1-"):
+            return self.undo_secret(aid, action)
         sha = (self.git.text("log", "-n", "1", "--format=%H", "--grep=^Brain-Controle-Action: %s$" % aid) or "").strip()
         if not sha:
             self.say("Je ne trouve pas la correction %s." % aid)
@@ -1567,11 +1617,12 @@ class Undo:
             refused[fp] = {"type": action.get("type"), "id": action.get("id"), "le": self.now.date().isoformat()}
         self.state.save("refusees.json", refused)
 
-    def undo_secret(self, journal, action):
-        aid = action["id"]
-        q = read_json(self.state.dir / "quarantaine" / (journal["run"] + ".json"), {}).get("actions", {}).get(aid)
+    def undo_secret(self, aid, action):
+        """A masked secret comes back from quarantine, never through git, and only
+        when asked for by its id with --remettre-le-secret."""
+        q = next((a[aid] for _, a in self.state.quarantined() if aid in a), None)
         if not q:
-            self.say("La valeur d'origine de %s n'est plus en quarantaine (gardée 30 jours) : rien à remettre." % aid)
+            self.say("La valeur d'origine de %s n'est plus en quarantaine : rien à remettre." % aid)
             return 1
         if self.undone(aid):
             self.say("La correction %s est déjà annulée." % aid)
@@ -1583,6 +1634,10 @@ class Undo:
             self.say("Je remettrais %d ligne%s de %s telles qu'elles étaient. %s" % (
                 len(q["lignes"]), plural(len(q["lignes"])), safe_name(rel), warning))
             return 0
+        if not self.put_back:
+            self.say("%s a masqué un mot de passe ou une clé. %s Si c'est vraiment voulu, relance avec "
+                     "--remettre-le-secret." % (aid, warning))
+            return 1
         if not self.prepare():
             return 1
         note = rules.read_note(str(self.vault), rel)
@@ -1609,11 +1664,14 @@ class Undo:
         for fp in q.get("valeurs", []):
             white[fp] = self.now.date().isoformat()
         self.state.save("blanche.json", white)
-        self.refuse(action)
+        self.refuse(action or {"id": aid, "type": "S1", "empreintes": q.get("empreintes") or []})
         self.say("Correction %s annulée. %s" % (aid, warning))
         return 0
 
     def run_night(self, run):
+        """Reverts the night's commits, newest first. Its masked secrets stay masked:
+        each one comes back on its own (annuler S1-... --remettre-le-secret). The night
+        counts as undone only when nothing is left to do by hand."""
         journals = self.state.journals()
         if run is None:
             done = [j for j in journals if any(a.get("statut") == "fait" for a in j.get("actions", []))
@@ -1635,14 +1693,17 @@ class Undo:
             ids = [v for k, v in TRAILER.findall(body) if k == "Action"]
             if ids and ids[0] != "rapport" and ACTION_ID.match(ids[0]):
                 commits.append((sha.strip(), ids[0]))
-        # Masked secrets come back from quarantine (and join the allow-list), never through git.
-        secrets_ = [a for a in journal.get("actions", []) if a.get("type") == "S1" and a.get("statut") == "fait"
-                    and not self.undone(a.get("id", ""))]
+        if not commits and any(a.get("commit") for a in journal.get("actions", [])):
+            self.say("Je ne trouve pas les corrections de la nuit %s dans ce cerveau (%s) : rien n'a changé." % (
+                run, safe_name(self.vault.name)))
+            return 1
+        masked = sorted({a["id"] for a in journal.get("actions", []) if a.get("type") == "S1"
+                         and a.get("statut") == "fait" and not self.undone(a.get("id", ""))})
+        kept = (" Les secrets masqués restent masqués (%s) : pour en remettre un dans sa note, « controle annuler "
+                "<ID> --remettre-le-secret », un par un." % ", ".join(masked)) if masked else ""
         todo = [(s, i) for s, i in commits if not i.startswith("S1") and not self.undone(i)]
         if self.essai:
-            self.say("J'annulerais %d correction%s de la nuit %s%s." % (
-                len(todo) + len(secrets_), plural(len(todo) + len(secrets_)), run,
-                " (dont %d secret%s remis dans les notes)" % (len(secrets_), plural(len(secrets_))) if secrets_ else ""))
+            self.say("J'annulerais %d correction%s de la nuit %s.%s" % (len(todo), plural(len(todo)), run, kept))
             return 0
         if not self.prepare():
             return 1
@@ -1652,23 +1713,23 @@ class Undo:
             r = self.revert(aid, sha)
             if r == "ok":
                 ok.append(aid)
-                if aid in actions:
-                    self.refuse(actions[aid])
+                action = actions.get(aid) or self.find_action(aid)
+                if action:
+                    self.refuse(action)
             else:
                 by_hand.append(aid)
-        for a in secrets_:
-            (ok if self.undo_secret(journal, a) == 0 else by_hand).append(a["id"])
-        if journal:
+        if journal and ok and not by_hand:
             journal["annule_le"] = self.now.isoformat()
             write_json(self.state.dir / "runs" / (run + ".json"), journal)
-        self.note_in_report(run, ok, by_hand)
+        if ok or by_hand:
+            self.note_in_report(run, ok, by_hand)
         recent = [j for j in self.state.journals() if any(a.get("statut") == "fait" for a in j.get("actions", []))][-2:]
-        if len(recent) == 2 and all(j.get("annule_le") for j in recent):
+        if ok and len(recent) == 2 and all(j.get("annule_le") for j in recent):
             (self.state.dir / "pause").touch()
             self.say("Deux nuits annulées de suite : je mets les corrections en pause (« controle reprendre » pour relancer).")
-        self.say("Nuit %s : %d correction%s annulée%s%s." % (
+        self.say("Nuit %s : %d correction%s annulée%s%s.%s" % (
             run, len(ok), plural(len(ok)), plural(len(ok)),
-            ", %d à faire à la main (%s)" % (len(by_hand), ", ".join(by_hand)) if by_hand else ""))
+            ", %d à faire à la main (%s)" % (len(by_hand), ", ".join(by_hand)) if by_hand else "", kept))
         return 0
 
     def note_in_report(self, run, ok, by_hand):
@@ -1719,7 +1780,7 @@ def cmd_undo(opts):
     if opts.nuit or target in ("derniere-nuit", "dernière-nuit"):
         return with_lock(opts, lambda: undo.run_night(opts.nuit))
     if not target or not ACTION_ID.match(target):
-        print("Donne l'identifiant d'une correction (ex. S2-1014-02) ou « derniere-nuit ».")
+        print("Donne l'identifiant d'une correction (ex. S2-261014-02) ou « derniere-nuit ».")
         return 1
     return with_lock(opts, lambda: undo.run_one(target))
 
@@ -1741,8 +1802,10 @@ def cmd_status(opts):
             print("Rien corrigé : %s." % CAUSES.get(etat["cause"], etat["cause"]))
     if (state.dir / "pause").exists():
         print("Le contrôle est en pause : il signale sans corriger (« controle reprendre » pour relancer).")
-    if (state.dir / "run.lock").exists():
-        print("Un contrôle est peut-être en cours.")
+    lock = Lock(state.dir / "run.lock")
+    if (state.dir / "run.lock").exists() and not lock.acquire():
+        print("Un contrôle est en cours.")
+    lock.release()
     return 0
 
 
@@ -1759,6 +1822,26 @@ def cmd_pause(opts, on):
         except OSError:
             pass
         print("Contrôle relancé : il corrigera de nouveau à la prochaine nuit.")
+    return 0
+
+
+def cmd_secret_changed(opts):
+    """The user changed a secret git already had: no more "change-le" about it."""
+    aid = opts.cible or ""
+    if not re.match(r"^S1-\d{6}-\d{2,3}$", aid):
+        print("Donne l'identifiant du secret masqué que tu as changé (ex. S1-261014-01).")
+        return 1
+    state = State(state_dir(opts))
+    state.ensure()
+    done = state.load("secrets-changes.json", {})
+    done[aid] = parse_now(opts.maintenant).date().isoformat()
+    state.save("secrets-changes.json", done)
+    etat = state.load("etat.json", {})
+    if aid in (etat.get("secrets_ids") or []):
+        etat["secrets_ids"] = [i for i in etat["secrets_ids"] if i != aid]
+        etat["secrets_a_changer"] = len(etat["secrets_ids"])
+        state.save("etat.json", etat)
+    print("C'est noté : je ne te rappelle plus de changer le secret masqué par %s." % aid)
     return 0
 
 
@@ -1825,9 +1908,13 @@ def parser():
     p.add_argument("cible", nargs="?")
     p.add_argument("--nuit", help="run id of the night to undo")
     p.add_argument("--essai", action="store_true", help="show what would be undone")
+    p.add_argument("--remettre-le-secret", action="store_true",
+                   help="puts a masked secret (S1-...) back in its note: it then goes to git and the online backup")
     for name, text in (("statut", "last check"), ("pause", "report only from now on"),
                        ("reprendre", "fix again"), ("lecons", "where lessons.md is, its size")):
         sub.add_parser(name, parents=[common], help=text)
+    p = sub.add_parser("secret-change", parents=[common], help="the user changed a secret git already had (S1-...)")
+    p.add_argument("cible", nargs="?")
     p = sub.add_parser("gbrain", parents=[common], help="gbrain's version and updates")
     p.add_argument("cible", nargs="?", choices=["maintenant", "reprendre"])
     return ap
@@ -1852,6 +1939,8 @@ def main(argv=None):
         return cmd_pause(opts, opts.cmd == "pause")
     if opts.cmd == "lecons":
         return cmd_lessons(opts)
+    if opts.cmd == "secret-change":
+        return cmd_secret_changed(opts)
     if opts.cmd == "gbrain":
         return cmd_gbrain(opts)
     parser().print_help()

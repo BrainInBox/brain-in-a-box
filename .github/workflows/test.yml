@@ -256,6 +256,14 @@ jobs:
           if ((git -C $V log -p --all) -match [regex]::Escape($pw)) { throw 'a password reached git history' }
           $out = (& $ctl annuler derniere-nuit --brain $V --etat "$T\etat" 2>&1) -join "`n"; $out
           if ($LASTEXITCODE) { throw "controle annuler exited $LASTEXITCODE" }
+          if ((Get-Content "$V\Projects\api-notes.md" -Raw).Contains($pw)) { throw "undoing the night put a secret back" }
+          # A masked secret comes back on its own, by its id, when asked for explicitly.
+          $ids = @([regex]::Matches($out, 'S1-\d{6}-\d{2,3}') | ForEach-Object { $_.Value } | Sort-Object -Unique)
+          if (-not $ids) { throw 'the undo did not list the masked secrets' }
+          foreach ($id in $ids) {
+            & $ctl annuler $id --remettre-le-secret --brain $V --etat "$T\etat"
+            if ($LASTEXITCODE) { throw "controle annuler $id exited $LASTEXITCODE" }
+          }
           $diff = @(Compare-Object $before (Snap $V) | ForEach-Object { $_.InputObject -replace ' [0-9A-F]{64}$', '' } | Sort-Object -Unique)
           if ("$diff" -ne '\Profile\controle.md') { throw "undoing the night left these files changed: $diff" }
           if ((Get-Content "$V\Profile\controle.md" -Raw) -notmatch '## Annul') { throw 'the report does not say the night was undone' }
