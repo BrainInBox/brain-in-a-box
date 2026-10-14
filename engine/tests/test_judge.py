@@ -267,6 +267,16 @@ class Environment(unittest.TestCase):
         self.assertEqual(env["HTTPS_PROXY"], "http://proxy.local:3128")
         self.assertEqual(env["PATH"], "/Users/jo/.local/bin:/usr/bin:/bin")
         self.assertEqual(env["DISABLE_AUTOUPDATER"], "1")
+        self.assertNotIn(headless.TOKEN_VAR, env)
+
+    def test_only_the_setup_token_travels(self):
+        parent = dict(PARENT_SECRETS, CLAUDE_CODE_OAUTH_TOKEN="sk-ant-oat01-canari-jeton")
+        with mock.patch.dict(os.environ, parent):
+            env = headless.child_env("/t/tmp", "/usr/bin:/bin")
+        self.assertEqual(env[headless.TOKEN_VAR], "sk-ant-oat01-canari-jeton")
+        self.assertFalse(set(PARENT_SECRETS) & set(env))
+        with mock.patch.dict(os.environ, dict(parent, CLAUDE_CODE_OAUTH_TOKEN="")):
+            self.assertNotIn(headless.TOKEN_VAR, headless.child_env("/t/tmp", "/usr/bin:/bin"))
 
     @unittest.skipUnless(os.name == "nt", "Windows: Claude Code needs Git Bash, found from git.exe")
     def test_the_git_found_by_the_check_reaches_claude(self):
@@ -479,6 +489,7 @@ class Isolation(StubCase):
         self.assertEqual(avail(help=short_help), (False, "options"))
         self.assertEqual(avail(auth={"loggedIn": False, "authMethod": "none"}), (False, "connexion"))
         self.assertEqual(avail(auth={"loggedIn": True, "authMethod": "apiKey"}), (False, "abonnement"))
+        self.assertEqual(avail(auth={"loggedIn": True, "authMethod": "oauth_token"}), (True, None))
         self.assertEqual(avail(auth={"loggedIn": False}), (False, "connexion"))
         self.assertEqual(self.records(), [], "nothing was asked")
 

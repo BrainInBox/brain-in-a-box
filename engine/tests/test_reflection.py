@@ -179,10 +179,14 @@ class Isolated(unittest.TestCase):
         self.assertEqual(answer.output, ANSWER)
         env = json.loads((self.fake / "env.json").read_text(encoding="utf-8"))
         allowed = {"HOME", "PATH", "LANG", "USER", "LOGNAME", "TMPDIR", "DISABLE_AUTOUPDATER",
-                   "CLAUDE_CODE_DISABLE_ADVISOR_TOOL", "TEMP", "TMP", *hc.WINDOWS_VARS, *hc.PROXY_VARS}
+                   "CLAUDE_CODE_DISABLE_ADVISOR_TOOL", "TEMP", "TMP", hc.TOKEN_VAR, *hc.WINDOWS_VARS,
+                   *hc.PROXY_VARS}
         # Windows hands a child its variables upper-cased.
         self.assertLessEqual({k.upper() for k in env} - SYSTEM_ADDED, {k.upper() for k in allowed})
-        self.assertFalse(set(CANARIES.values()) & set(env.values()))
+        # The subscription's setup-token is how claude logs in without a browser: it alone travels.
+        others = {v for k, v in CANARIES.items() if k != hc.TOKEN_VAR}
+        self.assertFalse(others & set(env.values()))
+        self.assertEqual({k.upper(): v for k, v in env.items()}.get(hc.TOKEN_VAR), CANARIES[hc.TOKEN_VAR])
         where = json.loads((self.fake / "cwd.json").read_text(encoding="utf-8"))
         if POSIX:
             self.assertEqual(where["mode"], "0o700")
@@ -203,6 +207,25 @@ class Isolated(unittest.TestCase):
             self.run_fake()
         self.assertEqual(e.exception.kind, "auth")
         self.assertEqual(self.calls(), 0)
+
+    def test_a_setup_token_is_the_subscription_too(self):
+        # `claude auth status` with CLAUDE_CODE_OAUTH_TOKEN set (claude setup-token): oauth_token.
+        (self.fake / "auth").write_text("oauth_token", encoding="utf-8")
+        self.assertEqual(self.run_fake().output, ANSWER)
+        self.assertEqual(self.calls(), 1)
+        for method in ("none", "apiKeyHelper", "bedrock"):
+            (self.fake / "auth").write_text(method, encoding="utf-8")
+            with self.assertRaises(hc.HeadlessError) as e:
+                self.run_fake()
+            self.assertEqual((e.exception.kind, e.exception.reason),
+                             ("auth", "logged_out" if method == "none" else "billed"), method)
+        self.assertEqual(self.calls(), 1)
+
+    def test_no_token_no_token_variable(self):
+        os.environ.pop(hc.TOKEN_VAR)
+        self.run_fake()
+        env = json.loads((self.fake / "env.json").read_text(encoding="utf-8"))
+        self.assertNotIn(hc.TOKEN_VAR, {k.upper() for k in env})
 
     def test_no_question_to_an_old_claude(self):
         (self.fake / "version").write_text("2.1.10 (Claude Code)", encoding="utf-8")

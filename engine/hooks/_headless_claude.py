@@ -6,7 +6,11 @@ folder, with a short allow-list for environment: whatever the text it reads
 says, all it can do is answer. Its stream is checked line by line against that
 (fail closed: no valid start-up line, no answer), and a claude logged in any
 other way than a claude.ai subscription is never started, since an API key
-would be billed. Same contract as the Mac app's repair (app/src-tauri/src/repair.rs).
+would be billed. A subscription reaches it two ways: the login `claude auth
+login` stores, or on a machine without a browser the token `claude setup-token`
+prints, in CLAUDE_CODE_OAUTH_TOKEN (the one credential the child is given;
+its value is never written anywhere). Same contract as the Mac app's repair
+(app/src-tauri/src/repair.rs), which knows only the first.
 
     answer = run(prompt, schema, system_prompt, budget_usd=1.0, timeout=600)
     answer.output  # the JSON object Claude returned, already parsed
@@ -42,6 +46,11 @@ STREAM_CAP = 32_000_000
 # left behind holding the pipes is not waited for.
 DRAIN = 2.0
 LIMIT_RE = re.compile(r"hit your .*limit|session limit|usage limit", re.I)
+# What `claude auth status` says of a claude.ai subscription: the stored login, or the
+# CLAUDE_CODE_OAUTH_TOKEN of `claude setup-token`. An API key or a cloud provider is billed.
+SUBSCRIPTION = ("claude.ai", "oauth_token")
+# The setup-token itself, passed on when set: nothing else of its kind is.
+TOKEN_VAR = "CLAUDE_CODE_OAUTH_TOKEN"
 PROXY_VARS = ("HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "NO_PROXY",
               "https_proxy", "http_proxy", "all_proxy", "no_proxy", "NODE_EXTRA_CA_CERTS")
 WINDOWS_VARS = ("USERPROFILE", "HOMEDRIVE", "HOMEPATH", "APPDATA", "LOCALAPPDATA", "SystemRoot",
@@ -136,8 +145,9 @@ def _login_name():
 
 
 def child_env(tmp, path):
-    """The child's whole environment: an allow-list, so no API key, token or VOYAGE_API_KEY travels.
-    USER is needed: without it Claude Code misses its login in the macOS keychain."""
+    """The child's whole environment: an allow-list, so no API key, other token or VOYAGE_API_KEY
+    travels; only a subscription's setup-token (TOKEN_VAR), which is how claude logs in where no
+    browser ever ran. USER is needed: without it Claude Code misses its login in the macOS keychain."""
     env = {"HOME": str(Path.home()), "PATH": path, "LANG": os.environ.get("LANG") or "en_US.UTF-8",
            "DISABLE_AUTOUPDATER": "1", "CLAUDE_CODE_DISABLE_ADVISOR_TOOL": "1"}
     user = _login_name()
@@ -149,6 +159,8 @@ def child_env(tmp, path):
     else:
         env["TMPDIR"] = tmp
     env.update({k: os.environ[k] for k in PROXY_VARS if os.environ.get(k)})
+    if os.environ.get(TOKEN_VAR):
+        env[TOKEN_VAR] = os.environ[TOKEN_VAR]
     return env
 
 
@@ -321,10 +333,11 @@ def check_cli(argv0, env, cwd):
         raise HeadlessError("unsupported", "this claude lacks " + ", ".join(missing), "flags")
     _, out, _ = _capture(argv0 + ["auth", "status"], env, cwd)
     method = auth_method(out)
-    if method != "claude.ai":
+    if method not in SUBSCRIPTION:
         raise HeadlessError("auth", f"Claude Code login is {_label(method) if method else 'missing'}, and only "
                                     "a claude.ai subscription is used (an API key would be billed). "
-                                    "Run `claude auth login`.",
+                                    "Run `claude auth login` (no browser: `claude setup-token`, then "
+                                    "CLAUDE_CODE_OAUTH_TOKEN).",
                             "billed" if method and method != "none" else "logged_out")
     return version
 
