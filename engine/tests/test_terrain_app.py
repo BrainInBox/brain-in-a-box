@@ -975,6 +975,8 @@ class WindowsInstaller(Base):
         self.assertEqual([x["page"] for x in pages], ["bienvenue", "dossier", "installation", "installe", "fin", "fin"])
         self.assertEqual([c for x in pages for c in x["clics"]],
                          ["Suivant >", "Suivant >", "Suivant >", "Lancer Brain in a Box : décoché", "Fermer"])
+        # « Suivant > » on three pages in a row: three first clicks, the mouse's (a GitHub VM showed Invoke on the second).
+        self.assertEqual([a[3] for a in p.appels if a[0] == "cliquer"], ["souris"] * 4)
         self.assertEqual(shots, ["installeur-" + x["page"] for x in pages])
         # The desktop shortcut is left as the installer offers it.
         self.assertFalse([a for a in p.appels if a[0] == "cocher" and "bureau" in a[2]])

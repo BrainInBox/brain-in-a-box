@@ -1400,7 +1400,9 @@ class PiloteWindows(Pilote):
             page = page_installeur(fen)
             sig = (page["cle"], sorted(page["boutons"].items()), sorted(page["cases"].items()))
             if sig != prev:
+                # A new page: its « Suivant > » is a first click (the mouse), not a retry of the last page's.
                 prev, clic, message = sig, None, None
+                self.nouvel_ecran()
                 pages.append({"page": page["cle"], "a_s": int(now - start), "boutons": sorted(page["boutons"]),
                               "cases": page["cases"], "textes": page["textes"][:12], "clics": [],
                               "capture": capturer("installeur-" + page["cle"]) if capturer else None})
