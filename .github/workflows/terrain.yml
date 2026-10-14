@@ -1,0 +1,352 @@
+name: terrain
+
+# The kit as a user gets it, every night, on GitHub VMs nobody keeps (macOS and Windows):
+# a fresh install with its real nightly, an upgrade from v0.2.0, seven nights of the night
+# check in time travel, and the real Claude on a synthetic corpus (engine/tests/terrain.py).
+# Each job leaves a table in its summary and a JSON artifact; the scheduled run keeps one
+# issue labelled "terrain" up to date, read by the repair agent (docs/terrain-agent.md).
+#
+# The repository is public: nothing a stranger can start runs this workflow (no
+# pull_request, no issue_comment), the Claude token reaches one step only, and the issue
+# gets fixed identifiers only, never a reason, a note or a log.
+
+on:
+  schedule:
+    # 01:17 UTC: far from 04:00 runner time, when the BrainNightly an install registers would run.
+    - cron: "17 1 * * *"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch, tag or commit to test (default: master)"
+        required: false
+        default: master
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: terrain
+  cancel-in-progress: false
+
+env:
+  TERRAIN_REF: ${{ inputs.ref || 'master' }}
+
+jobs:
+  macos:
+    name: macOS (${{ matrix.parcours }})
+    runs-on: macos-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        parcours: [neuf, montee]
+    env:
+      PARCOURS: ${{ matrix.parcours }}
+    steps:
+      - name: The ref to test is a plain branch, tag or commit
+        run: |
+          case "$TERRAIN_REF" in -*|*..*) echo "::error::ref refused: $TERRAIN_REF"; exit 1;; esac
+          [[ "$TERRAIN_REF" =~ ^[A-Za-z0-9._/-]{1,100}$ ]] || { echo "::error::ref refused"; exit 1; }
+          echo "TERRAIN_JSON=$RUNNER_TEMP/terrain-macos-$PARCOURS.json" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TERRAIN_REF }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Commit under test
+        run: echo "TERRAIN_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      # --- fresh install: Claude Code first, as the README asks, then clone + install.sh
+      # Only the real-Claude scenario needs it, and it says so when it is missing.
+      - name: Claude Code (Anthropic's official installer)
+        if: matrix.parcours == 'neuf'
+        continue-on-error: true
+        run: curl -fsSL https://claude.ai/install.sh | bash
+
+      - name: Fresh install (clone, ./install.sh with no terminal and no Voyage key)
+        id: installeur
+        if: matrix.parcours == 'neuf'
+        timeout-minutes: 30
+        run: |
+          git clone --quiet "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" "$HOME/brain-in-a-box"
+          cd "$HOME/brain-in-a-box" || exit 1
+          [ "$(git rev-parse HEAD)" = "$TERRAIN_SHA" ] || git -c advice.detachedHead=false checkout -q "$TERRAIN_SHA"
+          ./install.sh </dev/null
+
+      - name: Installer outcome, in the results
+        if: ${{ !cancelled() && matrix.parcours == 'neuf' }}
+        env:
+          OUTCOME: ${{ steps.installeur.outcome }}
+        run: python3 -I engine/tests/terrain.py etape installeur --resultat "$OUTCOME" --parcours "$PARCOURS" --vm --json "$TERRAIN_JSON"
+
+      - name: "Scenario: the install did what it says, its nightly included"
+        if: ${{ !cancelled() && matrix.parcours == 'neuf' }}
+        timeout-minutes: 45
+        run: python3 -I engine/tests/terrain.py installation --parcours "$PARCOURS" --vm --json "$TERRAIN_JSON"
+
+      # --- upgrade: v0.2.0 first, then the tested version over it
+      - name: v0.2.0 install, as it was (gbrain at the tested pin, a fake ZeroEntropy key it insists on)
+        id: v020
+        if: matrix.parcours == 'montee'
+        timeout-minutes: 30
+        run: |
+          git clone --quiet "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" "$HOME/brain-in-a-box"
+          cd "$HOME/brain-in-a-box" || exit 1
+          git -c advice.detachedHead=false checkout -q v0.2.0
+          # v0.2.0 cloned gbrain's master of its week: the release the tested version pins stands for it.
+          pin=$(python3 -I -c 'import json, re, sys; s = json.load(open(sys.argv[1]))["sha"]; assert re.fullmatch("[0-9a-f]{40}", s); print(s)' "$GITHUB_WORKSPACE/engine/gbrain-pin.json")
+          mkdir -p "$HOME/DEV/gbrain"
+          git -C "$HOME/DEV/gbrain" init -q
+          git -C "$HOME/DEV/gbrain" fetch -q --depth 1 https://github.com/garrytan/gbrain.git "$pin"
+          git -C "$HOME/DEV/gbrain" -c advice.detachedHead=false checkout -q FETCH_HEAD
+          printf 'ze_terrain_factice\n' | ./install.sh
+
+      - name: v0.2.0 installer outcome, in the results
+        if: ${{ !cancelled() && matrix.parcours == 'montee' }}
+        env:
+          OUTCOME: ${{ steps.v020.outcome }}
+        run: python3 -I engine/tests/terrain.py etape installeur-v0.2.0 --resultat "$OUTCOME" --parcours "$PARCOURS" --vm --json "$TERRAIN_JSON"
+
+      - name: "Scenario: what a user changed on v0.2.0"
+        if: ${{ !cancelled() && matrix.parcours == 'montee' }}
+        run: python3 -I engine/tests/terrain.py montee-avant --parcours "$PARCOURS" --vm --json "$TERRAIN_JSON"
+
+      - name: Upgrade (the tested version, ./install.sh again)
+        id: upgrade
+        if: ${{ !cancelled() && matrix.parcours == 'montee' }}
+        timeout-minutes: 30
+        run: |
+          cd "$HOME/brain-in-a-box" || exit 1
+          git -c advice.detachedHead=false checkout -q "$TERRAIN_SHA"
+          ./install.sh </dev/null
+
+      - name: Upgrade outcome, in the results
+        if: ${{ !cancelled() && matrix.parcours == 'montee' }}
+        env:
+          OUTCOME: ${{ steps.upgrade.outcome }}
+        run: python3 -I engine/tests/terrain.py etape installeur-montee --resultat "$OUTCOME" --parcours "$PARCOURS" --vm --json "$TERRAIN_JSON"
+
+      - name: "Scenario: nothing of the user lost, all the new there"
+        if: ${{ !cancelled() && matrix.parcours == 'montee' }}
+        timeout-minutes: 20
+        run: python3 -I engine/tests/terrain.py montee --parcours "$PARCOURS" --vm --json "$TERRAIN_JSON"
+
+      # --- from here on, the real nightly of this machine stays out of the way
+      - name: The launchd jobs are unloaded for the rest of the job
+        if: ${{ !cancelled() }}
+        run: |
+          for job in gbrain-nightly brain-reflection gbrain-lint; do
+            launchctl bootout "gui/$(id -u)/com.$(id -un).$job" 2>/dev/null || true
+          done
+
+      - name: "Scenario: seven nights of the night check, then J+20"
+        if: ${{ !cancelled() && matrix.parcours == 'neuf' }}
+        timeout-minutes: 20
+        run: python3 -I engine/tests/terrain.py nuits --parcours "$PARCOURS" --vm --json "$TERRAIN_JSON"
+
+      - name: "Scenario: the real Claude (skipped without the CLAUDE_CODE_OAUTH_TOKEN secret)"
+        if: ${{ !cancelled() && matrix.parcours == 'neuf' }}
+        timeout-minutes: 45
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: python3 -I engine/tests/terrain.py vrai-claude --parcours "$PARCOURS" --vm --json "$TERRAIN_JSON"
+
+      - name: Summary
+        if: always()
+        run: python3 -I engine/tests/terrain.py rapport "$TERRAIN_JSON" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: terrain-macos-${{ matrix.parcours }}
+          path: ${{ env.TERRAIN_JSON }}
+          if-no-files-found: warn
+          retention-days: 14
+
+  windows:
+    name: Windows (${{ matrix.parcours }})
+    runs-on: windows-latest
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        parcours: [neuf, montee]
+    env:
+      PARCOURS: ${{ matrix.parcours }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: The ref to test is a plain branch, tag or commit
+        run: |
+          $r = $env:TERRAIN_REF
+          if ($r -cnotmatch '^[A-Za-z0-9._/-]{1,100}$' -or $r.StartsWith('-') -or $r.Contains('..')) { Write-Host "::error::ref refused"; exit 1 }
+          "TERRAIN_JSON=$env:RUNNER_TEMP\terrain-windows-$env:PARCOURS.json" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TERRAIN_REF }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Commit under test
+        run: |
+          "TERRAIN_SHA=$((git rev-parse HEAD).Trim())" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      # --- fresh install: the one-liner a user pastes (the scheduled night: from GitHub itself)
+      - name: Fresh install (irm | iex)
+        id: installeur
+        if: matrix.parcours == 'neuf'
+        timeout-minutes: 45
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File .github/ci/terrain-install.ps1
+
+      # The task registers at 04:00 runner time and catches up a missed night: disabled
+      # right away, the installation scenario enables it for the one run it starts itself.
+      - name: The real nightly stays out of the way (tasks disabled)
+        if: ${{ !cancelled() && matrix.parcours == 'neuf' }}
+        run: Get-ScheduledTask -TaskName 'Brain*' -ErrorAction SilentlyContinue | Disable-ScheduledTask | Out-Null
+
+      - name: Installer outcome, in the results
+        if: ${{ !cancelled() && matrix.parcours == 'neuf' }}
+        env:
+          OUTCOME: ${{ steps.installeur.outcome }}
+        run: python -I engine/tests/terrain.py etape installeur --resultat $env:OUTCOME --parcours $env:PARCOURS --vm --json $env:TERRAIN_JSON
+
+      - name: "Scenario: the install did what it says, its nightly included"
+        if: ${{ !cancelled() && matrix.parcours == 'neuf' }}
+        timeout-minutes: 45
+        run: python -I engine/tests/terrain.py installation --parcours $env:PARCOURS --vm --json $env:TERRAIN_JSON
+
+      # --- upgrade: v0.2.0 (from a clone, as it was installed), then the one-liner over it
+      - name: v0.2.0 install, as it was
+        id: v020
+        if: matrix.parcours == 'montee'
+        timeout-minutes: 30
+        run: |
+          $old = Join-Path $env:RUNNER_TEMP 'v020'
+          git archive --format=zip --prefix=brain-in-a-box-0.2.0/ -o "$old.zip" v0.2.0
+          if ($LASTEXITCODE) { exit 1 }
+          Expand-Archive "$old.zip" $old
+          powershell -NoProfile -ExecutionPolicy Bypass -File "$old\brain-in-a-box-0.2.0\install.ps1"
+          if ($LASTEXITCODE) { exit 1 }
+
+      - name: The real nightly stays out of the way (v0.2.0 tasks disabled)
+        if: ${{ !cancelled() && matrix.parcours == 'montee' }}
+        run: Get-ScheduledTask -TaskName 'Brain*' -ErrorAction SilentlyContinue | Disable-ScheduledTask | Out-Null
+
+      - name: v0.2.0 installer outcome, in the results
+        if: ${{ !cancelled() && matrix.parcours == 'montee' }}
+        env:
+          OUTCOME: ${{ steps.v020.outcome }}
+        run: python -I engine/tests/terrain.py etape installeur-v0.2.0 --resultat $env:OUTCOME --parcours $env:PARCOURS --vm --json $env:TERRAIN_JSON
+
+      - name: "Scenario: what a user changed on v0.2.0"
+        if: ${{ !cancelled() && matrix.parcours == 'montee' }}
+        run: python -I engine/tests/terrain.py montee-avant --parcours $env:PARCOURS --vm --json $env:TERRAIN_JSON
+
+      - name: Upgrade (irm | iex over v0.2.0)
+        id: upgrade
+        if: ${{ !cancelled() && matrix.parcours == 'montee' }}
+        timeout-minutes: 45
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File .github/ci/terrain-install.ps1
+
+      - name: The real nightly stays out of the way (new tasks disabled)
+        if: ${{ !cancelled() && matrix.parcours == 'montee' }}
+        run: Get-ScheduledTask -TaskName 'Brain*' -ErrorAction SilentlyContinue | Disable-ScheduledTask | Out-Null
+
+      - name: Upgrade outcome, in the results
+        if: ${{ !cancelled() && matrix.parcours == 'montee' }}
+        env:
+          OUTCOME: ${{ steps.upgrade.outcome }}
+        run: python -I engine/tests/terrain.py etape installeur-montee --resultat $env:OUTCOME --parcours $env:PARCOURS --vm --json $env:TERRAIN_JSON
+
+      - name: "Scenario: nothing of the user lost, all the new there"
+        if: ${{ !cancelled() && matrix.parcours == 'montee' }}
+        timeout-minutes: 20
+        run: python -I engine/tests/terrain.py montee --parcours $env:PARCOURS --vm --json $env:TERRAIN_JSON
+
+      - name: "Scenario: seven nights of the night check, then J+20"
+        if: ${{ !cancelled() && matrix.parcours == 'neuf' }}
+        timeout-minutes: 20
+        run: python -I engine/tests/terrain.py nuits --parcours $env:PARCOURS --vm --json $env:TERRAIN_JSON
+
+      - name: "Scenario: the real Claude (skipped without the CLAUDE_CODE_OAUTH_TOKEN secret)"
+        if: ${{ !cancelled() && matrix.parcours == 'neuf' }}
+        timeout-minutes: 45
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: python -I engine/tests/terrain.py vrai-claude --parcours $env:PARCOURS --vm --json $env:TERRAIN_JSON
+
+      - name: Summary
+        if: always()
+        run: python -I engine/tests/terrain.py rapport $env:TERRAIN_JSON | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: terrain-windows-${{ matrix.parcours }}
+          path: ${{ env.TERRAIN_JSON }}
+          if-no-files-found: warn
+          retention-days: 14
+
+  rapport:
+    name: Report (one issue "terrain")
+    needs: [macos, windows]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    env:
+      ATTENDUS: macos-neuf,macos-montee,windows-neuf,windows-montee
+    steps:
+      # The workflow's own commit: the code that writes the issue is the one this file came with.
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # A job that died uploads nothing: the report then says which one.
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: terrain-*
+          path: ${{ runner.temp }}/terrain
+          merge-multiple: true
+
+      - name: The night in one table
+        if: ${{ !cancelled() }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/terrain"
+          shopt -s nullglob
+          python3 -I engine/tests/terrain.py rapport "$RUNNER_TEMP"/terrain/*.json --attendus "$ATTENDUS" >> "$GITHUB_STEP_SUMMARY"
+
+      # Scheduled runs only: a run started by hand on a branch never speaks for master.
+      - name: Open, or comment, the issue "terrain"; say when it is green again
+        if: ${{ !cancelled() && github.event_name == 'schedule' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          shopt -s nullglob
+          day=$(date -u +%Y-%m-%d)
+          body="$RUNNER_TEMP/issue.md"
+          python3 -I engine/tests/terrain.py issue "$RUNNER_TEMP"/terrain/*.json --attendus "$ATTENDUS" \
+            --run-url "$RUN_URL" --date "$day" > "$body"
+          open=$(gh issue list --repo "$GITHUB_REPOSITORY" --label terrain --state open --author app/github-actions \
+            --json number --jq '.[0].number // empty')
+          if [ -s "$body" ]; then
+            gh label create terrain --repo "$GITHUB_REPOSITORY" --color B60205 \
+              --description "Tests de terrain de nuit (VM)" 2>/dev/null || true
+            if [ -n "$open" ]; then
+              gh issue comment "$open" --repo "$GITHUB_REPOSITORY" --body-file "$body"
+            else
+              gh issue create --repo "$GITHUB_REPOSITORY" --label terrain \
+                --title "Terrain : des tests de nuit échouent" --body-file "$body"
+            fi
+          elif [ -n "$open" ]; then
+            gh issue comment "$open" --repo "$GITHUB_REPOSITORY" --body "vert le $day ($RUN_URL)"
+          fi
