@@ -189,7 +189,7 @@ jobs:
           foreach ($f in $hook, "$H\.brain-in-a-box\src\engine\hooks\correction-detector.py") { [IO.File]::WriteAllText($f, $old) }
           $sp = "$H\.claude\settings.json"
           $j = Get-Content $sp -Raw | ConvertFrom-Json
-          foreach ($h in @($j.hooks.UserPromptSubmit.hooks)) { $h.command = 'C:\Python311\python.exe' }
+          foreach ($entry in @($j.hooks.UserPromptSubmit.hooks)) { $entry.command = 'C:\Python311\python.exe' }
           $logger = @($j.hooks.Stop.hooks) | Where-Object { "$($_.args)" -like '*session-logger.py*' } | Select-Object -First 1
           $logger.command = "`"C:\Python311\python.exe`" `"$($logger.args[0])`""
           $logger.PSObject.Properties.Remove('args')
