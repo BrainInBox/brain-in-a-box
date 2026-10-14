@@ -730,7 +730,9 @@ class PiloteMac(Pilote):
             raise ErreurPilote("le DMG ne s'ouvre pas (open code %d : %s)" % (rc, out.strip()[-200:]))
         details["dmg_monte"] = str(mnt)
         try:
-            if not self.attendre(lambda: mnt.name in self.fenetres_finder(), 30):
+            if self.attendre(lambda: mnt.name in self.fenetres_finder(), 30):
+                time.sleep(3)   # the Finder draws the icons after the window
+            else:
                 notes.append("le Finder n'a pas montré la fenêtre du DMG (capture du bureau quand même)")
             if capturer:
                 details["capture_dmg"] = capturer("dmg")
@@ -781,10 +783,27 @@ class PiloteMac(Pilote):
         notes.append("quarantaine levée par le robot, là où l'utilisateur clique « Ouvrir quand même » dans Réglages")
         return notes
 
+    def _lancer(self, argv, env=None):
+        """A command left running (open waits for the answer to Gatekeeper's dialog)."""
+        try:
+            return subprocess.Popen([str(a) for a in argv], env=env, stdin=subprocess.DEVNULL,
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except OSError as e:
+            raise ErreurPilote("%s ne se lance pas (%s)" % (Path(str(argv[0])).name, e.strerror or type(e).__name__))
+
     def refus(self, details, capturer=None):
         """The app opened once as a double click opens it, still quarantined: macOS must refuse it
         with its dialog, which is captured and closed (« Terminé »), and the app must not start."""
-        self._run(["/usr/bin/open", self.app], timeout=120, env=env_utilisateur(Path.home()))
+        lanceur = self._lancer(["/usr/bin/open", self.app], env=env_utilisateur(Path.home()))
+        try:
+            return self._refus(details, capturer)
+        finally:
+            try:
+                lanceur.wait(30)
+            except subprocess.TimeoutExpired:
+                lanceur.kill()
+
+    def _refus(self, details, capturer):
         refus = lambda: next((d for d in self.lire().dialogues if d["processus"] == self.GATEKEEPER), None)
         dialogue = self.attendre(refus, 60)
         if self.vivante():
@@ -1136,21 +1155,16 @@ class ProcessusShell:
         self.k32.TerminateProcess(self.handle, 1)
 
 
-def question_securite(res, moi):
-    """(window, who, buttons, links, texts) of the question Windows asks before opening a downloaded
-    file: SmartScreen's window in front, or the Attachment Manager's dialog, which the shell shows
-    from the process that opened the file (moi). None when there is none."""
-    d = res.get("devant") if isinstance(res.get("devant"), dict) else {}
-    fen = [f for f in res.get("fenetres") or [] if isinstance(f, dict) and f.get("classe") == "#32770"]
-    if nom_programme(d.get("exe")).lower() == "smartscreen":
-        h, qui, arbre = d.get("h"), "SmartScreen", d.get("arbre")
-    elif fen:
-        h, qui, arbre = fen[0].get("h"), nom_programme(moi), fen[0].get("arbre")
-    else:
-        return None
-    flat = [n for _, n in _aplatir(arbre_uia(arbre))]
+def smartscreen(fenetre):
+    """True for SmartScreen's window (« Windows protected your PC »), by its program or its title."""
+    return nom_programme(fenetre.get("exe")).lower() == "smartscreen" or "smartscreen" in str(fenetre.get("titre") or "").lower()
+
+
+def question(fenetre, qui):
+    """(window, who, buttons, links, texts) of a question Windows asks before opening a downloaded file."""
+    flat = [n for _, n in _aplatir(arbre_uia(fenetre.get("arbre")))]
     noms = lambda role: [norm_win(n["n"]) for n in flat if n["r"] == role and norm_win(n["n"])]
-    return h, qui, noms("AXButton"), noms("AXLink"), noms("AXStaticText")
+    return fenetre.get("h"), qui, noms("AXButton"), noms("AXLink"), noms("AXStaticText")
 
 
 class PiloteWindows(Pilote):
@@ -1308,8 +1322,23 @@ class PiloteWindows(Pilote):
         while th.is_alive():
             if self.horloge() - start >= DELAI_SHELL:
                 raise ErreurPilote("setup.exe ne s'ouvre pas en %d min (%s)" % (DELAI_SHELL // 60, "question de sécurité "
-                                   "sans réponse : « %s »" % " ".join(vues[-1]["textes"])[:200] if vues else "rien à l'écran"))
-            q = question_securite(self._outil(["lire", os.getpid()]), sys.executable)
+                                   "sans réponse : « %s »" % " ".join(vues[-1]["textes"])[:200] if vues else
+                                   "aucune question lue à l'écran ; fenêtres : %s" % ", ".join(
+                                       "%s (%s)" % (f.get("titre"), nom_programme(f.get("exe")))
+                                       for f in (self.dernier_arbre or {}).get("visibles") or [] if f.get("titre"))[:300]))
+            # SmartScreen's window, in front or not; else the Attachment Manager's question, which the
+            # shell shows from the process that opened the file (this one).
+            q, visibles = None, self._outil(["fenetres"]).get("fenetres") or []
+            ss = next((f for f in visibles if isinstance(f, dict) and smartscreen(f)), None)
+            if ss:
+                res = self._outil(["lire", ss.get("pid")])
+                fen = [f for f in res.get("fenetres") or [] if isinstance(f, dict) and f.get("h") == ss.get("h")]
+                q = question(fen[0], "SmartScreen") if fen else None
+            else:
+                res = self._outil(["lire", os.getpid()])
+                fen = [f for f in res.get("fenetres") or [] if isinstance(f, dict) and f.get("classe") == "#32770"]
+                q = question(fen[0], nom_programme(sys.executable)) if fen else None
+            self.dernier_arbre = dict(res, visibles=visibles)
             if q:
                 h, qui, boutons, liens, textes = q
                 cle = [qui, sorted(boutons + liens)]

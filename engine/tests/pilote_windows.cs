@@ -15,6 +15,7 @@
 //   pilote-windows.exe devant <hwnd>               the window brought to the front
 //   pilote-windows.exe capturer <file.png>         the whole screen
 //   pilote-windows.exe ranger                      the windows already open minimized (a user's desktop)
+//   pilote-windows.exe fenetres                    the visible top-level windows, each with its program
 //   pilote-windows.exe raccourci <file.lnk>        where a shortcut points
 //
 // Every answer is one line of JSON, ASCII only (\uXXXX escapes): the console's code page never
@@ -107,6 +108,7 @@ static class PiloteWindows
         if (op == "capturer" && a.Length == 2) return Capturer(a[1]);
         if (op == "raccourci" && a.Length == 2) return Raccourci(a[1]);
         if (op == "ranger" && a.Length == 1) return Ranger();
+        if (op == "fenetres" && a.Length == 1) return Fenetres();
         return Echec("usage : lire <pid> | cliquer <hwnd> <libelle> | cocher <hwnd> <libelle> 0|1 | fermer <hwnd> | "
                      + "devant <hwnd> | capturer <png> | raccourci <lnk> | ranger");
     }
@@ -523,6 +525,27 @@ static class PiloteWindows
         }
         Dictionary<string, object> res = Ok();
         res["fenetres"] = rangees;
+        return res;
+    }
+
+    // Whatever shows on the screen, in front or not (SmartScreen's question may not hold the
+    // foreground): no tree, the program's file when Windows tells it.
+    static Dictionary<string, object> Fenetres()
+    {
+        IntPtr devant = GetForegroundWindow();
+        List<object> toutes = new List<object>();
+        EnumWindows(delegate (IntPtr h, IntPtr l)
+        {
+            if (!IsWindowVisible(h)) return true;
+            uint pid;
+            GetWindowThreadProcessId(h, out pid);
+            Dictionary<string, object> d = Infos(h, pid, devant);
+            d["exe"] = Image(pid);
+            toutes.Add(d);
+            return true;
+        }, IntPtr.Zero);
+        Dictionary<string, object> res = Ok();
+        res["fenetres"] = toutes;
         return res;
     }
 

@@ -235,11 +235,23 @@ class FauxMac(ta.PiloteMac):
         return super().attendre(predicat, delai, self.h, self.h.dormir, pas)
 
     def _run(self, argv, timeout=120, env=None, creationflags=0):
-        argv = [str(a) for a in argv]
-        self.cmds.append(argv)
-        if argv[:2] == ["/usr/bin/open", str(self.app)]:
-            self.lance = True
+        self.cmds.append([str(a) for a in argv])
         return 0, ""
+
+    def _lancer(self, argv, env=None):
+        # open waits for the answer to Gatekeeper's dialog: never run to its end before the click.
+        self.lance = [str(a) for a in argv] == ["/usr/bin/open", str(self.app)]
+        attente = self
+
+        class Open:
+            def wait(self, timeout):
+                if attente.refus_visible and not attente.ouvre:
+                    raise subprocess.TimeoutExpired("open", timeout)
+                return 0
+
+            def kill(self):
+                attente.tue = True
+        return Open()
 
     def vivante(self):
         return self.lance and self.ouvre
@@ -270,6 +282,7 @@ class MacInstall(unittest.TestCase):
         self.assertEqual(p.clics, [("CoreServicesUIAgent", "Done")])
         self.assertEqual(p.clics_installation, [{"ecran": "gatekeeper", "bouton": "Done", "comment": ta.CLIC_SOURIS}])
         self.assertEqual(details["gatekeeper_dialogue"]["textes"][0], "“Brain in a Box” Not Opened")
+        self.assertFalse(getattr(p, "tue", False), "open ended once the dialog was answered")
 
     def test_an_app_gatekeeper_lets_run_fails_and_no_dialog_is_said(self):
         with self.assertRaises(ta.ErreurPilote) as cm:
@@ -1121,8 +1134,15 @@ class WindowsShell(Base):
             args = [str(a) for a in args]
             calls.append(args)
             self.h.now += 0.3
+            shown = montre and not etat["fini"].is_set()
+            if args[0] == "fenetres":
+                # Not in front (a GitHub VM showed it so), its program unreadable: found by its title.
+                return {"ok": True, "fenetres": [{"h": 3, "pid": 4, "titre": "Program Manager", "classe": "Progman", "exe": ""}] + (
+                    [{"h": 21, "pid": 90, "titre": "Windows Defender SmartScreen", "classe": "Windows.UI.Core.CoreWindow",
+                      "exe": "", "devant": False}] if shown else [])}
             if args[0] == "lire":
-                return {"ok": True, "fenetres": [], "devant": smartscreen(etat["plus"]) if montre and not etat["fini"].is_set() else None}
+                self.assertEqual(args[1], "90" if shown else str(os.getpid()))
+                return {"ok": True, "fenetres": [smartscreen(etat["plus"])] if shown else [], "devant": None}
             if args[0] == "cliquer":
                 if args[2] == "More info":
                     etat["plus"] = True
@@ -1154,6 +1174,44 @@ class WindowsShell(Base):
         p, out, notes, details, shots, calls = self.lancer(montre=False)
         self.assertEqual(shots, [])
         self.assertIn("SmartScreen ne s'est pas affiché : setup.exe porte pourtant la Mark of the Web", notes[0])
+
+    def test_the_attachment_managers_question_is_answered_too(self):
+        p = FauxWindows(self.h, self.tmp)
+        fini = threading.Event()
+        boite = {"h": 31, "pid": os.getpid(), "classe": "#32770", "titre": "Open File - Security Warning",
+                 "arbre": uia("Window", "Open File - Security Warning", [
+                     uia("Text", "The publisher could not be verified. Are you sure you want to run this software?"),
+                     uia("Button", "Run"), uia("Button", "Cancel")])}
+
+        def outil(args, timeout=120):
+            self.h.now += 0.3
+            if args[0] == "fenetres":
+                return {"ok": True, "fenetres": []}
+            if args[0] == "lire":
+                return {"ok": True, "fenetres": [] if fini.is_set() else [boite], "devant": None}
+            if args[0] == "cliquer" and str(args[2]) == "Run":
+                fini.set()
+            return {"ok": True, "comment": "clic souris"}
+        p._outil = outil
+        out, notes = p.lancer_setup(Path(self.tmp) / "setup.exe", {}, ouvrir=lambda f, out: (fini.wait(10), out.update(ok=True, handle=7)))
+        self.assertEqual((out["handle"], notes), (7, []))
+        self.assertEqual(p.clics_installation, [{"ecran": ta.nom_programme(sys.executable).lower(), "bouton": "Run",
+                                                 "comment": ta.CLIC_SOURIS}])
+
+    def test_a_question_nobody_answers_names_the_windows_on_screen(self):
+        p = FauxWindows(self.h, self.tmp)
+        def outil(args, timeout=120):
+            self.h.now += 5
+            if args[0] == "fenetres":
+                return {"ok": True, "fenetres": [{"h": 3, "titre": "Program Manager", "exe": r"C:\Windows\explorer.exe"}]}
+            return {"ok": True, "fenetres": []}
+        p._outil = outil
+        bloque = threading.Event()
+        self.addCleanup(bloque.set)
+        with self.assertRaises(ta.ErreurPilote) as cm:
+            p.lancer_setup(Path(self.tmp) / "setup.exe", {}, ouvrir=lambda f, out: bloque.wait(60))
+        self.assertIn("setup.exe ne s'ouvre pas en 5 min (aucune question lue à l'écran ; fenêtres : Program Manager (explorer))",
+                      str(cm.exception))
 
     def test_the_mark_of_the_web_a_browser_leaves(self):
         p = FauxWindows(self.h, self.tmp)
@@ -1199,7 +1257,7 @@ class WindowsEnvironment(unittest.TestCase):
         with open(ta.__file__, encoding="utf-8") as f:
             py = f.read()
         asked = set(re.findall(r'_outil\(\[\s*"([a-z]+)"', py)) | {"cocher", "cliquer"}
-        self.assertEqual(asked, {"lire", "cliquer", "cocher", "fermer", "devant", "capturer", "raccourci", "ranger"})
+        self.assertEqual(asked, {"lire", "cliquer", "cocher", "fermer", "devant", "capturer", "raccourci", "ranger", "fenetres"})
         for op in asked:
             self.assertIn('op == "%s"' % op, src.decode("ascii"))
 
