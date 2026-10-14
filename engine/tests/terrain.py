@@ -539,6 +539,9 @@ TRANSCRIPT = [
     ("user", "Décision : on garde le meunier actuel jusqu'en janvier. password: %s" % vault_piege.fake_secrets()["password"]),
     ("assistant", "Noté. À faire : appeler le meunier lundi pour la commande de farine bio."),
 ]
+# The subscription's usage limit is not a bug of the kit: the scenario is skipped, never red (a red
+# one would have the repair agent spend the same quota again to reproduce it).
+QUOTA = "quota de l'abonnement atteint (limite d'usage) : rien à réparer, à refaire la nuit suivante"
 # The reflection's cap per call, lowered for the field test (its own is $4).
 REFLECTION_CAP = r'''
 import importlib.util, sys
@@ -595,6 +598,8 @@ def vrai_claude(t, opts):
     info = j.get("juge") or {}
     t.details["juge"] = {k: info.get(k) for k in ("version", "cout", "tours", "duree_s", "extraits", "notes_exclues",
                                                    "constats", "abandons", "suspect", "cause", "rejet")}
+    if j.get("claude") in ("saute:limite", "saute:limite-reflexion"):
+        raise Saute(QUOTA + " (relecture)")
     t.check(j.get("claude") == "fait", "la relecture par Claude n'a pas eu lieu : %s" % j.get("claude"))
 
     t("note-piege")
@@ -639,6 +644,8 @@ def vrai_claude(t, opts):
                    "--projects", projects, "--logs", logs], env=renv, timeout=1900)
     outputs.append(out)
     st = read_json(logs / "daily-reflection.state.json", {})
+    if str(st.get("last_error") or "").startswith("quota"):
+        raise Saute(QUOTA + " (réflexion ; relecture : rappel %d/%d)" % (s["trouvees"], s["paires"]))
     t.check(rc == 0, "la réflexion a fini en code %d" % rc)
     t.check(not st.get("last_error") and st.get("last_ok"), "la réflexion a échoué : %s" % (st.get("last_error") or
                                                                                              "aucun état écrit"))

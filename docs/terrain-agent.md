@@ -61,6 +61,9 @@ the next scheduled night.
    and no failure the last scheduled run did not have. Failures already listed on the issue, for
    other bugs, do not block it; a new one does. The PR says `Closes #<issue>` when it fixes
    everything the issue lists; otherwise it comments which failures it fixes.
+5. `vrai-claude` spends the maintainer's Claude subscription: never more than one run started by
+   hand a day (on master; elsewhere it is skipped). A run that hit the usage limit says "quota
+   atteint" and is skipped, not failed: wait for the next night, never retry it to reproduce.
 
 ## Never merge these yourself
 

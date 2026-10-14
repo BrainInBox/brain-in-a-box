@@ -27,7 +27,7 @@ for _stream in (sys.stdout, sys.stderr):
         _stream.reconfigure(encoding="utf-8", errors="replace")
 
 import terrain  # noqa: E402
-from test_judge import HELP, OK_STREAM  # noqa: E402
+from test_judge import FIXTURES, HELP, OK_STREAM  # noqa: E402
 
 STUB = r'''#!%(python)s -I
 import json, os, re, sys
@@ -57,6 +57,10 @@ stdin = sys.stdin.buffer.read().decode("utf-8")
 with open(os.path.join(here, "calls"), "a", encoding="utf-8") as f:
     f.write("%%s\n" %% ("token" if os.environ.get("CLAUDE_CODE_OAUTH_TOKEN") else "sans-jeton"))
 schema = args[args.index("--json-schema") + 1]
+if ("constats" if '"constats"' in schema else "reflexion") in plan.get("quota_on", []):
+    with open(plan["quota"], encoding="utf-8") as f:   # what Claude Code prints at the usage limit
+        sys.stdout.write(f.read())
+    sys.exit(1)
 if '"constats"' in schema:
     excerpts = re.findall(r'<extrait id="(E\d+)" note="([^"]*)"[^>]*>(.*?)</extrait>', stdin, re.S)
     found = lambda rel, q: next((i for i, n, t in excerpts if n == rel and q in t), None)
@@ -140,11 +144,12 @@ class OffAVm(Sandbox):
 
 @unittest.skipIf(os.name == "nt", "CLAUDE_BIN must be an executable: a script stands in for claude on POSIX only")
 class RealClaudeScenario(Sandbox):
-    def stub(self, constats):
+    def stub(self, constats, quota_on=()):
         here = os.path.join(self.home, ".terrain-stub")
         os.makedirs(here)
         plan = {"help": HELP, "init": OK_STREAM[0], "assistant": OK_STREAM[1], "user": OK_STREAM[2],
-                "result": OK_STREAM[-1], "constats": constats, "reflexion": REFLEXION}
+                "result": OK_STREAM[-1], "constats": constats, "reflexion": REFLEXION,
+                "quota": os.path.join(FIXTURES, "quota.jsonl"), "quota_on": list(quota_on)}
         with open(os.path.join(here, "plan.json"), "w", encoding="utf-8") as f:
             json.dump(plan, f, ensure_ascii=False)
         path = os.path.join(self.tmp, "claude")
@@ -186,6 +191,20 @@ class RealClaudeScenario(Sandbox):
         self.assertEqual(self.results()["vrai-claude"]["details"]["controle"], "controle.py du dépôt")
         with open(calls, encoding="utf-8") as f:
             self.assertEqual(f.read().split(), ["token", "token"])
+
+    def test_the_usage_limit_is_skipped_not_red(self):
+        # Chad's subscription at its limit: nothing to repair, and nothing to retry.
+        for quota_on, where in ((["constats", "reflexion"], "(relecture)"), (["reflexion"], "(réflexion ; relecture")):
+            with self.subTest(quota_on=quota_on):
+                shutil.rmtree(self.home)
+                os.makedirs(self.home)
+                self.stub([constat(p, "contradiction") for p in terrain.PAIRES], quota_on=quota_on)
+                rc, out = self.terrain("vrai-claude", "--home", self.home, "--json", self.json)
+                self.assertEqual(rc, 0, out)
+                r = self.results()["vrai-claude"]
+                self.assertEqual(r["statut"], "saute", out)
+                self.assertIn("quota de l'abonnement atteint", r["raison"])
+                self.assertIn(where, r["raison"])
 
     def test_an_annotation_on_a_decoy_fails(self):
         self.stub([constat(terrain.PAIRES[2], "contradiction"), constat(terrain.LEURRES[0], "contradiction")])
