@@ -193,13 +193,37 @@ else
 fi
 
 # ── 3. GBrain (clone + deps + link) ─────────────────────────────────────────
+# A new clone starts at the release CI tested (engine/gbrain-pin.json), never at
+# master. An existing clone keeps its version: the nightly moves it to the newest
+# release that is at least 7 days old (gbrain_update.py), never lower.
 say "GBrain"
 mkdir -p "$H/DEV"
-if [ -d "$GREPO/.git" ]; then ok "already cloned"; else
-  logged git clone https://github.com/garrytan/gbrain.git "$GREPO" || die_log "could not clone gbrain (network?)"
-  ok "cloned"
+if [ -d "$GREPO/.git" ]; then ok "already cloned (its version is left to the nightly update)"; else
+  if [ -L "$GREPO" ] || { [ -e "$GREPO" ] && [ -n "$(ls -A "$GREPO" 2>/dev/null)" ]; }; then
+    die "$GREPO exists but is not a gbrain clone: move it away, then re-run ./install.sh"
+  fi
+  PIN="$(python3 -I -c '
+import json, re, sys
+d = json.load(open(sys.argv[1]))
+if not (re.fullmatch(r"v[0-9]+(\.[0-9]+){2,3}", d["tag"]) and re.fullmatch(r"[0-9a-f]{40}", d["sha"])):
+    sys.exit(1)
+print(d["tag"], d["sha"])' "$REPO/engine/gbrain-pin.json" 2>/dev/null)" || die "engine/gbrain-pin.json is unreadable: download brain-in-a-box again"
+  PIN_TAG="${PIN% *}"; PIN_SHA="${PIN#* }"
+  # Cloned aside and moved into place once at the pinned commit: an interrupted
+  # clone never leaves a gbrain at master that a re-run would then keep.
+  CLONE="$(mktemp -d "$H/DEV/.gbrain-clone.XXXXXX")"
+  if logged git clone https://github.com/garrytan/gbrain.git "$CLONE/gbrain" \
+     && logged git -C "$CLONE/gbrain" -c advice.detachedHead=false checkout -q --detach "$PIN_SHA"; then
+    rmdir "$GREPO" 2>/dev/null || true   # an empty folder, which git clone used to accept
+    mv "$CLONE/gbrain" "$GREPO" && rmdir "$CLONE" || die "could not move the gbrain clone to $GREPO (left in $CLONE)"
+  else
+    rm -rf "$CLONE"
+    die_log "could not clone gbrain $PIN_TAG (network?)"
+  fi
+  ok "cloned at $PIN_TAG (the version CI tested)"
 fi
-( cd "$GREPO" && logged env -u VOYAGE_API_KEY bun install && logged env -u VOYAGE_API_KEY bun link ) || die_log "bun install / bun link failed in $GREPO"
+# --frozen-lockfile: the dependencies are exactly the ones gbrain's lockfile names.
+( cd "$GREPO" && logged env -u VOYAGE_API_KEY bun install --frozen-lockfile && logged env -u VOYAGE_API_KEY bun link ) || die_log "bun install / bun link failed in $GREPO"
 ok "deps + link"
 GBQ_BIN="$H/.bun/bin/gbrain"
 
@@ -398,6 +422,8 @@ else
   fi
 fi
 "$GBQ_BIN" config set search.mode balanced >/dev/null 2>&1 || true
+# The version is chosen by the 7-day update: `gbrain upgrade` (what gbrain suggests by default) would go to master.
+"$GBQ_BIN" config set self_upgrade.mode off >/dev/null 2>&1 || true
 # Link graph: gbrain's extractor only auto-recognizes English "entity" dirs
 # (people/, companies/, projects/…). EVERY skeleton dir (Team/, Agents/,
 # Decisions/, Skills/, Journal/…) is outside that whitelist, so without this

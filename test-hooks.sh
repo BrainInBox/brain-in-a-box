@@ -222,27 +222,36 @@ python3 -c "import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if (d['s
   && ok "gbrain_update.py runs: no clone → postponed, said in the log" || no "gbrain_update.py did not run or did not report"
 [ ! -e "$RH/DEV" ] && [ ! -e "$RH/.bun" ] && ok "…and nothing was created outside ~/.gbrain" || no "created files outside ~/.gbrain"
 
-echo "════ 7) gbrain-update-check — SessionStart daily catch-up, through the relay ════"
-mkdir -p "$H/.gbrain"
-rm -f "$H/.gbrain/last-selfupdate-check"
-MARKER="$H/.gbrain/selfupdate-ran.marker"
-rm -f "$MARKER"
-cp "$HB/gbrain_update.py" "$H/gbrain_update.py.real"
-cat > "$HB/gbrain_update.py" <<STUB
-open("$MARKER", "a").write("ran\n")
+echo "════ 7) gbrain-update-check — SessionStart catch-up when the last check is 36 h old ════"
+# Its own HOME: a gbrain clone, the real hook, and a gbrain_update.py stub beside it that
+# records how it was started. env -u: a GBRAIN_HOME from your shell would point at your real state.
+UH="$H/update-check"; UB="$UH/.claude/hooks/brain"; UM="$UH/started"
+mkdir -p "$UB" "$UH/DEV/gbrain/.git" "$UH/.gbrain"
+cp "$HB/gbrain-update-check.py" "$UB/"
+cat > "$UB/gbrain_update.py" <<STUB
+import os, sys
+open("$UM", "a").write("isolated=%d leader=%d args=%s\n" % (sys.flags.isolated, os.getsid(0) == os.getpid(), sys.argv[1:]))
 STUB
-
-echo '{"session_id":"s1"}' | HOME="$H" python3 "$HB/gbrain-update-check.py" 2>/dev/null
-for i in 1 2 3 4 5 6 7 8 9 10; do [ -f "$MARKER" ] && break; sleep 0.2; done
-[ -f "$MARKER" ] && ok "dispatches the update (hook → relay → gbrain_update.py) on the first session of the day" \
-  || no "did not dispatch on first session"
-[ "$(cat "$H/.gbrain/last-selfupdate-check" 2>/dev/null)" = "$DAY" ] && ok "stamps today's date" || no "stamp missing or wrong"
-
-rm -f "$MARKER"
-echo '{"session_id":"s2"}' | HOME="$H" python3 "$HB/gbrain-update-check.py" 2>/dev/null
-sleep 0.5
-[ ! -f "$MARKER" ] && ok "second session same day: rate-limited, no re-dispatch" || no "re-dispatched within the same day"
-mv "$H/gbrain_update.py.real" "$HB/gbrain_update.py"
+uc(){ echo '{"session_id":"s1","source":"startup"}' | env -u GBRAIN_HOME HOME="$UH" python3 "$UB/gbrain-update-check.py"; }
+started(){ for i in 1 2 3 4 5 6 7 8 9 10; do [ -f "$UM" ] && return 0; sleep 0.2; done; return 1; }
+checked(){  # checked <hours ago>: last-update.json as gbrain_update.py writes it
+  python3 -c 'import datetime as d, json, sys; t = d.datetime.now(d.timezone.utc) - d.timedelta(hours=float(sys.argv[2]))
+json.dump({"status": "up_to_date", "derniere_verif_ok": t.strftime("%Y-%m-%dT%H:%M:%SZ")}, open(sys.argv[1], "w"))' "$UH/.gbrain/last-update.json" "$1"
+  rm -f "$UH/.gbrain/last-selfupdate-check"
+}
+out=$(uc); rc=$?
+[ "$rc" = 0 ] && [ -z "$out" ] && started && grep -q "isolated=1 leader=1 args=\[\]" "$UM" \
+  && ok "never checked: starts gbrain_update.py (python -I, own session), says nothing, exits 0" || no "did not start gbrain_update.py on a first session"
+rm -f "$UM"; uc; sleep 0.5
+[ ! -f "$UM" ] && ok "a second session within the hour: not started again" || no "started again within the hour"
+checked 2; uc; sleep 0.5
+[ ! -f "$UM" ] && ok "last check 2 h ago: nothing started" || no "started although checked 2 h ago"
+checked 37; uc
+started && ok "last check 37 h ago: catch-up started" || no "no catch-up after 37 h"
+rm -f "$UM"; checked -48; uc
+started && ok "a last check dated in the future does not silence it" || no "a future date silenced the catch-up"
+rm -f "$UM"; rm -rf "$UH/DEV"; checked 37; uc; sleep 0.5
+[ ! -f "$UM" ] && ok "no gbrain clone: nothing started" || no "started without a gbrain clone"
 
 echo "════ 8) vault-skeleton — YAML frontmatters parse cleanly ════"
 # Catches unquoted {{PLACEHOLDER}} that breaks Claude Code / gstack skill loaders.
@@ -457,15 +466,48 @@ out=$(gw query "annual plan" 2>/dev/null); rc=$?
   && ok "gbq.py: keyword mode never calls gbrain" || no "gbq.py: keyword mode wrong (rc=$rc)"
 gw embed --stale --max-usd 0.10 >/dev/null 2>&1 && ok "gbq.py: keyword mode maps sync/embed to a reindex" || no "gbq.py: keyword-mode embed failed"
 
-# Windows nightly (engine/nightly/windows-nightly.py): commits the vault, syncs, embeds, reindexes.
-NW="$H/nightly-home"; NV="$NW/Brain"; mkdir -p "$NW/.bun/bin" "$NW/.brain-search" "$NV"
+# Windows nightly (engine/nightly/windows-nightly.py), installed next to the hooks as install.ps1 does:
+# gbrain update, night check, then commits the vault, syncs, embeds, reindexes. The update and
+# the check are stubs that record how and when they ran; the check crashes (exit 3). The
+# nightly has a *KEY* variable and git settings in its environment (as a Claude Code session
+# passes them): neither reaches the update or the check, and git still works for them.
+NW="$H/nightly-home"; NV="$NW/Brain"; NWB="$NW/.claude/hooks/brain"; GIT="$(command -v git)"
+mkdir -p "$NW/.bun/bin" "$NW/.brain-search" "$NV" "$NWB"
 cp "$BS" "$NW/.brain-search/"; echo gbrain > "$NW/.brain-search/engine"
+cp "$REPO/engine/nightly/windows-nightly.py" "$NWB/"
 printf '#!/usr/bin/env bash\necho "gbrain $*" >> "$HOME/gbrain-calls"\n' > "$NW/.bun/bin/gbrain"; chmod +x "$NW/.bun/bin/gbrain"
+for st in gbrain_update:0 controle:3; do
+  cat > "$NWB/${st%:*}.py" <<STUB
+import os, subprocess, sys
+dirty = bool(subprocess.run(["git", "-C", "$NV", "status", "--porcelain"], capture_output=True).stdout.strip())
+with open("$NW/steps", "a") as f:
+    f.write("${st%:*} isolated=%d dirty=%d secret=%d args=%s\n" % (sys.flags.isolated, dirty,
+            any(k == "FAKE_API_KEY" or k.startswith("GIT_CONFIG") for k in os.environ), " ".join(sys.argv[1:])))
+with open("$NW/.gbrain/nightly.log", "a") as f:
+    f.write("${st%:*} wrote its own line\n")
+print("${st%:*} printed this")
+sys.exit(${st#*:})
+STUB
+done
 ( cd "$NV" && git init -q && printf '# A\n' > a.md && git add -A && git -c user.email=t@t -c user.name=t commit -qm init )
 printf '# Lighthouse\n\nThe keeper logs every storm.\n' > "$NV/lighthouse.md"
-env -u BUN_INSTALL -u GBRAIN_HOME HOME="$NW" BRAIN_SEARCH_INDEX="$NW/index.json" python3 "$REPO/engine/nightly/windows-nightly.py" --brain "$NV" --git "$(command -v git)"
+nightly_win(){ env -u BUN_INSTALL -u GBRAIN_HOME HOME="$NW" FAKE_API_KEY=canari GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraHeader \
+  GIT_CONFIG_VALUE_0="Authorization: Bearer canari" BRAIN_SEARCH_INDEX="$NW/index.json" python3 "$NWB/windows-nightly.py" --brain "$NV" --git "$GIT"; }
+nightly_win
 [ -z "$(git -C "$NV" status --porcelain)" ] && git -C "$NV" log -1 --format=%s | grep -q nightly \
-  && ok "windows nightly: commits the day's notes first" || no "windows nightly: vault not committed"
+  && ok "windows nightly: commits the day's notes, even though the night check crashed" || no "windows nightly: vault not committed"
+[ "$(cat "$NW/steps" 2>/dev/null)" = "$(printf 'gbrain_update isolated=1 dirty=1 secret=0 args=--log %s --git %s\ncontrole isolated=1 dirty=1 secret=0 args=nuit --brain %s --git %s' "$NW/.gbrain/nightly.log" "$GIT" "$NV" "$GIT")" ] \
+  && ok "windows nightly: gbrain update, then the night check, before the commit (python -I, no credential)" \
+  || { no "windows nightly: update/check not run as expected"; cat "$NW/steps" 2>/dev/null; }
+NL="$NW/.gbrain/nightly.log"
+grep -q "^\[gbrain-update\] exit 0$" "$NL" && grep -q "^\[controle\] exit 3$" "$NL" \
+  && grep -q "gbrain_update wrote its own line" "$NL" && grep -q "gbrain_update printed this" "$NL" \
+  && ok "windows nightly: each step's exit code and output in nightly.log" || no "windows nightly: step results missing from the log"
+rm -f "$NW/steps" "$NWB/controle.py"; echo brain_search > "$NW/.brain-search/engine"
+nightly_win
+[ ! -f "$NW/steps" ] && grep -q "^\[controle\] not installed: skipped$" "$NL" \
+  && ok "windows nightly: no update on a keyword brain, no check before controle.py is installed" || no "windows nightly: a step ran that should not"
+echo gbrain > "$NW/.brain-search/engine"
 grep -q "gbrain sync --source vault --no-pull --no-embed" "$NW/gbrain-calls" 2>/dev/null \
   && grep -q "gbrain embed --stale --max-usd 0.10" "$NW/gbrain-calls" \
   && ok "windows nightly: gbrain sync + embed with a spend cap" || no "windows nightly: gbrain steps missing"

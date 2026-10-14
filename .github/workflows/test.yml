@@ -9,12 +9,15 @@ on:
 jobs:
   hooks:
     runs-on: macos-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
       - name: Run test-hooks.sh (hooks + gbrain self-update + YAML frontmatter validation)
         run: bash test-hooks.sh
+
+      - name: Unit tests (engine/tests; the 7-day gbrain update against a local repository and fake Bun)
+        run: python3 -I -m unittest discover -s engine/tests -v
 
       # Each script is parsed by the shell its shebang names: the zsh scripts
       # used to be checked with bash, and new scripts were easy to forget.
@@ -25,8 +28,8 @@ jobs:
             echo "$sh -n $f" && "$sh" -n "$f"
           done
 
-      - name: Compile the Python hooks, search, Windows nightly and CI helpers
-        run: python3 -m py_compile engine/*.py engine/hooks/*.py engine/search/*.py engine/nightly/*.py .github/ci/*.py
+      - name: Compile the Python hooks, search, Windows nightly, unit tests and CI helpers
+        run: python3 -m py_compile engine/*.py engine/hooks/*.py engine/search/*.py engine/nightly/*.py engine/tests/*.py .github/ci/*.py
 
       - name: launchd templates are well-formed plists
         run: for f in engine/nightly/*.plist.template; do plutil -lint "$f"; done
@@ -50,12 +53,12 @@ jobs:
 
   # A real install on a real Windows, the way a user runs it: no Python but the
   # Microsoft Store stub (what broke installs in the field), so Python comes from winget.
-  # The memory is gbrain, as on macOS, at the commit install.ps1 pins: this job is what
-  # makes that pin a tested one. No secret here: the Voyage path runs against
+  # The memory is gbrain, as on macOS, at the release engine/gbrain-pin.json pins: this job
+  # is what makes that pin a tested one. No secret here: the Voyage path runs against
   # .github/ci/fake_voyage.py, and the rejected-key path against the real API with a bad key.
   windows:
     runs-on: windows-latest
-    timeout-minutes: 60
+    timeout-minutes: 75
     defaults:
       run:
         shell: pwsh
@@ -105,6 +108,10 @@ jobs:
           $cd = @(@($j.hooks.UserPromptSubmit.hooks) | Where-Object { "$($_.args)" -like '*correction-detector.py*' })
           if ($cd.Count -ne 1) { throw "correction-detector wired $($cd.Count) times" }
           if ($cd[0].command -notlike '*python.exe') { throw "hook is not in exec form: $($cd[0].command)" }
+          $uc = @(@($j.hooks.SessionStart.hooks) | Where-Object { "$($_.args)" -like '*gbrain-update-check.py*' })
+          if ($uc.Count -ne 1) { throw "gbrain-update-check wired $($uc.Count) times under SessionStart" }
+          if ($uc[0].command -notlike '*python.exe') { throw "SessionStart hook is not in exec form: $($uc[0].command)" }
+          if (-not (Test-Path "$H\.claude\hooks\brain\gbrain_update.py")) { throw 'gbrain_update.py not installed next to the hooks' }
           if (-not (Test-Path "$H\Documents\Brain\Profile")) { throw 'vault skeleton missing' }
           if (-not (Test-Path "$H\Documents\Brain\.git")) { throw 'vault is not a git repo' }
           Get-ScheduledTask -TaskName BrainNightly, BrainReflection | Format-Table TaskName, State
@@ -117,6 +124,12 @@ jobs:
             if (-not (Test-Path "$H\.claude\skills\$($sk.Name)\SKILL.md")) { throw "skill $($sk.Name) not installed" }
           }
 
+      - name: Unit tests (engine/tests) with the Python the installer set up
+        run: |
+          $py = (@((Get-Content "$env:USERPROFILE\.claude\settings.json" -Raw | ConvertFrom-Json).hooks.UserPromptSubmit.hooks)[0]).command
+          & $py -I -m unittest discover -s engine/tests -v
+          if ($LASTEXITCODE) { throw "unit tests failed (exit $LASTEXITCODE)" }
+
       - name: gbrain is the memory (keyword brain, no key)
         run: |
           $H = $env:USERPROFILE
@@ -124,9 +137,9 @@ jobs:
           if (-not (Test-Path $gb)) { throw 'gbrain.exe not linked' }
           if ((Get-Content "$H\.brain-search\engine").Trim() -ne 'gbrain') { throw "engine: $(Get-Content "$H\.brain-search\engine")" }
           if (-not (Test-Path "$H\.gbrain\brain.pglite")) { throw 'no brain.pglite' }
-          $want = (Select-String -Path install.ps1 -Pattern '^\$GBRAIN_REF = "(\w+)"').Matches[0].Groups[1].Value
+          $want = (Get-Content engine\gbrain-pin.json -Raw | ConvertFrom-Json).sha
           $head = (git -C "$H\DEV\gbrain" rev-parse HEAD).Trim()
-          if ($head -ne $want) { throw "gbrain at $head, install.ps1 pins $want" }
+          if ($head -ne $want) { throw "gbrain at $head, engine/gbrain-pin.json pins $want" }
           & $gb --version
           $cfg = Get-Content "$H\.gbrain\config.json" -Raw | ConvertFrom-Json
           if (-not $cfg.embedding_disabled) { throw 'a brain without a key should be keyword-only' }
@@ -154,11 +167,30 @@ jobs:
           ~/.local/bin/gbq sync --repo ~/Documents/Brain --no-pull --no-embed
           ~/.local/bin/gbq embed --stale --max-usd 0.10
 
+      - name: The 7-day gbrain update, dry run against the real GitHub (reads, decides, changes nothing)
+        run: |
+          $H = $env:USERPROFILE
+          $py = (@((Get-Content "$H\.claude\settings.json" -Raw | ConvertFrom-Json).hooks.UserPromptSubmit.hooks)[0]).command
+          $head = (git -C "$H\DEV\gbrain" rev-parse HEAD).Trim()
+          # Its own lines carry accents: only their ASCII parts are matched.
+          $out = (& $py -I "$H\.claude\hooks\brain\gbrain_update.py" --a-blanc 2>&1) -join "`n"; $out
+          if ($LASTEXITCODE) { throw "gbrain_update.py --a-blanc exited $LASTEXITCODE" }
+          if ($out -notmatch 'tags v\* en amont : [1-9]') { throw 'the list of gbrain releases was not read' }
+          if ($out -notmatch 'cision : ') { throw 'no decision printed' }
+          if ((git -C "$H\DEV\gbrain" rev-parse HEAD).Trim() -ne $head) { throw 'a dry run moved gbrain' }
+          foreach ($f in 'update-state.json', 'last-update.json', 'update.lock') {
+            if (Test-Path "$H\.gbrain\$f") { throw "a dry run wrote ~/.gbrain/$f" }
+          }
+
       - name: The nightly task commits the day's notes and indexes them (S4U, as registered)
         run: |
           $H = $env:USERPROFILE
           $utf8 = New-Object Text.UTF8Encoding $false
           [IO.File]::WriteAllText("$H\Documents\Brain\Journal\lighthouse.md", "# The lighthouse`n`nThe lighthouse keeper logs every storm and repairs the lamp lens before winter.`n", $utf8)
+          # The update step runs for real (list, registry, state) but paused: whether a release is
+          # 7 days old today depends on upstream, and installing one is covered by engine/tests.
+          $until = (Get-Date).ToUniversalTime().AddDays(2).ToString("s") + "Z"
+          [IO.File]::WriteAllText("$H\.gbrain\update-state.json", "{`"pause_jusqua`": `"$until`"}", $utf8)
           Start-ScheduledTask -TaskName BrainNightly
           $sw = [Diagnostics.Stopwatch]::StartNew()
           Start-Sleep -Seconds 3
@@ -167,9 +199,12 @@ jobs:
           Get-Content "$H\.gbrain\nightly.log"
           if ($info.LastTaskResult -ne 0) { throw "BrainNightly LastTaskResult $($info.LastTaskResult)" }
           $log = Get-Content "$H\.gbrain\nightly.log" -Raw
-          foreach ($want in '[git] vault committed', '[sync] exit 0', '[embed] exit 0', '[brain_search] exit 0', 'nightly done') {
+          foreach ($want in '[gbrain-update] exit 0', '[git] vault committed', '[sync] exit 0', '[embed] exit 0', '[brain_search] exit 0', 'nightly done') {
             if (-not $log.Contains($want)) { throw "nightly.log lacks '$want'" }
           }
+          if ($log.IndexOf('[gbrain-update] exit') -gt $log.IndexOf('[git] vault committed')) { throw 'the update ran after the vault commit' }
+          $lu = Get-Content "$H\.gbrain\last-update.json" -Raw | ConvertFrom-Json
+          if ($lu.status -ne 'paused' -or -not $lu.derniere_verif_ok) { throw "update step: status $($lu.status), last check $($lu.derniere_verif_ok)" }
           $q = (& "$H\.local\bin\gbq.cmd" query "lighthouse keeper storm") -join "`n"; $q
           if ($q -notmatch '(?i)lighthouse' -or $q -match '#chunk') { throw 'the note written today is not in gbrain after the nightly' }
 
@@ -201,8 +236,8 @@ jobs:
           $q = (& "$H\.local\bin\gbq.cmd" query "lighthouse keeper storm") -join "`n"
           if ($q -notmatch '(?i)lighthouse' -or $q -match '#chunk') { throw 'gbrain lost the note on a second run' }
           $j = Get-Content "$env:USERPROFILE\.claude\settings.json" -Raw | ConvertFrom-Json
-          $all = @(@($j.hooks.UserPromptSubmit.hooks) + @($j.hooks.Stop.hooks))
-          foreach ($h in 'correction-detector', 'session-logger', 'session-indexer', 'session-recap') {
+          $all = @(@($j.hooks.UserPromptSubmit.hooks) + @($j.hooks.Stop.hooks) + @($j.hooks.SessionStart.hooks))
+          foreach ($h in 'correction-detector', 'session-logger', 'session-indexer', 'session-recap', 'gbrain-update-check') {
             $n = @($all | Where-Object { "$($_.command) $($_.args)" -like "*$h.py*" }).Count
             if ($n -ne 1) { throw "$h wired $n times after a second run" }
           }
@@ -285,3 +320,30 @@ jobs:
           while ((Get-ScheduledTask -TaskName BrainNightly).State -eq 'Running' -and $sw.Elapsed.TotalSeconds -lt 300) { Start-Sleep -Seconds 2 }
           if ((Get-ScheduledTaskInfo -TaskName BrainNightly).LastTaskResult -ne 0) { throw 'nightly failed in fallback mode' }
           Get-Content "$H\.gbrain\nightly.log" -Tail 6
+
+      # A gbrain the nightly moved past the pin stays where it is: its brain may already be
+      # migrated. merge-base cannot see that on the shallow clone, the version guard does.
+      - name: A re-install never moves gbrain back down to the pin
+        run: |
+          $H = $env:USERPROFILE
+          $G = "$H\DEV\gbrain"
+          Remove-Item -Recurse -Force $G
+          Rename-Item "$G.off" gbrain
+          $pin = Get-Content engine\gbrain-pin.json -Raw | ConvertFrom-Json
+          $pv = [version]$pin.tag.TrimStart('v')
+          $url = 'https://github.com/garrytan/gbrain.git'
+          $newer = @(git ls-remote --tags --refs $url 'refs/tags/v*' | ForEach-Object {
+              $tag = ($_ -split "`t")[1] -replace '^refs/tags/', ''
+              if ($tag -match '^v(\d+\.\d+\.\d+(\.\d+)?)$') { [pscustomobject]@{ tag = $tag; v = [version]$Matches[1] } }
+            } | Where-Object { $_.v -gt $pv } | Sort-Object v)
+          if (-not $newer.Count) { Write-Host "::warning::no gbrain release above $($pin.tag) yet: nothing to check"; exit 0 }
+          $tag = $newer[0].tag
+          git -C $G -c credential.helper= fetch -q --depth 1 $url "refs/tags/${tag}:refs/tags/${tag}"
+          if ($LASTEXITCODE) { throw "fetch of $tag failed" }
+          git -C $G -c advice.detachedHead=false checkout -q --detach $tag
+          if ($LASTEXITCODE) { throw "checkout of $tag failed" }
+          $head = (git -C $G rev-parse HEAD).Trim()
+          powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File install.ps1 *>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\install-newer.txt"
+          if ($LASTEXITCODE) { exit 1 }
+          if ((git -C $G rev-parse HEAD).Trim() -ne $head) { throw "the installer moved gbrain from $tag back to $($pin.tag)" }
+          if ((Get-Content "$env:RUNNER_TEMP\install-newer.txt" -Raw) -notmatch 'gbrain deja a jour \(v') { throw "the installer did not see gbrain is past the pin" }
