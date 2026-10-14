@@ -49,6 +49,7 @@ SOURCES = ("release", "build")
 MARQUEUR = ".terrain-ref"
 
 POLL = 1.0
+LECTURE_PLEINE = 15         # between two quick reads of Bibo's words, a full read of the window at least this often
 CAPTURE_ATTENTE = 120       # a capture every 2 min while a screen waits
 CLIC_RELANCE = 20           # a click that changed nothing is tried again after this
 CLIC_ESSAIS = 3
@@ -121,8 +122,10 @@ def choisir_source(ref):
 class Ecran:
     """What the robot sees: Bibo's title and text, the buttons (label, enabled), every text."""
 
-    def __init__(self, fenetre=False, titre="", texte="", boutons=(), textes=(), dialogues=(), lecture=""):
+    def __init__(self, fenetre=False, titre="", texte="", boutons=(), textes=(), dialogues=(), lecture="", statut=None):
         self.fenetre, self.titre, self.texte = fenetre, norm(titre), norm(texte)
+        # (window index, child indices from the window) of Bibo's status region: a quick read's path.
+        self.statut = statut
         self.boutons = [(norm(b), bool(on)) for b, on in boutons]
         self.textes = [norm(x) for x in textes if norm(x)]
         self.dialogues = list(dialogues)
@@ -173,13 +176,12 @@ def ecran_depuis_arbre(fenetres, dialogues=()):
     """The Ecran of the app's accessibility tree (PiloteMac's dump: r role, s subrole, n name,
     v value, d description, e enabled, k children). Bibo speaks in the status region (role=status:
     AXApplicationStatus); without it, the first text of the page and its neighbours stand in."""
-    web = None
-    for f in fenetres or []:
-        for chemin, node in _aplatir(f.get("arbre") or {}):
-            if node.get("r") == "AXWebArea":
-                web = node
-                break
+    web, chemin_statut = None, None
+    for wi, f in enumerate(fenetres or []):
+        flat = _aplatir(f.get("arbre") or {})
+        web = next((node for _, node in flat if node.get("r") == "AXWebArea"), None)
         if web:
+            chemin_statut = next(((wi, c) for c, node in flat if node.get("s") == "AXApplicationStatus"), None)
             break
     if web is None:
         return Ecran(fenetre=bool(fenetres), dialogues=dialogues)
@@ -199,7 +201,13 @@ def ecran_depuis_arbre(fenetres, dialogues=()):
     else:
         dits, lecture = [], "vide"
     return Ecran(fenetre=True, titre=dits[0] if dits else "", texte=" ".join(dits[1:]), boutons=boutons,
-                 textes=[t for _, t in textes], dialogues=dialogues, lecture=lecture)
+                 textes=[t for _, t in textes], dialogues=dialogues, lecture=lecture, statut=chemin_statut)
+
+
+def dits_rapides(textes):
+    """(title, text) of a quick read: the texts of Bibo's region, in order."""
+    dits = [norm(t) for t in textes or [] if isinstance(t, str) and norm(t)]
+    return (dits[0], " ".join(dits[1:])) if dits else None
 
 
 def dialogue_depuis_arbre(processus, arbre):
@@ -314,6 +322,11 @@ class Pilote:
         """The Ecran now (Ecran(fenetre=False) when the app has no window)."""
         raise NotImplementedError
 
+    def rapide(self):
+        """(title, text) of Bibo in a cheap read, or None when the driver has none: then every
+        reading of the window is a full one."""
+        return None
+
     def cliquer(self, libelle, processus=None):
         """Clicks the enabled button with this label (in the app, or in a system dialog's process)."""
         raise NotImplementedError
@@ -338,7 +351,7 @@ JXA = r'''
 function run(argv) {
   var req = JSON.parse(argv[0]);
   var se = Application('System Events');
-  var out = req.op === 'cliquer' ? cliquer(se, req) : lire(se, req);
+  var out = req.op === 'cliquer' ? cliquer(se, req) : req.op === 'rapide' ? rapide(se, req) : lire(se, req);
   return enc(out);
 }
 
@@ -431,6 +444,25 @@ function lire(se, req) {
   return res;
 }
 
+// Bibo's words only, from the path of the last full read: the texts of its region's paragraphs.
+function rapide(se, req) {
+  try {
+    var el = se.processes.byName(req.processus).windows[req.fenetre];
+    req.chemin.forEach(function (i) { el = el.uiElements[i]; });
+    if (str(el.subrole()) !== 'AXApplicationStatus') return {ok: false};
+    var out = [];
+    [el.uiElements.uiElements.value(), el.uiElements.uiElements.name()].some(function (rows) {
+      (rows || []).forEach(function (row) {
+        (row || []).forEach(function (x) { if (typeof x === 'string' && x.trim()) out.push(x); });
+      });
+      return out.length > 0;
+    });
+    return {ok: true, textes: out};
+  } catch (e) {
+    return {ok: false};
+  }
+}
+
 function chercher(el, label, depth) {
   var spec = el.uiElements;
   var count = 0;
@@ -489,6 +521,7 @@ class PiloteMac(Pilote):
         self.script = self.travail / "pilote-mac.js"
         self.script.write_text(JXA, encoding="utf-8")
         self.dernier_arbre = None
+        self.statut = None
 
     def _run(self, argv, timeout=120, env=None):
         try:
@@ -606,7 +639,19 @@ class PiloteMac(Pilote):
         fen = [f for f in res.get("app") or [] if isinstance(f, dict)]
         dialogues = [dialogue_depuis_arbre(d.get("processus"), d.get("arbre")) for d in res.get("dialogues") or []
                      if isinstance(d, dict)]
-        return ecran_depuis_arbre(fen, [d for d in dialogues if d["textes"] or d["boutons"]])
+        e = ecran_depuis_arbre(fen, [d for d in dialogues if d["textes"] or d["boutons"]])
+        self.statut = e.statut
+        return e
+
+    def rapide(self):
+        if not getattr(self, "statut", None):
+            return None
+        try:
+            res = self._osa({"op": "rapide", "processus": self.processus, "fenetre": self.statut[0],
+                             "chemin": list(self.statut[1])}, timeout=30)
+        except ErreurPilote:
+            return None
+        return dits_rapides(res.get("textes")) if res.get("ok") else None
 
     def cliquer(self, libelle, processus=None):
         res = self._osa({"op": "cliquer", "processus": processus or self.processus, "libelle": libelle})
@@ -640,7 +685,11 @@ class Parcours:
         self.ouverts = []       # the dialogs of the last reading
         self.dernier = Ecran()  # the last screen where Bibo said something
         self.debut = horloge()
-        self.lectures = []      # how long each reading of the window took, ms
+        self.lectures = []      # how long each full reading of the window took, ms
+        self.rapides = []       # and each quick one (Bibo's words only)
+        self.precedent = None   # the last full reading, kept while Bibo says the same
+        self.plein_a = 0.0
+        self.forcer = True      # the next reading is a full one (after a click, a launch)
 
     def secondes(self):
         return int(self.horloge() - self.debut)
@@ -653,9 +702,21 @@ class Parcours:
         return nom
 
     def lire(self):
+        """The window now. While Bibo says the same, a quick read of its words stands for the full
+        one (a short install step is not missed), a full one at least every LECTURE_PLEINE s."""
+        start = self.horloge()
+        prec = self.precedent
+        if prec is not None and not self.forcer and start - self.plein_a < LECTURE_PLEINE:
+            vite = self.p.rapide()
+            if vite is not None:
+                self.rapides.append(int((self.horloge() - start) * 1000))
+                if vite == (prec.titre, prec.texte):
+                    return prec
         start = self.horloge()
         e = self.p.lire()
         self.lectures.append(int((self.horloge() - start) * 1000))
+        self.plein_a, self.forcer = self.horloge(), False
+        self.precedent = e if e.fenetre and e.titre else None
         if e.titre:
             self.dernier = e
         self.ouverts = e.dialogues
@@ -679,6 +740,7 @@ class Parcours:
             return
         seen["essais"] += 1
         seen["clic_a"] = now
+        self.forcer = True
         try:
             self.p.cliquer(bouton, processus=d.get("processus"))
             seen["reponse"] = bouton
@@ -754,6 +816,7 @@ class Parcours:
                     if clic is not None and clic[1] >= CLIC_ESSAIS:
                         self.echouer("le clic sur « %s » ne change rien (%d essais)" % (label, clic[1]))
                     self.p.cliquer(label)
+                    self.forcer = True
                     clic = (now, (clic[1] if clic else 0) + 1)
             elif label and now - depuis >= CLIC_RELANCE * CLIC_ESSAIS:
                 self.echouer("l'écran « %s » n'offre pas le bouton « %s »%s" % (cle, label, " (désactivé)" if state is False else ""))
@@ -765,6 +828,7 @@ class Parcours:
 
     def lancer(self, env, prefixe=""):
         self.t("app-%slancement" % prefixe)
+        self.precedent, self.forcer = None, True
         self.p.ouvrir(env)
         if not self.p.attendre(lambda: self.lire().fenetre, DELAI_FENETRE, self.horloge, self.dormir):
             self.capturer(prefixe + "sans-fenetre")
@@ -807,11 +871,12 @@ class Parcours:
     def bilan(self):
         if self.ecrans and self.ecrans[-1]["duree_s"] is None:
             self.ecrans[-1]["duree_s"] = self.secondes() - self.ecrans[-1]["debut_s"]
-        mean = int(sum(self.lectures) / len(self.lectures)) if self.lectures else None
+        mean = lambda xs: int(sum(xs) / len(xs)) if xs else None
         return {"captures": self.captures, "ecrans": self.ecrans,
                 "dialogues_systeme": [{k: v for k, v in d.items() if k != "clic_a"} for d in self.dialogues],
                 "bibo": {"titre": self.dernier.titre, "texte": self.dernier.texte},
-                "dernier_ecran": dict(self.dernier.resume(), lecture=self.dernier.lecture), "lecture_fenetre_ms": mean}
+                "dernier_ecran": dict(self.dernier.resume(), lecture=self.dernier.lecture), "lecture_fenetre_ms": {"pleine": mean(self.lectures), "rapide": mean(self.rapides),
+                                                           "lectures": [len(self.lectures), len(self.rapides)]}}
 
 
 # --------------------------------------------------------------------------- getting the app

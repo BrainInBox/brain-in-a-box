@@ -100,6 +100,8 @@ class FauxPilote(ta.Pilote):
         self.depuis = 0.0
         self.clics, self.captures, self.envs, self.fermetures = [], [], [], 0
         self.dialogue = None        # {"processus", "textes", "boutons", "part_sur": button that closes it}
+        self.vite = False           # offers quick reads of Bibo's words
+        self.pleines = 0
 
     def aller(self, etat):
         self.etat = etat() if callable(etat) else etat
@@ -137,14 +139,26 @@ class FauxPilote(ta.Pilote):
         self.fermetures += 1
         return "Cmd+Q"
 
-    def lire(self):
-        self.h.now += 0.5   # reading the window takes a moment
-        if self.etat is None:
-            return ta.Ecran()
+    def spec(self):
         spec = self.ecrans[self.etat]
         if "apres" in spec and self.h.now - self.depuis >= spec["apres"][0]:
             self.aller(spec["apres"][1])
             spec = self.ecrans[self.etat]
+        return spec
+
+    def rapide(self):
+        if not self.vite or self.etat is None:
+            return None
+        self.h.now += 0.1
+        spec = self.spec()
+        return ta.norm(spec["titre"]), ta.norm(spec.get("texte", ""))
+
+    def lire(self):
+        self.h.now += 0.5   # reading the window takes a moment
+        self.pleines += 1
+        if self.etat is None:
+            return ta.Ecran()
+        spec = self.spec()
         dialogues = [dict(self.dialogue)] if self.dialogue else []
         return ta.Ecran(fenetre=True, titre=spec["titre"], texte=spec.get("texte", ""),
                         boutons=[(b, True) for b in spec.get("boutons", {})], textes=spec.get("textes", []),
@@ -228,6 +242,20 @@ class Walk(Base):
         brain = next(e for e in b["ecrans"] if e["ecran"] == "etape-brain")
         self.assertGreaterEqual(brain["duree_s"], 400)
         self.assertEqual(b["bibo"]["titre"], "Ton second cerveau est prêt !")
+
+    def test_quick_reads_stand_for_full_ones_while_bibo_says_the_same(self):
+        slow, quick = FauxPilote(self.h), FauxPilote(Horloge())
+        quick.vite = True
+        self.parcours(slow).premier_lancement({})
+        pa = ta.Parcours(Noms(), quick, self.shots, horloge=quick.h, dormir=quick.h.dormir)
+        pa.premier_lancement({})
+        self.assertEqual(quick.clics, slow.clics)
+        names = lambda shots: [re.sub(r"^\d\d-", "", n) for n in shots]
+        self.assertEqual(names(quick.captures), names(slow.captures))
+        self.assertLess(quick.pleines * 3, slow.pleines)
+        reads = pa.bilan()["lecture_fenetre_ms"]["lectures"]
+        self.assertEqual(reads[0], quick.pleines)
+        self.assertGreater(reads[1], reads[0])
 
     def test_opened_again_it_says_all_is_installed(self):
         p = FauxPilote(self.h)
@@ -382,6 +410,12 @@ class ReadingTheWindow(unittest.TestCase):
         self.assertIsNone(e.bouton("close button"))
         self.assertIn("Il te faut un abonnement Claude Pro ou Max.", e.textes)
         self.assertEqual(ta.cle_ecran(e), ("bienvenue", None))
+        # Where a quick read finds Bibo again: window 0, group, group, scroll area, page, header, region.
+        self.assertEqual(e.statut, (0, (0, 0, 0, 0, 0, 0)))
+        self.assertIsNone(ta.ecran_depuis_arbre(tree(subrole=False)).statut)
+        self.assertEqual(ta.dits_rapides(["Salut, moi c’est Bibo" + NB + "!", " ", "Je vais installer."]),
+                         ("Salut, moi c'est Bibo !", "Je vais installer."))
+        self.assertIsNone(ta.dits_rapides([]))
 
     def test_without_the_status_role_the_first_texts_stand_in(self):
         e = ta.ecran_depuis_arbre(tree(subrole=False))
