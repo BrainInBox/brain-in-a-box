@@ -18,7 +18,7 @@ const CURL_ARGS: [&str; 15] = [
     "-m",
     "15",
     "-o",
-    "/dev/null",
+    sys::NULL_DEVICE,
     "-w",
     "%{http_code}",
     "-K",
@@ -31,7 +31,7 @@ const CURL_ARGS: [&str; 15] = [
 ];
 
 pub fn check_key(key: &str) -> KeyCheck {
-    check_with(Path::new("/usr/bin/curl"), key)
+    check_with(&sys::curl(), key)
 }
 
 fn check_with(curl: &Path, key: &str) -> KeyCheck {
@@ -104,13 +104,17 @@ fn reply(status: KeyStatus, message: &str) -> KeyCheck {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use std::fs;
+    #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
+    #[cfg(unix)]
     use std::path::PathBuf;
 
     const KEY: &str = "pa-Sup3rSecret_key.42";
 
     /// A fake curl that records its argv and stdin, then prints `http` and exits with `code`.
+    #[cfg(unix)]
     fn fake_curl(dir: &Path, http: &str, code: i32) -> PathBuf {
         let p = dir.join("curl");
         let script = format!(
@@ -148,6 +152,7 @@ mod tests {
         assert_eq!(accepted("pa-Ab+c/d=_x.y-z"), Ok(()));
     }
 
+    #[cfg(unix)]
     #[test]
     fn refused_keys_never_reach_curl() {
         let dir = tempfile::tempdir().unwrap();
@@ -175,6 +180,7 @@ mod tests {
         assert!(from_http("502").message.contains("502"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn key_goes_through_stdin_never_argv() {
         let dir = tempfile::tempdir().unwrap();
@@ -201,6 +207,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn no_answer_means_offline() {
         let dir = tempfile::tempdir().unwrap();
@@ -214,5 +221,14 @@ mod tests {
     #[ignore = "network: hits api.voyageai.com"]
     fn real_voyage_rejects_a_bogus_key() {
         assert_eq!(check_key("pa-invalid").status, KeyStatus::Invalid);
+    }
+
+    #[test]
+    fn the_key_stays_off_the_command_line() {
+        assert!(!CURL_ARGS.iter().any(|a| a.contains("pa-") || a.contains("Bearer")));
+        assert_eq!(CURL_ARGS[0], "-q", "~/.curlrc must not be read");
+        // A curl that is not there: no answer, never a verdict on the key.
+        let missing = std::env::temp_dir().join("biab-no-curl").join(sys::exe("curl"));
+        assert_eq!(check_with(&missing, KEY).status, KeyStatus::Offline);
     }
 }

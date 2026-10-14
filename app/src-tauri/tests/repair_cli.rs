@@ -1,3 +1,4 @@
+#![cfg(unix)]
 //! The whole repair path through the binary (`--repair-step brain --yes`), in a
 //! temporary home: a brain archive whose install.sh fails, a fake `claude` first on
 //! the PATH that replays a recorded answer. Nothing of the real home is touched.
