@@ -29,10 +29,19 @@ const TARGETS: &[(&str, &str, &str)] = &[
     ("mettre_de_cote_sources", "brain", ".brain-in-a-box/src"),
     ("mettre_de_cote_gbrain", "brain", "DEV/gbrain"),
 ];
-/// What says an install works: the real probes in the app, fakes in tests.
+/// Where the brain goes when Documents is out of reach (controlled folder access on
+/// Windows): the profile's own Brain folder, which no default protection covers.
+const OUT_OF_DOCUMENTS: &str = "Brain";
+
+/// What says an install works, and where the brain goes: the real probes in the app,
+/// fakes in tests.
 pub struct Probes {
     pub bun_ok: fn(&Path) -> bool,
     pub obsidian_installed: fn(&Path) -> bool,
+    /// The folder install.ps1 would put the brain in now.
+    pub brain_dir: fn(&Path) -> PathBuf,
+    /// Saves the folder for install.ps1's next run (the user's BRAIN_DIR).
+    pub save_brain_dir: fn(&Path) -> io::Result<()>,
 }
 
 fn real_bun_ok(home: &Path) -> bool {
@@ -43,7 +52,20 @@ fn real_obsidian_installed(home: &Path) -> bool {
     detect::obsidian(home) != Found::Absent
 }
 
-pub const REAL_PROBES: Probes = Probes { bun_ok: real_bun_ok, obsidian_installed: real_obsidian_installed };
+/// A BRAIN_DIR the app was started with wins over the saved one: saving would change nothing.
+fn real_save_brain_dir(dir: &Path) -> io::Result<()> {
+    if std::env::var_os("BRAIN_DIR").is_some_and(|d| !d.is_empty()) {
+        return Err(io::Error::other("BRAIN_DIR est déjà choisi pour cette app"));
+    }
+    detect::save_brain_dir(dir)
+}
+
+pub const REAL_PROBES: Probes = Probes {
+    bun_ok: real_bun_ok,
+    obsidian_installed: real_obsidian_installed,
+    brain_dir: detect::brain_dir,
+    save_brain_dir: real_save_brain_dir,
+};
 
 pub struct Ctx<'a> {
     pub home: &'a Path,
@@ -65,6 +87,8 @@ pub enum Done {
     SetAside(PathBuf),
     /// The step runs again without the Voyage key.
     WithoutKey,
+    /// The brain goes in this folder from now on.
+    BrainDir(PathBuf),
 }
 
 /// One folder set aside, as manifest.json records it.
@@ -97,6 +121,7 @@ pub fn apply(id: &str, step: &str, ctx: &Ctx, key_given: bool) -> Result<Done, S
                 Err("aucune clé Voyage n'avait été donnée".into())
             }
         }
+        "cerveau_hors_documents" if step == "brain" => out_of_documents(ctx),
         _ => {
             let Some(&(_, owner, rel)) = TARGETS.iter().find(|t| t.0 == id) else { return Err("remède inconnu".into()) };
             if owner != step {
@@ -105,6 +130,33 @@ pub fn apply(id: &str, step: &str, ctx: &Ctx, key_given: bool) -> Result<Done, S
             let from = may_set_aside(id, rel, ctx)?;
             set_aside(id, &from, ctx).map(Done::SetAside)
         }
+    }
+}
+
+/// The brain goes to ~/Brain instead of a folder Windows protects. Nothing moves: only while
+/// the folder it was meant for holds nothing yet (no note left behind) and ~/Brain is free.
+/// Instead of letting one more program write in protected folders, which any ransomware
+/// written for it would then share.
+fn out_of_documents(ctx: &Ctx) -> Result<Done, String> {
+    let to = ctx.home.join(OUT_OF_DOCUMENTS);
+    let now = (ctx.probes.brain_dir)(ctx.home);
+    if now == to {
+        return Err("ton cerveau va déjà dans ~/Brain".into());
+    }
+    if !empty_or_absent(&now) {
+        return Err("le dossier de ton cerveau contient déjà quelque chose : je ne le change pas".into());
+    }
+    if !empty_or_absent(&to) {
+        return Err("~/Brain existe déjà et n'est pas vide : je n'y touche pas".into());
+    }
+    (ctx.probes.save_brain_dir)(&to).map_err(|e| format!("je n'ai pas pu choisir ~/Brain ({e})"))?;
+    Ok(Done::BrainDir(to))
+}
+
+fn empty_or_absent(dir: &Path) -> bool {
+    match fs::read_dir(dir) {
+        Ok(mut entries) => entries.next().is_none(),
+        Err(e) => e.kind() == io::ErrorKind::NotFound,
     }
 }
 
@@ -263,7 +315,7 @@ pub(crate) mod tests {
     use std::os::unix::fs::symlink;
 
     /// The remedies that need nothing on disk.
-    const OTHERS: &[&str] = &["relancer", "nettoyer_dossiers_travail", "relancer_sans_cle_voyage"];
+    const OTHERS: &[&str] = &["relancer", "nettoyer_dossiers_travail", "relancer_sans_cle_voyage", "cerveau_hors_documents"];
 
     /// Whether `apply` knows this remedy.
     pub(crate) fn known(id: &str) -> bool {
@@ -278,8 +330,21 @@ pub(crate) mod tests {
         false
     }
 
-    const BROKEN: Probes = Probes { bun_ok: broken, obsidian_installed: broken };
-    const WORKING: Probes = Probes { bun_ok: works, obsidian_installed: works };
+    fn documents_brain(home: &Path) -> PathBuf {
+        home.join("Documents").join("Brain")
+    }
+
+    /// Leaves the saved folder next to it, in the fake home.
+    fn save_in_home(dir: &Path) -> io::Result<()> {
+        fs::write(dir.parent().unwrap().join("saved-brain-dir"), dir.to_string_lossy().as_bytes())
+    }
+
+    fn cannot_save(_: &Path) -> io::Result<()> {
+        Err(io::ErrorKind::PermissionDenied.into())
+    }
+
+    const BROKEN: Probes = Probes { bun_ok: broken, obsidian_installed: broken, brain_dir: documents_brain, save_brain_dir: save_in_home };
+    const WORKING: Probes = Probes { bun_ok: works, obsidian_installed: works, brain_dir: documents_brain, save_brain_dir: save_in_home };
 
     struct Home {
         _tmp: tempfile::TempDir,
@@ -479,6 +544,34 @@ pub(crate) mod tests {
         #[cfg(unix)]
         assert!(undo(&h.home, h.me.wrapping_add(1), &h.aside).is_err(), "kept by someone else");
         assert_eq!(undo(&h.home, h.me, &h.aside).unwrap(), ["~/.bun"]);
+    }
+
+    #[test]
+    fn the_brain_goes_out_of_documents_only_while_nothing_is_there() {
+        let saved = |h: &Home| fs::read_to_string(h.home.join("saved-brain-dir")).ok();
+        let h = Home::new();
+        let to = h.home.join("Brain");
+        assert_eq!(apply("cerveau_hors_documents", "brain", &h.ctx(&BROKEN), false), Ok(Done::BrainDir(to.clone())));
+        assert_eq!(saved(&h), Some(to.to_string_lossy().into_owned()));
+        assert!(apply("cerveau_hors_documents", "bun", &h.ctx(&BROKEN), false).is_err(), "the brain step's only");
+
+        // An empty Documents/Brain left by the failed run is not a note.
+        let h = Home::new();
+        fs::create_dir_all(documents_brain(&h.home)).unwrap();
+        assert!(apply("cerveau_hors_documents", "brain", &h.ctx(&BROKEN), false).is_ok());
+
+        // A note in the old folder, something in ~/Brain, or no way to save: nothing changes.
+        for setup in ["Documents/Brain/Journal/note.md", "Brain/mine.txt"] {
+            let h = Home::new();
+            let p = h.home.join(setup);
+            fs::create_dir_all(p.parent().unwrap()).unwrap();
+            fs::write(&p, "mine").unwrap();
+            assert!(apply("cerveau_hors_documents", "brain", &h.ctx(&BROKEN), false).is_err(), "{setup}");
+            assert_eq!(saved(&h), None, "{setup}");
+        }
+        let h = Home::new();
+        let unsaved = Probes { save_brain_dir: cannot_save, ..BROKEN };
+        assert!(apply("cerveau_hors_documents", "brain", &h.ctx(&unsaved), false).is_err());
     }
 
     #[test]

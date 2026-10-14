@@ -44,8 +44,17 @@ const MAX_TREE: usize = 64 << 20;
 /// failed is never pruned (KEEP_MARK).
 const SNAPSHOTS_KEPT: usize = 3;
 
-/// What install.sh wrote (path -> sha256), once it keeps that list.
+/// What install.sh and install.ps1 wrote (path -> sha256).
 const INSTALLED: &str = ".brain-in-a-box/installed.json";
+/// The kit's sources the last install ran from. install.ps1 copies their hooks as they are:
+/// one still exactly like its source there is ours, from before installed.json.
+const SOURCES: &str = ".brain-in-a-box/src/engine";
+const SOURCE_DIRS: &[&str] = &["hooks", "nightly"];
+/// Where the installers put the kit's hooks, and what settings.json runs them from.
+const KIT_HOOKS: &str = ".claude/hooks/brain";
+/// install.ps1's gbq for Git Bash holds this PC's paths (Python, the brain), so no source
+/// matches it: its first lines say it is ours.
+const GBQ_MARK: (&str, &[u8]) = (".local/bin/gbq", b"#!/bin/sh\n# brain-in-a-box : gbq pour Git Bash");
 /// install_skills.py's list: skill name -> hash of the whole folder.
 const SKILLS_MANIFEST: &str = ".brain-in-a-box/skills.json";
 /// The guard's own list of what a guarded run wrote, next to the snapshots.
@@ -160,6 +169,8 @@ pub fn take(home: &Path, store: &Path) -> Result<Snapshot, String> {
     }
     let mut ours: HashSet<(String, String)> = hashes(home, &home.join(INSTALLED)).into_iter().collect();
     ours.extend(hashes(home, &store.join(WRITTEN)));
+    ours.extend(shipped(home));
+    ours.extend(marked(home));
     let our_skills = untouched_skills(home);
     Ok(Snapshot { store: store.to_path_buf(), dir, saved, ours, our_skills })
 }
@@ -297,6 +308,35 @@ fn hashes(home: &Path, file: &Path) -> Vec<(String, String)> {
             is_sha256(&sha).then_some((rel, sha))
         })
         .collect()
+}
+
+/// (path from home, sha256) of the kit's hooks as the last install's sources hold them, at
+/// the place install.ps1 copies them to. Every Windows install made before installed.json
+/// existed is told apart from the user's edit that way; on a Mac install.sh fills paths
+/// into its hooks, so this matches nothing there and its manifest does the job.
+fn shipped(home: &Path) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for dir in SOURCE_DIRS {
+        let dir = home.join(SOURCES).join(dir);
+        for name in names_in(&dir) {
+            let file = dir.join(&name);
+            if !fs::symlink_metadata(&file).is_ok_and(|m| m.is_file()) {
+                continue;
+            }
+            if let Some(sha) = sha256_file(&file) {
+                out.push((slashed(&Path::new(KIT_HOOKS).join(&name)), sha));
+            }
+        }
+    }
+    out
+}
+
+/// install.ps1's gbq, as it wrote it (see GBQ_MARK).
+fn marked(home: &Path) -> Option<(String, String)> {
+    let (rel, mark) = GBQ_MARK;
+    let file = home.join(rel);
+    let bytes = fs::read(&file).ok().filter(|b| b.starts_with(mark))?;
+    fs::symlink_metadata(&file).is_ok_and(|m| m.is_file()).then(|| (rel.to_string(), hex(&Sha256::digest(&bytes))))
 }
 
 fn is_sha256(s: &str) -> bool {
@@ -460,14 +500,14 @@ fn changed(snap: &Snapshot, home: &Path, s: &Saved) -> Option<&'static str> {
         Rule::Same => Some("réécrit"),
         Rule::Append if after.starts_with(&before) => None,
         Rule::Append => Some("début modifié"),
-        Rule::Settings => settings_change(&before, &after),
+        Rule::Settings => settings_change(&before, &after, home),
     };
     // A file of ours rewritten as allowed may change mode too; nothing else may.
     let mode_kept = perms::mode(&now) == k.mode || (s.rule == Rule::Same && before != after);
     content.or((!mode_kept).then_some("droits modifiés"))
 }
 
-fn settings_change(before: &[u8], after: &[u8]) -> Option<&'static str> {
+fn settings_change(before: &[u8], after: &[u8], home: &Path) -> Option<&'static str> {
     let Ok(Value::Object(old)) = serde_json::from_slice::<Value>(before) else {
         // Unreadable before: nothing tells what may change, so nothing may.
         return (before != after).then_some("réécrit alors qu'il était illisible");
@@ -482,10 +522,37 @@ fn settings_change(before: &[u8], after: &[u8]) -> Option<&'static str> {
         return Some("réglages modifiés");
     }
     let kept = hook_list(&new);
-    if hook_list(&old).iter().any(|h| !kept.contains(h)) {
+    // One of the kit's hooks may be re-pointed (another Python, the exec form instead of the
+    // shell one) or lose a second copy: install.ps1 does both. Still run for the same event,
+    // it is still there.
+    let kit_kept: HashSet<(&str, String)> =
+        kept.iter().filter_map(|(event, _, h)| Some((event.as_str(), kit_hook(h, home)?))).collect();
+    let still_run = |event: &str, h: &Value| kit_hook(h, home).is_some_and(|name| kit_kept.contains(&(event, name)));
+    if hook_list(&old).iter().any(|(event, matcher, h)| !kept.contains(&(event.clone(), matcher.clone(), h.clone())) && !still_run(event, h)) {
         return Some("hooks retirés");
     }
     None
+}
+
+/// The kit's hook a settings entry runs ("correction-detector.py"), whatever runs it: the
+/// shell form ("python3 /Users/jo/.claude/hooks/brain/x.py", "~/.claude/hooks/brain/x.py") or
+/// the exec form (python.exe, the script in "args"), with any Python. None for anything else.
+fn kit_hook(hook: &Value, home: &Path) -> Option<String> {
+    let mut text = hook.get("command")?.as_str()?.to_string();
+    for arg in hook.get("args").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str) {
+        text.push(' ');
+        text.push_str(arg);
+    }
+    // Windows paths have either slash and any case.
+    let plain = |s: &str| s.replace('\\', "/").to_lowercase();
+    let text = plain(&text);
+    let home = plain(&home.to_string_lossy());
+    let rest = [home.as_str(), "~", "$home", "${home}", "%userprofile%"].iter().find_map(|root| {
+        let at = format!("{}/{KIT_HOOKS}/", root.trim_end_matches('/'));
+        text.find(&at).map(|i| &text[i + at.len()..])
+    })?;
+    let name: String = rest.chars().take_while(|c| !c.is_whitespace() && !matches!(c, '"' | '\'' | '/')).collect();
+    (!name.is_empty()).then_some(name)
 }
 
 /// (event, matcher, hook) for every hook. Anything not shaped as expected counts as
@@ -590,7 +657,7 @@ fn resolve(link: &Path) -> io::Result<PathBuf> {
 }
 
 /// After a clean run: the files it created or rewrote are ours as written, so the
-/// next run may replace them (until install.sh keeps its own list, installed.json).
+/// next run may replace them (the installers' own list is installed.json).
 fn remember(snap: &Snapshot, home: &Path) {
     let before: HashMap<&Path, &Saved> = snap.saved.iter().map(|s| (s.rel.as_path(), s)).collect();
     let file = snap.store.join(WRITTEN);
@@ -821,6 +888,78 @@ mod tests {
                 assert_eq!(h.read(SETTINGS), USER_SETTINGS.as_bytes(), "{label}");
             }
         }
+    }
+
+    /// What install.ps1 makes of an older install's settings: the Python it finds now, the
+    /// exec form, one copy of each hook. The same hooks still run: nothing to put back.
+    #[test]
+    fn a_kit_hook_may_change_python_or_form_but_not_go() {
+        use serde_json::json;
+        let home = Path::new(if cfg!(windows) { r"C:\Users\Jo Doe" } else { "/Users/Jo Doe" });
+        let script = |name: &str| home.join(".claude").join("hooks").join("brain").join(name).to_string_lossy().into_owned();
+        let exec = |py: &str, name: &str| json!({ "type": "command", "command": py, "args": [script(name)] });
+        let settings = |hooks: Value| serde_json::to_vec(&json!({ "env": { "A": "1" }, "hooks": hooks })).unwrap();
+        let mine = json!([{ "matcher": "Bash", "hooks": [{ "type": "command", "command": "~/.claude/hooks/guard.sh" }] }]);
+        let old_py = r"C:\Python311\python.exe";
+        let new_py = r"C:\Users\Jo Doe\AppData\Local\Programs\Python\Python312\python.exe";
+        let before = settings(json!({
+            "UserPromptSubmit": [{ "matcher": "", "hooks": [exec(old_py, "correction-detector.py")] }],
+            "Stop": [
+                { "matcher": "", "hooks": [{ "type": "command", "command": format!("\"{old_py}\" \"{}\"", script("session-logger.py")) }] },
+                { "matcher": "x", "hooks": [exec(old_py, "session-logger.py")] }
+            ],
+            "SessionStart": [{ "hooks": [{ "type": "command", "command": "python3 ~/.claude/hooks/brain/gbrain-update-check.py" }] }],
+            "PreToolUse": mine
+        }));
+        let after = |ups: Value, stop: Value, pre: Value| {
+            settings(json!({
+                "UserPromptSubmit": ups,
+                "Stop": stop,
+                "SessionStart": [{ "hooks": [exec(new_py, "gbrain-update-check.py")] }],
+                "PreToolUse": pre
+            }))
+        };
+        let ups = json!([{ "matcher": "", "hooks": [exec(new_py, "correction-detector.py")] }]);
+        let stop = json!([{ "matcher": "", "hooks": [exec(new_py, "session-logger.py")] }]);
+        assert_eq!(settings_change(&before, &after(ups.clone(), stop.clone(), mine.clone()), home), None);
+
+        let cases = [
+            ("a kit hook gone", after(json!([]), stop.clone(), mine.clone())),
+            ("a kit hook under another event", after(json!([]), json!([{ "hooks": [exec(new_py, "session-logger.py"), exec(new_py, "correction-detector.py")] }]), mine.clone())),
+            ("the user's own hook gone", after(ups.clone(), stop.clone(), json!([]))),
+        ];
+        for (label, now) in cases {
+            assert_eq!(settings_change(&before, &now, home), Some("hooks retirés"), "{label}");
+        }
+        // Another script in the same folder is another hook.
+        assert_eq!(kit_hook(&exec(new_py, "correction-detector.py"), home).as_deref(), Some("correction-detector.py"));
+        assert_eq!(kit_hook(&json!({ "type": "command", "command": "~/.claude/hooks/guard.sh" }), home), None);
+    }
+
+    /// An install made before installed.json (every Windows one until then): a hook still
+    /// exactly like the sources it was copied from is the kit's to update; one the user
+    /// changed stays theirs.
+    #[test]
+    fn a_hook_as_the_last_install_left_it_may_be_updated() {
+        let h = Home::new();
+        h.write(".brain-in-a-box/src/engine/hooks/correction-detector.py", "v1\n");
+        h.write(".brain-in-a-box/src/engine/hooks/session-logger.py", "v1\n");
+        h.write(".brain-in-a-box/src/engine/nightly/windows-nightly.py", "n1\n");
+        h.write(".claude/hooks/brain/correction-detector.py", "v1\n");
+        h.write(".claude/hooks/brain/windows-nightly.py", "n1\n");
+        h.write(".claude/hooks/brain/session-logger.py", "v1, adapted on this PC\n");
+        // install.ps1's Git Bash gbq names the Python and the brain of the day.
+        h.write(".local/bin/gbq", "#!/bin/sh\n# brain-in-a-box : gbq pour Git Bash, meme logique que gbq.cmd\nexec '/c/Py311/python'\n");
+        let snap = h.take();
+        for f in ["correction-detector.py", "windows-nightly.py", "session-logger.py"] {
+            h.write(&format!(".claude/hooks/brain/{f}"), "v2\n");
+        }
+        h.write(".local/bin/gbq", "#!/bin/sh\n# brain-in-a-box : gbq pour Git Bash, meme logique que gbq.cmd\nexec '/c/Py312/python'\n");
+        let found: Vec<String> = check(&snap, &h.home).iter().map(ToString::to_string).collect();
+        assert_eq!(found, ["~/.claude/hooks/brain/session-logger.py (réécrit)"]);
+        settle(snap, &h.home);
+        assert_eq!(h.read(".claude/hooks/brain/session-logger.py"), b"v1, adapted on this PC\n");
+        assert_eq!(h.read(".claude/hooks/brain/correction-detector.py"), b"v2\n");
     }
 
     #[cfg(not(windows))]
@@ -1151,7 +1290,7 @@ mod tests {
                     ".claude/CLAUDE.md" => assert!(now.is_some_and(|b| b.starts_with(&claude_md)), "{rel}"),
                     // A valid settings.json may gain our hooks, and nothing else.
                     SETTINGS if !broken_settings => {
-                        assert_eq!(now.map(|b| settings_change(bytes, b)), Some(None), "{rel}");
+                        assert_eq!(now.map(|b| settings_change(bytes, b, &h.home)), Some(None), "{rel}");
                     }
                     _ => assert_eq!(now, Some(bytes), "{rel} changed"),
                 }
@@ -1206,6 +1345,21 @@ mod tests {
                 assert_eq!(fs::read(h.home.join(&rel)).unwrap(), bytes, "{rel}");
             }
         }
+    }
+
+    /// install.ps1's installed.json names its files as Place-File writes them: absolute
+    /// Windows paths, hashes in any case.
+    #[cfg(windows)]
+    #[test]
+    fn windows_install_ps1_manifest_names_its_files() {
+        let h = Home::new();
+        h.write(".claude/hooks/brain/x.py", "v1\n");
+        let v1 = sha256_file(&h.home.join(".claude/hooks/brain/x.py")).unwrap();
+        let key = h.home.join(r".claude\hooks\brain\x.py").display().to_string();
+        h.write(INSTALLED, &serde_json::json!({ key: v1.to_uppercase() }).to_string());
+        let snap = h.take();
+        h.write(".claude/hooks/brain/x.py", "v2\n");
+        assert!(settle(snap, &h.home).clean());
     }
 
     #[cfg(windows)]

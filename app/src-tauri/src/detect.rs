@@ -308,17 +308,54 @@ pub fn vault(home: &Path) -> Option<PathBuf> {
 }
 
 #[cfg(not(windows))]
-fn brain_dir(home: &Path) -> PathBuf {
+pub fn brain_dir(home: &Path) -> PathBuf {
     home.join("Documents/Brain")
 }
 
-/// install.ps1's own default: BRAIN_DIR, which it saves for the user, else Documents\Brain
-/// in the profile (never the Documents OneDrive may have moved).
+/// Where install.ps1 puts the brain: the folder chosen for it, else Documents\Brain in the
+/// profile (never the Documents OneDrive may have moved).
 #[cfg(windows)]
-fn brain_dir(home: &Path) -> PathBuf {
-    std::env::var_os("BRAIN_DIR")
-        .filter(|d| !d.is_empty())
-        .map_or_else(|| home.join("Documents").join("Brain"), PathBuf::from)
+pub fn brain_dir(home: &Path) -> PathBuf {
+    chosen_brain_dir().unwrap_or_else(|| home.join("Documents").join("Brain"))
+}
+
+/// BRAIN_DIR of this process, else the one install.ps1 saved for the user (HKCU\Environment):
+/// an app started before the install does not have it in its environment, and install.ps1
+/// may have chosen it itself (out of Documents, which controlled folder access protects).
+/// None: install.ps1 chooses.
+#[cfg(windows)]
+pub fn chosen_brain_dir() -> Option<PathBuf> {
+    std::env::var_os("BRAIN_DIR").filter(|d| !d.is_empty()).or_else(saved_brain_dir).map(PathBuf::from)
+}
+
+#[cfg(windows)]
+fn saved_brain_dir() -> Option<std::ffi::OsString> {
+    use winreg::{enums::HKEY_CURRENT_USER, RegKey};
+    let dir: std::ffi::OsString = RegKey::predef(HKEY_CURRENT_USER).open_subkey("Environment").ok()?.get_value("BRAIN_DIR").ok()?;
+    (!dir.is_empty()).then_some(dir)
+}
+
+/// Saves `dir` as the user's BRAIN_DIR, where install.ps1 saves it: its next run puts the brain there.
+#[cfg(windows)]
+pub fn save_brain_dir(dir: &Path) -> std::io::Result<()> {
+    use winreg::{enums::HKEY_CURRENT_USER, RegKey};
+    let (env, _) = RegKey::predef(HKEY_CURRENT_USER).create_subkey("Environment")?;
+    env.set_value("BRAIN_DIR", &dir.as_os_str())
+}
+
+#[cfg(not(windows))]
+pub fn save_brain_dir(_: &Path) -> std::io::Result<()> {
+    Err(std::io::ErrorKind::Unsupported.into())
+}
+
+/// The brain's folder as the window says it: "Documents/Brain" on a Mac; on Windows the
+/// whole path, since install.ps1 may have put it elsewhere.
+pub fn brain_dir_shown(home: &Path) -> String {
+    if cfg!(windows) {
+        brain_dir(home).display().to_string()
+    } else {
+        "Documents/Brain".into()
+    }
 }
 
 /// Set once search by meaning works ("voyage:voyage-4"). The file also holds API

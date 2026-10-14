@@ -6,12 +6,18 @@ on:
   push:
     branches: [master]
 
+# Read only, whatever the repository's default is: these jobs run third-party installers.
+permissions:
+  contents: read
+
 jobs:
   hooks:
     runs-on: macos-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Run test-hooks.sh (hooks + gbrain self-update + YAML frontmatter validation)
         run: bash test-hooks.sh
@@ -34,6 +40,29 @@ jobs:
       - name: launchd templates are well-formed plists
         run: for f in engine/nightly/*.plist.template; do plutil -lint "$f"; done
 
+  # The app's own Windows jobs (25 minutes) run when the app, install.ps1, this workflow or its
+  # helpers change, and on every push to master. A skipped job counts as passed.
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      app: ${{ steps.diff.outputs.app }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT" != pull_request ]; then echo app=true >> "$GITHUB_OUTPUT"; exit 0; fi
+          # The pull request's merge commit: its first parent is master.
+          files=$(git diff --name-only HEAD^1 HEAD)
+          echo "$files"
+          if grep -qE '^(app/|install\.ps1$|\.github/workflows/test\.yml$|\.github/ci/)' <<< "$files"; then app=true; else app=false; fi
+          echo "app=$app" | tee -a "$GITHUB_OUTPUT"
+
   # The installer app, on a Mac and on Windows: diagnosis, install steps, Voyage key check,
   # command runner. (Real downloads are #[ignore] tests, run by hand.)
   app:
@@ -49,6 +78,8 @@ jobs:
         working-directory: app/src-tauri
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Rust tests
         run: cargo test --locked
       - name: Clippy, warnings are errors
@@ -78,8 +109,12 @@ jobs:
 
   # The app's own install path on a real Windows, without its window: Claude Code, then the
   # brain (install.ps1 from this commit, no console, no question) on a PC with only the Store's
-  # python stub. Afterwards the app's diagnosis must find nothing left to install.
+  # python stub, Documents protected against ransomware and a TEMP every account can write to.
+  # Afterwards the app's diagnosis must find nothing left to install. Then the app updates that
+  # brain the way it updates one installed before it, and a folder with an accent arrives whole.
   app-windows-install:
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
     runs-on: windows-latest
     timeout-minutes: 75
     defaults:
@@ -87,15 +122,25 @@ jobs:
         shell: pwsh
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Build the app
         working-directory: app/src-tauri
         run: cargo build --locked
 
-      - name: Claude Code, then the brain, through the app's steps
+      - name: Claude Code, then the brain, through the app's steps (Documents protected, TEMP shared)
         run: |
           git archive --format=zip --prefix=brain-in-a-box-master/ -o "$env:RUNNER_TEMP\biab.zip" HEAD
           . .github/ci/poste-neuf.ps1
+          # Controlled folder access, as on PCs hardened against ransomware: Documents is closed
+          # to the programs Windows does not know. The brain goes to the profile's own folder.
+          Set-MpPreference -EnableControlledFolderAccess Enabled
+          if ((Get-MpPreference).EnableControlledFolderAccess -ne 1) { throw 'controlled folder access did not turn on' }
+          # TEMP as on many company PCs: one folder every account can write to. Nothing of the app's goes there.
+          $shared = 'C:\biab-shared-temp'
+          New-Item -ItemType Directory $shared -Force | Out-Null
+          $env:TMP = $shared; $env:TEMP = $shared
           $env:BIAB_ARCHIVE = "$env:RUNNER_TEMP\biab.zip"
           [Console]::OutputEncoding = [Text.UTF8Encoding]::new()
           foreach ($step in 'claude', 'brain') {
@@ -106,23 +151,79 @@ jobs:
           $seen = @(Select-String -Path "$env:RUNNER_TEMP\step-brain.txt" -Pattern '\((\d+) sur 13\)' | ForEach-Object { [int]$_.Matches[0].Groups[1].Value })
           if ($seen.Count -lt 10) { throw "only $($seen.Count) sections announced: $seen" }
           if (($seen -join ',') -ne (($seen | Sort-Object) -join ',')) { throw "sections out of order: $seen" }
+          if (-not (Test-Path "$env:USERPROFILE\.brain-in-a-box\tmp")) { throw "the app's work folders were not in the profile" }
+          if (-not (Test-Path "$env:USERPROFILE\Brain\Profile")) { throw 'the brain is not in the profile folder' }
+          if (Test-Path "$env:USERPROFILE\Documents\Brain") { throw 'the brain went into the protected Documents' }
 
-      - name: The app now finds everything installed
+      - name: The app now finds everything installed, Python from winget past the Store's stub
         run: |
+          # The runner's own Python is back on this step's PATH: out again, the stub in front.
+          . .github/ci/poste-neuf.ps1
           [Console]::OutputEncoding = [Text.UTF8Encoding]::new()
+          # No BRAIN_DIR in this step's environment: the app reads the one install.ps1 saved.
+          if ($env:BRAIN_DIR) { throw 'BRAIN_DIR leaked into the step' }
           $d = ((& app\src-tauri\target\debug\brain-in-a-box.exe --diagnose) -join "`n") | ConvertFrom-Json
-          $d.checks | Format-Table id, status, detail -AutoSize | Out-String -Width 200
+          $d.checks | Format-Table id, status, detail, path -AutoSize | Out-String -Width 250
           if (@($d.todo).Count) { throw "still to install: $($d.todo -join ', ')" }
           foreach ($id in 'python', 'git', 'bun', 'claude', 'obsidian', 'brain_vault', 'brain_hooks', 'brain_skills', 'brain_memory') {
             $c = $d.checks | Where-Object id -eq $id
             if ($c.status -ne 'ok') { throw "$id is $($c.status): $($c.detail)" }
           }
+          $py = ($d.checks | Where-Object id -eq python).path
+          if ($py -notlike "$env:LOCALAPPDATA\Programs\Python\*") { throw "the app's Python is $py, not winget's" }
+          if (($d.checks | Where-Object id -eq brain_vault).detail -notlike "*$env:USERPROFILE\Brain*") { throw 'the window does not say where the brain is' }
           # Run again, the step has nothing to do.
           $again = (& app\src-tauri\target\debug\brain-in-a-box.exe --run-step brain) -join "`n"; $again
           if ($LASTEXITCODE -or $again -notmatch 'Ton cerveau est d\S+ install') { throw 'a second run did something' }
 
-  # The Windows installer (NSIS, for the user alone, no administrator), as a preview to try.
+      - name: A brain installed before the app is updated through it, nothing put back, and an accented folder arrives whole
+        run: |
+          . .github/ci/poste-neuf.ps1
+          $H = $env:USERPROFILE
+          # What an install from before installed.json leaves: no manifest (neither the kit's nor
+          # the app's guard's), its sources, a hook as those sources had it, and settings.json
+          # wired to the Python of that day, the shell form for one hook.
+          Remove-Item "$H\.brain-in-a-box\installed.json", "$H\.brain-in-a-box\garde\ecrits.json" -ErrorAction SilentlyContinue
+          $hook = "$H\.claude\hooks\brain\correction-detector.py"
+          $old = [IO.File]::ReadAllText("$PWD\engine\hooks\correction-detector.py") + "# an older kit version`n"
+          foreach ($f in $hook, "$H\.brain-in-a-box\src\engine\hooks\correction-detector.py") { [IO.File]::WriteAllText($f, $old) }
+          $sp = "$H\.claude\settings.json"
+          $j = Get-Content $sp -Raw | ConvertFrom-Json
+          foreach ($h in @($j.hooks.UserPromptSubmit.hooks)) { $h.command = 'C:\Python311\python.exe' }
+          $logger = @($j.hooks.Stop.hooks) | Where-Object { "$($_.args)" -like '*session-logger.py*' } | Select-Object -First 1
+          $logger.command = "`"C:\Python311\python.exe`" `"$($logger.args[0])`""
+          $logger.PSObject.Properties.Remove('args')
+          [IO.File]::WriteAllText($sp, ($j | ConvertTo-Json -Depth 20))
+          # The user turns on search by meaning (a key Voyage refuses, no secret here) and keeps the
+          # brain in a folder named with an accent and a space.
+          $dir = "$H\H$([char]0xE9)l$([char]0xE8)ne Dupont\Brain"
+          $env:BRAIN_DIR = $dir
+          $env:VOYAGE_API_KEY = 'pa-ci-refused-not-a-secret'
+          $env:BIAB_ARCHIVE = "$env:RUNNER_TEMP\biab.zip"
+          [Console]::OutputEncoding = [Text.UTF8Encoding]::new()
+          & app\src-tauri\target\debug\brain-in-a-box.exe --run-step brain *>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\step-again.txt"
+          $code = $LASTEXITCODE
+          $out = [IO.File]::ReadAllText("$env:RUNNER_TEMP\step-again.txt")
+          if ($out -match 'remis exactement comme avant|pas pu le remettre') { throw 'the configuration guard put files back' }
+          if ($code) { throw "the brain step failed on an existing install (exit $code)" }
+          # install.ps1's own line, decoded by the app: not the app's sentence, which it writes itself.
+          if (-not $out.Contains("=== Brain vault ($dir) ===")) { throw "install.ps1's output lost the accented folder: $(($out -split "`n" | Select-String 'Brain vault') -join ' | ')" }
+          if ((Get-FileHash $hook).Hash -ne (Get-FileHash engine\hooks\correction-detector.py).Hash) { throw 'the hook was not updated' }
+          $j = Get-Content $sp -Raw | ConvertFrom-Json
+          foreach ($pair in @(@('UserPromptSubmit', 'correction-detector'), @('Stop', 'session-logger'))) {
+            $w = @(@($j.hooks.($pair[0]).hooks) | Where-Object { "$($_.command) $($_.args)" -like "*$($pair[1]).py*" })
+            if ($w.Count -ne 1 -or $w[0].command -notlike "$env:LOCALAPPDATA\Programs\Python\*") { throw "$($pair[1]) wired $($w.Count) times, to $($w.command)" }
+          }
+          $m = Get-Content "$H\.brain-in-a-box\installed.json" -Raw | ConvertFrom-Json
+          if ($m.$hook -ne (Get-FileHash $hook).Hash.ToLower()) { throw "installed.json does not list the hook it wrote: $($m.$hook)" }
+          if (-not (Test-Path -LiteralPath "$dir\Profile")) { throw 'no vault in the accented folder' }
+
+  # The Windows installer (NSIS, for the user alone, no administrator), built as release.yml
+  # builds it for the GitHub release, installed silently and started. A fork's pull request
+  # gets no artifact: a link to this repository's Actions must never hand out its build.
   app-windows-bundle:
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
     runs-on: windows-latest
     timeout-minutes: 40
     defaults:
@@ -131,19 +232,42 @@ jobs:
         working-directory: app/src-tauri
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Tauri CLI
         run: cargo install tauri-cli --version "=2.11.5" --locked
-      - name: Build the installer
-        run: cargo tauri build --bundles nsis
-      - name: One per-user installer, French
+      - name: Build the installer (release.yml's command)
+        run: cargo tauri build --ci --target x86_64-pc-windows-msvc --bundles nsis -- --locked
+      - name: It installs for the user alone, without administrator, and the installed app runs
         run: |
-          $exe = @(Get-ChildItem target\release\bundle\nsis\*-setup.exe)
+          $exe = @(Get-ChildItem target\x86_64-pc-windows-msvc\release\bundle\nsis\*-setup.exe)
           if ($exe.Count -ne 1) { throw "installers: $($exe.Name -join ', ')" }
           $exe | Format-Table Name, Length
-      - uses: actions/upload-artifact@v4
+          $p = Start-Process $exe[0].FullName -ArgumentList '/S' -Wait -PassThru
+          if ($p.ExitCode) { throw "the installer exited $($p.ExitCode)" }
+          $uninstall = 'Software\Microsoft\Windows\CurrentVersion\Uninstall'
+          $mine = @(Get-ChildItem "HKCU:\$uninstall" | Get-ItemProperty | Where-Object DisplayName -eq 'Brain in a Box')
+          if ($mine.Count -ne 1) { throw "uninstall entries for the user: $($mine.Count)" }
+          $mine | Format-List DisplayName, DisplayVersion, UninstallString
+          $all = @(Get-ChildItem "HKLM:\$uninstall", "HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall" -ErrorAction SilentlyContinue |
+            Get-ItemProperty | Where-Object DisplayName -eq 'Brain in a Box')
+          if ($all.Count) { throw 'installed for every user of the PC' }
+          $uninstaller = $mine[0].UninstallString.Trim('"')
+          if ($uninstaller -notlike "$env:LOCALAPPDATA\*") { throw "installed in $uninstaller, outside the user's own programs" }
+          $app = @(Get-ChildItem (Split-Path -Parent $uninstaller) -Filter *.exe | Where-Object Name -notlike 'uninstall*')
+          if ($app.Count -ne 1) { throw "programs installed: $($app.Name -join ', ')" }
+          # The release build has no console: its JSON goes to a file.
+          $diag = "$env:RUNNER_TEMP\diag.json"
+          $r = Start-Process $app[0].FullName -ArgumentList '--diagnose' -Wait -PassThru -NoNewWindow -RedirectStandardOutput $diag
+          if ($r.ExitCode) { throw "--diagnose exited $($r.ExitCode)" }
+          $d = [IO.File]::ReadAllText($diag) | ConvertFrom-Json
+          if ($d.os -notlike 'Windows 1*' -or @($d.checks).Count -lt 10) { throw "the installed app answered: $(Get-Content $diag -Raw)" }
+          "installed app: $($d.os), $(@($d.checks).Count) checks"
+      - if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/upload-artifact@v4
         with:
           name: brain-in-a-box-windows-preview
-          path: app/src-tauri/target/release/bundle/nsis/*-setup.exe
+          path: app/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*-setup.exe
           retention-days: 7
 
   # A real install on a real Windows, the way a user runs it: no Python but the
@@ -159,6 +283,8 @@ jobs:
         shell: pwsh
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: install.ps1 parses in Windows PowerShell 5.1 and PowerShell 7
         run: |

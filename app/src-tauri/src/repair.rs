@@ -107,6 +107,8 @@ const CLT: &[&str] = &["clt"];
 const BUN: &[&str] = &["bun"];
 const OBSIDIAN: &[&str] = &["obsidian"];
 const BRAIN: &[&str] = &["brain"];
+const MAC_BRAIN: &[&str] = if cfg!(windows) { &[] } else { BRAIN };
+const WINDOWS_BRAIN: &[&str] = if cfg!(windows) { BRAIN } else { &[] };
 
 struct Entry {
     id: &'static str,
@@ -167,7 +169,7 @@ const CAUSES: &[Entry] = &[
     Entry::new("gbrain_abime", BRAIN, "le moteur de mémoire installé est abîmé.",
         "Le moteur de mémoire est abîmé."),
     Entry::new("acces_documents_refuse", BRAIN,
-        if cfg!(windows) { "Windows bloque l'écriture dans le dossier Documents (accès contrôlé aux dossiers)." }
+        if cfg!(windows) { "Windows ou un antivirus bloque l'écriture dans le dossier Documents (accès contrôlé aux dossiers)." }
         else { "macOS refuse l'accès au dossier Documents." },
         if cfg!(windows) { "Windows bloque l'écriture dans ton dossier Documents (protection contre les ransomwares)." }
         else { "macOS refuse l'accès à ton dossier Documents." }),
@@ -192,6 +194,11 @@ const REMEDIES: &[Entry] = &[
         "Mettre de côté le moteur de mémoire et le réinstaller."),
     Entry::new("relancer_sans_cle_voyage", BRAIN, "relancer sans la recherche par le sens.",
         "Relancer sans la recherche par le sens (tu pourras l'ajouter plus tard)."),
+    // Windows protects Documents from programs it does not know: the brain goes to the
+    // profile's own folder rather than open Documents to PowerShell, git or Python.
+    Entry::new("cerveau_hors_documents", WINDOWS_BRAIN,
+        "mettre le cerveau dans le dossier personnel (~/Brain) au lieu de Documents, si Documents/Brain ne contient encore rien.",
+        "Mettre ton cerveau dans ton dossier personnel, hors de Documents que Windows protège, puis relancer."),
 ];
 
 const ACTIONS: &[Entry] = &[
@@ -203,13 +210,10 @@ const ACTIONS: &[Entry] = &[
     Entry::new("verifier_reseau", ALL, "vérifier le Wi-Fi, couper le VPN.",
         "Vérifie ton Wi-Fi. Si tu as un VPN ou un réseau d'entreprise, coupe-le le temps de l'installation."),
     Entry::new("liberer_espace", ALL, "libérer au moins 5 Go.", "Libère au moins 5 Go sur ton {machine}.").pane("storage"),
-    Entry::new("autoriser_documents", BRAIN,
-        if cfg!(windows) { "autoriser PowerShell dans l'accès contrôlé aux dossiers." }
-        else { "autoriser l'accès au dossier Documents." },
-        if cfg!(windows) {
-            "Dans Sécurité Windows, ouvre « Gérer la protection contre les ransomwares » et autorise PowerShell \
-             dans « Accès contrôlé aux dossiers »."
-        } else { "Autorise Brain in a Box à accéder à ton dossier Documents." })
+    // A Mac asks once for the app itself. On Windows the only way through would be to allow
+    // PowerShell, git or Python in protected folders, for every script: never offered.
+    Entry::new("autoriser_documents", MAC_BRAIN, "autoriser l'accès au dossier Documents.",
+        "Autorise Brain in a Box à accéder à ton dossier Documents.")
     .pane("privacy_files"),
     Entry::new("fermer_claude", BRAIN, "fermer les autres fenêtres Claude ou {terminal}.",
         "Ferme les autres fenêtres Claude ou {terminal}, puis relance."),
@@ -773,9 +777,9 @@ pub fn analyze(step: &str, on_progress: &mut dyn FnMut(Stage)) -> Result<RepairP
     let home = sys::home();
     let ctx = Ctx {
         store: home.join(STORE),
-        // The user's own temporary folder (/var/folders/…), named by no one. Windows
-        // has no private folder outside the profile: there the path names the user.
-        work: std::env::temp_dir(),
+        // The user's own temporary folder (/var/folders/…), named by no one. On Windows a
+        // folder of the profile (TEMP may be open to every account): the path names the user.
+        work: sys::work_root().map_err(internal)?,
         user: login_name(&home),
         home,
         claude,
@@ -1059,8 +1063,9 @@ pub fn apply(plan_id: &str, key: Option<&str>, log: &mut dyn FnMut(&str, String)
         store: home.join(STORE),
         me: owner(&home),
         probes: &remedies::REAL_PROBES,
-        // Where steps::TempDir puts its work folders.
-        work_dirs: vec![std::env::temp_dir(), home.join("Applications"), home.join(".brain-in-a-box")],
+        // Where steps::TempDir puts its work folders. Never a TEMP shared with other accounts:
+        // on Windows every file there would count as the user's (see perms::owner).
+        work_dirs: sys::work_root().into_iter().chain([home.join("Applications"), home.join(".brain-in-a-box")]).collect(),
         diag: &diagnose::run,
         home,
     };
@@ -1316,6 +1321,7 @@ fn done_text(done: &remedies::Done, home: &Path) -> String {
         remedies::Done::Cleaned(n) => format!("{n} dossier(s) de travail supprimé(s)"),
         remedies::Done::SetAside(to) => format!("mis de côté dans {}", config_guard::tilde(to, home)),
         remedies::Done::WithoutKey => "relance sans la clé Voyage".into(),
+        remedies::Done::BrainDir(to) => format!("le cerveau ira dans {}", config_guard::tilde(to, home)),
     }
 }
 
@@ -1715,11 +1721,30 @@ fn system_facts(home: &Path) -> Map<String, Value> {
     let key = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings";
     let reg = sys::run(&sys::system32("reg.exe"), &["query", key], PROBE_TIMEOUT);
     let tasks = sys::run(&sys::system32("tasklist.exe"), &["/FI", "IMAGENAME eq gbrain.exe", "/NH"], PROBE_TIMEOUT);
+    let cfa = sys::run(&sys::powershell(), &["-NoProfile", "-NonInteractive", "-Command", CFA_PROBE], PROBE_TIMEOUT);
     let mut m = Map::new();
     m.insert("outils".into(), Value::Object(tools));
     m.insert("proxy_systeme".into(), json!(reg.ok() && windows_proxy_on(&reg.stdout)));
     m.insert("gbrain_en_cours".into(), json!(tasks.stdout.to_ascii_lowercase().contains("gbrain.exe")));
+    m.insert("acces_controle_dossiers".into(), json!(controlled_folder_access(&cfa.stdout)));
     m
+}
+
+/// Read only, as install.ps1 reads it before choosing where the brain goes.
+#[cfg(windows)]
+const CFA_PROBE: &str = "(Get-MpPreference).EnableControlledFolderAccess";
+
+/// Controlled folder access: on (1) blocks the programs Windows does not know in Documents,
+/// 2 only audits. Unknown without Microsoft Defender (another antivirus may block all the same).
+#[cfg(windows)]
+fn controlled_folder_access(out: &str) -> Option<&'static str> {
+    match out.trim() {
+        "1" => Some("actif"),
+        "0" => Some("inactif"),
+        "2" | "4" => Some("audit"),
+        "3" => Some("disques_seulement"),
+        _ => None,
+    }
 }
 
 /// From `reg query` of Internet Settings: a proxy server switched on, or a script that
@@ -1746,6 +1771,10 @@ fn home_facts(step: &str, home: &Path) -> Map<String, Value> {
         };
         m.insert("documents".into(), json!(documents));
         m.insert("gbrain_biab_owned".into(), json!(home.join("DEV/gbrain/.biab-owned").exists()));
+        // On Windows install.ps1 may put it out of Documents (controlled folder access).
+        let brain = detect::brain_dir(home);
+        m.insert("dossier_cerveau".into(), json!(config_guard::tilde(&brain, home)));
+        m.insert("dossier_cerveau_a_du_contenu".into(), json!(fs::read_dir(&brain).is_ok_and(|mut d| d.next().is_some())));
     }
     m.insert("settings_json".into(), settings_json(home));
     m.insert("embedding_model".into(), json!(detect::embedding_model(home)));
@@ -2611,19 +2640,21 @@ mod tests {
 
     #[test]
     fn plans_carry_the_app_texts_and_panes() {
-        let a = answer("acces_documents_refuse", &[], &["autoriser_documents", "envoyer_rapport"], "Autorise l'accès.", false);
+        let a = answer("disque_plein", &[], &["liberer_espace", "envoyer_rapport"], "Libère de la place.", false);
         let v = validate("brain", &a, &[], false).unwrap_or_else(|_| panic!());
         let p = plan("brain", 2, "20261013-184455-brain", &v);
         assert!(p.last_round && p.remedies.is_empty());
-        assert_eq!(p.actions[0].pane, Some("privacy_files"));
+        assert_eq!(p.actions[0].pane, Some("storage"));
         assert_eq!(p.actions[1].pane, None);
         let json = serde_json::to_value(&p).unwrap();
         assert_eq!(json["plan_id"], "20261013-184455-brain");
-        let allow = json["actions"][0]["text"].as_str().unwrap();
-        if cfg!(windows) {
-            assert!(allow.contains("PowerShell") && allow.contains("Accès contrôlé aux dossiers"), "{allow}");
-        } else {
-            assert_eq!(allow, "Autorise Brain in a Box à accéder à ton dossier Documents.");
+        assert_eq!(json["actions"][0]["text"], format!("Libère au moins 5 Go sur ton {}.", sys::MACHINE));
+        #[cfg(not(windows))]
+        {
+            let a = answer("acces_documents_refuse", &[], &["autoriser_documents"], "Autorise l'accès.", false);
+            let p = plan("brain", 1, "id", &validate("brain", &a, &[], false).unwrap_or_else(|_| panic!()));
+            assert_eq!(p.actions[0].pane, Some("privacy_files"));
+            assert_eq!(p.actions[0].text, "Autorise Brain in a Box à accéder à ton dossier Documents.");
         }
         // The catalogue says Mac or PC as the app does: no placeholder ever reaches anyone.
         for step in REPAIRABLE {
@@ -2633,6 +2664,23 @@ mod tests {
             }
         }
         assert!(SYSTEM_PROMPT.contains(&format!("sur le {} d'une personne", sys::MACHINE)));
+    }
+
+    /// Allowing PowerShell, git or Python in Windows' protected folders would let in every
+    /// script they run, ransomware included: no plan ever says so. On Windows the brain goes
+    /// out of Documents instead.
+    #[test]
+    fn no_plan_opens_protected_folders_to_a_program() {
+        for step in REPAIRABLE {
+            for e in for_step(ACTIONS, step).chain(for_step(REMEDIES, step)) {
+                let said = format!("{} {}", e.claude, e.user_text(step)).to_lowercase();
+                let program = ["powershell", "git", "python", "interpréteur"].iter().any(|w| said.contains(w));
+                assert!(!(program && said.contains("autoris")), "{}: {said}", e.id);
+            }
+        }
+        let brain = schema("brain").to_string();
+        assert_eq!(brain.contains("cerveau_hors_documents"), cfg!(windows));
+        assert_eq!(brain.contains("autoriser_documents"), !cfg!(windows));
     }
 
     fn failure(lines: &[&str], message: &str) -> Failure {
@@ -2793,6 +2841,10 @@ mod tests {
         assert!(windows_proxy_on(&format!("{key}    ProxyEnable    REG_DWORD    0x0\r\n    AutoConfigURL    REG_SZ    http://wpad/x.pac\r\n")));
         assert!(!windows_proxy_on(&format!("{key}    ProxyEnable    REG_DWORD    0x0\r\n")));
         assert!(!windows_proxy_on(""));
+        assert_eq!(controlled_folder_access("1\r\n"), Some("actif"));
+        assert_eq!(controlled_folder_access("0"), Some("inactif"));
+        assert_eq!(controlled_folder_access("2"), Some("audit"));
+        assert_eq!(controlled_folder_access(""), None, "no Defender");
     }
 
     #[test]
@@ -3418,7 +3470,16 @@ mod tests {
         false
     }
 
-    const PROBES: remedies::Probes = remedies::Probes { bun_ok: bun_works, obsidian_installed: never };
+    fn documents_brain(home: &Path) -> PathBuf {
+        home.join("Documents/Brain")
+    }
+
+    fn no_save(_: &Path) -> io::Result<()> {
+        Err(io::ErrorKind::Unsupported.into())
+    }
+
+    const PROBES: remedies::Probes =
+        remedies::Probes { bun_ok: bun_works, obsidian_installed: never, brain_dir: documents_brain, save_brain_dir: no_save };
 
     /// What the window would see: bun and brain from the temp home, claude while
     /// ~/claude-ok exists, the network and the disk from ~/offline and ~/disk-full.
@@ -3445,6 +3506,7 @@ mod tests {
                     status,
                     detail: String::new(),
                     fix: fix.map(String::from),
+                    path: None,
                 })
                 .collect(),
             todo: Vec::new(),

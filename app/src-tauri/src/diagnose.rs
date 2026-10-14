@@ -13,7 +13,9 @@ use std::time::Duration;
 
 #[cfg(not(windows))]
 use crate::detect::parse_version;
-use crate::detect::{self, fmt_version, Brain, Found, Version};
+#[cfg(not(windows))]
+use crate::detect::Version;
+use crate::detect::{self, fmt_version, Brain, Found};
 use crate::model::{Check, Diagnosis, Status};
 use crate::{steps, sys};
 
@@ -68,6 +70,7 @@ impl Item {
             status,
             detail: detail.into(),
             fix: fix.map(String::from),
+            path: None,
         }
     }
 }
@@ -88,7 +91,7 @@ struct Facts {
     #[cfg(not(windows))]
     clt: bool,
     #[cfg(windows)]
-    python: Option<Version>,
+    python: Option<detect::Python>,
     #[cfg(windows)]
     git: Found,
     bun: Found,
@@ -181,7 +184,7 @@ fn probe(home: &Path) -> Facts {
             parse_windows_probe(&out.stdout)
         });
 
-        let python = detect::python().map(|p| p.version);
+        let python = detect::python();
         let git = detect::git();
         let bun = detect::bun(home);
         let claude = detect::claude();
@@ -279,7 +282,7 @@ fn decide(home: &Path, f: &Facts) -> Diagnosis {
     #[cfg(not(windows))]
     let tools = vec![check_clt(f.clt)];
     #[cfg(windows)]
-    let tools = vec![check_python(f.python), check_git(&f.git)];
+    let tools = vec![check_python(f.python.as_ref()), check_git(&f.git)];
     let mut checks = Vec::from(system);
     checks.extend([check_disk(disk_free_gb), check_network(f.github, f.claude_ai)]);
     checks.extend(tools);
@@ -289,7 +292,7 @@ fn decide(home: &Path, f: &Facts) -> Diagnosis {
         check_claude_auth(f.claude.answers(), f.claude_logged_in),
         check_obsidian(&f.obsidian),
     ]);
-    checks.extend(check_brain(detect::brain(home)));
+    checks.extend(check_brain(detect::brain(home), &detect::brain_dir_shown(home)));
     checks.push(check_voyage(detect::embedding_model(home).as_deref()));
 
     let missing = |step: &str| {
@@ -395,9 +398,12 @@ fn check_clt(found: bool) -> Check {
 
 /// The Microsoft Store's python.exe does not count: it runs nothing.
 #[cfg(windows)]
-fn check_python(version: Option<Version>) -> Check {
-    match version {
-        Some(v) => PYTHON.is(Status::Ok, format!("Python {}", fmt_version(v))),
+fn check_python(found: Option<&detect::Python>) -> Check {
+    match found {
+        Some(p) => Check {
+            path: Some(p.exe.to_string_lossy().into_owned()),
+            ..PYTHON.is(Status::Ok, format!("Python {}", fmt_version(p.version)))
+        },
         None => PYTHON.is(Status::Missing, "Pas encore installé. Je le prends chez Microsoft (winget)."),
     }
 }
@@ -459,7 +465,8 @@ fn check_obsidian(found: &Found) -> Check {
     }
 }
 
-fn check_brain(brain: Brain) -> [Check; 4] {
+/// `at`: the brain's folder as the window says it (detect::brain_dir_shown).
+fn check_brain(brain: Brain, at: &str) -> [Check; 4] {
     let piece = |item: Item, present: bool, ok: &str, missing: &str| {
         if present {
             item.is(Status::Ok, ok)
@@ -471,7 +478,7 @@ fn check_brain(brain: Brain) -> [Check; 4] {
         piece(
             BRAIN_VAULT,
             brain.vault,
-            "Il est dans Documents/Brain.",
+            &format!("Il est dans {at}."),
             "Pas encore créé.",
         ),
         piece(
@@ -565,7 +572,7 @@ mod tests {
             #[cfg(not(windows))]
             clt: true,
             #[cfg(windows)]
-            python: Some((3, 12, 10)),
+            python: Some(detect::Python { exe: r"C:\Users\jo\AppData\Local\Programs\Python\Python312\python.exe".into(), version: (3, 12, 10) }),
             #[cfg(windows)]
             git: Found::Version("git version 2.51.0.windows.1".into()),
             bun: Found::Version("1.4.2".into()),
@@ -658,14 +665,14 @@ mod tests {
     #[test]
     fn brain_pieces_point_to_the_brain_step() {
         let none = Brain { vault: false, hooks: false, skills: false, memory: false };
-        for c in check_brain(none) {
+        for c in check_brain(none, "Documents/Brain") {
             assert_eq!((c.status, c.fix.as_deref()), (Status::Missing, Some("brain")), "{}", c.id);
         }
         let all = Brain { vault: true, hooks: true, skills: true, memory: true };
-        for c in check_brain(all) {
+        for c in check_brain(all, "Documents/Brain") {
             assert_eq!(c.status, Status::Ok, "{}", c.id);
         }
-        let [_, hooks, _, _] = check_brain(Brain { hooks: false, ..all });
+        let [_, hooks, _, _] = check_brain(Brain { hooks: false, ..all }, "Documents/Brain");
         assert_eq!((hooks.id.as_str(), hooks.status), ("brain_hooks", Status::Missing));
     }
 
@@ -786,6 +793,8 @@ mod tests {
             ]
         );
         assert_eq!(by_id(&d, "python").detail, "Python 3.12.10");
+        assert!(by_id(&d, "python").path.as_deref().is_some_and(|p| p.ends_with(r"Python312\python.exe")));
+        assert_eq!(by_id(&d, "git").path, None);
         assert_eq!(by_id(&d, "git").detail, "Git 2.51.0");
         assert!(!format!("{d:?}").contains("SECRET"));
     }

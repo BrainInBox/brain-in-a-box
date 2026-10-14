@@ -2,8 +2,8 @@
 //!
 //! On a Mac these are Unix permissions: 0700 folders, 0600 files, the owner's uid.
 //! Windows has neither modes nor uids. Everything the app writes lives in the user's
-//! profile (its temporary folder included), whose access list keeps the other accounts
-//! out and passes on to what is created in it. There a folder is private by being where
+//! profile (its work folders included: sys::work_root, never a TEMP that may be shared),
+//! whose access list keeps the other accounts out and passes on to what is created in it. There a folder is private by being where
 //! it is, every file counts as the user's own, and a mode only says read-only or not.
 
 use std::fs::{self, File, Metadata, OpenOptions};

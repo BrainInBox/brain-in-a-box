@@ -46,6 +46,23 @@ pub fn home() -> PathBuf {
     std::env::var_os("USERPROFILE").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(r"C:\"))
 }
 
+/// Where the app's work folders go: a downloaded installer, the folder Claude reads.
+/// A Mac's temporary folder (/var/folders/…) is the user's own, and they are 0700 in it.
+#[cfg(not(windows))]
+pub fn work_root() -> io::Result<PathBuf> {
+    Ok(std::env::temp_dir())
+}
+
+/// Windows' TEMP may point outside the profile (C:\Temp, on many company PCs), where every
+/// account can write: another one could swap an installer before it runs. A folder of the
+/// profile instead, private like the rest of it (see perms.rs).
+#[cfg(windows)]
+pub fn work_root() -> io::Result<PathBuf> {
+    let root = home().join(".brain-in-a-box").join("tmp");
+    crate::perms::create_dir_all(&root)?;
+    Ok(root)
+}
+
 /// `name` as a program file: "claude" on a Mac, "claude.exe" on Windows.
 pub fn exe(name: &str) -> String {
     format!("{name}{}", std::env::consts::EXE_SUFFIX)
@@ -545,6 +562,14 @@ mod tests {
     #[cfg(unix)]
     fn alive(pid: &str) -> bool {
         Command::new("/bin/kill").args(["-0", pid]).stderr(Stdio::null()).status().is_ok_and(|s| s.success())
+    }
+
+    /// Whatever TEMP says (C:\Temp, open to every account), the work folders stay in the profile.
+    #[cfg(windows)]
+    #[test]
+    fn work_folders_live_in_the_profile() {
+        let root = work_root().unwrap();
+        assert!(root.starts_with(home()) && root.is_dir(), "{}", root.display());
     }
 
     #[test]

@@ -424,12 +424,12 @@ impl Drop for Mount {
 // ── The brain (brain-in-a-box's own install.sh) ─────────────────────────────
 
 /// The French names of the parts install.sh did not leave behind.
-fn missing_parts(brain: detect::Brain) -> Vec<&'static str> {
+fn missing_parts(brain: detect::Brain, home: &Path) -> Vec<String> {
     [
-        ("le dossier Documents/Brain", brain.vault),
-        ("les automatismes de Claude", brain.hooks),
-        ("la mémoire de recherche", brain.memory),
-        ("les compétences de Claude", brain.skills),
+        (format!("le dossier {}", detect::brain_dir_shown(home)), brain.vault),
+        ("les automatismes de Claude".into(), brain.hooks),
+        ("la mémoire de recherche".into(), brain.memory),
+        ("les compétences de Claude".into(), brain.skills),
     ]
     .into_iter()
     .filter(|(_, there)| !there)
@@ -501,7 +501,7 @@ fn brain(voyage_key: Option<&str>, log: &mut dyn FnMut(String)) -> Step {
              Relance l'étape ; si ça recommence, envoie le journal à l'équipe."
         ));
     }
-    let missing = missing_parts(detect::brain(&home));
+    let missing = missing_parts(detect::brain(&home), &home);
     if !missing.is_empty() {
         return Err(format!("L'installation s'est terminée, mais il manque {}. Relance l'étape.", missing.join(", ")));
     }
@@ -545,8 +545,11 @@ fn brain(voyage_key: Option<&str>, log: &mut dyn FnMut(String)) -> Step {
 
     log("Je mets en place ton cerveau, avec Python, Git, la mémoire et Obsidian (10 à 20 minutes)…".into());
     // Without a key from the user, the variable is removed: a key inherited from the
-    // app's own environment never sneaks in.
-    let env = [("VOYAGE_API_KEY", key)];
+    // app's own environment never sneaks in. The brain's folder, once one was chosen (by the
+    // user, a repair, or install.ps1 itself), goes the same way: this app may have started
+    // before it was saved. Otherwise install.ps1 chooses.
+    let dir = detect::chosen_brain_dir().map(|d| d.to_string_lossy().into_owned());
+    let env = [("VOYAGE_API_KEY", key), ("BRAIN_DIR", dir.as_deref())];
     let mut last = String::new();
     let mut sections = Sections::default();
     let code = run_ps1(&src.join(INSTALLER), &env, &src, BRAIN_LIMIT, &mut |line| {
@@ -568,8 +571,8 @@ fn brain(voyage_key: Option<&str>, log: &mut dyn FnMut(String)) -> Step {
              Relance l'étape ; si ça recommence, envoie le journal à l'équipe."
         ));
     }
-    let mut missing = missing_parts(detect::brain(&home));
-    missing.extend(missing_tools(&home));
+    let mut missing = missing_parts(detect::brain(&home), &home);
+    missing.extend(missing_tools(&home).into_iter().map(String::from));
     if !missing.is_empty() {
         return Err(format!(
             "L'installation s'est terminée, mais il manque {}. Relance l'étape ; \
@@ -577,14 +580,15 @@ fn brain(voyage_key: Option<&str>, log: &mut dyn FnMut(String)) -> Step {
             missing.join(", ")
         ));
     }
+    let at = detect::brain_dir_shown(&home);
     Ok(match (detect::embedding_model(&home), key) {
-        (Some(_), _) => "Ton cerveau est installé dans Documents\\Brain, avec la recherche par le sens.".into(),
-        (None, Some(_)) => "Ton cerveau est installé dans Documents\\Brain. Voyage n'a pas accepté la clé : \
-                            il cherche par mots-clés pour l'instant."
-            .into(),
-        (None, None) => "Ton cerveau est installé dans Documents\\Brain. Il cherche par mots-clés ; \
-                         tu pourras ajouter une clé Voyage plus tard."
-            .into(),
+        (Some(_), _) => format!("Ton cerveau est installé dans {at}, avec la recherche par le sens."),
+        (None, Some(_)) => format!(
+            "Ton cerveau est installé dans {at}. Voyage n'a pas accepté la clé : il cherche par mots-clés pour l'instant."
+        ),
+        (None, None) => format!(
+            "Ton cerveau est installé dans {at}. Il cherche par mots-clés ; tu pourras ajouter une clé Voyage plus tard."
+        ),
     })
 }
 
@@ -908,7 +912,7 @@ pub fn open_vault() -> Result<(), String> {
     let existing = match fs::read_to_string(&config) {
         Ok(s) => Some(s),
         Err(e) if e.kind() == io::ErrorKind::NotFound => None,
-        Err(_) => return unregistered(&app),
+        Err(_) => return unregistered(&app, &vault),
     };
     let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
     match add_vault(existing.as_deref(), &vault, &random_hex(), now) {
@@ -918,21 +922,22 @@ pub fn open_vault() -> Result<(), String> {
             let saved =
                 config.parent().map_or(Ok(()), fs::create_dir_all).and_then(|_| write_atomic(&config, json.as_bytes(), mode));
             if saved.is_err() {
-                return unregistered(&app);
+                return unregistered(&app, &vault);
             }
             open_obsidian(&app, None)
         }
-        VaultList::Unreadable => unregistered(&app),
+        VaultList::Unreadable => unregistered(&app, &vault),
     }
 }
 
 /// Obsidian's vault list could not be updated: open Obsidian anyway and say how to
 /// pick the folder by hand.
-fn unregistered(app: &Path) -> Result<(), String> {
+fn unregistered(app: &Path, vault: &str) -> Result<(), String> {
     open_obsidian(app, None)?;
-    Err("Je n'ai pas pu ajouter ton cerveau à Obsidian. \
-         Dans Obsidian, choisis « Ouvrir un dossier comme coffre », puis Documents > Brain."
-        .into())
+    let folder = if cfg!(windows) { format!("le dossier {vault}") } else { "Documents > Brain".into() };
+    Err(format!(
+        "Je n'ai pas pu ajouter ton cerveau à Obsidian. Dans Obsidian, choisis « Ouvrir un dossier comme coffre », puis {folder}."
+    ))
 }
 
 #[cfg(not(windows))]
@@ -1124,7 +1129,8 @@ fn progress(got: u64, size: Option<u64>) -> String {
 
 /// Downloads an official installer script and runs it with bash (PowerShell on Windows).
 fn run_installer(url: &str, name: &str, args: &[&str], log: &mut dyn FnMut(String)) -> Result<(), String> {
-    let tmp = TempDir::new_in(&std::env::temp_dir())?;
+    let root = sys::work_root().map_err(|e| format!("Je n'ai pas pu créer mon dossier de travail ({e})."))?;
+    let tmp = TempDir::new_in(&root)?;
     let script = tmp.path().join(if cfg!(windows) { "install.ps1" } else { "install.sh" });
     download(url, &script, &format!("l'installeur de {name}"), None, Duration::from_secs(5 * 60), log)?;
     log(format!("J'installe {name}…"));
@@ -1413,9 +1419,10 @@ mod tests {
     #[test]
     fn missing_brain_parts_are_named() {
         let all = detect::Brain { vault: true, hooks: true, skills: true, memory: true };
-        assert!(missing_parts(all).is_empty());
-        assert_eq!(missing_parts(detect::Brain { hooks: false, ..all }), ["les automatismes de Claude"]);
-        assert_eq!(missing_parts(detect::Brain { vault: false, hooks: false, skills: false, memory: false }).len(), 4);
+        let home = Path::new("/Users/jo");
+        assert!(missing_parts(all, home).is_empty());
+        assert_eq!(missing_parts(detect::Brain { hooks: false, ..all }, home), ["les automatismes de Claude"]);
+        assert_eq!(missing_parts(detect::Brain { vault: false, hooks: false, skills: false, memory: false }, home).len(), 4);
     }
 
     #[cfg(unix)]
