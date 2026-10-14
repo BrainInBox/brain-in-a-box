@@ -34,8 +34,13 @@ yourself. Ask them to type something only when it must stay out of the chat
     dashboard).
   - `convert-documents-to-markdown`: reads Word, Excel, PowerPoint, EPUB and
     more. Needs Node.js 20 or later; the skill explains how to get it.
+  - `controle`: the night check (what it fixed, what to look at, undoing a
+    fix, gbrain's updates).
 - **Night shift**: the vault is re-indexed every night and the day's
-  sessions are summarized. Nothing to do.
+  sessions are summarized. The night check masks secrets, archives old
+  memory and flags contradictions, one undoable git commit per fix, report in
+  `Profile/controle.md`. gbrain updates itself to a release at least 7 days
+  old. Nothing to do.
 
 ## Getting a beginner started
 
