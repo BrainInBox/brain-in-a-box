@@ -583,6 +583,12 @@ def vrai_claude(t, opts):
         if os.environ.get("TERRAIN_JETON") == "reserve":
             raise Saute("jeton réservé au workflow de master qui teste master (run planifié, ou lancé sur master)")
         raise Saute("pas de jeton (CLAUDE_CODE_OAUTH_TOKEN)")
+    # The token's shape, never its value: a 401 with line breaks in it is a bad paste, without
+    # them an expired or revoked token (docs/terrain-agent.md, rule 6).
+    raw = os.environ["CLAUDE_CODE_OAUTH_TOKEN"]
+    whole = "".join(raw.split())
+    t.details["jeton"] = {"longueur": len(whole), "prefixe_setup_token": whole.startswith("sk-ant-oat01-"),
+                          "blancs_retires": len(raw) - len(whole)}
     t("claude")
     t.check(find_claude(opts), "Claude Code introuvable (~/.local/bin/claude ou PATH)")
     work = workdir(opts, "vrai-claude")

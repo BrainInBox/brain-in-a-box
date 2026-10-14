@@ -160,9 +160,12 @@ def _login_name():
 
 def setup_token():
     """The setup-token: CLAUDE_CODE_OAUTH_TOKEN when set, else the token file when its owner alone
-    can read it; None when neither. A token file that is not right is an auth error, said."""
-    if os.environ.get(TOKEN_VAR):
-        return os.environ[TOKEN_VAR]
+    can read it; None when neither. A token file that is not right is an auth error, said.
+    `claude setup-token` prints the token across lines, and copied as is it holds line breaks
+    (refused with a 401): a token has no whitespace, so all of it is dropped."""
+    token = "".join(os.environ.get(TOKEN_VAR, "").split())
+    if token:
+        return token
     path, shown = Path.home().joinpath(*TOKEN_FILE), "~/" + "/".join(TOKEN_FILE)
     try:
         st = os.lstat(str(path))
@@ -174,7 +177,7 @@ def setup_token():
         raise HeadlessError("auth", f"{shown} can be read by others: chmod 600 {shown}", "logged_out")
     try:
         with open(str(path), encoding="utf-8") as f:
-            token = f.read(8192).strip()
+            token = "".join(f.read(8192).split())
     except (OSError, ValueError):
         token = ""
     if not re.fullmatch(r"[\x21-\x7e]{20,4096}", token):
