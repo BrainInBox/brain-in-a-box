@@ -565,7 +565,13 @@ function Install-Gbrain {
     }
     Write-Host "  ... gbrain : installation (1 a 3 minutes)"
     # --frozen-lockfile : exactement les dependances que nomme le fichier de verrouillage de gbrain.
-    if ((Invoke-Logged $bun @("install", "--frozen-lockfile") $GREPO) -ne 0) { Warn "gbrain : bun install a echoue (details : $LOG)"; return $false }
+    # Un clone d'une ancienne installation peut etre sur un master dont le verrou est en retard :
+    # il garde l'installation simple d'avant, jusqu'a ce que la nuit le passe sur une version publiee.
+    if ((Invoke-Logged $bun @("install", "--frozen-lockfile") $GREPO) -ne 0) {
+        if ($fresh) { Warn "gbrain : bun install a echoue (details : $LOG)"; return $false }
+        Warn "gbrain : le verrou des dependances ne correspond pas, installation simple"
+        if ((Invoke-Logged $bun @("install") $GREPO) -ne 0) { Warn "gbrain : bun install a echoue (details : $LOG)"; return $false }
+    }
     if ((Invoke-Logged $bun @("link") $GREPO) -ne 0) { Warn "gbrain : bun link a echoue (details : $LOG)"; return $false }
     $gb = Join-Path $BUNBIN "gbrain.exe"
     if ((Invoke-Logged $gb @("--version")) -ne 0) { Warn "gbrain ne demarre pas (details : $LOG)"; return $false }

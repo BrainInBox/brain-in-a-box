@@ -198,7 +198,9 @@ fi
 # release that is at least 7 days old (gbrain_update.py), never lower.
 say "GBrain"
 mkdir -p "$H/DEV"
+FRESH_GBRAIN=0
 if [ -d "$GREPO/.git" ]; then ok "already cloned (its version is left to the nightly update)"; else
+  FRESH_GBRAIN=1
   if [ -L "$GREPO" ] || { [ -e "$GREPO" ] && [ -n "$(ls -A "$GREPO" 2>/dev/null)" ]; }; then
     die "$GREPO exists but is not a gbrain clone: move it away, then re-run ./install.sh"
   fi
@@ -223,7 +225,15 @@ print(d["tag"], d["sha"])' "$REPO/engine/gbrain-pin.json" 2>/dev/null)" || die "
   ok "cloned at $PIN_TAG (the version CI tested)"
 fi
 # --frozen-lockfile: the dependencies are exactly the ones gbrain's lockfile names.
-( cd "$GREPO" && logged env -u VOYAGE_API_KEY bun install --frozen-lockfile && logged env -u VOYAGE_API_KEY bun link ) || die_log "bun install / bun link failed in $GREPO"
+# A clone from an older install can sit on a master whose lockfile lags behind
+# package.json: it gets the plain install it always had, until the nightly
+# moves it to a release.
+if ! ( cd "$GREPO" && logged env -u VOYAGE_API_KEY bun install --frozen-lockfile ); then
+  [ "$FRESH_GBRAIN" = 0 ] || die_log "dependency install failed in $GREPO"
+  warn "gbrain's lockfile does not match its dependencies here: installing without it"
+  ( cd "$GREPO" && logged env -u VOYAGE_API_KEY bun install ) || die_log "bun install failed in $GREPO"
+fi
+( cd "$GREPO" && logged env -u VOYAGE_API_KEY bun link ) || die_log "bun link failed in $GREPO"
 ok "deps + link"
 GBQ_BIN="$H/.bun/bin/gbrain"
 
