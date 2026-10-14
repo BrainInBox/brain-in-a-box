@@ -224,6 +224,16 @@ class RealClaudeScenario(Sandbox):
         self.assertIn("401", r["details"]["juge"]["detail"])
         self.assertNotIn("factice-pas-un-secret", json.dumps(r) + out)
 
+    def test_the_tokens_shape_is_said_never_its_value(self):
+        self.stub([constat(p, "contradiction") for p in terrain.PAIRES], refuse=True)
+        self.env["CLAUDE_CODE_OAUTH_TOKEN"] = "sk-ant-oat01-factice-\n pas-un-secret\n"
+        self.terrain("vrai-claude", "--home", self.home, "--json", self.json)
+        r = self.results()["vrai-claude"]
+        self.assertEqual(r["details"]["jeton"],
+                         {"longueur": len("sk-ant-oat01-factice-pas-un-secret"), "prefixe_setup_token": True,
+                          "blancs_retires": 3})
+        self.assertNotIn("pas-un-secret", json.dumps(r))
+
     def test_an_annotation_on_a_decoy_fails(self):
         self.stub([constat(terrain.PAIRES[2], "contradiction"), constat(terrain.LEURRES[0], "contradiction")])
         rc, out = self.terrain("vrai-claude", "--home", self.home, "--json", self.json)

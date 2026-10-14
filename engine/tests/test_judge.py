@@ -289,6 +289,20 @@ class Environment(unittest.TestCase):
             self.assertEqual(headless.child_env("/t/tmp", "/usr/bin:/bin")[headless.TOKEN_VAR],
                              "sk-ant-oat01-canari-variable")
 
+    def test_a_token_copied_from_a_wrapped_terminal_is_whole(self):
+        # `claude setup-token` prints the token across lines: copied as is, it held line breaks and
+        # the service said 401 (first real-token night of the terrain, 2026-10-14). A token never
+        # has whitespace in it.
+        with mock.patch.dict(os.environ, {headless.TOKEN_VAR: "sk-ant-oat01-canari-\n  jeton-0123\r\n"}):
+            self.assertEqual(headless.child_env("/t/tmp", "/usr/bin:/bin")[headless.TOKEN_VAR],
+                             "sk-ant-oat01-canari-jeton-0123")
+        with mock.patch.dict(os.environ, {headless.TOKEN_VAR: " \n "}):   # blank: as if unset
+            self.assertNotIn(headless.TOKEN_VAR, headless.child_env("/t/tmp", "/usr/bin:/bin"))
+        self.token_file("sk-ant-oat01-canari-\nfichier-0123456789\n")
+        with mock.patch.dict(os.environ, {headless.TOKEN_VAR: " \n "}):   # blank: the file's
+            self.assertEqual(headless.child_env("/t/tmp", "/usr/bin:/bin")[headless.TOKEN_VAR],
+                             "sk-ant-oat01-canari-fichier-0123456789")
+
     def test_a_token_file_that_is_not_right_is_said(self):
         bad = [("sk-ant-oat01-canari-fichier-0123456789", 0o644), ("deux mots", 0o600), ("", 0o600)]
         if os.name == "nt":
