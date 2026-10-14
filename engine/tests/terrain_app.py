@@ -48,7 +48,7 @@ SOURCES = ("release", "build")
 # The marker the robot adds to the sources it hands the app on a branch: the app used them.
 MARQUEUR = ".terrain-ref"
 
-POLL = 1.0
+POLL = 0.5
 LECTURE_PLEINE = 15         # between two quick reads of Bibo's words, a full read of the window at least this often
 CAPTURE_ATTENTE = 120       # a capture every 2 min while a screen waits
 CLIC_RELANCE = 20           # a click that changed nothing is tried again after this
@@ -122,8 +122,11 @@ def choisir_source(ref):
 class Ecran:
     """What the robot sees: Bibo's title and text, the buttons (label, enabled), every text."""
 
-    def __init__(self, fenetre=False, titre="", texte="", boutons=(), textes=(), dialogues=(), lecture="", statut=None):
+    def __init__(self, fenetre=False, titre="", texte="", boutons=(), textes=(), dialogues=(), lecture="", statut=None,
+                 partiel=False):
         self.fenetre, self.titre, self.texte = fenetre, norm(titre), norm(texte)
+        # Bibo's words only (a quick read saw them change): the full read comes next.
+        self.partiel = partiel
         # (window index, child indices from the window) of Bibo's status region: a quick read's path.
         self.statut = statut
         self.boutons = [(norm(b), bool(on)) for b, on in boutons]
@@ -712,6 +715,10 @@ class Parcours:
                 self.rapides.append(int((self.horloge() - start) * 1000))
                 if vite == (prec.titre, prec.texte):
                     return prec
+                # New words: the screen is captured now, its buttons read right after.
+                self.forcer = True
+                self.dernier = Ecran(fenetre=True, titre=vite[0], texte=vite[1], partiel=True)
+                return self.dernier
         start = self.horloge()
         e = self.p.lire()
         self.lectures.append(int((self.horloge() - start) * 1000))
@@ -801,22 +808,22 @@ class Parcours:
             now = self.horloge()
             if cle != cle_prec:
                 cle_prec, depuis, capture_prec, clic = cle, now, now, None
-                vus.setdefault(cle, e)
                 self.entrer(cle, prefixe)
             elif now - capture_prec >= CAPTURE_ATTENTE:
                 capture_prec = now
                 self.capturer("%s%s-%dmin" % (prefixe, cle, int((now - depuis) // 60)))
-            if cle == but:
+            if cle not in vus or (vus[cle].partiel and not e.partiel):
+                vus[cle] = e
+            if cle == but and not e.partiel:
                 self.ecrans[-1]["duree_s"] = 0
                 return vus
-            label = self.reaction(cle, e, relance)
+            label = None if e.partiel else self.reaction(cle, e, relance)
             state = e.bouton(label) if label else None
             if state:
                 if clic is None or now - clic[0] >= CLIC_RELANCE:
                     if clic is not None and clic[1] >= CLIC_ESSAIS:
                         self.echouer("le clic sur « %s » ne change rien (%d essais)" % (label, clic[1]))
                     self.p.cliquer(label)
-                    self.forcer = True
                     clic = (now, (clic[1] if clic else 0) + 1)
             elif label and now - depuis >= CLIC_RELANCE * CLIC_ESSAIS:
                 self.echouer("l'écran « %s » n'offre pas le bouton « %s »%s" % (cle, label, " (désactivé)" if state is False else ""))

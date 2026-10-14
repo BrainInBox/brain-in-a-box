@@ -257,6 +257,18 @@ class Walk(Base):
         self.assertEqual(reads[0], quick.pleines)
         self.assertGreater(reads[1], reads[0])
 
+    def test_a_step_over_in_a_second_still_gets_its_capture(self):
+        # Bun installs in about a second on a GitHub VM: a full read of the window (2 s) misses it.
+        short = {"bun": {"titre": "J’installe Bun.", "apres": (1.0, "obsidian")}}
+        slow, quick = FauxPilote(self.h, change=short), FauxPilote(Horloge(), change=short)
+        quick.vite = True
+        self.parcours(slow).premier_lancement({})
+        self.assertFalse([n for n in slow.captures if "etape-bun" in n])
+        pa = ta.Parcours(Noms(), quick, self.shots, horloge=quick.h, dormir=quick.h.dormir)
+        pa.premier_lancement({})
+        self.assertEqual(len([n for n in quick.captures if n.endswith("-etape-bun.png")]), 1)
+        self.assertEqual(quick.clics, slow.clics)
+
     def test_opened_again_it_says_all_is_installed(self):
         p = FauxPilote(self.h)
         pa = self.parcours(p)
