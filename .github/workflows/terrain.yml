@@ -394,7 +394,8 @@ jobs:
           python3 -I engine/tests/terrain.py rapport "$RUNNER_TEMP"/terrain/*.json --attendus "$ATTENDUS" --jobs "$JOBS" >> "$GITHUB_STEP_SUMMARY"
 
       # Scheduled runs only: a run started by hand on a branch never speaks for master.
-      - name: Open, or comment, the issue "terrain"; say when it is green again
+      # Green again: the issue is closed, with the run's link; the next failure opens a new one.
+      - name: Open, or comment, the issue "terrain"; close it when green again
         if: ${{ !cancelled() && github.event_name == 'schedule' }}
         env:
           GH_TOKEN: ${{ github.token }}
@@ -417,5 +418,5 @@ jobs:
                 --title "Terrain : des tests de nuit échouent" --body-file "$body"
             fi
           elif [ -n "$open" ]; then
-            gh issue comment "$open" --repo "$GITHUB_REPOSITORY" --body "vert le $day ($RUN_URL)"
+            gh issue close "$open" --repo "$GITHUB_REPOSITORY" --reason completed --comment "vert le $day ($RUN_URL)"
           fi

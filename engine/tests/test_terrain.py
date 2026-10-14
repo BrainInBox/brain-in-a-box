@@ -334,6 +334,8 @@ class Workflow(unittest.TestCase):
         self.assertEqual(sorted(rapport["env"]["ATTENDUS"].split(",")), want)
         runs = json.dumps(rapport["steps"])
         self.assertEqual(runs.count('--jobs \\"$JOBS\\"'), 2, "rapport and issue both get the jobs' results")
+        # Green again on a scheduled night: the issue is closed, not left open with a comment.
+        self.assertIn('gh issue close \\"$open\\"', runs)
 
 
 class Score(unittest.TestCase):

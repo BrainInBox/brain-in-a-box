@@ -6,6 +6,17 @@ Windows, a fresh install and an upgrade from v0.2.0) and runs the scenarios of
 
 ## Read the last run
 
+First, is the terrain still running? No run is not a green run: GitHub disables the schedule of a
+public repository after 60 days without activity, and a broken `terrain.yml` starts nothing.
+
+```bash
+gh run list --workflow terrain.yml --event schedule --limit 1 --json createdAt,conclusion,url
+```
+
+If the last scheduled run is more than 30 hours old (or there is none): `gh workflow enable
+terrain.yml`, then say it on the open `terrain` issue, or open one ("Terrain : aucun run planifié
+depuis <date>"), and change nothing else. The issue is closed by the first green scheduled run.
+
 ```bash
 gh run list --workflow terrain.yml --limit 3
 gh run view <run-id>                                  # jobs and steps, the red ones
