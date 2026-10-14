@@ -803,6 +803,16 @@ def check_install(t, opts, kept=(), fresh=True, query=True):
         if auto != "false":
             t.notes.append("le coffre monté garde core.autocrlf=%s (annuler une nuit y réécrit en CRLF)" % (auto or "?"))
 
+    t("claude-code")
+    if WINDOWS:
+        # install.ps1 installs Claude Code when it is missing (test.yml checks the same).
+        t.check((home / ".local" / "bin" / "claude.exe").is_file(),
+                "Claude Code n'est pas installé (~/.local/bin/claude.exe)")
+    if fresh and WINDOWS:
+        settings = json.dumps(read_json(home / ".claude" / "settings.json", {}))
+        t.check("stub" not in settings.lower(), "les hooks sont branchés sur le faux python du Microsoft Store")
+        t.check("Programs\\\\Python" in settings, "les hooks ne sont pas branchés sur le Python que winget a installé")
+
     t("gbrain")
     t.check((home / ".bun" / "bin" / ("gbrain.exe" if WINDOWS else "gbrain")).is_file(), "gbrain n'est pas installé")
     if WINDOWS:

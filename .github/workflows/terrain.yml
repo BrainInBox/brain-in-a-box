@@ -204,12 +204,15 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      # --- fresh install: the one-liner a user pastes (the scheduled night: from GitHub itself)
-      - name: Fresh install (irm | iex)
+      # --- fresh install: the one-liner a user pastes (the scheduled night: from GitHub itself),
+      # on a PC as users have it: no Python but the Store stub, so Python comes from winget.
+      - name: Fresh install (irm | iex), no Python but the Store stub
         id: installeur
         if: matrix.parcours == 'neuf'
         timeout-minutes: 45
-        run: pwsh -NoProfile -ExecutionPolicy Bypass -File .github/ci/terrain-install.ps1
+        run: |
+          . .github/ci/poste-neuf.ps1
+          pwsh -NoProfile -ExecutionPolicy Bypass -File .github/ci/terrain-install.ps1
 
       # The task registers at 04:00 runner time and catches up a missed night: disabled
       # right away, the installation scenario enables it for the one run it starts itself.

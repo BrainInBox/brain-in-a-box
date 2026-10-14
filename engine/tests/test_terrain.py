@@ -253,10 +253,10 @@ class RefGuard(unittest.TestCase):
                 self.assertIn("::error::terrain: ref refused", said)
 
 
-def workflow():
-    """terrain.yml as data (read by ruby's YAML: `on` comes back as the key "true")."""
+def workflow(path=WORKFLOW):
+    """A workflow as data (read by ruby's YAML: `on` comes back as the key "true")."""
     p = subprocess.run(["ruby", "-ryaml", "-rjson", "-e", "puts JSON.dump(YAML.safe_load(File.read(ARGV[0])))",
-                        WORKFLOW], capture_output=True, check=True)
+                        path], capture_output=True, check=True)
     return json.loads(p.stdout.decode("utf-8"))
 
 
@@ -336,6 +336,18 @@ class Workflow(unittest.TestCase):
         self.assertEqual(runs.count('--jobs \\"$JOBS\\"'), 2, "rapport and issue both get the jobs' results")
         # Green again on a scheduled night: the issue is closed, not left open with a comment.
         self.assertIn('gh issue close \\"$open\\"', runs)
+
+
+    def test_a_fresh_windows_has_no_python_in_both_workflows(self):
+        # One description of a fresh PC (.github/ci/poste-neuf.ps1), used by both installs: the
+        # terrain's nightly install exercises winget's Python too, and the two cannot drift apart.
+        tests = workflow(WORKFLOW.replace("terrain.yml", "test.yml"))["jobs"]["windows"]["steps"]
+        fresh = [st for st in tests if "Fresh install" in st.get("name", "")]
+        terrain_fresh = [st for st in self.jobs["windows"]["steps"] if st.get("id") == "installeur"]
+        for st in fresh + terrain_fresh:
+            self.assertTrue(st["run"].startswith(". .github/ci/poste-neuf.ps1\n"), st["name"])
+        self.assertEqual((len(fresh), len(terrain_fresh)), (1, 1))
+        self.assertNotIn("hostedtoolcache", json.dumps(tests), "a second copy of the fresh PC in test.yml")
 
 
 class Score(unittest.TestCase):
