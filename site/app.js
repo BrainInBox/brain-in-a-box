@@ -113,18 +113,19 @@ function fillLinks(release) {
 function mainButtons(system, release) {
   const main = MAIN[system];
   if (system === 'mobile') {
-    for (const btn of document.querySelectorAll('[data-dl-main]')) btn.hidden = true;
+    // Neither the app nor the command line installs on a phone.
+    for (const el of document.querySelectorAll('[data-dl-main], .dl-actions, [data-dl-main-meta]')) el.hidden = true;
     for (const msg of document.querySelectorAll('[data-dl-mobile]')) msg.hidden = false;
-    document.getElementById('dl-main-meta').hidden = true;
     return;
   }
   if (!main) return;
   const file = release && release.files[main.file];
   for (const label of document.querySelectorAll('[data-dl-main-label]')) label.textContent = main.label;
   // Without the API's answer the button opens the Releases page: say which file to take there.
-  document.getElementById('dl-main-meta').textContent = file
+  const meta = file
     ? `${main.meta} · ${megabytes(file.size)}`
     : `${main.meta} · sur GitHub, prends le fichier qui finit par ${FILES[main.file]}`;
+  for (const el of document.querySelectorAll('[data-dl-main-meta]')) el.textContent = meta;
   if (file) for (const btn of document.querySelectorAll('[data-dl-main]')) btn.href = file.url;
   // The others under the button: the one the button already gives goes away.
   const own = document.querySelector(`.dl-others li[data-for="${system}"]`);

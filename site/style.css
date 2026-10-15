@@ -252,6 +252,7 @@ code {
   letter-spacing: -0.02em;
   text-decoration: none;
   white-space: nowrap;
+  flex: none;
 }
 .top-nav { display: flex; gap: 28px; font-size: 15px; }
 .top-nav a { color: var(--ink-2); text-decoration: none; white-space: nowrap; }
@@ -266,8 +267,9 @@ code {
   .top-in { gap: 28px; }
 }
 
-/* On a phone or a tablet: two rows, the sections as a strip that scrolls, not pinned. */
-@media (max-width: 900px) {
+/* Below 980px the name, the five links and the button no longer fit on one row:
+   two rows, the sections as a strip that scrolls, not pinned. */
+@media (max-width: 980px) {
   html { scroll-padding-top: 16px; }
   .top { position: relative; }
   .top-in { flex-wrap: wrap; height: auto; gap: 0 16px; padding-top: 12px; }
@@ -801,7 +803,7 @@ pre.cmd code { padding: 0; background: none; border: 0; color: inherit; font: in
 .cli-after { max-width: 780px; margin: 20px auto 0; color: var(--ink-3); font-size: 14px; text-align: center; }
 .cli-after a { color: var(--ink-2); }
 .cli-cta { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 16px 28px; margin-top: 56px; }
-.cli-cta .dl-mobile { width: 100%; margin: 0; text-align: center; }
+.cli-cta .dl-mobile, .cli-cta .dl-meta { width: 100%; margin: 0; text-align: center; }
 
 /* Footer */
 
@@ -835,7 +837,8 @@ pre.cmd code { padding: 0; background: none; border: 0; color: inherit; font: in
 
 /* Narrower screens */
 
-@media (max-width: 1180px) {
+/* Under 1240px the tree's boxes get too narrow for their text beside the words. */
+@media (max-width: 1240px) {
   .split { grid-template-columns: minmax(0, 1fr); gap: 48px; }
   .split-text { max-width: 44em; }
 }
@@ -857,13 +860,10 @@ pre.cmd code { padding: 0; background: none; border: 0; color: inherit; font: in
   .steps > li:not(:has(> .shot, > .shot-pair)) > .step-text { grid-column: 2; }
 }
 
+/* The three steps one under the other, and the tree as a list that goes down */
 @media (max-width: 760px) {
   .trio { grid-template-columns: minmax(0, 1fr); }
   .trio h3 { margin-top: 18px; }
-}
-
-/* The tree as a list that goes down, on a narrow screen */
-@media (max-width: 700px) {
   .org-panel { padding: 24px 18px; }
   .org { grid-template-columns: minmax(0, 1fr); }
   .org .org-cell { grid-row: auto; grid-column: auto; justify-content: flex-start; padding: 6px 0 6px 30px; }
