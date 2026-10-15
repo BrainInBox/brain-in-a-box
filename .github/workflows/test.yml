@@ -143,6 +143,23 @@ jobs:
           "$H/.local/bin/controle" statut
           # shellcheck disable=SC2016  # the Obsidian line is matched as printed, $(...) included
           grep -q 'd=$(mktemp -d) && curl -fL -o "$d/obsidian.deb" https://github.com/obsidianmd/obsidian-releases/' "$RUNNER_TEMP/install-1.txt"
+          # Nothing chosen: Claude alone, as before there was a choice, and no file says so.
+          test ! -e "$H/.brain-in-a-box/agents.json"
+          if grep -q 'AI agents' "$RUNNER_TEMP/install-1.txt"; then echo "::error::a line about agents with nothing chosen"; exit 1; fi
+
+      - name: Codex is refused on this system (option or BIAB_AGENTS), before anything changes
+        run: |
+          snap() { sha256sum ~/.claude/settings.json ~/.claude/CLAUDE.md ~/.brain-in-a-box/installed.json ~/.brain-in-a-box/install.log; }
+          before=$(snap)
+          for agents in codex claude,codex; do
+            if ./install.sh --agents "$agents" </dev/null > "$RUNNER_TEMP/refused.txt" 2>&1; then echo "::error::--agents $agents went on"; exit 1; fi
+            cat "$RUNNER_TEMP/refused.txt"
+            grep -q "Codex is coming soon on this system" "$RUNNER_TEMP/refused.txt"
+          done
+          if BIAB_AGENTS=codex ./install.sh </dev/null > "$RUNNER_TEMP/refused.txt" 2>&1; then echo "::error::BIAB_AGENTS=codex went on"; exit 1; fi
+          grep -q "Codex is coming soon on this system" "$RUNNER_TEMP/refused.txt"
+          test ! -e ~/.brain-in-a-box/agents.json
+          [ "$(snap)" = "$before" ] || { echo "::error::a refused choice changed the install"; exit 1; }
 
       - name: The nightly as cron starts it (its line, cron's bare environment) commits and indexes today's note
         run: |
@@ -219,6 +236,7 @@ jobs:
           grep -q "Obsidian already installed" "$RUNNER_TEMP/install-3.txt"
           grep -q "Claude Code already installed" "$RUNNER_TEMP/install-3.txt"
           [ "$(grep -c '<!-- brain-in-a-box -->' "$H/.claude/CLAUDE.md")" = 1 ]
+          test ! -e "$H/.brain-in-a-box/agents.json"
           [ "$(systemctl --user show -p NextElapseUSecRealtime --value gbrain-nightly.timer | grep -c '05:30')" = 1 ]
 
       - name: The 7-day gbrain update, dry run against the real GitHub (reads, decides, changes nothing)
@@ -614,6 +632,26 @@ jobs:
           foreach ($sk in Get-ChildItem skills -Directory) {
             if (-not (Test-Path "$H\.claude\skills\$($sk.Name)\SKILL.md")) { throw "skill $($sk.Name) not installed" }
           }
+          # Nothing chosen: Claude alone, as before there was a choice, and no file says so.
+          if (Test-Path "$H\.brain-in-a-box\agents.json") { throw 'nothing was chosen, yet agents.json was written' }
+          if ((Get-Content "$env:RUNNER_TEMP\install-1.txt" -Raw) -match 'agents IA') { throw 'a line about agents with nothing chosen' }
+
+      - name: Codex is refused on this system (-Agents or BIAB_AGENTS), before anything changes
+        run: |
+          $H = $env:USERPROFILE
+          $snap = { foreach ($f in "$H\.claude\settings.json", "$H\.claude\CLAUDE.md", "$H\.brain-in-a-box\installed.json") { "$f $((Get-FileHash $f).Hash)" } }
+          $before = (& $snap) -join "`n"
+          foreach ($case in @(@('-Agents', 'codex'), @('-Agents', 'claude,codex', '-Prefere', 'codex'), @('env'))) {
+            if ($case[0] -eq 'env') { $env:BIAB_AGENTS = 'codex'; $case = @() }
+            $out = (powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File install.ps1 @case 2>&1) -join "`n"
+            $rc = $LASTEXITCODE
+            Remove-Item Env:BIAB_AGENTS -ErrorAction SilentlyContinue
+            $out
+            if (-not $rc) { throw "install.ps1 $case went on" }
+            if ($out -notmatch 'Codex arrive bientot sur ce systeme') { throw "install.ps1 $case did not say why" }
+          }
+          if (Test-Path "$H\.brain-in-a-box\agents.json") { throw 'a refused choice was written' }
+          if (((& $snap) -join "`n") -ne $before) { throw 'a refused choice changed the install' }
 
       - name: Unit tests (engine/tests) with the Python the installer set up
         run: |
@@ -787,6 +825,7 @@ jobs:
           $sb = @(Get-ChildItem "$H\.claude\settings.json.bak-*" | Where-Object { Select-String -Path $_.FullName -SimpleMatch '"kept"' -Quiet })
           if (-not $sb.Count) { throw 'settings.json was rewritten without a backup' }
           if ((Get-Content $sp -Raw | ConvertFrom-Json).mine -ne 'kept') { throw 'a setting of the user was lost' }
+          if (Test-Path "$H\.brain-in-a-box\agents.json") { throw 'nothing was chosen, yet agents.json was written' }
           if (Get-ScheduledTask -TaskName BrainSearchReindex -ErrorAction SilentlyContinue) { throw 'the old BrainSearchReindex task is still there' }
           if ([IO.File]::ReadAllText("$H\Documents\Brain\Journal\lighthouse.md") -ne $note) { throw 'a note changed' }
           $q = (& "$H\.local\bin\gbq.cmd" query "lighthouse keeper storm") -join "`n"
@@ -803,17 +842,22 @@ jobs:
           $n = @((& "$env:USERPROFILE\.bun\bin\gbrain.exe" sources list) | Select-String '^\s+vault\s').Count
           if ($n -ne 1) { throw "vault source listed $n times after a second run" }
 
-      - name: One-liner mode (irm | iex) under the Restricted policy of a fresh PC
+      # irm | iex passes no parameter: the choice comes through BIAB_AGENTS, as the app passes it.
+      - name: One-liner mode (irm | iex) under the Restricted policy of a fresh PC, Claude chosen through BIAB_AGENTS
         run: |
           Unregister-ScheduledTask -TaskName BrainNightly, BrainReflection -Confirm:$false
           git archive --format=zip --prefix=brain-in-a-box-master/ -o "$env:RUNNER_TEMP\src.zip" HEAD
           $env:BIAB_ARCHIVE = "$env:RUNNER_TEMP\src.zip"
           $env:BRAIN_DIR = "$env:RUNNER_TEMP\Brain2"
-          powershell -NoProfile -ExecutionPolicy Restricted -Command "Get-Content -Raw '$PWD\install.ps1' | Invoke-Expression"
+          $env:BIAB_AGENTS = 'claude'
+          powershell -NoProfile -ExecutionPolicy Restricted -Command "Get-Content -Raw '$PWD\install.ps1' | Invoke-Expression" *>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\install-iex.txt"
           if ($LASTEXITCODE) { exit 1 }
           if (-not (Test-Path "$env:USERPROFILE\.brain-in-a-box\src\vault-skeleton")) { throw 'sources not unpacked' }
           if (-not (Test-Path "$env:RUNNER_TEMP\Brain2\Profile")) { throw 'vault not created in BRAIN_DIR' }
           Get-ScheduledTask -TaskName BrainNightly, BrainReflection | Format-Table TaskName, State
+          $a = Get-Content "$env:USERPROFILE\.brain-in-a-box\agents.json" -Raw | ConvertFrom-Json
+          if ("$($a.version) $($a.agents -join ',') $($a.prefere) $($a.pose_par)" -ne '1 claude claude install.ps1' -or $a.codex_home) { throw "agents.json: $($a | ConvertTo-Json -Compress)" }
+          if ((Get-Content "$env:RUNNER_TEMP\install-iex.txt" -Raw) -notmatch 'agents IA : Claude Code, note dans') { throw 'the choice was not said' }
 
       - name: A Voyage key added later turns on search by meaning (fake Voyage, no secret)
         run: |
