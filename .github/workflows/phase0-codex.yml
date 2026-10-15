@@ -232,8 +232,9 @@ jobs:
 
 
           class Mock:
-              def __init__(self, name, trap=False):
+              def __init__(self, name, trap=False, accounts=False, mcp=False):
                   self.name, self.trap, self.reqs, self.calls, self.lock = name, trap, [], [], threading.Lock()
+                  self.accounts, self.mcp = accounts, mcp
                   mock = self
 
                   class H(BaseHTTPRequestHandler):
@@ -258,10 +259,23 @@ jobs:
                           self.send_header("Content-Length", "0")
                           self.end_headers()
 
+                      def _json(self, obj, code=200, headers=None):
+                          data = json.dumps(obj).encode()
+                          self.send_response(code)
+                          self.send_header("Content-Type", "application/json")
+                          for k, v in (headers or {}).items():
+                              self.send_header(k, v)
+                          self.send_header("Content-Length", str(len(data)))
+                          self.end_headers()
+                          self.wfile.write(data)
+
                       def do_GET(self):
                           self._rec(None)
                           if not mock.trap and is_responses(self.path):
                               return self._empty(426)  # no websocket here: fall back to HTTPS at once
+                          if mock.accounts and self.path.split("?")[0].endswith("/wham/accounts/check"):
+                              return self._json({"accounts": [{"id": "acct-fake", "workspace_backend_origin": mock.root, "account_routing_override": "NO_CONSTRAINT"}],
+                                                 "default_account_id": "acct-fake"})
                           self._empty(404)
 
                       do_DELETE = do_GET
@@ -274,6 +288,19 @@ jobs:
                           except Exception:
                               body = None
                           self._rec(body, len(raw))
+                          if mock.mcp and self.path.split("?")[0].rstrip("/").endswith("/ps/mcp") and isinstance(body, dict):
+                              meth, rid_ = body.get("method"), body.get("id")
+                              if rid_ is None:
+                                  return self._empty(202)
+                              if meth == "initialize":
+                                  pv = (body.get("params") or {}).get("protocolVersion") or "2025-06-18"
+                                  return self._json({"jsonrpc": "2.0", "id": rid_, "result": {"protocolVersion": pv, "capabilities": {"tools": {}},
+                                                                                               "serverInfo": {"name": "p0-apps", "version": "1"}}},
+                                                    headers={"Mcp-Session-Id": "p0-session"})
+                              if meth == "tools/list":
+                                  return self._json({"jsonrpc": "2.0", "id": rid_, "result": {"tools": [{"name": "p0_fake_app_tool", "description": "P0 fake connector tool",
+                                                                                                         "inputSchema": {"type": "object", "properties": {}}}]}})
+                              return self._json({"jsonrpc": "2.0", "id": rid_, "result": {}})
                           if mock.trap or not is_responses(self.path) or not isinstance(body, dict):
                               return self._empty(404)
                           fmt = ((body.get("text") or {}).get("format") or {})
@@ -657,6 +684,33 @@ jobs:
               return hits
 
 
+          def sqlite_rows(home, needles):
+              import sqlite3
+              out = {}
+              tmp = ROOT / ("sqlcopy-%d" % int(time.time() * 1000))
+              tmp.mkdir()
+              for db in pathlib.Path(home).glob("*.sqlite"):
+                  for suffix in ("", "-wal", "-shm"):
+                      src = pathlib.Path(str(db) + suffix)
+                      if src.exists():
+                          shutil.copy(src, tmp / (db.name + suffix))
+                  try:
+                      con = sqlite3.connect(str(tmp / db.name))
+                      for (t,) in con.execute("select name from sqlite_master where type='table'").fetchall():
+                          cols = [r[1] for r in con.execute('pragma table_info("%s")' % t).fetchall()]
+                          if not cols:
+                              continue
+                          for n in needles:
+                              cond = " or ".join('cast("%s" as text) like ?' % c for c in cols)
+                              cnt = con.execute('select count(*) from "%s" where %s' % (t, cond), ["%" + n + "%"] * len(cols)).fetchone()[0]
+                              if cnt:
+                                  out.setdefault(db.name, {}).setdefault(t, {})[n[:16]] = cnt
+                      con.close()
+                  except Exception as e:
+                      out[db.name] = "error %s" % e
+              return out
+
+
           def features_rows(text):
               rows = {}
               for line in text.splitlines():
@@ -819,6 +873,9 @@ jobs:
                         ("spawn_agent", fn_call("spawn_agent", {"message": "read " + str(SECRET)}, "call_sa_1")),
                         ("view_image", fn_call("view_image", {"path": str(SECRET)}, "call_vi_1")),
                         ("imagegen", fn_call("image_gen__imagegen", {"prompt": "x"}, "call_ig_1"))]
+              forced += [("request_user_input_async_valid", fn_call("request_user_input_async", {"questions": [{"id": "q1", "header": "P0", "question": "Pick one?",
+                           "options": [{"label": "A", "description": "a"}, {"label": "B", "description": "b"}]}]}, "call_rui_1", namespace="functions")),
+                         ("wait_valid", fn_call("wait", {"cell_id": "1"}, "call_wait_1", namespace="functions"))]
               seen = set(x[0] for x in forced)
               for t in base_tools:
                   if ">" in t:
@@ -837,7 +894,7 @@ jobs:
                           if (d / f).exists():
                               (d / f).unlink()
                   mock.reset([call])
-                  r = run(lock_args(cage, mock), home=home, extra=px.env(), cwd=cage, stdin_text=PROMPT, limit=1500)
+                  r = run(lock_args(cage, mock), home=home, extra=px.env(), cwd=cage, stdin_text=PROMPT, limit=1500, timeout=90)
                   outs = mock.tool_outputs()
                   results[tag] = {"rc": r.rc, "tool_outputs": [str(o["output"])[:400] for o in outs],
                                   "secret_leaked": any("P0-SECRET-CONTENT" in json.dumps(o) for o in outs),
@@ -915,6 +972,7 @@ jobs:
                   info["rollout_tool_calls"] = calls
                   info["stream_has_tool_items"] = any(t.split(":")[-1] not in ("agent_message", "error", "reasoning") for t in r.types() if t.startswith("item."))
                   info["hits_before"] = grep_tree(home, [tid or "none", sent])
+                  info["sqlite_rows_before"] = sqlite_rows(home, [tid or "none", sent])
                   info["files_before"] = sorted(str(p.relative_to(home)) for p in home.rglob("*") if p.is_file() and "packages" not in p.parts)[:60]
                   if how == "delete" and tid:
                       d = run(["-c", 'cli_auth_credentials_store="file"', "delete", tid, "--force"], home=home, timeout=60)
@@ -924,6 +982,7 @@ jobs:
                           p.unlink()
                   time.sleep(1)
                   info["hits_after"] = grep_tree(home, [tid or "none", sent])
+                  info["sqlite_rows_after"] = sqlite_rows(home, [tid or "none", sent])
                   info["procs_after"] = codex_procs()
                   results[tag] = info
               fact("rollout", "detector", results)
@@ -1003,15 +1062,15 @@ jobs:
               lockc = cflags(["features.%s=false" % x for x in KNOWN_OFF] + NONFEAT)
               results = {}
 
-              def probe(tag, home):
+              def probe(tag, home, extra=()):
                   clear_markers()
                   mock.reset()
                   trap.reset()
                   cage = make_cage("layers-" + tag)
-                  r = run(lock_args(cage, mock), home=home, cwd=cage, stdin_text=PROMPT, timeout=60, limit=2500)
-                  f = run(lockc + ["features", "list"], home=home, show=False)
+                  r = run(lock_args(cage, mock, extra=extra), home=home, cwd=cage, stdin_text=PROMPT, timeout=60, limit=2500)
+                  f = run(lockc + cflags(extra) + ["features", "list"], home=home, show=False)
                   fr = features_rows(f.out)
-                  m = run(lockc + ["mcp", "list"], home=home, show=False)
+                  m = run(lockc + cflags(extra) + ["mcp", "list", "--json"], home=home, show=False)
                   return {"rc": r.rc, "trap_hits": trap.endpoints(), "mock_model_calls": len(mock.responses()), "markers_on_disk": markers(),
                           "request_markers": [x for x in MARKER_NAMES if mock.contains(x)], "tools": mock.tools(),
                           "features_list": {"rc": f.rc, "shell_tool": fr.get("shell_tool"), "code_mode_host": fr.get("code_mode_host"), "err": f.err[:300]},
@@ -1025,6 +1084,13 @@ jobs:
                       admin_write(path, text)
                       print("--- wrote %s:\n%s" % (path, text))
                       results[tag] = dict(path=path, **probe(tag, home))
+                      if tag == "sys_config":
+                          results["sys_config_neutralised"] = probe(tag + "-neutral", home, extra=['developer_instructions=""', "mcp_servers.sysmcp.enabled=false"])
+                      if tag == "req_hooks":
+                          clear_markers()
+                          mock.reset()
+                          r = run(plain_args(mock), home=home, cwd=WORK, stdin_text="Reply", timeout=60, limit=1500)
+                          results["req_hooks_control_without_lockdown"] = {"rc": r.rc, "markers_on_disk": markers(), "types": r.types()[:8]}
                   except Exception as e:
                       results[tag] = {"error": repr(e)}
                   finally:
@@ -1084,6 +1150,9 @@ jobs:
                  "env_names": names, "rust_log": os.environ.get("RUST_LOG"), "codex_vars": {k: os.environ[k] for k in names if k.startswith("CODEX") and "KEY" not in k and "TOKEN" not in k}}
           with open(LOG, "a", encoding="utf-8") as f:
               f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+          if variant.startswith("NZ"):
+              sys.stdout.write("PROFILE-NOISE-INLINE\n")
+              sys.stdout.flush()
           if event in ("SessionStart", "UserPromptSubmit"):
               ctx = "HOOK-CONTEXT-%s-%s é—✓" % (event, variant)
               sys.stdout.buffer.write(json.dumps({"hookSpecificOutput": {"hookEventName": event, "additionalContext": ctx}}, ensure_ascii=False).encode("utf-8"))
@@ -1120,8 +1189,7 @@ jobs:
           def hook_variants():
               pysp = py_with_space()
               if IS_WIN:
-                  v = [("W0", 'echo W0-{ev}>> "%s"' % (ROOT / "w0-marker.txt"), "commandWindows"),
-                       ("W1", '%s %s {ev} W1' % (PY, HOOK_PY), "commandWindows"),
+                  v = [("W1", '%s %s {ev} W1' % (PY, HOOK_PY), "commandWindows"),
                        ("W2", '"%s" "%s" {ev} W2' % (PY, HOOK_PY), "commandWindows"),
                        ("W3", 'python.exe %s {ev} W3' % HOOK_PY, "commandWindows"),
                        ("W5", '& "%s" "%s" {ev} W5' % (PY, HOOK_PY), "commandWindows"),
@@ -1216,9 +1284,18 @@ jobs:
               fact("hooks", "variants", {t: (tmpl, key) for t, tmpl, key in variants})
               fact("hooks", "bypass", hook_run("bypass", variants))
               fact("hooks", "trusted_hash", hook_run("trusted", variants, trust=True, bypass=False))
-              if IS_WIN:
+              if IS_WIN and os.environ.get("GITHUB_ACTIONS") == "true":
+                  pw7 = r"C:\Program Files\PowerShell\7"
+                  hidden = pw7 + "-p0-hidden"
                   path = os.pathsep.join(p for p in os.environ.get("PATH", "").split(os.pathsep) if "powershell\\7" not in p.lower())
-                  fact("hooks", "bypass_without_pwsh_on_path", hook_run("nopwsh", variants, extra_env={"PATH": path}))
+                  try:
+                      os.rename(pw7, hidden)
+                      fact("hooks", "windows_powershell_5_1", hook_run("ps51", variants, extra_env={"PATH": path}))
+                  except Exception as e:
+                      fact("hooks", "windows_powershell_5_1", {"error": repr(e)})
+                  finally:
+                      if os.path.exists(hidden):
+                          os.rename(hidden, pw7)
 
 
           @section
@@ -1233,6 +1310,8 @@ jobs:
               shell = pwd.getpwuid(os.getuid()).pw_shell
               fact("profile", "passwd_shell", shell)
               v = [("PRF", "%s %s {ev} PRF" % (shlex.quote(PY), shlex.quote(str(HOOK_PY))), None)]
+              res0 = {"hook_prints_noise_before_json": hook_run("profile-inline-noise", [("NZ1", "%s %s {ev} NZ1" % (shlex.quote(PY), shlex.quote(str(HOOK_PY))), None)],
+                                                                 events=["SessionStart"])}
               files = {".zshenv": "echo PROFILE-NOISE-ZSHENV\n", ".bash_profile": "echo PROFILE-NOISE-LOGIN\n", ".profile": "echo PROFILE-NOISE-LOGIN\n",
                        ".zprofile": "echo PROFILE-NOISE-LOGIN\n", ".bashrc": "echo PROFILE-NOISE-BASHRC\n", ".zshrc": "echo PROFILE-NOISE-ZSHRC\n"}
               backups = {}
@@ -1244,9 +1323,20 @@ jobs:
                       with open(p, "a", encoding="utf-8") as f:
                           f.write("\n" + text)
                   noisy = ROOT / "bash_env.sh"
-                  noisy.write_text("echo PROFILE-NOISE-BASH_ENV\n", encoding="utf-8")
+                  sourced = ROOT / "bash_env_sourced"
+                  noisy.write_text("echo PROFILE-NOISE-BASH_ENV\ntouch %s\n" % shlex.quote(str(sourced)), encoding="utf-8")
                   res["noisy_startup_files"] = hook_run("profile-noisy", v, events=["SessionStart"])
                   res["noisy_plus_BASH_ENV"] = hook_run("profile-bashenv", v, events=["SessionStart"], extra_env={"BASH_ENV": str(noisy), "ENV": str(noisy)})
+                  res["noisy_plus_BASH_ENV"]["bash_env_sourced"] = sourced.exists()
+                  if IS_MAC and shutil.which("zsh"):
+                      user = pwd.getpwuid(os.getuid()).pw_name
+                      set_shell = lambda sh: subprocess.run(["sudo", "-n", "dscl", ".", "-create", "/Users/" + user, "UserShell", sh], capture_output=True, text=True)
+                      try:
+                          set_shell("/bin/zsh")
+                          res["zsh_user_shell_noisy_zshenv"] = hook_run("profile-zsh", v, events=["SessionStart"])
+                          res["zsh_user_shell_noisy_zshenv"]["passwd_shell_during"] = pwd.getpwuid(os.getuid()).pw_shell
+                      finally:
+                          set_shell(shell)
               finally:
                   for name, data in backups.items():
                       p = HOME / name
@@ -1254,7 +1344,9 @@ jobs:
                           p.unlink(missing_ok=True)
                       else:
                           p.write_bytes(data)
-              fact("profile", "results", {k: {"ran": x["ran"], "context": x["context"], "parents": x["parents"], "stderr_hook_lines": x["stderr_hook_lines"][:12]}
+              res.update(res0)
+              fact("profile", "results", {k: {"ran": x["ran"], "context": x["context"], "parents": x["parents"], "stderr_hook_lines": x["stderr_hook_lines"][:12],
+                                              "extra": {kk: vv for kk, vv in x.items() if kk in ("bash_env_sourced", "passwd_shell_during")}}
                                           for k, x in res.items()})
 
 
@@ -1380,6 +1472,19 @@ jobs:
                                                       if t["solo_adds_endpoints"] or t["drop_removes_endpoints"]})
               fact("classify", "prompt_by_feature", {f: [t["solo_dev_delta"], t["drop_dev_delta"]] for f, t in table.items() if t["solo_dev_delta"] or t["drop_dev_delta"]})
               fact("classify", "failures", {f: [t["solo_rc"], t["drop_rc"]] for f, t in table.items() if t["solo_rc"] != 0 or t["drop_rc"] != 0})
+              for tag, on in (("code_mode_host_off", set()), ("code_mode_host_on", {"code_mode_host"})):
+                  js = {"type": "custom_tool_call", "call_id": "call_cm_1", "namespace": "functions", "name": "exec", "input": 'text("P0-CODE-MODE-RAN " + (40 + 2));'}
+                  mock.reset([js])
+                  cage = make_cage("cls-cm")
+                  r = run(lock_args(cage, mock, off=[f for f in dt if f not in on], on=sorted(on)), home=home, cwd=cage, stdin_text=PROMPT, timeout=60, show=False)
+                  fact("classify", "behaviour_" + tag, {"rc": r.rc, "tool_output": [str(x["output"])[:300] for x in mock.tool_outputs()]})
+              mmock = Mock("classify-mcp", mcp=True)
+              for tag, on in (("apps_off", set()), ("apps_on", {"apps"}), ("all_default_on", set(dt))):
+                  mmock.reset()
+                  cage = make_cage("cls-apps")
+                  r = run(lock_args(cage, mmock, off=[f for f in dt if f not in on], on=sorted(on)), home=home, cwd=cage, stdin_text=PROMPT, timeout=60, show=False)
+                  fact("classify", "hosted_mcp_" + tag, {"rc": r.rc, "tools": mmock.tools(),
+                                                         "mcp_methods": [(x["body"] or {}).get("method") for x in mmock.reqs if x["path"].split("?")[0].rstrip("/").endswith("/ps/mcp")]})
 
 
           # ------------------------------------------------------------------ interactive (pty)
@@ -1480,7 +1585,6 @@ jobs:
                   return
               h = run(["--help"], show=False)
               (OUT / "help-top.txt").write_text(h.out, encoding="utf-8")
-              mock = Mock("tui")
               vault = ROOT / "vault-tui"
               (vault / "Projets").mkdir(parents=True)
               (vault / "CLAUDE.md").write_text("VAULT-CLAUDE-MARKER\n", encoding="utf-8")
@@ -1488,47 +1592,52 @@ jobs:
               subprocess.run(["git", "init", "-q", str(vault)], check=True)
               v = [("TUI", "%s %s {ev} TUI" % (shlex.quote(PY), shlex.quote(str(HOOK_PY))), None)]
               doc = hooks_doc(v, ["SessionStart", "UserPromptSubmit", "Stop"])
-              home = make_home("tui", files={"hooks.json": json.dumps(doc, indent=1)})
-              cfg = trust_toml(home, doc) + '\n[projects.%s]\ntrust_level = "trusted"\n\n[projects.%s]\ntrust_level = "trusted"\n' % (
-                  tq(vault / "Projets"), tq(vault))
-              (home / "config.toml").write_text(cfg, encoding="utf-8")
-              read_hook_log()
-              env = mkenv(home, {"TERM": "xterm-256color", "COLUMNS": "120", "LINES": "40"})
-              t0 = time.time()
-              res = tui_session(home, vault / "Projets", env, mock, "hello from the probe", "tui-session.raw")
-              time.sleep(2)
-              recs = read_hook_log()
-              res["hooks"] = [{"event": x["event"], "source": x["stdin"].get("source") if isinstance(x["stdin"], dict) else None,
-                               "transcript_path": (x["stdin"] or {}).get("transcript_path") if isinstance(x["stdin"], dict) else None,
-                               "permission_mode": (x["stdin"] or {}).get("permission_mode") if isinstance(x["stdin"], dict) else None,
-                               "keys": sorted(x["stdin"].keys()) if isinstance(x["stdin"], dict) else None, "parent": x["parent"][:150]} for x in recs]
-              if recs:
-                  (FIX / ("hook-payloads-tui-%s.jsonl" % OSN)).write_text("\n".join(json.dumps(x, ensure_ascii=False) for x in recs), encoding="utf-8")
-              res["model_calls"] = len(mock.responses())
-              res["endpoints"] = mock.endpoints()
-              res["markers"] = [m for m in MARKER_NAMES if mock.contains(m)]
-              rolls = sorted(home.glob("sessions/**/rollout-*.jsonl"))
-              res["rollouts"] = [str(p.relative_to(home)) for p in rolls]
-              if rolls:
-                  shutil.copy(rolls[-1], FIX / ("rollout-tui-%s.jsonl" % OSN))
-                  kinds = {}
-                  first = None
-                  for line in rolls[-1].read_text(encoding="utf-8", errors="replace").splitlines():
-                      try:
-                          o = json.loads(line)
-                      except Exception:
-                          continue
-                      pl = o.get("payload") if isinstance(o.get("payload"), dict) else {}
-                      k = "%s/%s" % (o.get("type"), pl.get("type"))
-                      kinds[k] = kinds.get(k, 0) + 1
-                      if o.get("type") == "session_meta":
-                          first = {"source": pl.get("source"), "originator": pl.get("originator")}
-                  res["rollout_kinds"] = kinds
-                  res["session_meta"] = first
-              res["procs_after"] = codex_procs()
-              res["files_elsewhere"] = recent_files(t0)
-              fact("tui", "session", res)
-              kill_codex_procs()
+              for auth in ("chatgpt", "apikey"):
+                  mock = Mock("tui-" + auth, accounts=True)
+                  home = make_home("tui-" + auth, auth=(auth == "chatgpt"), files={"hooks.json": json.dumps(doc, indent=1)})
+                  if auth == "apikey":
+                      (home / "auth.json").write_text(json.dumps({"auth_mode": "apikey", "OPENAI_API_KEY": "sk-dummy-not-a-real-key"}), encoding="utf-8")
+                  cfg = trust_toml(home, doc) + '\n[projects.%s]\ntrust_level = "trusted"\n\n[projects.%s]\ntrust_level = "trusted"\n' % (
+                      tq(vault / "Projets"), tq(vault))
+                  (home / "config.toml").write_text(cfg, encoding="utf-8")
+                  read_hook_log()
+                  env = mkenv(home, {"TERM": "xterm-256color", "COLUMNS": "120", "LINES": "40"})
+                  t0 = time.time()
+                  res = tui_session(home, vault / "Projets", env, mock, "hello from the probe", "tui-session-%s.raw" % auth)
+                  time.sleep(2)
+                  recs = read_hook_log()
+                  res["hooks"] = [{"event": x["event"], "source": x["stdin"].get("source") if isinstance(x["stdin"], dict) else None,
+                                   "transcript_path": (x["stdin"] or {}).get("transcript_path") if isinstance(x["stdin"], dict) else None,
+                                   "permission_mode": (x["stdin"] or {}).get("permission_mode") if isinstance(x["stdin"], dict) else None,
+                                   "keys": sorted(x["stdin"].keys()) if isinstance(x["stdin"], dict) else None, "parent": x["parent"][:150]} for x in recs]
+                  if recs:
+                      (FIX / ("hook-payloads-tui-%s-%s.jsonl" % (auth, OSN))).write_text("\n".join(json.dumps(x, ensure_ascii=False) for x in recs), encoding="utf-8")
+                  res["model_calls"] = len(mock.responses())
+                  res["endpoints"] = mock.endpoints()
+                  res["markers"] = [m for m in MARKER_NAMES if mock.contains(m)]
+                  rolls = sorted(home.glob("sessions/**/rollout-*.jsonl"))
+                  res["rollouts"] = [str(p.relative_to(home)) for p in rolls]
+                  if rolls:
+                      shutil.copy(rolls[-1], FIX / ("rollout-tui-%s-%s.jsonl" % (auth, OSN)))
+                      kinds, first = {}, None
+                      for line in rolls[-1].read_text(encoding="utf-8", errors="replace").splitlines():
+                          try:
+                              o = json.loads(line)
+                          except Exception:
+                              continue
+                          pl = o.get("payload") if isinstance(o.get("payload"), dict) else {}
+                          k = "%s/%s" % (o.get("type"), pl.get("type"))
+                          kinds[k] = kinds.get(k, 0) + 1
+                          if o.get("type") == "session_meta":
+                              first = {"source": pl.get("source"), "originator": pl.get("originator")}
+                      res["rollout_kinds"] = kinds
+                      res["session_meta"] = first
+                  res["procs_after"] = codex_procs()
+                  res["files_elsewhere"] = recent_files(t0)
+                  fact("tui", "session_" + auth, res)
+                  kill_codex_procs()
+                  if res["model_calls"]:
+                      break
 
 
           @section
@@ -1570,6 +1679,18 @@ jobs:
 
               res["exec_forced_default"] = forced("default")
               if IS_LINUX:
+                  ap = subprocess.run(["sudo", "-n", "apt-get", "install", "-y", "-q", "bubblewrap"], capture_output=True, text=True, timeout=400)
+                  if ap.returncode != 0:
+                      subprocess.run(["sudo", "-n", "apt-get", "update", "-q"], capture_output=True, timeout=400)
+                      ap = subprocess.run(["sudo", "-n", "apt-get", "install", "-y", "-q", "bubblewrap"], capture_output=True, text=True, timeout=400)
+                  res["bubblewrap_install_rc"] = ap.returncode
+                  res["system_bwrap_after_install"] = shutil.which("bwrap")
+                  res["apparmor_bwrap_profiles_after_install"] = [p for p in os.listdir("/etc/apparmor.d") if "bwrap" in p.lower()] if os.path.isdir("/etc/apparmor.d") else None
+                  for p in OUTSIDE.iterdir():
+                      p.unlink()
+                  r = run(["-c", 'sandbox_mode="read-only"', "sandbox", "--"] + probe_cmd, home=home, timeout=60)
+                  res["system_bwrap_userns_restricted"] = {"rc": r.rc, "out": r.out[-600:], "err": r.err[-600:], "outside": sorted(p.name for p in OUTSIDE.iterdir())}
+                  res["exec_forced_system_bwrap_userns_restricted"] = forced("sysbwrap")
                   sw = subprocess.run(["sudo", "-n", "sysctl", "-w", "kernel.apparmor_restrict_unprivileged_userns=0"], capture_output=True, text=True)
                   res["sysctl_set"] = sw.stdout.strip() or sw.stderr.strip()
                   try:
@@ -1610,27 +1731,41 @@ jobs:
         run: |
           if [ "$RUNNER_OS" = "Windows" ]; then PY=python; else PY=python3; fi
           codex --version
-          "$PY" -u "$RUNNER_TEMP/probe.py"
+          "$PY" -u "$RUNNER_TEMP/probe.py" version login features lock rollout layers hooks profile tui classify sandbox
 
-      - name: Windows, newest Codex release (prerelease included), hooks again
-        if: runner.os == 'Windows'
-        shell: pwsh
+      - name: Newest Codex prerelease (GitHub release asset, SHA-256 checked), probe again
+        shell: bash
         env:
           OUT: ${{ runner.temp }}/p0-out/newest
           P0_TAG: newest
           PYTHONUTF8: "1"
           PYTHONIOENCODING: utf-8
         run: |
-          $tag = $null
-          try {
-            $tag = (Invoke-RestMethod 'https://api.github.com/repos/openai/codex/releases?per_page=15' | Where-Object { $_.tag_name -like 'rust-v*' } | Select-Object -First 1).tag_name
-          } catch { "release list unavailable: $_" }
-          if (-not $tag) { $tag = 'rust-v0.163.0-alpha.13' }
-          $env:CODEX_RELEASE = $tag.Substring(6)
-          "installing $env:CODEX_RELEASE"
-          powershell -ExecutionPolicy ByPass -c "irm https://chatgpt.com/codex/install.ps1 | iex"
+          if [ "$RUNNER_OS" = "Windows" ]; then PY=python; else PY=python3; fi
+          case "$RUNNER_OS-$(uname -m)" in
+            Linux-x86_64) T=x86_64-unknown-linux-musl ;;
+            Linux-aarch64) T=aarch64-unknown-linux-musl ;;
+            macOS-arm64) T=aarch64-apple-darwin ;;
+            macOS-x86_64) T=x86_64-apple-darwin ;;
+            *) T=x86_64-pc-windows-msvc ;;
+          esac
+          if command -v cygpath >/dev/null; then D="$(cygpath -u "$RUNNER_TEMP")/newest"; else D="$RUNNER_TEMP/newest"; fi
+          mkdir -p "$D/x"
+          cd "$D"
+          V=""
+          for c in 0.163.0-alpha.13 0.163.0-alpha.12 0.163.0-alpha.11; do
+            B="https://github.com/openai/codex/releases/download/rust-v$c"
+            if curl -fsSL "$B/codex-package_SHA256SUMS" -o sums && curl -fsSL "$B/codex-package-$T.tar.gz" -o pkg.tar.gz; then V=$c; break; fi
+          done
+          [ -n "$V" ] || { echo "no prerelease package found"; exit 1; }
+          want=$(grep " codex-package-$T.tar.gz\$" sums | cut -d' ' -f1)
+          got=$("$PY" -c 'import hashlib, sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' pkg.tar.gz)
+          [ -n "$want" ] && [ "$want" = "$got" ] || { echo "sha256 mismatch for $V"; exit 1; }
+          tar -xzf pkg.tar.gz -C x
+          export PATH="$D/x/bin:$PATH"
+          echo "newest prerelease with assets: $V"
           codex --version
-          python -u "$env:RUNNER_TEMP\probe.py" version hooks
+          "$PY" -u "$RUNNER_TEMP/probe.py" version features lock hooks classify
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
