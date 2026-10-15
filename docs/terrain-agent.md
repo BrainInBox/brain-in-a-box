@@ -205,6 +205,8 @@ Open the PR and leave a comment asking the maintainer to review it when the diff
   or puts back a secret, wherever that code lives (the rest of the night check is yours to fix);
 - what the app runs as root on Linux: `app/src-tauri/src/root.rs` (the two `apt-get install` scripts
   pkexec runs after the user's password);
+- the agents' gate: `engine/hooks/_agents.py` (the systems Codex is open on, and what the installers
+  and the hooks trust in `~/.brain-in-a-box/agents.json`);
 - the Claude token: `engine/hooks/_headless_claude.py` (environment, login and start-up checks),
   anything that reads `CLAUDE_CODE_OAUTH_TOKEN`, and `engine/tests/terrain.py`,
   `engine/tests/terrain_app.py`, `engine/tests/pilote_windows.cs` and `engine/tests/vault_piege.py`,

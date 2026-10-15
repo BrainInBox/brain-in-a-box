@@ -5,6 +5,7 @@
 const REPO = 'BrainInBox/brain-in-a-box';
 const API = `https://api.github.com/repos/${REPO}/releases?per_page=30`;
 const DOWNLOADS = `https://github.com/${REPO}/releases/download/`;
+const RELEASE_PAGE = `https://github.com/${REPO}/releases/tag/`;
 const TAG = /^app-v(\d+)\.(\d+)\.(\d+)-preview\.(\d+)$/;
 // How each file of an app preview is named (.github/workflows/release.yml).
 const FILES = {
@@ -68,7 +69,8 @@ async function newestPreview() {
         && typeof a.browser_download_url === 'string' && a.browser_download_url.startsWith(prefix));
       if (asset) files[kind] = { url: asset.browser_download_url, name: asset.name, size: Number(asset.size) || 0 };
     }
-    return { version: `${n[0]}.${n[1]}.${n[2]}-preview.${n[3]}`, date: r.published_at, files };
+    const page = typeof r.html_url === 'string' && r.html_url === RELEASE_PAGE + encodeURIComponent(r.tag_name) ? r.html_url : null;
+    return { version: `${n[0]}.${n[1]}.${n[2]}-preview.${n[3]}`, date: r.published_at, files, page };
   } catch {
     return null;
   } finally {
@@ -103,35 +105,40 @@ function fillLinks(release) {
   }
   const date = frenchDate(release.date);
   document.getElementById('version').textContent = `Préversion ${release.version}${date ? `, du ${date}` : ''}`;
+  document.getElementById('announce-text').textContent = `Préversion ${release.version} de l’app disponible${date ? ` depuis le ${date}` : ''}.`;
+  if (release.page) document.getElementById('announce-link').href = release.page;
 }
 
-function heroButton(system, release) {
+// The big buttons (top of the page, and the last call at the bottom) are for the visitor's system.
+function mainButtons(system, release) {
   const main = MAIN[system];
   if (system === 'mobile') {
-    document.getElementById('dl-main').hidden = true;
-    document.getElementById('dl-main-meta').hidden = true;
-    document.getElementById('dl-mobile').hidden = false;
+    // Neither the app nor the command line installs on a phone.
+    for (const el of document.querySelectorAll('[data-dl-main], .dl-actions, [data-dl-main-meta]')) el.hidden = true;
+    for (const msg of document.querySelectorAll('[data-dl-mobile]')) msg.hidden = false;
     return;
   }
   if (!main) return;
   const file = release && release.files[main.file];
-  document.getElementById('dl-main-label').textContent = main.label;
+  for (const label of document.querySelectorAll('[data-dl-main-label]')) label.textContent = main.label;
   // Without the API's answer the button opens the Releases page: say which file to take there.
-  document.getElementById('dl-main-meta').textContent = file
+  const meta = file
     ? `${main.meta} · ${megabytes(file.size)}`
     : `${main.meta} · sur GitHub, prends le fichier qui finit par ${FILES[main.file]}`;
-  if (file) document.getElementById('dl-main').href = file.url;
+  for (const el of document.querySelectorAll('[data-dl-main-meta]')) el.textContent = meta;
+  if (file) for (const btn of document.querySelectorAll('[data-dl-main]')) btn.href = file.url;
   // The others under the button: the one the button already gives goes away.
   const own = document.querySelector(`.dl-others li[data-for="${system}"]`);
   if (own) own.hidden = true;
   document.getElementById('dl-others-label').textContent = 'Autres systèmes\u00a0:';
 }
 
-// ── Install tabs: the links to each system become tabs ─────────────────────
+// ── Tabs: the links to each system become tabs ────────────────────────────
+// Two sets: the install guide (#installer-mac…) and the command line (#cli-mac…).
 
-function setupTabs(preferred) {
-  const nav = document.querySelector('[data-tabs]');
-  if (!nav) return;
+function setupTabs(nav, preferred) {
+  const prefix = nav.dataset.tabs;
+  const section = nav.closest('section');
   const panels = [];
   const tabs = [];
   nav.setAttribute('role', 'tablist');
@@ -182,11 +189,11 @@ function setupTabs(preferred) {
     const id = location.hash.slice(1);
     if (!panels.some((p) => p.id === id)) return false;
     select(id);
-    document.getElementById('installer').scrollIntoView();
+    section.scrollIntoView();
     return true;
   }
   window.addEventListener('hashchange', fromHash);
-  if (!fromHash()) select(`installer-${preferred}`);
+  if (!fromHash()) select(`${prefix}-${preferred}`);
 }
 
 // A link to a question of the FAQ (#verifier) opens it.
@@ -224,15 +231,15 @@ function addCopyButtons() {
 
 async function start() {
   const system = detectSystem();
-  setupTabs(MAIN[system] ? system : 'mac');
+  for (const nav of document.querySelectorAll('[data-tabs]')) setupTabs(nav, MAIN[system] ? system : 'mac');
   addCopyButtons();
   openLinkedDetails();
   window.addEventListener('hashchange', openLinkedDetails);
-  heroButton(system, null);
+  mainButtons(system, null);
   const release = await newestPreview();
   if (!release) return;
   fillLinks(release);
-  heroButton(system, release);
+  mainButtons(system, release);
 }
 
 start();

@@ -1,0 +1,599 @@
+{
+ "api_key_cyber_access_programs": {
+  "solo_adds_tools": [],
+  "solo_adds_endpoints": [],
+  "solo_dev_delta": 0,
+  "solo_rc": 0,
+  "drop_removes_tools": [],
+  "drop_removes_endpoints": [],
+  "drop_dev_delta": 0,
+  "drop_rc": 0,
+  "unreadable": false
+ },
+ "api_key_model_discovery": {
+  "solo_adds_tools": [],
+  "solo_adds_endpoints": [],
+  "solo_dev_delta": 0,
+  "solo_rc": 0,
+  "drop_removes_tools": [],
+  "drop_removes_endpoints": [],
+  "drop_dev_delta": 0,
+  "drop_rc": 0,
+  "unreadable": false
+ },
+ "apps": {
+  "solo_adds_tools": [],
+  "solo_adds_endpoints": [
+   "POST /backend-api/ps/mcp"
+  ],
+  "solo_dev_delta": 0,
+  "solo_rc": 0,
+  "drop_removes_tools": [],
+  "drop_removes_endpoints": [
+   "POST /backend-api/ps/mcp"
+  ],
+  "drop_dev_delta": 0,
+  "drop_rc": 0,
+  "unreadable": false
+ },
+ "auth_elicitation": {
+  "solo_adds_tools": [],
+  "solo_adds_endpoints": [],
+  "solo_dev_delta": 0,
+  "solo_rc": 0,
+  "drop_removes_tools": [],
+  "drop_removes_endpoints": [],
+  "drop_dev_delta": 0,
+  "drop_rc": 0,
+  "unreadable": false
+ },
+ "browser_annotation_api": {
+  "solo_adds_tools": [],
+  "solo_adds_endpoints": [],
+  "solo_dev_delta": 0,
+  "solo_rc": 0,
+  "drop_removes_tools": [],
+  "drop_removes_endpoints": [],
+  "drop_dev_delta": 0,
+  "drop_rc": 0,
+  "unreadable": false
+ },
+ "browser_use": {
+  "solo_adds_tools": [],
+  "solo_adds_endpoints": [],
+  "solo_dev_delta": 0,
+  "solo_rc": 0,
+  "drop_removes_tools": [],
+  "drop_removes_endpoints": [],
+  "drop_dev_delta": 0,
+  "drop_rc": 0,
+  "unreadable": false
+ },
+ "browser_use_external": {
+  "solo_adds_tools": [],
+  "solo_adds_endpoints": [],
+  "solo_dev_delta": 0,
+  "solo_rc": 0,
+  "drop_removes_tools": [],
+  "drop_removes_endpoints": [],
+  "drop_dev_delta": 0,
+  "drop_rc": 0,
+  "unreadable": false
+ },
+ "browser_use_full_cdp_access": {
+  "solo_adds_tools": [],
+  "solo_adds_endpoints": [],
+  "solo_dev_delta": 0,
+  "solo_rc": 0,
+  "drop_removes_tools": [],
+  "drop_removes_endpoints": [],
+  "drop_dev_delta": 0,
+  "drop_rc": 0,
+  "unreadable": false
+ },
+ "cli_daybreak": {
+  "solo_adds_tools": [],
+  "solo_adds_endpoints": [],
+  "solo_dev_delta": 0,
+  "solo_rc": 0,
+  "drop_removes_tools": [],
+  "drop_removes_endpoints": [],
+  "drop_dev_delta": 0,
+  "drop_rc": 0,
+  "unreadable": false
+ },
+ "code_mode_host": {
+  "solo_adds_tools": [],
+  "solo_adds_endpoints": [],
+  "solo_dev_delta": 0,
+  "solo_rc": 0,
+  "drop_removes_tools": [],
+  "drop_removes_endpoints": [],
+  "drop_dev_delta": 0,
+  "drop_rc": 0,
+  "unreadable": false
+ },
+ "code_mode_interrupt": {
+  "solo_adds_tools": [],
+  "solo_adds_endpoints": [],
+  "solo_dev_delta": 0,
+  "solo_rc": 0,
+  "drop_removes_tools": [],
+  "drop_removes_endpoints": [],
+  "drop_dev_delta": 0,
+  "drop_rc": 0,
+  "unreadable": false
+ },
+ "compaction_image_budget": {
+  "solo_adds_tools": [],
+  "solo_adds_endpoints": [],
+  "solo_dev_delta": 0,
+  "solo_rc": 0,
+  "drop_removes_tools": [],
+  "drop_removes_endpoints": [
+   "GET /backend-api/wham/accounts/check"
+  ],
+  "drop_dev_delta": 0,
+  "drop_rc": 0,
+  "unreadable": false
+ },
+ "computer_use": {
+  "solo_adds_tools": [],
+  "solo_adds_endpoints": [],
+  "solo_dev_delta": 0,
+  "solo_rc": 0,
+  "drop_removes_tools": [],
+  "drop_removes_endpoints": [],
+  "drop_dev_delta": 0,
+  "drop_rc": 0,
+  "unreadable": false
+ },
+ "content_item_kinds": {
+  "solo_adds_tools": [],
+  "solo_adds_endpoints": [],
+  "solo_dev_delta": 0,
+  "solo_rc": 0,
+  "drop_removes_tools": [],
+  "drop_removes_endpoints": [],
+  "drop_dev_delta": 0,
+  "drop_rc": 0,
+  "unreadable": false
+ },
+ "daemon_auto_start": {
+  "solo_adds_tools": [],
+  "solo_adds_endpoints": [],
+  "solo_dev_delta": 0,
+  "solo_rc": 0,
+  "drop_removes_tools": [],
+  "drop_removes_endpoints": [],
+  "drop_dev_delta": 0,
+  "drop_rc": 0,
+  "unreadable": false
+ },
+ "fast_mode": {
+  "solo_adds_tools": [],
+  "solo_adds_endpoints": [],
+  "solo_dev_delta": 0,
+  "solo_rc": 0,
+  "drop_removes_tools": [],
+  "drop_removes_endpoints": [],
+  "drop_dev_delta": 0,
+  "drop_rc": 0,
+  "unreadable": false
+ },
+ "goals": {
+  "solo_adds_tools": [
+   "functions.exec>create_goal",
+   "functions.exec>get_goal",
+   "functions.exec>update_goal"
+  ],
+  "solo_adds_endpoints": [],
+  "solo_dev_delta": 0,
+  "solo_rc": 0,
+  "drop_removes_tools": [
+   "functions.exec>create_goal",
+   "functions.exec>get_goal",
+   "functions.exec>update_goal"
+  ],
+  "drop_removes_endpoints": [],
+  "drop_dev_delta": 0,
+  "drop_rc": 0,
+  "unreadable": false
+ },
+ "guardian_approval": {
+  "solo_adds_tools": [],
+  "solo_adds_endpoints": [],
+  "solo_dev_delta": 0,
+  "solo_rc": 0,
+  "drop_removes_tools": [],
+  "drop_removes_endpoints": [],
+  "drop_dev_delta": 0,
+  "drop_rc": 0,
+  "unreadable": false
+ },
+ "guardian_reuse_parent_compaction": {
+  "solo_adds_tools": [],
+  "solo_adds_endpoints": [],
+  "solo_dev_delta": 0,
+  "solo_rc": 0,
+  "drop_removes_tools": [],
+  "drop_removes_endpoints": [],
+  "drop_dev_delta": 0,
+  "drop_rc": 0,
+  "unreadable": false
+ },
+ "hooks": {
+  "solo_adds_tools": [],
+  "solo_adds_endpoints": [],
+  "solo_dev_delta": 0,
+  "solo_rc": 0,
+  "drop_removes_tools": [],
+  "drop_removes_endpoints": [],
+  "drop_dev_delta": 0,
+  "drop_rc": 0,
+  "unreadable": false
+ },
+ "image_generation": {
+  "solo_adds_tools": [
+   "functions.exec>image_gen__imagegen"
+  ],
+  "solo_adds_endpoints": [],
+  "solo_dev_delta": 0,
+  "solo_rc": 0,
+  "drop_removes_tools": [
+   "functions.exec>image_gen__imagegen"
+  ],
+  "drop_removes_endpoints": [],
+  "drop_dev_delta": 0,
+  "drop_rc": 0,
+  "unreadable": false
+ },
+ "in_app_browser": {
+  "solo_adds_tools": [],
+  "solo_adds_endpoints": [],
+  "solo_dev_delta": 0,
+  "solo_rc": 0,
+  "drop_removes_tools": [],
+  "drop_removes_endpoints": [],
+  "drop_dev_delta": 0,
+  "drop_rc": 0,
+  "unreadable": false
+ },
+ "in_app_chat": {
+  "solo_adds_tools": [],
+  "solo_adds_endpoints": [],
+  "solo_dev_delta": 0,
+  "solo_rc": 0,
+  "drop_removes_tools": [],
+  "drop_removes_endpoints": [],
+  "drop_dev_delta": 0,
+  "drop_rc": 0,
+  "unreadable": false
+ },
+ "in_app_dictation": {
+  "solo_adds_tools": [],
+  "solo_adds_endpoints": [],
+  "solo_dev_delta": 0,
+  "solo_rc": 0,
+  "drop_removes_tools": [],
+  "drop_removes_endpoints": [],
+  "drop_dev_delta": 0,
+  "drop_rc": 0,
+  "unreadable": false
+ },
+ "in_app_local_automation": {
+  "solo_adds_tools": [],
+  "solo_adds_endpoints": [],
+  "solo_dev_delta": 0,
+  "solo_rc": 0,
+  "drop_removes_tools": [],
+  "drop_removes_endpoints": [
+   "GET /backend-api/wham/accounts/check"
+  ],
+  "drop_dev_delta": 0,
+  "drop_rc": 0,
+  "unreadable": false
+ },
+ "in_app_updates": {
+  "solo_adds_tools": [],
+  "solo_adds_endpoints": [],
+  "solo_dev_delta": 0,
+  "solo_rc": 0,
+  "drop_removes_tools": [],
+  "drop_removes_endpoints": [],
+  "drop_dev_delta": 0,
+  "drop_rc": 0,
+  "unreadable": false
+ },
+ "in_app_voice": {
+  "solo_adds_tools": [],
+  "solo_adds_endpoints": [],
+  "solo_dev_delta": 0,
+  "solo_rc": 0,
+  "drop_removes_tools": [],
+  "drop_removes_endpoints": [],
+  "drop_dev_delta": 0,
+  "drop_rc": 0,
+  "unreadable": false
+ },
+ "instant_interrupt": {
+  "solo_adds_tools": [],
+  "solo_adds_endpoints": [],
+  "solo_dev_delta": 0,
+  "solo_rc": 0,
+  "drop_removes_tools": [],
+  "drop_removes_endpoints": [],
+  "drop_dev_delta": 0,
+  "drop_rc": 0,
+  "unreadable": false
+ },
+ "mentions_v2": {
+  "solo_adds_tools": [],
+  "solo_adds_endpoints": [],
+  "solo_dev_delta": 0,
+  "solo_rc": 0,
+  "drop_removes_tools": [],
+  "drop_removes_endpoints": [],
+  "drop_dev_delta": 0,
+  "drop_rc": 0,
+  "unreadable": false
+ },
+ "multi_agent": {
+  "solo_adds_tools": [],
+  "solo_adds_endpoints": [],
+  "solo_dev_delta": 0,
+  "solo_rc": 0,
+  "drop_removes_tools": [],
+  "drop_removes_endpoints": [],
+  "drop_dev_delta": 0,
+  "drop_rc": 0,
+  "unreadable": false
+ },
+ "plugin_sharing": {
+  "solo_adds_tools": [],
+  "solo_adds_endpoints": [],
+  "solo_dev_delta": 0,
+  "solo_rc": 0,
+  "drop_removes_tools": [],
+  "drop_removes_endpoints": [],
+  "drop_dev_delta": 0,
+  "drop_rc": 0,
+  "unreadable": false
+ },
+ "plugins": {
+  "solo_adds_tools": [],
+  "solo_adds_endpoints": [
+   "GET /backend-api/plugins/featured",
+   "GET /backend-api/ps/plugins/installed"
+  ],
+  "solo_dev_delta": 0,
+  "solo_rc": 0,
+  "drop_removes_tools": [],
+  "drop_removes_endpoints": [
+   "GET /backend-api/plugins/featured",
+   "GET /backend-api/ps/plugins/installed",
+   "GET /backend-api/ps/plugins/list",
+   "GET /backend-api/ps/plugins/suggested/codex"
+  ],
+  "drop_dev_delta": 0,
+  "drop_rc": 0,
+  "unreadable": false
+ },
+ "realtime_conversation": {
+  "solo_adds_tools": [],
+  "solo_adds_endpoints": [],
+  "solo_dev_delta": 0,
+  "solo_rc": 0,
+  "drop_removes_tools": [],
+  "drop_removes_endpoints": [],
+  "drop_dev_delta": 0,
+  "drop_rc": 0,
+  "unreadable": false
+ },
+ "remote_plugin": {
+  "solo_adds_tools": [],
+  "solo_adds_endpoints": [],
+  "solo_dev_delta": 0,
+  "solo_rc": 0,
+  "drop_removes_tools": [],
+  "drop_removes_endpoints": [
+   "GET /backend-api/ps/plugins/list",
+   "GET /backend-api/ps/plugins/suggested/codex"
+  ],
+  "drop_dev_delta": 0,
+  "drop_rc": 0,
+  "unreadable": false
+ },
+ "shell_snapshot": {
+  "solo_adds_tools": [],
+  "solo_adds_endpoints": [],
+  "solo_dev_delta": 0,
+  "solo_rc": 0,
+  "drop_removes_tools": [],
+  "drop_removes_endpoints": [],
+  "drop_dev_delta": 0,
+  "drop_rc": 0,
+  "unreadable": false
+ },
+ "shell_tool": {
+  "solo_adds_tools": [
+   "functions.exec>exec_command",
+   "functions.exec>write_stdin"
+  ],
+  "solo_adds_endpoints": [],
+  "solo_dev_delta": 0,
+  "solo_rc": 0,
+  "drop_removes_tools": [
+   "functions.exec>exec_command",
+   "functions.exec>write_stdin"
+  ],
+  "drop_removes_endpoints": [],
+  "drop_dev_delta": 0,
+  "drop_rc": 0,
+  "unreadable": false
+ },
+ "skill_mcp_dependency_install": {
+  "solo_adds_tools": [],
+  "solo_adds_endpoints": [],
+  "solo_dev_delta": 0,
+  "solo_rc": 0,
+  "drop_removes_tools": [],
+  "drop_removes_endpoints": [],
+  "drop_dev_delta": 0,
+  "drop_rc": 0,
+  "unreadable": false
+ },
+ "skill_search": {
+  "solo_adds_tools": [],
+  "solo_adds_endpoints": [],
+  "solo_dev_delta": 0,
+  "solo_rc": 0,
+  "drop_removes_tools": [],
+  "drop_removes_endpoints": [],
+  "drop_dev_delta": 0,
+  "drop_rc": 0,
+  "unreadable": false
+ },
+ "sleep_tool": {
+  "solo_adds_tools": [
+   "clock.sleep"
+  ],
+  "solo_adds_endpoints": [],
+  "solo_dev_delta": 0,
+  "solo_rc": 0,
+  "drop_removes_tools": [
+   "clock.sleep"
+  ],
+  "drop_removes_endpoints": [],
+  "drop_dev_delta": 0,
+  "drop_rc": 0,
+  "unreadable": false
+ },
+ "system_proxy_fallback": {
+  "solo_adds_tools": [],
+  "solo_adds_endpoints": [],
+  "solo_dev_delta": 0,
+  "solo_rc": 0,
+  "drop_removes_tools": [],
+  "drop_removes_endpoints": [],
+  "drop_dev_delta": 0,
+  "drop_rc": 0,
+  "unreadable": false
+ },
+ "tool_call_mcp_elicitation": {
+  "solo_adds_tools": [],
+  "solo_adds_endpoints": [],
+  "solo_dev_delta": 0,
+  "solo_rc": 0,
+  "drop_removes_tools": [],
+  "drop_removes_endpoints": [],
+  "drop_dev_delta": 0,
+  "drop_rc": 0,
+  "unreadable": false
+ },
+ "tool_suggest": {
+  "solo_adds_tools": [],
+  "solo_adds_endpoints": [],
+  "solo_dev_delta": 0,
+  "solo_rc": 0,
+  "drop_removes_tools": [],
+  "drop_removes_endpoints": [],
+  "drop_dev_delta": 0,
+  "drop_rc": 0,
+  "unreadable": false
+ },
+ "ultrafast_mode": {
+  "solo_adds_tools": [],
+  "solo_adds_endpoints": [],
+  "solo_dev_delta": 0,
+  "solo_rc": 0,
+  "drop_removes_tools": [],
+  "drop_removes_endpoints": [],
+  "drop_dev_delta": 0,
+  "drop_rc": 0,
+  "unreadable": false
+ },
+ "unbounded_connection_retries": {
+  "solo_adds_tools": [],
+  "solo_adds_endpoints": [],
+  "solo_dev_delta": 0,
+  "solo_rc": 0,
+  "drop_removes_tools": [],
+  "drop_removes_endpoints": [],
+  "drop_dev_delta": 0,
+  "drop_rc": 0,
+  "unreadable": false
+ },
+ "unified_exec": {
+  "solo_adds_tools": [],
+  "solo_adds_endpoints": [],
+  "solo_dev_delta": 0,
+  "solo_rc": 0,
+  "drop_removes_tools": [],
+  "drop_removes_endpoints": [],
+  "drop_dev_delta": 0,
+  "drop_rc": 0,
+  "unreadable": false
+ },
+ "unified_exec_tty": {
+  "solo_adds_tools": [],
+  "solo_adds_endpoints": [],
+  "solo_dev_delta": 0,
+  "solo_rc": 0,
+  "drop_removes_tools": [],
+  "drop_removes_endpoints": [
+   "GET /backend-api/wham/accounts/check"
+  ],
+  "drop_dev_delta": 0,
+  "drop_rc": 0,
+  "unreadable": false
+ },
+ "view_image": {
+  "solo_adds_tools": [
+   "functions.exec>view_image"
+  ],
+  "solo_adds_endpoints": [],
+  "solo_dev_delta": 0,
+  "solo_rc": 0,
+  "drop_removes_tools": [
+   "functions.exec>view_image"
+  ],
+  "drop_removes_endpoints": [],
+  "drop_dev_delta": 0,
+  "drop_rc": 0,
+  "unreadable": false
+ },
+ "workspace_dependencies": {
+  "solo_adds_tools": [],
+  "solo_adds_endpoints": [],
+  "solo_dev_delta": 0,
+  "solo_rc": 0,
+  "drop_removes_tools": [],
+  "drop_removes_endpoints": [],
+  "drop_dev_delta": 0,
+  "drop_rc": 0,
+  "unreadable": false
+ },
+ "worktrees": {
+  "solo_adds_tools": [],
+  "solo_adds_endpoints": [],
+  "solo_dev_delta": 0,
+  "solo_rc": 0,
+  "drop_removes_tools": [],
+  "drop_removes_endpoints": [],
+  "drop_dev_delta": 0,
+  "drop_rc": 0,
+  "unreadable": false
+ },
+ "write_stdin_approval": {
+  "solo_adds_tools": [],
+  "solo_adds_endpoints": [],
+  "solo_dev_delta": 0,
+  "solo_rc": 0,
+  "drop_removes_tools": [],
+  "drop_removes_endpoints": [],
+  "drop_dev_delta": 0,
+  "drop_rc": 0,
+  "unreadable": false
+ }
+}

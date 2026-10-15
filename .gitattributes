@@ -8,3 +8,6 @@
 *.webp binary
 *.pdf  binary
 *.zip  binary
+
+# Codex's own output, captured as it was (some Windows captures hold CRLF): bytes kept as they are.
+engine/tests/fixtures/codex/** -text

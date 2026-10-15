@@ -1,0 +1,465 @@
+{
+ "os": "windows",
+ "python": "3.12.10",
+ "codex_path": "C:\\Users\\runneradmin\\AppData\\Local\\Programs\\OpenAI\\Codex\\bin\\codex.EXE",
+ "version": {
+  "codex": "codex-cli 0.162.1",
+  "exec_flags": {
+   "--json": true,
+   "--ephemeral": true,
+   "--ignore-user-config": true,
+   "--ignore-rules": true,
+   "--output-schema": true,
+   "--output-last-message": true,
+   "--skip-git-repo-check": true,
+   "--cd": true,
+   "--sandbox": true,
+   "--dangerously-bypass-hook-trust": true
+  },
+  "exec_help_stdin_lines": [
+   "instructions are read from stdin. If stdin is piped and a prompt is also provided, stdin",
+   "is appended as a `<stdin>` block"
+  ],
+  "mcp_list_has_json": true,
+  "_seconds": 0.3
+ },
+ "hooks": {
+  "variants": {
+   "W0": [
+    "echo W0-{ev}>> \"D:\\a\\_temp\\p0-newest\\w0-marker.txt\"",
+    "commandWindows"
+   ],
+   "W1": [
+    "C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe D:\\a\\_temp\\p0-newest\\hooks\\hook.py {ev} W1",
+    "commandWindows"
+   ],
+   "W2": [
+    "\"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe\" \"D:\\a\\_temp\\p0-newest\\hooks\\hook.py\" {ev} W2",
+    "commandWindows"
+   ],
+   "W3": [
+    "python.exe D:\\a\\_temp\\p0-newest\\hooks\\hook.py {ev} W3",
+    "commandWindows"
+   ],
+   "W5": [
+    "& \"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe\" \"D:\\a\\_temp\\p0-newest\\hooks\\hook.py\" {ev} W5",
+    "commandWindows"
+   ],
+   "W5s": [
+    "& \"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe\" \"D:\\a\\_temp\\p0-newest\\hooks\\hook.py\" {ev} W5s",
+    "command_windows"
+   ],
+   "W4": [
+    "& \"D:\\a\\_temp\\p0-newest\\py space\\python.exe\" \"D:\\a\\_temp\\p0-newest\\dir with space\\hook.py\" {ev} W4",
+    "commandWindows"
+   ]
+  },
+  "bypass": {
+   "rc": 0,
+   "ran": {
+    "W5s": [
+     "SessionStart",
+     "UserPromptSubmit",
+     "Stop"
+    ],
+    "W5": [
+     "SessionStart",
+     "UserPromptSubmit",
+     "Stop"
+    ],
+    "W3": [
+     "SessionStart",
+     "UserPromptSubmit",
+     "Stop"
+    ],
+    "W1": [
+     "SessionStart",
+     "UserPromptSubmit",
+     "Stop"
+    ],
+    "W4": [
+     "SessionStart",
+     "UserPromptSubmit",
+     "Stop"
+    ]
+   },
+   "context": {
+    "W0/SessionStart": "absent",
+    "W0/UserPromptSubmit": "absent",
+    "W1/SessionStart": "exact",
+    "W1/UserPromptSubmit": "exact",
+    "W2/SessionStart": "absent",
+    "W2/UserPromptSubmit": "absent",
+    "W3/SessionStart": "exact",
+    "W3/UserPromptSubmit": "exact",
+    "W5/SessionStart": "exact",
+    "W5/UserPromptSubmit": "exact",
+    "W5s/SessionStart": "exact",
+    "W5s/UserPromptSubmit": "exact",
+    "W4/SessionStart": "exact",
+    "W4/UserPromptSubmit": "exact"
+   },
+   "parents": [
+    "W1: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe D:\\a\\_temp\\p0-newest\\hooks\\hook.py SessionStart W1\"",
+    "W1: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe D:\\a\\_temp\\p0-newest\\hooks\\hook.py Stop W1\"",
+    "W1: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe D:\\a\\_temp\\p0-newest\\hooks\\hook.py UserPromptSubmit W1\"",
+    "W3: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"python.exe D:\\a\\_temp\\p0-newest\\hooks\\hook.py SessionStart W3\"",
+    "W3: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"python.exe D:\\a\\_temp\\p0-newest\\hooks\\hook.py Stop W3\"",
+    "W3: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"python.exe D:\\a\\_temp\\p0-newest\\hooks\\hook.py UserPromptSubmit W3\"",
+    "W4: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"& \\\"D:\\a\\_temp\\p0-newest\\py space\\python.exe\\\" \\\"D:\\a\\_temp\\p0-newest\\dir with space\\hook.py\\\" SessionStart W4\"",
+    "W4: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"& \\\"D:\\a\\_temp\\p0-newest\\py space\\python.exe\\\" \\\"D:\\a\\_temp\\p0-newest\\dir with space\\hook.py\\\" Stop W4\"",
+    "W4: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"& \\\"D:\\a\\_temp\\p0-newest\\py space\\python.exe\\\" \\\"D:\\a\\_temp\\p0-newest\\dir with space\\hook.py\\\" UserPromptSubmit W4\"",
+    "W5: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"& \\\"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe\\\" \\\"D:\\a\\_temp\\p0-newest\\hooks\\hook.py\\\" SessionStart W5\"",
+    "W5: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"& \\\"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe\\\" \\\"D:\\a\\_temp\\p0-newest\\hooks\\hook.py\\\" Stop W5\"",
+    "W5: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"& \\\"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe\\\" \\\"D:\\a\\_temp\\p0-newest\\hooks\\hook.py\\\" UserPromptSubmit W5\"",
+    "W5s: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"& \\\"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe\\\" \\\"D:\\a\\_temp\\p0-newest\\hooks\\hook.py\\\" SessionStart W5s\"",
+    "W5s: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"& \\\"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe\\\" \\\"D:\\a\\_temp\\p0-newest\\hooks\\hook.py\\\" Stop W5s\"",
+    "W5s: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"& \\\"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe\\\" \\\"D:\\a\\_temp\\p0-newest\\hooks\\hook.py\\\" UserPromptSubmit W5s\""
+   ],
+   "stderr_hook_lines": [],
+   "types": [
+    "thread.started",
+    "item.completed:error",
+    "item.completed:error",
+    "turn.started",
+    "item.completed:agent_message",
+    "turn.completed"
+   ],
+   "rust_log_seen_by_hook": [
+    "codex_hooks=trace,codex_core::hook_runtime=trace,warn"
+   ],
+   "payload_keys": {
+    "SessionStart": [
+     "cwd",
+     "hook_event_name",
+     "model",
+     "permission_mode",
+     "session_id",
+     "source",
+     "transcript_path"
+    ],
+    "UserPromptSubmit": [
+     "cwd",
+     "hook_event_name",
+     "model",
+     "permission_mode",
+     "prompt",
+     "session_id",
+     "transcript_path",
+     "turn_id"
+    ],
+    "Stop": [
+     "cwd",
+     "hook_event_name",
+     "last_assistant_message",
+     "model",
+     "permission_mode",
+     "session_id",
+     "stop_hook_active",
+     "transcript_path",
+     "turn_id"
+    ]
+   },
+   "payload_sample": {
+    "SessionStart": {
+     "hook_event_name": "SessionStart",
+     "source": "startup",
+     "transcript_path": "D:\\a\\_temp\\p0-newest\\homes\\hooks-bypass\\sessions\\2026\\10\\15\\rollout-2026-10-15T17-29-10-01a1409c-5886-75c1-8dee-1178ac6e01b5.jsonl",
+     "permission_mode": "bypassPermissions",
+     "model": "gpt-6.1-sol",
+     "cwd": "D:\\a\\_temp\\p0-newest\\work",
+     "session_id": "01a1409c-5886-75c1-8dee-1178ac6e01b5"
+    },
+    "UserPromptSubmit": {
+     "hook_event_name": "UserPromptSubmit",
+     "source": null,
+     "transcript_path": "D:\\a\\_temp\\p0-newest\\homes\\hooks-bypass\\sessions\\2026\\10\\15\\rollout-2026-10-15T17-29-10-01a1409c-5886-75c1-8dee-1178ac6e01b5.jsonl",
+     "permission_mode": "bypassPermissions",
+     "model": "gpt-6.1-sol",
+     "cwd": "D:\\a\\_temp\\p0-newest\\work",
+     "session_id": "01a1409c-5886-75c1-8dee-1178ac6e01b5"
+    },
+    "Stop": {
+     "hook_event_name": "Stop",
+     "source": null,
+     "transcript_path": "D:\\a\\_temp\\p0-newest\\homes\\hooks-bypass\\sessions\\2026\\10\\15\\rollout-2026-10-15T17-29-10-01a1409c-5886-75c1-8dee-1178ac6e01b5.jsonl",
+     "permission_mode": "bypassPermissions",
+     "model": "gpt-6.1-sol",
+     "cwd": "D:\\a\\_temp\\p0-newest\\work",
+     "session_id": "01a1409c-5886-75c1-8dee-1178ac6e01b5"
+    }
+   }
+  },
+  "trusted_hash": {
+   "rc": 0,
+   "ran": {
+    "W5": [
+     "SessionStart",
+     "UserPromptSubmit",
+     "Stop"
+    ],
+    "W3": [
+     "SessionStart",
+     "UserPromptSubmit",
+     "Stop"
+    ],
+    "W4": [
+     "SessionStart",
+     "UserPromptSubmit",
+     "Stop"
+    ],
+    "W1": [
+     "SessionStart",
+     "UserPromptSubmit",
+     "Stop"
+    ],
+    "W5s": [
+     "SessionStart",
+     "UserPromptSubmit",
+     "Stop"
+    ]
+   },
+   "context": {
+    "W0/SessionStart": "absent",
+    "W0/UserPromptSubmit": "absent",
+    "W1/SessionStart": "exact",
+    "W1/UserPromptSubmit": "exact",
+    "W2/SessionStart": "absent",
+    "W2/UserPromptSubmit": "absent",
+    "W3/SessionStart": "exact",
+    "W3/UserPromptSubmit": "exact",
+    "W5/SessionStart": "exact",
+    "W5/UserPromptSubmit": "exact",
+    "W5s/SessionStart": "exact",
+    "W5s/UserPromptSubmit": "exact",
+    "W4/SessionStart": "exact",
+    "W4/UserPromptSubmit": "exact"
+   },
+   "parents": [
+    "W1: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe D:\\a\\_temp\\p0-newest\\hooks\\hook.py SessionStart W1\"",
+    "W1: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe D:\\a\\_temp\\p0-newest\\hooks\\hook.py Stop W1\"",
+    "W1: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe D:\\a\\_temp\\p0-newest\\hooks\\hook.py UserPromptSubmit W1\"",
+    "W3: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"python.exe D:\\a\\_temp\\p0-newest\\hooks\\hook.py SessionStart W3\"",
+    "W3: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"python.exe D:\\a\\_temp\\p0-newest\\hooks\\hook.py Stop W3\"",
+    "W3: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"python.exe D:\\a\\_temp\\p0-newest\\hooks\\hook.py UserPromptSubmit W3\"",
+    "W4: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"& \\\"D:\\a\\_temp\\p0-newest\\py space\\python.exe\\\" \\\"D:\\a\\_temp\\p0-newest\\dir with space\\hook.py\\\" SessionStart W4\"",
+    "W4: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"& \\\"D:\\a\\_temp\\p0-newest\\py space\\python.exe\\\" \\\"D:\\a\\_temp\\p0-newest\\dir with space\\hook.py\\\" Stop W4\"",
+    "W4: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"& \\\"D:\\a\\_temp\\p0-newest\\py space\\python.exe\\\" \\\"D:\\a\\_temp\\p0-newest\\dir with space\\hook.py\\\" UserPromptSubmit W4\"",
+    "W5: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"& \\\"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe\\\" \\\"D:\\a\\_temp\\p0-newest\\hooks\\hook.py\\\" SessionStart W5\"",
+    "W5: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"& \\\"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe\\\" \\\"D:\\a\\_temp\\p0-newest\\hooks\\hook.py\\\" Stop W5\"",
+    "W5: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"& \\\"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe\\\" \\\"D:\\a\\_temp\\p0-newest\\hooks\\hook.py\\\" UserPromptSubmit W5\"",
+    "W5s: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"& \\\"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe\\\" \\\"D:\\a\\_temp\\p0-newest\\hooks\\hook.py\\\" SessionStart W5s\"",
+    "W5s: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"& \\\"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe\\\" \\\"D:\\a\\_temp\\p0-newest\\hooks\\hook.py\\\" Stop W5s\"",
+    "W5s: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"& \\\"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe\\\" \\\"D:\\a\\_temp\\p0-newest\\hooks\\hook.py\\\" UserPromptSubmit W5s\""
+   ],
+   "stderr_hook_lines": [],
+   "types": [
+    "thread.started",
+    "turn.started",
+    "item.completed:agent_message",
+    "turn.completed"
+   ],
+   "rust_log_seen_by_hook": [
+    "codex_hooks=trace,codex_core::hook_runtime=trace,warn"
+   ],
+   "payload_keys": {
+    "SessionStart": [
+     "cwd",
+     "hook_event_name",
+     "model",
+     "permission_mode",
+     "session_id",
+     "source",
+     "transcript_path"
+    ],
+    "UserPromptSubmit": [
+     "cwd",
+     "hook_event_name",
+     "model",
+     "permission_mode",
+     "prompt",
+     "session_id",
+     "transcript_path",
+     "turn_id"
+    ],
+    "Stop": [
+     "cwd",
+     "hook_event_name",
+     "last_assistant_message",
+     "model",
+     "permission_mode",
+     "session_id",
+     "stop_hook_active",
+     "transcript_path",
+     "turn_id"
+    ]
+   },
+   "payload_sample": {
+    "SessionStart": {
+     "hook_event_name": "SessionStart",
+     "source": "startup",
+     "transcript_path": "D:\\a\\_temp\\p0-newest\\homes\\hooks-trusted\\sessions\\2026\\10\\15\\rollout-2026-10-15T17-29-18-01a1409c-763f-75c0-9267-d1531ce15aef.jsonl",
+     "permission_mode": "bypassPermissions",
+     "model": "gpt-6.1-sol",
+     "cwd": "D:\\a\\_temp\\p0-newest\\work",
+     "session_id": "01a1409c-763f-75c0-9267-d1531ce15aef"
+    },
+    "UserPromptSubmit": {
+     "hook_event_name": "UserPromptSubmit",
+     "source": null,
+     "transcript_path": "D:\\a\\_temp\\p0-newest\\homes\\hooks-trusted\\sessions\\2026\\10\\15\\rollout-2026-10-15T17-29-18-01a1409c-763f-75c0-9267-d1531ce15aef.jsonl",
+     "permission_mode": "bypassPermissions",
+     "model": "gpt-6.1-sol",
+     "cwd": "D:\\a\\_temp\\p0-newest\\work",
+     "session_id": "01a1409c-763f-75c0-9267-d1531ce15aef"
+    },
+    "Stop": {
+     "hook_event_name": "Stop",
+     "source": null,
+     "transcript_path": "D:\\a\\_temp\\p0-newest\\homes\\hooks-trusted\\sessions\\2026\\10\\15\\rollout-2026-10-15T17-29-18-01a1409c-763f-75c0-9267-d1531ce15aef.jsonl",
+     "permission_mode": "bypassPermissions",
+     "model": "gpt-6.1-sol",
+     "cwd": "D:\\a\\_temp\\p0-newest\\work",
+     "session_id": "01a1409c-763f-75c0-9267-d1531ce15aef"
+    }
+   }
+  },
+  "bypass_without_pwsh_on_path": {
+   "rc": 0,
+   "ran": {
+    "W4": [
+     "SessionStart",
+     "UserPromptSubmit",
+     "Stop"
+    ],
+    "W5": [
+     "SessionStart",
+     "UserPromptSubmit",
+     "Stop"
+    ],
+    "W3": [
+     "SessionStart",
+     "UserPromptSubmit",
+     "Stop"
+    ],
+    "W5s": [
+     "SessionStart",
+     "UserPromptSubmit",
+     "Stop"
+    ],
+    "W1": [
+     "SessionStart",
+     "UserPromptSubmit",
+     "Stop"
+    ]
+   },
+   "context": {
+    "W0/SessionStart": "absent",
+    "W0/UserPromptSubmit": "absent",
+    "W1/SessionStart": "exact",
+    "W1/UserPromptSubmit": "exact",
+    "W2/SessionStart": "absent",
+    "W2/UserPromptSubmit": "absent",
+    "W3/SessionStart": "exact",
+    "W3/UserPromptSubmit": "exact",
+    "W5/SessionStart": "exact",
+    "W5/UserPromptSubmit": "exact",
+    "W5s/SessionStart": "exact",
+    "W5s/UserPromptSubmit": "exact",
+    "W4/SessionStart": "exact",
+    "W4/UserPromptSubmit": "exact"
+   },
+   "parents": [
+    "W1: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe D:\\a\\_temp\\p0-newest\\hooks\\hook.py SessionStart W1\"",
+    "W1: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe D:\\a\\_temp\\p0-newest\\hooks\\hook.py Stop W1\"",
+    "W1: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe D:\\a\\_temp\\p0-newest\\hooks\\hook.py UserPromptSubmit W1\"",
+    "W3: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"python.exe D:\\a\\_temp\\p0-newest\\hooks\\hook.py SessionStart W3\"",
+    "W3: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"python.exe D:\\a\\_temp\\p0-newest\\hooks\\hook.py Stop W3\"",
+    "W3: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"python.exe D:\\a\\_temp\\p0-newest\\hooks\\hook.py UserPromptSubmit W3\"",
+    "W4: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"& \\\"D:\\a\\_temp\\p0-newest\\py space\\python.exe\\\" \\\"D:\\a\\_temp\\p0-newest\\dir with space\\hook.py\\\" SessionStart W4\"",
+    "W4: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"& \\\"D:\\a\\_temp\\p0-newest\\py space\\python.exe\\\" \\\"D:\\a\\_temp\\p0-newest\\dir with space\\hook.py\\\" Stop W4\"",
+    "W4: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"& \\\"D:\\a\\_temp\\p0-newest\\py space\\python.exe\\\" \\\"D:\\a\\_temp\\p0-newest\\dir with space\\hook.py\\\" UserPromptSubmit W4\"",
+    "W5: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"& \\\"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe\\\" \\\"D:\\a\\_temp\\p0-newest\\hooks\\hook.py\\\" SessionStart W5\"",
+    "W5: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"& \\\"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe\\\" \\\"D:\\a\\_temp\\p0-newest\\hooks\\hook.py\\\" Stop W5\"",
+    "W5: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"& \\\"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe\\\" \\\"D:\\a\\_temp\\p0-newest\\hooks\\hook.py\\\" UserPromptSubmit W5\"",
+    "W5s: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"& \\\"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe\\\" \\\"D:\\a\\_temp\\p0-newest\\hooks\\hook.py\\\" SessionStart W5s\"",
+    "W5s: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"& \\\"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe\\\" \\\"D:\\a\\_temp\\p0-newest\\hooks\\hook.py\\\" Stop W5s\"",
+    "W5s: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"& \\\"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe\\\" \\\"D:\\a\\_temp\\p0-newest\\hooks\\hook.py\\\" UserPromptSubmit W5s\""
+   ],
+   "stderr_hook_lines": [],
+   "types": [
+    "thread.started",
+    "item.completed:error",
+    "item.completed:error",
+    "turn.started",
+    "item.completed:agent_message",
+    "turn.completed"
+   ],
+   "rust_log_seen_by_hook": [
+    "codex_hooks=trace,codex_core::hook_runtime=trace,warn"
+   ],
+   "payload_keys": {
+    "SessionStart": [
+     "cwd",
+     "hook_event_name",
+     "model",
+     "permission_mode",
+     "session_id",
+     "source",
+     "transcript_path"
+    ],
+    "UserPromptSubmit": [
+     "cwd",
+     "hook_event_name",
+     "model",
+     "permission_mode",
+     "prompt",
+     "session_id",
+     "transcript_path",
+     "turn_id"
+    ],
+    "Stop": [
+     "cwd",
+     "hook_event_name",
+     "last_assistant_message",
+     "model",
+     "permission_mode",
+     "session_id",
+     "stop_hook_active",
+     "transcript_path",
+     "turn_id"
+    ]
+   },
+   "payload_sample": {
+    "SessionStart": {
+     "hook_event_name": "SessionStart",
+     "source": "startup",
+     "transcript_path": "D:\\a\\_temp\\p0-newest\\homes\\hooks-nopwsh\\sessions\\2026\\10\\15\\rollout-2026-10-15T17-29-25-01a1409c-92a8-77d1-b221-5e3ef1465425.jsonl",
+     "permission_mode": "bypassPermissions",
+     "model": "gpt-6.1-sol",
+     "cwd": "D:\\a\\_temp\\p0-newest\\work",
+     "session_id": "01a1409c-92a8-77d1-b221-5e3ef1465425"
+    },
+    "UserPromptSubmit": {
+     "hook_event_name": "UserPromptSubmit",
+     "source": null,
+     "transcript_path": "D:\\a\\_temp\\p0-newest\\homes\\hooks-nopwsh\\sessions\\2026\\10\\15\\rollout-2026-10-15T17-29-25-01a1409c-92a8-77d1-b221-5e3ef1465425.jsonl",
+     "permission_mode": "bypassPermissions",
+     "model": "gpt-6.1-sol",
+     "cwd": "D:\\a\\_temp\\p0-newest\\work",
+     "session_id": "01a1409c-92a8-77d1-b221-5e3ef1465425"
+    },
+    "Stop": {
+     "hook_event_name": "Stop",
+     "source": null,
+     "transcript_path": "D:\\a\\_temp\\p0-newest\\homes\\hooks-nopwsh\\sessions\\2026\\10\\15\\rollout-2026-10-15T17-29-25-01a1409c-92a8-77d1-b221-5e3ef1465425.jsonl",
+     "permission_mode": "bypassPermissions",
+     "model": "gpt-6.1-sol",
+     "cwd": "D:\\a\\_temp\\p0-newest\\work",
+     "session_id": "01a1409c-92a8-77d1-b221-5e3ef1465425"
+    }
+   }
+  },
+  "_seconds": 22.4
+ }
+}

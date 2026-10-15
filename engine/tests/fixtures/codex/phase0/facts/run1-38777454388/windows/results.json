@@ -1,0 +1,1916 @@
+{
+ "os": "windows",
+ "python": "3.12.10",
+ "codex_path": "C:\\Users\\runneradmin\\AppData\\Local\\Programs\\OpenAI\\Codex\\bin\\codex.EXE",
+ "version": {
+  "codex": "codex-cli 0.162.1",
+  "exec_flags": {
+   "--json": true,
+   "--ephemeral": true,
+   "--ignore-user-config": true,
+   "--ignore-rules": true,
+   "--output-schema": true,
+   "--output-last-message": true,
+   "--skip-git-repo-check": true,
+   "--cd": true,
+   "--sandbox": true,
+   "--dangerously-bypass-hook-trust": true
+  },
+  "exec_help_stdin_lines": [
+   "instructions are read from stdin. If stdin is piped and a prompt is also provided, stdin",
+   "is appended as a `<stdin>` block"
+  ],
+  "mcp_list_has_json": true,
+  "_seconds": 0.3
+ },
+ "login": {
+  "status_file": {
+   "rc": 0,
+   "stdout": "",
+   "stderr_first": "Logged in using ChatGPT"
+  },
+  "status_default": {
+   "rc": 0,
+   "stdout": "",
+   "stderr_first": "Logged in using ChatGPT"
+  },
+  "auth_json_still_there": true,
+  "_seconds": 0.1
+ },
+ "features": {
+  "count": 167,
+  "default_true_count": 58,
+  "default_true": [
+   "api_key_model_discovery",
+   "apps",
+   "auth_elicitation",
+   "browser_annotation_api",
+   "browser_use",
+   "browser_use_external",
+   "browser_use_full_cdp_access",
+   "code_mode_host",
+   "collaboration_modes",
+   "compaction_image_budget",
+   "computer_use",
+   "content_item_kinds",
+   "daemon_auto_start",
+   "enable_request_compression",
+   "fast_mode",
+   "goals",
+   "guardian_approval",
+   "guardian_reuse_parent_compaction",
+   "hooks",
+   "image_generation",
+   "in_app_browser",
+   "in_app_chat",
+   "in_app_dictation",
+   "in_app_local_automation",
+   "in_app_updates",
+   "in_app_voice",
+   "instant_interrupt",
+   "item_ids",
+   "mentions_v2",
+   "multi_agent",
+   "plugin_sharing",
+   "plugins",
+   "realtime_conversation",
+   "remote_plugin",
+   "resize_all_images",
+   "secret_auth_storage",
+   "shell_snapshot",
+   "shell_tool",
+   "skill_mcp_dependency_install",
+   "skill_search",
+   "sleep_tool",
+   "sqlite",
+   "steer",
+   "system_proxy_fallback",
+   "terminal_resize_reflow",
+   "tool_call_mcp_elicitation",
+   "tool_search_always_defer_mcp_tools",
+   "tool_suggest",
+   "tui_app_server",
+   "ultrafast_mode",
+   "unbounded_connection_retries",
+   "unified_exec",
+   "unified_exec_tty",
+   "unified_exec_zsh_fork",
+   "view_image",
+   "workspace_dependencies",
+   "worktrees",
+   "write_stdin_approval"
+  ],
+  "default_true_removed_stage": [
+   "collaboration_modes",
+   "item_ids",
+   "resize_all_images",
+   "sqlite",
+   "steer",
+   "terminal_resize_reflow",
+   "tool_search_always_defer_mcp_tools",
+   "tui_app_server",
+   "unified_exec_zsh_fork"
+  ],
+  "root_c_before_subcommand": {
+   "rc": 0,
+   "shell_tool": [
+    "stable",
+    false
+   ],
+   "hooks": [
+    "stable",
+    false
+   ]
+  },
+  "c_after_subcommand": {
+   "rc": 0,
+   "shell_tool": [
+    "stable",
+    false
+   ],
+   "stderr": ""
+  },
+  "user_config_true_vs_c_false": {
+   "rc": 0,
+   "shell_tool": [
+    "stable",
+    false
+   ],
+   "code_mode_host_from_user_config": [
+    "stable",
+    true
+   ],
+   "stderr": ""
+  },
+  "unknown_feature_key": {
+   "rc": 0,
+   "stderr": "",
+   "listed": false
+  },
+  "lockc_still_true": [
+   "api_key_model_discovery",
+   "auth_elicitation",
+   "browser_annotation_api",
+   "browser_use_external",
+   "browser_use_full_cdp_access",
+   "collaboration_modes",
+   "compaction_image_budget",
+   "content_item_kinds",
+   "daemon_auto_start",
+   "enable_request_compression",
+   "fast_mode",
+   "guardian_approval",
+   "guardian_reuse_parent_compaction",
+   "in_app_chat",
+   "in_app_dictation",
+   "in_app_local_automation",
+   "in_app_updates",
+   "in_app_voice",
+   "instant_interrupt",
+   "item_ids",
+   "mentions_v2",
+   "plugin_sharing",
+   "realtime_conversation",
+   "remote_plugin",
+   "resize_all_images",
+   "secret_auth_storage",
+   "shell_snapshot",
+   "skill_mcp_dependency_install",
+   "sqlite",
+   "steer",
+   "system_proxy_fallback",
+   "terminal_resize_reflow",
+   "tool_call_mcp_elicitation",
+   "tool_search_always_defer_mcp_tools",
+   "tui_app_server",
+   "ultrafast_mode",
+   "unbounded_connection_retries",
+   "unified_exec",
+   "unified_exec_tty",
+   "unified_exec_zsh_fork",
+   "workspace_dependencies",
+   "worktrees",
+   "write_stdin_approval"
+  ],
+  "lockc_known_off_missing": [],
+  "lockc_known_off_still_true": [
+   "unified_exec"
+  ],
+  "all_default_true_off_still_true": [
+   "collaboration_modes",
+   "item_ids",
+   "resize_all_images",
+   "sqlite",
+   "steer",
+   "terminal_resize_reflow",
+   "tool_search_always_defer_mcp_tools",
+   "tui_app_server",
+   "unified_exec",
+   "unified_exec_zsh_fork"
+  ],
+  "_seconds": 0.3
+ },
+ "lock": {
+  "LC_chatgpt": {
+   "rc": 0,
+   "dt": 0.3,
+   "thread": "01a1409a-e6e1-7190-af09-33a642bf63d9",
+   "types": [
+    "thread.started",
+    "item.completed:error",
+    "turn.started",
+    "item.completed:agent_message",
+    "turn.completed"
+   ],
+   "n_model_calls": 1,
+   "tools": [
+    "functions.exec",
+    "functions.exec>apply_patch",
+    "functions.exec>clock__curr_time",
+    "functions.exec>list_mcp_resource_templates",
+    "functions.exec>list_mcp_resources",
+    "functions.exec>read_mcp_resource",
+    "functions.request_user_input_async",
+    "functions.wait"
+   ],
+   "endpoints": {
+    "GET /v1/models": 3,
+    "GET /backend-api/wham/accounts/check": 2,
+    "GET /v1/responses": 1,
+    "GET /backend-api/wham/settings/user": 1,
+    "POST /v1/responses": 1
+   },
+   "last_message": "{\"verdict\":\"ok\",\"n\":1}",
+   "markers": [
+    "GLOBAL-AGENTS-MARKER",
+    "INSTR-FILE-MARKER"
+   ],
+   "auth_kinds": [
+    "fake-chatgpt"
+   ],
+   "unreadable_bodies": [],
+   "stderr_errors": [
+    "2026-10-15T17:27:35.917434Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 404 Not Found: Unknown error, url: http://127.0.0.1:50035/v1/models?client_version=0.162.1",
+    "2026-10-15T17:27:35.918575Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 404 Not Found: Unknown error, url: http://127.0.0.1:50035/v1/models?client_version=0.162.1",
+    "2026-10-15T17:27:35.920358Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 404 Not Found: Unknown error, url: http://127.0.0.1:50035/v1/models?client_version=0.162.1",
+    "2026-10-15T17:27:36.059303Z ERROR codex_api::endpoint::responses_websocket: failed to connect to websocket: HTTP error: 426 Upgrade Required, url: ws://127.0.0.1:50035/v1/responses"
+   ],
+   "proxy": [],
+   "answer_file": "{\"verdict\":\"ok\",\"n\":1}",
+   "answer_matches_last_message": true,
+   "trap_hits": {},
+   "markers_on_disk": [],
+   "input": {
+    "instructions_len": 0,
+    "instructions_head": "",
+    "input": [
+     {
+      "role": "developer",
+      "len": 0,
+      "head": ""
+     },
+     {
+      "role": "developer",
+      "len": 46,
+      "head": "You are a strict JSON judge. INSTR-FILE-MARKER"
+     },
+     {
+      "role": "user",
+      "len": 99,
+      "head": "# AGENTS.md instructions\n\n<INSTRUCTIONS>\nGLOBAL-AGENTS-MARKER: global instructions.\n</INSTRUCTIONS>"
+     },
+     {
+      "role": "user",
+      "len": 60,
+      "head": "Judge this text and answer with the schema. P0-SENTINEL-LOCK"
+     }
+    ],
+    "model": "gpt-6.1-sol",
+    "reasoning": {
+     "effort": "low",
+     "context": "all_turns"
+    }
+   }
+  },
+  "LC_files_codex_home": {
+   "new_count": 13,
+   "new": [
+    "D:\\a\\_temp\\p0-main\\cages\\001-lock\\answer.json",
+    "goals_1.sqlite",
+    "installation_id",
+    "logs_2.sqlite",
+    "memories_1.sqlite",
+    "memories_1.sqlite-shm",
+    "memories_1.sqlite-wal",
+    "queue_1.sqlite",
+    "queue_1.sqlite-shm",
+    "queue_1.sqlite-wal",
+    "state_5.sqlite",
+    "state_5.sqlite-shm",
+    "state_5.sqlite-wal"
+   ],
+   "changed": [],
+   "removed": []
+  },
+  "LC_files_elsewhere": {
+   "codex_or_openai": [],
+   "other_count": 0,
+   "other_sample": []
+  },
+  "LC_procs_after": [],
+  "LALL_chatgpt": {
+   "rc": 0,
+   "dt": 0.2,
+   "thread": "01a1409b-167e-7333-9ad5-a5c607143433",
+   "types": [
+    "thread.started",
+    "item.completed:error",
+    "turn.started",
+    "item.completed:agent_message",
+    "turn.completed"
+   ],
+   "n_model_calls": 1,
+   "tools": [
+    "functions.exec",
+    "functions.exec>apply_patch",
+    "functions.exec>clock__curr_time",
+    "functions.exec>list_mcp_resource_templates",
+    "functions.exec>list_mcp_resources",
+    "functions.exec>read_mcp_resource",
+    "functions.request_user_input_async",
+    "functions.wait"
+   ],
+   "endpoints": {
+    "GET /v1/models": 3,
+    "GET /backend-api/wham/accounts/check": 2,
+    "GET /v1/responses": 1,
+    "GET /backend-api/wham/settings/user": 1,
+    "POST /v1/responses": 1
+   },
+   "last_message": "{\"verdict\":\"ok\",\"n\":1}",
+   "markers": [
+    "GLOBAL-AGENTS-MARKER",
+    "INSTR-FILE-MARKER"
+   ],
+   "auth_kinds": [
+    "fake-chatgpt"
+   ],
+   "unreadable_bodies": [],
+   "stderr_errors": [
+    "2026-10-15T17:27:48.093090Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 404 Not Found: Unknown error, url: http://127.0.0.1:50035/v1/models?client_version=0.162.1",
+    "2026-10-15T17:27:48.096795Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 404 Not Found: Unknown error, url: http://127.0.0.1:50035/v1/models?client_version=0.162.1",
+    "2026-10-15T17:27:48.098501Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 404 Not Found: Unknown error, url: http://127.0.0.1:50035/v1/models?client_version=0.162.1",
+    "2026-10-15T17:27:48.156261Z ERROR codex_api::endpoint::responses_websocket: failed to connect to websocket: HTTP error: 426 Upgrade Required, url: ws://127.0.0.1:50035/v1/responses"
+   ]
+  },
+  "LC_forced_calls": {
+   "exec_js": {
+    "rc": 0,
+    "tool_outputs": [
+     "code-mode host is disabled"
+    ],
+    "secret_leaked": false,
+    "files_written": [],
+    "stream_types": [
+     "thread.started",
+     "item.completed:error",
+     "turn.started",
+     "item.completed:agent_message",
+     "turn.completed"
+    ],
+    "proxy": []
+   },
+   "exec_command": {
+    "rc": 0,
+    "tool_outputs": [
+     "unsupported call: exec_command"
+    ],
+    "secret_leaked": false,
+    "files_written": [],
+    "stream_types": [
+     "thread.started",
+     "item.completed:error",
+     "turn.started",
+     "item.completed:agent_message",
+     "turn.completed"
+    ],
+    "proxy": []
+   },
+   "apply_patch": {
+    "rc": 0,
+    "tool_outputs": [
+     "patch rejected: writing is blocked by read-only sandbox; rejected by user approval settings"
+    ],
+    "secret_leaked": false,
+    "files_written": [],
+    "stream_types": [
+     "thread.started",
+     "item.completed:error",
+     "turn.started",
+     "item.completed:agent_message",
+     "turn.completed"
+    ],
+    "proxy": []
+   },
+   "shell": {
+    "rc": 0,
+    "tool_outputs": [
+     "unsupported call: shell"
+    ],
+    "secret_leaked": false,
+    "files_written": [],
+    "stream_types": [
+     "thread.started",
+     "item.completed:error",
+     "turn.started",
+     "item.completed:agent_message",
+     "turn.completed"
+    ],
+    "proxy": []
+   },
+   "spawn_agent": {
+    "rc": 0,
+    "tool_outputs": [
+     "unsupported call: spawn_agent"
+    ],
+    "secret_leaked": false,
+    "files_written": [],
+    "stream_types": [
+     "thread.started",
+     "item.completed:error",
+     "turn.started",
+     "item.completed:agent_message",
+     "turn.completed"
+    ],
+    "proxy": []
+   },
+   "view_image": {
+    "rc": 0,
+    "tool_outputs": [
+     "unsupported call: view_image"
+    ],
+    "secret_leaked": false,
+    "files_written": [],
+    "stream_types": [
+     "thread.started",
+     "item.completed:error",
+     "turn.started",
+     "item.completed:agent_message",
+     "turn.completed"
+    ],
+    "proxy": []
+   },
+   "imagegen": {
+    "rc": 0,
+    "tool_outputs": [
+     "unsupported call: image_gen__imagegen"
+    ],
+    "secret_leaked": false,
+    "files_written": [],
+    "stream_types": [
+     "thread.started",
+     "item.completed:error",
+     "turn.started",
+     "item.completed:agent_message",
+     "turn.completed"
+    ],
+    "proxy": []
+   },
+   "announced_request_user_input_async": {
+    "rc": 0,
+    "tool_outputs": [
+     "failed to parse function arguments: missing field `questions` at line 1 column 2"
+    ],
+    "secret_leaked": false,
+    "files_written": [],
+    "stream_types": [
+     "thread.started",
+     "item.completed:error",
+     "turn.started",
+     "item.completed:agent_message",
+     "turn.completed"
+    ],
+    "proxy": []
+   },
+   "announced_wait": {
+    "rc": 0,
+    "tool_outputs": [
+     "failed to parse function arguments: missing field `cell_id` at line 1 column 2"
+    ],
+    "secret_leaked": false,
+    "files_written": [],
+    "stream_types": [
+     "thread.started",
+     "item.completed:error",
+     "turn.started",
+     "item.completed:agent_message",
+     "turn.completed"
+    ],
+    "proxy": []
+   }
+  },
+  "LC_official_urls": {
+   "rc": 1,
+   "proxy": [
+    "CONNECT chatgpt.com:443"
+   ],
+   "mock_hits": {},
+   "types": [
+    "thread.started",
+    "item.completed:error",
+    "turn.started",
+    "error",
+    "error",
+    "error",
+    "error",
+    "item.completed:error",
+    "error",
+    "error",
+    "error",
+    "error"
+   ],
+   "stderr_tail": "2026-10-15T17:27:52.704820Z ERROR codex_models_manager::manager: failed to refresh available models: Connection failed: error sending request\n2026-10-15T17:27:52.736858Z ERROR codex_models_manager::manager: failed to refresh available models: Connection failed: error sending request\n2026-10-15T17:27:55.797358Z ERROR codex_models_manager::manager: failed to refresh available models: Connection failed: error sending request\n"
+  },
+  "_seconds": 33.1
+ },
+ "stdin": {
+  "big_prompt": {
+   "rc": 0,
+   "sent_chars": 150005,
+   "received_lens": [
+    150005
+   ],
+   "exact": true,
+   "exact_after_crlf_to_lf": false,
+   "contains_start_end": true,
+   "sha_sent": "402a7103294304c6",
+   "sha_received": [
+    "402a7103294304c6"
+   ]
+  },
+  "arg_plus_stdin": {
+   "rc": 0,
+   "arg": true,
+   "stdin": true,
+   "text": "ARG-PART\n\n<stdin>\nSTDIN-PART\n</stdin>",
+   "stderr": "Reading additional input from stdin...\n2026-10-15T17:28:09.139498Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 404 Not Found: Unknown error, url: http://"
+  },
+  "no_positional": {
+   "rc": 0,
+   "stdin": true,
+   "stderr": "Reading prompt from stdin...\n2026-10-15T17:28:09.300939Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 404 Not Found: Unknown error, url: http://127.0.0.1:"
+  },
+  "_seconds": 0.6
+ },
+ "rollout": {
+  "detector": {
+   "delete_cmd": {
+    "rc": 0,
+    "thread": "01a1409b-6a48-70c1-ae6b-6099a0be1786",
+    "rollouts": [
+     "sessions\\2026\\10\\15\\rollout-2026-10-15T17-28-09-01a1409b-6a48-70c1-ae6b-6099a0be1786.jsonl"
+    ],
+    "stream_types": [
+     "thread.started",
+     "item.completed:error",
+     "turn.started",
+     "item.completed:agent_message",
+     "turn.completed"
+    ],
+    "session_meta_source": "exec",
+    "session_meta_keys": [
+     "base_instructions",
+     "cli_version",
+     "context_window",
+     "creator_account_id",
+     "creator_user_id",
+     "cwd",
+     "history_mode",
+     "id",
+     "model_provider",
+     "multi_agent_version",
+     "originator",
+     "runtime_workspace_roots",
+     "session_id",
+     "source",
+     "thread_source",
+     "timestamp"
+    ],
+    "rollout_kinds": {
+     "session_meta/None": 1,
+     "event_msg/task_started": 1,
+     "world_state/None": 1,
+     "turn_context/None": 1,
+     "response_item/message": 2,
+     "event_msg/item_completed": 2,
+     "response_item/custom_tool_call": 1,
+     "token_usage_record/None": 3,
+     "response_item/custom_tool_call_output": 1,
+     "event_msg/token_count": 3,
+     "response_item/function_call": 1,
+     "response_item/function_call_output": 1,
+     "event_msg/task_complete": 1
+    },
+    "rollout_tool_calls": [
+     {
+      "type": "custom_tool_call",
+      "name": "exec",
+      "out": "None"
+     },
+     {
+      "type": "custom_tool_call_output",
+      "name": null,
+      "out": "code-mode host is disabled"
+     },
+     {
+      "type": "function_call",
+      "name": "exec_command",
+      "out": "None"
+     },
+     {
+      "type": "function_call_output",
+      "name": null,
+      "out": "unsupported call: exec_command"
+     }
+    ],
+    "stream_has_tool_items": false,
+    "hits_before": {
+     "01a1409b-6a48-70c1-ae6b-6099a0be1786": [
+      "state_5.sqlite-wal",
+      "thread_history_1.sqlite-wal",
+      "sessions\\2026\\10\\15\\rollout-2026-10-15T17-28-09-01a1409b-6a48-70c1-ae6b-6099a0be1786.jsonl"
+     ],
+     "P0-SENTINEL-ROLLOUT-7f3a": [
+      "state_5.sqlite-wal",
+      "thread_history_1.sqlite-wal",
+      "sessions\\2026\\10\\15\\rollout-2026-10-15T17-28-09-01a1409b-6a48-70c1-ae6b-6099a0be1786.jsonl"
+     ]
+    },
+    "files_before": [
+     "auth.json",
+     "goals_1.sqlite",
+     "goals_1.sqlite-shm",
+     "goals_1.sqlite-wal",
+     "installation_id",
+     "logs_2.sqlite",
+     "memories_1.sqlite",
+     "memories_1.sqlite-shm",
+     "memories_1.sqlite-wal",
+     "queue_1.sqlite",
+     "queue_1.sqlite-shm",
+     "queue_1.sqlite-wal",
+     "sessions\\2026\\10\\15\\rollout-2026-10-15T17-28-09-01a1409b-6a48-70c1-ae6b-6099a0be1786.jsonl",
+     "state_5.sqlite",
+     "state_5.sqlite-shm",
+     "state_5.sqlite-wal",
+     "thread-writer-locks\\.coordination.lock",
+     "thread_history_1.sqlite",
+     "thread_history_1.sqlite-shm",
+     "thread_history_1.sqlite-wal"
+    ],
+    "delete_cmd": {
+     "rc": 0,
+     "out": "Deleted session 01a1409b-6a48-70c1-ae6b-6099a0be1786.\n",
+     "err": ""
+    },
+    "hits_after": {
+     "01a1409b-6a48-70c1-ae6b-6099a0be1786": [
+      "state_5.sqlite-wal",
+      "thread_history_1.sqlite-wal"
+     ],
+     "P0-SENTINEL-ROLLOUT-7f3a": [
+      "state_5.sqlite-wal",
+      "thread_history_1.sqlite-wal"
+     ]
+    },
+    "procs_after": []
+   },
+   "unlink": {
+    "rc": 0,
+    "thread": "01a1409b-71c5-7470-a32e-3740e5b7b878",
+    "rollouts": [
+     "sessions\\2026\\10\\15\\rollout-2026-10-15T17-28-11-01a1409b-71c5-7470-a32e-3740e5b7b878.jsonl"
+    ],
+    "stream_types": [
+     "thread.started",
+     "item.completed:error",
+     "turn.started",
+     "item.completed:agent_message",
+     "turn.completed"
+    ],
+    "session_meta_source": "exec",
+    "session_meta_keys": [
+     "base_instructions",
+     "cli_version",
+     "context_window",
+     "creator_account_id",
+     "creator_user_id",
+     "cwd",
+     "history_mode",
+     "id",
+     "model_provider",
+     "multi_agent_version",
+     "originator",
+     "runtime_workspace_roots",
+     "session_id",
+     "source",
+     "thread_source",
+     "timestamp"
+    ],
+    "rollout_kinds": {
+     "session_meta/None": 1,
+     "event_msg/task_started": 1,
+     "world_state/None": 1,
+     "turn_context/None": 1,
+     "response_item/message": 2,
+     "event_msg/item_completed": 2,
+     "response_item/custom_tool_call": 1,
+     "token_usage_record/None": 3,
+     "response_item/custom_tool_call_output": 1,
+     "event_msg/token_count": 3,
+     "response_item/function_call": 1,
+     "response_item/function_call_output": 1,
+     "event_msg/task_complete": 1
+    },
+    "rollout_tool_calls": [
+     {
+      "type": "custom_tool_call",
+      "name": "exec",
+      "out": "None"
+     },
+     {
+      "type": "custom_tool_call_output",
+      "name": null,
+      "out": "code-mode host is disabled"
+     },
+     {
+      "type": "function_call",
+      "name": "exec_command",
+      "out": "None"
+     },
+     {
+      "type": "function_call_output",
+      "name": null,
+      "out": "unsupported call: exec_command"
+     }
+    ],
+    "stream_has_tool_items": false,
+    "hits_before": {
+     "01a1409b-71c5-7470-a32e-3740e5b7b878": [
+      "state_5.sqlite-wal",
+      "thread_history_1.sqlite",
+      "thread_history_1.sqlite-wal",
+      "sessions\\2026\\10\\15\\rollout-2026-10-15T17-28-11-01a1409b-71c5-7470-a32e-3740e5b7b878.jsonl"
+     ],
+     "P0-SENTINEL-ROLLOUT-7f3a": [
+      "state_5.sqlite-wal",
+      "thread_history_1.sqlite",
+      "thread_history_1.sqlite-wal",
+      "sessions\\2026\\10\\15\\rollout-2026-10-15T17-28-11-01a1409b-71c5-7470-a32e-3740e5b7b878.jsonl"
+     ]
+    },
+    "files_before": [
+     "auth.json",
+     "goals_1.sqlite",
+     "goals_1.sqlite-shm",
+     "goals_1.sqlite-wal",
+     "installation_id",
+     "logs_2.sqlite",
+     "memories_1.sqlite",
+     "memories_1.sqlite-shm",
+     "memories_1.sqlite-wal",
+     "queue_1.sqlite",
+     "queue_1.sqlite-shm",
+     "queue_1.sqlite-wal",
+     "sessions\\2026\\10\\15\\rollout-2026-10-15T17-28-11-01a1409b-71c5-7470-a32e-3740e5b7b878.jsonl",
+     "state_5.sqlite",
+     "state_5.sqlite-shm",
+     "state_5.sqlite-wal",
+     "thread-writer-locks\\.coordination.lock",
+     "thread_history_1.sqlite",
+     "thread_history_1.sqlite-shm",
+     "thread_history_1.sqlite-wal"
+    ],
+    "hits_after": {
+     "01a1409b-71c5-7470-a32e-3740e5b7b878": [
+      "state_5.sqlite-wal",
+      "thread_history_1.sqlite",
+      "thread_history_1.sqlite-wal"
+     ],
+     "P0-SENTINEL-ROLLOUT-7f3a": [
+      "state_5.sqlite-wal",
+      "thread_history_1.sqlite",
+      "thread_history_1.sqlite-wal"
+     ]
+    },
+    "procs_after": []
+   }
+  },
+  "ephemeral_hits": {
+   "rc": 0,
+   "hits": {
+    "01a1409b-7867-7cd2-a0c9-d3acbb4bef7e": [],
+    "P0-SENTINEL-ROLLOUT-7f3a": []
+   },
+   "files": [
+    "auth.json",
+    "goals_1.sqlite",
+    "installation_id",
+    "logs_2.sqlite",
+    "memories_1.sqlite",
+    "memories_1.sqlite-shm",
+    "memories_1.sqlite-wal",
+    "queue_1.sqlite",
+    "queue_1.sqlite-shm",
+    "queue_1.sqlite-wal",
+    "state_5.sqlite",
+    "state_5.sqlite-shm",
+    "state_5.sqlite-wal"
+   ]
+  },
+  "_seconds": 3.9
+ },
+ "mcp": {
+  "mcp_list_user_config": {
+   "rc": 0,
+   "lists_usermcp": true,
+   "out": "Name     Command                                                   Args                                  Env  Cwd  Status   Auth       \nusermcp  C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe  D:\\a\\_temp\\p0-main\\marker.py usermcp  -    -    enabled  Unsupported\n",
+   "err": ""
+  },
+  "mcp_list_json": {
+   "rc": 0,
+   "out": "[\n  {\n    \"name\": \"usermcp\",\n    \"enabled\": true,\n    \"disabled_reason\": null,\n    \"transport\": {\n      \"type\": \"stdio\",\n      \"command\": \"C:\\\\hostedtoolcache\\\\windows\\\\Python\\\\3.12.10\\\\x64\\\\python.exe\",\n      \"args\": [\n        \"D:\\\\a\\\\_temp\\\\p0-main\\\\marker.py\",\n        \"usermcp\"\n      ],\n      \"env\": null,\n      \"env_vars\": [],\n      \"cwd\": null\n    },\n    \"startup_timeout_sec\": null,\n    \"tool_timeout_sec\": null,\n    \"auth_status\": \"unsupported\"\n  }\n]\n"
+  },
+  "exec_lock_started": {
+   "rc": 0,
+   "markers": []
+  },
+  "exec_default_started_control": {
+   "rc": 0,
+   "markers": [
+    "usermcp"
+   ],
+   "endpoints": {
+    "GET /v1/models": 3,
+    "GET /backend-api/ps/plugins/list": 1,
+    "GET /backend-api/plugins/featured": 1,
+    "GET /backend-api/ps/plugins/installed": 3,
+    "GET /backend-api/ps/plugins/suggested/codex": 5,
+    "GET /backend-api/wham/accounts/check": 2,
+    "POST /backend-api/ps/mcp": 2,
+    "GET /v1/responses": 1,
+    "GET /backend-api/wham/settings/user": 1,
+    "POST /v1/responses": 1
+   }
+  },
+  "_seconds": 0.5
+ },
+ "layers": {
+  "cases": {
+   "sys_config": {
+    "path": "C:\\ProgramData\\OpenAI\\Codex\\config.toml",
+    "rc": 0,
+    "trap_hits": {},
+    "mock_model_calls": 1,
+    "markers_on_disk": [
+     "sysmcp"
+    ],
+    "request_markers": [
+     "SYSTEM-DEV-MARKER",
+     "INSTR-FILE-MARKER"
+    ],
+    "tools": [
+     "functions.exec",
+     "functions.exec>apply_patch",
+     "functions.exec>clock__curr_time",
+     "functions.exec>list_mcp_resource_templates",
+     "functions.exec>list_mcp_resources",
+     "functions.exec>read_mcp_resource",
+     "functions.request_user_input_async",
+     "functions.wait"
+    ],
+    "features_list": {
+     "rc": 0,
+     "shell_tool": [
+      "stable",
+      false
+     ],
+     "code_mode_host": [
+      "stable",
+      false
+     ],
+     "err": ""
+    },
+    "mcp_list": {
+     "rc": 0,
+     "out": "Name    Command                                                   Args                                 Env  Cwd  Status   Auth       \nsysmcp  C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe  D:\\a\\_temp\\p0-main\\marker.py sysmcp  -    -    enabled  Unsupported\n",
+     "err": ""
+    },
+    "stderr_tail": " status 404 Not Found: Unknown error, url: http://127.0.0.1:63966/v1/models?client_version=0.162.1\n2026-10-15T17:28:13.950825Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 404 Not Found: Unknown error, url: http://127.0.0.1:63966/v1/models?client_version=0.162.1\n2026-10-15T17:28:13.952386Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 404 Not Found: Unknown error, url: http://127.0.0.1:63966/v1/models?client_version=0.162.1\n2026-10-15T17:28:14.021416Z ERROR codex_api::endpoint::responses_websocket: failed to connect to websocket: HTTP error: 426 Upgrade Required, url: ws://127.0.0.1:63966/v1/responses\n",
+    "types": [
+     "thread.started",
+     "item.completed:error",
+     "turn.started",
+     "item.completed:agent_message",
+     "turn.completed"
+    ]
+   },
+   "req_provider": {
+    "path": "C:\\ProgramData\\OpenAI\\Codex\\requirements.toml",
+    "rc": 1,
+    "trap_hits": {
+     "GET /v1/models": 3,
+     "POST /v1/responses": 6
+    },
+    "mock_model_calls": 0,
+    "markers_on_disk": [],
+    "request_markers": [],
+    "tools": [],
+    "features_list": {
+     "rc": 0,
+     "shell_tool": [
+      "stable",
+      false
+     ],
+     "code_mode_host": [
+      "stable",
+      false
+     ],
+     "err": ""
+    },
+    "mcp_list": {
+     "rc": 0,
+     "out": "No MCP servers configured yet. Try `codex mcp add my-tool -- my-command`.\n",
+     "err": ""
+    },
+    "stderr_tail": "2026-10-15T17:28:14.300519Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 404 Not Found: Unknown error, url: http://127.0.0.1:63967/v1/models?client_version=0.162.1\n2026-10-15T17:28:14.301067Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 404 Not Found: Unknown error, url: http://127.0.0.1:63967/v1/models?client_version=0.162.1\n2026-10-15T17:28:14.303171Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 404 Not Found: Unknown error, url: http://127.0.0.1:63967/v1/models?client_version=0.162.1\n",
+    "types": [
+     "thread.started",
+     "item.completed:error",
+     "item.completed:error",
+     "item.completed:error",
+     "turn.started",
+     "error",
+     "error",
+     "error",
+     "error",
+     "error"
+    ]
+   },
+   "req_chatgpt_url": {
+    "path": "C:\\ProgramData\\OpenAI\\Codex\\requirements.toml",
+    "rc": 0,
+    "trap_hits": {
+     "GET /backend-api/wham/accounts/check": 2,
+     "GET /backend-api/wham/settings/user": 1
+    },
+    "mock_model_calls": 1,
+    "markers_on_disk": [],
+    "request_markers": [
+     "INSTR-FILE-MARKER"
+    ],
+    "tools": [
+     "functions.exec",
+     "functions.exec>apply_patch",
+     "functions.exec>clock__curr_time",
+     "functions.exec>list_mcp_resource_templates",
+     "functions.exec>list_mcp_resources",
+     "functions.exec>read_mcp_resource",
+     "functions.request_user_input_async",
+     "functions.wait"
+    ],
+    "features_list": {
+     "rc": 0,
+     "shell_tool": [
+      "stable",
+      false
+     ],
+     "code_mode_host": [
+      "stable",
+      false
+     ],
+     "err": ""
+    },
+    "mcp_list": {
+     "rc": 0,
+     "out": "No MCP servers configured yet. Try `codex mcp add my-tool -- my-command`.\n",
+     "err": ""
+    },
+    "stderr_tail": " status 404 Not Found: Unknown error, url: http://127.0.0.1:63966/v1/models?client_version=0.162.1\n2026-10-15T17:28:20.689907Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 404 Not Found: Unknown error, url: http://127.0.0.1:63966/v1/models?client_version=0.162.1\n2026-10-15T17:28:20.691703Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 404 Not Found: Unknown error, url: http://127.0.0.1:63966/v1/models?client_version=0.162.1\n2026-10-15T17:28:20.756437Z ERROR codex_api::endpoint::responses_websocket: failed to connect to websocket: HTTP error: 426 Upgrade Required, url: ws://127.0.0.1:63966/v1/responses\n",
+    "types": [
+     "thread.started",
+     "item.completed:error",
+     "item.completed:error",
+     "item.completed:error",
+     "turn.started",
+     "item.completed:agent_message",
+     "turn.completed"
+    ]
+   },
+   "req_features": {
+    "path": "C:\\ProgramData\\OpenAI\\Codex\\requirements.toml",
+    "rc": 0,
+    "trap_hits": {},
+    "mock_model_calls": 1,
+    "markers_on_disk": [],
+    "request_markers": [
+     "INSTR-FILE-MARKER"
+    ],
+    "tools": [
+     "functions.exec",
+     "functions.exec>apply_patch",
+     "functions.exec>clock__curr_time",
+     "functions.exec>exec_command",
+     "functions.exec>list_mcp_resource_templates",
+     "functions.exec>list_mcp_resources",
+     "functions.exec>read_mcp_resource",
+     "functions.exec>write_stdin",
+     "functions.request_user_input_async",
+     "functions.wait"
+    ],
+    "features_list": {
+     "rc": 0,
+     "shell_tool": [
+      "stable",
+      true
+     ],
+     "code_mode_host": [
+      "stable",
+      true
+     ],
+     "err": ""
+    },
+    "mcp_list": {
+     "rc": 0,
+     "out": "No MCP servers configured yet. Try `codex mcp add my-tool -- my-command`.\n",
+     "err": ""
+    },
+    "stderr_tail": " status 404 Not Found: Unknown error, url: http://127.0.0.1:63966/v1/models?client_version=0.162.1\n2026-10-15T17:28:21.025649Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 404 Not Found: Unknown error, url: http://127.0.0.1:63966/v1/models?client_version=0.162.1\n2026-10-15T17:28:21.027371Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 404 Not Found: Unknown error, url: http://127.0.0.1:63966/v1/models?client_version=0.162.1\n2026-10-15T17:28:21.082684Z ERROR codex_api::endpoint::responses_websocket: failed to connect to websocket: HTTP error: 426 Upgrade Required, url: ws://127.0.0.1:63966/v1/responses\n",
+    "types": [
+     "thread.started",
+     "turn.started",
+     "item.completed:agent_message",
+     "turn.completed"
+    ]
+   },
+   "req_devinstr": {
+    "path": "C:\\ProgramData\\OpenAI\\Codex\\requirements.toml",
+    "rc": 0,
+    "trap_hits": {},
+    "mock_model_calls": 1,
+    "markers_on_disk": [],
+    "request_markers": [
+     "REQ-DEV-MARKER",
+     "INSTR-FILE-MARKER"
+    ],
+    "tools": [
+     "functions.exec",
+     "functions.exec>apply_patch",
+     "functions.exec>clock__curr_time",
+     "functions.exec>list_mcp_resource_templates",
+     "functions.exec>list_mcp_resources",
+     "functions.exec>read_mcp_resource",
+     "functions.request_user_input_async",
+     "functions.wait"
+    ],
+    "features_list": {
+     "rc": 0,
+     "shell_tool": [
+      "stable",
+      false
+     ],
+     "code_mode_host": [
+      "stable",
+      false
+     ],
+     "err": ""
+    },
+    "mcp_list": {
+     "rc": 0,
+     "out": "No MCP servers configured yet. Try `codex mcp add my-tool -- my-command`.\n",
+     "err": ""
+    },
+    "stderr_tail": " status 404 Not Found: Unknown error, url: http://127.0.0.1:63966/v1/models?client_version=0.162.1\n2026-10-15T17:28:21.353772Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 404 Not Found: Unknown error, url: http://127.0.0.1:63966/v1/models?client_version=0.162.1\n2026-10-15T17:28:21.355505Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 404 Not Found: Unknown error, url: http://127.0.0.1:63966/v1/models?client_version=0.162.1\n2026-10-15T17:28:21.420473Z ERROR codex_api::endpoint::responses_websocket: failed to connect to websocket: HTTP error: 426 Upgrade Required, url: ws://127.0.0.1:63966/v1/responses\n",
+    "types": [
+     "thread.started",
+     "item.completed:error",
+     "turn.started",
+     "item.completed:agent_message",
+     "turn.completed"
+    ]
+   },
+   "req_hooks": {
+    "path": "C:\\ProgramData\\OpenAI\\Codex\\requirements.toml",
+    "rc": 0,
+    "trap_hits": {},
+    "mock_model_calls": 1,
+    "markers_on_disk": [],
+    "request_markers": [
+     "INSTR-FILE-MARKER"
+    ],
+    "tools": [
+     "functions.exec",
+     "functions.exec>apply_patch",
+     "functions.exec>clock__curr_time",
+     "functions.exec>list_mcp_resource_templates",
+     "functions.exec>list_mcp_resources",
+     "functions.exec>read_mcp_resource",
+     "functions.request_user_input_async",
+     "functions.wait"
+    ],
+    "features_list": {
+     "rc": 0,
+     "shell_tool": [
+      "stable",
+      false
+     ],
+     "code_mode_host": [
+      "stable",
+      false
+     ],
+     "err": ""
+    },
+    "mcp_list": {
+     "rc": 0,
+     "out": "No MCP servers configured yet. Try `codex mcp add my-tool -- my-command`.\n",
+     "err": ""
+    },
+    "stderr_tail": " status 404 Not Found: Unknown error, url: http://127.0.0.1:63966/v1/models?client_version=0.162.1\n2026-10-15T17:28:21.669272Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 404 Not Found: Unknown error, url: http://127.0.0.1:63966/v1/models?client_version=0.162.1\n2026-10-15T17:28:21.670910Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 404 Not Found: Unknown error, url: http://127.0.0.1:63966/v1/models?client_version=0.162.1\n2026-10-15T17:28:21.725733Z ERROR codex_api::endpoint::responses_websocket: failed to connect to websocket: HTTP error: 426 Upgrade Required, url: ws://127.0.0.1:63966/v1/responses\n",
+    "types": [
+     "thread.started",
+     "item.completed:error",
+     "turn.started",
+     "item.completed:agent_message",
+     "turn.completed"
+    ]
+   },
+   "win_codex_home_managed_config": {
+    "rc": 0,
+    "trap_hits": {},
+    "mock_model_calls": 1,
+    "markers_on_disk": [],
+    "request_markers": [
+     "INSTR-FILE-MARKER"
+    ],
+    "tools": [
+     "functions.exec",
+     "functions.exec>apply_patch",
+     "functions.exec>clock__curr_time",
+     "functions.exec>list_mcp_resource_templates",
+     "functions.exec>list_mcp_resources",
+     "functions.exec>read_mcp_resource",
+     "functions.request_user_input_async",
+     "functions.wait"
+    ],
+    "features_list": {
+     "rc": 0,
+     "shell_tool": [
+      "stable",
+      false
+     ],
+     "code_mode_host": [
+      "stable",
+      false
+     ],
+     "err": ""
+    },
+    "mcp_list": {
+     "rc": 0,
+     "out": "No MCP servers configured yet. Try `codex mcp add my-tool -- my-command`.\n",
+     "err": ""
+    },
+    "stderr_tail": " status 404 Not Found: Unknown error, url: http://127.0.0.1:63966/v1/models?client_version=0.162.1\n2026-10-15T17:28:22.023713Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 404 Not Found: Unknown error, url: http://127.0.0.1:63966/v1/models?client_version=0.162.1\n2026-10-15T17:28:22.025139Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 404 Not Found: Unknown error, url: http://127.0.0.1:63966/v1/models?client_version=0.162.1\n2026-10-15T17:28:22.083635Z ERROR codex_api::endpoint::responses_websocket: failed to connect to websocket: HTTP error: 426 Upgrade Required, url: ws://127.0.0.1:63966/v1/responses\n",
+    "types": [
+     "thread.started",
+     "item.completed:error",
+     "item.completed:error",
+     "item.completed:error",
+     "turn.started",
+     "item.completed:agent_message",
+     "turn.completed"
+    ]
+   }
+  },
+  "_seconds": 8.4
+ },
+ "hooks": {
+  "variants": {
+   "W0": [
+    "echo W0-{ev}>> \"D:\\a\\_temp\\p0-main\\w0-marker.txt\"",
+    "commandWindows"
+   ],
+   "W1": [
+    "C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe D:\\a\\_temp\\p0-main\\hooks\\hook.py {ev} W1",
+    "commandWindows"
+   ],
+   "W2": [
+    "\"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe\" \"D:\\a\\_temp\\p0-main\\hooks\\hook.py\" {ev} W2",
+    "commandWindows"
+   ],
+   "W3": [
+    "python.exe D:\\a\\_temp\\p0-main\\hooks\\hook.py {ev} W3",
+    "commandWindows"
+   ],
+   "W5": [
+    "& \"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe\" \"D:\\a\\_temp\\p0-main\\hooks\\hook.py\" {ev} W5",
+    "commandWindows"
+   ],
+   "W5s": [
+    "& \"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe\" \"D:\\a\\_temp\\p0-main\\hooks\\hook.py\" {ev} W5s",
+    "command_windows"
+   ],
+   "W4": [
+    "& \"D:\\a\\_temp\\p0-main\\py space\\python.exe\" \"D:\\a\\_temp\\p0-main\\dir with space\\hook.py\" {ev} W4",
+    "commandWindows"
+   ]
+  },
+  "bypass": {
+   "rc": 0,
+   "ran": {
+    "W5s": [
+     "SessionStart",
+     "UserPromptSubmit",
+     "Stop"
+    ],
+    "W1": [
+     "SessionStart",
+     "UserPromptSubmit",
+     "Stop"
+    ],
+    "W5": [
+     "SessionStart",
+     "UserPromptSubmit",
+     "Stop"
+    ],
+    "W3": [
+     "SessionStart",
+     "UserPromptSubmit",
+     "Stop"
+    ],
+    "W4": [
+     "UserPromptSubmit",
+     "Stop"
+    ]
+   },
+   "context": {
+    "W0/SessionStart": "absent",
+    "W0/UserPromptSubmit": "absent",
+    "W1/SessionStart": "exact",
+    "W1/UserPromptSubmit": "exact",
+    "W2/SessionStart": "absent",
+    "W2/UserPromptSubmit": "absent",
+    "W3/SessionStart": "exact",
+    "W3/UserPromptSubmit": "exact",
+    "W5/SessionStart": "exact",
+    "W5/UserPromptSubmit": "exact",
+    "W5s/SessionStart": "exact",
+    "W5s/UserPromptSubmit": "exact",
+    "W4/SessionStart": "exact",
+    "W4/UserPromptSubmit": "exact"
+   },
+   "parents": [
+    "W1: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe D:\\a\\_temp\\p0-main\\hooks\\hook.py SessionStart W1\"",
+    "W1: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe D:\\a\\_temp\\p0-main\\hooks\\hook.py Stop W1\"",
+    "W1: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe D:\\a\\_temp\\p0-main\\hooks\\hook.py UserPromptSubmit W1\"",
+    "W3: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"python.exe D:\\a\\_temp\\p0-main\\hooks\\hook.py SessionStart W3\"",
+    "W3: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"python.exe D:\\a\\_temp\\p0-main\\hooks\\hook.py Stop W3\"",
+    "W3: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"python.exe D:\\a\\_temp\\p0-main\\hooks\\hook.py UserPromptSubmit W3\"",
+    "W4: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"& \\\"D:\\a\\_temp\\p0-main\\py space\\python.exe\\\" \\\"D:\\a\\_temp\\p0-main\\dir with space\\hook.py\\\" Stop W4\"",
+    "W4: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"& \\\"D:\\a\\_temp\\p0-main\\py space\\python.exe\\\" \\\"D:\\a\\_temp\\p0-main\\dir with space\\hook.py\\\" UserPromptSubmit W4\"",
+    "W5: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"& \\\"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe\\\" \\\"D:\\a\\_temp\\p0-main\\hooks\\hook.py\\\" SessionStart W5\"",
+    "W5: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"& \\\"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe\\\" \\\"D:\\a\\_temp\\p0-main\\hooks\\hook.py\\\" Stop W5\"",
+    "W5: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"& \\\"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe\\\" \\\"D:\\a\\_temp\\p0-main\\hooks\\hook.py\\\" UserPromptSubmit W5\"",
+    "W5s: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"& \\\"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe\\\" \\\"D:\\a\\_temp\\p0-main\\hooks\\hook.py\\\" SessionStart W5s\"",
+    "W5s: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"& \\\"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe\\\" \\\"D:\\a\\_temp\\p0-main\\hooks\\hook.py\\\" Stop W5s\"",
+    "W5s: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"& \\\"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe\\\" \\\"D:\\a\\_temp\\p0-main\\hooks\\hook.py\\\" UserPromptSubmit W5s\""
+   ],
+   "stderr_hook_lines": [],
+   "types": [
+    "thread.started",
+    "item.completed:error",
+    "item.completed:error",
+    "turn.started",
+    "item.completed:agent_message",
+    "turn.completed"
+   ],
+   "rust_log_seen_by_hook": [
+    "codex_hooks=trace,codex_core::hook_runtime=trace,warn"
+   ],
+   "payload_keys": {
+    "SessionStart": [
+     "cwd",
+     "hook_event_name",
+     "model",
+     "permission_mode",
+     "session_id",
+     "source",
+     "transcript_path"
+    ],
+    "UserPromptSubmit": [
+     "cwd",
+     "hook_event_name",
+     "model",
+     "permission_mode",
+     "prompt",
+     "session_id",
+     "transcript_path",
+     "turn_id"
+    ],
+    "Stop": [
+     "cwd",
+     "hook_event_name",
+     "last_assistant_message",
+     "model",
+     "permission_mode",
+     "session_id",
+     "stop_hook_active",
+     "transcript_path",
+     "turn_id"
+    ]
+   },
+   "payload_sample": {
+    "SessionStart": {
+     "hook_event_name": "SessionStart",
+     "source": "startup",
+     "transcript_path": "D:\\a\\_temp\\p0-main\\homes\\hooks-bypass\\sessions\\2026\\10\\15\\rollout-2026-10-15T17-28-22-01a1409b-9c47-7753-9c15-e54e9b6f86fe.jsonl",
+     "permission_mode": "bypassPermissions",
+     "model": "gpt-6.1-sol",
+     "cwd": "D:\\a\\_temp\\p0-main\\work",
+     "session_id": "01a1409b-9c47-7753-9c15-e54e9b6f86fe"
+    },
+    "UserPromptSubmit": {
+     "hook_event_name": "UserPromptSubmit",
+     "source": null,
+     "transcript_path": "D:\\a\\_temp\\p0-main\\homes\\hooks-bypass\\sessions\\2026\\10\\15\\rollout-2026-10-15T17-28-22-01a1409b-9c47-7753-9c15-e54e9b6f86fe.jsonl",
+     "permission_mode": "bypassPermissions",
+     "model": "gpt-6.1-sol",
+     "cwd": "D:\\a\\_temp\\p0-main\\work",
+     "session_id": "01a1409b-9c47-7753-9c15-e54e9b6f86fe"
+    },
+    "Stop": {
+     "hook_event_name": "Stop",
+     "source": null,
+     "transcript_path": "D:\\a\\_temp\\p0-main\\homes\\hooks-bypass\\sessions\\2026\\10\\15\\rollout-2026-10-15T17-28-22-01a1409b-9c47-7753-9c15-e54e9b6f86fe.jsonl",
+     "permission_mode": "bypassPermissions",
+     "model": "gpt-6.1-sol",
+     "cwd": "D:\\a\\_temp\\p0-main\\work",
+     "session_id": "01a1409b-9c47-7753-9c15-e54e9b6f86fe"
+    }
+   }
+  },
+  "trusted_hash": {
+   "rc": 0,
+   "ran": {
+    "W1": [
+     "SessionStart",
+     "UserPromptSubmit",
+     "Stop"
+    ],
+    "W4": [
+     "SessionStart",
+     "UserPromptSubmit",
+     "Stop"
+    ],
+    "W3": [
+     "SessionStart",
+     "UserPromptSubmit",
+     "Stop"
+    ],
+    "W5s": [
+     "SessionStart",
+     "UserPromptSubmit",
+     "Stop"
+    ],
+    "W5": [
+     "SessionStart",
+     "UserPromptSubmit",
+     "Stop"
+    ]
+   },
+   "context": {
+    "W0/SessionStart": "absent",
+    "W0/UserPromptSubmit": "absent",
+    "W1/SessionStart": "exact",
+    "W1/UserPromptSubmit": "exact",
+    "W2/SessionStart": "absent",
+    "W2/UserPromptSubmit": "absent",
+    "W3/SessionStart": "exact",
+    "W3/UserPromptSubmit": "exact",
+    "W5/SessionStart": "exact",
+    "W5/UserPromptSubmit": "exact",
+    "W5s/SessionStart": "exact",
+    "W5s/UserPromptSubmit": "exact",
+    "W4/SessionStart": "exact",
+    "W4/UserPromptSubmit": "exact"
+   },
+   "parents": [
+    "W1: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe D:\\a\\_temp\\p0-main\\hooks\\hook.py SessionStart W1\"",
+    "W1: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe D:\\a\\_temp\\p0-main\\hooks\\hook.py Stop W1\"",
+    "W1: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe D:\\a\\_temp\\p0-main\\hooks\\hook.py UserPromptSubmit W1\"",
+    "W3: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"python.exe D:\\a\\_temp\\p0-main\\hooks\\hook.py SessionStart W3\"",
+    "W3: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"python.exe D:\\a\\_temp\\p0-main\\hooks\\hook.py Stop W3\"",
+    "W3: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"python.exe D:\\a\\_temp\\p0-main\\hooks\\hook.py UserPromptSubmit W3\"",
+    "W4: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"& \\\"D:\\a\\_temp\\p0-main\\py space\\python.exe\\\" \\\"D:\\a\\_temp\\p0-main\\dir with space\\hook.py\\\" SessionStart W4\"",
+    "W4: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"& \\\"D:\\a\\_temp\\p0-main\\py space\\python.exe\\\" \\\"D:\\a\\_temp\\p0-main\\dir with space\\hook.py\\\" Stop W4\"",
+    "W4: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"& \\\"D:\\a\\_temp\\p0-main\\py space\\python.exe\\\" \\\"D:\\a\\_temp\\p0-main\\dir with space\\hook.py\\\" UserPromptSubmit W4\"",
+    "W5: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"& \\\"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe\\\" \\\"D:\\a\\_temp\\p0-main\\hooks\\hook.py\\\" SessionStart W5\"",
+    "W5: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"& \\\"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe\\\" \\\"D:\\a\\_temp\\p0-main\\hooks\\hook.py\\\" Stop W5\"",
+    "W5: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"& \\\"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe\\\" \\\"D:\\a\\_temp\\p0-main\\hooks\\hook.py\\\" UserPromptSubmit W5\"",
+    "W5s: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"& \\\"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe\\\" \\\"D:\\a\\_temp\\p0-main\\hooks\\hook.py\\\" SessionStart W5s\"",
+    "W5s: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"& \\\"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe\\\" \\\"D:\\a\\_temp\\p0-main\\hooks\\hook.py\\\" Stop W5s\"",
+    "W5s: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"& \\\"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe\\\" \\\"D:\\a\\_temp\\p0-main\\hooks\\hook.py\\\" UserPromptSubmit W5s\""
+   ],
+   "stderr_hook_lines": [],
+   "types": [
+    "thread.started",
+    "turn.started",
+    "item.completed:agent_message",
+    "turn.completed"
+   ],
+   "rust_log_seen_by_hook": [
+    "codex_hooks=trace,codex_core::hook_runtime=trace,warn"
+   ],
+   "payload_keys": {
+    "SessionStart": [
+     "cwd",
+     "hook_event_name",
+     "model",
+     "permission_mode",
+     "session_id",
+     "source",
+     "transcript_path"
+    ],
+    "UserPromptSubmit": [
+     "cwd",
+     "hook_event_name",
+     "model",
+     "permission_mode",
+     "prompt",
+     "session_id",
+     "transcript_path",
+     "turn_id"
+    ],
+    "Stop": [
+     "cwd",
+     "hook_event_name",
+     "last_assistant_message",
+     "model",
+     "permission_mode",
+     "session_id",
+     "stop_hook_active",
+     "transcript_path",
+     "turn_id"
+    ]
+   },
+   "payload_sample": {
+    "SessionStart": {
+     "hook_event_name": "SessionStart",
+     "source": "startup",
+     "transcript_path": "D:\\a\\_temp\\p0-main\\homes\\hooks-trusted\\sessions\\2026\\10\\15\\rollout-2026-10-15T17-28-29-01a1409b-b8b8-71c1-b334-cb85be9579cb.jsonl",
+     "permission_mode": "bypassPermissions",
+     "model": "gpt-6.1-sol",
+     "cwd": "D:\\a\\_temp\\p0-main\\work",
+     "session_id": "01a1409b-b8b8-71c1-b334-cb85be9579cb"
+    },
+    "UserPromptSubmit": {
+     "hook_event_name": "UserPromptSubmit",
+     "source": null,
+     "transcript_path": "D:\\a\\_temp\\p0-main\\homes\\hooks-trusted\\sessions\\2026\\10\\15\\rollout-2026-10-15T17-28-29-01a1409b-b8b8-71c1-b334-cb85be9579cb.jsonl",
+     "permission_mode": "bypassPermissions",
+     "model": "gpt-6.1-sol",
+     "cwd": "D:\\a\\_temp\\p0-main\\work",
+     "session_id": "01a1409b-b8b8-71c1-b334-cb85be9579cb"
+    },
+    "Stop": {
+     "hook_event_name": "Stop",
+     "source": null,
+     "transcript_path": "D:\\a\\_temp\\p0-main\\homes\\hooks-trusted\\sessions\\2026\\10\\15\\rollout-2026-10-15T17-28-29-01a1409b-b8b8-71c1-b334-cb85be9579cb.jsonl",
+     "permission_mode": "bypassPermissions",
+     "model": "gpt-6.1-sol",
+     "cwd": "D:\\a\\_temp\\p0-main\\work",
+     "session_id": "01a1409b-b8b8-71c1-b334-cb85be9579cb"
+    }
+   }
+  },
+  "bypass_without_pwsh_on_path": {
+   "rc": 0,
+   "ran": {
+    "W1": [
+     "SessionStart",
+     "UserPromptSubmit",
+     "Stop"
+    ],
+    "W5s": [
+     "SessionStart",
+     "UserPromptSubmit",
+     "Stop"
+    ],
+    "W5": [
+     "SessionStart",
+     "UserPromptSubmit",
+     "Stop"
+    ],
+    "W4": [
+     "SessionStart",
+     "UserPromptSubmit",
+     "Stop"
+    ],
+    "W3": [
+     "SessionStart",
+     "UserPromptSubmit",
+     "Stop"
+    ]
+   },
+   "context": {
+    "W0/SessionStart": "absent",
+    "W0/UserPromptSubmit": "absent",
+    "W1/SessionStart": "exact",
+    "W1/UserPromptSubmit": "exact",
+    "W2/SessionStart": "absent",
+    "W2/UserPromptSubmit": "absent",
+    "W3/SessionStart": "exact",
+    "W3/UserPromptSubmit": "exact",
+    "W5/SessionStart": "exact",
+    "W5/UserPromptSubmit": "exact",
+    "W5s/SessionStart": "exact",
+    "W5s/UserPromptSubmit": "exact",
+    "W4/SessionStart": "exact",
+    "W4/UserPromptSubmit": "exact"
+   },
+   "parents": [
+    "W1: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe D:\\a\\_temp\\p0-main\\hooks\\hook.py SessionStart W1\"",
+    "W1: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe D:\\a\\_temp\\p0-main\\hooks\\hook.py Stop W1\"",
+    "W1: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe D:\\a\\_temp\\p0-main\\hooks\\hook.py UserPromptSubmit W1\"",
+    "W3: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"python.exe D:\\a\\_temp\\p0-main\\hooks\\hook.py SessionStart W3\"",
+    "W3: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"python.exe D:\\a\\_temp\\p0-main\\hooks\\hook.py Stop W3\"",
+    "W3: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"python.exe D:\\a\\_temp\\p0-main\\hooks\\hook.py UserPromptSubmit W3\"",
+    "W4: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"& \\\"D:\\a\\_temp\\p0-main\\py space\\python.exe\\\" \\\"D:\\a\\_temp\\p0-main\\dir with space\\hook.py\\\" SessionStart W4\"",
+    "W4: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"& \\\"D:\\a\\_temp\\p0-main\\py space\\python.exe\\\" \\\"D:\\a\\_temp\\p0-main\\dir with space\\hook.py\\\" Stop W4\"",
+    "W4: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"& \\\"D:\\a\\_temp\\p0-main\\py space\\python.exe\\\" \\\"D:\\a\\_temp\\p0-main\\dir with space\\hook.py\\\" UserPromptSubmit W4\"",
+    "W5: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"& \\\"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe\\\" \\\"D:\\a\\_temp\\p0-main\\hooks\\hook.py\\\" SessionStart W5\"",
+    "W5: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"& \\\"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe\\\" \\\"D:\\a\\_temp\\p0-main\\hooks\\hook.py\\\" Stop W5\"",
+    "W5: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"& \\\"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe\\\" \\\"D:\\a\\_temp\\p0-main\\hooks\\hook.py\\\" UserPromptSubmit W5\"",
+    "W5s: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"& \\\"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe\\\" \\\"D:\\a\\_temp\\p0-main\\hooks\\hook.py\\\" SessionStart W5s\"",
+    "W5s: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"& \\\"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe\\\" \\\"D:\\a\\_temp\\p0-main\\hooks\\hook.py\\\" Stop W5s\"",
+    "W5s: \"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -Command \"& \\\"C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe\\\" \\\"D:\\a\\_temp\\p0-main\\hooks\\hook.py\\\" UserPromptSubmit W5s\""
+   ],
+   "stderr_hook_lines": [],
+   "types": [
+    "thread.started",
+    "item.completed:error",
+    "item.completed:error",
+    "turn.started",
+    "item.completed:agent_message",
+    "turn.completed"
+   ],
+   "rust_log_seen_by_hook": [
+    "codex_hooks=trace,codex_core::hook_runtime=trace,warn"
+   ],
+   "payload_keys": {
+    "SessionStart": [
+     "cwd",
+     "hook_event_name",
+     "model",
+     "permission_mode",
+     "session_id",
+     "source",
+     "transcript_path"
+    ],
+    "UserPromptSubmit": [
+     "cwd",
+     "hook_event_name",
+     "model",
+     "permission_mode",
+     "prompt",
+     "session_id",
+     "transcript_path",
+     "turn_id"
+    ],
+    "Stop": [
+     "cwd",
+     "hook_event_name",
+     "last_assistant_message",
+     "model",
+     "permission_mode",
+     "session_id",
+     "stop_hook_active",
+     "transcript_path",
+     "turn_id"
+    ]
+   },
+   "payload_sample": {
+    "SessionStart": {
+     "hook_event_name": "SessionStart",
+     "source": "startup",
+     "transcript_path": "D:\\a\\_temp\\p0-main\\homes\\hooks-nopwsh\\sessions\\2026\\10\\15\\rollout-2026-10-15T17-28-36-01a1409b-d31d-7e63-9646-bbe833fac03d.jsonl",
+     "permission_mode": "bypassPermissions",
+     "model": "gpt-6.1-sol",
+     "cwd": "D:\\a\\_temp\\p0-main\\work",
+     "session_id": "01a1409b-d31d-7e63-9646-bbe833fac03d"
+    },
+    "UserPromptSubmit": {
+     "hook_event_name": "UserPromptSubmit",
+     "source": null,
+     "transcript_path": "D:\\a\\_temp\\p0-main\\homes\\hooks-nopwsh\\sessions\\2026\\10\\15\\rollout-2026-10-15T17-28-36-01a1409b-d31d-7e63-9646-bbe833fac03d.jsonl",
+     "permission_mode": "bypassPermissions",
+     "model": "gpt-6.1-sol",
+     "cwd": "D:\\a\\_temp\\p0-main\\work",
+     "session_id": "01a1409b-d31d-7e63-9646-bbe833fac03d"
+    },
+    "Stop": {
+     "hook_event_name": "Stop",
+     "source": null,
+     "transcript_path": "D:\\a\\_temp\\p0-main\\homes\\hooks-nopwsh\\sessions\\2026\\10\\15\\rollout-2026-10-15T17-28-36-01a1409b-d31d-7e63-9646-bbe833fac03d.jsonl",
+     "permission_mode": "bypassPermissions",
+     "model": "gpt-6.1-sol",
+     "cwd": "D:\\a\\_temp\\p0-main\\work",
+     "session_id": "01a1409b-d31d-7e63-9646-bbe833fac03d"
+    }
+   }
+  },
+  "_seconds": 20.9
+ },
+ "profile": {
+  "skipped": "PowerShell hooks run with -NoProfile (code)",
+  "_seconds": 0.0
+ },
+ "vault": {
+  "agents_md": {
+   "git": {
+    "rc": 0,
+    "markers": [
+     "GLOBAL-AGENTS-MARKER",
+     "You are Codex",
+     "VAULT-AGENTS-MARKER"
+    ],
+    "agents_block": "# AGENTS.md instructions for D:\\a\\_temp\\p0-main\\vault-git\\Projets\n\n<INSTRUCTIONS>\nGLOBAL-AGENTS-MARKER: global.\n\n--- project-doc ---\n\nVAULT-AGENTS-MARKER: les consignes de ce coffre sont dans CLAUDE.md, à la racine. Lis-le en entier avant de répondre.\r\n\n</INSTRUCTIONS>\n<environment_context>\n  <cwd>D:\\a\\_temp\\p0-main\\vault-git\\Projets</cwd>\n  <shell>powershell</shell>\n  <current_date>2026-10-15</current_date>\n  <timezone>Etc/UTC</timezone>\n  <filesystem><workspace_roots><root>D:\\a\\_temp\\p0-main\\vault-git\\Projets</root></workspace_roots><permission_profile type=\"managed\"><file_system type=\"restricted\"><entry access=\"read\"><special>:root</special></entry></file_system></permission_profile></filesystem>\n</environment_context>"
+   },
+   "nogit": {
+    "rc": 0,
+    "markers": [
+     "GLOBAL-AGENTS-MARKER",
+     "You are Codex"
+    ],
+    "agents_block": "# AGENTS.md instructions\n\n<INSTRUCTIONS>\nGLOBAL-AGENTS-MARKER: global.\n</INSTRUCTIONS>\n<environment_context>\n  <cwd>D:\\a\\_temp\\p0-main\\vault-nogit\\Projets</cwd>\n  <shell>powershell</shell>\n  <current_date>2026-10-15</current_date>\n  <timezone>Etc/UTC</timezone>\n  <filesystem><workspace_roots><root>D:\\a\\_temp\\p0-main\\vault-nogit\\Projets</root></workspace_roots><permission_profile type=\"managed\"><file_system type=\"restricted\"><entry access=\"read\"><special>:root</special></entry></file_system></permission_profile></filesystem>\n</environment_context>"
+   },
+   "override_nonempty": {
+    "rc": 0,
+    "markers": [
+     "You are Codex",
+     "OVERRIDE-MARKER"
+    ]
+   },
+   "override_empty": {
+    "rc": 0,
+    "markers": [
+     "GLOBAL-AGENTS-MARKER",
+     "You are Codex"
+    ]
+   }
+  },
+  "_seconds": 1.8
+ },
+ "tomlcheck": {
+  "features_list_exit": {
+   "valid_new_tables": {
+    "rc": 0,
+    "stderr": "",
+    "stdout_lines": 167
+   },
+   "duplicate_table": {
+    "rc": 1,
+    "stderr": "Error: failed to load bootstrap configuration\n\nCaused by:\n    0: D:\\a\\_temp\\p0-main\\homes\\toml-duplicate_table\\config.toml:4:14: duplicate key\n    1: TOML parse error at line 4, column 14\n         |\n       4 | [hooks.state.\"/x/hooks.json:session_start:0:0\"]\n         |              ^^^^^^^^^^^^^^^^^^",
+    "stdout_lines": 0
+   },
+   "hooks_table_then_state": {
+    "rc": 0,
+    "stderr": "",
+    "stdout_lines": 167
+   },
+   "dotted_then_table": {
+    "rc": 0,
+    "stderr": "",
+    "stdout_lines": 167
+   },
+   "wrong_type": {
+    "rc": 1,
+    "stderr": "Error: failed to load bootstrap configuration\n\nCaused by:\n    invalid type: integer `5`, expected a string\n    in `hooks.state./x/hooks.json:session_start:0:0.trusted_hash`",
+    "stdout_lines": 0
+   },
+   "syntax_error": {
+    "rc": 1,
+    "stderr": "Error: failed to load bootstrap configuration\n\nCaused by:\n    0: D:\\a\\_temp\\p0-main\\homes\\toml-syntax_error\\config.toml:1:47: unclosed table, expected `]`\n    1: TOML parse error at line 1, column 47\n         |\n       1 | [hooks.state.\"/x/hooks.json:session_start:0:0\"\n         |                     ",
+    "stdout_lines": 0
+   },
+   "unknown_top_key": {
+    "rc": 0,
+    "stderr": "",
+    "stdout_lines": 167
+   },
+   "unknown_key_in_state": {
+    "rc": 0,
+    "stderr": "",
+    "stdout_lines": 167
+   },
+   "key_after_table_lands_in_table": {
+    "rc": 0,
+    "stderr": "",
+    "stdout_lines": 167
+   }
+  },
+  "_seconds": 0.3
+ },
+ "rules": {
+  "skipped": "gbq is a POSIX shell script in the kit",
+  "_seconds": 0.0
+ },
+ "classify": {
+  "baseline_all_off": {
+   "rc": 0,
+   "tools": [
+    "functions.exec",
+    "functions.exec>apply_patch",
+    "functions.exec>clock__curr_time",
+    "functions.exec>list_mcp_resource_templates",
+    "functions.exec>list_mcp_resources",
+    "functions.exec>read_mcp_resource",
+    "functions.request_user_input_async",
+    "functions.wait"
+   ],
+   "endpoints": [
+    "GET /backend-api/wham/accounts/check",
+    "GET /backend-api/wham/settings/user",
+    "GET /v1/models",
+    "GET /v1/responses",
+    "POST /v1/responses"
+   ],
+   "dev_len": 46,
+   "unreadable": false,
+   "err": [
+    "2026-10-15T17:28:45.378823Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 404 Not Found: Unknown error, url: http://127.0.0.1:64191/v1/models?client_versio",
+    "2026-10-15T17:28:45.381625Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 404 Not Found: Unknown error, url: http://127.0.0.1:64191/v1/models?client_versio",
+    "2026-10-15T17:28:45.383291Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 404 Not Found: Unknown error, url: http://127.0.0.1:64191/v1/models?client_versio"
+   ]
+  },
+  "baseline_all_on": {
+   "rc": 0,
+   "tools": [
+    "clock.sleep",
+    "functions.exec",
+    "functions.exec>apply_patch",
+    "functions.exec>clock__curr_time",
+    "functions.exec>create_goal",
+    "functions.exec>exec_command",
+    "functions.exec>get_goal",
+    "functions.exec>image_gen__imagegen",
+    "functions.exec>list_mcp_resource_templates",
+    "functions.exec>list_mcp_resources",
+    "functions.exec>read_mcp_resource",
+    "functions.exec>update_goal",
+    "functions.exec>view_image",
+    "functions.exec>write_stdin",
+    "functions.request_user_input_async",
+    "functions.wait"
+   ],
+   "endpoints": [
+    "GET /backend-api/plugins/featured",
+    "GET /backend-api/ps/plugins/installed",
+    "GET /backend-api/ps/plugins/list",
+    "GET /backend-api/ps/plugins/suggested/codex",
+    "GET /backend-api/wham/accounts/check",
+    "GET /backend-api/wham/settings/user",
+    "GET /v1/models",
+    "GET /v1/responses",
+    "POST /backend-api/ps/mcp",
+    "POST /v1/responses"
+   ],
+   "dev_len": 46,
+   "unreadable": false,
+   "err": [
+    "2026-10-15T17:28:45.543364Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 404 Not Found: Unknown error, url: http://127.0.0.1:64191/v1/models?client_versio",
+    "2026-10-15T17:28:45.550582Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 404 Not Found: Unknown error, url: http://127.0.0.1:64191/v1/models?client_versio",
+    "2026-10-15T17:28:45.552255Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 404 Not Found: Unknown error, url: http://127.0.0.1:64191/v1/models?client_versio"
+   ]
+  },
+  "enable_request_compression_solo": {
+   "rc": 1,
+   "tools": [],
+   "endpoints": [
+    "GET /backend-api/wham/accounts/check",
+    "GET /backend-api/wham/settings/user",
+    "GET /v1/models",
+    "GET /v1/responses",
+    "POST /v1/responses"
+   ],
+   "dev_len": 0,
+   "unreadable": true,
+   "err": [
+    "2026-10-15T17:28:45.730194Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 404 Not Found: Unknown error, url: http://127.0.0.1:64191/v1/models?client_versio",
+    "2026-10-15T17:28:45.753339Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 404 Not Found: Unknown error, url: http://127.0.0.1:64191/v1/models?client_versio",
+    "2026-10-15T17:28:45.755363Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 404 Not Found: Unknown error, url: http://127.0.0.1:64191/v1/models?client_versio"
+   ]
+  },
+  "tools_by_feature": {
+   "goals": {
+    "solo": [
+     "functions.exec>create_goal",
+     "functions.exec>get_goal",
+     "functions.exec>update_goal"
+    ],
+    "drop": [
+     "functions.exec>create_goal",
+     "functions.exec>get_goal",
+     "functions.exec>update_goal"
+    ]
+   },
+   "image_generation": {
+    "solo": [
+     "functions.exec>image_gen__imagegen"
+    ],
+    "drop": [
+     "functions.exec>image_gen__imagegen"
+    ]
+   },
+   "shell_tool": {
+    "solo": [
+     "functions.exec>exec_command",
+     "functions.exec>write_stdin"
+    ],
+    "drop": [
+     "functions.exec>exec_command",
+     "functions.exec>write_stdin"
+    ]
+   },
+   "sleep_tool": {
+    "solo": [
+     "clock.sleep"
+    ],
+    "drop": [
+     "clock.sleep"
+    ]
+   },
+   "view_image": {
+    "solo": [
+     "functions.exec>view_image"
+    ],
+    "drop": [
+     "functions.exec>view_image"
+    ]
+   }
+  },
+  "network_by_feature": {
+   "apps": {
+    "solo": [
+     "POST /backend-api/ps/mcp"
+    ],
+    "drop": [
+     "POST /backend-api/ps/mcp"
+    ]
+   },
+   "plugins": {
+    "solo": [
+     "GET /backend-api/plugins/featured",
+     "GET /backend-api/ps/plugins/installed"
+    ],
+    "drop": [
+     "GET /backend-api/plugins/featured",
+     "GET /backend-api/ps/plugins/installed",
+     "GET /backend-api/ps/plugins/list",
+     "GET /backend-api/ps/plugins/suggested/codex"
+    ]
+   },
+   "remote_plugin": {
+    "solo": [],
+    "drop": [
+     "GET /backend-api/ps/plugins/list",
+     "GET /backend-api/ps/plugins/suggested/codex"
+    ]
+   }
+  },
+  "prompt_by_feature": {},
+  "failures": {},
+  "_seconds": 21.3
+ },
+ "tui": {
+  "skipped": "no pty driver on Windows in this probe",
+  "_seconds": 0.0
+ },
+ "sandbox": {
+  "results": {
+   "default": {
+    "rc": 1,
+    "out": "SBX-RAN \n",
+    "err": "The filename, directory name, or volume label syntax is incorrect.\nThe filename, directory name, or volume label syntax is incorrect.\nThe filename, directory name, or volume label syntax is incorrect.\n",
+    "outside": []
+   },
+   "exec_forced_default": {
+    "rc": 0,
+    "tool_output": [
+     "[{'type': 'input_text', 'text': 'Script failed\\nWall time 0.0 seconds\\nOutput:\\n'}, {'type': 'input_text', 'text': 'Script error:\\nexec_command failed: CreateProcess { message: \"Rejected(\\\\\"`\\\\\\\\\\\\\"C:\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\Program Files\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\PowerShell\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\7\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\pwsh.exe\\\\\\\\\\\\\" -NoProfile -Command \\\\\\\\\\\\\"echo SBX-RAN & type \\\\\\\\\\\\\\\\\\\\\\\\\\\\\"D:\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\a\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\_temp\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\p0-main\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\work\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\secret-note.txt\\\\\\\\\\\\\\\\\\\\\\\\\\\\\" & ec"
+    ],
+    "outside": []
+   }
+  },
+  "_seconds": 0.4
+ }
+}
