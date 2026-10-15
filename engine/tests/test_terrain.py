@@ -611,9 +611,13 @@ class WindowsWithoutGit(unittest.TestCase):
     def test_install_ps1_notes_each_winget_attempt_in_its_journal(self):
         with open(os.path.join(HERE, "..", "..", "install.ps1"), encoding="utf-8") as f:
             ps1 = f.read()
-        self.assertIn('Add-Content -LiteralPath $LOG -Value "`r`n> winget $($a -join \' \')`r`nwinget : code $code" -Encoding utf8', ps1)
-        # The journal is open before the preflight, where winget brings Python and Git.
-        self.assertLess(ps1.index('install =====" -Encoding utf8'), ps1.index('Say "Preflight"'))
+        self.assertIn('Note-Winget "> winget $($a -join \' \')`r`nwinget : code $code"', ps1)
+        self.assertIn('if ($script:LogOpen) { Add-Content -LiteralPath $LOG -Value "`r`n$t" -Encoding utf8 }', ps1)
+        # The journal opens once the choice of agents is accepted (a refused one leaves nothing in it), with
+        # Python's attempts kept until then, and before Git's.
+        order = [ps1.index(s) for s in ('Winget-Install "Python.Python.3.12"', "# <<< agents", 'install =====" -Encoding utf8',
+                                        "foreach ($n in $WingetNotes) { Note-Winget $n }", 'Winget-Install "Git.Git"')]
+        self.assertEqual(order, sorted(order))
         args = "install -e --id Git.Git --source winget --silent --accept-package-agreements --accept-source-agreements"
         log = "\r\n===== 2026-10-15 01:20:00 install =====\r\n\r\n> winget %s --scope user\r\nwinget : code -1978335216\r\n" \
               "\r\n> winget %s\r\nwinget : code 0\r\n\r\n> winget install -e --id Python.Python.3.12 x\r\nwinget : code 0\r\n" % (args, args)

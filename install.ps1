@@ -120,12 +120,16 @@ function Place-File([string]$Dest, [byte[]]$Bytes) {
 
 if ($psISE) { Fail "tu es dans PowerShell ISE. Ouvre 'Windows PowerShell' (pas ISE), puis recolle la commande." }
 
+# Chaque essai de winget va dans le journal : un Python ou un Git absent apres l'installation s'y
+# explique. Ceux d'avant son ouverture (Python, avant le choix des agents) y entrent avec elle.
+$LogOpen = $false
+$WingetNotes = @()
+function Note-Winget([string]$t) {
+    if ($script:LogOpen) { Add-Content -LiteralPath $LOG -Value "`r`n$t" -Encoding utf8 } else { $script:WingetNotes += $t }
+}
+
 function Winget-Install($id, $label) {
-    if (-not (Have winget)) {
-        Warn "$label absent et winget indisponible"
-        Add-Content -LiteralPath $LOG -Value "`r`n> winget absent : $label non installe" -Encoding utf8
-        return
-    }
+    if (-not (Have winget)) { Warn "$label absent et winget indisponible"; Note-Winget "> winget absent : $label non installe"; return }
     Write-Host "  ... $label : installation (winget)"
     # Portee utilisateur d'abord (pas de fenetre admin), sinon l'installeur par defaut du paquet.
     foreach ($scope in @("user", "")) {
@@ -133,8 +137,7 @@ function Winget-Install($id, $label) {
         if ($scope) { $a += @("--scope", $scope) }
         Invoke-Native { & winget @a }
         $code = $LASTEXITCODE
-        # Chaque essai dans le journal : un Python ou un Git absent apres l'installation s'y explique.
-        Add-Content -LiteralPath $LOG -Value "`r`n> winget $($a -join ' ')`r`nwinget : code $code" -Encoding utf8
+        Note-Winget "> winget $($a -join ' ')`r`nwinget : code $code"
         if ($code -eq 0) { break }
     }
     Refresh-Path
@@ -332,10 +335,6 @@ $GBRAIN_TAG = [string]$pin.tag
 $GBRAIN_REF = [string]$pin.sha
 $BUN_VERSION = [string]$pin.bun
 
-# Le journal d'installation est ouvert avant le preflight : winget y note ce qu'il installe.
-New-Item -ItemType Directory -Path (Split-Path -Parent $LOG) -Force | Out-Null
-Add-Content -LiteralPath $LOG -Value "`r`n===== $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') install =====" -Encoding utf8
-
 # 1. Preflight : Python (obligatoire), Git (historique du vault, et Git Bash pour l'outil Bash de Claude Code)
 Say "Preflight"
 $Py = Find-Python
@@ -380,6 +379,12 @@ $agentsLabel = switch ("$ChosenAgents $PreferredAgent") {
 if ($agentsSource -eq "choix" -and $agentsWritten -eq "oui") { Ok "agents IA : $agentsLabel, note dans $AgentsFile" }
 elseif ($agentsSource -ne "defaut") { Ok "agents IA : $agentsLabel, comme choisi avant ($AgentsFile)" }
 # <<< agents
+# Le journal s'ouvre une fois le choix des agents accepte (un choix refuse n'y laisse rien), avant
+# Git : winget y note ce qu'il installe.
+New-Item -ItemType Directory -Path (Split-Path -Parent $LOG) -Force | Out-Null
+Add-Content -LiteralPath $LOG -Value "`r`n===== $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') install =====" -Encoding utf8
+$LogOpen = $true
+foreach ($n in $WingetNotes) { Note-Winget $n }
 $Git = Find-Git
 if (-not $Git) { Winget-Install "Git.Git" "Git"; $Git = Find-Git }
 if ($Git) {
