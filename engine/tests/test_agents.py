@@ -137,6 +137,16 @@ class Read(Home):
         self.assertEqual(self.run_cli("--pose-par=install.sh")[:2], (2, "erreur=fichier:illisible"))
         self.assertEqual(self.lire(), (ag.AUCUN, "illisible"))
 
+    @unittest.skipUnless(POSIX, "named pipes")
+    def test_a_pipe_fed_a_valid_choice_is_still_not_trusted(self):
+        # Whatever writes into it is not a file the installer wrote.
+        self.p.parent.mkdir(parents=True)
+        os.mkfifo(self.p, 0o600)
+        w = os.open(self.p, os.O_RDWR | os.O_NONBLOCK)   # a writer is there: a read would get the bytes
+        self.addCleanup(os.close, w)
+        os.write(w, json.dumps({"version": 1, "agents": ["claude"], "prefere": "claude"}).encode())
+        self.assertEqual(self.lire(), (ag.AUCUN, "illisible"))
+
     @unittest.skipUnless(POSIX, "symlinks")
     def test_a_link_in_its_place_is_not_followed(self):
         target = Path(self.home) / "elsewhere.json"
