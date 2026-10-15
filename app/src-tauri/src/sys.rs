@@ -9,6 +9,10 @@
 //! installer adds later is missing from it, so `tool_path()` adds those places too.
 //! Every program starts without a console window (CREATE_NO_WINDOW), and stopping one
 //! stops the whole tree it started (taskkill /T), as a process group does on a Mac.
+//!
+//! On Linux an app started from the desktop's menu gets the session's PATH, which may
+//! lack ~/.local/bin until the next login: the same places are added. Links open with
+//! xdg-open, and the command window is whichever terminal the desktop has.
 
 use std::collections::HashSet;
 use std::ffi::OsString;
@@ -30,9 +34,9 @@ const TICK: Duration = Duration::from_millis(50);
 const DRAIN: Duration = Duration::from_millis(500);
 
 /// "Mac" or "PC", for the sentences that name the computer ("ton Mac", "ce PC").
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 pub const MACHINE: &str = "Mac";
-#[cfg(windows)]
+#[cfg(not(target_os = "macos"))]
 pub const MACHINE: &str = "PC";
 
 #[cfg(not(windows))]
@@ -48,9 +52,31 @@ pub fn home() -> PathBuf {
 
 /// Where the app's work folders go: a downloaded installer, the folder Claude reads.
 /// A Mac's temporary folder (/var/folders/…) is the user's own, and they are 0700 in it.
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 pub fn work_root() -> io::Result<PathBuf> {
     Ok(std::env::temp_dir())
+}
+
+/// Linux's /tmp is every account's. The session's own folder instead (/run/user/<uid>:
+/// 0700, the user's, named after no one) when it is really that, else one of the home.
+#[cfg(target_os = "linux")]
+pub fn work_root() -> io::Result<PathBuf> {
+    if let Some(run) = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).filter(|d| private_to_me(d)) {
+        return Ok(run);
+    }
+    let root = home().join(".brain-in-a-box").join("tmp");
+    crate::perms::create_dir_all(&root)?;
+    Ok(root)
+}
+
+/// A real folder (not a link), this process's user's, that no one else may enter.
+#[cfg(target_os = "linux")]
+fn private_to_me(dir: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    // /proc/self belongs to whoever this process runs as.
+    let Ok(me) = std::fs::metadata("/proc/self").map(|m| m.uid()) else { return false };
+    dir.is_absolute()
+        && std::fs::symlink_metadata(dir).is_ok_and(|m| m.is_dir() && m.uid() == me && m.mode() & 0o077 == 0)
 }
 
 /// Windows' TEMP may point outside the profile (C:\Temp, on many company PCs), where every
@@ -82,7 +108,7 @@ pub fn tool_path() -> OsString {
         .unwrap_or_default()
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 fn install_dirs(h: &Path) -> Vec<PathBuf> {
     vec![
         h.join(".local/bin"),
@@ -93,6 +119,22 @@ fn install_dirs(h: &Path) -> Vec<PathBuf> {
         PathBuf::from("/bin"),
         PathBuf::from("/usr/sbin"),
         PathBuf::from("/sbin"),
+    ]
+}
+
+/// Claude Code and gbq in ~/.local/bin, Bun in ~/.bun/bin, the system's, then the snaps'
+/// (Obsidian may come as one).
+#[cfg(target_os = "linux")]
+fn install_dirs(h: &Path) -> Vec<PathBuf> {
+    vec![
+        h.join(".local/bin"),
+        h.join(".bun/bin"),
+        PathBuf::from("/usr/local/bin"),
+        PathBuf::from("/usr/bin"),
+        PathBuf::from("/bin"),
+        PathBuf::from("/usr/sbin"),
+        PathBuf::from("/sbin"),
+        PathBuf::from("/snap/bin"),
     ]
 }
 
@@ -154,7 +196,8 @@ pub fn powershell() -> PathBuf {
     system32(r"WindowsPowerShell\v1.0\powershell.exe")
 }
 
-/// The system's curl: macOS's, or the one Windows 10 (1803) and later ship.
+/// The system's curl: macOS's, Linux's package's (see the paquets step), or the one
+/// Windows 10 (1803) and later ship.
 #[cfg(not(windows))]
 pub fn curl() -> PathBuf {
     PathBuf::from("/usr/bin/curl")
@@ -456,10 +499,84 @@ fn kill_group(child: &mut Child) {
 
 /// Hands a link (https://, a Settings page) to the system, which opens it with the
 /// right program: `open` on a Mac, Explorer on Windows (which answers 1 even when it
-/// worked: only its start counts).
-#[cfg(not(windows))]
+/// worked: only its start counts), xdg-open on Linux (which may wait for the browser:
+/// only its start counts there too).
+#[cfg(target_os = "macos")]
 pub fn open_with_system(target: &str) -> bool {
     run(Path::new("/usr/bin/open"), &[target], Duration::from_secs(15)).ok()
+}
+
+#[cfg(target_os = "linux")]
+pub fn open_with_system(target: &str) -> bool {
+    find_tool("xdg-open").is_some_and(|x| spawn_detached(&x, &[target]).is_ok())
+}
+
+/// Starts a program that lives on by itself (Obsidian, a browser, a terminal) and does
+/// not wait for it; a thread reaps it once it ends.
+#[cfg(target_os = "linux")]
+pub fn spawn_detached(program: &Path, args: &[&str]) -> io::Result<()> {
+    let mut child = Command::new(program)
+        .args(args)
+        .env("PATH", tool_path())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .process_group(0)
+        .spawn()?;
+    thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(())
+}
+
+/// The terminals a Linux desktop may have, each with the option that runs a program in it.
+/// The Debian alternative comes first: it is the one the user's desktop picked.
+#[cfg(target_os = "linux")]
+const TERMINALS: &[(&str, &str)] = &[
+    ("x-terminal-emulator", "-e"),
+    ("gnome-terminal", "--"),
+    ("ptyxis", "--"),
+    ("kgx", "--"),
+    ("konsole", "-e"),
+    ("xfce4-terminal", "-x"),
+    ("mate-terminal", "-x"),
+    ("xterm", "-e"),
+];
+
+/// Opens a terminal window on `script` (an executable file of ours) and does not wait for
+/// it: Terminal on a Mac. A terminal that quits at once with an error makes way for the next.
+#[cfg(target_os = "linux")]
+pub fn open_terminal_window(script: &Path) -> Result<(), String> {
+    let file = script.to_string_lossy();
+    // x-terminal-emulator may hand -e's argument to a shell: only a plain path goes there.
+    let plain = !file.chars().any(|c| c.is_whitespace() || "'\"\\$`;&|<>(){}*?[]~#!".contains(c));
+    for (name, flag) in TERMINALS.iter().filter(|(n, _)| plain || *n != "x-terminal-emulator") {
+        let Some(term) = find_tool(name) else { continue };
+        let started = Command::new(&term)
+            .args([flag, file.as_ref()])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .process_group(0)
+            .spawn();
+        let Ok(mut child) = started else { continue };
+        // gnome-terminal hands the window to its server and quits; xterm stays.
+        let t = Instant::now();
+        while t.elapsed() < Duration::from_secs(3) {
+            match child.try_wait() {
+                Ok(Some(status)) if status.success() => return Ok(()),
+                Ok(Some(_)) => break,
+                _ => thread::sleep(TICK),
+            }
+        }
+        if child.try_wait().is_ok_and(|s| s.is_none()) {
+            thread::spawn(move || {
+                let _ = child.wait();
+            });
+            return Ok(());
+        }
+    }
+    Err("Je n'ai pas trouvé de terminal à ouvrir sur ce PC.".into())
 }
 
 #[cfg(windows)]

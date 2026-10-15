@@ -18,7 +18,8 @@ fn executable(path: &Path, body: &str) {
 }
 
 /// install.sh runs git and python3: the brain step stops before it without Apple's tools.
-fn apple_tools() -> bool {
+#[cfg(target_os = "macos")]
+fn system_tools() -> bool {
     Command::new("/usr/bin/xcode-select")
         .arg("-p")
         .output()
@@ -27,10 +28,27 @@ fn apple_tools() -> bool {
         .is_some_and(|o| Path::new(String::from_utf8_lossy(&o.stdout).trim()).join("usr/bin/git").is_file())
 }
 
+/// Linux: the system's tools the paquets step brings (the brain step stops without them).
+#[cfg(target_os = "linux")]
+fn system_tools() -> bool {
+    ["python3", "git", "curl", "pgrep", "unzip"].iter().all(|t| ["/usr/bin", "/bin"].iter().any(|d| Path::new(d).join(t).is_file()))
+}
+
+/// GitHub's shape: everything under one folder.
+#[cfg(target_os = "macos")]
+fn zip(src: &Path, zip: &Path) -> bool {
+    Command::new("/usr/bin/ditto").args(["-c", "-k", "--keepParent"]).arg(src).arg(zip).status().unwrap().success()
+}
+
+#[cfg(target_os = "linux")]
+fn zip(src: &Path, zip: &Path) -> bool {
+    Command::new("/usr/bin/python3").args(["-I", "-m", "zipfile", "-c"]).arg(zip).arg(src).status().unwrap().success()
+}
+
 #[test]
 fn a_failed_brain_step_is_analyzed_repaired_and_nothing_leaks() {
-    if !apple_tools() {
-        eprintln!("no Apple command line tools: skipped");
+    if !system_tools() {
+        eprintln!("no git, python3 (Apple's tools, the system's packages): skipped");
         return;
     }
     let tmp = tempfile::tempdir().unwrap();
@@ -39,6 +57,7 @@ fn a_failed_brain_step_is_analyzed_repaired_and_nothing_leaks() {
     for d in [&home, &out, &bin, &scratch] {
         fs::create_dir_all(d).unwrap();
     }
+    fs::set_permissions(&scratch, fs::Permissions::from_mode(0o700)).unwrap();
     executable(&home.join(".bun/bin/bun"), "#!/bin/sh\necho 1.4.2\n");
 
     // The archive: an install.sh that prints what a careless installer could, then fails.
@@ -53,14 +72,8 @@ fn a_failed_brain_step_is_analyzed_repaired_and_nothing_leaks() {
          echo \"Cloning into '/Users/jo/DEV/gbrain'...\"\n\
          exit 1\n",
     );
-    let zip = root.join("brain.zip");
-    let made = Command::new("/usr/bin/ditto")
-        .args(["-c", "-k", "--keepParent"])
-        .arg(&src)
-        .arg(&zip)
-        .status()
-        .unwrap();
-    assert!(made.success());
+    let archive = root.join("brain.zip");
+    assert!(zip(&src, &archive));
 
     executable(
         &bin.join("claude"),
@@ -83,8 +96,10 @@ fn a_failed_brain_step_is_analyzed_repaired_and_nothing_leaks() {
         .env("HOME", &home)
         .env("USER", "jo")
         .env("TMPDIR", &scratch)
+        // A Linux session's own folder (Claude's working folder goes there, out of the home).
+        .env("XDG_RUNTIME_DIR", &scratch)
         .env("PATH", format!("{}:/usr/bin:/bin:/usr/sbin:/sbin", bin.display()))
-        .env("BIAB_ARCHIVE", &zip)
+        .env("BIAB_ARCHIVE", &archive)
         .env("VOYAGE_API_KEY", CANARY)
         .output()
         .unwrap();

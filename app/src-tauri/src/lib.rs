@@ -6,6 +6,8 @@ mod perms;
 mod redact;
 mod remedies;
 mod repair;
+#[cfg(target_os = "linux")]
+mod root;
 mod steps;
 mod sys;
 mod voyage;

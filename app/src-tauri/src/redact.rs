@@ -41,7 +41,8 @@ static SECRETS: LazyLock<Vec<(Regex, &'static str)>> = LazyLock::new(|| {
     SECRET_PATTERNS.iter().filter_map(|(p, r)| Regex::new(p).ok().map(|re| (re, *r))).collect()
 });
 
-static USER_HOME: LazyLock<Option<Regex>> = LazyLock::new(|| Regex::new(r#"/Users/[^/\s"'<>:]+"#).ok());
+/// A Mac's or a Linux's home folder (Fedora's atomic desktops keep them under /var/home).
+static USER_HOME: LazyLock<Option<Regex>> = LazyLock::new(|| Regex::new(r#"(?:/Users|/var/home|/home)/[^/\s"'<>:]+"#).ok());
 /// A Windows profile, written with either slash, or doubled as JSON writes it.
 static WINDOWS_HOME: LazyLock<Option<Regex>> =
     LazyLock::new(|| Regex::new(r#"(?i)\b[a-z]:[\\/]+users[\\/]+[^\\/\s"'<>:]+"#).ok());
@@ -49,6 +50,9 @@ static WINDOWS_HOME: LazyLock<Option<Regex>> =
 /// general pattern stops.
 #[cfg(windows)]
 static OWN_HOME: LazyLock<Option<Regex>> = LazyLock::new(|| home_pattern(&sys::home()));
+/// On Linux the home may be anywhere (/srv/jo, a name with a space): this user's own, whole.
+#[cfg(target_os = "linux")]
+static OWN_HOME: LazyLock<Option<Regex>> = LazyLock::new(|| unix_home_pattern(&sys::home()));
 
 static BLOCK_TAG: LazyLock<Option<Regex>> =
     LazyLock::new(|| Regex::new(&format!(r"(?i)<\s*(/?)\s*({BLOCKS})\b[^<>]*>")).ok());
@@ -98,7 +102,7 @@ pub fn redact_lines(text: &str, known: &[&str], max_line: usize) -> String {
     for (re, with) in SECRETS.iter() {
         s = re.replace_all(&s, *with).into_owned();
     }
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux"))]
     if let Some(re) = &*OWN_HOME {
         s = re.replace_all(&s, "~$1").into_owned();
     }
@@ -107,6 +111,14 @@ pub fn redact_lines(text: &str, known: &[&str], max_line: usize) -> String {
         s = re.replace_all(&s, "~").into_owned();
     }
     s.split('\n').map(|l| cut(l, max_line)).collect::<Vec<_>>().join("\n")
+}
+
+/// The home folder as written, then the end of its name (what follows is kept). Not for a
+/// home at the root of the disk: "/" or "/root" would mask too much.
+#[cfg(target_os = "linux")]
+fn unix_home_pattern(home: &std::path::Path) -> Option<Regex> {
+    let h = home.to_str()?.trim_end_matches('/');
+    (h.matches('/').count() >= 2).then(|| Regex::new(&format!(r#"{}([/\s"'<>:]|$)"#, regex::escape(h))).ok()).flatten()
 }
 
 /// The profile folder however a program wrote it: either slash or a doubled one, any
@@ -219,6 +231,8 @@ mod tests {
     fn the_user_name_never_leaves() {
         let out = redact("Cloning into '/Users/jo.doe/DEV/gbrain'... /Users/jo.doe", &[]);
         assert_eq!(out, "Cloning into '~/DEV/gbrain'... ~");
+        let out = redact("cp: /home/jo.doe/.bun: denied (/var/home/jo/x) /homework/a", &[]);
+        assert_eq!(out, "cp: ~/.bun: denied (~/x) /homework/a");
         let out = redact(r#"[OK] python (C:\Users\Jo\AppData\Local\Programs\Python\Python312\python.exe) {"p":"c:\\users\\jo\\.bun"} C:/Users/jo/x"#, &[]);
         assert_eq!(out, r#"[OK] python (~\AppData\Local\Programs\Python\Python312\python.exe) {"p":"~\\.bun"} ~/x"#);
     }
@@ -231,6 +245,16 @@ mod tests {
         let out = re.replace_all(text, "~$1");
         assert_eq!(out, r#"~\.bun "~\\x" ~ C:\Users\Jo Doe2\y"#);
         assert!(home_pattern(std::path::Path::new(r"C:\")).is_none());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_home_anywhere_never_leaves() {
+        let re = unix_home_pattern(std::path::Path::new("/srv/Jo Doe")).unwrap();
+        let out = re.replace_all("/srv/Jo Doe/.bun '/srv/Jo Doe' /srv/Jo Doe2/x /srv/Jo Doe", "~$1");
+        assert_eq!(out, "~/.bun '~' /srv/Jo Doe2/x ~");
+        assert!(unix_home_pattern(std::path::Path::new("/root")).is_none());
+        assert!(unix_home_pattern(std::path::Path::new("/")).is_none());
     }
 
     #[test]

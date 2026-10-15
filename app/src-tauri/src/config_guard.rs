@@ -1,6 +1,6 @@
 //! The configuration guard: around every run of the brain step and every repair,
-//! what the user already had in ~/.claude, their LaunchAgents and their shell files
-//! comes out exactly as it went in.
+//! what the user already had in ~/.claude, their scheduled jobs (LaunchAgents on a Mac,
+//! systemd's user units on Linux) and their shell files comes out exactly as it went in.
 //!
 //! `take` copies every protected file into a private folder before the step, `check`
 //! compares after it, `restore` puts back, byte for byte, whatever the step should
@@ -30,7 +30,11 @@ const APPEND_ONLY: &[&str] =
 const SINGLE: &[&str] = &[".local/bin/gbq"];
 const HOOKS: &str = ".claude/hooks";
 const SKILLS: &str = ".claude/skills";
-const AGENTS: &str = "Library/LaunchAgents";
+/// The user's scheduled jobs, where install.sh writes the kit's.
+#[cfg(not(target_os = "linux"))]
+const AGENTS: (&str, &[&str]) = ("Library/LaunchAgents", &[".plist"]);
+#[cfg(target_os = "linux")]
+const AGENTS: (&str, &[&str]) = (".config/systemd/user", &[".service", ".timer"]);
 /// Written by programs as they run, not by people: never compared.
 const SKIPPED_DIRS: &[&str] = &["__pycache__", ".git", "node_modules", ".venv", "venv"];
 const SKIPPED_ENDINGS: &[&str] = &[".pyc", ".log", ".lock", ".pid", ".DS_Store"];
@@ -186,8 +190,9 @@ fn protected(home: &Path) -> Vec<(PathBuf, Rule)> {
     for skill in names_in(&home.join(SKILLS)) {
         out.push((Path::new(SKILLS).join(skill).join("SKILL.md"), Rule::Same));
     }
-    for agent in names_in(&home.join(AGENTS)).into_iter().filter(|n| n.to_string_lossy().ends_with(".plist")) {
-        out.push((Path::new(AGENTS).join(agent), Rule::Same));
+    let (agents, endings) = AGENTS;
+    for agent in names_in(&home.join(agents)).into_iter().filter(|n| endings.iter().any(|e| n.to_string_lossy().ends_with(e))) {
+        out.push((Path::new(agents).join(agent), Rule::Same));
     }
     out.retain(|(rel, _)| fs::symlink_metadata(home.join(rel)).is_ok());
     out
@@ -750,6 +755,11 @@ mod tests {
     }
 
     const USER_HOOK: &str = "#!/usr/bin/env python3\n# my own correction detector, tuned for months\nprint('mine')\n";
+    /// The user's own scheduled job, next to where install.sh writes the kit's.
+    #[cfg(not(target_os = "linux"))]
+    const USER_AGENT: &str = "Library/LaunchAgents/com.me.backup.plist";
+    #[cfg(target_os = "linux")]
+    const USER_AGENT: &str = ".config/systemd/user/backup.timer";
     const USER_SETTINGS: &str = r#"{
   "env": {"MY_VAR": "1"},
   "permissions": {"allow": ["Bash(git status)"]},
@@ -768,7 +778,7 @@ mod tests {
         h.write(".claude/settings.json", USER_SETTINGS);
         h.write(".claude/CLAUDE.md", "# Mes règles\n");
         h.write(".zshrc", "export PATH=$HOME/bin:$PATH\n");
-        h.write("Library/LaunchAgents/com.me.backup.plist", "<plist>mine</plist>\n");
+        h.write(USER_AGENT, "<plist>mine</plist>\n");
         h.write(".local/bin/gbq", "#!/bin/sh\n# my gbq\n");
     }
 
@@ -827,32 +837,32 @@ mod tests {
         personal(&h);
         let before = snapshot_of(&h);
         let snap = h.take();
-        h.install(
+        h.install(&format!(
             r#"printf 'ours\n' > "$H/.claude/hooks/brain/correction-detector.py.tmp"
                mv "$H/.claude/hooks/brain/correction-detector.py.tmp" "$H/.claude/hooks/brain/correction-detector.py"
                chmod +x "$H/.claude/hooks/brain/correction-detector.py"
                rm "$H/.claude/hooks/brain/my-own.py"
                chmod 600 "$H/.claude/hooks/guard.sh"
-               echo '<plist>ours</plist>' > "$H/Library/LaunchAgents/com.me.backup.plist"
+               echo '<plist>ours</plist>' > "$H/{USER_AGENT}"
                echo '# our gbq' > "$H/.local/bin/gbq"
                echo 'nouveau' > "$H/.claude/CLAUDE.md"
-               echo 'export X=1' > "$H/.zshrc""#,
-        );
+               echo 'export X=1' > "$H/.zshrc""#
+        ));
         let found = check(&snap, &h.home);
         let mut named: Vec<String> = found.iter().map(ToString::to_string).collect();
         named.sort();
-        assert_eq!(
-            named,
-            [
-                "~/.claude/CLAUDE.md (début modifié)",
-                "~/.claude/hooks/brain/correction-detector.py (réécrit)",
-                "~/.claude/hooks/brain/my-own.py (supprimé)",
-                "~/.claude/hooks/guard.sh (droits modifiés)",
-                "~/.local/bin/gbq (réécrit)",
-                "~/.zshrc (début modifié)",
-                "~/Library/LaunchAgents/com.me.backup.plist (réécrit)",
-            ]
-        );
+        let agent = format!("~/{USER_AGENT} (réécrit)");
+        let mut expected = vec![
+            "~/.claude/CLAUDE.md (début modifié)",
+            "~/.claude/hooks/brain/correction-detector.py (réécrit)",
+            "~/.claude/hooks/brain/my-own.py (supprimé)",
+            "~/.claude/hooks/guard.sh (droits modifiés)",
+            "~/.local/bin/gbq (réécrit)",
+            "~/.zshrc (début modifié)",
+            agent.as_str(),
+        ];
+        expected.sort();
+        assert_eq!(named, expected);
         let report = settle(snap, &h.home);
         assert_eq!((report.restored.len(), report.failed.len(), report.kept), (7, 0, None));
         assert_eq!(snapshot_of(&h), before);
@@ -1078,7 +1088,10 @@ mod tests {
     #[cfg(not(windows))]
     fn python_tree_hash(dir: &Path) -> Option<String> {
         // Without Apple's tools, /usr/bin/python3 opens their install window.
+        #[cfg(target_os = "macos")]
         crate::detect::clt_dir()?;
+        #[cfg(target_os = "linux")]
+        sys::find_tool("python3")?;
         let engine = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../engine");
         let code = "import sys; sys.path.insert(0, sys.argv[1]); import install_skills as m; print(m.tree_hash(sys.argv[2]))";
         let out = sys::run(
@@ -1208,15 +1221,22 @@ mod tests {
 
     /// The incident, replayed on a copy of the real install.sh in a temp home: no
     /// network (gbrain already cloned, bun and gbrain faked), a fake launchctl first
-    /// on the PATH. Without a manifest or a git history, install.sh still replaces hooks,
-    /// gbq and LaunchAgents named like ours (after a backup): the guard puts every one of
-    /// them back. An unreadable settings.json stops install.sh before it writes anything.
-    /// Either way the user's files come out byte for byte.
-    #[cfg(not(windows))]
+    /// on the PATH (Linux: systemctl and crontab). Without a manifest or a git history,
+    /// install.sh still replaces hooks, gbq and LaunchAgents (systemd units) named like
+    /// ours (after a backup): the guard puts every one of them back. An unreadable
+    /// settings.json stops install.sh before it writes anything. Either way the user's
+    /// files come out byte for byte.
+    #[cfg(unix)]
     #[test]
     fn the_real_install_sh_cannot_damage_the_users_files() {
+        #[cfg(target_os = "macos")]
         if crate::detect::clt_dir().is_none() {
             eprintln!("no Apple command line tools (git, python3): skipped");
+            return;
+        }
+        #[cfg(target_os = "linux")]
+        if sys::find_tool("git").is_none() || sys::find_tool("python3").is_none() {
+            eprintln!("no git or python3: skipped");
             return;
         }
         let repo_src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -1235,12 +1255,22 @@ mod tests {
             fs::write(repo.join("test-hooks.sh"), "exit 0\n").unwrap();
 
             let fake = h.root.join("fakebin");
-            let calls = h.root.join("launchctl-calls");
-            for (name, body) in [
-                ("launchctl", format!("echo \"$@\" >> '{}'", calls.display())),
+            let calls = h.root.join("scheduler-calls");
+            let record = format!("echo \"$0 $@\" >> '{}'", calls.display());
+            // Linux: the user's systemd answers when the machine runs systemd (else cron), as
+            // in a desktop session; crontab has nothing yet.
+            #[cfg(target_os = "linux")]
+            let scheduler = [
+                ("systemctl", record.clone()),
+                ("crontab", format!("[ \"$1\" = -l ] && {{ echo 'no crontab for me' >&2; exit 1; }}; {record}")),
+                ("claude", "echo 2.1.296".into()),
+            ];
+            #[cfg(target_os = "macos")]
+            let scheduler = [("launchctl", record.clone())];
+            for (name, body) in scheduler.into_iter().chain([
                 ("bun", "exit 0".into()),
                 ("curl", "echo 'no network in this test' >&2; exit 7".into()),
-            ] {
+            ]) {
                 fs::create_dir_all(&fake).unwrap();
                 fs::write(fake.join(name), format!("#!/bin/sh\n{body}\n")).unwrap();
                 fs::set_permissions(fake.join(name), fs::Permissions::from_mode(0o755)).unwrap();
@@ -1251,7 +1281,10 @@ mod tests {
 
             let user = sys::output_text(Path::new("/usr/bin/id"), &["-un"], Duration::from_secs(5)).unwrap();
             personal(&h);
+            #[cfg(target_os = "macos")]
             h.write(&format!("Library/LaunchAgents/com.{user}.gbrain-nightly.plist"), "<plist>my own nightly</plist>\n");
+            #[cfg(target_os = "linux")]
+            h.write(".config/systemd/user/gbrain-nightly.timer", "[Timer]\n# my own nightly\n");
             h.write(".claude/hooks/brain/gbrain-nightly.sh", "#!/bin/sh\n# my nightly\n");
             if broken_settings {
                 h.write(".claude/settings.json", "{\n  \"env\": {\"A\": \"1\"},\n}\n");
@@ -1273,11 +1306,15 @@ mod tests {
                 // Since P0, an unreadable settings.json stops install.sh before it writes anything.
                 assert_ne!(code, 0, "{}", log.join("\n"));
                 assert!(log.iter().any(|l| l.contains("left untouched")), "{}", log.join("\n"));
-                assert!(!calls.exists(), "nothing loaded in launchd");
+                assert!(!calls.exists(), "nothing scheduled");
             } else {
                 assert_eq!(code, 0, "{}", log.join("\n"));
                 assert!(h.home.join(".claude/hooks/brain/session-recap.py").is_file(), "install.sh went through");
-                assert!(fs::read_to_string(&calls).unwrap().contains("bootstrap"), "launchctl was the fake one");
+                let said = fs::read_to_string(&calls).unwrap();
+                #[cfg(target_os = "macos")]
+                assert!(said.contains("bootstrap"), "launchctl was the fake one: {said}");
+                #[cfg(target_os = "linux")]
+                assert!(said.contains("systemctl --user enable") || said.contains("crontab "), "the scheduler was the fake one: {said}");
             }
 
             let report = settle(snap, &h.home);
