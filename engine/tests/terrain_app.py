@@ -419,6 +419,10 @@ class Pilote:
     def constats(self, t, details):
         """Checks of this system once the app installed everything (Linux: what ran as root)."""
 
+    def journaux(self):
+        """On a failure, what the system logged that the window does not show: {name: [lines]}."""
+        return {}
+
     def rendre_la_nuit(self):
         """Gives the nightly back to the scheduler (what ecarter_la_nuit did, undone); returns what it did."""
         return None
@@ -1951,6 +1955,40 @@ class PiloteLinux(Pilote):
         for c in cmds:
             t.check(c.startswith("/bin/sh -c ") and "apt-get install" in c, "pkexec a lancé autre chose qu'apt-get : %s" % c[:200])
 
+    def journaux(self):
+        """apt's own logs, pkexec's and polkit's journal since the job began, what the kernel denied
+        (AppArmor), the confinement of the app's processes, the app's own output."""
+        since = "@%d" % int(self.debut)
+        out = {}
+        for name, argv in (("apt_term_log", ["sudo", "-n", "tail", "-n", "60", "/var/log/apt/term.log"]),
+                           ("apt_history_log", ["sudo", "-n", "tail", "-n", "30", "/var/log/apt/history.log"]),
+                           ("pkexec", ["sudo", "-n", "journalctl", "-t", "pkexec", "-o", "cat", "--no-pager", "--since", since]),
+                           ("polkit", ["sudo", "-n", "journalctl", "-u", "polkit", "-o", "cat", "--no-pager", "--since", since]),
+                           ("noyau", ["sudo", "-n", "journalctl", "-k", "-g", "apparmor|audit", "-o", "cat", "--no-pager",
+                                      "--since", since])):
+            try:
+                rc, text = self._run(argv, timeout=60)
+            except ErreurPilote as e:
+                rc, text = -1, str(e)
+            out[name] = text.splitlines()[-60:]
+        rc, pids = self._run(["pgrep", "-f", "brain-in-a-box|Brain-in-a-Box"], timeout=30)
+        labels = []
+        for pid in pids.split():
+            try:
+                with open("/proc/%s/attr/current" % pid, encoding="utf-8", errors="replace") as f:
+                    label = f.read().strip()
+                with open("/proc/%s/comm" % pid, encoding="utf-8", errors="replace") as f:
+                    labels.append("%s %s : %s" % (pid, f.read().strip(), label))
+            except OSError:
+                continue
+        out["confinement"] = labels
+        try:
+            with open(self.travail / "app.log", encoding="utf-8", errors="replace") as f:
+                out["app_log"] = f.read().splitlines()[-60:]
+        except OSError:
+            out["app_log"] = []
+        return out
+
     def ouvrir(self, env):
         """As a double click in Files: the AppImage itself, the session's environment."""
         if not self.exe:
@@ -2473,6 +2511,16 @@ def journal_installation(home, lignes=80):
         return ["(pas de %s)" % path.name]
 
 
+def journaux_systeme(pilote, details):
+    """The system's own logs on a failure (PiloteLinux.journaux), never a failure of their own."""
+    try:
+        logs = pilote.journaux()
+    except Exception as e:  # what is read on a failure must not hide that failure
+        logs = {"erreur": "%s: %s" % (type(e).__name__, str(e)[:200])}
+    if logs:
+        details["journaux_systeme"] = logs
+
+
 def clics_sans_souris(clics):
     """A reason when a click was not the mouse's (AXPress, Invoke, Toggle), else None."""
     autres = [c for c in clics if c.get("comment") != CLIC_SOURIS]
@@ -2561,11 +2609,13 @@ def scenario(t, opts, kit, pilote=None, horloge=time.monotonic, dormir=time.slee
         if parcours:
             parcours.sur_echec()
             details["install_log"] = journal_installation(home)
+            journaux_systeme(pilote, details)
         t.check(False, parcours.raison(str(e)) if parcours else str(e))
     except kit.Echec as e:
         if parcours:
             parcours.sur_echec()
             details["install_log"] = journal_installation(home)
+            journaux_systeme(pilote, details)
             raise kit.Echec(parcours.raison(str(e))) from None
         raise
     finally:

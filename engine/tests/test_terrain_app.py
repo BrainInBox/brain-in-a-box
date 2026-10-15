@@ -1435,6 +1435,22 @@ class Scenario(Base):
         self.assertEqual(len(row["details"]["install_log"]), 80)
         self.assertEqual(row["details"]["install_log"][-1], "bun install: error: ENOSPC")
 
+    def test_a_failure_keeps_the_systems_logs_and_never_fails_on_them(self):
+        p = FauxPilote(self.h, home=Path(self.tmp) / "home")
+        p.ecrans["bun"] = {"titre": "J’installe Bun.", "apres": (5, "oups")}
+        p.ecrans["oups"] = {"titre": "Oups, ça a coincé.", "boutons": {"Copier le rapport": None, "Réessayer": "bun"}}
+        p.journaux = lambda: {"apt_term_log": ["E: setgroups 65534 failed"]}
+        row, _, _, _, _, _ = self.run_it(pilote=p)
+        self.assertEqual((row["statut"], row["etape"]), ("echec", "app-etape-bun"))
+        self.assertEqual(row["details"]["journaux_systeme"], {"apt_term_log": ["E: setgroups 65534 failed"]})
+        p = FauxPilote(self.h, home=Path(self.tmp) / "home2")
+        p.ecrans["bun"] = {"titre": "J’installe Bun.", "apres": (5, "oups")}
+        p.ecrans["oups"] = {"titre": "Oups, ça a coincé.", "boutons": {"Copier le rapport": None, "Réessayer": "bun"}}
+        p.journaux = lambda: 1 / 0
+        row, _, _, _, _, _ = self.run_it(pilote=p)
+        self.assertEqual(row["etape"], "app-etape-bun")
+        self.assertIn("ZeroDivisionError", row["details"]["journaux_systeme"]["erreur"])
+
     def test_what_the_vm_had_before_the_app_is_said(self):
         p = FauxPilote(self.h, home=Path(self.tmp) / "home")
         p.neufs = ("Outils Apple (git, python3)",)
