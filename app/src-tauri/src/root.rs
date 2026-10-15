@@ -16,8 +16,10 @@ const LIMIT: Duration = Duration::from_secs(20 * 60);
 
 /// Runs as root, through pkexec: the system's own window asks for the user's password and
 /// names the command. The script is a constant of this file; `args` reach it as "$1"…, never
-/// through its text. pkexec gives it a clean environment of its own.
-pub const APT_INSTALL: &str = "export DEBIAN_FRONTEND=noninteractive\n\
+/// through its text. pkexec gives it a clean environment of its own. Each script first makes
+/// sure it is root: apt run as anyone else fails, and the step must say why.
+pub const APT_INSTALL: &str = "[ \"$(id -u)\" = 0 ] || { echo \"pas root (uid $(id -u))\" >&2; exit 4; }\n\
+export DEBIAN_FRONTEND=noninteractive\n\
 apt-get update -q || true\n\
 apt-get install -y -q \"$@\"\n";
 
@@ -25,6 +27,7 @@ apt-get install -y -q \"$@\"\n";
 /// checked there, and installed from there: nothing of the user's can swap it between the
 /// check and apt.
 pub const APT_INSTALL_DEB: &str = "set -eu\n\
+[ \"$(id -u)\" = 0 ] || { echo \"pas root (uid $(id -u))\" >&2; exit 4; }\n\
 d=$(mktemp -d)\n\
 trap 'rm -rf \"$d\"' EXIT\n\
 cp -- \"$1\" \"$d/paquet.deb\"\n\
@@ -50,10 +53,20 @@ pub fn run(pkexec: &Path, script: &str, args: &[&str], what: &str, by_hand: &str
     let mut argv = vec!["/bin/sh", "-c", script, "sh"];
     argv.extend(args);
     let mut busy = false;
+    // What stopped it, for the step's sentence: apt's own error (« E: … ») first, else the last line.
+    let (mut error, mut last) = (String::new(), String::new());
     let code = sys::run_streaming(pkexec, &argv, &[("VOYAGE_API_KEY", None)], None, LIMIT, &mut |line| {
         busy |= line.contains("Could not get lock") || line.contains("is held by process");
+        let said: String = line.trim().chars().take(200).collect();
+        if said.starts_with("E:") && error.is_empty() {
+            error.clone_from(&said);
+        }
+        if !said.is_empty() {
+            last = said;
+        }
         log(line);
     });
+    let why = if error.is_empty() { last } else { error };
     match code {
         0 => Ok(()),
         // pkexec: 126, the window was closed; 127, no authorization (wrong password, an
@@ -64,7 +77,10 @@ pub fn run(pkexec: &Path, script: &str, args: &[&str], what: &str, by_hand: &str
              Relance l'étape ; sinon, demande à la personne qui s'occupe de cet ordinateur."
         )),
         _ if busy => Err("Les mises à jour du système sont en cours. Attends qu'elles finissent, puis relance l'étape.".into()),
-        code => Err(format!("L'installation de {what} s'est arrêtée (code {code}). Relance l'étape ; si ça recommence, copie le rapport et envoie-le à l'équipe.")),
+        code => Err(format!(
+            "L'installation de {what} s'est arrêtée (code {code}) sur : « {why} ». Relance l'étape ; si ça recommence, \
+             copie le rapport et envoie-le à l'équipe."
+        )),
     }
 }
 
@@ -98,6 +114,8 @@ mod tests {
                 None => format!("#!/bin/sh\nPATH='{}':/usr/bin:/bin exec \"$@\"\n", bin.display()),
             };
             write_exec(&dir.path().join("pkexec"), &pkexec);
+            // root, as pkexec makes the script
+            write_exec(&bin.join("id"), "#!/bin/sh\necho 0\n");
             let seen = dir.path().join("apt-get.txt");
             write_exec(
                 &bin.join("apt-get"),
@@ -151,6 +169,24 @@ mod tests {
         let seen = root.seen();
         assert!(seen.contains("install\n-y\n-q\ncurl\ngit; touch /tmp/biab-pwned\n"), "{seen}");
         assert!(!Path::new("/tmp/biab-pwned").exists());
+    }
+
+    #[test]
+    fn a_script_that_is_not_root_and_apt_s_own_error_are_said() {
+        // pkexec that did not make it root: the script stops before apt, and says so.
+        let root = Root::new(None);
+        fs::remove_file(root.dir.path().join("bin/id")).unwrap();
+        let err = run(&root.pkexec(), APT_INSTALL, &["git"], "git", "", &mut |_| {}).unwrap_err();
+        assert!(err.contains("(code 4) sur : « pas root (uid "), "{err}");
+        assert_eq!(root.seen(), "", "apt never ran");
+        // apt's first error is the one the sentence quotes.
+        let root = Root::new(None);
+        write_exec(
+            &root.dir.path().join("bin/apt-get"),
+            "#!/bin/sh\n[ \"$1\" = update ] && exit 0\necho 'Reading package lists...'\necho 'E: Unable to locate package gitt' >&2\necho 'E: second'\nexit 100\n",
+        );
+        let err = run(&root.pkexec(), APT_INSTALL, &["gitt"], "gitt", "", &mut |_| {}).unwrap_err();
+        assert!(err.contains("(code 100) sur : « E: Unable to locate package gitt »"), "{err}");
     }
 
     #[test]
