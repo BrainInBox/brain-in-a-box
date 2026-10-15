@@ -179,11 +179,11 @@ mod tests {
         let err = run(&root.pkexec(), APT_INSTALL, &["git"], "git", "", &mut |_| {}).unwrap_err();
         assert!(err.contains("(code 4) sur : « pas root (uid "), "{err}");
         assert_eq!(root.seen(), "", "apt never ran");
-        // apt's first error is the one the sentence quotes.
+        // apt's first error is the one the sentence quotes (apt writes them on stderr: one pipe, in order).
         let root = Root::new(None);
         write_exec(
             &root.dir.path().join("bin/apt-get"),
-            "#!/bin/sh\n[ \"$1\" = update ] && exit 0\necho 'Reading package lists...'\necho 'E: Unable to locate package gitt' >&2\necho 'E: second'\nexit 100\n",
+            "#!/bin/sh\n[ \"$1\" = update ] && exit 0\necho 'Reading package lists...'\necho 'E: Unable to locate package gitt' >&2\necho 'E: second' >&2\nexit 100\n",
         );
         let err = run(&root.pkexec(), APT_INSTALL, &["gitt"], "gitt", "", &mut |_| {}).unwrap_err();
         assert!(err.contains("(code 100) sur : « E: Unable to locate package gitt »"), "{err}");
