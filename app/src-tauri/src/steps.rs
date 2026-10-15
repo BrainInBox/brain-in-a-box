@@ -79,6 +79,10 @@ const CLAUDE_INSTALLER: &str = "https://claude.ai/install.sh";
 const CLAUDE_INSTALLER: &str = "https://claude.ai/install.ps1";
 #[cfg(target_os = "macos")]
 const CLT_WAIT: Duration = Duration::from_secs(45 * 60);
+/// git shows up in the tools' folder while Apple's installer still writes the rest: its window,
+/// still open, is waited for this long more (the user clicks « Terminé » once it says so).
+#[cfg(target_os = "macos")]
+const CLT_SETTLE: Duration = Duration::from_secs(90);
 /// Past these, an installer is stuck rather than slow: it is stopped.
 const INSTALLER_LIMIT: Duration = Duration::from_secs(20 * 60);
 /// install.ps1 also fetches Python, Git and Obsidian through winget.
@@ -231,10 +235,19 @@ fn clt(log: &mut dyn FnMut(String)) -> Step {
     let start = Instant::now();
     let mut next_note = Duration::from_secs(30);
     let (mut seen, mut gone) = (false, 0);
+    let mut tools_since: Option<Instant> = None;
     loop {
         thread::sleep(Duration::from_secs(5));
         if let Some(dir) = detect::clt_dir() {
-            return Ok(format!("Les outils Apple sont installés{}.", git_version(&dir)));
+            let open = apple_installer_open();
+            if tools_since.is_none() && open {
+                log("Les outils sont là, Apple finit son installation : clique sur « Terminé » dans sa fenêtre quand elle le propose.".into());
+            }
+            let since = *tools_since.get_or_insert_with(Instant::now);
+            if clt_settled(open, since.elapsed()) {
+                return Ok(format!("Les outils Apple sont installés{}.", git_version(&dir)));
+            }
+            continue;
         }
         // Apple's window stays open until the install is over: if it was there and is
         // gone (three checks in a row), the user closed it.
@@ -259,6 +272,12 @@ fn clt(log: &mut dyn FnMut(String)) -> Step {
             next_note += Duration::from_secs(30);
         }
     }
+}
+
+/// The tools are there: done once Apple's window is closed, or CLT_SETTLE after they showed up.
+#[cfg(target_os = "macos")]
+fn clt_settled(installer_open: bool, since_tools: Duration) -> bool {
+    !installer_open || since_tools >= CLT_SETTLE
 }
 
 #[cfg(target_os = "macos")]
@@ -1478,6 +1497,16 @@ mod tests {
         }
         // An id collision would overwrite someone else's vault.
         assert_eq!(add_vault(Some(r#"{"vaults":{"id":{"path":"/other"}}}"#), "/b", "id", 1), VaultList::Unreadable);
+    }
+
+    /// Apple's installer still writes the tools when git is already there (a GitHub VM showed
+    /// install.sh started 20 s before Apple's window said it was over).
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn apple_tools_are_done_when_apples_window_is() {
+        assert!(clt_settled(false, Duration::ZERO));
+        assert!(!clt_settled(true, Duration::from_secs(30)));
+        assert!(clt_settled(true, CLT_SETTLE));
     }
 
     #[cfg(target_os = "macos")]
