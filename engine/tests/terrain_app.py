@@ -1923,35 +1923,47 @@ class PiloteLinux(Pilote):
 
     def poste_neuf(self):
         """Ubuntu's desktop has neither git nor curl: taken away, as Ubuntu comes (apt, not hidden: the
-        app's step puts them back with apt). A desktop keeps its packages up to date, a runner's image is
-        older than its package lists: each is first brought to its newest version, so that apt can put
-        it back without upgrading what else the image pinned; one apt could not put back stays (said)."""
+        app's step puts them back with apt). The runner's image is not a desktop kept up to date: its
+        package lists are newer than what it has, and apt, asked by the app for the newest git or curl,
+        may refuse (« held broken packages ») where a desktop would not. So the lists are refreshed as
+        the app will refresh them, and once removed, the app's own command is simulated as root: one apt
+        would refuse goes back at the very version the VM had, said in the results with apt's reasons."""
         env = dict(os.environ, DEBIAN_FRONTEND="noninteractive")
-        out = {}
-        rc, said = self._run(["sudo", "-n", "apt-get", "install", "-y", "-q", "--only-upgrade"] + list(SANS_PAQUETS),
-                             timeout=900, env=env)
-        out["mis_a_jour"] = rc == 0
-        retires, gardes = [], {}
+        sudo_apt = ["sudo", "-n", "env", "DEBIAN_FRONTEND=noninteractive", "apt-get"]
+        out = {"gardes": {}}
+        self._run(sudo_apt + ["update", "-q"], timeout=900, env=env)
+        versions = {}
         for p in SANS_PAQUETS:
-            rc, said = self._run(["apt-get", "-s", "-q", "install", "--reinstall", p], timeout=300)
-            if rc == 0:
-                retires.append(p)
-            else:
-                gardes[p] = [l for l in said.splitlines() if l.strip()][-4:]
-        out["gardes"] = gardes
-        if not retires:
-            raise ErreurPilote("apt ne pourrait remettre ni git ni curl sur cette VM : %s" % json.dumps(gardes, ensure_ascii=False)[:400])
-        rc, said = self._run(["sudo", "-n", "apt-get", "remove", "-y", "-q"] + retires, timeout=600, env=env)
+            rc, said = self._run(["dpkg-query", "-W", "-f=${Version}", p], timeout=60)
+            if rc == 0 and said.strip():
+                versions[p] = said.strip()
+        rc, said = self._run(sudo_apt + ["remove", "-y", "-q"] + list(SANS_PAQUETS), timeout=600, env=env)
         if rc != 0:
-            raise ErreurPilote("apt-get remove %s : %s" % (" ".join(retires), said.strip()[-300:]))
+            raise ErreurPilote("apt-get remove %s : %s" % (" ".join(SANS_PAQUETS), said.strip()[-300:]))
+        out["aussi"] = sorted(set(re.findall(r"^Removing (\S+) ", said, re.M)) - set(SANS_PAQUETS))
+        retires = list(SANS_PAQUETS)
+        rc, said = self._run(sudo_apt + ["-s", "-q", "install"] + retires, timeout=300, env=env)
+        if rc != 0:
+            for p in SANS_PAQUETS:
+                rc, said = self._run(sudo_apt + ["-s", "-q", "install", p], timeout=300, env=env)
+                if rc == 0:
+                    continue
+                out["gardes"][p] = [l.strip() for l in said.splitlines() if l.strip()][-6:]
+                retires.remove(p)
+                if p in versions:
+                    rc, said = self._run(sudo_apt + ["install", "-y", "-q", "%s=%s" % (p, versions[p])], timeout=600, env=env)
+                    if rc != 0:
+                        raise ErreurPilote("%s ne revient pas à sa version (%s) : %s" % (p, versions[p], said.strip()[-300:]))
+            if not retires:
+                raise ErreurPilote("apt ne pourrait remettre ni git ni curl sur cette VM : %s" % json.dumps(
+                    out["gardes"], ensure_ascii=False)[:400])
         left = [p for p in retires if shutil.which(p, path=PATH_UBUNTU)]
         if left:
             raise ErreurPilote("toujours là après apt-get remove : %s" % ", ".join(left))
         out["retires"] = retires
-        out["aussi"] = sorted(set(re.findall(r"^Removing (\S+) ", said, re.M)) - set(retires))
-        if gardes:
-            out["note"] = "gardé sur la VM, apt ne pourrait pas le remettre : %s ; son installation par l'app n'est pas testée" % (
-                ", ".join(gardes))
+        if out["gardes"]:
+            out["note"] = "gardé sur la VM, apt n'y installerait pas sa version courante : %s ; son installation par l'app " \
+                          "n'est pas testée" % ", ".join(out["gardes"])
         return out
 
     def environnement(self, home, extra=None):
@@ -1986,7 +1998,8 @@ class PiloteLinux(Pilote):
                            ("pkexec", ["sudo", "-n", "journalctl", "-t", "pkexec", "-o", "cat", "--no-pager", "--since", since]),
                            ("polkit", ["sudo", "-n", "journalctl", "-u", "polkit", "-o", "cat", "--no-pager", "--since", since]),
                            ("noyau", ["sudo", "-n", "journalctl", "-k", "-g", "apparmor|audit", "-o", "cat", "--no-pager",
-                                      "--since", since])):
+                                      "--since", since]),
+                           ("apt_simule", ["sudo", "-n", "apt-get", "-s", "-q", "install"] + list(SANS_PAQUETS))):
             try:
                 rc, text = self._run(argv, timeout=60)
             except ErreurPilote as e:

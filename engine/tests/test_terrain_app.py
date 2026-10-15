@@ -1353,16 +1353,22 @@ class LinuxReading(unittest.TestCase):
 
     def test_the_vm_loses_git_and_curl_only_when_apt_can_put_them_back(self):
         class Apt(ta.PiloteLinux):
-            def __init__(self, reinstallable):
-                self.reinstallable, self.calls = reinstallable, []
+            """apt on a runner: `installable` are what apt would install again at their newest version."""
+
+            def __init__(self, installable):
+                self.installable, self.calls = installable, []
 
             def _run(self, argv, timeout=120, env=None, creationflags=0):
-                self.calls.append(argv)
-                if "--reinstall" in argv:
-                    ok = argv[-1] in self.reinstallable
-                    return (0, "Inst %s" % argv[-1]) if ok else (100, "E: Reinstallation of %s is not possible, it cannot be downloaded." % argv[-1])
+                self.calls.append(list(argv))
+                if argv[0] == "dpkg-query":
+                    return 0, {"git": "1:2.55.0-0ppa1", "curl": "8.5.0-2ubuntu10.16"}[argv[-1]]
+                if "-s" in argv:
+                    asked = argv[argv.index("install") + 1:]
+                    bad = [p for p in asked if p not in self.installable]
+                    return (100, "The following packages have unmet dependencies:\n %s : Depends: libx (= 2)\n"
+                                 "E: Unable to correct problems, you have held broken packages." % bad[0]) if bad else (0, "Inst")
                 if "remove" in argv:
-                    return 0, "".join("Removing %s (1.0) ...\n" % p for p in argv[6:]) + "Removing git-lfs (3.8.0) ...\n"
+                    return 0, "Removing git (1) ...\nRemoving curl (1) ...\nRemoving git-lfs (3.8.0) ...\n"
                 return 0, ""
 
         with mock.patch.object(ta.shutil, "which", return_value=None):
@@ -1370,14 +1376,15 @@ class LinuxReading(unittest.TestCase):
             out = p.poste_neuf()
             self.assertEqual((out["retires"], out["aussi"], out["gardes"]), (["git", "curl"], ["git-lfs"], {}))
             self.assertNotIn("note", out)
-            self.assertEqual(p.calls[0][:6], ["sudo", "-n", "apt-get", "install", "-y", "-q"], "brought up to date first")
-            self.assertIn("--only-upgrade", p.calls[0])
+            self.assertIn("update", p.calls[0], "the lists the app will see")
+            # apt would not install curl's newest: curl goes back at its own version, the app installs git.
             p = Apt(("git",))
             out = p.poste_neuf()
             self.assertEqual(out["retires"], ["git"])
-            self.assertIn("curl", out["gardes"])
-            self.assertIn("gardé sur la VM, apt ne pourrait pas le remettre : curl", out["note"])
-            self.assertNotIn("curl", [a for c in p.calls if "remove" in c for a in c])
+            self.assertIn("E: Unable to correct problems, you have held broken packages.", out["gardes"]["curl"])
+            self.assertIn("apt n'y installerait pas sa version courante : curl", out["note"])
+            self.assertIn(["sudo", "-n", "env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", "-q",
+                           "curl=8.5.0-2ubuntu10.16"], p.calls)
             with self.assertRaises(ta.ErreurPilote):
                 Apt(()).poste_neuf()
 
