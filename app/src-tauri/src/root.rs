@@ -52,11 +52,14 @@ pub fn run(pkexec: &Path, script: &str, args: &[&str], what: &str, by_hand: &str
     }
     let mut argv = vec!["/bin/sh", "-c", script, "sh"];
     argv.extend(args);
-    let mut busy = false;
+    let (mut busy, mut outdated) = (false, false);
     // What stopped it, for the step's sentence: apt's own error (« E: … ») first, else the last line.
     let (mut error, mut last) = (String::new(), String::new());
-    let code = sys::run_streaming(pkexec, &argv, &[("VOYAGE_API_KEY", None)], None, LIMIT, &mut |line| {
+    // In / : the app's own folder may be its AppImage's, mounted for this user only.
+    let code = sys::run_streaming(pkexec, &argv, &[("VOYAGE_API_KEY", None)], Some(Path::new("/")), LIMIT, &mut |line| {
         busy |= line.contains("Could not get lock") || line.contains("is held by process");
+        // A library the package needs at a newer version than the system's, which apt may not upgrade alone.
+        outdated |= line.contains("held broken packages") || line.contains("unmet dependencies");
         let said: String = line.trim().chars().take(200).collect();
         if said.starts_with("E:") && error.is_empty() {
             error.clone_from(&said);
@@ -77,6 +80,10 @@ pub fn run(pkexec: &Path, script: &str, args: &[&str], what: &str, by_hand: &str
              Relance l'étape ; sinon, demande à la personne qui s'occupe de cet ordinateur."
         )),
         _ if busy => Err("Les mises à jour du système sont en cours. Attends qu'elles finissent, puis relance l'étape.".into()),
+        _ if outdated => Err(format!(
+            "Pour installer {what}, ton système doit d'abord être à jour (« {why} »). Ouvre « Mise à jour des logiciels », \
+             installe les mises à jour, puis relance l'étape."
+        )),
         code => Err(format!(
             "L'installation de {what} s'est arrêtée (code {code}) sur : « {why} ». Relance l'étape ; si ça recommence, \
              copie le rapport et envoie-le à l'équipe."
@@ -187,6 +194,24 @@ mod tests {
         );
         let err = run(&root.pkexec(), APT_INSTALL, &["gitt"], "gitt", "", &mut |_| {}).unwrap_err();
         assert!(err.contains("(code 100) sur : « E: Unable to locate package gitt »"), "{err}");
+    }
+
+    #[test]
+    fn a_system_to_update_first_is_said_so() {
+        let root = Root::new(None);
+        write_exec(
+            &root.dir.path().join("bin/apt-get"),
+            "#!/bin/sh\n[ \"$1\" = update ] && exit 0\necho 'The following packages have unmet dependencies:' >&2\n\
+             echo ' curl : Depends: libcurl4t64 (= 8.5.0-2ubuntu10.16) but 8.5.0-2ubuntu10.15 is to be installed' >&2\n\
+             echo 'E: Unable to correct problems, you have held broken packages.' >&2\nexit 100\n",
+        );
+        let err = run(&root.pkexec(), APT_INSTALL, &["curl"], "curl", "", &mut |_| {}).unwrap_err();
+        assert!(err.contains("ton système doit d'abord être à jour") && err.contains("held broken packages"), "{err}");
+        // pkexec starts it in /, not in the app's folder.
+        let root = Root::new(None);
+        write_exec(&root.dir.path().join("bin/apt-get"), &format!("#!/bin/sh\npwd >> '{}'\n", root.dir.path().join("cwd").display()));
+        run(&root.pkexec(), APT_INSTALL, &["git"], "git", "", &mut |_| {}).unwrap();
+        assert_eq!(fs::read_to_string(root.dir.path().join("cwd")).unwrap(), "/\n/\n");
     }
 
     #[test]
