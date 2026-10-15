@@ -1284,6 +1284,283 @@ class WindowsEnvironment(unittest.TestCase):
             self.assertIn('op == "%s"' % op, src.decode("ascii"))
 
 
+def atspi_page(statut="status bar", boutons=(("Revérifier", True), ("Tout installer", True)), decale=False):
+    """The helper's tree of the diagnosis screen, as WebKitGTK gives it on Ubuntu 24.04 (recorded, cut).
+    decale: as the AppImage built on 22.04 gives it there, some roles one below theirs (recorded)."""
+    if decale:
+        tree = json.loads(json.dumps(atspi_page(statut, boutons)))
+        for _, n in ta._aplatir(tree):
+            n["r"] = {"document web": "document text", "paragraph": "footer", "landmark": "article"}.get(n["r"], n["r"])
+        return tree
+    ligne = lambda label, statut_, detail: {"r": "list item", "n": label, "v": "%s : %s\n%s\n" % (label, statut_, detail)}
+    return {"r": "frame", "n": "Brain in a Box", "x": [249, 97, 782, 705], "k": [
+        {"r": "filler", "n": "", "k": [{"r": "filler", "n": "", "k": [{"r": "filler", "n": "", "k": [
+            {"r": "scroll pane", "n": "", "k": [{"r": "document web", "n": "Brain in a Box", "x": [250, 117, 780, 680], "k": [
+                {"r": "landmark", "n": "", "k": [{"r": statut, "n": "", "l": "polite", "k": [
+                    {"r": "paragraph", "n": "", "v": "J’ai fait le tour."},
+                    {"r": "paragraph", "n": "", "v": "Il manque Claude Code, Bun et ton cerveau. Je m’en occupe."}]}]},
+                {"r": "landmark", "n": "", "k": [
+                    {"r": "paragraph", "n": "", "v": "Ubuntu 24.04.5 LTS · 12 Go de mémoire · 118 Go libres"},
+                    {"r": "panel", "n": "", "k": [
+                        ligne("Système", "OK", "Ubuntu 24.04.5 LTS"),
+                        ligne("Outils de base (git, python3, curl)", "OK", "git, python3, curl et unzip sont là."),
+                        ligne("Bun (le moteur de la mémoire)", "À installer", "Pas encore installé.")]}]},
+                {"r": "landmark", "n": "", "k": [{"r": "push button", "n": b, "e": on, "x": [700 + 120 * i, 736, 110, 41]}
+                                                 for i, (b, on) in enumerate(boutons)]}]}]}]}]}]}]}
+
+
+class LinuxReading(unittest.TestCase):
+    """PiloteLinux's side of the window: AT-SPI's tree as the robot reads it."""
+
+    def test_bibo_in_the_status_bar_and_the_checks_as_macos_gives_them(self):
+        e = ta.ecran_depuis_arbre([{"titre": "Brain in a Box", "arbre": ta.arbre_atspi(atspi_page())}])
+        self.assertEqual((e.titre, e.texte, e.lecture), ("J'ai fait le tour.", "Il manque Claude Code, Bun et ton cerveau. Je m'en occupe.",
+                                                         "statut"))
+        self.assertEqual(e.boutons, [("Revérifier", True), ("Tout installer", True)])
+        self.assertEqual(ta.cle_ecran(e), ("diagnostic", None))
+        # The window's path to Bibo's region: a quick read follows it in the app's own tree.
+        self.assertEqual(e.statut, (0, (0, 0, 0, 0, 0, 0, 0)))
+        self.assertEqual(ta.deja_presents(e.textes, ta.PiloteLinux.neufs),
+                         [("Outils de base (git, python3, curl)", "git, python3, curl et unzip sont là.")])
+        self.assertEqual(e.textes[e.textes.index("Bun (le moteur de la mémoire)") + 1], ": À installer")
+
+    def test_the_22_04_appimage_s_roles_one_below_read_the_same_and_are_noted(self):
+        # Its page reads « document text », its paragraphs « footer », its landmarks « article ».
+        page = atspi_page(decale=True)
+        e = ta.ecran_depuis_arbre([{"titre": "Brain in a Box", "arbre": ta.arbre_atspi(page)}])
+        self.assertEqual((e.titre, e.texte, e.lecture), ("J'ai fait le tour.", "Il manque Claude Code, Bun et ton cerveau. Je m'en occupe.",
+                                                         "statut"))
+        self.assertEqual(e.boutons, [("Revérifier", True), ("Tout installer", True)])
+        self.assertEqual(ta.roles_decales(page), {"article": "landmark", "document text": "document web", "footer": "paragraph"})
+        self.assertEqual(ta.roles_decales(atspi_page()), {})
+        self.assertIn('"document text"', ta.ATSPI, "the helper finds that page and its place too")
+
+    def test_a_live_region_stands_for_a_status_bar_and_a_disabled_button_says_so(self):
+        e = ta.ecran_depuis_arbre([{"titre": "x", "arbre": ta.arbre_atspi(atspi_page("section", (("Plus tard", False),)))}])
+        self.assertEqual(e.titre, "J'ai fait le tour.")
+        self.assertEqual(e.bouton("Plus tard"), False)
+
+    def test_lines_of_a_text_and_a_checks_status_apart(self):
+        self.assertEqual(ta.lignes("Connexion à Claude\u00a0: À noter\nTu te connecteras une fois Claude Code installé.\n"),
+                         ["Connexion à Claude", ": À noter", "Tu te connecteras une fois Claude Code installé."])
+        self.assertEqual(ta.lignes("Il te faut un abonnement Claude Pro ou Max."), ["Il te faut un abonnement Claude Pro ou Max."])
+        self.assertEqual(ta.lignes("L'heure : 12 h\n\n"), ["L'heure : 12 h"])
+
+    def test_the_window_where_x_says_it_is(self):
+        out = ("xwininfo: Window id: 0x400003 \"Brain in a Box\"\n\n  Absolute upper-left X:  250\n  Absolute upper-left Y:  117\n"
+               "  Relative upper-left X:  1\n  Relative upper-left Y:  20\n  Width: 780\n  Height: 680\n")
+        self.assertEqual(ta.place_xwininfo(out), [250, 117, 780, 680])
+        self.assertIsNone(ta.place_xwininfo("X Error of failed request: BadWindow"))
+
+    def test_what_pkexec_ran_from_its_journal(self):
+        cmd = "/bin/sh -c export DEBIAN_FRONTEND=noninteractive\napt-get update -q || true\napt-get install -y -q \"$@\"\n sh git curl"
+        lines = [json.dumps({"MESSAGE": "runner: Executing command [USER=root] [TTY=unknown] [CWD=/home/runner] [COMMAND=%s]" % cmd}),
+                 json.dumps({"MESSAGE": list(("runner: Executing command [USER=root] [TTY=unknown] [CWD=/] [COMMAND=/bin/sh -c x]")
+                                             .encode("utf-8"))}),
+                 json.dumps({"MESSAGE": "runner: Error executing command as another user: Not authorized"}), "not json"]
+        self.assertEqual(ta.commandes_root("\n".join(lines)), [cmd, "/bin/sh -c x"])
+
+    def scripts(self):
+        with open(ta.ROOT_RS, encoding="utf-8") as f:
+            return ta.scripts_root(f.read())
+
+    def test_root_rs_is_read_as_rustc_reads_it(self):
+        s = self.scripts()
+        self.assertEqual(s["PACKAGES"], ["python3", "git", "curl", "procps", "unzip", "ca-certificates"])
+        self.assertTrue(s["APT_INSTALL"].startswith('# Brain in a Box installe :\n[ "$(id -u)" = 0 ] || { echo'), s["APT_INSTALL"][:80])
+        self.assertTrue(s["APT_INSTALL"].endswith('\napt-get -o DPkg::Lock::Timeout=600 install -y -q -- "$@"\n'))
+        self.assertIn('\nif ! echo "%s  $d/paquet.deb" | sha256sum -c --status -; then\necho "paquet.deb : somme SHA-256 inattendue, '
+                      "rien n'est installé\" >&2\n" % s["OBSIDIAN_DEB_SHA256"], s["APT_INSTALL_DEB"])
+        self.assertEqual((s["PKEXEC"], s["PACKAGES_LABEL"]), ("/usr/bin/pkexec", "Brain in a Box installe avec apt-get :"))
+        # Rust's escapes and continued lines.
+        rust = 'const A: &str = "a\\\\b\\"c\\n\\\n              d\\u{e9}\\x41\\t";\n'
+        self.assertEqual(ta.scripts_root(rust)["A"], 'a\\b"c\ndéA\t')
+
+    def test_root_ran_root_rs_scripts_to_the_letter_with_what_they_accept(self):
+        s = self.scripts()
+        home = "/home/runner"
+        paquets = "/bin/sh -c %s %s " % (s["APT_INSTALL"], s["PACKAGES_LABEL"])
+        deb = "/bin/sh -c %s %s " % (s["APT_INSTALL_DEB"], s["OBSIDIAN_LABEL"])
+        chemin = "/home/runner/.brain-in-a-box/.biab-0123456789abcdef/obsidian.deb"
+        self.assertEqual(ta.forme_root(paquets + "git curl", s, home), ("paquets", ["git", "curl"]))
+        self.assertEqual(ta.forme_root(deb + chemin, s, home), ("obsidian", chemin))
+        for autre in (paquets + "git; curl x | sh", paquets + "unzip -oDPkg::Pre-Invoke::=id", paquets + "openssh-server",
+                      paquets.rstrip(), deb + "/tmp/.biab-0123456789abcdef/obsidian.deb", deb + chemin + " x",
+                      deb.replace("sha256sum -c", "true", 1) + chemin, "/bin/sh -c x; apt-get install git curl",
+                      paquets.replace("apt-get update", "curl e | sh; apt-get update", 1) + "git"):
+            self.assertIsNone(ta.forme_root(autre, s, home), autre[-70:])
+        # What the system's password window shows of them (pkexec 124), as root.rs's own test says.
+        self.assertEqual(ta.ligne_mot_de_passe(paquets + "git curl"),
+                         "/bin/sh -c # Brain in a Box installe : ...  Box installe avec apt-get : git curl")
+        self.assertEqual(ta.ligne_mot_de_passe(deb + chemin),
+                         "/bin/sh -c # Brain in a Box : Obsidian ... x/.biab-0123456789abcdef/obsidian.deb")
+        self.assertEqual(ta.ligne_mot_de_passe("/usr/bin/true"), "/usr/bin/true")
+
+    def test_app_root_wants_each_removed_package_and_obsidian_through_root_rs_and_their_window(self):
+        s = self.scripts()
+        paquets = "/bin/sh -c %s %s " % (s["APT_INSTALL"], s["PACKAGES_LABEL"])
+        deb = "/bin/sh -c %s %s %s/.brain-in-a-box/.biab-0123456789abcdef/obsidian.deb" % (
+            s["APT_INSTALL_DEB"], s["OBSIDIAN_LABEL"], Path.home())
+
+        class Journal(ta.PiloteLinux):
+            def __init__(self, cmds, fenetres=None):
+                self.debut, self.cmds = 0, cmds
+                self.fenetres = [ta.ligne_mot_de_passe(c) for c in cmds] if fenetres is None else fenetres
+
+            def _run(self, argv, timeout=120, env=None, creationflags=0):
+                if "pkexec" in argv:
+                    return 0, "\n".join(json.dumps({"MESSAGE": "runner: Executing command [USER=root] [TTY=unknown] [CWD=/] "
+                                                               "[COMMAND=%s]" % c}) for c in self.cmds)
+                if ta.FENETRE in argv:
+                    return 0, "\n".join(self.fenetres)
+                raise AssertionError(argv)
+
+        def constats(pilote, retires=("git", "curl")):
+            t = Noms()
+            t.details = {"poste_neuf": {"retires": list(retires)}}
+            pilote.constats(t, t.details)
+            return t
+
+        t = constats(Journal([paquets + "git curl", deb]))
+        self.assertEqual((t.nom, len(t.details["root"]), len(t.details["fenetre_mot_de_passe"])), ("app-root", 2, 2))
+        self.assertEqual(t.notes, [])
+        j = Journal([paquets + "git curl", deb])
+        j.roles_decales = {"document text": "document web"}
+        t = constats(j)
+        self.assertEqual(t.notes, ["rôles d'accessibilité décalés d'un cran (« document text » pour « document web ») : "
+                                   "un lecteur d'écran les annonce ainsi"])
+        for cmds, retires, why in (([paquets + "git curl", deb], (), "l'étape « Outils de base » (pkexec, apt) n'a pas été testée"),
+                                   ([paquets + "git", deb], ("git", "curl"), "pkexec n'a pas installé curl"),
+                                   ([paquets + "git curl"], ("git", "curl"), "Obsidian installé par pkexec 0 fois"),
+                                   ([paquets + "git curl", deb, deb], ("git", "curl"), "Obsidian installé par pkexec 2 fois"),
+                                   ([paquets + "git curl", deb, "/bin/sh -c x; apt-get install git"], ("git",),
+                                    "pkexec a lancé autre chose que les scripts de root.rs")):
+            with self.assertRaises(terrain.Echec) as e:
+                constats(Journal(cmds), retires)
+            self.assertIn(why, str(e.exception))
+        with self.assertRaises(terrain.Echec) as e:
+            constats(Journal([paquets + "git curl", deb], fenetres=[ta.ligne_mot_de_passe(deb)]))
+        self.assertIn("la fenêtre du mot de passe n'a pas montré « /bin/sh -c # Brain in a Box installe : ... ", str(e.exception))
+
+    def test_the_appimage_mounts_with_a_setuid_fusermount_a_vm_without_one_gets_fuse3(self):
+        tmp = Path(tempfile.mkdtemp(prefix="terrain-fuse-"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        for d, n in (("a", "fusermount"), ("b", "fusermount3"), ("b", "other"), ("c", "fusermount")):
+            (tmp / d).mkdir(exist_ok=True)
+            (tmp / d / n).write_text("")
+        real = os.stat
+        setuid = {str(tmp / "b" / "fusermount3"), str(tmp / "b" / "other"), str(tmp / "c" / "fusermount")}
+
+        def fake(p, *a, **k):
+            return types.SimpleNamespace(st_uid=0, st_mode=0o104755) if str(p) in setuid else real(p, *a, **k)
+
+        path = os.pathsep.join(str(tmp / d) for d in ("none", "a", "c", "b"))
+        with mock.patch.object(ta.os, "stat", fake):
+            self.assertEqual(ta.fusermount_setuid(path), [str(tmp / "c" / "fusermount"), str(tmp / "b" / "fusermount3")],
+                             "setuid root only, fusermount* only, in the PATH's order")
+            self.assertEqual(ta.fusermount_setuid(str(tmp / "a")), [])
+
+        image = tmp / "Brain-in-a-Box_0.1.0_linux-x86_64.AppImage"
+        image.write_bytes(b"\x7fELF\x02\x01\x01\x00AI\x02" + b"\0" * 64)
+
+        class Vm(ta.PiloteLinux):
+            """A server's image: libEGL and Mesa's EGL driver missing."""
+
+            def __init__(self):
+                self.calls = []
+
+            def _run(self, argv, timeout=120, env=None, creationflags=0):
+                if argv[0] == "dpkg-query":
+                    return 0, "" if argv[-1] in ("libegl1", "libegl-mesa0") else "install ok installed"
+                self.calls.append(argv)
+                return 0, ""
+
+        with mock.patch.object(ta.Path, "home", return_value=tmp), \
+                mock.patch.object(ta, "fusermount_setuid", side_effect=[["/usr/bin/fusermount"], ["/usr/bin/fusermount",
+                                                                                                    "/usr/bin/fusermount3"]]):
+            vm, details = Vm(), {}
+            notes = vm.installer(image, details)
+        self.assertEqual(vm.calls, [["sudo", "-n", "apt-get", "install", "-y", "-q", "fuse3"],
+                                    ["sudo", "-n", "apt-get", "update", "-q"],
+                                    ["sudo", "-n", "apt-get", "install", "-y", "-q", "--no-install-recommends", "libegl1",
+                                     "libegl-mesa0"]])
+        self.assertEqual((details["fuse"], details["bureau"]), ("fuse3 installé par le robot (/usr/bin/fusermount, /usr/bin/fusermount3)",
+                                                                ["libegl1", "libegl-mesa0"]))
+        self.assertIn("qu'un bureau Ubuntu a (fuse3)", notes[0])
+        self.assertIn("installées par le robot : libegl1, libegl-mesa0", notes[1])
+        self.assertNotIn("libfuse2", json.dumps(vm.calls))
+
+    def test_the_app_gets_a_desktops_environment_never_a_token(self):
+        with mock.patch.dict(os.environ, {"GH_TOKEN": "ghs_x", "GITHUB_TOKEN": "ghs_y", "CI": "true", "USER": "runner"}):
+            env = ta.env_linux("/home/runner", ":99", 1001, {"BIAB_ARCHIVE": "/tmp/k.zip"})
+        self.assertEqual(sorted(env), ["BIAB_ARCHIVE", "DBUS_SESSION_BUS_ADDRESS", "DISPLAY", "HOME", "LANG", "LOGNAME", "PATH",
+                                       "SHELL", "USER", "XDG_RUNTIME_DIR", "XDG_SESSION_TYPE"])
+        self.assertEqual((env["DBUS_SESSION_BUS_ADDRESS"], env["XDG_RUNTIME_DIR"]), ("unix:path=/run/user/1001/bus", "/run/user/1001"))
+        self.assertTrue(env["PATH"].startswith("/usr/local/sbin:") and "/home/" not in env["PATH"])
+
+    def test_the_vm_loses_git_and_curl_only_when_apt_can_put_them_back(self):
+        class Apt(ta.PiloteLinux):
+            """apt on a runner: `installable` are what apt would install again at their newest version."""
+
+            def __init__(self, installable):
+                self.installable, self.calls = installable, []
+
+            def _run(self, argv, timeout=120, env=None, creationflags=0):
+                self.calls.append(list(argv))
+                if argv[0] == "dpkg-query":
+                    return 0, {"git": "1:2.55.0-0ppa1", "curl": "8.5.0-2ubuntu10.16"}[argv[-1]]
+                if "-s" in argv:
+                    asked = argv[argv.index("install") + 1:]
+                    bad = [p for p in asked if p not in self.installable]
+                    return (100, "The following packages have unmet dependencies:\n %s : Depends: libx (= 2)\n"
+                                 "E: Unable to correct problems, you have held broken packages." % bad[0]) if bad else (0, "Inst")
+                if "remove" in argv:
+                    return 0, "Removing git (1) ...\nRemoving curl (1) ...\nRemoving git-lfs (3.8.0) ...\n"
+                return 0, ""
+
+        with mock.patch.object(ta.shutil, "which", return_value=None):
+            p = Apt(("git", "curl"))
+            out = p.poste_neuf()
+            self.assertEqual((out["retires"], out["aussi"], out["gardes"]), (["git", "curl"], ["git-lfs"], {}))
+            # git's manual goes with git: the runner's is a PPA's, which would bar Ubuntu's git.
+            removal = next(c for c in p.calls if "remove" in c)
+            self.assertEqual(removal[-3:], ["git", "curl", "git-man"])
+            self.assertNotIn("note", out)
+            self.assertIn("update", p.calls[0], "the lists the app will see")
+            self.assertIn("--only-upgrade", p.calls[1], "at their newest, which the lists hold")
+            self.assertTrue(out["mis_a_jour"])
+            # apt would not install curl's newest: curl goes back at its own version, the app installs git.
+            p = Apt(("git",))
+            out = p.poste_neuf()
+            self.assertEqual(out["retires"], ["git"])
+            self.assertIn("E: Unable to correct problems, you have held broken packages.", out["gardes"]["curl"])
+            self.assertIn("apt n'y installerait pas sa version courante : curl", out["note"])
+            self.assertIn(["sudo", "-n", "env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", "-q",
+                           "curl=8.5.0-2ubuntu10.16"], p.calls)
+            # Neither: both back, the app's step goes untested, and the results say why.
+            out = Apt(()).poste_neuf()
+            self.assertEqual((out["retires"], sorted(out["gardes"])), ([], ["curl", "git"]))
+            self.assertIn("git, curl ; son installation par l'app n'est pas testée", out["note"])
+            # A version apt can no longer download (its PPA's source gone): it stays removed, the app says the rest.
+            p = Apt(("curl",))
+            real = p._run
+            p._run = lambda argv, **kw: (100, "E: Can't find a source to download version") if any("=" in a for a in argv[5:]) \
+                else real(argv, **kw)
+            out = p.poste_neuf()
+            self.assertEqual((out["retires"], out["gardes"]), (["git", "curl"], {}))
+            self.assertIn("git", out["sans_retour"])
+
+    def test_the_helper_is_ascii_compiles_and_answers_every_request(self):
+        self.assertTrue(all(ord(c) < 128 for c in ta.ATSPI), "written and read as ASCII")
+        compile(ta.ATSPI, "pilote-atspi.py", "exec")
+        with open(ta.__file__, encoding="utf-8") as f:
+            py = f.read()
+        asked = set(re.findall(r'_helper\(\{"op": "([a-z]+)"', py))
+        self.assertEqual(asked, {"lire", "rapide", "bouton"})
+        for op in asked:
+            self.assertIn('"%s": %s' % (op, op), ta.ATSPI)
+
+
 class Scenario(Base):
     """The whole scenario on the build path, a fake window and a fake check of the kit: what reaches
     the app, what the results say."""
@@ -1357,6 +1634,22 @@ class Scenario(Base):
         self.assertEqual(len(row["details"]["install_log"]), 80)
         self.assertEqual(row["details"]["install_log"][-1], "bun install: error: ENOSPC")
 
+    def test_a_failure_keeps_the_systems_logs_and_never_fails_on_them(self):
+        p = FauxPilote(self.h, home=Path(self.tmp) / "home")
+        p.ecrans["bun"] = {"titre": "J’installe Bun.", "apres": (5, "oups")}
+        p.ecrans["oups"] = {"titre": "Oups, ça a coincé.", "boutons": {"Copier le rapport": None, "Réessayer": "bun"}}
+        p.journaux = lambda: {"apt_term_log": ["E: setgroups 65534 failed"]}
+        row, _, _, _, _, _ = self.run_it(pilote=p)
+        self.assertEqual((row["statut"], row["etape"]), ("echec", "app-etape-bun"))
+        self.assertEqual(row["details"]["journaux_systeme"], {"apt_term_log": ["E: setgroups 65534 failed"]})
+        p = FauxPilote(self.h, home=Path(self.tmp) / "home2")
+        p.ecrans["bun"] = {"titre": "J’installe Bun.", "apres": (5, "oups")}
+        p.ecrans["oups"] = {"titre": "Oups, ça a coincé.", "boutons": {"Copier le rapport": None, "Réessayer": "bun"}}
+        p.journaux = lambda: 1 / 0
+        row, _, _, _, _, _ = self.run_it(pilote=p)
+        self.assertEqual(row["etape"], "app-etape-bun")
+        self.assertIn("ZeroDivisionError", row["details"]["journaux_systeme"]["erreur"])
+
     def test_what_the_vm_had_before_the_app_is_said(self):
         p = FauxPilote(self.h, home=Path(self.tmp) / "home")
         p.neufs = ("Outils Apple (git, python3)",)
@@ -1379,6 +1672,19 @@ class Scenario(Base):
         self.assertIn("gbq query ne trouve pas Profile/lessons.md (code 127) ; Bibo : « Ton second cerveau est prêt !",
                       row["raison"])
         self.assertTrue(row["details"]["captures"][-1].endswith("-echec.png"))
+
+    def test_the_machine_users_have_before_the_first_start_and_its_own_checks_after(self):
+        # Linux: git and curl taken away once the app is installed, before it starts; what ran as
+        # root checked once everything is installed.
+        p = FauxPilote(self.h, home=Path(self.tmp) / "home")
+        order = []
+        p.poste_neuf = lambda: order.append(("poste", p.etat)) or {"retires": ["git", "curl"], "aussi": []}
+        p.constats = lambda t, details: order.append(("constats", t.nom)) or details.update(root=["/bin/sh -c ... apt-get install"])
+        row, _, _, _, _, _ = self.run_it(pilote=p)
+        self.assertEqual(row["statut"], "ok", row["raison"])
+        self.assertEqual(order, [("poste", None), ("constats", "app-outils")])
+        self.assertEqual(row["details"]["poste_neuf"], {"retires": ["git", "curl"], "aussi": []})
+        self.assertEqual(row["details"]["root"], ["/bin/sh -c ... apt-get install"])
 
     def test_sources_the_app_did_not_take_fail(self):
         p = FauxPilote(self.h, home=Path(self.tmp) / "home")

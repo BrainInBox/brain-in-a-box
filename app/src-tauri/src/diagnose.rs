@@ -5,21 +5,22 @@
 //! `decide()` and the `check_*` functions, so tests drive them with a fake home.
 //!
 //! On Windows, install.ps1 installs Python, Git, Bun and Obsidian along with the brain:
-//! their checks point to the brain step.
+//! their checks point to the brain step. On Linux, the system's own tools (git, python3,
+//! curl) come first, from the system's packages, as Apple's tools do on a Mac.
 
 use std::path::Path;
 use std::thread;
 use std::time::Duration;
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 use crate::detect::parse_version;
-#[cfg(not(windows))]
+#[cfg(unix)]
 use crate::detect::Version;
 use crate::detect::{self, fmt_version, Brain, Found};
 use crate::model::{Check, Diagnosis, Status};
 use crate::{steps, sys};
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 const MIN_MACOS: Version = (13, 0, 0);
 /// Windows 10 version 1809: install.ps1's floor (winget, curl, tar).
 #[cfg(windows)]
@@ -35,14 +36,18 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 #[derive(Clone, Copy)]
 struct Item(&'static str, &'static str, Option<&'static str>);
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 const MACOS: Item = Item("macos", "Version de macOS", None);
+#[cfg(target_os = "linux")]
+const LINUX: Item = Item("linux", "Système", None);
 #[cfg(windows)]
 const WINDOWS: Item = Item("windows", "Version de Windows", None);
 const DISK: Item = Item("disk", "Espace disque", None);
 const NETWORK: Item = Item("network", "Connexion internet", None);
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 const CLT: Item = Item("clt", "Outils Apple (git, python3)", Some("clt"));
+#[cfg(target_os = "linux")]
+const PAQUETS: Item = Item("paquets", "Outils de base (git, python3, curl)", Some("paquets"));
 #[cfg(windows)]
 const PYTHON: Item = Item("python", "Python (pour les automatismes)", Some("brain"));
 #[cfg(windows)]
@@ -79,8 +84,10 @@ impl Item {
 #[derive(Debug)]
 struct Facts {
     /// `sw_vers -productVersion`, e.g. "26.3.1".
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
     macos: Option<String>,
+    #[cfg(target_os = "linux")]
+    linux: LinuxFacts,
     #[cfg(windows)]
     windows: Option<WindowsVersion>,
     arch: String,
@@ -88,7 +95,7 @@ struct Facts {
     disk_free_kb: Option<u64>,
     github: bool,
     claude_ai: bool,
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
     clt: bool,
     #[cfg(windows)]
     python: Option<detect::Python>,
@@ -98,6 +105,21 @@ struct Facts {
     claude: Found,
     claude_logged_in: bool,
     obsidian: Found,
+}
+
+/// The system and its packages, as install.sh sees them.
+#[cfg(target_os = "linux")]
+#[derive(Debug, Clone, Default)]
+struct LinuxFacts {
+    /// /etc/os-release's PRETTY_NAME: "Ubuntu 24.04.1 LTS".
+    name: Option<String>,
+    /// Debian, Ubuntu or a derivative, with apt-get: the paquets step can install there.
+    debian: bool,
+    /// Debian names of the tools that are missing.
+    missing: Vec<&'static str>,
+    python3: Option<Version>,
+    /// The official Obsidian package fits this system (x86-64, apt).
+    obsidian_installable: bool,
 }
 
 #[cfg(windows)]
@@ -128,7 +150,7 @@ pub fn run() -> Diagnosis {
 /// What the window gets when the diagnosis itself broke: one red line, nothing to install.
 pub fn failed(why: &str) -> Diagnosis {
     Diagnosis {
-        os: if cfg!(windows) { "Windows" } else { "macOS" }.into(),
+        os: if cfg!(windows) { "Windows" } else if cfg!(target_os = "linux") { "Linux" } else { "macOS" }.into(),
         arch: String::new(),
         ram_gb: 0.0,
         disk_free_gb: 0.0,
@@ -142,7 +164,7 @@ pub fn failed(why: &str) -> Diagnosis {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 fn probe(home: &Path) -> Facts {
     thread::scope(|s| {
         // The slow probes (network, `claude auth status`) run alongside the rest.
@@ -207,6 +229,55 @@ fn probe(home: &Path) -> Facts {
     })
 }
 
+#[cfg(target_os = "linux")]
+fn probe(home: &Path) -> Facts {
+    thread::scope(|s| {
+        let github = s.spawn(|| answers("https://github.com"));
+        let claude_ai = s.spawn(|| answers("https://claude.ai"));
+        let logged_in = s.spawn(detect::claude_logged_in);
+
+        let home_arg = home.to_string_lossy();
+        let os = detect::os_release();
+        let debian = detect::debian_like(&os);
+        Facts {
+            linux: LinuxFacts {
+                name: os.pretty.clone(),
+                debian,
+                missing: detect::missing_packages(debian),
+                python3: detect::python3(),
+                obsidian_installable: detect::obsidian_installable(&os),
+            },
+            arch: linux_arch(&command_text("/usr/bin/uname", &["-m"]).unwrap_or_default()),
+            ram_bytes: std::fs::read_to_string("/proc/meminfo").ok().and_then(|t| mem_total_bytes(&t)),
+            // -P: one line per filesystem, however long its name.
+            disk_free_kb: command_text("/bin/df", &["-P", "-k", "--", &home_arg]).and_then(|t| parse_df_available_kb(&t)),
+            bun: detect::bun(home),
+            claude: detect::claude(),
+            obsidian: detect::obsidian(home),
+            github: github.join().unwrap_or(false),
+            claude_ai: claude_ai.join().unwrap_or(false),
+            claude_logged_in: logged_in.join().unwrap_or(false),
+        }
+    })
+}
+
+/// The window says arm64 for any ARM processor, as macOS and Windows do.
+#[cfg(target_os = "linux")]
+fn linux_arch(uname: &str) -> String {
+    match uname.trim() {
+        "aarch64" | "arm64" => "arm64".into(),
+        other => other.into(),
+    }
+}
+
+/// "MemTotal:       16314512 kB" of /proc/meminfo, in bytes.
+#[cfg(target_os = "linux")]
+fn mem_total_bytes(meminfo: &str) -> Option<u64> {
+    let line = meminfo.lines().find(|l| l.starts_with("MemTotal:"))?;
+    let kb: u64 = line.split_whitespace().nth(1)?.parse().ok()?;
+    (kb > 0).then_some(kb * 1024)
+}
+
 #[cfg(windows)]
 const SYSTEM_PROBE_TIMEOUT: Duration = Duration::from_secs(25);
 
@@ -257,15 +328,36 @@ fn parse_windows_probe(out: &str) -> WindowsFacts {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(unix)]
 fn command_text(program: &str, args: &[&str]) -> Option<String> {
     sys::output_text(Path::new(program), args, PROBE_TIMEOUT)
 }
 
 /// Any HTTP status counts: claude.ai answers 403 to curl, which still proves the network works.
+/// A Linux without curl yet (the paquets step brings it) gets a plain connection instead.
 pub(crate) fn answers(url: &str) -> bool {
+    if cfg!(target_os = "linux") && !sys::is_executable(&sys::curl()) {
+        return connects(url);
+    }
     let args = ["-sS", "-o", sys::NULL_DEVICE, "-m", "8", "-w", "%{http_code}", url];
     http_answered(&sys::run(&sys::curl(), &args, PROBE_TIMEOUT).stdout)
+}
+
+/// The site's port 443 accepts a connection within 8 s, name lookup included.
+fn connects(url: &str) -> bool {
+    use std::net::{TcpStream, ToSocketAddrs};
+    use std::sync::mpsc;
+    let Some(host) = url.strip_prefix("https://").map(|r| r.split(['/', '?', '#']).next().unwrap_or_default().to_string()) else {
+        return false;
+    };
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let ok = (host.as_str(), 443)
+            .to_socket_addrs()
+            .is_ok_and(|mut addrs| addrs.any(|a| TcpStream::connect_timeout(&a, Duration::from_secs(8)).is_ok()));
+        let _ = tx.send(ok);
+    });
+    rx.recv_timeout(Duration::from_secs(10)).unwrap_or(false)
 }
 
 /// curl prints "000" when nothing answered.
@@ -275,12 +367,16 @@ fn http_answered(code: &str) -> bool {
 
 fn decide(home: &Path, f: &Facts) -> Diagnosis {
     let disk_free_gb = f.disk_free_kb.map(kb_to_gb);
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
     let system = [check_macos(f.macos.as_deref())];
+    #[cfg(target_os = "linux")]
+    let system = [check_linux(&f.linux)];
     #[cfg(windows)]
     let system = [check_windows(f.windows.as_ref())];
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
     let tools = vec![check_clt(f.clt)];
+    #[cfg(target_os = "linux")]
+    let tools = vec![check_paquets(&f.linux)];
     #[cfg(windows)]
     let tools = vec![check_python(f.python.as_ref()), check_git(&f.git)];
     let mut checks = Vec::from(system);
@@ -290,7 +386,10 @@ fn decide(home: &Path, f: &Facts) -> Diagnosis {
         check_bun(&f.bun),
         check_claude(&f.claude),
         check_claude_auth(f.claude.answers(), f.claude_logged_in),
+        #[cfg(not(target_os = "linux"))]
         check_obsidian(&f.obsidian),
+        #[cfg(target_os = "linux")]
+        check_obsidian_linux(&f.obsidian, f.linux.obsidian_installable),
     ]);
     checks.extend(check_brain(detect::brain(home), &detect::brain_dir_shown(home)));
     checks.push(check_voyage(detect::embedding_model(home).as_deref()));
@@ -307,8 +406,10 @@ fn decide(home: &Path, f: &Facts) -> Diagnosis {
         .collect();
     let can_install = checks.iter().all(|c| c.status != Status::Error);
 
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
     let os = f.macos.as_ref().map_or("macOS".into(), |v| format!("macOS {v}"));
+    #[cfg(target_os = "linux")]
+    let os = f.linux.name.clone().unwrap_or_else(|| "Linux".into());
     #[cfg(windows)]
     let os = f.windows.as_ref().map_or("Windows".into(), WindowsVersion::name);
     Diagnosis {
@@ -325,7 +426,7 @@ fn decide(home: &Path, f: &Facts) -> Diagnosis {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 fn check_macos(version: Option<&str>) -> Check {
     match version.and_then(|v| Some((v, parse_version(v)?))) {
         Some((v, parsed)) if parsed >= MIN_MACOS => MACOS.is(Status::Ok, format!("macOS {v}")),
@@ -336,6 +437,20 @@ fn check_macos(version: Option<&str>) -> Check {
             ),
         ),
         None => MACOS.is(Status::Warn, "Je n'ai pas pu lire la version de macOS."),
+    }
+}
+
+/// Debian, Ubuntu and their derivatives are where the app was tried; elsewhere it says so,
+/// without blocking: the paquets check says what the system lacks.
+#[cfg(target_os = "linux")]
+fn check_linux(f: &LinuxFacts) -> Check {
+    match (&f.name, f.debian) {
+        (Some(name), true) => LINUX.is(Status::Ok, name.clone()),
+        (Some(name), false) => LINUX.is(
+            Status::Warn,
+            format!("{name} : je ne l'ai pas encore essayé (Ubuntu et Debian oui). Ça devrait marcher ; s'il manque des outils, je te le dis."),
+        ),
+        (None, _) => LINUX.is(Status::Warn, "Je n'ai pas pu lire le nom du système."),
     }
 }
 
@@ -384,7 +499,7 @@ fn check_network(github: bool, claude_ai: bool) -> Check {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 fn check_clt(found: bool) -> Check {
     if found {
         CLT.is(Status::Ok, "git et python3 sont là.")
@@ -393,6 +508,40 @@ fn check_clt(found: bool) -> Check {
             Status::Missing,
             "Pas encore installés. Apple s'en charge, il suffit de cliquer.",
         )
+    }
+}
+
+/// What the kit needs from the system. On Debian and Ubuntu the paquets step installs it,
+/// with the user's password; elsewhere the user does, with the system's own tool.
+#[cfg(target_os = "linux")]
+fn check_paquets(f: &LinuxFacts) -> Check {
+    let listed = |pkgs: &[&str]| crate::steps::list_fr(&pkgs.iter().map(|p| p.to_string()).collect::<Vec<_>>());
+    match f.python3 {
+        Some(v) if v < detect::MIN_PYTHON3 => {
+            return PAQUETS.is(
+                Status::Error,
+                format!(
+                    "python3 {} est trop ancien : il faut {} ou plus. Mets ton système à jour, puis clique sur Revérifier.",
+                    fmt_version(v),
+                    fmt_version(detect::MIN_PYTHON3)
+                ),
+            )
+        }
+        _ => {}
+    }
+    match (f.missing.as_slice(), f.debian) {
+        ([], _) => PAQUETS.is(Status::Ok, "git, python3, curl et unzip sont là."),
+        (missing, true) => PAQUETS.is(
+            Status::Missing,
+            format!("Il manque {}. Je les installe : ton ordinateur te demandera ton mot de passe.", listed(missing)),
+        ),
+        (missing, false) => PAQUETS.is(
+            Status::Error,
+            format!(
+                "Il manque {} : installe-les avec le gestionnaire de paquets de ton système, puis clique sur Revérifier.",
+                listed(missing)
+            ),
+        ),
     }
 }
 
@@ -465,6 +614,22 @@ fn check_obsidian(found: &Found) -> Check {
     }
 }
 
+/// Linux: where its official package does not fit (ARM, another family than Debian's),
+/// Obsidian is the user's to install, and nothing waits on it.
+#[cfg(target_os = "linux")]
+fn check_obsidian_linux(found: &Found, installable: bool) -> Check {
+    match found {
+        Found::Absent if !installable => Check {
+            fix: None,
+            ..OBSIDIAN.is(
+                Status::Warn,
+                "Pas de paquet officiel pour ce système : installe-le depuis obsidian.md ou Flathub pour feuilleter tes notes.",
+            )
+        },
+        _ => check_obsidian(found),
+    }
+}
+
 /// `at`: the brain's folder as the window says it (detect::brain_dir_shown).
 fn check_brain(brain: Brain, at: &str) -> [Check; 4] {
     let piece = |item: Item, present: bool, ok: &str, missing: &str| {
@@ -516,7 +681,7 @@ fn check_voyage(model: Option<&str>) -> Check {
 
 /// "Available" column of `df -k`: the field just before the first "NN%", which
 /// still holds when the filesystem name has spaces ("map auto_home").
-#[cfg(not(windows))]
+#[cfg(unix)]
 fn parse_df_available_kb(output: &str) -> Option<u64> {
     let fields: Vec<&str> = output.lines().skip(1).flat_map(str::split_whitespace).collect();
     let capacity = fields.iter().position(|f| f.ends_with('%'))?;
@@ -560,8 +725,16 @@ mod tests {
 
     fn healthy_facts() -> Facts {
         Facts {
-            #[cfg(not(windows))]
+            #[cfg(target_os = "macos")]
             macos: Some("26.3.1".into()),
+            #[cfg(target_os = "linux")]
+            linux: LinuxFacts {
+                name: Some("Ubuntu 24.04.1 LTS".into()),
+                debian: true,
+                missing: Vec::new(),
+                python3: Some((3, 12, 3)),
+                obsidian_installable: true,
+            },
             #[cfg(windows)]
             windows: Some(WindowsVersion { build: 26100, release: Some("24H2".into()) }),
             arch: "arm64".into(),
@@ -569,7 +742,7 @@ mod tests {
             disk_free_kb: Some(169_941_844),
             github: true,
             claude_ai: true,
-            #[cfg(not(windows))]
+            #[cfg(target_os = "macos")]
             clt: true,
             #[cfg(windows)]
             python: Some(detect::Python { exe: r"C:\Users\jo\AppData\Local\Programs\Python\Python312\python.exe".into(), version: (3, 12, 10) }),
@@ -582,7 +755,7 @@ mod tests {
         }
     }
 
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
     #[test]
     fn macos_13_is_the_floor() {
         assert_eq!(check_macos(Some("12.7.6")).status, Status::Error);
@@ -604,7 +777,7 @@ mod tests {
         assert_eq!(check_disk(Some(174.02)).detail, "174 Go libres");
     }
 
-    #[cfg(not(windows))]
+    #[cfg(unix)]
     #[test]
     fn reads_free_space_from_df() {
         let mac = "Filesystem   1024-blocks      Used Available Capacity iused      ifree %iused  Mounted on\n\
@@ -614,6 +787,10 @@ mod tests {
                       map auto_home 0 0 0 100% /System/Volumes/Data/home\n";
         assert_eq!(parse_df_available_kb(spaced), Some(0));
         assert_eq!(parse_df_available_kb("df: /nope: No such file or directory"), None);
+        // GNU df -P (Linux).
+        let gnu = "Filesystem     1024-blocks      Used Available Capacity Mounted on\n\
+                   /dev/nvme0n1p2   490617784 211874012 253748420      46% /\n";
+        assert_eq!(parse_df_available_kb(gnu), Some(253_748_420));
         assert!((kb_to_gb(169_941_844) - 174.02).abs() < 0.01);
     }
 
@@ -628,7 +805,7 @@ mod tests {
         assert!(!http_answered(""));
     }
 
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
     #[test]
     fn missing_apple_tools_are_installed_by_their_step() {
         assert_eq!(check_clt(true).status, Status::Ok);
@@ -684,7 +861,7 @@ mod tests {
         assert_eq!((off.status, off.fix), (Status::Warn, None));
     }
 
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
     #[test]
     fn nothing_to_do_on_a_complete_mac() {
         let tmp = tempfile::tempdir().unwrap();
@@ -699,7 +876,7 @@ mod tests {
         assert!(!format!("{d:?}").contains("SECRET"));
     }
 
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
     #[test]
     fn todo_follows_the_install_order() {
         let tmp = tempfile::tempdir().unwrap();
@@ -723,8 +900,10 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         fake_brain(tmp.path());
         let old_system = Facts {
-            #[cfg(not(windows))]
+            #[cfg(target_os = "macos")]
             macos: Some("12.7.6".into()),
+            #[cfg(target_os = "linux")]
+            linux: LinuxFacts { python3: Some((3, 8, 10)), ..healthy_facts().linux },
             #[cfg(windows)]
             windows: Some(WindowsVersion { build: 17134, release: Some("1803".into()) }),
             ..healthy_facts()
@@ -772,6 +951,69 @@ mod tests {
         let absent = check_obsidian(&Found::Absent);
         let step = if cfg!(windows) { "brain" } else { "obsidian" };
         assert_eq!((absent.status, absent.fix.as_deref()), (Status::Missing, Some(step)));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn nothing_to_do_on_a_complete_linux() {
+        let tmp = tempfile::tempdir().unwrap();
+        fake_brain(tmp.path());
+        let d = decide(tmp.path(), &healthy_facts());
+        assert!(d.todo.is_empty(), "{:?}", d.todo);
+        assert!(d.can_install && d.online);
+        assert_eq!((d.os.as_str(), d.ram_gb, d.disk_free_gb), ("Ubuntu 24.04.1 LTS", 24.0, 174.0));
+        assert!(d.checks.iter().all(|c| c.status == Status::Ok), "{:?}", d.checks);
+        let ids: Vec<&str> = d.checks.iter().map(|c| c.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            [
+                "linux", "disk", "network", "paquets", "bun", "claude", "claude_auth", "obsidian", "brain_vault", "brain_hooks",
+                "brain_skills", "brain_memory", "voyage"
+            ]
+        );
+        assert!(!format!("{d:?}").contains("SECRET"));
+    }
+
+    /// A fresh Ubuntu desktop: no git nor curl, nothing of the kit. The system's tools come first.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_fresh_ubuntu_gets_its_tools_first() {
+        let tmp = tempfile::tempdir().unwrap();
+        let facts = Facts {
+            linux: LinuxFacts { missing: vec!["git", "curl"], ..healthy_facts().linux },
+            bun: Found::Absent,
+            claude: Found::Absent,
+            claude_logged_in: false,
+            obsidian: Found::Absent,
+            ..healthy_facts()
+        };
+        let d = decide(tmp.path(), &facts);
+        assert_eq!(d.todo, ["paquets", "claude", "bun", "obsidian", "brain"]);
+        assert!(d.can_install);
+        let p = by_id(&d, "paquets");
+        assert_eq!((p.status, p.fix.as_deref()), (Status::Missing, Some("paquets")));
+        assert!(p.detail.contains("git et curl") && p.detail.contains("mot de passe"), "{}", p.detail);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn elsewhere_the_user_installs_what_the_system_lacks() {
+        let tmp = tempfile::tempdir().unwrap();
+        let fedora = LinuxFacts { name: Some("Fedora Linux 41".into()), debian: false, obsidian_installable: false, ..healthy_facts().linux };
+        let d = decide(tmp.path(), &Facts { linux: fedora.clone(), obsidian: Found::Absent, ..healthy_facts() });
+        assert!(d.can_install, "{:?}", d.checks);
+        assert_eq!(by_id(&d, "linux").status, Status::Warn);
+        // No official Obsidian package here: a word, no step.
+        let o = by_id(&d, "obsidian");
+        assert_eq!((o.status, o.fix.as_deref()), (Status::Warn, None));
+        assert!(!d.todo.contains(&"obsidian".to_string()));
+        let lacking = Facts { linux: LinuxFacts { missing: vec!["git"], ..fedora }, ..healthy_facts() };
+        let d = decide(tmp.path(), &lacking);
+        assert!(!d.can_install);
+        assert!(by_id(&d, "paquets").detail.contains("gestionnaire de paquets"));
+        assert_eq!(linux_arch("aarch64\n"), "arm64");
+        assert_eq!(mem_total_bytes("MemTotal:       16314512 kB\nMemFree: 1 kB\n"), Some(16_314_512 * 1024));
+        assert_eq!(mem_total_bytes("nothing"), None);
     }
 
     #[cfg(windows)]

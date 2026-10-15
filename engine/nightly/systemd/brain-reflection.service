@@ -1,0 +1,10 @@
+# brain-in-a-box, Linux: the daily reflection (install.sh places it in ~/.config/systemd/user).
+# Started by brain-reflection.timer; by hand: systemctl --user start brain-reflection.service
+[Unit]
+Description=brain-in-a-box daily reflection: the day's journal and memory.md entry
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/env python3 "%h/.claude/hooks/brain/daily-reflection.py"
+StandardOutput=append:%h/.claude/logs/daily-reflection.out
+StandardError=append:%h/.claude/logs/daily-reflection.err

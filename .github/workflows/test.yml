@@ -27,18 +27,210 @@ jobs:
 
       # Each script is parsed by the shell its shebang names: the zsh scripts
       # used to be checked with bash, and new scripts were easy to forget.
+      # The nightly scripts and gbq also by zsh: launchd starts the nightly with /bin/zsh,
+      # systemd and cron with bash (test-hooks.sh runs the nightly under both).
       - name: Syntax-check every script with its own shell
         run: |
           for f in *.sh engine/nightly/*.sh engine/bin/* skills/*/scripts/*.sh; do
             sh=$(head -1 "$f" | sed -E 's@^#! *@@; s@^/usr/bin/env +@@; s@^.*/@@; s@ .*@@')
             echo "$sh -n $f" && "$sh" -n "$f"
           done
+          for f in engine/nightly/*.sh engine/bin/gbq; do echo "zsh -n $f" && zsh -n "$f"; done
 
       - name: Compile the Python hooks, search, Windows nightly, unit tests and CI helpers
         run: python3 -m py_compile engine/*.py engine/hooks/*.py engine/search/*.py engine/nightly/*.py engine/tests/*.py .github/ci/*.py
 
       - name: launchd templates are well-formed plists
         run: for f in engine/nightly/*.plist.template; do plutil -lint "$f"; done
+
+  # The kit on Linux (ubuntu-latest: Ubuntu 24.04), installed with no terminal, as an app or a
+  # script runs it: no question, so nothing as root. A CI runner has no session for the user's
+  # systemd, like a container or a WSL without systemd: the first run schedules through cron.
+  # Lingering on (the command the installer printed), the second moves to systemd --user timers
+  # and drops the cron lines; a third, over a hook and a timer the user changed, keeps them. The
+  # nightly runs as cron starts it, then as systemd does; Obsidian's line, pasted, installs the
+  # pinned .deb. No secret: a Voyage key Voyage refuses.
+  linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Syntax of every script with bash, shellcheck, the systemd units
+        run: |
+          for f in *.sh engine/nightly/*.sh engine/bin/* skills/*/scripts/*.sh; do
+            sh=$(head -1 "$f" | sed -E 's@^#! *@@; s@^/usr/bin/env +@@; s@^.*/@@; s@ .*@@')
+            if [ "$sh" = zsh ]; then echo "::error::$f needs zsh, which Linux often lacks"; exit 1; fi
+            echo "$sh -n $f" && "$sh" -n "$f"
+          done
+          shellcheck -S warning install.sh engine/nightly/*.sh engine/bin/* .github/ci/*.sh try-it-locally.sh setup-company.sh
+          # test-hooks.sh sets variables that functions taken from install.sh read.
+          shellcheck -S warning -e SC2034 test-hooks.sh
+          systemd-analyze verify engine/nightly/systemd/*.service engine/nightly/systemd/*.timer
+
+      - name: "Run test-hooks.sh (no zsh on this runner: the nightly under bash)"
+        run: bash test-hooks.sh
+
+      - name: Unit tests (engine/tests)
+        run: python3 -I -m unittest discover -s engine/tests -v
+
+      # As on a server a script reaches: no session for the user's systemd (a runner may keep one
+      # lingering), and cron, which every Ubuntu has.
+      - name: No session for the user's systemd, cron there
+        run: |
+          if [ -e "/var/lib/systemd/linger/$USER" ]; then sudo loginctl disable-linger "$USER"; fi
+          if XDG_RUNTIME_DIR="/run/user/$(id -u)" systemctl --user show-environment >/dev/null 2>&1; then
+            sudo systemctl stop "user@$(id -u).service"
+          fi
+          if XDG_RUNTIME_DIR="/run/user/$(id -u)" systemctl --user show-environment >/dev/null 2>&1; then
+            echo "::error::the user's systemd still answers"; exit 1
+          fi
+          command -v crontab >/dev/null || sudo apt-get install -y cron
+
+      - name: Fresh install, no terminal, a Voyage key Voyage refuses
+        env:
+          VOYAGE_API_KEY: pa-ci-refused-not-a-secret
+        run: |
+          ./install.sh </dev/null 2>&1 | tee "$RUNNER_TEMP/install-1.txt"
+          [ "${PIPESTATUS[0]}" = 0 ] || exit 1
+          grep -q "Voyage did not accept this key" "$RUNNER_TEMP/install-1.txt" || { echo "::error::a refused key was not reported"; exit 1; }
+          for f in "$RUNNER_TEMP/install-1.txt" ~/.brain-in-a-box/install.log ~/.gbrain/config.json; do
+            if grep -q pa-ci-refused "$f"; then echo "::error::the key leaked into $f"; exit 1; fi
+          done
+          grep -q "cron, as systemd does not run for your user here" "$RUNNER_TEMP/install-1.txt" \
+            || { echo "::error::no cron fallback without a session for the user's systemd"; exit 1; }
+
+      - name: The install did what it says
+        run: |
+          set -e
+          H=$HOME
+          python3 - "$H" <<'PY'
+          import json, sys
+          h = sys.argv[1]
+          s = json.load(open(h + "/.claude/settings.json", encoding="utf-8"))
+          want = {"UserPromptSubmit": ["correction-detector.py"], "SessionStart": ["gbrain-update-check.py", "controle-sessionstart.py"],
+                  "Stop": ["session-logger.py", "session-indexer.py", "session-recap.py"]}
+          for event, names in want.items():
+              cmds = [x["command"] for g in s["hooks"][event] for x in g["hooks"]]
+              for n in names:
+                  assert cmds.count(h + "/.claude/hooks/brain/" + n) == 1, (event, n, cmds)
+          PY
+          for f in engine/hooks/*.py; do cmp "$f" "$H/.claude/hooks/brain/$(basename "$f")"; done
+          for f in gbrain-nightly.sh gbrain-lint.sh gbrain-selfupdate.sh gbrain-sync-vault.py; do cmp "engine/nightly/$f" "$H/.claude/hooks/brain/$f"; done
+          test -x "$H/.local/bin/gbq"
+          test -x "$H/.local/bin/controle"
+          test -x "$H/.local/bin/claude"
+          head -1 "$H/.local/bin/gbq" | grep -qx '#!/usr/bin/env bash'
+          [ "$(grep -c '<!-- brain-in-a-box -->' "$H/.claude/CLAUDE.md")" = 1 ]
+          for sk in skills/*/; do test -f "$H/.claude/skills/$(basename "$sk")/SKILL.md"; done
+          test -d "$H/Documents/Brain/Profile"
+          test -d "$H/Documents/Brain/.git"
+          [ "$(git -C "$H/DEV/gbrain" rev-parse HEAD)" = "$(python3 -c 'import json; print(json.load(open("engine/gbrain-pin.json"))["sha"])')" ]
+          [ "$("$H/.bun/bin/bun" --version)" = "$(python3 -c 'import json; print(json.load(open("engine/gbrain-pin.json"))["bun"])')" ]
+          crontab -l | tee "$RUNNER_TEMP/crontab-1.txt"
+          [ "$(grep -c '^# >>> brain-in-a-box' "$RUNNER_TEMP/crontab-1.txt")" = 1 ]
+          # shellcheck disable=SC2016  # $HOME stays as written: cron's shell expands it
+          for want in '0 4 * * * /bin/bash "$HOME/.claude/hooks/brain/gbrain-nightly.sh"' \
+                      '0 12,23 * * * /usr/bin/env python3 "$HOME/.claude/hooks/brain/daily-reflection.py"' \
+                      '0 8 * * 1 /bin/bash "$HOME/.claude/hooks/brain/gbrain-lint.sh"'; do
+            grep -qF -- "$want" "$RUNNER_TEMP/crontab-1.txt"
+          done
+          test ! -e "$H/.config/systemd/user/gbrain-nightly.timer"
+          out=$("$H/.local/bin/gbq" query "captured corrections"); echo "$out"; echo "$out" | grep -qi 'profile/lessons'
+          "$H/.local/bin/controle" --help | grep -q annuler
+          "$H/.local/bin/controle" statut
+          # shellcheck disable=SC2016  # the Obsidian line is matched as printed, $(...) included
+          grep -q 'd=$(mktemp -d) && curl -fL -o "$d/obsidian.deb" https://github.com/obsidianmd/obsidian-releases/' "$RUNNER_TEMP/install-1.txt"
+
+      - name: The nightly as cron starts it (its line, cron's bare environment) commits and indexes today's note
+        run: |
+          printf '# The lighthouse\n\nThe keeper logs every storm and repairs the lamp lens before winter.\n' > ~/Documents/Brain/Journal/lighthouse.md
+          # The update step runs for real but paused: whether a release is 7 days old today depends on upstream.
+          python3 -c 'import datetime as d, json, os; json.dump({"pause_jusqua": (d.datetime.now(d.timezone.utc) + d.timedelta(days=2)).strftime("%Y-%m-%dT%H:%M:%SZ")}, open(os.path.expanduser("~/.gbrain/update-state.json"), "w"))'
+          line=$(crontab -l | grep 'gbrain-nightly.sh' | cut -d' ' -f6-)
+          env -i HOME="$HOME" LOGNAME="$USER" USER="$USER" SHELL=/bin/sh PATH=/usr/bin:/bin /bin/sh -c "$line"
+          cat ~/.gbrain/nightly.log
+          grep -q '^\[controle\] exit 0$' ~/.gbrain/nightly.log
+          grep -q 'nightly done' ~/.gbrain/nightly.log
+          git -C ~/Documents/Brain log -1 --format=%s -- Journal/lighthouse.md | grep -q '^nightly '
+          out=$(~/.local/bin/gbq query "lighthouse keeper storm"); echo "$out"; echo "$out" | grep -qi lighthouse
+
+      - name: Lingering on (the command the installer printed), a second run moves to systemd --user timers
+        run: |
+          grep -o 'loginctl enable-linger [a-z0-9_-]*' "$RUNNER_TEMP/install-1.txt" | head -1 | tee "$RUNNER_TEMP/linger.txt" || true
+          sudo loginctl enable-linger "$USER"
+          for _ in $(seq 1 20); do [ -S "/run/user/$(id -u)/bus" ] && break; sleep 1; done
+          # The steps after this one reach the user's systemd too (a CI step has no session).
+          echo "XDG_RUNTIME_DIR=/run/user/$(id -u)" >> "$GITHUB_ENV"
+          ./install.sh </dev/null 2>&1 | tee "$RUNNER_TEMP/install-2.txt"
+          [ "${PIPESTATUS[0]}" = 0 ] || exit 1
+          grep -q "systemd --user timers on" "$RUNNER_TEMP/install-2.txt"
+          grep -q "lingering is on" "$RUNNER_TEMP/install-2.txt"
+          XDG_RUNTIME_DIR="/run/user/$(id -u)"; export XDG_RUNTIME_DIR
+          for t in gbrain-nightly brain-reflection gbrain-lint; do
+            [ "$(systemctl --user is-enabled "$t.timer")" = enabled ]
+            [ "$(systemctl --user is-active "$t.timer")" = active ]
+            cmp "engine/nightly/systemd/$t.timer" ~/.config/systemd/user/"$t.timer"
+            cmp "engine/nightly/systemd/$t.service" ~/.config/systemd/user/"$t.service"
+          done
+          systemctl --user list-timers --all --no-pager
+          if crontab -l 2>/dev/null | grep -q 'brain-in-a-box'; then echo "::error::the cron lines are still there beside the timers"; exit 1; fi
+
+      - name: The nightly started by systemd --user
+        run: |
+          before=$(grep -c 'nightly done' ~/.gbrain/nightly.log)
+          systemctl --user start gbrain-nightly.service
+          systemctl --user show -p Result -p ExecMainStatus gbrain-nightly.service | tee "$RUNNER_TEMP/service.txt"
+          grep -qx 'Result=success' "$RUNNER_TEMP/service.txt"
+          grep -qx 'ExecMainStatus=0' "$RUNNER_TEMP/service.txt"
+          [ "$(grep -c 'nightly done' ~/.gbrain/nightly.log)" -gt "$before" ]
+          tail -15 ~/.gbrain/nightly.log
+
+      - name: Obsidian's line, pasted as printed, installs the pinned .deb
+        run: |
+          # shellcheck disable=SC2016  # the line is found as printed, $(...) included
+          line=$(grep -o 'd=$(mktemp -d) && curl .*' "$RUNNER_TEMP/install-1.txt" | head -1)
+          echo "$line"
+          bash -c "$line"
+          test -x /opt/Obsidian/obsidian
+          dpkg -s obsidian | grep -q '^Version: 1.14.4'
+
+      - name: A third run changes nothing but says so, and keeps a hook and a timer the user changed
+        run: |
+          H=$HOME
+          echo '# adapted on this machine' >> "$H/.claude/hooks/brain/session-logger.py"
+          sed -i 's/^OnCalendar=\*-\*-\* 04:00:00$/OnCalendar=*-*-* 05:30:00/' "$H/.config/systemd/user/gbrain-nightly.timer"
+          python3 -c 'import json, os; p = os.path.expanduser("~/.claude/settings.json"); d = json.load(open(p)); d["mine"] = "kept"; json.dump(d, open(p, "w"), indent=2)'
+          cp "$H/.brain-in-a-box/installed.json" "$RUNNER_TEMP/installed-before.json"
+          note=$(sha256sum "$H/Documents/Brain/Journal/lighthouse.md")
+          ./install.sh </dev/null 2>&1 | tee "$RUNNER_TEMP/install-3.txt"
+          [ "${PIPESTATUS[0]}" = 0 ] || exit 1
+          grep -q "Kept as you changed them: session-logger.py gbrain-nightly.timer" "$RUNNER_TEMP/install-3.txt"
+          grep -q "adapted on this machine" "$H/.claude/hooks/brain/session-logger.py"
+          cmp engine/hooks/session-logger.py "$H/.brain-in-a-box/pending/session-logger.py"
+          grep -qx 'OnCalendar=\*-\*-\* 05:30:00' "$H/.config/systemd/user/gbrain-nightly.timer"
+          cmp engine/nightly/systemd/gbrain-nightly.timer "$H/.brain-in-a-box/pending/gbrain-nightly.timer"
+          cmp "$RUNNER_TEMP/installed-before.json" "$H/.brain-in-a-box/installed.json"
+          test ! -d "$H/.brain-in-a-box/backups"
+          [ "$(sha256sum "$H/Documents/Brain/Journal/lighthouse.md")" = "$note" ]
+          [ "$(python3 -c 'import json, os; print(json.load(open(os.path.expanduser("~/.claude/settings.json"))).get("mine"))')" = kept ]
+          grep -q "Obsidian already installed" "$RUNNER_TEMP/install-3.txt"
+          grep -q "Claude Code already installed" "$RUNNER_TEMP/install-3.txt"
+          [ "$(grep -c '<!-- brain-in-a-box -->' "$H/.claude/CLAUDE.md")" = 1 ]
+          [ "$(systemctl --user show -p NextElapseUSecRealtime --value gbrain-nightly.timer | grep -c '05:30')" = 1 ]
+
+      - name: The 7-day gbrain update, dry run against the real GitHub (reads, decides, changes nothing)
+        run: |
+          head=$(git -C ~/DEV/gbrain rev-parse HEAD)
+          snap() { for f in update-state.json last-update.json update.lock; do p=~/.gbrain/$f; if [ -e "$p" ]; then echo "$f $(sha256sum < "$p")"; else echo "$f -"; fi; done; }
+          before=$(snap)
+          out=$(python3 -I ~/.claude/hooks/brain/gbrain_update.py --a-blanc 2>&1); echo "$out"
+          echo "$out" | grep -q 'tags v\* en amont : [1-9]'
+          echo "$out" | grep -q 'cision : '
+          [ "$(git -C ~/DEV/gbrain rev-parse HEAD)" = "$head" ]
+          [ "$(snap)" = "$before" ]
 
   # The app's own Windows jobs (25 minutes) run when the app, install.ps1, this workflow or its
   # helpers change, and on every push to master. A skipped job counts as passed.
@@ -63,14 +255,14 @@ jobs:
           if grep -qE '^(app/|install\.ps1$|\.github/workflows/test\.yml$|\.github/ci/)' <<< "$files"; then app=true; else app=false; fi
           echo "app=$app" | tee -a "$GITHUB_OUTPUT"
 
-  # The installer app, on a Mac and on Windows: diagnosis, install steps, Voyage key check,
-  # command runner. (Real downloads are #[ignore] tests, run by hand.)
+  # The installer app, on a Mac, on Windows and on Linux (Ubuntu 24.04): diagnosis, install
+  # steps, Voyage key check, command runner. (Real downloads are #[ignore] tests, run by hand.)
   app:
     name: app (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
+        os: [macos-latest, windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     defaults:
@@ -80,6 +272,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      # WebKitGTK and GTK, from Ubuntu's archive, to build the window against.
+      - name: Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev \
+            libssl-dev libxdo-dev
       - name: Rust tests
         run: cargo test --locked
       - name: Clippy, warnings are errors
@@ -106,6 +305,26 @@ jobs:
           if (-not $d.can_install) { throw 'a fresh runner cannot install' }
           foreach ($step in @($d.todo)) { if ($step -notin 'claude', 'brain') { throw "unknown step $step" } }
           if ($d.ram_gb -le 0 -or $d.disk_free_gb -le 0) { throw "memory $($d.ram_gb), free $($d.disk_free_gb)" }
+
+      - name: Without its window, the app examines the Linux machine and says so in JSON
+        if: runner.os == 'Linux'
+        run: |
+          cargo build --locked
+          ./target/debug/brain-in-a-box --diagnose | tee "$RUNNER_TEMP/diag.json"
+          python3 -I - "$RUNNER_TEMP/diag.json" <<'PY'
+          import json, sys
+          d = json.load(open(sys.argv[1], encoding="utf-8"))
+          ids = [c["id"] for c in d["checks"]]
+          assert d["os"].startswith("Ubuntu"), d["os"]
+          for want in ("linux", "disk", "network", "paquets", "bun", "claude", "obsidian", "brain_vault", "voyage"):
+              assert want in ids, (want, ids)
+          assert "clt" not in ids and "macos" not in ids, ids
+          assert d["can_install"], d["checks"]
+          assert set(d["todo"]) <= {"paquets", "claude", "bun", "obsidian", "brain"}, d["todo"]
+          assert "paquets" not in d["todo"], "a runner has git, python3, curl and unzip"
+          assert d["ram_gb"] > 0 and d["disk_free_gb"] > 0, (d["ram_gb"], d["disk_free_gb"])
+          print("linux:", d["os"], len(ids), "checks, to do:", d["todo"])
+          PY
 
   # The app's own install path on a real Windows, without its window: Claude Code, then the
   # brain (install.ps1 from this commit, no console, no question) on a PC with only the Store's
@@ -263,6 +482,63 @@ jobs:
           $d = [IO.File]::ReadAllText($diag) | ConvertFrom-Json
           if ($d.os -notlike 'Windows 1*' -or @($d.checks).Count -lt 10) { throw "the installed app answered: $(Get-Content $diag -Raw)" }
           "installed app: $($d.os), $(@($d.checks).Count) checks"
+
+  # The Linux packages, built as release.yml builds them (on 22.04, its AppImage tools and runtime
+  # pinned): the .deb installs with apt, its dependencies from Ubuntu's archive, and the installed
+  # app answers; the AppImage starts with the pinned runtime and answers too, unpacked (a runner may
+  # lack FUSE). Both again on Ubuntu 24.04, where most users are. The night's terrain (app-linux)
+  # runs the AppImage built the same way in a real window on 24.04.
+  app-linux-bundle:
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: app/src-tauri
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build dependencies, Tauri CLI, the AppImage tools and runtime pinned
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev \
+            libssl-dev libxdo-dev patchelf file
+          bash "$GITHUB_WORKSPACE/.github/ci/appimage-tools.sh"
+          cargo install tauri-cli --version "=2.11.5" --locked
+      - name: Build the .deb and the AppImage (release.yml's command)
+        run: cargo tauri build --ci --target x86_64-unknown-linux-gnu --bundles deb,appimage -- --locked
+      - name: The .deb installs and the installed app answers, the AppImage too
+        run: |
+          shopt -s nullglob
+          debs=(target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb)
+          images=(target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage)
+          [ "${#debs[@]}" -eq 1 ] && [ "${#images[@]}" -eq 1 ] || { echo "::error::packages: ${debs[*]} ${images[*]}"; exit 1; }
+          ls -la "${debs[0]}" "${images[0]}"
+          bash "$GITHUB_WORKSPACE/.github/ci/appimage-tools.sh" check "${images[0]}"
+          dpkg-deb -I "${debs[0]}"
+          deps=$(dpkg-deb -f "${debs[0]}" Depends)
+          case "$deps" in *libwebkit2gtk-4.1-0*) ;; *) echo "::error::the .deb does not depend on WebKitGTK 4.1: $deps"; exit 1 ;; esac
+          sudo apt-get install -y -q "./${debs[0]}"
+          test -f "/usr/share/applications/Brain in a Box.desktop"
+          grep -qx 'Exec=brain-in-a-box' "/usr/share/applications/Brain in a Box.desktop"
+          check='import json, sys; d = json.load(sys.stdin); ids = [c["id"] for c in d["checks"]]; assert "paquets" in ids, ids; print(sys.argv[1], d["os"], len(ids), "checks")'
+          brain-in-a-box --diagnose | python3 -I -c "$check" deb
+          chmod +x "${images[0]}"
+          APPIMAGE_EXTRACT_AND_RUN=1 "${images[0]}" --diagnose | python3 -I -c "$check" AppImage
+      # The same files on Ubuntu 24.04 (its image pinned): the .deb installs there with apt, both answer.
+      - name: The 22.04 build installs and answers on Ubuntu 24.04
+        env:
+          NOBLE: ubuntu:24.04@sha256:534baea6a22c03a63003dbc8dbe78fe34bc0d7e595d9a9dc9834884ff530eb55
+        run: |
+          check='import json, sys; d = json.load(sys.stdin); ids = [c["id"] for c in d["checks"]]; assert "paquets" in ids, ids; assert "24.04" in d["os"], d["os"]; print(sys.argv[1], d["os"], len(ids), "checks")'
+          docker run --rm -e "CHECK=$check" -v "$PWD/target/x86_64-unknown-linux-gnu/release/bundle:/bundle:ro" "$NOBLE" bash -euc '
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -q >/dev/null
+            apt-get install -y -q python3 /bundle/deb/*.deb >/dev/null
+            brain-in-a-box --diagnose | python3 -I -c "$CHECK" deb
+            APPIMAGE_EXTRACT_AND_RUN=1 /bundle/appimage/*.AppImage --diagnose | python3 -I -c "$CHECK" AppImage'
 
   # A real install on a real Windows, the way a user runs it: no Python but the
   # Microsoft Store stub (what broke installs in the field), so Python comes from winget.

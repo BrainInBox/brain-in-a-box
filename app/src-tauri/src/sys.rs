@@ -9,6 +9,12 @@
 //! installer adds later is missing from it, so `tool_path()` adds those places too.
 //! Every program starts without a console window (CREATE_NO_WINDOW), and stopping one
 //! stops the whole tree it started (taskkill /T), as a process group does on a Mac.
+//!
+//! On Linux an app started from the desktop's menu gets the session's PATH, which may
+//! lack ~/.local/bin until the next login: the same places are added. Links open with
+//! xdg-open, and the command window is whichever terminal the desktop has. Run from an
+//! AppImage, the app has the AppImage's own libraries and Python in its environment:
+//! none of that reaches the programs it starts (see `APPIMAGE_ENV`).
 
 use std::collections::HashSet;
 use std::ffi::OsString;
@@ -20,6 +26,8 @@ use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(target_os = "linux")]
+use std::sync::LazyLock;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -30,9 +38,9 @@ const TICK: Duration = Duration::from_millis(50);
 const DRAIN: Duration = Duration::from_millis(500);
 
 /// "Mac" or "PC", for the sentences that name the computer ("ton Mac", "ce PC").
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 pub const MACHINE: &str = "Mac";
-#[cfg(windows)]
+#[cfg(not(target_os = "macos"))]
 pub const MACHINE: &str = "PC";
 
 #[cfg(not(windows))]
@@ -48,9 +56,31 @@ pub fn home() -> PathBuf {
 
 /// Where the app's work folders go: a downloaded installer, the folder Claude reads.
 /// A Mac's temporary folder (/var/folders/…) is the user's own, and they are 0700 in it.
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 pub fn work_root() -> io::Result<PathBuf> {
     Ok(std::env::temp_dir())
+}
+
+/// Linux's /tmp is every account's. The session's own folder instead (/run/user/<uid>:
+/// 0700, the user's, named after no one) when it is really that, else one of the home.
+#[cfg(target_os = "linux")]
+pub fn work_root() -> io::Result<PathBuf> {
+    if let Some(run) = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).filter(|d| private_to_me(d)) {
+        return Ok(run);
+    }
+    let root = home().join(".brain-in-a-box").join("tmp");
+    crate::perms::create_dir_all(&root)?;
+    Ok(root)
+}
+
+/// A real folder (not a link), this process's user's, that no one else may enter.
+#[cfg(target_os = "linux")]
+fn private_to_me(dir: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    // /proc/self belongs to whoever this process runs as.
+    let Ok(me) = std::fs::metadata("/proc/self").map(|m| m.uid()) else { return false };
+    dir.is_absolute()
+        && std::fs::symlink_metadata(dir).is_ok_and(|m| m.is_dir() && m.uid() == me && m.mode() & 0o077 == 0)
 }
 
 /// Windows' TEMP may point outside the profile (C:\Temp, on many company PCs), where every
@@ -69,9 +99,10 @@ pub fn exe(name: &str) -> String {
 }
 
 /// The inherited PATH first (a test can put stubs in front), then our install locations.
+/// Never a folder of the AppImage the app runs from.
 pub fn tool_path() -> OsString {
     let mut dirs: Vec<PathBuf> = std::env::var_os("PATH")
-        .map(|p| std::env::split_paths(&p).filter(|d| !d.as_os_str().is_empty()).collect())
+        .map(|p| std::env::split_paths(&p).filter(|d| !d.as_os_str().is_empty() && !in_appimage(d)).collect())
         .unwrap_or_default();
     dirs.extend(install_dirs(&home()));
     let mut seen = HashSet::new();
@@ -82,7 +113,7 @@ pub fn tool_path() -> OsString {
         .unwrap_or_default()
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 fn install_dirs(h: &Path) -> Vec<PathBuf> {
     vec![
         h.join(".local/bin"),
@@ -93,6 +124,84 @@ fn install_dirs(h: &Path) -> Vec<PathBuf> {
         PathBuf::from("/bin"),
         PathBuf::from("/usr/sbin"),
         PathBuf::from("/sbin"),
+    ]
+}
+
+/// Claude Code and gbq in ~/.local/bin, Bun in ~/.bun/bin, the system's, then the snaps'
+/// (Obsidian may come as one).
+/// The folder an AppImage runs the app from (its AppRun sets APPDIR), when it is one.
+#[cfg(target_os = "linux")]
+static APPDIR: LazyLock<Option<PathBuf>> =
+    LazyLock::new(|| std::env::var_os("APPDIR").map(PathBuf::from).filter(|d| d.is_absolute() && d.join("AppRun").is_file()));
+
+#[cfg(target_os = "linux")]
+fn in_appimage(dir: &Path) -> bool {
+    APPDIR.as_deref().is_some_and(|a| dir.starts_with(a))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn in_appimage(_: &Path) -> bool {
+    false
+}
+
+/// What an AppImage's AppRun put in the app's environment for its own libraries (PYTHONHOME,
+/// LD_LIBRARY_PATH, GTK's modules...), taken back out of what the app starts: the system's
+/// python3 stops on the AppImage's PYTHONHOME, git or curl could load its libraries. Lists keep
+/// their own entries, variables that only point into the AppImage go.
+#[cfg(target_os = "linux")]
+static APPIMAGE_ENV: LazyLock<Vec<(OsString, Option<OsString>)>> =
+    LazyLock::new(|| appimage_env(std::env::vars_os(), APPDIR.as_deref()));
+
+/// Set by the AppImage's runtime and its hooks whatever the user had: never passed on.
+#[cfg(target_os = "linux")]
+const APPIMAGE_OWN: &[&str] = &["APPDIR", "APPIMAGE", "OWD", "ARGV0", "GTK_THEME", "GDK_BACKEND", "PYTHONDONTWRITEBYTECODE"];
+
+#[cfg(target_os = "linux")]
+fn appimage_env(vars: impl Iterator<Item = (OsString, OsString)>, appdir: Option<&Path>) -> Vec<(OsString, Option<OsString>)> {
+    let Some(dir) = appdir else { return Vec::new() };
+    let mut out = Vec::new();
+    for (key, value) in vars {
+        if key == "PATH" {
+            continue; // tool_path() keeps the AppImage out of it
+        }
+        if key.to_str().is_some_and(|k| APPIMAGE_OWN.contains(&k)) {
+            out.push((key, None));
+            continue;
+        }
+        let parts: Vec<PathBuf> = std::env::split_paths(&value).collect();
+        if !parts.iter().any(|p| p.starts_with(dir)) {
+            continue;
+        }
+        let kept: Vec<PathBuf> = parts.into_iter().filter(|p| !p.as_os_str().is_empty() && !p.starts_with(dir)).collect();
+        let kept = (!kept.is_empty()).then(|| std::env::join_paths(kept).ok()).flatten();
+        out.push((key, kept));
+    }
+    out
+}
+
+/// `cmd` without what the AppImage added to the app's environment.
+fn outside_appimage(cmd: &mut Command) -> &mut Command {
+    #[cfg(target_os = "linux")]
+    for (k, v) in APPIMAGE_ENV.iter() {
+        match v {
+            Some(v) => cmd.env(k, v),
+            None => cmd.env_remove(k),
+        };
+    }
+    cmd
+}
+
+#[cfg(target_os = "linux")]
+fn install_dirs(h: &Path) -> Vec<PathBuf> {
+    vec![
+        h.join(".local/bin"),
+        h.join(".bun/bin"),
+        PathBuf::from("/usr/local/bin"),
+        PathBuf::from("/usr/bin"),
+        PathBuf::from("/bin"),
+        PathBuf::from("/usr/sbin"),
+        PathBuf::from("/sbin"),
+        PathBuf::from("/snap/bin"),
     ]
 }
 
@@ -154,7 +263,8 @@ pub fn powershell() -> PathBuf {
     system32(r"WindowsPowerShell\v1.0\powershell.exe")
 }
 
-/// The system's curl: macOS's, or the one Windows 10 (1803) and later ship.
+/// The system's curl: macOS's, Linux's package's (see the paquets step), or the one
+/// Windows 10 (1803) and later ship.
 #[cfg(not(windows))]
 pub fn curl() -> PathBuf {
     PathBuf::from("/usr/bin/curl")
@@ -306,7 +416,7 @@ pub fn run_isolated(program: &Path, args: &[&str], iso: &Isolated, on_line: &mut
 
 fn command(program: &Path) -> Command {
     let mut cmd = Command::new(program);
-    cmd.env("PATH", tool_path());
+    outside_appimage(&mut cmd).env("PATH", tool_path());
     #[cfg(windows)]
     if program == powershell() {
         without_ps7_modules(&mut cmd);
@@ -428,7 +538,7 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 #[cfg(unix)]
 fn kill_group(child: &mut Child) {
     let group = format!("-{}", child.id());
-    let _ = Command::new("/bin/kill")
+    let _ = outside_appimage(&mut Command::new("/bin/kill"))
         .args(["-KILL", "--", &group])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -456,10 +566,85 @@ fn kill_group(child: &mut Child) {
 
 /// Hands a link (https://, a Settings page) to the system, which opens it with the
 /// right program: `open` on a Mac, Explorer on Windows (which answers 1 even when it
-/// worked: only its start counts).
-#[cfg(not(windows))]
+/// worked: only its start counts), xdg-open on Linux (which may wait for the browser:
+/// only its start counts there too).
+#[cfg(target_os = "macos")]
 pub fn open_with_system(target: &str) -> bool {
     run(Path::new("/usr/bin/open"), &[target], Duration::from_secs(15)).ok()
+}
+
+#[cfg(target_os = "linux")]
+pub fn open_with_system(target: &str) -> bool {
+    find_tool("xdg-open").is_some_and(|x| spawn_detached(&x, &[target]).is_ok())
+}
+
+/// Starts a program that lives on by itself (Obsidian, a browser, a terminal) and does
+/// not wait for it; a thread reaps it once it ends.
+#[cfg(target_os = "linux")]
+pub fn spawn_detached(program: &Path, args: &[&str]) -> io::Result<()> {
+    let mut child = outside_appimage(&mut Command::new(program))
+        .args(args)
+        .env("PATH", tool_path())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .process_group(0)
+        .spawn()?;
+    thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(())
+}
+
+/// The terminals a Linux desktop may have, each with the option that runs a program in it.
+/// The Debian alternative comes first: it is the one the user's desktop picked.
+#[cfg(target_os = "linux")]
+const TERMINALS: &[(&str, &str)] = &[
+    ("x-terminal-emulator", "-e"),
+    ("gnome-terminal", "--"),
+    ("ptyxis", "--"),
+    ("kgx", "--"),
+    ("konsole", "-e"),
+    ("xfce4-terminal", "-x"),
+    ("mate-terminal", "-x"),
+    ("xterm", "-e"),
+];
+
+/// Opens a terminal window on `script` (an executable file of ours) and does not wait for
+/// it: Terminal on a Mac. A terminal that quits at once with an error makes way for the next.
+#[cfg(target_os = "linux")]
+pub fn open_terminal_window(script: &Path) -> Result<(), String> {
+    let file = script.to_string_lossy();
+    // x-terminal-emulator may hand -e's argument to a shell: only a plain path goes there.
+    let plain = !file.chars().any(|c| c.is_whitespace() || "'\"\\$`;&|<>(){}*?[]~#!".contains(c));
+    for (name, flag) in TERMINALS.iter().filter(|(n, _)| plain || *n != "x-terminal-emulator") {
+        let Some(term) = find_tool(name) else { continue };
+        let started = outside_appimage(&mut Command::new(&term))
+            .env("PATH", tool_path())
+            .args([flag, file.as_ref()])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .process_group(0)
+            .spawn();
+        let Ok(mut child) = started else { continue };
+        // gnome-terminal hands the window to its server and quits; xterm stays.
+        let t = Instant::now();
+        while t.elapsed() < Duration::from_secs(3) {
+            match child.try_wait() {
+                Ok(Some(status)) if status.success() => return Ok(()),
+                Ok(Some(_)) => break,
+                _ => thread::sleep(TICK),
+            }
+        }
+        if child.try_wait().is_ok_and(|s| s.is_none()) {
+            thread::spawn(move || {
+                let _ = child.wait();
+            });
+            return Ok(());
+        }
+    }
+    Err("Je n'ai pas trouvé de terminal à ouvrir sur ce PC.".into())
 }
 
 #[cfg(windows)]
@@ -799,6 +984,47 @@ mod tests {
         let mut lines = Vec::new();
         assert_eq!(run_isolated(&dir.path().join("missing"), &[], &iso, &mut |l| lines.push(l)), -1);
         assert!(lines[0].starts_with("impossible de lancer"), "{lines:?}");
+    }
+
+    /// Linux: what an AppImage's AppRun sets (AppImageKit's and linuxdeploy's GTK hook), as the
+    /// app inherits it, and what its children get.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn nothing_of_the_appimage_reaches_the_programs_it_starts() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = dir.path().join("Brain in a Box.AppDir");
+        let a = app.to_string_lossy();
+        let vars = [
+            ("PYTHONHOME", format!("{a}/usr/")),
+            ("PYTHONPATH", format!("{a}/usr/share/pyshared/:")),
+            ("LD_LIBRARY_PATH", format!("{a}/usr/lib/:{a}/lib64/:/opt/mine/lib")),
+            ("XDG_DATA_DIRS", format!("{a}/usr/share:/usr/share:/usr/local/share")),
+            ("GDK_PIXBUF_MODULE_FILE", format!("{a}//usr/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache")),
+            ("GTK_THEME", "Adwaita:light".into()),
+            ("APPIMAGE", "/home/jo/Applications/x.AppImage".into()),
+            ("APPDIR", a.to_string()),
+            ("PATH", format!("{a}/usr/bin/:/usr/bin")),
+            ("HOME", "/home/jo".into()),
+            ("LANG", "fr_FR.UTF-8".into()),
+        ];
+        let got = appimage_env(vars.iter().map(|(k, v)| (OsString::from(k), OsString::from(v))), Some(&app));
+        let got: Vec<(String, Option<String>)> =
+            got.into_iter().map(|(k, v)| (k.to_string_lossy().into_owned(), v.map(|v| v.to_string_lossy().into_owned()))).collect();
+        let want: Vec<(String, Option<String>)> = [
+            ("PYTHONHOME", None),
+            ("PYTHONPATH", None),
+            ("LD_LIBRARY_PATH", Some("/opt/mine/lib")),
+            ("XDG_DATA_DIRS", Some("/usr/share:/usr/local/share")),
+            ("GDK_PIXBUF_MODULE_FILE", None),
+            ("GTK_THEME", None),
+            ("APPIMAGE", None),
+            ("APPDIR", None),
+        ]
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.map(String::from)))
+        .collect();
+        assert_eq!(got, want);
+        assert!(appimage_env(vars.iter().map(|(k, v)| (OsString::from(k), OsString::from(v))), None).is_empty(), "not an AppImage");
     }
 
     #[test]

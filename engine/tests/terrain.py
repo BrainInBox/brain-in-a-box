@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Field tests ("terrain"): the kit as a user gets it, on a machine nobody keeps.
 
-Run every night on fresh GitHub VMs, macOS and Windows (.github/workflows/terrain.yml),
+Run every night on fresh GitHub VMs, macOS, Windows and Linux (.github/workflows/terrain.yml),
 and by hand for the scenarios that need no VM:
 
     python3 -I engine/tests/terrain.py nuits --home <empty folder>
@@ -10,6 +10,7 @@ and by hand for the scenarios that need no VM:
 Scenarios:
   installation   a fresh install did what it says, its nightly included        (VM only)
   montee-avant   on a v0.2.0 install, what a user changed since                 (VM only)
+                 (Linux, path "reinstallation": on the tested version itself, no earlier one runs there)
   montee         the tested version installed over it: nothing of the user lost, all the new there (VM only)
   nuits          seven nights of the night check on the trapped vault, then J+20, in time travel
   vrai-claude    the real Claude on a synthetic corpus, then the daily reflection (CLAUDE_CODE_OAUTH_TOKEN),
@@ -74,21 +75,26 @@ STATUTS = {"ok": "OK", "echec": "ÉCHEC", "saute": "SAUTÉ"}
 SCENARIOS = ("installation", "montee-avant", "montee", "nuits", "vrai-claude", "app")
 INSTALLEURS = ("installeur", "installeur-v0.2.0", "installeur-montee")
 VM_ONLY = ("installation", "montee-avant", "montee", "app")
-PARCOURS = ("neuf", "montee", "claude", "app", "local")
+PARCOURS = ("neuf", "montee", "claude", "app", "local", "reinstallation")
 OSES = ("macos", "windows", "linux")
 # The rows each path of terrain.yml writes. One missing is a failure: a step killed by its
 # timeout before it recorded, a cancelled job, a guard that refused to run.
+# "reinstallation" is Linux's "montee": no earlier version of the kit installs on Linux, so the
+# tested version is installed, changed by its user, then installed again over it.
 ATTENDUS = {"neuf": ("installeur", "installation", "nuits"),
             "montee": ("installeur-v0.2.0", "montee-avant", "installeur-montee", "montee"),
+            "reinstallation": ("installeur", "montee-avant", "installeur-montee", "montee"),
             "claude": ("vrai-claude",),
             "app": ("app",)}
-# The systems each path runs on, when not both.
-ATTENDUS_OS = {}
+# The systems each path runs on, when not macOS and Windows.
+ATTENDUS_OS = {"neuf": ("macos", "windows", "linux"), "reinstallation": ("linux",), "app": ("macos", "windows", "linux")}
 # terrain.yml's jobs, and the result files each one writes ("tous": the commit to test, for all).
 JOBS = {"ref": ("tous", ()), "macos": ("macos", ("macos-neuf", "macos-montee")),
         "windows": ("windows", ("windows-neuf", "windows-montee")),
+        "linux": ("linux", ("linux-neuf", "linux-reinstallation")),
         "claude": ("macos+windows", ("macos-claude", "windows-claude")),
-        "app-macos": ("macos", ("macos-app",)), "app-windows": ("windows", ("windows-app",))}
+        "app-macos": ("macos", ("macos-app",)), "app-windows": ("windows", ("windows-app",)),
+        "app-linux-build": ("linux", ("linux-app",)), "app-linux": ("linux", ("linux-app",))}
 JOB_RESULTS = ("success", "failure", "cancelled", "skipped")
 ETAPE_RE = re.compile(r"^[a-z0-9][a-z0-9.-]{0,40}$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -103,6 +109,19 @@ WIRED = {"UserPromptSubmit": ["correction-detector.py"],
          "SessionStart": ["gbrain-update-check.py", "controle-sessionstart.py"]}
 CANARIES = vault_piege.canary_markers()
 NIGHT_WAIT = 1500
+# Linux: what each path's installer leaves. The fresh install answers its questions in a terminal
+# (.github/ci/terminal.py: lingering yes, Obsidian yes), the reinstallation has none (cron, as in
+# a container or a WSL without systemd). The app runs install.sh without a terminal from a desktop
+# session, whose user's systemd answers (no question about lingering there), after its own step
+# installed Obsidian's package.
+LINUX_TIMERS = ("gbrain-nightly", "brain-reflection", "gbrain-lint")
+LINGER_DIR = Path("/var/lib/systemd/linger")
+LINUX_ATTENDU = {"neuf": {"planificateur": "systemd", "obsidian": True, "linger": True},
+                 "reinstallation": {"planificateur": "cron", "obsidian": False},
+                 "app": {"planificateur": "systemd", "obsidian": True}}
+CRON_LINES = ('0 4 * * * /bin/bash "$HOME/.claude/hooks/brain/gbrain-nightly.sh"',
+              '0 12,23 * * * /usr/bin/env python3 "$HOME/.claude/hooks/brain/daily-reflection.py"',
+              '0 8 * * 1 /bin/bash "$HOME/.claude/hooks/brain/gbrain-lint.sh"')
 
 
 class Echec(Exception):
@@ -855,10 +874,18 @@ def check_install(t, opts, kept=(), fresh=True, query=True):
             t.notes.append("le coffre monté garde core.autocrlf=%s (annuler une nuit y réécrit en CRLF)" % (auto or "?"))
 
     t("claude-code")
-    if WINDOWS:
-        # install.ps1 installs Claude Code when it is missing (test.yml checks the same).
-        t.check((home / ".local" / "bin" / "claude.exe").is_file(),
-                "Claude Code n'est pas installé (~/.local/bin/claude.exe)")
+    if WINDOWS or OS_NAME == "linux":
+        # install.ps1 and, on Linux, install.sh install Claude Code when it is missing (test.yml checks the same).
+        exe = "claude.exe" if WINDOWS else "claude"
+        t.check((home / ".local" / "bin" / exe).is_file(), "Claude Code n'est pas installé (~/.local/bin/%s)" % exe)
+    if OS_NAME == "linux":
+        t("obsidian")
+        found = [p for p in ("/opt/Obsidian/obsidian", "/usr/bin/obsidian") if os.path.exists(p)]
+        t.details["obsidian"] = found[0] if found else "absent"
+        expected = (LINUX_ATTENDU.get(opts.parcours) or {}).get("obsidian")
+        if expected is not None:
+            t.check(bool(found) == expected, "Obsidian %s après une installation %s" % (
+                "absent" if expected else "installé", "qui a répondu oui" if expected else "sans terminal"))
     if fresh and WINDOWS:
         settings = json.dumps(read_json(home / ".claude" / "settings.json", {}))
         t.check("stub" not in settings.lower(), "les hooks sont branchés sur le faux python du Microsoft Store")
@@ -888,8 +915,71 @@ def mac_labels():
     return ["com.%s.%s" % (user, n) for n in ("gbrain-nightly", "brain-reflection", "gbrain-lint")]
 
 
+def linux_env():
+    """The harness's environment, with the user's systemd reachable when it runs (a CI step has no session)."""
+    env = dict(os.environ)
+    run_dir = "/run/user/%d" % os.getuid()
+    if not env.get("XDG_RUNTIME_DIR") and os.path.exists(run_dir + "/bus"):
+        env["XDG_RUNTIME_DIR"] = run_dir
+    return env
+
+
+def systemctl(*args, timeout=60):
+    rc, out = run(["systemctl", "--user"] + list(args), env=linux_env(), timeout=timeout)
+    return rc, out.strip()
+
+
+def kit_crontab():
+    """The kit's lines in the user's crontab ([] without one)."""
+    if not shutil.which("crontab"):
+        return []
+    rc, out = run(["crontab", "-l"], timeout=60)
+    lines = out.splitlines() if rc == 0 else []
+    start = next((i for i, l in enumerate(lines) if l.startswith("# >>> brain-in-a-box")), None)
+    end = next((i for i, l in enumerate(lines) if start is not None and i > start and l == "# <<< brain-in-a-box"), None)
+    return lines[start:end + 1] if end is not None else []
+
+
+def check_linux_scheduler(t, opts):
+    """systemd --user timers, or the cron block where the user's systemd does not run: one of the two, never both."""
+    import getpass
+    units = opts.home / ".config" / "systemd" / "user"
+    systemd = any((units / (n + ".timer")).exists() for n in LINUX_TIMERS)
+    cron = kit_crontab()
+    t.details["planificateur"] = "systemd" if systemd else "cron" if cron else "aucun"
+    t.check(systemd or cron, "ni minuteurs systemd --user ni lignes cron du kit : rien ne lance la nuit")
+    t.check(not (systemd and cron), "minuteurs systemd et lignes cron à la fois : chaque tâche tournerait deux fois")
+    want = (LINUX_ATTENDU.get(opts.parcours) or {}).get("planificateur")
+    t.check(not want or t.details["planificateur"] == want,
+            "planificateur %s, attendu %s" % (t.details["planificateur"], want))
+    if cron:
+        for line in CRON_LINES:
+            t.check(any(l.startswith(line) for l in cron), "ligne cron absente : %s" % line.split('"')[1])
+        return
+    for n in LINUX_TIMERS:
+        for kind in ("service", "timer"):
+            p = units / ("%s.%s" % (n, kind))
+            t.check(p.is_file() and p.read_bytes() == (REPO / "engine" / "nightly" / "systemd" / p.name).read_bytes(),
+                    "%s absent ou pas la version testée" % p.name)
+        t.check("Persistent=true" in read(units / (n + ".timer")).splitlines(),
+                "%s.timer ne rattrape pas une heure manquée (Persistent)" % n)
+        rc, state = systemctl("is-enabled", n + ".timer")
+        t.check(state == "enabled", "%s.timer n'est pas activé (%s)" % (n, state or rc))
+        rc, state = systemctl("is-active", n + ".timer")
+        t.check(state == "active", "%s.timer ne tourne pas (%s)" % (n, state or rc))
+    t.check("OnCalendar=*-*-* 04:00:00" in read(units / "gbrain-nightly.timer"), "la nuit n'est pas à 04:00")
+    t.details["minuteurs"] = systemctl("list-timers", "--all", "--no-pager")[1].splitlines()[:8]
+    linger = LINGER_DIR / getpass.getuser()
+    t.details["linger"] = linger.exists()
+    if (LINUX_ATTENDU.get(opts.parcours) or {}).get("linger"):
+        t.check(linger.exists(), "lingering absent alors que l'installation a répondu oui")
+
+
 def check_scheduler(t, opts):
     home = opts.home
+    if OS_NAME == "linux":
+        check_linux_scheduler(t, opts)
+        return
     if WINDOWS:
         rc, tasks, out = powershell(PS_TASKS)
         t.check(rc == 0 and isinstance(tasks, dict), "le Planificateur de tâches ne répond pas")
@@ -928,6 +1018,35 @@ def run_nightly(t, opts):
         t.check(not res.get("running"), "BrainNightly tourne encore après %d s" % NIGHT_WAIT)
         t.check(res.get("result") == 0, "BrainNightly : LastTaskResult %s" % res.get("result"))
         want = ["[gbrain-update] exit 0", "[controle] exit 0", "[sync] exit 0", "nightly done"]
+    elif OS_NAME == "linux":
+        want = ["[controle] exit 0", "nightly done"]
+        units = opts.home / ".config" / "systemd" / "user"
+        if (units / "gbrain-nightly.service").is_file():
+            rc, out = systemctl("start", "--no-block", "gbrain-nightly.service")
+            t.check(rc == 0, "systemctl --user start gbrain-nightly.service : %s" % (out or rc))
+            t.details["nuit_lancee_par"] = "systemd --user"
+            deadline = time.monotonic() + NIGHT_WAIT
+            state = "activating"
+            while time.monotonic() < deadline:
+                time.sleep(5)
+                state = systemctl("show", "-p", "ActiveState", "--value", "gbrain-nightly.service")[1]
+                if state in ("inactive", "failed"):
+                    break
+            result = systemctl("show", "-p", "Result", "-p", "ExecMainStatus", "gbrain-nightly.service")[1]
+            t.details["service"] = result.splitlines()
+            t.check(state in ("inactive", "failed"), "gbrain-nightly.service tourne encore après %d s" % NIGHT_WAIT)
+            t.check("Result=success" in result.splitlines() and "ExecMainStatus=0" in result.splitlines(),
+                    "gbrain-nightly.service : %s" % result.replace("\n", ", "))
+        else:
+            # As cron starts it: /bin/sh's bare environment (crontab(5)).
+            import getpass
+            user = getpass.getuser()
+            env = {"HOME": str(opts.home), "LOGNAME": user, "USER": user, "SHELL": "/bin/sh", "PATH": "/usr/bin:/bin"}
+            line = next((l for l in kit_crontab() if "gbrain-nightly.sh" in l), None)
+            t.check(line, "aucune ligne cron pour la nuit")
+            rc, _ = run(["/bin/sh", "-c", line.split(" ", 5)[5]], env=env, timeout=NIGHT_WAIT)
+            t.check(rc == 0, "la ligne cron de la nuit a fini en code %d" % rc)
+            t.details["nuit_lancee_par"] = "cron (sa ligne, son environnement)"
     else:
         label = mac_labels()[0]
         if run(["launchctl", "print", "%s/%s" % (launchd_domain(), label)], timeout=60)[0] == 0:
@@ -978,10 +1097,12 @@ def montee_avant(t, opts):
     home = opts.home
     hooks = home / ".claude" / "hooks" / "brain"
     vault = home / "Documents" / "Brain"
-    t("etat-v0.2.0")
-    t.check((hooks / "session-logger.py").is_file(), "pas de hooks v0.2.0 installés")
-    t.check((home / ".claude" / "settings.json").is_file(), "pas de settings.json après l'installation v0.2.0")
-    t.check(vault.is_dir(), "pas de coffre après l'installation v0.2.0")
+    # Linux has no earlier version: the first install is the tested one (path "reinstallation").
+    avant = "v0.2.0" if opts.parcours == "montee" else "précédente"
+    t("etat-v0.2.0" if opts.parcours == "montee" else "etat-avant")
+    t.check((hooks / "session-logger.py").is_file(), "pas de hooks installés par l'installation %s" % avant)
+    t.check((home / ".claude" / "settings.json").is_file(), "pas de settings.json après l'installation %s" % avant)
+    t.check(vault.is_dir(), "pas de coffre après l'installation %s" % avant)
 
     t("notes")
     write(str(vault), "Projects/terrain-montee.md", None,
@@ -999,7 +1120,7 @@ def montee_avant(t, opts):
     t("settings")
     sp = home / ".claude" / "settings.json"
     s = read_json(sp)
-    t.check(s is not None, "settings.json v0.2.0 illisible")
+    t.check(s is not None, "settings.json de l'installation %s illisible" % avant)
     s[USER_KEY] = "garde"
     s.setdefault("hooks", {}).setdefault("Stop", []).append(
         {"matcher": "terrain", "hooks": [{"type": "command", "command": USER_HOOK}]})
@@ -1013,8 +1134,9 @@ def montee_avant(t, opts):
         f.write((USER_CLAUDE + "\n\n").encode("utf-8") + old)
 
     t("instantane")
-    write_json(montee_state(opts), {"coffre": tree(vault)})
-    t.resume = "état v0.2.0 en place, modifications de l'utilisateur faites"
+    write_json(montee_state(opts), {"coffre": tree(vault),
+                                    "settings": hashlib.sha256((home / ".claude" / "settings.json").read_bytes()).hexdigest()})
+    t.resume = "état de l'installation %s en place, modifications de l'utilisateur faites" % avant
 
 
 def montee(t, opts):
@@ -1053,14 +1175,18 @@ def montee(t, opts):
             if isinstance(h, dict) and h.get("command") == USER_HOOK]
     t.check(len(mine) == 1, "le hook de l'utilisateur est là %d fois" % len(mine))
     baks = list((home / ".claude").glob("settings.json.bak-*"))
-    t.check(any(USER_KEY in read(p) for p in baks), "settings.json réécrit sans copie de sauvegarde")
+    if snap.get("settings") == hashlib.sha256((home / ".claude" / "settings.json").read_bytes()).hexdigest():
+        t.details["settings"] = "inchangé : rien à y ajouter, donc pas de copie"   # a reinstallation of the same version
+    else:
+        t.check(any(USER_KEY in read(p) for p in baks), "settings.json réécrit sans copie de sauvegarde")
 
     t("claude-md-garde")
     text = read(home / ".claude" / "CLAUDE.md")
     t.check(USER_CLAUDE in text, "les consignes de l'utilisateur dans CLAUDE.md sont perdues")
     t.check(text.count(KIT_MARK) == 1, "le repère du kit est %d fois dans CLAUDE.md" % text.count(KIT_MARK))
 
-    # macOS upgrades from #27 (keyword search without a Voyage key), Windows from v0.2.0: both answer.
+    # macOS upgrades from #27 (keyword search without a Voyage key), Windows from v0.2.0, Linux from
+    # the tested version itself: all answer.
     check_install(t, opts, kept={"session-logger.py"}, fresh=False)
     t.resume = "coffre octet pour octet, hook modifié %s, réglages gardés, tout le nouveau présent" % \
         t.details["hook_modifie"]

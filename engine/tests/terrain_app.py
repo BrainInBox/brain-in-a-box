@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Field test "app": the desktop app as a user gets it, clicked through in its real window.
 
-On a fresh GitHub VM (terrain.yml, jobs app-macos and app-windows), the robot gets the app the
+On a fresh GitHub VM (terrain.yml, jobs app-macos, app-windows and app-linux), the robot gets the app the
 way a user does, installs it, opens it and clicks through its real window, Bienvenue to the final
 screen, with a capture of every screen. Then it checks the brain works and opens the app a second
 time: it must say everything is already installed.
@@ -26,7 +26,10 @@ label, captures the screen. PiloteMac: System Events (accessibility) and screenc
 GitHub's macOS runners allow. PiloteWindows: UI Automation and a capture of the screen, through
 pilote_windows.cs compiled on the VM by Windows' own .NET Framework; the installer's pages are
 clicked the same way. On Windows the VM is first made a PC without Python (poste-neuf.ps1): the
-app has to bring it.
+app has to bring it. PiloteLinux: AT-SPI (the accessibility tree WebKitGTK gives the page, read by
+the system's Python), the mouse through xdotool, ImageMagick's capture of the X screen (Xvfb with
+a window manager, the job's desktop); the AppImage as a user runs it from ~/Applications, on an
+Ubuntu without git nor curl, as Ubuntu's desktop comes: the app has to bring them.
 
 This module imports nothing of terrain.py: terrain.py passes itself in (kit), so a failure is
 always terrain.py's own Echec, even when terrain.py runs as __main__.
@@ -35,8 +38,10 @@ import hashlib
 import json
 import os
 import plistlib
+import posixpath
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -89,6 +94,7 @@ ECRANS = (
 ETAPES = {
     "J'installe Claude Code.": "claude",
     "Une fenêtre Apple va s'ouvrir : clique sur Installer.": "clt",
+    "Ton ordinateur va te demander ton mot de passe.": "paquets",
     "J'installe Bun.": "bun",
     "J'installe Obsidian.": "obsidian",
     "Je prépare ton cerveau.": "brain",
@@ -406,6 +412,18 @@ class Pilote:
     def ecarter_la_nuit(self):
         """Keeps the nightly the install registered out of the checks' way; returns what it did, or None."""
         return None
+
+    def poste_neuf(self):
+        """Makes the VM the machine users have, right before the app's first start (what its steps must
+        bring, taken away); returns what it did, or None."""
+        return None
+
+    def constats(self, t, details):
+        """Checks of this system once the app installed everything (Linux: what ran as root)."""
+
+    def journaux(self):
+        """On a failure, what the system logged that the window does not show: {name: [lines]}."""
+        return {}
 
     def rendre_la_nuit(self):
         """Gives the nightly back to the scheduler (what ecarter_la_nuit did, undone); returns what it did."""
@@ -1569,6 +1587,722 @@ class PiloteWindows(Pilote):
             raise ErreurPilote("les tâches Brain* ne se réactivent pas (code %d : %s)" % (rc, out.strip()[-300:]))
 
 
+# --------------------------------------------------------------------------- Linux
+
+# The helper PiloteLinux runs with the system's Python and its AT-SPI bindings (python3-gi,
+# gir1.2-atspi-2.0): the app's accessibility tree, a button's place, a button pressed through
+# AT-SPI. One JSON request in argv, one JSON answer on stdout, ASCII only.
+ATSPI = r'''
+import json, sys, unicodedata
+import gi
+gi.require_version("Atspi", "2.0")
+from gi.repository import Atspi
+
+OBJ = "\ufffc"     # a child element inside a text: the text is not a leaf
+
+
+def norm(s):
+    s = unicodedata.normalize("NFC", s or "")
+    for a, b in (("\u00a0", " "), ("\u202f", " "), ("\u2019", "'"), ("\u2018", "'")):
+        s = s.replace(a, b)
+    return " ".join(s.split())
+
+
+def text(o):
+    try:
+        if o.get_text_iface() is None:
+            return ""
+        return Atspi.Text.get_text(o, 0, Atspi.Text.get_character_count(o)) or ""
+    except Exception:
+        return ""
+
+
+def rect(o):
+    try:
+        if o.get_component_iface() is None:
+            return None
+        r = Atspi.Component.get_extents(o, Atspi.CoordType.SCREEN)
+        return [r.x, r.y, r.width, r.height]
+    except Exception:
+        return None
+
+
+def node(o, depth, budget):
+    budget[0] -= 1
+    role = o.get_role_name() or ""
+    n = {"r": role, "n": o.get_name() or "", "k": []}
+    try:
+        attrs = o.get_attributes() or {}
+    except Exception:
+        attrs = {}
+    if attrs.get("live"):
+        n["l"] = attrs["live"]
+    if role in ("push button", "toggle button", "frame", "document web", "document text", "dialog", "alert"):
+        n["x"] = rect(o)
+    if role in ("push button", "toggle button"):
+        n["e"] = o.get_state_set().contains(Atspi.StateType.ENABLED)
+        return n
+    t = text(o)
+    if t.strip() and OBJ not in t:
+        n["v"] = t
+        return n
+    if depth < 40:
+        for i in range(o.get_child_count()):
+            if budget[0] <= 0:
+                break
+            kid = o.get_child_at_index(i)
+            n["k"].append(node(kid, depth + 1, budget) if kid is not None else {"r": "", "n": "", "k": []})
+    return n
+
+
+def apps(name):
+    desk = Atspi.get_desktop(0)
+    out = []
+    for i in range(desk.get_child_count()):
+        a = desk.get_child_at_index(i)
+        if a is not None and (name is None or (a.get_name() or "") == name):
+            out.append(a)
+    return out
+
+
+def windows(app):
+    return [app.get_child_at_index(i) for i in range(app.get_child_count())]
+
+
+def lire(req):
+    res = {"app": [], "dialogues": []}
+    mine = apps(req["app"])
+    for a in mine[-1:]:
+        for w in windows(a):
+            res["app"].append({"titre": w.get_name() or "", "arbre": node(w, 0, [1500])})
+    for a in apps(None):
+        if a in mine:
+            continue
+        for w in windows(a):
+            if w is not None and w.get_role_name() in ("dialog", "alert"):
+                res["dialogues"].append({"processus": a.get_name() or "", "arbre": node(w, 0, [300])})
+    return res
+
+
+def rapide(req):
+    try:
+        el = windows(apps(req["app"])[-1])[req["fenetre"]]
+        for i in req["chemin"]:
+            el = el.get_child_at_index(i)
+        if el.get_role_name() != "status bar":
+            return {"ok": False}
+        return {"ok": True, "textes": [text(el.get_child_at_index(i)) for i in range(el.get_child_count())]}
+    except Exception:
+        return {"ok": False}
+
+
+def chercher(o, label, depth=0):
+    if o is None or depth > 40:
+        return None
+    if o.get_role_name() in ("push button", "toggle button"):
+        return o if norm(o.get_name()) == label else None
+    for i in range(o.get_child_count()):
+        found = chercher(o.get_child_at_index(i), label, depth + 1)
+        if found is not None:
+            return found
+    return None
+
+
+def document(o, depth=0):
+    if o is None or depth > 40:
+        return None
+    if o.get_role_name() in ("document web", "document text"):
+        return o
+    for i in range(o.get_child_count()):
+        found = document(o.get_child_at_index(i), depth + 1)
+        if found is not None:
+            return found
+    return None
+
+
+def bouton(req):
+    label = norm(req["libelle"])
+    for a in apps(req["app"])[-1:]:
+        for w in windows(a):
+            b = chercher(w, label)
+            if b is None:
+                continue
+            if not b.get_state_set().contains(Atspi.StateType.ENABLED):
+                return {"ok": False, "pourquoi": "inactif"}
+            if req.get("presser"):
+                try:
+                    return {"ok": bool(Atspi.Action.do_action(b, 0))}
+                except Exception as e:
+                    return {"ok": False, "pourquoi": "action AT-SPI : %s" % e}
+            try:
+                Atspi.Component.scroll_to(b, Atspi.ScrollType.ANYWHERE)
+            except Exception:
+                pass
+            doc = document(w)
+            return {"ok": True, "bouton": rect(b), "page": rect(doc) if doc is not None else None}
+    return {"ok": False, "pourquoi": "absent"}
+
+
+req = json.loads(sys.argv[1])
+out = {"lire": lire, "rapide": rapide, "bouton": bouton}[req["op"]](req)
+sys.stdout.write(json.dumps(out, ensure_ascii=True) + "\n")
+'''
+
+# AT-SPI's roles, as the roles of the tree ecran_depuis_arbre() reads (macOS's words). The AppImage
+# built on 22.04 reaches Ubuntu 24.04's AT-SPI with some roles one below their own: its page reads
+# « document text » (« document web »), a paragraph « footer », a landmark « article ».
+ATSPI_ROLES = {"frame": "AXWindow", "dialog": "AXWindow", "alert": "AXWindow", "document web": "AXWebArea",
+               "document text": "AXWebArea", "push button": "AXButton", "toggle button": "AXCheckBox"}
+DECALES = {"document text": "document web", "footer": "paragraph", "article": "landmark"}
+
+
+def roles_decales(node):
+    """{role read: role meant} of DECALES found in a helper tree, when its page reads « document text »."""
+    vus = {str(n.get("r") or "") for _, n in _aplatir(node if isinstance(node, dict) else {})}
+    return {r: DECALES[r] for r in sorted(vus) if r in DECALES} if "document text" in vus else {}
+# The diagnosis' lines: WebKitGTK gives a check's label, its hidden status and its detail as one
+# text, a line each; macOS and Windows give the status apart, as the robot reads it.
+STATUT_CHECK = re.compile(r"^(.*\S)\s+(: (?:OK|À installer|À noter|Bloquant))$")
+
+
+def lignes(text):
+    """The lines of a text, a check's status apart."""
+    out = []
+    for line in str(text or "").split("\n"):
+        line = norm(line)
+        if not line:
+            continue
+        m = STATUT_CHECK.match(line)
+        out.extend([m.group(1), m.group(2)] if m else [line])
+    return out
+
+
+def arbre_atspi(node):
+    """PiloteLinux's helper tree (r AT-SPI role, n name, v text, e enabled, x screen rect, l aria-live,
+    k children) in the shape of PiloteMac's (r, s, n, v, e, k). A node keeps its place among its
+    siblings (a quick read follows the path of the last full one); a text becomes a group of its lines.
+    Bibo's region is the status bar, or else the first live region of the page."""
+    out = _atspi(node)
+    page = next((n for _, n in _aplatir(out) if n["r"] == "AXWebArea"), out)
+    if not any(n.get("s") for _, n in _aplatir(page)):
+        live = next((n for _, n in _aplatir(page) if n.get("l") and n["r"] not in ("AXStaticText", "AXButton")), None)
+        if live is not None:
+            live["s"] = "AXApplicationStatus"
+    return out
+
+
+def _atspi(node):
+    node = node if isinstance(node, dict) else {}
+    role = str(node.get("r") or "")
+    out = {"r": ATSPI_ROLES.get(role, "AXGroup"), "s": "AXApplicationStatus" if role == "status bar" else "",
+           "n": str(node.get("n") or ""), "v": "", "d": "", "e": node.get("e", True) is not False, "k": []}
+    if node.get("l"):
+        out["l"] = node["l"]
+    if isinstance(node.get("v"), str):
+        out["k"] = [{"r": "AXStaticText", "s": "", "n": "", "v": l, "d": "", "e": True, "k": []} for l in lignes(node["v"])]
+    elif out["r"] not in ("AXButton", "AXCheckBox"):
+        out["k"] = [_atspi(k) for k in node.get("k") or []]
+    return out
+
+
+# Ubuntu's PATH for a desktop session (/etc/environment), what an app opened from the desktop gets.
+PATH_UBUNTU = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin"
+
+
+def env_linux(home, display, uid, extra=None):
+    """What an app started from an Ubuntu desktop gets: the session's display and buses (the user's
+    systemd and the accessibility bus answer there), the system's PATH; no token, no CI variable."""
+    user = os.environ.get("USER") or Path(home).name
+    run = "/run/user/%d" % uid
+    env = {"HOME": str(home), "USER": user, "LOGNAME": user, "SHELL": "/bin/bash", "PATH": PATH_UBUNTU,
+           "LANG": "C.UTF-8", "DISPLAY": display, "XDG_RUNTIME_DIR": run,
+           "DBUS_SESSION_BUS_ADDRESS": "unix:path=%s/bus" % run, "XDG_SESSION_TYPE": "x11"}
+    env.update(extra or {})
+    return env
+
+
+# What every Ubuntu 24.04 desktop has (ubuntu-24.04.4-desktop-amd64.manifest) and the AppImage leaves to
+# the system (linuxdeploy's exclusions, seen with ldd in its files): EGL, GL and GBM with Mesa's drivers,
+# X11's libraries, fonts and text shaping. The runner's image is a server's, without libEGL: those it
+# lacks are installed before the app starts, said in the results. One the app needs and no desktop has
+# is not here: the app then does not start, as it would not on a desktop.
+BUREAU = ("libegl1", "libgl1", "libgles2", "libgbm1", "libegl-mesa0", "libglx-mesa0", "libgl1-mesa-dri", "libdrm2",
+          "libx11-6", "libx11-xcb1", "libxcb1", "libexpat1", "libfontconfig1", "libfreetype6", "libfribidi0",
+          "libharfbuzz0b", "fonts-dejavu-core")
+# The packages a fresh Ubuntu desktop does not have and the app's « Outils de base » step installs.
+SANS_PAQUETS = ("git", "curl")
+# Removed with them: git's manual, which a desktop without git has not either. The runner's image has
+# git and git-man from a PPA whose source it then drops: Ubuntu's git needs Ubuntu's git-man, apt
+# would not replace the PPA's by itself (« held broken packages », seen on the VM).
+AUSSI_RETIRES = ("git-man",)
+TITRE_FENETRE = "Brain in a Box"
+# The app's own name for AT-SPI (its program's name).
+NOM_ATSPI = "brain-in-a-box"
+
+
+def fusermount_setuid(path=PATH_UBUNTU):
+    """The fusermount* of the PATH that are setuid root, in its order: the AppImage's runtime
+    (type2-runtime) mounts it with one of them. A desktop's is fuse3's fusermount3."""
+    out = []
+    for d in path.split(os.pathsep):
+        try:
+            names = sorted(os.listdir(d))
+        except OSError:
+            continue
+        for n in names:
+            p = os.path.join(d, n)
+            try:
+                st = os.stat(p)
+            except OSError:
+                continue
+            if n.startswith("fusermount") and st.st_uid == 0 and st.st_mode & stat.S_ISUID:
+                out.append(p)
+    return out
+
+
+def place_xwininfo(out):
+    """[x, y, width, height] of a window from xwininfo's answer, or None."""
+    want = ("Absolute upper-left X", "Absolute upper-left Y", "Width", "Height")
+    found = dict((k.strip(), v.strip()) for k, _, v in (l.partition(":") for l in str(out).splitlines()))
+    try:
+        return [int(found[k]) for k in want]
+    except (KeyError, ValueError):
+        return None
+
+
+def commandes_root(journal):
+    """The commands pkexec ran as root, from its journal (journalctl -o json: one entry a line, its
+    MESSAGE « … [COMMAND=…] », the command's lines included, as text or as bytes)."""
+    out = []
+    for line in str(journal or "").splitlines():
+        try:
+            message = json.loads(line).get("MESSAGE")
+        except (ValueError, AttributeError):
+            continue
+        if isinstance(message, list):
+            message = bytes(b & 0xff for b in message if isinstance(b, int)).decode("utf-8", "replace")
+        m = re.search(r"\[COMMAND=(.*)\]\s*$", message, re.S) if isinstance(message, str) else None
+        if m:
+            out.append(m.group(1))
+    return out
+
+
+# What root may run, as the app is built: its two scripts, their labels ("$0"), the packages of their list.
+ROOT_RS = Path(__file__).resolve().parents[2] / "app" / "src-tauri" / "src" / "root.rs"
+# The polkit rule that stands in for the password (terrain.yml) logs the window's text under this tag.
+FENETRE = "fenetre-mot-de-passe"
+
+
+def chaine_rust(texte, debut):
+    """(value, end) of the Rust string literal of `texte` whose opening quote is at `debut`."""
+    out, i = [], debut + 1
+    while texte[i] != '"':
+        c = texte[i]
+        if c != "\\":
+            out.append(c)
+            i += 1
+            continue
+        e = texte[i + 1]
+        if e == "\n":  # a backslash at the end of a line: the line break and the next line's indent go
+            i += 2
+            while texte[i] in " \t\r\n":
+                i += 1
+        elif e == "u":
+            fin = texte.index("}", i)
+            out.append(chr(int(texte[i + 3:fin], 16)))
+            i = fin + 1
+        elif e == "x":
+            out.append(chr(int(texte[i + 2:i + 4], 16)))
+            i += 4
+        else:
+            out.append({"n": "\n", "t": "\t", "r": "\r", "0": "\0", "\\": "\\", '"': '"', "'": "'"}[e])
+            i += 2
+    return "".join(out), i + 1
+
+
+def scripts_root(texte):
+    """root.rs's string constants by name, and PACKAGES, read from its source."""
+    out = {m.group(1): chaine_rust(texte, m.end() - 1)[0]
+           for m in re.finditer(r'^(?:pub )?const ([A-Z0-9_]+): &str = "', texte, re.M)}
+    m = re.search(r'^pub const PACKAGES: &\[&str\] = &\[([^\]]*)\];', texte, re.M)
+    out["PACKAGES"] = re.findall(r'"([^"]+)"', m.group(1)) if m else []
+    return out
+
+
+def forme_root(cmd, s, home):
+    """("paquets", [packages]) or ("obsidian", its path) when the command pkexec ran is one of
+    root.rs's, to the letter: its script, its label, then arguments it accepts (packages of its
+    list; Obsidian's package downloaded by the app in ~/.brain-in-a-box). None for anything else."""
+    paquets = "/bin/sh -c %s %s " % (s["APT_INSTALL"], s["PACKAGES_LABEL"])
+    if cmd.startswith(paquets):
+        noms = cmd[len(paquets):].split(" ")
+        return ("paquets", noms) if all(n in s["PACKAGES"] for n in noms) else None
+    deb = "/bin/sh -c %s %s " % (s["APT_INSTALL_DEB"], s["OBSIDIAN_LABEL"])
+    chemin = cmd[len(deb):]
+    dossier = re.escape(posixpath.join(str(home), ".brain-in-a-box"))
+    if cmd.startswith(deb) and re.fullmatch(dossier + r"/\.biab-[0-9a-f]{16}/obsidian\.deb", chemin):
+        return ("obsidian", chemin)
+    return None
+
+
+def ligne_mot_de_passe(cmd):
+    """The command as pkexec 124 shows it in the system's password window ($(cmdline_short)):
+    past 80 bytes, its first 38, « ... » and its last 37."""
+    b = cmd.encode("utf-8")
+    return cmd if len(b) <= 80 else (b[:38] + b" ... " + b[-37:]).decode("utf-8", "replace")
+
+
+class PiloteLinux(Pilote):
+    """AT-SPI (the accessibility tree WebKitGTK gives the app's page, through the system's Python),
+    xdotool for the mouse and the keyboard, ImageMagick's import for a capture of the X screen. The
+    desktop is the job's: Xvfb, a window manager, the user's session bus (terrain.yml)."""
+
+    machine = "PC"
+    suffixe = "_linux-x86_64.AppImage"
+    neufs = ("Outils de base (git, python3, curl)",)
+
+    def __init__(self, travail, display=None, horloge=time.monotonic, dormir=time.sleep):
+        self.travail = Path(travail)
+        self.helper = self.travail / "pilote-atspi.py"
+        self.helper.write_text(ATSPI, encoding="ascii")
+        self.display = display or os.environ.get("DISPLAY") or ":99"
+        self.horloge, self.dormir = horloge, dormir
+        self.exe = None
+        self.proc = None
+        self.statut = None
+        self.dernier_arbre = None
+        self.roles_decales = {}
+        self.debut = time.time()
+
+    def _env_outils(self):
+        """The robot's tools reach the same display and the same buses as the app."""
+        return env_linux(Path.home(), self.display, os.getuid())
+
+    def _helper(self, req, timeout=60):
+        rc, out = self._run(["/usr/bin/python3", "-I", self.helper, json.dumps(req)], timeout=timeout, env=self._env_outils())
+        try:
+            res = json.loads(out.strip().splitlines()[-1])
+        except (ValueError, IndexError):
+            raise ErreurPilote("réponse illisible d'AT-SPI (code %d) : %s" % (rc, out.strip()[-300:]))
+        if rc != 0 or not isinstance(res, dict):
+            raise ErreurPilote("AT-SPI ne répond pas (code %d) : %s" % (rc, out.strip()[-300:]))
+        return res
+
+    def _x(self, *args, timeout=30):
+        return self._run(["xdotool"] + [str(a) for a in args], timeout=timeout, env=self._env_outils())
+
+    def marquer_telecharge(self, fichier):
+        # What Chrome and Firefox leave on a download on Linux: where it came from.
+        url = "https://github.com/%s/releases" % REPO_SLUG
+        try:
+            os.setxattr(str(fichier), "user.xdg.origin.url", url.encode("ascii"))
+        except OSError as e:
+            return "pas d'attribut d'origine (%s)" % (e.strerror or type(e).__name__)
+        return "user.xdg.origin.url=%s" % url
+
+    def installer(self, fichier, details, capturer=None):
+        """The AppImage put in ~/Applications and allowed to run as a program (Files' « Exécutable
+        comme un programme »). Its runtime mounts it with the system's fusermount3 (fuse3, on every
+        Ubuntu desktop since 22.04), and it loads the desktop's graphics and X11 libraries (BUREAU):
+        a VM without them gets them, and the results say so."""
+        notes = []
+        apps = Path.home() / "Applications"
+        apps.mkdir(exist_ok=True)
+        dest = apps / Path(fichier).name
+        if dest.exists():
+            raise ErreurPilote("%s existe déjà : la VM n'est pas neuve" % dest)
+        shutil.move(str(fichier), str(dest))
+        with open(dest, "rb") as f:
+            head = f.read(11)
+        if head[:4] != b"\x7fELF" or head[8:11] != b"AI\x02":
+            raise ErreurPilote("%s n'est pas une AppImage (type 2)" % dest.name)
+        os.chmod(dest, 0o755)
+        fusermount = fusermount_setuid()
+        if not any(p.endswith("/fusermount3") for p in fusermount):
+            rc, out = self._run(["sudo", "-n", "apt-get", "install", "-y", "-q", "fuse3"], timeout=600,
+                                env=dict(os.environ, DEBIAN_FRONTEND="noninteractive"))
+            fusermount = fusermount_setuid()
+            if rc != 0 or not any(p.endswith("/fusermount3") for p in fusermount):
+                raise ErreurPilote("pas de fusermount3 setuid root, même après apt-get install fuse3 : %s" % out.strip()[-300:])
+            notes.append("pas de fusermount3 sur la VM, qu'un bureau Ubuntu a (fuse3) : installé par le robot")
+            details["fuse"] = "fuse3 installé par le robot (%s)" % ", ".join(fusermount)
+        else:
+            details["fuse"] = "déjà là (%s)" % ", ".join(fusermount)
+        manque = [p for p in BUREAU if self._run(["dpkg-query", "-W", "-f=${Status}", p], timeout=60)[1].strip()
+                  != "install ok installed"]
+        details["bureau"] = manque or "déjà là"
+        if manque:
+            env = dict(os.environ, DEBIAN_FRONTEND="noninteractive")
+            self._run(["sudo", "-n", "apt-get", "update", "-q"], timeout=900, env=env)
+            rc, out = self._run(["sudo", "-n", "apt-get", "install", "-y", "-q", "--no-install-recommends"] + manque,
+                                timeout=900, env=env)
+            if rc != 0:
+                raise ErreurPilote("les bibliothèques d'un bureau Ubuntu ne s'installent pas : %s" % out.strip()[-300:])
+            notes.append("VM de serveur : bibliothèques qu'un bureau Ubuntu 24.04 a et que l'AppImage laisse au système, "
+                         "installées par le robot : %s" % ", ".join(manque))
+        self.exe = dest
+        details["installee_dans"] = str(dest).replace(str(Path.home()), "~")
+        return notes
+
+    def poste_neuf(self):
+        """Ubuntu's desktop has neither git nor curl: taken away, as Ubuntu comes (apt, not hidden: the
+        app's step puts them back with apt). The runner's image is not a desktop kept up to date: its
+        package lists are newer than what it has, and apt, asked by the app for the newest git or curl,
+        may refuse (« held broken packages ») where a desktop would not. So the lists are refreshed as
+        the app will refresh them, and once removed, the app's own command is simulated as root: one apt
+        would refuse goes back at the very version the VM had, said in the results with apt's reasons."""
+        env = dict(os.environ, DEBIAN_FRONTEND="noninteractive")
+        sudo_apt = ["sudo", "-n", "env", "DEBIAN_FRONTEND=noninteractive", "apt-get"]
+        out = {"gardes": {}}
+        self._run(sudo_apt + ["update", "-q"], timeout=900, env=env)
+        # At their newest first: the versions they go back to, if they must, are in the lists.
+        rc, said = self._run(sudo_apt + ["install", "-y", "-q", "--only-upgrade"] + list(SANS_PAQUETS), timeout=900, env=env)
+        out["mis_a_jour"] = rc == 0
+        versions = {}
+        for p in SANS_PAQUETS:
+            rc, said = self._run(["dpkg-query", "-W", "-f=${Version}", p], timeout=60)
+            if rc == 0 and said.strip():
+                versions[p] = said.strip()
+        rc, said = self._run(sudo_apt + ["remove", "-y", "-q"] + list(SANS_PAQUETS + AUSSI_RETIRES), timeout=600, env=env)
+        if rc != 0:
+            raise ErreurPilote("apt-get remove %s : %s" % (" ".join(SANS_PAQUETS + AUSSI_RETIRES), said.strip()[-300:]))
+        out["aussi"] = sorted(set(re.findall(r"^Removing (\S+) ", said, re.M)) - set(SANS_PAQUETS))
+        retires = list(SANS_PAQUETS)
+        rc, said = self._run(sudo_apt + ["-s", "-q", "install"] + retires, timeout=300, env=env)
+        if rc != 0:
+            for p in SANS_PAQUETS:
+                rc, said = self._run(sudo_apt + ["-s", "-q", "install", p], timeout=300, env=env)
+                if rc == 0:
+                    continue
+                out["gardes"][p] = [l.strip() for l in said.splitlines() if l.strip()][-6:]
+                rc, said = self._run(sudo_apt + ["install", "-y", "-q", "%s=%s" % (p, versions.get(p, ""))], timeout=600,
+                                     env=env) if p in versions else (1, "pas de version d'avant")
+                if rc == 0:
+                    retires.remove(p)
+                else:
+                    # Gone for good: the app's step will meet apt's refusal, and say it.
+                    del out["gardes"][p]
+                    out.setdefault("sans_retour", {})[p] = [l.strip() for l in said.splitlines() if l.strip()][-3:]
+        left = [p for p in retires if shutil.which(p, path=PATH_UBUNTU)]
+        if left:
+            raise ErreurPilote("toujours là après apt-get remove : %s" % ", ".join(left))
+        out["retires"] = retires
+        if out["gardes"]:
+            out["note"] = "gardé sur la VM, apt n'y installerait pas sa version courante : %s ; son installation par l'app " \
+                          "n'est pas testée" % ", ".join(out["gardes"])
+        return out
+
+    def environnement(self, home, extra=None):
+        return env_linux(home, self.display, os.getuid(), extra)
+
+    def outils(self, home):
+        home = Path(home)
+        return [("Claude Code", [home / ".local" / "bin" / "claude"]), ("Bun", [home / ".bun" / "bin" / "bun"]),
+                ("Obsidian", [Path("/opt/Obsidian/obsidian")])] + [
+                    ("%s (paquet du système)" % p, [Path("/usr/bin") / p]) for p in SANS_PAQUETS]
+
+    def constats(self, t, details):
+        """What ran as root: through pkexec only (the system's password window), root.rs's two
+        scripts to the letter, with arguments they accept, and nothing else; the packages the VM
+        was made to lack among them, and Obsidian's package once; each named in the window."""
+        if getattr(self, "roles_decales", None):
+            details["roles_atspi_decales"] = self.roles_decales
+            t.notes.append("rôles d'accessibilité décalés d'un cran (%s) : un lecteur d'écran les annonce ainsi"
+                           % ", ".join("« %s » pour « %s »" % kv for kv in sorted(self.roles_decales.items())))
+        t("app-root")
+        since = "@%d" % int(self.debut)
+        rc, out = self._run(["sudo", "-n", "journalctl", "-t", "pkexec", "-o", "json", "--no-pager", "--since", since], timeout=60)
+        t.check(rc == 0, "journalctl ne dit pas ce que pkexec a lancé : %s" % out.strip()[-200:])
+        cmds = commandes_root(out)
+        details["root"] = [c[:160] for c in cmds]
+        retires = (details.get("poste_neuf") or {}).get("retires") or []
+        t.check(retires, "rien n'a été retiré de la VM : l'étape « Outils de base » (pkexec, apt) n'a pas été testée")
+        try:
+            with open(ROOT_RS, encoding="utf-8") as f:
+                scripts = scripts_root(f.read())
+        except OSError as e:
+            scripts = {}
+            details["root_rs"] = str(e)
+        t.check(all(k in scripts for k in ("APT_INSTALL", "APT_INSTALL_DEB", "PACKAGES_LABEL", "OBSIDIAN_LABEL")) and scripts["PACKAGES"],
+                "les scripts de root.rs sont illisibles : rien à quoi comparer ce que root a lancé")
+        rc, said = self._run(["sudo", "-n", "journalctl", "-t", FENETRE, "-o", "cat", "--no-pager", "--since", since], timeout=60)
+        fenetres = set(said.splitlines()) if rc == 0 else set()
+        details["fenetre_mot_de_passe"] = sorted(fenetres)
+        paquets, obsidian = set(), []
+        for c in cmds:
+            forme = forme_root(c, scripts, Path.home())
+            t.check(forme, "pkexec a lancé autre chose que les scripts de root.rs : %s" % c[:200])
+            ligne = ligne_mot_de_passe(c)
+            t.check(ligne in fenetres, "la fenêtre du mot de passe n'a pas montré « %s » (journal : %s)" % (ligne, sorted(fenetres)[:4]))
+            if forme[0] == "paquets":
+                paquets.update(forme[1])
+                t.check(ligne.startswith("/bin/sh -c # Brain in a Box installe") and ligne.endswith(forme[1][-1]),
+                        "la fenêtre du mot de passe ne nomme pas l'app et les paquets : %s" % ligne)
+            else:
+                obsidian.append(forme[1])
+                t.check("Obsidian" in ligne and ligne.endswith("obsidian.deb"),
+                        "la fenêtre du mot de passe ne nomme pas Obsidian : %s" % ligne)
+        manque = [p for p in retires if p not in paquets]
+        t.check(not manque, "pkexec n'a pas installé %s, que la VM n'avait pas" % ", ".join(manque))
+        t.check(len(obsidian) == 1, "le paquet d'Obsidian installé par pkexec %d fois (une attendue)" % len(obsidian))
+
+    def journaux(self):
+        """apt's own logs, pkexec's and polkit's journal since the job began, what the kernel denied
+        (AppArmor), the confinement of the app's processes, the app's own output."""
+        since = "@%d" % int(self.debut)
+        out = {}
+        for name, argv in (("apt_term_log", ["sudo", "-n", "tail", "-n", "60", "/var/log/apt/term.log"]),
+                           ("apt_history_log", ["sudo", "-n", "tail", "-n", "30", "/var/log/apt/history.log"]),
+                           ("pkexec", ["sudo", "-n", "journalctl", "-t", "pkexec", "-o", "cat", "--no-pager", "--since", since]),
+                           ("polkit", ["sudo", "-n", "journalctl", "-u", "polkit", "-o", "cat", "--no-pager", "--since", since]),
+                           ("noyau", ["sudo", "-n", "journalctl", "-k", "-g", "apparmor|audit", "-o", "cat", "--no-pager",
+                                      "--since", since]),
+                           ("apt_simule", ["sudo", "-n", "apt-get", "-s", "-q", "install"] + list(SANS_PAQUETS))):
+            try:
+                rc, text = self._run(argv, timeout=60)
+            except ErreurPilote as e:
+                rc, text = -1, str(e)
+            out[name] = text.splitlines()[-60:]
+        rc, pids = self._run(["pgrep", "-f", "brain-in-a-box|Brain-in-a-Box"], timeout=30)
+        labels = []
+        for pid in pids.split():
+            try:
+                with open("/proc/%s/attr/current" % pid, encoding="utf-8", errors="replace") as f:
+                    label = f.read().strip()
+                with open("/proc/%s/comm" % pid, encoding="utf-8", errors="replace") as f:
+                    labels.append("%s %s : %s" % (pid, f.read().strip(), label))
+            except OSError:
+                continue
+        out["confinement"] = labels
+        try:
+            with open(self.travail / "app.log", encoding="utf-8", errors="replace") as f:
+                out["app_log"] = f.read().splitlines()[-60:]
+        except OSError:
+            out["app_log"] = []
+        return out
+
+    def ouvrir(self, env):
+        """As a double click in Files: the AppImage itself, the session's environment."""
+        if not self.exe:
+            raise ErreurPilote("l'app n'est pas installée")
+        log = open(self.travail / "app.log", "ab")
+        try:
+            self.proc = subprocess.Popen([str(self.exe)], env=env, cwd=env.get("HOME"), stdin=subprocess.DEVNULL,
+                                         stdout=log, stderr=log, start_new_session=True)
+        except OSError as e:
+            raise ErreurPilote("l'app ne se lance pas (%s)" % (e.strerror or type(e).__name__))
+        finally:
+            log.close()
+
+    def vivante(self):
+        return self.proc is not None and self.proc.poll() is None
+
+    def fenetre(self):
+        """(X window, its place on the screen and its size) of the app, or None. xwininfo's absolute
+        place: xdotool's counts the window manager's frame twice."""
+        rc, out = self._x("search", "--onlyvisible", "--name", "^%s$" % re.escape(TITRE_FENETRE))
+        wid = next((w for w in out.split() if w.isdigit()), None) if rc == 0 else None
+        if not wid:
+            return None
+        rc, out = self._run(["xwininfo", "-id", wid], timeout=30, env=self._env_outils())
+        return (wid, place_xwininfo(out)) if rc == 0 and place_xwininfo(out) else None
+
+    def fermer(self):
+        """Alt+F4 in its window, as a user quits (the window manager closes it); killed only if it stays."""
+        if self.vivante():
+            f = self.fenetre()
+            if f:
+                self._x("windowactivate", "--sync", f[0], "key", "--clearmodifiers", "alt+F4")
+                if self.attendre(lambda: not self.vivante(), 20, self.horloge, self.dormir):
+                    return "Alt+F4"
+            try:
+                os.killpg(self.proc.pid, 15)
+            except OSError:
+                pass
+            if self.attendre(lambda: not self.vivante(), 20, self.horloge, self.dormir):
+                return "SIGTERM (Alt+F4 sans effet)"
+            raise ErreurPilote("l'app ne se ferme pas")
+        return "déjà fermée"
+
+    def lire(self):
+        if not self.vivante():
+            return Ecran()
+        res = self._helper({"op": "lire", "app": NOM_ATSPI})
+        self.dernier_arbre = res
+        for f in res.get("app") or []:
+            if isinstance(f, dict):
+                self.roles_decales.update(roles_decales(f.get("arbre")))
+        fen = [{"titre": f.get("titre"), "arbre": arbre_atspi(f.get("arbre"))} for f in res.get("app") or [] if isinstance(f, dict)]
+        dialogues = [dialogue_depuis_arbre(d.get("processus"), arbre_atspi(d.get("arbre"))) for d in res.get("dialogues") or []
+                     if isinstance(d, dict)]
+        e = ecran_depuis_arbre(fen, [d for d in dialogues if d["textes"] or d["boutons"]])
+        self.statut = e.statut
+        return e
+
+    def rapide(self):
+        if not self.statut:
+            return None
+        try:
+            res = self._helper({"op": "rapide", "app": NOM_ATSPI, "fenetre": self.statut[0], "chemin": list(self.statut[1])},
+                               timeout=30)
+        except ErreurPilote:
+            return None
+        return dits_rapides(res.get("textes")) if res.get("ok") else None
+
+    def sous_la_souris(self, wid):
+        """True when the window under the pointer holds the app's (the window manager's frame does)."""
+        rc, out = self._x("getmouselocation", "--shell")
+        geo = dict(l.split("=", 1) for l in out.splitlines() if "=" in l)
+        dessous = geo.get("WINDOW", "")
+        if dessous == wid:
+            return True
+        if not dessous.isdigit():
+            return False
+        rc, tree = self._run(["xwininfo", "-tree", "-id", dessous], timeout=30, env=self._env_outils())
+        return rc == 0 and re.search(r"\b0x%x\b" % int(wid), tree) is not None
+
+    def cliquer(self, libelle, processus=None):
+        """The mouse on the middle of the button, as a user clicks: the window to the front, the button
+        scrolled into view, its place in the window from AT-SPI (relative to the page: WebKitGTK's
+        screen places leave out the window manager's frame), then nothing else under the pointer."""
+        res = self._helper({"op": "bouton", "app": NOM_ATSPI, "libelle": libelle})
+        if not res.get("ok"):
+            raise ErreurPilote("pas de clic sur « %s » (%s)" % (libelle, res.get("pourquoi")))
+        pourquoi = self._souris(res)
+        if pourquoi is None:
+            return CLIC_SOURIS
+        res = self._helper({"op": "bouton", "app": NOM_ATSPI, "libelle": libelle, "presser": True})
+        if not res.get("ok"):
+            raise ErreurPilote("pas de clic sur « %s » (ni souris ni AT-SPI : %s)" % (libelle, pourquoi))
+        return "action AT-SPI (pas de clic souris : %s)" % pourquoi
+
+    def _souris(self, res):
+        f = self.fenetre()
+        b, page = res.get("bouton"), res.get("page")
+        if not f:
+            return "pas de fenêtre X"
+        if not (isinstance(b, list) and isinstance(page, list) and b[2] > 0 and b[3] > 0):
+            return "pas de position"
+        wid, (wx, wy, ww, wh) = f
+        x, y = wx + b[0] - page[0] + b[2] // 2, wy + b[1] - page[1] + b[3] // 2
+        if not (wx <= x < wx + ww and wy <= y < wy + wh):
+            return "hors de sa fenêtre"
+        self._x("windowactivate", "--sync", wid)
+        self._x("mousemove", "--sync", x, y)
+        if not self.sous_la_souris(wid):
+            return "un autre programme est sur le bouton"
+        rc, out = self._x("click", "1")
+        return None if rc == 0 else "xdotool click : %s" % out.strip()[-100:]
+
+    def capturer(self, chemin):
+        rc, out = self._run(["import", "-window", "root", "png:%s" % chemin], timeout=60, env=self._env_outils())
+        if rc != 0 or not Path(chemin).is_file() or Path(chemin).stat().st_size == 0:
+            raise ErreurPilote("pas de capture de l'écran (import code %d : %s)" % (rc, out.strip()[-200:]))
+
+    def arbre(self):
+        return self.dernier_arbre
+
+
 # --------------------------------------------------------------------------- the walk through the window
 
 class Parcours:
@@ -1948,6 +2682,8 @@ def pilote_du_systeme(travail, opts):
         return PiloteMac(travail)
     if os.name == "nt":
         return PiloteWindows(travail, stub=getattr(opts, "stub", "") or None)
+    if sys.platform.startswith("linux"):
+        return PiloteLinux(travail)
     raise ErreurPilote("pas encore de pilote de fenêtre pour %s" % sys.platform)
 
 
@@ -1968,6 +2704,16 @@ def journal_installation(home, lignes=80):
             return f.read().decode("utf-8", "replace").splitlines()[-lignes:]
     except OSError:
         return ["(pas de %s)" % path.name]
+
+
+def journaux_systeme(pilote, details):
+    """The system's own logs on a failure (PiloteLinux.journaux), never a failure of their own."""
+    try:
+        logs = pilote.journaux()
+    except Exception as e:  # what is read on a failure must not hide that failure
+        logs = {"erreur": "%s: %s" % (type(e).__name__, str(e)[:200])}
+    if logs:
+        details["journaux_systeme"] = logs
 
 
 def clics_sans_souris(clics):
@@ -2015,6 +2761,11 @@ def scenario(t, opts, kit, pilote=None, horloge=time.monotonic, dormir=time.slee
         t("app-installation")
         t.notes.extend(pilote.installer(fichier, details, parcours.capturer))
         env = pilote.environnement(home, extra)
+        poste = pilote.poste_neuf()
+        if poste:
+            details["poste_neuf"] = poste
+            if poste.get("note"):
+                t.notes.append(poste["note"])
 
         details["duree_parcours_s"] = parcours.premier_lancement(env)
         t("app-fermeture")
@@ -2025,6 +2776,7 @@ def scenario(t, opts, kit, pilote=None, horloge=time.monotonic, dormir=time.slee
             details["nuit_reelle"] = nuit
 
         outils(t, home, pilote)
+        pilote.constats(t, details)
         t("app-sources")
         marker = home / ".brain-in-a-box" / "src" / MARQUEUR
         if source == "build":
@@ -2054,11 +2806,13 @@ def scenario(t, opts, kit, pilote=None, horloge=time.monotonic, dormir=time.slee
         if parcours:
             parcours.sur_echec()
             details["install_log"] = journal_installation(home)
+            journaux_systeme(pilote, details)
         t.check(False, parcours.raison(str(e)) if parcours else str(e))
     except kit.Echec as e:
         if parcours:
             parcours.sur_echec()
             details["install_log"] = journal_installation(home)
+            journaux_systeme(pilote, details)
             raise kit.Echec(parcours.raison(str(e))) from None
         raise
     finally:

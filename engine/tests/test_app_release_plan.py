@@ -1,5 +1,5 @@
 """Tests for .github/ci/app-release-plan.py: what the app release workflow builds and
-when Windows joins the matrix.
+when Windows and Linux join the matrix.
 
     python -I -m unittest discover -s engine/tests -v
 """
@@ -68,13 +68,42 @@ class Plan(unittest.TestCase):
             with self.subTest(targets=targets):
                 self.conf("tauri.conf.json", {"version": "0.1.0", "bundle": {"targets": targets}})
                 out, err = self.plan()
-                self.assertEqual(self.platforms(out), ["macos", "windows"], err)
+                self.assertEqual(self.platforms(out)[:2], ["macos", "windows"], err)
 
     def test_a_windows_config_without_nsis_keeps_windows_out(self):
         self.conf("tauri.conf.json", {"version": "0.1.0", "bundle": {"targets": "all"}})
         self.conf("tauri.windows.conf.json", {"bundle": {"targets": ["msi"]}})
+        self.conf("tauri.linux.conf.json", {"bundle": {"targets": ["rpm"]}})
         out, err = self.plan()
         self.assertEqual(self.platforms(out), ["macos"], err)
+
+    def test_the_repository_config_builds_all_three(self):
+        for name in ("tauri.conf.json", "tauri.windows.conf.json", "tauri.linux.conf.json"):
+            self.conf(name, json.loads((REPO_CONF.parent / name).read_text(encoding="utf-8")))
+        out, err = self.plan()
+        self.assertEqual(self.platforms(out), ["macos", "windows", "linux"], err)
+
+    def test_linux_joins_with_an_appimage_and_a_deb_built_on_ubuntu_22_04(self):
+        self.conf("tauri.conf.json", {"version": "0.1.0", "bundle": {"targets": ["app", "dmg"]}})
+        self.conf("tauri.linux.conf.json", {"bundle": {"targets": ["deb", "appimage"]}})
+        out, err = self.plan()
+        self.assertEqual(self.platforms(out), ["macos", "linux"], err)
+        linux = out["matrix"]["include"][1]
+        # Built on the oldest Ubuntu it runs on: an AppImage runs where its glibc is as recent.
+        self.assertEqual((linux["os"], linux["target"], linux["bundles"]),
+                         ("ubuntu-22.04", "x86_64-unknown-linux-gnu", "deb,appimage"))
+
+    def test_linux_needs_both_its_packages(self):
+        for targets in (["deb"], ["appimage"], ["rpm", "deb"]):
+            with self.subTest(targets=targets):
+                self.conf("tauri.conf.json", {"version": "0.1.0", "bundle": {"targets": ["app", "dmg"]}})
+                self.conf("tauri.linux.conf.json", {"bundle": {"targets": targets}})
+                out, err = self.plan()
+                self.assertNotIn("linux", self.platforms(out), err)
+        self.conf("tauri.conf.json", {"version": "0.1.0", "bundle": {"targets": "all"}})
+        (self.root / "app" / "src-tauri" / "tauri.linux.conf.json").unlink()
+        out, err = self.plan()
+        self.assertIn("linux", self.platforms(out), err)
 
     def test_a_windows_config_without_targets_inherits_the_main_ones(self):
         self.conf("tauri.conf.json", {"version": "0.1.0", "bundle": {"targets": ["app", "dmg"]}})

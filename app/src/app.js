@@ -11,14 +11,45 @@ const HAPPY_MS = 4500;
 const FIXED_PAUSE_MS = 2500;
 const VOYAGE_DASHBOARD = 'https://dashboard.voyageai.com';
 
-// The same window on a Mac and on Windows: only the words for the machine, its
-// settings and its command window differ. dev/mock.html sets window.BIBO_OS.
-const WINDOWS = (window.BIBO_OS || (/Windows/.test(navigator.userAgent) ? 'windows' : 'macos')) === 'windows';
-const OS = WINDOWS
-  ? { machine: 'PC', terminal: 'PowerShell', inTerminal: 'dans PowerShell', window: 'fenêtre PowerShell', settings: 'Paramètres' }
-  : { machine: 'Mac', terminal: 'le Terminal', inTerminal: 'dans le Terminal', window: 'fenêtre Terminal', settings: 'Réglages' };
+// The same window on a Mac, on Windows and on Linux: only the words for the machine, its
+// settings, its command window and what the system may ask during the install differ.
+// dev/mock.html sets window.BIBO_OS.
+const SYSTEMS = {
+  macos: {
+    machine: 'Mac', terminal: 'le Terminal', inTerminal: 'dans le Terminal', window: 'fenêtre Terminal', settings: 'Réglages',
+    // The brain lives in Documents, a folder macOS guards: refusing breaks the step.
+    asks: ['brain', 'macOS va peut-être demander l’accès à ton dossier Documents : clique sur « Autoriser ».'],
+  },
+  windows: {
+    machine: 'PC', terminal: 'PowerShell', inTerminal: 'dans PowerShell', window: 'fenêtre PowerShell', settings: 'Paramètres',
+    // winget may need an administrator's yes for Git or Python.
+    asks: ['brain', 'Windows va peut-être demander une autorisation pour installer Git ou Python : clique sur « Oui ».'],
+  },
+  linux: {
+    machine: 'PC', terminal: 'le Terminal', inTerminal: 'dans le Terminal', window: 'fenêtre de Terminal', settings: 'Paramètres',
+    // The system's packages and Obsidian's are installed as root: the system asks for the password.
+    asks: ['root', 'Ton ordinateur va te demander ton mot de passe pour installer des outils du système ou Obsidian : c’est normal, tape-le.'],
+  },
+};
+function detectSystem() {
+  const ua = navigator.userAgent;
+  if (/Windows/.test(ua)) return 'windows';
+  return /Linux/.test(ua) && !/Android/.test(ua) ? 'linux' : 'macos';
+}
+const SYSTEM = Object.hasOwn(SYSTEMS, window.BIBO_OS || '') ? window.BIBO_OS : detectSystem();
+const WINDOWS = SYSTEM === 'windows';
+const OS = SYSTEMS[SYSTEM];
+// The Linux steps that run as root, after the system's password window.
+const ROOT_STEPS = ['paquets', 'obsidian'];
 
 const STEPS = {
+  paquets: {
+    name: 'Outils de base',
+    short: 'les outils de base',
+    what: 'git, python3 et curl, des outils du système.',
+    running: 'Tape ton mot de passe dans la fenêtre du système.',
+    say: ['Ton ordinateur va te demander ton mot de passe.', 'C’est pour installer les outils du système qui manquent.'],
+  },
   clt: {
     name: 'Outils Apple',
     short: 'les outils Apple',
@@ -42,7 +73,10 @@ const STEPS = {
     name: 'Obsidian',
     short: 'Obsidian',
     what: 'Pour feuilleter ton cerveau.',
-    say: ['J’installe Obsidian.', 'Gros téléchargement (230 Mo) : un peu de patience.'],
+    // Linux: its official package, installed as root once the system has the password.
+    say: ['J’installe Obsidian.', SYSTEM === 'linux'
+      ? 'Téléchargement de 110 Mo, puis ton ordinateur te demande ton mot de passe.'
+      : 'Gros téléchargement (230 Mo) : un peu de patience.'],
   },
   brain: {
     name: 'Ton cerveau',
@@ -270,7 +304,7 @@ function clock(ms) {
 
 // The app's sentences start with a capital; after « Il pense que : » they read on.
 function lowerFirst(text) {
-  return /^(Voyage|Bun|Obsidian|Claude|Apple|Mac|PC|Windows|PowerShell)\b/.test(text) ? text : text.charAt(0).toLowerCase() + text.slice(1);
+  return /^(Voyage|Bun|Obsidian|Claude|Apple|Mac|PC|Windows|PowerShell|Linux)\b/.test(text) ? text : text.charAt(0).toLowerCase() + text.slice(1);
 }
 
 // No space inside: the patterns that keep a label (« token: … ») mask a mask into itself.
@@ -298,7 +332,7 @@ function scrub(text) {
   let out = text;
   if (state.key) out = out.split(state.key).join(MASKED);
   for (const [re, by] of SECRET_PATTERNS) out = out.replace(re, by);
-  return out.replace(/\b[A-Za-z]:[\\/]+Users[\\/]+[^\\/\s:'"<>]+/gi, '~').replace(/\/Users\/[^/\s:'"<>]+/g, '~');
+  return out.replace(/\b[A-Za-z]:[\\/]+Users[\\/]+[^\\/\s:'"<>]+/gi, '~').replace(/(?:\/Users|\/var\/home|\/home)\/[^/\s:'"<>]+/g, '~');
 }
 
 // ── Frame: Bibo, the message, the screen, the buttons ──────────────────────
@@ -538,7 +572,7 @@ async function runDiagnosis() {
 function sysLine(d) {
   const mac = d.arch === 'arm64' ? 'Puce Apple' : d.arch === 'x86_64' ? 'Intel' : d.arch;
   // On a PC the processor only matters when it is not the usual one.
-  const arch = WINDOWS ? (d.arch === 'arm64' ? 'Processeur ARM' : '') : mac;
+  const arch = SYSTEM === 'macos' ? mac : (d.arch === 'arm64' ? 'Processeur ARM' : '');
   const parts = [d.os, arch];
   if (d.ram_gb > 0) parts.push(`${gb(d.ram_gb)} Go de mémoire`);
   if (d.disk_free_gb > 0) parts.push(`${gb(d.disk_free_gb)} Go libres`);
@@ -786,13 +820,10 @@ function renderInstall(name = 'install') {
   }
   view.bar = h('span', { class: 'bar-fill' });
   ui.screen.append(h('div', { class: 'bar', 'aria-hidden': 'true' }, view.bar), list);
-  // The brain lives in Documents, a folder macOS guards: refusing breaks the step.
-  // On Windows, winget may need an administrator's yes for Git or Python.
-  if (state.plan.some((id) => stepRun(id) === 'brain')) {
-    ui.screen.append(h('p', { class: 'note' }, WINDOWS
-      ? 'Windows va peut-être demander une autorisation pour installer Git ou Python : clique sur « Oui ».'
-      : 'macOS va peut-être demander l’accès à ton dossier Documents : clique sur « Autoriser ».'));
-  }
+  // What the system may ask during these steps (OS.asks: the step it comes with, the words).
+  const [askStep, askNote] = OS.asks;
+  const asking = askStep === 'root' ? (id) => ROOT_STEPS.includes(stepRun(id)) : (id) => stepRun(id) === askStep;
+  if (state.plan.some(asking)) ui.screen.append(h('p', { class: 'note' }, askNote));
   ui.screen.append(logPanel());
   paintProgress();
   every(tickElapsed, 10000);

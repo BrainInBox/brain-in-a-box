@@ -22,6 +22,7 @@ TERRAIN = os.path.join(HERE, "terrain.py")
 REF_GUARD = os.path.join(HERE, "..", "..", ".github", "ci", "terrain-ref.sh")
 MERGE_GUARD = os.path.join(HERE, "..", "..", ".github", "ci", "terrain-garde.sh")
 WORKFLOW = os.path.join(HERE, "..", "..", ".github", "workflows", "terrain.yml")
+TERMINAL = os.path.join(HERE, "..", "..", ".github", "ci", "terminal.py")
 TOKEN = "secrets.CLAUDE_CODE_OAUTH_TOKEN"
 sys.path.insert(0, HERE)
 
@@ -405,7 +406,8 @@ class Workflow(unittest.TestCase):
 
 
     def test_the_app_jobs_get_the_app_as_a_user_and_never_a_claude_token(self):
-        for name, os_name, ref in (("app-macos", "macos", '"$TERRAIN_REF"'), ("app-windows", "windows", '"$env:TERRAIN_REF"')):
+        for name, os_name, ref in (("app-macos", "macos", '"$TERRAIN_REF"'), ("app-windows", "windows", '"$env:TERRAIN_REF"'),
+                                   ("app-linux", "linux", '"$TERRAIN_REF"')):
             job = self.jobs[name]
             steps = job["steps"]
             text = json.dumps(steps)
@@ -415,9 +417,11 @@ class Workflow(unittest.TestCase):
             source = [st for st in steps if st.get("id") == "source"]
             self.assertEqual(len(source), 1, name)
             self.assertIn("terrain_app.py source --ref " + ref, source[0]["run"])
-            builds = [st for st in steps if "cargo" in json.dumps(st)]
+            # Linux builds in a job of its own, on 22.04 as release.yml does (app-linux-build).
+            builder = self.jobs.get(name + "-build", job)
+            builds = [st for st in builder["steps"] if "cargo" in json.dumps(st)]
             self.assertGreaterEqual(len(builds), 2, name)
-            for st in builds:
+            for st in builds + [st for st in steps if "download-artifact" in st.get("uses", "")]:
                 self.assertTrue(st["if"].startswith("steps.source.outputs.source == 'build'"), st.get("name"))
             # The read-only token reaches the scenario step only, and only to download a release.
             holders = [st for st in steps if "github.token" in json.dumps(st)]
@@ -453,11 +457,11 @@ class Workflow(unittest.TestCase):
         for name, job in self.jobs.items():
             steps = job["steps"]
             caches = [(i, st) for i, st in enumerate(steps) if str(st.get("uses", "")).startswith("actions/cache")]
-            if name not in ("app-macos", "app-windows"):
+            if name not in ("app-macos", "app-windows", "app-linux-build"):
                 self.assertEqual(caches, [], name)
                 continue
-            app = min(i for i, st in enumerate(steps) if "terrain.py app" in st.get("run", "")
-                      or "poste-neuf.ps1" in st.get("run", ""))
+            app = min([i for i, st in enumerate(steps) if "terrain.py app" in st.get("run", "")
+                       or "poste-neuf.ps1" in st.get("run", "")] or [len(steps)])
             kinds = []
             for i, st in caches:
                 m = pinned.match(st["uses"])
@@ -473,6 +477,36 @@ class Workflow(unittest.TestCase):
                     self.assertIn("github.ref != 'refs/heads/master'", st["if"])
                     self.assertRegex(key, r"^\$\{\{ steps\.[a-z-]+\.outputs\.cache-primary-key \}\}$")
             self.assertEqual(sorted(kinds), ["restore", "restore", "save", "save"], name)
+
+    def test_the_linux_app_job_has_a_desktop_and_one_stand_in_only(self):
+        # The window needs a display, a window manager and the session bus before the scenario; the
+        # system's password window needs a person: one polkit rule, for pkexec, for this user only.
+        steps = self.jobs["app-linux"]["steps"]
+        desktop = [i for i, st in enumerate(steps) if st.get("name") == "A desktop for the app"]
+        scenario = [i for i, st in enumerate(steps) if "terrain.py app" in st.get("run", "")]
+        self.assertEqual(len(desktop), 1)
+        self.assertLess(desktop[0], scenario[0])
+        run = steps[desktop[0]]["run"]
+        for need in ("Xvfb :99", "openbox", "xdotool", "gir1.2-atspi-2.0", "imagemagick", "pkexec", 'echo "DISPLAY=:99"'):
+            self.assertIn(need, run)
+        rules = re.findall(r"action\.id == \\?\"([a-z.]+)\\?\"", run)
+        self.assertEqual(rules, ["org.freedesktop.policykit.exec"])
+        self.assertIn('subject.user == \\"$USER\\"', run)
+        self.assertNotIn("sudo -n true", run)
+        # The polkit rule says what the window would show: the results compare it with root.rs.
+        self.assertIn('polkit.spawn(["/usr/bin/logger", "-t", "fenetre-mot-de-passe", "--", "" + action.lookup("cmdline_short")])', run)
+        # The AppImage is release.yml's: built on Ubuntu 22.04 with its command, its tools and runtime
+        # pinned and checked, then handed to the 24.04 desktop.
+        build_job = self.jobs["app-linux-build"]
+        self.assertEqual(build_job["runs-on"], "ubuntu-22.04")
+        self.assertEqual(self.jobs["app-linux"]["needs"], ["ref", "app-linux-build"])
+        build = next(st for st in build_job["steps"] if st.get("name") == "Build the app from the tested commit (branch)")
+        self.assertIn("--bundles appimage -- --locked", build["run"])
+        self.assertIn('appimage-tools.sh" check "${images[0]}"', build["run"])
+        tools = [st for st in build_job["steps"] if "appimage-tools.sh" in st.get("run", "") and st is not build]
+        self.assertEqual(len(tools), 1, "the tools, and LDAI_RUNTIME_FILE, in a step before the build's")
+        with open(os.path.join(os.path.dirname(os.path.dirname(WORKFLOW)), "ci", "app-release-plan.py"), encoding="utf-8") as f:
+            self.assertIn('"os": "ubuntu-22.04"', f.read(), "release.yml builds on 22.04 too")
 
     def test_a_fresh_windows_has_no_python_in_both_workflows(self):
         # One description of a fresh PC (.github/ci/poste-neuf.ps1), used by both installs: the
@@ -693,6 +727,25 @@ class Reports(Sandbox):
         self.assertIn("| macos | neuf | job | aucun-resultat |", out)
         self.assertIn("| windows | claude | job | aucun-resultat |", out)
 
+    def test_linux_reinstalls_over_itself_and_nothing_missing_passes(self):
+        # No earlier kit installs on Linux: its "reinstallation" path writes the rows of an upgrade.
+        only = self.write("l.json", {"os": "linux", "parcours": "reinstallation", "scenarios": [
+            {"scenario": "installeur", "statut": "ok"}]})
+        rc, out = self.terrain("issue", only, "--attendus", "linux-reinstallation,linux-neuf", "--date", "2026-10-15")
+        self.assertIn("Terrain du 2026-10-15 : 4 échec(s).", out)
+        for name in ("montee-avant", "installeur-montee", "montee"):
+            self.assertIn("| linux | reinstallation | %s | absent |" % name, out)
+        self.assertIn("| linux | neuf | job | aucun-resultat |", out)
+        # Every row green, yet the linux job did not succeed: said too.
+        green = [self.write("ln.json", {"os": "linux", "parcours": "neuf", "scenarios": [
+                     {"scenario": s, "statut": "ok"} for s in terrain.ATTENDUS["neuf"]]}),
+                 self.write("lr.json", {"os": "linux", "parcours": "reinstallation", "scenarios": [
+                     {"scenario": s, "statut": "ok"} for s in terrain.ATTENDUS["reinstallation"]]})]
+        rc, out = self.terrain("issue", *green, "--attendus", "linux-neuf,linux-reinstallation",
+                               "--jobs", "ref=success,linux=failure")
+        self.assertIn("1 échec(s)", out)
+        self.assertIn("| linux | ? | job | linux-failure |", out)
+
     def test_the_summary_table(self):
         files, _ = self.files()
         rc, out = self.terrain("rapport", *files, "--attendus", "macos-neuf,macos-montee")
@@ -702,6 +755,133 @@ class Reports(Sandbox):
         self.assertIn("| vrai-claude | SAUTÉ |", out)
         self.assertIn("aucun résultat : job interrompu, annulé ou trop long", out)
         self.assertEqual(out.count("### Terrain"), 3)
+
+
+SYSTEMCTL = """#!/bin/sh
+case "$*" in
+  *is-enabled*) cat "%(state)s/enabled" 2>/dev/null || echo disabled ;;
+  *is-active*) cat "%(state)s/active" 2>/dev/null || echo inactive ;;
+  *list-timers*) echo "NEXT LEFT LAST PASSED UNIT ACTIVATES" ;;
+esac
+"""
+CRONTAB = """#!/bin/sh
+[ -f "%(state)s/crontab" ] && exec cat "%(state)s/crontab"
+echo "no crontab for tester" >&2; exit 1
+"""
+
+
+@unittest.skipUnless(os.name == "posix", "systemd and cron: Linux (stand-ins run on a Mac too)")
+class LinuxScheduler(unittest.TestCase):
+    """check_scheduler's Linux half, against stand-ins for systemctl and crontab."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="terrain-linux-")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.state, bin_ = os.path.join(self.tmp, "state"), os.path.join(self.tmp, "bin")
+        os.makedirs(self.state)
+        os.makedirs(bin_)
+        for name, text in (("systemctl", SYSTEMCTL), ("crontab", CRONTAB)):
+            with open(os.path.join(bin_, name), "w", encoding="utf-8") as f:
+                f.write(text % {"state": self.state})
+            os.chmod(os.path.join(bin_, name), 0o755)
+        saved_path, saved_linger = os.environ["PATH"], terrain.LINGER_DIR
+        os.environ["PATH"] = bin_ + os.pathsep + saved_path
+        terrain.LINGER_DIR = Path(self.tmp) / "linger"
+        self.addCleanup(setattr, terrain, "LINGER_DIR", saved_linger)
+        self.addCleanup(os.environ.__setitem__, "PATH", saved_path)
+        self.home = Path(self.tmp) / "home"
+        self.units = self.home / ".config" / "systemd" / "user"
+
+    def timers(self, enabled="enabled", active="active", linger=True):
+        self.units.mkdir(parents=True)
+        for f in sorted((Path(terrain.REPO) / "engine" / "nightly" / "systemd").iterdir()):
+            shutil.copy(str(f), str(self.units / f.name))
+        for name, value in (("enabled", enabled), ("active", active)):
+            with open(os.path.join(self.state, name), "w") as f:
+                f.write(value + "\n")
+        if linger:
+            terrain.LINGER_DIR.mkdir()
+            (terrain.LINGER_DIR / __import__("getpass").getuser()).touch()
+
+    def cron(self, lines=terrain.CRON_LINES):
+        with open(os.path.join(self.state, "crontab"), "w", encoding="utf-8") as f:
+            f.write("MAILTO=me\n# >>> brain-in-a-box: the kit\n%s\n# <<< brain-in-a-box\n"
+                    % "\n".join(l + " >> out 2>&1" for l in lines))
+
+    def check(self, parcours):
+        t = terrain.Etapes()
+        terrain.check_linux_scheduler(t, types.SimpleNamespace(home=self.home, parcours=parcours))
+        return t
+
+    def fails(self, parcours, words):
+        with self.assertRaises(terrain.Echec) as e:
+            self.check(parcours)
+        self.assertIn(words, str(e.exception))
+
+    def test_the_fresh_install_runs_on_systemd_timers_that_catch_up(self):
+        self.timers()
+        t = self.check("neuf")
+        self.assertEqual((t.details["planificateur"], t.details["linger"]), ("systemd", True))
+
+    def test_a_timer_that_does_not_run_or_differs_fails(self):
+        self.timers(active="inactive")
+        self.fails("neuf", "gbrain-nightly.timer ne tourne pas (inactive)")
+        with open(self.units / "gbrain-lint.timer", "a", encoding="utf-8") as f:
+            f.write("# changed\n")
+        with open(os.path.join(self.state, "active"), "w") as f:
+            f.write("active\n")
+        self.fails("neuf", "gbrain-lint.timer absent ou pas la version testée")
+
+    def test_lingering_refused_is_a_failure_of_the_fresh_path_only(self):
+        self.timers(linger=False)
+        self.fails("neuf", "lingering absent")
+        self.assertEqual(self.check("app").details["linger"], False)
+
+    def test_systemd_and_cron_both_would_run_twice(self):
+        self.timers()
+        self.cron()
+        self.fails("neuf", "deux fois")
+
+    def test_the_reinstallation_without_a_terminal_runs_on_cron(self):
+        self.cron()
+        self.assertEqual(self.check("reinstallation").details["planificateur"], "cron")
+        self.fails("neuf", "planificateur cron, attendu systemd")
+        self.cron(terrain.CRON_LINES[:2])
+        self.fails("reinstallation", "ligne cron absente : $HOME/.claude/hooks/brain/gbrain-lint.sh")
+
+    def test_nothing_scheduled_fails(self):
+        self.fails("app", "rien ne lance la nuit")
+
+
+@unittest.skipUnless(os.name == "posix", "a pty: Linux and macOS")
+class Terminal(unittest.TestCase):
+    """.github/ci/terminal.py, which answers install.sh's questions in the field tests."""
+
+    SCRIPT = ('read -rs -p "  Voyage key: " k; echo; echo "key=[$k]"; '
+              'read -r -p "  Install Obsidian? [y/N] " a; echo "obsidian=$a"; [ -t 0 ] && echo tty; exit 5')
+
+    def term(self, *answers):
+        argv = [sys.executable, "-I", TERMINAL] + ["--answer=" + a for a in answers] + ["--", "bash", "-c", self.SCRIPT]
+        p = subprocess.run(argv, capture_output=True, timeout=60)
+        return p.returncode, p.stdout.decode("utf-8", "replace")
+
+    def test_each_question_gets_its_answer_in_a_real_terminal(self):
+        rc, out = self.term("Voyage key:=", "Obsidian=y")
+        self.assertEqual(rc, 5, out)
+        for line in ("key=[]", "obsidian=y", "tty"):
+            self.assertIn(line, out.replace("\r", "").splitlines())
+
+    def test_a_question_nobody_expected_stops_the_run(self):
+        rc, out = self.term("Voyage key:=")
+        self.assertEqual(rc, 3, out)
+        self.assertIn("no answer for the question 'Install Obsidian? [y/N]'", out)
+        self.assertNotIn("obsidian=", out)
+
+    def test_an_expected_question_never_asked_fails(self):
+        p = subprocess.run([sys.executable, "-I", TERMINAL, "--answer=linger=y", "--", "true"], capture_output=True,
+                           timeout=60)
+        self.assertEqual(p.returncode, 4)
+        self.assertIn("never asked about 'linger'", p.stdout.decode())
 
 
 if __name__ == "__main__":

@@ -11,7 +11,8 @@
 //!
 //! On Windows the same, for the one step Claude may look at there: the brain
 //! (install.ps1). Claude gets the same closed lists and the same guards; the words
-//! for the machine, its settings and its terminal are Windows' own.
+//! for the machine, its settings and its terminal are Windows' own. On Linux, the Mac's
+//! steps but Apple's tools; the system's packages come before Claude, which cannot help there.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 #[cfg(windows)]
@@ -56,8 +57,15 @@ const STORE: &str = ".brain-in-a-box/reparations";
 const FACTS_FRESH: Duration = Duration::from_secs(120);
 const PROBE_TIMEOUT: Duration = Duration::from_secs(20);
 /// The claude step installs Claude itself: it is never analyzed. On Windows, the
-/// brain step (install.ps1) is the only other one.
-const REPAIRABLE: &[&str] = if cfg!(windows) { &["brain"] } else { &["clt", "bun", "obsidian", "brain"] };
+/// brain step (install.ps1) is the only other one. On Linux the system's packages come
+/// before Claude Code is there: never analyzed either.
+const REPAIRABLE: &[&str] = if cfg!(windows) {
+    &["brain"]
+} else if cfg!(target_os = "macos") {
+    &["clt", "bun", "obsidian", "brain"]
+} else {
+    &["bun", "obsidian", "brain"]
+};
 /// The analysis depends on each of these: a Claude Code that lacks one is not used.
 const REQUIRED_FLAGS: &[&str] = &[
     "--restricted",
@@ -73,13 +81,13 @@ const HOSTS: &[&str] = &["github.com", "claude.ai", "bun.sh", "registry.npmjs.or
 const TOOLS: &[&str] = &["bun", "claude", "git", if cfg!(windows) { "python" } else { "python3" }, "gbrain"];
 
 /// "Mac" or "PC", in a constant (see sys::MACHINE).
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 macro_rules! machine {
     () => {
         "Mac"
     };
 }
-#[cfg(windows)]
+#[cfg(not(target_os = "macos"))]
 macro_rules! machine {
     () => {
         "PC"
@@ -107,8 +115,15 @@ const CLT: &[&str] = &["clt"];
 const BUN: &[&str] = &["bun"];
 const OBSIDIAN: &[&str] = &["obsidian"];
 const BRAIN: &[&str] = &["brain"];
-const MAC_BRAIN: &[&str] = if cfg!(windows) { &[] } else { BRAIN };
+const MAC_BRAIN: &[&str] = if cfg!(target_os = "macos") { BRAIN } else { &[] };
 const WINDOWS_BRAIN: &[&str] = if cfg!(windows) { BRAIN } else { &[] };
+/// Documents is guarded by macOS (privacy) and Windows (controlled folder access); nothing
+/// on Linux keeps the user's own programs out of it.
+const GUARDED_DOCUMENTS: &[&str] = if cfg!(target_os = "linux") { &[] } else { BRAIN };
+/// A half-copied Obsidian.app the user may set aside: Linux's Obsidian is the system's (/opt).
+const MAC_OBSIDIAN: &[&str] = if cfg!(target_os = "macos") { OBSIDIAN } else { &[] };
+/// Installed as root after the system asked for the user's password.
+const LINUX_OBSIDIAN: &[&str] = if cfg!(target_os = "linux") { OBSIDIAN } else { &[] };
 
 struct Entry {
     id: &'static str,
@@ -160,15 +175,20 @@ const CAUSES: &[Entry] = &[
         "Les outils Apple ne sont installés qu'en partie."),
     Entry::new("dossier_bun_abime", BUN, "le dossier de Bun existe mais Bun ne marche pas.",
         "L'installation de Bun est abîmée."),
-    Entry::new("dossier_bun_pas_a_moi", BUN, "le dossier de Bun appartient à un autre compte du Mac.",
-        "Le dossier de Bun appartient à un autre compte de ce Mac."),
-    Entry::new("obsidian_incomplet", OBSIDIAN, "une copie incomplète d'Obsidian occupe sa place.",
+    Entry::new("dossier_bun_pas_a_moi", BUN, "le dossier de Bun appartient à un autre compte du {machine}.",
+        "Le dossier de Bun appartient à un autre compte de ce {machine}."),
+    Entry::new("obsidian_incomplet", MAC_OBSIDIAN, "une copie incomplète d'Obsidian occupe sa place.",
         "Une copie incomplète d'Obsidian occupe sa place."),
+    Entry::new("mot_de_passe_refuse", LINUX_OBSIDIAN,
+        "la demande de mot de passe du système a été fermée ou refusée (pkexec code 126 ou 127).",
+        "La demande de mot de passe a été fermée, ou ton compte n'a pas le droit d'installer des programmes."),
+    Entry::new("systeme_occupe", LINUX_OBSIDIAN, "les mises à jour du système occupaient le gestionnaire de paquets.",
+        "Les mises à jour du système occupaient l'installation."),
     Entry::new("sources_abimees", BRAIN, "le programme d'installation du cerveau est incomplet ou abîmé.",
         "Le programme d'installation du cerveau est abîmé."),
     Entry::new("gbrain_abime", BRAIN, "le moteur de mémoire installé est abîmé.",
         "Le moteur de mémoire est abîmé."),
-    Entry::new("acces_documents_refuse", BRAIN,
+    Entry::new("acces_documents_refuse", GUARDED_DOCUMENTS,
         if cfg!(windows) { "Windows ou un antivirus bloque l'écriture dans le dossier Documents (accès contrôlé aux dossiers)." }
         else { "macOS refuse l'accès au dossier Documents." },
         if cfg!(windows) { "Windows bloque l'écriture dans ton dossier Documents (protection contre les ransomwares)." }
@@ -186,7 +206,7 @@ const REMEDIES: &[Entry] = &[
         "Faire le ménage dans mes fichiers temporaires."),
     Entry::new("mettre_de_cote_bun", BUN, "mettre de côté le dossier de Bun et le réinstaller.",
         "Mettre de côté l'installation abîmée de Bun, puis la refaire. Rien n'est effacé."),
-    Entry::new("mettre_de_cote_obsidian", OBSIDIAN, "mettre de côté l'Obsidian incomplet et le retélécharger.",
+    Entry::new("mettre_de_cote_obsidian", MAC_OBSIDIAN, "mettre de côté l'Obsidian incomplet et le retélécharger.",
         "Mettre de côté l'Obsidian incomplet, puis le retélécharger."),
     Entry::new("mettre_de_cote_sources", BRAIN, "mettre de côté le programme d'installation et le retélécharger.",
         "Mettre de côté le programme d'installation du cerveau et le retélécharger."),
@@ -218,6 +238,10 @@ const ACTIONS: &[Entry] = &[
     Entry::new("fermer_claude", BRAIN, "fermer les autres fenêtres Claude ou {terminal}.",
         "Ferme les autres fenêtres Claude ou {terminal}, puis relance."),
     Entry::new("redemarrer_mac", ALL, "redémarrer le {machine}.", "Redémarre ton {machine}, puis rouvre Brain in a Box."),
+    Entry::new("taper_mot_de_passe", LINUX_OBSIDIAN, "taper son mot de passe quand le système le demande.",
+        "Quand ton ordinateur te demande ton mot de passe, tape-le : c'est pour installer Obsidian."),
+    Entry::new("attendre_mises_a_jour", LINUX_OBSIDIAN, "attendre la fin des mises à jour du système.",
+        "Attends que les mises à jour du système soient finies, puis relance."),
     Entry::new("envoyer_rapport", ALL, "envoyer le rapport à l'équipe.",
         "Copie le rapport et envoie-le à l'équipe : il contient déjà l'analyse de Claude."),
 ];
@@ -236,6 +260,7 @@ fn find(list: &'static [Entry], step: &str, id: &str) -> Option<&'static Entry> 
 fn step_name(step: &str) -> &str {
     match step {
         "clt" => "Outils Apple",
+        "paquets" => "Outils de base",
         "bun" => "Bun",
         "obsidian" => "Obsidian",
         "brain" => "Ton cerveau",
@@ -949,7 +974,8 @@ impl Drop for WorkDir {
 }
 
 fn plan(step: &str, n: usize, id: &str, v: &Verdict) -> RepairPlan {
-    let line = |e: &&'static Entry| PlanLine { id: e.id, text: e.user_text(step), pane: e.pane };
+    // A pane this system has no page for gets no button.
+    let line = |e: &&'static Entry| PlanLine { id: e.id, text: e.user_text(step), pane: e.pane.filter(|p| settings_url(p).is_some()) };
     RepairPlan {
         plan_id: id.to_string(),
         step: step.to_string(),
@@ -1363,10 +1389,17 @@ const TERMINAL_FLAGS: &[&str] = &[
 /// What Claude in Terminal keeps of the shell's environment: its window and the
 /// network. Tokens exported in .zshrc, and an API key or a provider that would bill
 /// someone other than the subscription, stay out of its reach.
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 const TERMINAL_ENV: &[&str] = &[
     "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "TERM", "TERM_PROGRAM", "COLORTERM", "LANG", "LC_ALL", "LC_CTYPE",
     "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "no_proxy",
+];
+/// The same on Linux, plus the desktop's display: Claude Code opens the browser through it.
+#[cfg(target_os = "linux")]
+const TERMINAL_ENV: &[&str] = &[
+    "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "TERM", "TERM_PROGRAM", "COLORTERM", "LANG", "LC_ALL", "LC_CTYPE",
+    "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "no_proxy",
+    "DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR",
 ];
 /// The same on Windows: the profile, Windows' own folders a program needs to start,
 /// and the network. The rest of the session's environment stays out.
@@ -1515,7 +1548,7 @@ fn terminal_script(claude: &Path, path: &std::ffi::OsStr, dir: &Path, settings: 
 // ── System Settings ─────────────────────────────────────────────────────────
 
 /// The panes a human action can point to, and nothing else (`open_link` stays https only).
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 const SETTINGS_PANES: &[(&str, &str)] = &[
     ("storage", "x-apple.systempreferences:com.apple.settings.Storage"),
     ("privacy_files", "x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders"),
@@ -1529,6 +1562,10 @@ const SETTINGS_PANES: &[(&str, &str)] = &[
     ("privacy_files", "windowsdefender://threat"),
     ("software_update", "ms-settings:windowsupdate"),
 ];
+
+/// Linux desktops share no settings page addresses: no button, the sentence says where to go.
+#[cfg(target_os = "linux")]
+const SETTINGS_PANES: &[(&str, &str)] = &[];
 
 fn settings_url(pane: &str) -> Option<&'static str> {
     SETTINGS_PANES.iter().find(|(p, _)| *p == pane).map(|(_, url)| *url)
@@ -1658,7 +1695,7 @@ fn collect_facts(step: &str, home: &Path) -> Value {
     });
     facts.insert("http".into(), Value::Object(http));
     if let Some(d) = diag {
-        facts.insert(if cfg!(windows) { "windows" } else { "macos" }.into(), json!(d.os));
+        facts.insert(if cfg!(windows) { "windows" } else if cfg!(target_os = "linux") { "systeme" } else { "macos" }.into(), json!(d.os));
         facts.insert("puce".into(), json!(d.arch));
         facts.insert("memoire_go".into(), json!(d.ram_gb));
         facts.insert("go_libres".into(), json!(d.disk_free_gb));
@@ -1672,7 +1709,7 @@ fn collect_facts(step: &str, home: &Path) -> Value {
     Value::Object(facts)
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 fn system_facts(home: &Path) -> Map<String, Value> {
     let clt = detect::clt_dir();
     let mut tools = Map::new();
@@ -1698,6 +1735,42 @@ fn system_facts(home: &Path) -> Map<String, Value> {
         "gbrain_en_cours".into(),
         json!(sys::run(Path::new("/usr/bin/pgrep"), &["-f", "gbrain"], PROBE_TIMEOUT).ok()),
     );
+    m
+}
+
+/// The same on Linux: the tools, the packages the kit needs, whether the system can ask for
+/// a password (pkexec), a proxy (the session's variables, GNOME's setting: on or off, never
+/// its host), whether gbrain is running.
+#[cfg(target_os = "linux")]
+fn system_facts(home: &Path) -> Map<String, Value> {
+    let mut tools = Map::new();
+    for name in TOOLS {
+        let found = sys::which_all(name);
+        let version = match *name {
+            "bun" => detect::bun(home).version(),
+            "claude" => detect::claude().version(),
+            _ => found.first().and_then(|p| version_at(p)),
+        };
+        let found: Vec<String> = found.iter().map(|p| p.to_string_lossy().into_owned()).collect();
+        tools.insert(name.to_string(), json!({ "version": version.map(fmt_version), "emplacements": found }));
+    }
+    let os = detect::os_release();
+    let debian = detect::debian_like(&os);
+    let env_proxy = ["https_proxy", "HTTPS_PROXY", "http_proxy", "HTTP_PROXY", "all_proxy", "ALL_PROXY"]
+        .iter()
+        .any(|k| std::env::var_os(k).is_some_and(|v| !v.is_empty()));
+    let gnome_proxy = sys::find_tool("gsettings")
+        .and_then(|g| sys::output_text(&g, &["get", "org.gnome.system.proxy", "mode"], PROBE_TIMEOUT))
+        .is_some_and(|mode| mode.trim_matches('\'') != "none");
+    let pgrep = sys::find_tool("pgrep");
+    let mut m = Map::new();
+    m.insert("outils".into(), Value::Object(tools));
+    m.insert("paquets_manquants".into(), json!(detect::missing_packages(debian)));
+    m.insert("famille_debian".into(), json!(debian));
+    m.insert("pkexec".into(), json!(sys::is_executable(Path::new(crate::root::PKEXEC))));
+    m.insert("obsidian".into(), json!(detect::obsidian_install(home).map(|o| format!("{:?}", o.kind))));
+    m.insert("proxy_systeme".into(), json!(env_proxy || gnome_proxy));
+    m.insert("gbrain_en_cours".into(), json!(pgrep.is_some_and(|p| sys::run(&p, &["-f", "gbrain"], PROBE_TIMEOUT).ok())));
     m
 }
 
@@ -1791,7 +1864,8 @@ const CLAUDE_LINK: &str = if cfg!(windows) { ".local/bin/claude.exe" } else { ".
 fn watched_paths(step: &str) -> &'static [&'static str] {
     match step {
         "bun" => &[".bun"],
-        "obsidian" => &["Applications/Obsidian.app"],
+        // Linux's is the system's (/opt): nothing of the home folder.
+        "obsidian" if cfg!(target_os = "macos") => &["Applications/Obsidian.app"],
         "brain" => &[
             ".bun",
             CLAUDE_LINK,
@@ -1858,7 +1932,7 @@ fn http_code(host: &str) -> u16 {
 }
 
 /// From `scutil --proxy`: is any proxy on? The host names are not kept.
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 fn proxy_on(scutil: &str) -> bool {
     const SWITCHES: &[&str] = &["HTTPEnable", "HTTPSEnable", "SOCKSEnable", "ProxyAutoConfigEnable", "FTPEnable"];
     scutil.lines().filter_map(|l| l.split_once(':')).any(|(k, v)| SWITCHES.contains(&k.trim()) && v.trim() == "1")
@@ -2644,12 +2718,13 @@ mod tests {
         let v = validate("brain", &a, &[], false).unwrap_or_else(|_| panic!());
         let p = plan("brain", 2, "20261013-184455-brain", &v);
         assert!(p.last_round && p.remedies.is_empty());
-        assert_eq!(p.actions[0].pane, Some("storage"));
+        // Linux has no settings page to open: the sentence alone.
+        assert_eq!(p.actions[0].pane, if cfg!(target_os = "linux") { None } else { Some("storage") });
         assert_eq!(p.actions[1].pane, None);
         let json = serde_json::to_value(&p).unwrap();
         assert_eq!(json["plan_id"], "20261013-184455-brain");
         assert_eq!(json["actions"][0]["text"], format!("Libère au moins 5 Go sur ton {}.", sys::MACHINE));
-        #[cfg(not(windows))]
+        #[cfg(target_os = "macos")]
         {
             let a = answer("acces_documents_refuse", &[], &["autoriser_documents"], "Autorise l'accès.", false);
             let p = plan("brain", 1, "id", &validate("brain", &a, &[], false).unwrap_or_else(|_| panic!()));
@@ -2680,7 +2755,12 @@ mod tests {
         }
         let brain = schema("brain").to_string();
         assert_eq!(brain.contains("cerveau_hors_documents"), cfg!(windows));
-        assert_eq!(brain.contains("autoriser_documents"), !cfg!(windows));
+        assert_eq!(brain.contains("autoriser_documents"), cfg!(target_os = "macos"));
+        assert_eq!(brain.contains("acces_documents_refuse"), !cfg!(target_os = "linux"));
+        // Linux: Obsidian is the system's, installed after a password; nothing to set aside.
+        let obsidian = schema("obsidian").to_string();
+        assert_eq!(obsidian.contains("mettre_de_cote_obsidian"), cfg!(target_os = "macos"));
+        assert_eq!(obsidian.contains("taper_mot_de_passe"), cfg!(target_os = "linux"));
     }
 
     fn failure(lines: &[&str], message: &str) -> Failure {
@@ -2823,7 +2903,7 @@ mod tests {
         assert_eq!(known_secrets(home), vec![CANARY.to_string()]);
     }
 
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
     #[test]
     fn proxies_are_seen_without_their_host() {
         let on = "<dictionary> {\n  HTTPEnable : 1\n  HTTPProxy : proxy.corp.example\n  HTTPPort : 3128\n}";
@@ -3448,7 +3528,11 @@ mod tests {
         let system: &[&str] = if cfg!(windows) { &["ms-settings:", "windowsdefender://"] } else { &["x-apple.systempreferences:"] };
         for e in ACTIONS {
             if let Some(pane) = e.pane {
-                assert!(settings_url(pane).is_some_and(|u| system.iter().any(|s| u.starts_with(s))), "{pane}");
+                // Linux opens none.
+                assert!(
+                    settings_url(pane).is_some_and(|u| system.iter().any(|s| u.starts_with(s))) || (cfg!(target_os = "linux") && settings_url(pane).is_none()),
+                    "{pane}"
+                );
             }
         }
         for bad in ["", "https://evil.example", "x-apple.systempreferences:com.apple.Users", "storage;open -a Terminal"] {
@@ -3799,8 +3883,9 @@ mod tests {
         let known = known_secrets(&home);
         let etat = redact(&serde_json::to_string_pretty(&collect_facts("bun", &home)).unwrap(), &refs(&known));
         println!("{etat}");
-        assert!(!etat.contains("/Users/"));
-        for key in ["http", "outils", "proxy_systeme", "controles", "chemins", "macos"] {
+        assert!(!etat.contains("/Users/") && !etat.contains("/home/"));
+        let system = if cfg!(target_os = "linux") { "systeme" } else { "macos" };
+        for key in ["http", "outils", "proxy_systeme", "controles", "chemins", system] {
             assert!(etat.contains(&format!("\"{key}\"")), "{key}");
         }
     }

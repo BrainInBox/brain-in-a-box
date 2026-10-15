@@ -5,7 +5,8 @@
 //!
 //! On Windows the answer is the one install.ps1 would give: it finds Python, Git,
 //! Claude Code and Obsidian where its Find-* functions look, and leaves the brain where
-//! this file looks for it.
+//! this file looks for it. On Linux, the one install.sh gives: the same system tools
+//! (missing_packages), Obsidian where obsidian_found looks.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -55,7 +56,7 @@ impl Found {
 // ── Apple command line tools ────────────────────────────────────────────────
 
 /// The tools folder, when it is really there.
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 pub fn clt_dir() -> Option<PathBuf> {
     let dir = PathBuf::from(sys::output_text(Path::new("/usr/bin/xcode-select"), &["-p"], TIMEOUT)?);
     has_clt(&dir).then_some(dir)
@@ -63,9 +64,90 @@ pub fn clt_dir() -> Option<PathBuf> {
 
 /// Without the tools, /usr/bin/git and /usr/bin/python3 are decoys that open Apple's
 /// install window. So we look for the real git inside the selected folder, and never run it.
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 fn has_clt(dir: &Path) -> bool {
     dir.is_absolute() && dir.join("usr/bin/git").is_file()
+}
+
+// ── The system's tools (Linux: the paquets step installs them) ──────────────
+
+/// What /etc/os-release says, as install.sh reads it.
+#[cfg(target_os = "linux")]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct OsRelease {
+    /// "Ubuntu 24.04.1 LTS"
+    pub pretty: Option<String>,
+    pub id: String,
+    pub like: String,
+}
+
+#[cfg(target_os = "linux")]
+pub fn os_release() -> OsRelease {
+    let text = fs::read_to_string("/etc/os-release").or_else(|_| fs::read_to_string("/usr/lib/os-release"));
+    parse_os_release(&text.unwrap_or_default())
+}
+
+/// KEY=value lines, the value maybe quoted. Nothing is run or expanded.
+#[cfg(target_os = "linux")]
+fn parse_os_release(text: &str) -> OsRelease {
+    let value = |key: &str| {
+        text.lines().filter_map(|l| l.trim().split_once('=')).find(|(k, _)| *k == key).map(|(_, v)| {
+            let v = v.trim();
+            let unquoted = v.strip_prefix('"').and_then(|v| v.strip_suffix('"')).or_else(|| v.strip_prefix('\'').and_then(|v| v.strip_suffix('\'')));
+            unquoted.unwrap_or(v).replace("\\\"", "\"").chars().filter(|c| !c.is_control()).take(80).collect::<String>()
+        })
+    };
+    OsRelease {
+        pretty: value("PRETTY_NAME").filter(|p| !p.trim().is_empty()),
+        id: value("ID").unwrap_or_default().to_lowercase(),
+        like: value("ID_LIKE").unwrap_or_default().to_lowercase(),
+    }
+}
+
+/// Debian, Ubuntu and their derivatives (Mint, Pop!_OS…), apt-get there: install.sh's debian_like.
+#[cfg(target_os = "linux")]
+pub fn debian_like(os: &OsRelease) -> bool {
+    debian_family(os) && sys::find_tool("apt-get").is_some()
+}
+
+#[cfg(target_os = "linux")]
+fn debian_family(os: &OsRelease) -> bool {
+    let words = format!(" {} {} ", os.id, os.like);
+    words.contains(" debian ") || words.contains(" ubuntu ")
+}
+
+/// What install.sh's missing_packages lists, by Debian package name, with unzip always: the
+/// app unpacks the brain's sources with it, and Bun's installer needs it.
+#[cfg(target_os = "linux")]
+const SYSTEM_TOOLS: &[(&str, &str)] = &[("python3", "python3"), ("git", "git"), ("curl", "curl"), ("pgrep", "procps"), ("unzip", "unzip")];
+#[cfg(target_os = "linux")]
+const CA_BUNDLE: &str = "/etc/ssl/certs/ca-certificates.crt";
+
+/// The Debian packages of the tools the kit needs and this machine lacks.
+#[cfg(target_os = "linux")]
+pub fn missing_packages(debian: bool) -> Vec<&'static str> {
+    let ca = fs::metadata(CA_BUNDLE).is_ok_and(|m| m.len() > 0);
+    missing_from(&|tool| sys::find_tool(tool).is_some(), debian && !ca)
+}
+
+#[cfg(target_os = "linux")]
+fn missing_from(has: &dyn Fn(&str) -> bool, no_ca: bool) -> Vec<&'static str> {
+    let mut out: Vec<&'static str> = SYSTEM_TOOLS.iter().filter(|(tool, _)| !has(tool)).map(|(_, pkg)| *pkg).collect();
+    if no_ca {
+        out.push("ca-certificates");
+    }
+    out
+}
+
+/// install.sh refuses older ones.
+#[cfg(target_os = "linux")]
+pub const MIN_PYTHON3: Version = (3, 9, 0);
+
+/// python3's version, when it runs.
+#[cfg(target_os = "linux")]
+pub fn python3() -> Option<Version> {
+    let bin = sys::find_tool("python3")?;
+    sys::output_text(&bin, &["--version"], TIMEOUT).and_then(|t| parse_version(&t))
 }
 
 // ── Python and Git (Windows: install.ps1 installs them) ─────────────────────
@@ -213,12 +295,12 @@ fn auth_method(status: &str) -> Option<String> {
 
 /// In /Applications or ~/Applications, with its program inside: an empty or
 /// half-copied Obsidian.app folder is not an installed Obsidian.
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 pub fn obsidian_app(home: &Path) -> Option<PathBuf> {
     app_in(&[PathBuf::from("/Applications"), home.join("Applications")], "Obsidian")
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 fn app_in(dirs: &[PathBuf], name: &str) -> Option<PathBuf> {
     dirs.iter()
         .map(|d| d.join(format!("{name}.app")))
@@ -226,7 +308,7 @@ fn app_in(dirs: &[PathBuf], name: &str) -> Option<PathBuf> {
 }
 
 /// Installed once the app is there, even if its version cannot be read.
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 pub fn obsidian(home: &Path) -> Found {
     let Some(app) = obsidian_app(home) else { return Found::Absent };
     let plist = app.join("Contents/Info.plist");
@@ -256,6 +338,96 @@ pub fn obsidian_exe(home: &Path) -> Option<PathBuf> {
 #[cfg(windows)]
 pub fn obsidian(home: &Path) -> Found {
     obsidian_exe(home).map_or(Found::Absent, |_| Found::NoVersion)
+}
+
+/// Obsidian on Linux, however it came: the .deb (/opt/Obsidian, the one the app and install.sh
+/// install), a snap, a Flatpak, an AppImage. What it takes to start it, and where it keeps
+/// its list of vaults.
+#[cfg(target_os = "linux")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Obsidian {
+    pub kind: ObsidianKind,
+    /// The program, then the arguments before Obsidian's own (Flatpak: run md.obsidian.Obsidian).
+    pub program: PathBuf,
+    pub args: Vec<String>,
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ObsidianKind {
+    Deb,
+    Snap,
+    Flatpak,
+    AppImage,
+    /// An obsidian command on the PATH, from somewhere else.
+    Other,
+}
+
+#[cfg(target_os = "linux")]
+const OBSIDIAN_DEB: &str = "/opt/Obsidian/obsidian";
+#[cfg(target_os = "linux")]
+const OBSIDIAN_SNAP: &str = "/snap/bin/obsidian";
+#[cfg(target_os = "linux")]
+const OBSIDIAN_FLATPAK: &str = "md.obsidian.Obsidian";
+
+/// Where install.sh's obsidian_found looks, in its order: the .deb's, the snap's, a Flatpak,
+/// an AppImage in ~/Applications or ~/.local/bin, then any obsidian on the PATH.
+#[cfg(target_os = "linux")]
+pub fn obsidian_install(home: &Path) -> Option<Obsidian> {
+    obsidian_in(home, Path::new("/"))
+}
+
+/// The same under `root` (/ in the app, a fake one in tests) for the system's folders.
+#[cfg(target_os = "linux")]
+fn obsidian_in(home: &Path, root: &Path) -> Option<Obsidian> {
+    let at = |p: &str| root.join(p.trim_start_matches('/'));
+    let found = |kind, program: PathBuf| Some(Obsidian { kind, program, args: Vec::new() });
+    if sys::is_executable(&at(OBSIDIAN_DEB)) {
+        return found(ObsidianKind::Deb, at(OBSIDIAN_DEB));
+    }
+    if sys::is_executable(&at(OBSIDIAN_SNAP)) {
+        return found(ObsidianKind::Snap, at(OBSIDIAN_SNAP));
+    }
+    let flatpak = [home.join(".local/share/flatpak/app"), at("/var/lib/flatpak/app")]
+        .iter()
+        .any(|d| d.join(OBSIDIAN_FLATPAK).join("current/active").exists());
+    if flatpak {
+        if let Some(fp) = sys::find_tool("flatpak") {
+            return Some(Obsidian { kind: ObsidianKind::Flatpak, program: fp, args: vec!["run".into(), OBSIDIAN_FLATPAK.into()] });
+        }
+    }
+    for dir in [home.join("Applications"), home.join(".local/bin")] {
+        let Ok(entries) = fs::read_dir(&dir) else { continue };
+        let mut images: Vec<PathBuf> = entries
+            .filter_map(Result::ok)
+            .map(|e| e.path())
+            .filter(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with("Obsidian") && n.ends_with(".AppImage")))
+            .filter(|p| sys::is_executable(p))
+            .collect();
+        images.sort();
+        if let Some(image) = images.pop() {
+            return found(ObsidianKind::AppImage, image);
+        }
+    }
+    sys::find_tool("obsidian").and_then(|p| found(ObsidianKind::Other, p))
+}
+
+/// Installed once it is there. Only the .deb tells its version (dpkg).
+#[cfg(target_os = "linux")]
+pub fn obsidian(home: &Path) -> Found {
+    match obsidian_install(home) {
+        None => Found::Absent,
+        Some(o) if o.kind == ObsidianKind::Deb => sys::find_tool("dpkg-query")
+            .and_then(|dq| sys::output_text(&dq, &["-W", "-f=${Version}", "obsidian"], TIMEOUT))
+            .map_or(Found::NoVersion, Found::Version),
+        Some(_) => Found::NoVersion,
+    }
+}
+
+/// The official .deb is for x86-64 only: elsewhere Obsidian comes from Flathub or obsidian.md.
+#[cfg(target_os = "linux")]
+pub fn obsidian_installable(os: &OsRelease) -> bool {
+    std::env::consts::ARCH == "x86_64" && debian_like(os)
 }
 
 // ── The brain ───────────────────────────────────────────────────────────────
@@ -474,7 +646,7 @@ pub(crate) mod tests {
         assert_eq!(bun(home), Found::Absent);
     }
 
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
     #[test]
     fn clt_needs_the_real_git_in_the_selected_folder() {
         let tmp = tempfile::tempdir().unwrap();
@@ -486,7 +658,7 @@ pub(crate) mod tests {
         assert!(!has_clt(Path::new("")));
     }
 
-    #[cfg(unix)]
+    #[cfg(target_os = "macos")]
     #[test]
     fn obsidian_counts_only_with_its_program_inside() {
         let tmp = tempfile::tempdir().unwrap();
@@ -502,6 +674,72 @@ pub(crate) mod tests {
         assert_eq!(app_in(&dirs, "Obsidian"), None, "not executable");
         write_exec(&system.join("Obsidian.app/Contents/MacOS/Obsidian"), "");
         assert_eq!(app_in(&dirs, "Obsidian"), Some(system.join("Obsidian.app")));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn os_release_is_read_as_install_sh_reads_it() {
+        let ubuntu = "PRETTY_NAME=\"Ubuntu 24.04.1 LTS\"\nNAME=\"Ubuntu\"\nID=ubuntu\nID_LIKE=debian\nVERSION_ID=\"24.04\"\n";
+        let os = parse_os_release(ubuntu);
+        assert_eq!(os, OsRelease { pretty: Some("Ubuntu 24.04.1 LTS".into()), id: "ubuntu".into(), like: "debian".into() });
+        assert!(debian_family(&os));
+        let mint = parse_os_release("ID=linuxmint\nID_LIKE='ubuntu debian'\nPRETTY_NAME='Linux Mint 22'\n");
+        assert!(debian_family(&mint) && mint.pretty.as_deref() == Some("Linux Mint 22"));
+        for other in ["ID=fedora\nPRETTY_NAME=\"Fedora Linux 41\"\n", "ID=arch\n", "ID=debianish\n", ""] {
+            assert!(!debian_family(&parse_os_release(other)), "{other}");
+        }
+        // Nothing is expanded, nothing past the line is taken.
+        let odd = parse_os_release("PRETTY_NAME=\"$(reboot) \\\"x\\\"\u{1b}[31m\"\nID=\n");
+        assert_eq!(odd.pretty.as_deref(), Some("$(reboot) \"x\"[31m"));
+        assert_eq!(parse_os_release("PRETTY_NAME=\"\"\n").pretty, None);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn missing_tools_are_named_as_debian_packages() {
+        let none = missing_from(&|_| true, false);
+        assert!(none.is_empty());
+        let fresh_desktop = missing_from(&|t| !["git", "curl"].contains(&t), false);
+        assert_eq!(fresh_desktop, ["git", "curl"]);
+        assert_eq!(missing_from(&|_| false, true), ["python3", "git", "curl", "procps", "unzip", "ca-certificates"]);
+    }
+
+    /// The packages install.sh asks for are the app's, and the only ones root installs: what
+    /// install.sh would stop on, the paquets step installs first, and nothing more (root.rs).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_app_installs_the_packages_install_sh_needs_and_root_no_other() {
+        let script = include_str!("../../../install.sh");
+        let body = script.split("missing_packages() {").nth(1).and_then(|b| b.split("\n}").next()).unwrap();
+        let mut named: Vec<&str> = body.lines().filter_map(|l| l.split("p=\"$p ").nth(1)).filter_map(|r| r.split('"').next()).collect();
+        let mut app: Vec<&str> = SYSTEM_TOOLS.iter().map(|(_, p)| *p).chain(["ca-certificates"]).collect();
+        let mut root = crate::root::PACKAGES.to_vec();
+        for v in [&mut named, &mut app, &mut root] {
+            v.sort_unstable();
+        }
+        assert_eq!(named, app);
+        assert_eq!(app, root);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn obsidian_is_found_however_it_came() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (home, root) = (tmp.path().join("home"), tmp.path().join("root"));
+        fs::create_dir_all(&home).unwrap();
+        assert_eq!(obsidian_in(&home, &root).map(|o| o.kind), sys::find_tool("obsidian").map(|_| ObsidianKind::Other));
+        let image = home.join("Applications/Obsidian-1.14.4.AppImage");
+        write_exec(&image, "");
+        let o = obsidian_in(&home, &root).unwrap();
+        assert_eq!((o.kind, o.program), (ObsidianKind::AppImage, image.clone()));
+        fs::set_permissions(&image, fs::Permissions::from_mode(0o644)).unwrap();
+        assert_ne!(obsidian_in(&home, &root).map(|o| o.kind), Some(ObsidianKind::AppImage), "not executable");
+        write_exec(&root.join("snap/bin/obsidian"), "");
+        assert_eq!(obsidian_in(&home, &root).map(|o| o.kind), Some(ObsidianKind::Snap));
+        let deb = root.join("opt/Obsidian/obsidian");
+        write_exec(&deb, "");
+        let o = obsidian_in(&home, &root).unwrap();
+        assert_eq!((o.kind, o.program, o.args.len()), (ObsidianKind::Deb, deb, 0));
     }
 
     #[test]

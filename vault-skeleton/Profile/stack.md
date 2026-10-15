@@ -10,7 +10,7 @@
 - Tool: `~/DEV/gbrain` (clone of garrytan/gbrain)
 - **Search**: `~/.local/bin/gbq query "<question>"` (semantic) · `gbq search "<kw>"` (keyword)
   - ⚠️ Always `gbq`, never `gbrain query` directly (hangs on the single-connection PGLite lock)
-- **Nightly** (launchd `com.{{USER}}.gbrain-nightly`, 04:00): commit vault → sync → dream cycle (dedup, facts, consolidation) → self-update GBrain (smoke-tested, auto-rollback if broken)
+- **Nightly** (04:00; launchd `com.{{USER}}.gbrain-nightly` on macOS, the `gbrain-nightly` systemd user timer or cron on Linux): commit vault → sync → dream cycle (dedup, facts, consolidation) → self-update GBrain (smoke-tested, auto-rollback if broken)
 - **Self-update catch-up** (SessionStart hook, once/day): if the machine missed the 04:00 run, the first Claude Code session of the day triggers it in the background — see `Profile/memory.md` for the last result
 - Voyage AI key: in `~/.gbrain/config.json` (field `voyage_api_key`, file mode 600); older installs use `zeroentropy_api_key`
 

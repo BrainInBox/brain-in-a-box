@@ -9,13 +9,18 @@
 //! Obsidian along with the brain, so the brain step runs it (without a console, without a
 //! question) and reads its sections to show where it is. Only Claude Code has a step
 //! of its own, first, as on a Mac.
+//!
+//! On Linux the steps are the Mac's, Apple's tools replaced by the system's packages (git,
+//! python3, curl). Those and Obsidian's official package need root: the system asks the
+//! user for their password (pkexec, its own window), for a command fixed here, and only for
+//! these two steps. Everything else lands in the home folder, as on a Mac.
 
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Mutex, MutexGuard, TryLockError};
 use std::thread;
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 use std::time::Instant;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -26,27 +31,41 @@ use crate::config_guard;
 use crate::detect::fmt_version;
 use crate::detect::{self, Found};
 use crate::model::StepResult;
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 use crate::sys::minutes;
 use crate::{perms, sys, voyage};
+#[cfg(target_os = "linux")]
+use crate::root::{self, OBSIDIAN_DEB_SHA256};
 
 /// Claude Code first: its installer needs none of Apple's tools, and once the user is
 /// logged in, Claude can help repair the steps that follow.
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 pub const ORDER: &[&str] = &["claude", "clt", "bun", "obsidian", "brain"];
+/// The system's tools first: everything after downloads with curl (a fresh Ubuntu desktop
+/// has none), Bun's installer unzips, install.sh needs git and python3.
+#[cfg(target_os = "linux")]
+pub const ORDER: &[&str] = &["paquets", "claude", "bun", "obsidian", "brain"];
 /// install.ps1 installs all the rest, Python and Git included.
 #[cfg(windows)]
 pub const ORDER: &[&str] = &["claude", "brain"];
 
+/// engine/gbrain-pin.json's, which install.sh follows (a test holds them equal).
 #[cfg(not(windows))]
-const BUN_PIN: &str = "bun-v1.4.2";
-#[cfg(not(windows))]
+const BUN_PIN: &str = "bun-v1.4.3";
+#[cfg(target_os = "macos")]
 const OBSIDIAN_URL: &str = "https://github.com/obsidianmd/obsidian-releases/releases/download/v1.14.4/Obsidian-1.14.4.dmg";
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 const OBSIDIAN_SIZE: u64 = 233_704_463;
 /// Obsidian's Apple developer id: a copy signed by anyone else is thrown away.
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 const OBSIDIAN_TEAM: &str = "6JSW4SJWN9";
+/// Obsidian's official package, the one install.sh pins (a test holds them equal); its SHA-256
+/// is root.rs's, the only package root installs from a file.
+#[cfg(target_os = "linux")]
+const OBSIDIAN_DEB_URL: &str = "https://github.com/obsidianmd/obsidian-releases/releases/download/v1.14.4/obsidian_1.14.4_amd64.deb";
+#[cfg(target_os = "linux")]
+const OBSIDIAN_DEB_SIZE: u64 = 108_364_996;
+
 const BRAIN_ZIP: &str = "https://github.com/BrainInBox/brain-in-a-box/archive/refs/heads/master.zip";
 /// The installer in the sources: the brain step runs it, and its presence says the
 /// unpacked folder is the right one.
@@ -58,8 +77,12 @@ const INSTALLER: &str = "install.ps1";
 const CLAUDE_INSTALLER: &str = "https://claude.ai/install.sh";
 #[cfg(windows)]
 const CLAUDE_INSTALLER: &str = "https://claude.ai/install.ps1";
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 const CLT_WAIT: Duration = Duration::from_secs(45 * 60);
+/// git shows up in the tools' folder while Apple's installer still writes the rest: its window,
+/// still open, is waited for this long more (the user clicks « Terminé » once it says so).
+#[cfg(target_os = "macos")]
+const CLT_SETTLE: Duration = Duration::from_secs(90);
 /// Past these, an installer is stuck rather than slow: it is stopped.
 const INSTALLER_LIMIT: Duration = Duration::from_secs(20 * 60);
 /// install.ps1 also fetches Python, Git and Obsidian through winget.
@@ -105,13 +128,17 @@ pub(crate) struct Held {
 pub(crate) fn run_held(_g: &MutexGuard<'static, ()>, id: &str, voyage_key: Option<&str>, log: &mut dyn FnMut(String)) -> Held {
     let mut restored = Vec::new();
     let res = match id {
-        #[cfg(not(windows))]
+        #[cfg(target_os = "macos")]
         "clt" => clt(log),
+        #[cfg(target_os = "linux")]
+        "paquets" => paquets(Path::new(root::PKEXEC), log),
         #[cfg(not(windows))]
         "bun" => bun(log),
         "claude" => claude(log),
-        #[cfg(not(windows))]
+        #[cfg(target_os = "macos")]
         "obsidian" => obsidian(log),
+        #[cfg(target_os = "linux")]
+        "obsidian" => obsidian(Path::new(root::PKEXEC), log),
         "brain" => {
             let home = sys::home();
             let (res, back) = guarded(&home, &home.join(GUARD_DIR), log, |log| brain(voyage_key, log));
@@ -175,7 +202,7 @@ fn guarded(
 // ── Apple command line tools (git, python3) ─────────────────────────────────
 
 /// " (git 2.39.5)", or nothing when git does not say.
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 fn git_version(clt: &Path) -> String {
     let out = sys::run(&clt.join("usr/bin/git"), &["--version"], Duration::from_secs(10));
     match out.stdout.split_whitespace().nth(2) {
@@ -184,7 +211,7 @@ fn git_version(clt: &Path) -> String {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 fn clt(log: &mut dyn FnMut(String)) -> Step {
     if let Some(dir) = detect::clt_dir() {
         return Ok(format!("Les outils Apple sont déjà installés{}.", git_version(&dir)));
@@ -208,10 +235,19 @@ fn clt(log: &mut dyn FnMut(String)) -> Step {
     let start = Instant::now();
     let mut next_note = Duration::from_secs(30);
     let (mut seen, mut gone) = (false, 0);
+    let mut tools_since: Option<Instant> = None;
     loop {
         thread::sleep(Duration::from_secs(5));
         if let Some(dir) = detect::clt_dir() {
-            return Ok(format!("Les outils Apple sont installés{}.", git_version(&dir)));
+            let open = apple_installer_open();
+            if tools_since.is_none() && open {
+                log("Les outils sont là, Apple finit son installation : clique sur « Terminé » dans sa fenêtre quand elle le propose.".into());
+            }
+            let since = *tools_since.get_or_insert_with(Instant::now);
+            if clt_settled(open, since.elapsed()) {
+                return Ok(format!("Les outils Apple sont installés{}.", git_version(&dir)));
+            }
+            continue;
         }
         // Apple's window stays open until the install is over: if it was there and is
         // gone (three checks in a row), the user closed it.
@@ -238,9 +274,57 @@ fn clt(log: &mut dyn FnMut(String)) -> Step {
     }
 }
 
-#[cfg(not(windows))]
+/// The tools are there: done once Apple's window is closed, or CLT_SETTLE after they showed up.
+#[cfg(target_os = "macos")]
+fn clt_settled(installer_open: bool, since_tools: Duration) -> bool {
+    !installer_open || since_tools >= CLT_SETTLE
+}
+
+#[cfg(target_os = "macos")]
 fn apple_installer_open() -> bool {
     sys::run(Path::new("/usr/bin/pgrep"), &["-f", "Install Command Line Developer Tools"], Duration::from_secs(5)).ok()
+}
+
+// ── The system's tools (Linux: git, python3, curl…) ─────────────────────────
+
+/// "git, curl et unzip".
+#[cfg(target_os = "linux")]
+pub(crate) fn list_fr(items: &[String]) -> String {
+    match items {
+        [] => String::new(),
+        [one] => one.clone(),
+        [rest @ .., last] => format!("{} et {last}", rest.join(", ")),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn paquets(pkexec: &Path, log: &mut dyn FnMut(String)) -> Step {
+    let os = detect::os_release();
+    let debian = detect::debian_like(&os);
+    let missing = detect::missing_packages(debian);
+    if missing.is_empty() {
+        return Ok("Les outils de base sont déjà là (git, python3, curl).".into());
+    }
+    let names: Vec<String> = missing.iter().map(|p| p.to_string()).collect();
+    let listed = list_fr(&names);
+    if !debian {
+        return Err(format!("Il manque {listed}. Installe-les avec le gestionnaire de paquets de ton système, puis relance l'étape."));
+    }
+    log(format!("Il manque {listed}. Ton ordinateur va te demander ton mot de passe : c'est pour les installer."));
+    let by_hand = format!("sudo apt-get install -y {}", missing.join(" "));
+    root::install_packages(pkexec, &missing, &listed, &by_hand, log)?;
+    let still: Vec<String> = detect::missing_packages(debian).iter().map(|p| p.to_string()).collect();
+    if still.is_empty() {
+        Ok(format!("{} {} installés.", capitalize(&listed), if names.len() > 1 { "sont" } else { "est" }))
+    } else {
+        Err(format!("Il manque encore {} après l'installation. Relance l'étape.", list_fr(&still)))
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn capitalize(s: &str) -> String {
+    let mut c = s.chars();
+    c.next().map_or_else(String::new, |f| f.to_uppercase().chain(c).collect())
 }
 
 // ── Bun ─────────────────────────────────────────────────────────────────────
@@ -282,7 +366,7 @@ fn claude(log: &mut dyn FnMut(String)) -> Step {
 
 // ── Obsidian ────────────────────────────────────────────────────────────────
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 fn obsidian(log: &mut dyn FnMut(String)) -> Step {
     let home = sys::home();
     let apps = home.join("Applications");
@@ -301,7 +385,7 @@ fn obsidian(log: &mut dyn FnMut(String)) -> Step {
 }
 
 /// Downloads the pinned Obsidian, checks its signature and puts it in `apps`.
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 fn install_obsidian_into(apps: &Path, log: &mut dyn FnMut(String)) -> Result<PathBuf, String> {
     let dest = apps.join("Obsidian.app");
     // Not a working Obsidian (detect said so), but maybe the user's own files: never overwritten.
@@ -363,7 +447,43 @@ fn is_work_id(s: &str) -> bool {
     s.len() == 16 && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
-#[cfg(not(windows))]
+/// Obsidian's official package, pinned and checked, installed by apt as root: in /opt/Obsidian
+/// with its sandbox helper, which Ubuntu 24.04's AppArmor profile for Obsidian expects. The
+/// download stays in a private folder of the home; root copies it out before checking it.
+#[cfg(target_os = "linux")]
+fn obsidian(pkexec: &Path, log: &mut dyn FnMut(String)) -> Step {
+    let home = sys::home();
+    let base = home.join(".brain-in-a-box");
+    if let Ok(me) = fs::metadata(&home).map(|m| perms::owner(&m)) {
+        remove_stale_copies(&base, me);
+    }
+    let found = detect::obsidian(&home);
+    if found != Found::Absent {
+        return Ok(format!("{} est déjà installé.", found.label("Obsidian")));
+    }
+    if !detect::obsidian_installable(&detect::os_release()) {
+        return Err("Obsidian n'a pas de paquet officiel pour ce système. Installe-le depuis obsidian.md ou Flathub, puis clique sur Revérifier.".into());
+    }
+    fs::create_dir_all(&base).map_err(|e| format!("Je n'ai pas pu créer le dossier .brain-in-a-box ({e})."))?;
+    let tmp = TempDir::new_in(&base)?;
+    let deb = tmp.path().join("obsidian.deb");
+    download(OBSIDIAN_DEB_URL, &deb, "Obsidian", Some(OBSIDIAN_DEB_SIZE), Duration::from_secs(60 * 60), log)?;
+    log("Je vérifie le paquet d'Obsidian…".into());
+    if config_guard::sha256_file(&deb).as_deref() != Some(OBSIDIAN_DEB_SHA256) {
+        return Err("Le paquet d'Obsidian téléchargé n'est pas celui attendu : je l'ai supprimé par sécurité. Réessaie plus tard.".into());
+    }
+    log("Ton ordinateur va te demander ton mot de passe : c'est pour installer Obsidian.".into());
+    let by_hand = format!(
+        "d=$(mktemp -d) && curl -fL -o \"$d/obsidian.deb\" {OBSIDIAN_DEB_URL} && echo \"{OBSIDIAN_DEB_SHA256}  $d/obsidian.deb\" | sha256sum -c - && sudo apt-get install -y \"$d/obsidian.deb\""
+    );
+    root::install_obsidian_deb(pkexec, &deb, &by_hand, log)?;
+    match detect::obsidian(&home) {
+        Found::Absent => Err("Obsidian n'apparaît pas après l'installation. Relance l'étape.".into()),
+        found => Ok(format!("{} est installé.", found.label("Obsidian"))),
+    }
+}
+
+#[cfg(target_os = "macos")]
 fn signed_by_obsidian(app: &Path) -> Result<(), String> {
     let codesign = Path::new("/usr/bin/codesign");
     let app = app.to_string_lossy();
@@ -379,16 +499,16 @@ fn signed_by_obsidian(app: &Path) -> Result<(), String> {
 }
 
 /// The signer's team, from `codesign -dv` (which writes on stderr).
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 fn team_id(codesign_dv: &str) -> Option<&str> {
     codesign_dv.lines().find_map(|l| l.trim().strip_prefix("TeamIdentifier=")).map(str::trim)
 }
 
 /// A mounted disk image, detached when dropped, the step failing or not.
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 struct Mount(PathBuf);
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 impl Mount {
     fn attach(dmg: &Path, at: &Path) -> Result<Self, String> {
         fs::create_dir(at).map_err(|e| format!("Je n'ai pas pu préparer l'ouverture d'Obsidian ({e})."))?;
@@ -410,7 +530,7 @@ impl Mount {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 impl Drop for Mount {
     fn drop(&mut self) {
         let hdiutil = Path::new("/usr/bin/hdiutil");
@@ -463,10 +583,7 @@ fn brain(voyage_key: Option<&str>, log: &mut dyn FnMut(String)) -> Step {
             .into());
     }
     let home = sys::home();
-    // install.sh runs git and python3: without the Apple tools, that pops Apple's window.
-    if detect::clt_dir().is_none() {
-        return Err("Il faut d'abord installer les outils Apple.".into());
-    }
+    system_tools_ready()?;
     if !detect::bun_ok(&detect::bun(&home)) {
         return Err("Il faut d'abord installer Bun.".into());
     }
@@ -514,6 +631,24 @@ fn brain(voyage_key: Option<&str>, log: &mut dyn FnMut(String)) -> Step {
                          tu pourras ajouter une clé Voyage plus tard."
             .into(),
     })
+}
+
+/// install.sh runs git and python3: without the Apple tools, that pops Apple's window.
+#[cfg(target_os = "macos")]
+fn system_tools_ready() -> Result<(), String> {
+    if detect::clt_dir().is_none() {
+        return Err("Il faut d'abord installer les outils Apple.".into());
+    }
+    Ok(())
+}
+
+/// install.sh stops on a missing package (it may not ask for a password from here).
+#[cfg(target_os = "linux")]
+fn system_tools_ready() -> Result<(), String> {
+    if !detect::missing_packages(detect::debian_like(&detect::os_release())).is_empty() {
+        return Err("Il faut d'abord installer les outils de base.".into());
+    }
+    Ok(())
 }
 
 /// install.ps1 from the sources, without a console and without a question: the key comes
@@ -697,13 +832,23 @@ fn install_sources(base: &Path, archive: &Archive, log: &mut dyn FnMut(String)) 
     Ok(src)
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 fn unzip(zip: &Path, out: &Path) -> sys::Output {
     sys::run(
         Path::new("/usr/bin/ditto"),
         &["-x", "-k", &zip.to_string_lossy(), &out.to_string_lossy()],
         Duration::from_secs(5 * 60),
     )
+}
+
+/// Info-ZIP's unzip, which keeps the files' modes (the paquets step brings it). It leaves
+/// out the "../" of a name: nothing lands outside `out`.
+#[cfg(target_os = "linux")]
+fn unzip(zip: &Path, out: &Path) -> sys::Output {
+    let Some(unzip) = sys::find_tool("unzip") else {
+        return sys::Output { code: -1, stdout: String::new(), stderr: "unzip est introuvable".into() };
+    };
+    sys::run(&unzip, &["-q", &zip.to_string_lossy(), "-d", &out.to_string_lossy()], Duration::from_secs(5 * 60))
 }
 
 /// Windows' own tar (10 1803 and later) reads zips. Not Git's tar, which does not.
@@ -861,8 +1006,9 @@ pub(crate) fn ps_quote(s: &str) -> String {
 }
 
 /// Opens `script` in a window the user sees: Terminal on a Mac (a .command file),
-/// PowerShell on Windows (a .ps1). `name` is the file's name without its extension.
-#[cfg(not(windows))]
+/// PowerShell on Windows (a .ps1), the desktop's terminal on Linux (a .sh it runs).
+/// `name` is the file's name without its extension.
+#[cfg(target_os = "macos")]
 pub(crate) fn open_in_terminal(name: &str, script: &str) -> Result<(), String> {
     let file = terminal_file(&format!("{name}.command"), script.as_bytes(), 0o700)?;
     if sys::run(Path::new("/usr/bin/open"), &["-a", "Terminal", &file.to_string_lossy()], Duration::from_secs(15)).ok() {
@@ -870,6 +1016,11 @@ pub(crate) fn open_in_terminal(name: &str, script: &str) -> Result<(), String> {
     } else {
         Err("Je n'ai pas pu ouvrir le Terminal.".into())
     }
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn open_in_terminal(name: &str, script: &str) -> Result<(), String> {
+    sys::open_terminal_window(&terminal_file(&format!("{name}.sh"), script.as_bytes(), 0o700)?)
 }
 
 #[cfg(windows)]
@@ -932,15 +1083,24 @@ pub fn open_vault() -> Result<(), String> {
 
 /// Obsidian's vault list could not be updated: open Obsidian anyway and say how to
 /// pick the folder by hand.
+#[cfg(not(target_os = "linux"))]
 fn unregistered(app: &Path, vault: &str) -> Result<(), String> {
     open_obsidian(app, None)?;
-    let folder = if cfg!(windows) { format!("le dossier {vault}") } else { "Documents > Brain".into() };
-    Err(format!(
-        "Je n'ai pas pu ajouter ton cerveau à Obsidian. Dans Obsidian, choisis « Ouvrir un dossier comme coffre », puis {folder}."
-    ))
+    Err(unregistered_message(vault))
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+fn unregistered(app: &detect::Obsidian, vault: &str) -> Result<(), String> {
+    open_obsidian(app, None)?;
+    Err(unregistered_message(vault))
+}
+
+fn unregistered_message(vault: &str) -> String {
+    let folder = if cfg!(windows) { format!("le dossier {vault}") } else { "Documents > Brain".into() };
+    format!("Je n'ai pas pu ajouter ton cerveau à Obsidian. Dans Obsidian, choisis « Ouvrir un dossier comme coffre », puis {folder}.")
+}
+
+#[cfg(target_os = "macos")]
 fn obsidian_program(home: &Path) -> Option<PathBuf> {
     detect::obsidian_app(home)
 }
@@ -950,9 +1110,25 @@ fn obsidian_program(home: &Path) -> Option<PathBuf> {
     detect::obsidian_exe(home)
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+fn obsidian_program(home: &Path) -> Option<detect::Obsidian> {
+    detect::obsidian_install(home)
+}
+
+#[cfg(target_os = "macos")]
 fn obsidian_config(home: &Path) -> PathBuf {
     home.join("Library/Application Support/obsidian/obsidian.json")
+}
+
+/// Electron's folder for Obsidian: ~/.config, or the sandbox's own for a snap or a Flatpak.
+#[cfg(target_os = "linux")]
+fn obsidian_config(home: &Path) -> PathBuf {
+    let config = match detect::obsidian_install(home).map(|o| o.kind) {
+        Some(detect::ObsidianKind::Snap) => home.join("snap/obsidian/current/.config"),
+        Some(detect::ObsidianKind::Flatpak) => home.join(".var/app/md.obsidian.Obsidian/config"),
+        _ => std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).filter(|p| p.is_absolute()).unwrap_or_else(|| home.join(".config")),
+    };
+    config.join("obsidian").join("obsidian.json")
 }
 
 #[cfg(windows)]
@@ -961,9 +1137,14 @@ fn obsidian_config(home: &Path) -> PathBuf {
     roaming.join("obsidian").join("obsidian.json")
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 fn obsidian_running() -> bool {
     sys::run(Path::new("/usr/bin/pgrep"), &["-x", "Obsidian"], Duration::from_secs(5)).ok()
+}
+
+#[cfg(target_os = "linux")]
+fn obsidian_running() -> bool {
+    sys::find_tool("pgrep").is_some_and(|pgrep| sys::run(&pgrep, &["-x", "obsidian"], Duration::from_secs(5)).ok())
 }
 
 #[cfg(windows)]
@@ -974,7 +1155,7 @@ fn obsidian_running() -> bool {
 
 /// By the bundle's path, not its name nor the obsidian:// scheme: a copy made a
 /// minute ago may not be known to macOS (Launch Services) yet.
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
 fn open_obsidian(app: &Path, uri: Option<&str>) -> Result<(), String> {
     let app = app.to_string_lossy();
     let mut args = vec!["-a", app.as_ref()];
@@ -991,6 +1172,14 @@ fn open_obsidian(app: &Path, uri: Option<&str>) -> Result<(), String> {
 fn open_obsidian(app: &Path, uri: Option<&str>) -> Result<(), String> {
     let args: Vec<&str> = uri.into_iter().collect();
     sys::spawn_detached(app, &args).map_err(|_| "Je n'ai pas pu ouvrir Obsidian.".to_string())
+}
+
+/// The program as its desktop entry starts it, the link as its argument (Electron hands it to
+/// a running Obsidian).
+#[cfg(target_os = "linux")]
+fn open_obsidian(app: &detect::Obsidian, uri: Option<&str>) -> Result<(), String> {
+    let args: Vec<&str> = app.args.iter().map(String::as_str).chain(uri).collect();
+    sys::spawn_detached(&app.program, &args).map_err(|_| "Je n'ai pas pu ouvrir Obsidian.".to_string())
 }
 
 #[derive(Debug, PartialEq)]
@@ -1024,7 +1213,7 @@ fn add_vault(existing: Option<&str>, vault: &str, id: &str, ts: u64) -> VaultLis
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(unix)]
 fn same_folder(a: &str, b: &str) -> bool {
     a.trim_end_matches('/') == b.trim_end_matches('/')
 }
@@ -1309,7 +1498,17 @@ mod tests {
         assert_eq!(add_vault(Some(r#"{"vaults":{"id":{"path":"/other"}}}"#), "/b", "id", 1), VaultList::Unreadable);
     }
 
-    #[cfg(not(windows))]
+    /// Apple's installer still writes the tools when git is already there (a GitHub VM showed
+    /// install.sh started 20 s before Apple's window said it was over).
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn apple_tools_are_done_when_apples_window_is() {
+        assert!(clt_settled(false, Duration::ZERO));
+        assert!(!clt_settled(true, Duration::from_secs(30)));
+        assert!(clt_settled(true, CLT_SETTLE));
+    }
+
+    #[cfg(target_os = "macos")]
     #[test]
     fn team_id_comes_from_codesign_output() {
         let dv = "Executable=/Applications/Obsidian.app/Contents/MacOS/Obsidian\nIdentifier=md.obsidian\n\
@@ -1384,7 +1583,7 @@ mod tests {
         perms::set_mode(&p, 0o600).unwrap();
     }
 
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
     #[test]
     fn disk_image_is_detached_even_on_failure() {
         let dir = tempfile::tempdir().unwrap();
@@ -1409,7 +1608,7 @@ mod tests {
         assert!(Mount::attach(&dir.path().join("missing.dmg"), &dir.path().join("mnt2")).is_err());
     }
 
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
     #[test]
     fn apps_signed_by_someone_else_are_refused() {
         assert!(signed_by_obsidian(Path::new("/System/Applications/Calculator.app")).is_err());
@@ -1476,10 +1675,17 @@ mod tests {
             fs::write(repo.join(INSTALLER), "echo hi\n").unwrap();
         }
         let zip = root.join(format!("biab-{with_installer}.zip"));
-        #[cfg(not(windows))]
+        #[cfg(target_os = "macos")]
         let o = sys::run(
             Path::new("/usr/bin/ditto"),
             &["-c", "-k", "--keepParent", &repo.to_string_lossy(), &zip.to_string_lossy()],
+            Duration::from_secs(30),
+        );
+        // Linux: Python's zipfile, which every machine running these tests has.
+        #[cfg(target_os = "linux")]
+        let o = sys::run(
+            Path::new("/usr/bin/python3"),
+            &["-I", "-m", "zipfile", "-c", &zip.to_string_lossy(), &repo.to_string_lossy()],
             Duration::from_secs(30),
         );
         #[cfg(windows)]
@@ -1621,7 +1827,7 @@ mod tests {
     }
 
     /// Real download (233 MB) into a temp folder: `cargo test -- --ignored obsidian_real`.
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
     #[test]
     #[ignore]
     fn obsidian_real_download_lands_signed() {
@@ -1631,6 +1837,38 @@ mod tests {
         assert!(signed_by_obsidian(&app).is_ok());
         let leftovers: Vec<_> = fs::read_dir(apps.path()).unwrap().filter_map(Result::ok).map(|e| e.file_name()).collect();
         assert_eq!(leftovers, vec![std::ffi::OsString::from("Obsidian.app")], "no staging folder left");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn lists_read_as_french() {
+        let l = |v: &[&str]| list_fr(&v.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+        assert_eq!((l(&[]), l(&["git"]), l(&["git", "curl"]), l(&["git", "curl", "unzip"])), (
+            String::new(),
+            "git".into(),
+            "git et curl".into(),
+            "git, curl et unzip".into()
+        ));
+    }
+
+    /// Obsidian's package, as install.sh pins it: the same URL, the same SHA-256.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn obsidian_is_the_package_install_sh_pins() {
+        let script = include_str!("../../../install.sh");
+        let value = |key: &str| script.lines().find_map(|l| l.strip_prefix(&format!("{key}="))).unwrap().trim_matches('"').to_string();
+        let version = value("OBSIDIAN_VERSION");
+        assert_eq!(value("OBSIDIAN_DEB_SHA256"), OBSIDIAN_DEB_SHA256);
+        let url = value("OBSIDIAN_DEB_URL").replace("$OBSIDIAN_VERSION", &version).replace("${OBSIDIAN_VERSION}", &version);
+        assert_eq!(url, OBSIDIAN_DEB_URL);
+    }
+
+    /// The Bun the app installs is the one gbrain is tested with, which install.sh installs.
+    #[cfg(not(windows))]
+    #[test]
+    fn bun_is_the_one_gbrain_pin_json_names() {
+        let pin: Value = serde_json::from_str(include_str!("../../../engine/gbrain-pin.json")).unwrap();
+        assert_eq!(BUN_PIN, format!("bun-v{}", pin["bun"].as_str().unwrap()));
     }
 
     #[cfg(windows)]

@@ -6,7 +6,8 @@
 set -u
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-H="$(mktemp -d -t biab-hooktest)"
+TMP0="${TMPDIR:-/tmp}"
+H="$(mktemp -d "${TMP0%/}/biab-hooktest.XXXXXX")"   # GNU mktemp wants the XXXXXX; macOS's TMPDIR ends with a /
 export TMPDIR="$H/tmp"             # isolate hook locks (tempfile.gettempdir()) in the throwaway HOME
 DAY=$(date +%Y-%m-%d)
 SID="biabtest$(date +%s)"          # unique per run → no stale-lock collisions
@@ -170,7 +171,7 @@ answer() { printf '%s' "$1" > "$FK/answer.json"; }
 scenario() { echo "$1" > "$FK/scenario"; }
 calls() { local n; n=$(grep -c . "$FK/calls" 2>/dev/null); rm -f "$FK/calls"; echo "${n:-0}"; }
 cause() { python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['last_error'] or '')" "$ST" 2>/dev/null; }
-sha() { shasum -a 256 "$1" | cut -d' ' -f1; }
+sha() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1; }
 stamp() { python3 -c "from datetime import datetime,timedelta; print((datetime.now().astimezone().replace(hour=12,minute=0,second=0,microsecond=0)-timedelta(days=$1)).isoformat())"; }
 T0=$(stamp 0); T1=$(stamp 1)
 HOME="$H" git config --global user.email builder@example.com
@@ -410,8 +411,10 @@ echo "════ 9) gbrain-nightly — night check, then commit; waits for the
 # through ~/.bun/bin, which comes first on the nightly's PATH: a dead resolver is
 # faked without waiting 5 min, no real DNS is needed, and the check (controle.py,
 # tested in engine/tests) only records how it was called and exits with $3.
+# Under each shell that starts it: zsh (launchd, macOS), bash (systemd and cron, Linux).
+NIGHT_SHELLS="bash"; command -v zsh >/dev/null 2>&1 && NIGHT_SHELLS="zsh bash"
 nightly_run() {   # $1 = probe exit code (0 = network up), $2 = vault remote ("" = a local bare repo), $3 = check's exit code
-  NH="$(mktemp -d -t biab-nightly)"
+  NH="$(mktemp -d "${TMPDIR:-/tmp}/biab-nightly.XXXXXX")"
   mkdir -p "$NH/.bun/bin" "$NH/.gbrain" "$NH/nightly" "$NH/Documents/Brain"
   printf '#!/bin/sh\necho "gbrain $1" >> "$HOME/gbrain-calls"\n[ -z "$CLAUDE_CODE_OAUTH_TOKEN" ] || echo "gbrain $1" >> "$HOME/gbrain-saw-token"\nexit 0\n' > "$NH/.bun/bin/gbrain"
   printf '#!/bin/sh\nexit 0\n' > "$NH/.bun/bin/sleep"
@@ -424,32 +427,34 @@ nightly_run() {   # $1 = probe exit code (0 = network up), $2 = vault remote (""
   git -C "$NH/Documents/Brain" init -q
   git -C "$NH/Documents/Brain" remote add origin "${2:-$NH/remote.git}"
   echo note > "$NH/Documents/Brain/a.md"
-  CLAUDE_CODE_OAUTH_TOKEN=canari-claude-token HOME="$NH" zsh "$NH/nightly/gbrain-nightly.sh" 2>/dev/null
+  CLAUDE_CODE_OAUTH_TOKEN=canari-claude-token HOME="$NH" "$NSH" "$NH/nightly/gbrain-nightly.sh" 2>/dev/null
   NLOG="$NH/.gbrain/nightly.log"
 }
+first(){ grep -n -m1 -- "$1" "$NLOG" | cut -d: -f1; }
+for NSH in $NIGHT_SHELLS; do
 nightly_run 0 ""
 grep -q "vault pushed to origin (attempt 1)" "$NLOG" && git --git-dir="$NH/remote.git" rev-parse -q --verify HEAD >/dev/null \
-  && ok "network up: vault committed and pushed" || no "network up: vault not pushed"
-first(){ grep -n -m1 -- "$1" "$NLOG" | cut -d: -f1; }
+  && ok "$NSH: network up: vault committed and pushed" || no "$NSH: network up: vault not pushed"
 [ "$(cat "$NH/controle.calls" 2>/dev/null)" = "-I $(cd "$NH/nightly" && pwd -P)/controle.py nuit --brain $NH/Documents/Brain" ] \
   && [ -n "$(first '^\[controle\] exit 0$')" ] && [ "$(first '^\[controle\] exit')" -lt "$(first 'vault pushed')" ] \
-  && ok "night check: python -I controle.py nuit on the vault, '[controle] exit 0' logged before the push" || no "night check not run as expected: $(cat "$NH/controle.calls" 2>/dev/null)"
+  && ok "$NSH: night check: python -I controle.py nuit on the vault, '[controle] exit 0' logged before the push" || no "$NSH: night check not run as expected: $(cat "$NH/controle.calls" 2>/dev/null)"
 grep -q "gbrain embed" "$NH/gbrain-calls" 2>/dev/null && [ ! -f "$NH/gbrain-saw-token" ] \
-  && ok "nightly: gbrain never gets a CLAUDE_CODE_OAUTH_TOKEN the job was started with" || no "nightly: gbrain got the Claude token ($(tr '\n' ' ' < "$NH/gbrain-saw-token"))"
+  && ok "$NSH: nightly: gbrain never gets a CLAUDE_CODE_OAUTH_TOKEN the job was started with" || no "$NSH: nightly: gbrain got the Claude token ($(tr '\n' ' ' < "$NH/gbrain-saw-token"))"
 rm -rf "$NH"
 nightly_run 0 "" 1
 grep -q '^\[controle\] exit 1$' "$NLOG" && [ -z "$(git -C "$NH/Documents/Brain" status --porcelain)" ] \
   && grep -q "vault pushed to origin (attempt 1)" "$NLOG" && git --git-dir="$NH/remote.git" rev-parse -q --verify HEAD >/dev/null \
-  && ok "night check crashed (exit 1): the vault is still committed and pushed" || no "a crashed night check stopped the commit or the push"
+  && ok "$NSH: night check crashed (exit 1): the vault is still committed and pushed" || no "$NSH: a crashed night check stopped the commit or the push"
 rm -rf "$NH"
 nightly_run 1 ""
 grep -q "still unresolvable" "$NLOG" && grep -q "push SKIPPED — no network" "$NLOG" \
-  && ok "no network: waits, then says why the push was skipped" || no "no network: cause not logged"
+  && ok "$NSH: no network: waits, then says why the push was skipped" || no "$NSH: no network: cause not logged"
 rm -rf "$NH"
 nightly_run 0 "/nonexistent/remote.git"
 [ "$(grep -c '^fatal:' "$NLOG")" -ge 3 ] && grep -q "push FAILED after 3 attempts" "$NLOG" \
-  && ok "push error: retried 3 times, then reported" || no "push error: not retried or not reported"
+  && ok "$NSH: push error: retried 3 times, then reported" || no "$NSH: push error: not retried or not reported"
 rm -rf "$NH"
+done
 
 echo "════ 9bis) gbrain-sync-vault.py — the vault's source, read from gbrain sources list ════"
 # A stub gbrain: `sources list --json` prints $HOME/sources.json (no file: it fails),
@@ -532,7 +537,7 @@ printf '#!/bin/sh\nexit 0\n' > "$T/.bun/bin/sleep"; printf '#!/bin/sh\nexit 0\n'
 cp "$REPO/engine/nightly/gbrain-nightly.sh" "$REPO/engine/nightly/gbrain-sync-vault.py" "$T/nightly/"
 chmod +x "$T/.bun/bin/sleep" "$T/nightly/"*
 ( cd "$V" && git init -q && echo note > a.md )
-HOME="$T" zsh "$T/nightly/gbrain-nightly.sh" 2>/dev/null
+HOME="$T" bash "$T/nightly/gbrain-nightly.sh" 2>/dev/null   # zsh: section 9
 [ -z "$(git -C "$V" status --porcelain)" ] && called "sources add vault --path $V --federated" \
   && called "sync --source vault --no-pull --no-embed" && called "delete a --source-id default --force" \
   && grep -q "^\[vault\] vault registered" "$T/.gbrain/nightly.log" \
@@ -550,12 +555,12 @@ case "$1" in
 esac
 STUB
 chmod +x "$GQ/.bun/bin/gbrain"
-HOME="$GQ" GBQ_STUB_RC=3 zsh "$REPO/engine/bin/gbq" sync >/dev/null 2>&1; rc=$?
+HOME="$GQ" GBQ_STUB_RC=3 bash "$REPO/engine/bin/gbq" sync >/dev/null 2>&1; rc=$?
 [ "$rc" = 3 ] && ok "gbq: a write returns gbrain's exit code" || no "gbq: write returned $rc, want 3"
-t0=$(date +%s); out=$(HOME="$GQ" zsh "$REPO/engine/bin/gbq" query pricing 2>&1); rc=$?; took=$(( $(date +%s) - t0 ))
+t0=$(date +%s); out=$(HOME="$GQ" bash "$REPO/engine/bin/gbq" query pricing 2>&1); rc=$?; took=$(( $(date +%s) - t0 ))
 [ "$rc" = 0 ] && echo "$out" | grep -q "hit: pricing.md" && [ "$took" -lt 15 ] \
   && ok "gbq: a read that never exits is cut once its output settles (${took}s)" || no "gbq: hung read not handled (rc=$rc, ${took}s)"
-HOME="$GQ" GBQ_STUB_RC=2 zsh "$REPO/engine/bin/gbq" query pricing >/dev/null 2>&1; rc=$?
+HOME="$GQ" GBQ_STUB_RC=2 bash "$REPO/engine/bin/gbq" query pricing >/dev/null 2>&1; rc=$?
 [ "$rc" = 2 ] && ok "gbq: a read that fails on its own reports the failure" || no "gbq: failing read returned $rc, want 2"
 # The real gbrain is a script run by `#!/usr/bin/env bun`: a shell opened before Bun was installed
 # (or Claude Code started then) has no ~/.bun/bin on its PATH, and gbq used to fail with 127.
@@ -563,7 +568,7 @@ GB="$H/gbq-bun-home"; mkdir -p "$GB/.bun/bin" "$GB/.gbrain"
 printf '#!/bin/sh\necho "bun ran $(basename "$1") $2"\n' > "$GB/.bun/bin/bun"
 printf '#!/usr/bin/env bun\n' > "$GB/.bun/bin/gbrain"
 chmod +x "$GB/.bun/bin/bun" "$GB/.bun/bin/gbrain"
-out=$(HOME="$GB" PATH="/usr/bin:/bin" zsh "$REPO/engine/bin/gbq" sync 2>&1); rc=$?
+out=$(HOME="$GB" PATH="/usr/bin:/bin" bash "$REPO/engine/bin/gbq" sync 2>&1); rc=$?
 [ "$rc" = 0 ] && echo "$out" | grep -q "bun ran gbrain sync" \
   && ok "gbq: finds Bun without ~/.bun/bin on the PATH (a terminal opened before the install)" \
   || no "gbq: without ~/.bun/bin on the PATH: rc=$rc, $out"
@@ -837,8 +842,177 @@ out=$( (set -euo pipefail; unset VOYAGE VOYAGE_STORED; logged sh -c 'echo hi; ex
 [ "$out" = "caught 3" ] && ok "log: under set -euo pipefail, with no key known, a failing tool is caught by ||" || no "log: logged broke under install.sh's shell options: $out"
 grep -n 'VOYAGE' "$REPO/install.sh" | grep -v 'env -u VOYAGE_API_KEY' | grep -E 'logged|"\$GBQ_BIN"|git clone|bun (install|link)' \
   && no "log: the Voyage key is passed to a logged command" || ok "log: no logged command receives the Voyage key"
-grep -v '^[[:space:]]*#' "$REPO/install.sh" | grep -E 'bun (install|link)|bun\.sh/install|\./setup|brew install' | grep -v 'env -u VOYAGE_API_KEY' \
-  && no "log: code that is not gbrain inherits VOYAGE_API_KEY" || ok "log: bun, gstack's setup and brew run without VOYAGE_API_KEY"
+grep -v '^[[:space:]]*#' "$REPO/install.sh" | grep -E 'bun (install|link)|bun\.sh/install|\./setup|brew install|claude\.ai/install' | grep -v 'env -u VOYAGE_API_KEY' \
+  && no "log: code that is not gbrain inherits VOYAGE_API_KEY" || ok "log: bun, gstack's setup, brew and Claude Code's installer run without VOYAGE_API_KEY"
+
+echo "════ 15) install.sh on Linux: prerequisites, systemd --user or cron, Claude Code, Obsidian ════"
+# The Linux part of install.sh, against stand-ins for systemctl, loginctl, crontab, apt-get, sudo,
+# dpkg and curl that record their calls: it runs on a Mac too. With no terminal (stdin is
+# /dev/null), nothing ever runs as root and nothing is downloaded but what the step is about.
+LX="$H/linux-test"; LB="$LX/bin"; LH="$LX/home"
+mkdir -p "$LB" "$LX/os" "$LX/linger" "$LH"
+eval "$(sed -n '/^# >>> linux$/,/^# <<< linux$/p' "$REPO/install.sh")"
+cat > "$LB/systemctl" <<STUB
+#!/bin/sh
+echo "systemctl \$*" >> "$LX/calls"
+case "\$*" in "--user show-environment") [ -e "$LX/systemd-up" ];; esac
+STUB
+cat > "$LB/loginctl" <<STUB
+#!/bin/sh
+echo "loginctl \$*" >> "$LX/calls"
+case "\$*" in *enable-linger*) for u; do :; done; touch "$LX/linger/\$u";; esac
+exit 0
+STUB
+cat > "$LB/crontab" <<STUB
+#!/bin/sh
+if [ "\$1" = -l ]; then
+  [ -n "\$CRONTAB_BROKEN" ] && { echo "crontabs/tester: Permission denied" >&2; exit 1; }
+  [ -f "$LX/crontab" ] && { cat "$LX/crontab"; exit 0; }
+  echo "no crontab for tester" >&2; exit 1
+fi
+echo "crontab install" >> "$LX/calls"; cp "\$1" "$LX/crontab"
+STUB
+cat > "$LB/sudo" <<STUB
+#!/bin/sh
+echo "sudo \$*" >> "$LX/calls"; exec "\$@"
+STUB
+cat > "$LB/apt-get" <<STUB
+#!/bin/sh
+echo "apt-get \$*" >> "$LX/calls"
+case " \$* " in *" install "*) ;; *) exit 0;; esac
+for p in "\$@"; do case "\$p" in curl|unzip) /bin/ln -sf /bin/echo "$LX/min/\$p";; procps) /bin/ln -sf /bin/echo "$LX/min/pgrep";; esac; done
+STUB
+printf '#!/bin/sh\necho "${DPKG_ARCH:-amd64}"\n' > "$LB/dpkg"
+cat > "$LB/curl" <<STUB
+#!/bin/sh
+echo "curl \$*" >> "$LX/calls"
+case "\$*" in
+  *claude.ai/install.sh*) printf 'mkdir -p "\$HOME/.local/bin"; printf "#!/bin/sh\\\\n" > "\$HOME/.local/bin/claude"; chmod +x "\$HOME/.local/bin/claude"; env > "$LX/claude-installer-env"\\n';;
+  *) while [ \$# -gt 0 ]; do [ "\$1" = -o ] && printf 'not obsidian\\n' > "\$2"; shift; done;;
+esac
+STUB
+printf '#!/bin/sh\nexit 0\n' > "$LB/pgrep"
+chmod +x "$LB"/*
+printf 'ID=ubuntu\nID_LIKE=debian\n' > "$LX/os/ubuntu"; printf 'ID=fedora\n' > "$LX/os/fedora"; echo cert > "$LX/os/ca.crt"
+SUDO="sudo "; [ "$(id -u)" = 0 ] && SUDO=""
+# The system's own tools only: no claude, obsidian or flatpak this machine may have.
+mkdir -p "$LX/sys"
+for t in bash sh env mkdir chmod cat cp rm mv date tail sed grep mktemp touch ln dirname basename id python3 git cut tr \
+         uname sleep ls wc cmp shasum sha256sum; do
+  w=$(command -v "$t") && ln -sf "$w" "$LX/sys/$t"
+done
+# lx <function> [args]: one of install.sh's Linux functions, in a home of its own, stdin not a terminal.
+lx(){ ( H="$LH" HOME="$LH" U=tester OS_RELEASE="${OSR:-$LX/os/ubuntu}" SYSTEMD_DIR="$LX/run/systemd/system" \
+        RUNTIME_ROOT="$LX/run/user" LINGER_DIR="$LX/linger" CA_BUNDLE="$LX/os/ca.crt" OBSIDIAN_BINS="$LX/none" \
+        UNITS="$LH/.config/systemd/user" MANIFEST="$LX/installed.json" PENDING="$LX/pending" BACKUP="$LX/backup" \
+        BACKED_UP=0 KEPT="" LOG="$LX/install.log" XDG_RUNTIME_DIR="" PATH="${LPATH:-$LB:$LX/sys}"
+        export VOYAGE_API_KEY=canari-voyage
+        ok(){ echo "OK $*"; }; warn(){ echo "WARN $*"; }; die(){ echo "DIED $*"; exit 1; }
+        [ -z "${YES:-}" ] || ask(){ echo "ASKED $*"; return 0; }
+        "$@"; echo "SCHEDULER=${SCHEDULER:-}" ) < /dev/null 2>&1; }
+lxcalls(){ cat "$LX/calls" 2>/dev/null; rm -f "$LX/calls"; }
+
+# Prerequisites. A PATH with python3 and git only: curl, pgrep and unzip are missing.
+mkdir -p "$LX/min"
+for t in python3 git id env sh cat cut tr; do ln -sf "$(command -v "$t")" "$LX/min/$t"; done
+ln -sf "$LB/apt-get" "$LX/min/apt-get"; ln -sf "$LB/sudo" "$LX/min/sudo"
+# apt waits for another apt (unattended-upgrades holds dpkg's lock after a first start) instead of failing.
+WANT_APT="${SUDO}apt-get update && ${SUDO}apt-get -o DPkg::Lock::Timeout=600 install -y curl procps unzip"
+out=$(LPATH="$LX/min" lx linux_prereqs)
+echo "$out" | grep -qF "DIED Install them with: $WANT_APT   then re-run ./install.sh" && [ -z "$(lxcalls)" ] \
+  && ok "linux: a missing prerequisite without a terminal: the exact apt-get line, nothing run as root" || no "linux: missing prerequisites mishandled: $out"
+out=$(LPATH="$LX/min" YES=1 lx linux_prereqs); c=$(lxcalls)
+echo "$out" | grep -qF "ASKED Install them now? This runs: $WANT_APT" && ! echo "$out" | grep -q DIED \
+  && [ "$(echo "$c" | grep '^apt-get')" = "$(printf 'apt-get update\napt-get -o DPkg::Lock::Timeout=600 install -y curl procps unzip')" ] \
+  && ok "linux: after a yes, apt-get installs exactly what is missing, then the install goes on" || no "linux: yes path wrong: $out | $c"
+rm -f "$LX/min/curl" "$LX/min/pgrep" "$LX/min/unzip"
+out=$(OSR="$LX/os/fedora" LPATH="$LX/min" YES=1 lx linux_prereqs)
+echo "$out" | grep -q "DIED missing: curl procps unzip. Install them with your distribution's package manager" && [ -z "$(lxcalls)" ] \
+  && ok "linux: not Debian or Ubuntu: what is missing, and no apt-get" || no "linux: other distribution mishandled: $out"
+mkdir -p "$LX/root"; printf '#!/bin/sh\necho 0\n' > "$LX/root/id"; chmod +x "$LX/root/id"
+out=$( (export SUDO_USER=tester; LPATH="$LX/root:$LX/min" YES=1 lx linux_prereqs) )
+echo "$out" | grep -q "DIED Run ./install.sh without sudo" && [ -z "$(lxcalls)" ] \
+  && ok "linux: run with sudo: refused (it would install in root's home)" || no "linux: sudo run not refused: $out"
+
+# The scheduler. cron first (no systemd for this user), over a crontab the user already has.
+printf 'MAILTO=me@example.org\n0 9 * * * echo mine\n' > "$LX/crontab"; cp "$LX/crontab" "$LX/crontab.user"
+out=$(lx linux_schedule); c=$(lxcalls)
+python3 - "$LX/crontab" "$LX/crontab.user" <<'PY' && echo "$out" | grep -q "SCHEDULER=cron" && echo "$c" | grep -q "crontab install" \
+  && ok "linux cron: the user's lines kept, the kit's block added once (nightly, reflection, lint)" || no "linux cron: block not added as expected: $out"
+import sys
+tab, user = open(sys.argv[1]).read(), open(sys.argv[2]).read()
+assert tab.startswith(user) and tab.count("# >>> brain-in-a-box") == 1 and tab.count("# <<< brain-in-a-box") == 1
+assert '0 4 * * * /bin/bash "$HOME/.claude/hooks/brain/gbrain-nightly.sh"' in tab
+assert '0 12,23 * * * /usr/bin/env python3 "$HOME/.claude/hooks/brain/daily-reflection.py"' in tab
+assert '0 8 * * 1 /bin/bash "$HOME/.claude/hooks/brain/gbrain-lint.sh"' in tab
+PY
+cp "$LX/crontab" "$LX/crontab.1"; out=$(lx linux_schedule); c=$(lxcalls)
+cmp -s "$LX/crontab" "$LX/crontab.1" && ! echo "$c" | grep -q "crontab install" && echo "$out" | grep -q "(unchanged)" \
+  && ok "linux cron: a second run writes nothing" || no "linux cron: second run rewrote the crontab: $c"
+out=$(CRONTAB_BROKEN=1 lx linux_schedule); c=$(lxcalls)
+cmp -s "$LX/crontab" "$LX/crontab.1" && ! echo "$c" | grep -q "crontab install" && echo "$out" | grep -q "WARN crontab -l failed" \
+  && ok "linux cron: a crontab that cannot be read is left as it is" || no "linux cron: unreadable crontab overwritten: $out"
+mkdir -p "$LX/run/systemd/system"; out=$(lx linux_schedule); lxcalls >/dev/null
+echo "$out" | grep -qF "no session): ${SUDO}loginctl enable-linger tester, then re-run ./install.sh" \
+  && ok "linux cron: systemd runs the machine but not for the user here: the lingering command, to move to timers" || no "linux cron: no lingering hint: $out"
+# systemd answers now (a desktop session): timers on, the cron block gone, no lingering without a yes.
+touch "$LX/systemd-up"; mkdir -p "$LX/run/systemd/system"
+out=$(lx linux_schedule); c=$(lxcalls); U_DIR="$LH/.config/systemd/user"; bad=""
+for t in gbrain-nightly brain-reflection gbrain-lint; do
+  for k in service timer; do
+    cmp -s "$REPO/engine/nightly/systemd/$t.$k" "$U_DIR/$t.$k" && [ "$(mode "$U_DIR/$t.$k")" = 644 ] || bad="$bad $t.$k"
+  done
+  echo "$c" | grep -qx "systemctl --user enable $t.timer" && echo "$c" | grep -qx "systemctl --user restart $t.timer" || bad="$bad enable:$t"
+done
+grep -qx "Persistent=true" "$U_DIR/gbrain-nightly.timer" || bad="$bad persistent"
+[ -z "$bad" ] && echo "$c" | grep -qx "systemctl --user daemon-reload" && echo "$out" | grep -q "SCHEDULER=systemd" \
+  && ok "linux systemd: 3 services + 3 timers placed (644), daemon-reload, enabled and restarted" || no "linux systemd: wrong:$bad $out"
+cmp -s "$LX/crontab" "$LX/crontab.user" && ! echo "$c" | grep -q "enable-linger" && echo "$out" | grep -q "loginctl enable-linger tester" \
+  && ok "linux systemd: the cron block of a run without systemd removed, the user's lines kept; lingering only said" \
+  || no "linux systemd: cron block left, user lines lost, or linger turned on without a yes: $c"
+out=$(YES=1 lx linux_schedule); c=$(lxcalls)
+echo "$c" | grep -qx "loginctl --no-ask-password enable-linger tester" && echo "$out" | grep -q "OK lingering is on" \
+  && ok "linux systemd: lingering turned on after a yes" || no "linux systemd: linger yes path: $out"
+# systemd for this user does not answer from here, but its timers are on: cron stays out of it.
+rm -f "$LX/systemd-up" "$LX/linger/tester"; mkdir -p "$U_DIR/timers.target.wants"; ln -sf ../gbrain-nightly.timer "$U_DIR/timers.target.wants/gbrain-nightly.timer"
+out=$(lx linux_schedule); c=$(lxcalls)
+cmp -s "$LX/crontab" "$LX/crontab.user" && ! echo "$c" | grep -q "crontab install" && echo "$out" | grep -q "cron is left alone" \
+  && ok "linux: timers on but systemd unreachable from here: no cron block, nothing runs twice" || no "linux: cron added beside the timers: $out"
+# A block the user changed (another hour) is kept, the new one waits in pending/.
+rm -rf "$U_DIR/timers.target.wants"; lx linux_schedule >/dev/null; lxcalls >/dev/null
+python3 -c 'import sys; p = sys.argv[1]; t = open(p).read().replace("0 4 * * *", "30 5 * * *"); open(p, "w").write(t)' "$LX/crontab"
+cp "$LX/crontab" "$LX/crontab.mine"; out=$(lx linux_schedule); c=$(lxcalls)
+cmp -s "$LX/crontab" "$LX/crontab.mine" && grep -q '^0 4 \* \* \* /bin/bash' "$LX/pending/crontab" && echo "$out" | grep -q "WARN crontab: the brain-in-a-box lines were changed" \
+  && ok "linux cron: a block the user changed is kept, the new one in pending/crontab" || no "linux cron: user's block overwritten: $out"
+
+# Moving to systemd while the user had changed the kit's cron lines: kept, and the risk said.
+touch "$LX/systemd-up"; out=$(lx linux_schedule); lxcalls >/dev/null; rm -f "$LX/systemd-up"
+cmp -s "$LX/crontab" "$LX/crontab.mine" && echo "$out" | grep -q "each job would run twice: remove them (crontab -e)" \
+  && ok "linux systemd: cron lines the user changed stay, and the double run is said" || no "linux systemd: changed cron lines mishandled: $out"
+rm -rf "$LH/.config/systemd/user/timers.target.wants"
+# Claude Code: Anthropic's installer, for the user, without the Voyage key.
+out=$(lx linux_claude); c=$(lxcalls)
+echo "$c" | grep -q "curl -fsSL https://claude.ai/install.sh" && [ -x "$LH/.local/bin/claude" ] && echo "$out" | grep -q "OK Claude Code installed" \
+  && grep -qx "HOME=$LH" "$LX/claude-installer-env" && ! grep -q canari-voyage "$LX/claude-installer-env" && ! echo "$c" | grep -q sudo \
+  && ok "linux: Claude Code from Anthropic's installer, in the home folder, without VOYAGE_API_KEY or sudo" || no "linux: Claude Code step wrong: $out | $c"
+out=$(lx linux_claude); [ -z "$(lxcalls)" ] && echo "$out" | grep -q "already installed" \
+  && ok "linux: Claude Code already there: nothing downloaded" || no "linux: Claude Code reinstalled: $out"
+
+# Obsidian: without a terminal, the one line to paste; after a yes, a download that does not match
+# the pinned SHA-256 is never installed; on arm64 (no .deb) or another distribution, where to get it.
+out=$(lx linux_obsidian); c=$(lxcalls)
+line="d=\$(mktemp -d) && curl -fL -o \"\$d/obsidian.deb\" https://github.com/obsidianmd/obsidian-releases/releases/download/v1.14.4/obsidian_1.14.4_amd64.deb && echo \"85b10dcba6edfc1c0460a6d18260cf31c30447a444bd858a6440b9c9c8806d25  \$d/obsidian.deb\" | sha256sum -c - && ${SUDO}apt-get install -y \"\$d/obsidian.deb\""
+echo "$out" | grep -qxF "      $line" && [ -z "$c" ] \
+  && ok "linux Obsidian: no terminal: the official .deb's line (pinned, checked), nothing run" || no "linux Obsidian: no-terminal path: $out | $c"
+out=$(YES=1 lx linux_obsidian); c=$(lxcalls)
+echo "$out" | grep -q "does not match the pinned SHA-256" && echo "$c" | grep -q "^curl -fL" && ! echo "$c" | grep -qE "apt-get|sudo" \
+  && ok "linux Obsidian: a download that is not the pinned one is never installed" || no "linux Obsidian: checksum not enforced: $out | $c"
+out=$(DPKG_ARCH=arm64 YES=1 lx linux_obsidian); c=$(lxcalls)
+echo "$out" | grep -q "flatpak install --user flathub md.obsidian.Obsidian" && [ -z "$c" ] \
+  && ok "linux Obsidian: arm64 (no official .deb): where to get it, nothing run" || no "linux Obsidian: arm64 path: $out | $c"
+mkdir -p "$LH/Applications"; : > "$LH/Applications/Obsidian-1.14.4.AppImage"
+out=$(YES=1 lx linux_obsidian); [ -z "$(lxcalls)" ] && echo "$out" | grep -q "OK Obsidian already installed" \
+  && ok "linux Obsidian: an AppImage in ~/Applications counts as installed" || no "linux Obsidian: existing AppImage not seen: $out"
 
 echo ""
 if [ "$FAIL" -eq 0 ]; then

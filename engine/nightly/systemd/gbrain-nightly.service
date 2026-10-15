@@ -1,0 +1,11 @@
+# brain-in-a-box, Linux: the nightly maintenance (install.sh places it in ~/.config/systemd/user).
+# Started by gbrain-nightly.timer; by hand: systemctl --user start gbrain-nightly.service
+[Unit]
+Description=brain-in-a-box nightly: GBrain update, night check, vault commit and push, sync, dream
+Documentation=https://github.com/BrainInBox/brain-in-a-box
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash "%h/.claude/hooks/brain/gbrain-nightly.sh"
+StandardOutput=append:%h/.gbrain/nightly.systemd.out
+StandardError=append:%h/.gbrain/nightly.systemd.err
