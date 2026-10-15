@@ -879,7 +879,7 @@ STUB
 cat > "$LB/apt-get" <<STUB
 #!/bin/sh
 echo "apt-get \$*" >> "$LX/calls"
-[ "\$1" = install ] || exit 0
+case " \$* " in *" install "*) ;; *) exit 0;; esac
 for p in "\$@"; do case "\$p" in curl|unzip) /bin/ln -sf /bin/echo "$LX/min/\$p";; procps) /bin/ln -sf /bin/echo "$LX/min/pgrep";; esac; done
 STUB
 printf '#!/bin/sh\necho "${DPKG_ARCH:-amd64}"\n' > "$LB/dpkg"
@@ -916,13 +916,14 @@ lxcalls(){ cat "$LX/calls" 2>/dev/null; rm -f "$LX/calls"; }
 mkdir -p "$LX/min"
 for t in python3 git id env sh cat cut tr; do ln -sf "$(command -v "$t")" "$LX/min/$t"; done
 ln -sf "$LB/apt-get" "$LX/min/apt-get"; ln -sf "$LB/sudo" "$LX/min/sudo"
-WANT_APT="${SUDO}apt-get update && ${SUDO}apt-get install -y curl procps unzip"
+# apt waits for another apt (unattended-upgrades holds dpkg's lock after a first start) instead of failing.
+WANT_APT="${SUDO}apt-get update && ${SUDO}apt-get -o DPkg::Lock::Timeout=600 install -y curl procps unzip"
 out=$(LPATH="$LX/min" lx linux_prereqs)
 echo "$out" | grep -qF "DIED Install them with: $WANT_APT   then re-run ./install.sh" && [ -z "$(lxcalls)" ] \
   && ok "linux: a missing prerequisite without a terminal: the exact apt-get line, nothing run as root" || no "linux: missing prerequisites mishandled: $out"
 out=$(LPATH="$LX/min" YES=1 lx linux_prereqs); c=$(lxcalls)
 echo "$out" | grep -qF "ASKED Install them now? This runs: $WANT_APT" && ! echo "$out" | grep -q DIED \
-  && [ "$(echo "$c" | grep '^apt-get')" = "$(printf 'apt-get update\napt-get install -y curl procps unzip')" ] \
+  && [ "$(echo "$c" | grep '^apt-get')" = "$(printf 'apt-get update\napt-get -o DPkg::Lock::Timeout=600 install -y curl procps unzip')" ] \
   && ok "linux: after a yes, apt-get installs exactly what is missing, then the install goes on" || no "linux: yes path wrong: $out | $c"
 rm -f "$LX/min/curl" "$LX/min/pgrep" "$LX/min/unzip"
 out=$(OSR="$LX/os/fedora" LPATH="$LX/min" YES=1 lx linux_prereqs)

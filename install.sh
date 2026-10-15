@@ -202,7 +202,8 @@ linux_prereqs() {
     if ! debian_like; then
       die "missing: $pkgs. Install them with your distribution's package manager, then re-run ./install.sh"
     fi
-    cmd="$(as_root apt-get update) && $(as_root apt-get install -y "$pkgs")"
+    # Waits for another apt (unattended-upgrades holds dpkg's lock after a first start) instead of failing.
+    cmd="$(as_root apt-get update) && $(as_root apt-get -o DPkg::Lock::Timeout=600 install -y "$pkgs")"
     warn "missing: $pkgs"
     if ask "Install them now? This runs: $cmd"; then
       env -u VOYAGE_API_KEY sh -c "$cmd" || die "the install of $pkgs failed (see above)"
@@ -404,7 +405,7 @@ linux_obsidian() {
     rm -rf "$d"; warn "Obsidian: the download does not match the pinned SHA-256, nothing installed"; return 0
   fi
   chmod 755 "$d"; chmod 644 "$f"   # apt reads it as its own user
-  if env -u VOYAGE_API_KEY sh -c "$(as_root apt-get install -y) \"\$1\"" sh "$f"; then ok "Obsidian $OBSIDIAN_VERSION installed"; else warn "Obsidian: apt-get failed (see above)"; fi
+  if env -u VOYAGE_API_KEY sh -c "$(as_root apt-get -o DPkg::Lock::Timeout=600 install -y) \"\$1\"" sh "$f"; then ok "Obsidian $OBSIDIAN_VERSION installed"; else warn "Obsidian: apt-get failed (see above)"; fi
   rm -rf "$d"
 }
 # <<< linux
