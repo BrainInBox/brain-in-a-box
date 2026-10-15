@@ -1284,8 +1284,14 @@ class WindowsEnvironment(unittest.TestCase):
             self.assertIn('op == "%s"' % op, src.decode("ascii"))
 
 
-def atspi_page(statut="status bar", boutons=(("Revérifier", True), ("Tout installer", True))):
-    """The helper's tree of the diagnosis screen, as WebKitGTK gives it on Ubuntu 24.04 (recorded, cut)."""
+def atspi_page(statut="status bar", boutons=(("Revérifier", True), ("Tout installer", True)), decale=False):
+    """The helper's tree of the diagnosis screen, as WebKitGTK gives it on Ubuntu 24.04 (recorded, cut).
+    decale: as the AppImage built on 22.04 gives it there, some roles one below theirs (recorded)."""
+    if decale:
+        tree = json.loads(json.dumps(atspi_page(statut, boutons)))
+        for _, n in ta._aplatir(tree):
+            n["r"] = {"document web": "document text", "paragraph": "footer", "landmark": "article"}.get(n["r"], n["r"])
+        return tree
     ligne = lambda label, statut_, detail: {"r": "list item", "n": label, "v": "%s : %s\n%s\n" % (label, statut_, detail)}
     return {"r": "frame", "n": "Brain in a Box", "x": [249, 97, 782, 705], "k": [
         {"r": "filler", "n": "", "k": [{"r": "filler", "n": "", "k": [{"r": "filler", "n": "", "k": [
@@ -1317,6 +1323,17 @@ class LinuxReading(unittest.TestCase):
         self.assertEqual(ta.deja_presents(e.textes, ta.PiloteLinux.neufs),
                          [("Outils de base (git, python3, curl)", "git, python3, curl et unzip sont là.")])
         self.assertEqual(e.textes[e.textes.index("Bun (le moteur de la mémoire)") + 1], ": À installer")
+
+    def test_the_22_04_appimage_s_roles_one_below_read_the_same_and_are_noted(self):
+        # Its page reads « document text », its paragraphs « footer », its landmarks « article ».
+        page = atspi_page(decale=True)
+        e = ta.ecran_depuis_arbre([{"titre": "Brain in a Box", "arbre": ta.arbre_atspi(page)}])
+        self.assertEqual((e.titre, e.texte, e.lecture), ("J'ai fait le tour.", "Il manque Claude Code, Bun et ton cerveau. Je m'en occupe.",
+                                                         "statut"))
+        self.assertEqual(e.boutons, [("Revérifier", True), ("Tout installer", True)])
+        self.assertEqual(ta.roles_decales(page), {"article": "landmark", "document text": "document web", "footer": "paragraph"})
+        self.assertEqual(ta.roles_decales(atspi_page()), {})
+        self.assertIn('"document text"', ta.ATSPI, "the helper finds that page and its place too")
 
     def test_a_live_region_stands_for_a_status_bar_and_a_disabled_button_says_so(self):
         e = ta.ecran_depuis_arbre([{"titre": "x", "arbre": ta.arbre_atspi(atspi_page("section", (("Plus tard", False),)))}])
@@ -1406,6 +1423,12 @@ class LinuxReading(unittest.TestCase):
 
         t = constats(Journal([paquets + "git curl", deb]))
         self.assertEqual((t.nom, len(t.details["root"]), len(t.details["fenetre_mot_de_passe"])), ("app-root", 2, 2))
+        self.assertEqual(t.notes, [])
+        j = Journal([paquets + "git curl", deb])
+        j.roles_decales = {"document text": "document web"}
+        t = constats(j)
+        self.assertEqual(t.notes, ["rôles d'accessibilité décalés d'un cran (« document text » pour « document web ») : "
+                                   "un lecteur d'écran les annonce ainsi"])
         for cmds, retires, why in (([paquets + "git curl", deb], (), "l'étape « Outils de base » (pkexec, apt) n'a pas été testée"),
                                    ([paquets + "git", deb], ("git", "curl"), "pkexec n'a pas installé curl"),
                                    ([paquets + "git curl"], ("git", "curl"), "Obsidian installé par pkexec 0 fois"),

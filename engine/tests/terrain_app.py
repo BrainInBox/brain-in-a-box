@@ -1637,7 +1637,7 @@ def node(o, depth, budget):
         attrs = {}
     if attrs.get("live"):
         n["l"] = attrs["live"]
-    if role in ("push button", "toggle button", "frame", "document web", "dialog", "alert"):
+    if role in ("push button", "toggle button", "frame", "document web", "document text", "dialog", "alert"):
         n["x"] = rect(o)
     if role in ("push button", "toggle button"):
         n["e"] = o.get_state_set().contains(Atspi.StateType.ENABLED)
@@ -1711,7 +1711,7 @@ def chercher(o, label, depth=0):
 def document(o, depth=0):
     if o is None or depth > 40:
         return None
-    if o.get_role_name() == "document web":
+    if o.get_role_name() in ("document web", "document text"):
         return o
     for i in range(o.get_child_count()):
         found = document(o.get_child_at_index(i), depth + 1)
@@ -1748,9 +1748,18 @@ out = {"lire": lire, "rapide": rapide, "bouton": bouton}[req["op"]](req)
 sys.stdout.write(json.dumps(out, ensure_ascii=True) + "\n")
 '''
 
-# AT-SPI's roles, as the roles of the tree ecran_depuis_arbre() reads (macOS's words).
+# AT-SPI's roles, as the roles of the tree ecran_depuis_arbre() reads (macOS's words). The AppImage
+# built on 22.04 reaches Ubuntu 24.04's AT-SPI with some roles one below their own: its page reads
+# « document text » (« document web »), a paragraph « footer », a landmark « article ».
 ATSPI_ROLES = {"frame": "AXWindow", "dialog": "AXWindow", "alert": "AXWindow", "document web": "AXWebArea",
-               "push button": "AXButton", "toggle button": "AXCheckBox"}
+               "document text": "AXWebArea", "push button": "AXButton", "toggle button": "AXCheckBox"}
+DECALES = {"document text": "document web", "footer": "paragraph", "article": "landmark"}
+
+
+def roles_decales(node):
+    """{role read: role meant} of DECALES found in a helper tree, when its page reads « document text »."""
+    vus = {str(n.get("r") or "") for _, n in _aplatir(node if isinstance(node, dict) else {})}
+    return {r: DECALES[r] for r in sorted(vus) if r in DECALES} if "document text" in vus else {}
 # The diagnosis' lines: WebKitGTK gives a check's label, its hidden status and its detail as one
 # text, a line each; macOS and Windows give the status apart, as the robot reads it.
 STATUT_CHECK = re.compile(r"^(.*\S)\s+(: (?:OK|À installer|À noter|Bloquant))$")
@@ -1962,6 +1971,7 @@ class PiloteLinux(Pilote):
         self.proc = None
         self.statut = None
         self.dernier_arbre = None
+        self.roles_decales = {}
         self.debut = time.time()
 
     def _env_outils(self):
@@ -2095,6 +2105,10 @@ class PiloteLinux(Pilote):
         """What ran as root: through pkexec only (the system's password window), root.rs's two
         scripts to the letter, with arguments they accept, and nothing else; the packages the VM
         was made to lack among them, and Obsidian's package once; each named in the window."""
+        if getattr(self, "roles_decales", None):
+            details["roles_atspi_decales"] = self.roles_decales
+            t.notes.append("rôles d'accessibilité décalés d'un cran (%s) : un lecteur d'écran les annonce ainsi"
+                           % ", ".join("« %s » pour « %s »" % kv for kv in sorted(self.roles_decales.items())))
         t("app-root")
         since = "@%d" % int(self.debut)
         rc, out = self._run(["sudo", "-n", "journalctl", "-t", "pkexec", "-o", "json", "--no-pager", "--since", since], timeout=60)
@@ -2215,6 +2229,9 @@ class PiloteLinux(Pilote):
             return Ecran()
         res = self._helper({"op": "lire", "app": NOM_ATSPI})
         self.dernier_arbre = res
+        for f in res.get("app") or []:
+            if isinstance(f, dict):
+                self.roles_decales.update(roles_decales(f.get("arbre")))
         fen = [{"titre": f.get("titre"), "arbre": arbre_atspi(f.get("arbre"))} for f in res.get("app") or [] if isinstance(f, dict)]
         dialogues = [dialogue_depuis_arbre(d.get("processus"), arbre_atspi(d.get("arbre"))) for d in res.get("dialogues") or []
                      if isinstance(d, dict)]
