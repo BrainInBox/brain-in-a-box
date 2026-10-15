@@ -1387,8 +1387,10 @@ class LinuxReading(unittest.TestCase):
             self.assertIn("apt n'y installerait pas sa version courante : curl", out["note"])
             self.assertIn(["sudo", "-n", "env", "DEBIAN_FRONTEND=noninteractive", "apt-get", "install", "-y", "-q",
                            "curl=8.5.0-2ubuntu10.16"], p.calls)
-            with self.assertRaises(ta.ErreurPilote):
-                Apt(()).poste_neuf()
+            # Neither: both back, the app's step goes untested, and the results say why.
+            out = Apt(()).poste_neuf()
+            self.assertEqual((out["retires"], sorted(out["gardes"])), ([], ["curl", "git"]))
+            self.assertIn("git, curl ; son installation par l'app n'est pas testée", out["note"])
 
     def test_the_helper_is_ascii_compiles_and_answers_every_request(self):
         self.assertTrue(all(ord(c) < 128 for c in ta.ATSPI), "written and read as ASCII")

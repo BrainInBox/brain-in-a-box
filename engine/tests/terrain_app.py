@@ -1957,9 +1957,6 @@ class PiloteLinux(Pilote):
                     rc, said = self._run(sudo_apt + ["install", "-y", "-q", "%s=%s" % (p, versions[p])], timeout=600, env=env)
                     if rc != 0:
                         raise ErreurPilote("%s ne revient pas à sa version (%s) : %s" % (p, versions[p], said.strip()[-300:]))
-            if not retires:
-                raise ErreurPilote("apt ne pourrait remettre ni git ni curl sur cette VM : %s" % json.dumps(
-                    out["gardes"], ensure_ascii=False)[:400])
         left = [p for p in retires if shutil.which(p, path=PATH_UBUNTU)]
         if left:
             raise ErreurPilote("toujours là après apt-get remove : %s" % ", ".join(left))
