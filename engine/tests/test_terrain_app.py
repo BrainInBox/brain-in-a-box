@@ -1377,6 +1377,8 @@ class LinuxReading(unittest.TestCase):
             self.assertEqual((out["retires"], out["aussi"], out["gardes"]), (["git", "curl"], ["git-lfs"], {}))
             self.assertNotIn("note", out)
             self.assertIn("update", p.calls[0], "the lists the app will see")
+            self.assertIn("--only-upgrade", p.calls[1], "at their newest, which the lists hold")
+            self.assertTrue(out["mis_a_jour"])
             # apt would not install curl's newest: curl goes back at its own version, the app installs git.
             p = Apt(("git",))
             out = p.poste_neuf()

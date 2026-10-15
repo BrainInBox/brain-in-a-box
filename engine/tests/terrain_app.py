@@ -1932,6 +1932,9 @@ class PiloteLinux(Pilote):
         sudo_apt = ["sudo", "-n", "env", "DEBIAN_FRONTEND=noninteractive", "apt-get"]
         out = {"gardes": {}}
         self._run(sudo_apt + ["update", "-q"], timeout=900, env=env)
+        # At their newest first: the versions they go back to, if they must, are in the lists.
+        rc, said = self._run(sudo_apt + ["install", "-y", "-q", "--only-upgrade"] + list(SANS_PAQUETS), timeout=900, env=env)
+        out["mis_a_jour"] = rc == 0
         versions = {}
         for p in SANS_PAQUETS:
             rc, said = self._run(["dpkg-query", "-W", "-f=${Version}", p], timeout=60)
