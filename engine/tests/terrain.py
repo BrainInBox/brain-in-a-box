@@ -87,13 +87,14 @@ ATTENDUS = {"neuf": ("installeur", "installation", "nuits"),
             "claude": ("vrai-claude",),
             "app": ("app",)}
 # The systems each path runs on, when not macOS and Windows.
-ATTENDUS_OS = {"neuf": ("macos", "windows", "linux"), "reinstallation": ("linux",)}
+ATTENDUS_OS = {"neuf": ("macos", "windows", "linux"), "reinstallation": ("linux",), "app": ("macos", "windows", "linux")}
 # terrain.yml's jobs, and the result files each one writes ("tous": the commit to test, for all).
 JOBS = {"ref": ("tous", ()), "macos": ("macos", ("macos-neuf", "macos-montee")),
         "windows": ("windows", ("windows-neuf", "windows-montee")),
         "linux": ("linux", ("linux-neuf", "linux-reinstallation")),
         "claude": ("macos+windows", ("macos-claude", "windows-claude")),
-        "app-macos": ("macos", ("macos-app",)), "app-windows": ("windows", ("windows-app",))}
+        "app-macos": ("macos", ("macos-app",)), "app-windows": ("windows", ("windows-app",)),
+        "app-linux": ("linux", ("linux-app",))}
 JOB_RESULTS = ("success", "failure", "cancelled", "skipped")
 ETAPE_RE = re.compile(r"^[a-z0-9][a-z0-9.-]{0,40}$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -110,11 +111,14 @@ CANARIES = vault_piege.canary_markers()
 NIGHT_WAIT = 1500
 # Linux: what each path's installer leaves. The fresh install answers its questions in a terminal
 # (.github/ci/terminal.py: lingering yes, Obsidian yes), the reinstallation has none (cron, as in
-# a container or a WSL without systemd). Another path (the app) may get either scheduler.
+# a container or a WSL without systemd). The app runs install.sh without a terminal from a desktop
+# session, whose user's systemd answers (no question about lingering there), after its own step
+# installed Obsidian's package.
 LINUX_TIMERS = ("gbrain-nightly", "brain-reflection", "gbrain-lint")
 LINGER_DIR = Path("/var/lib/systemd/linger")
-LINUX_ATTENDU = {"neuf": {"planificateur": "systemd", "obsidian": True},
-                 "reinstallation": {"planificateur": "cron", "obsidian": False}}
+LINUX_ATTENDU = {"neuf": {"planificateur": "systemd", "obsidian": True, "linger": True},
+                 "reinstallation": {"planificateur": "cron", "obsidian": False},
+                 "app": {"planificateur": "systemd", "obsidian": True}}
 CRON_LINES = ('0 4 * * * /bin/bash "$HOME/.claude/hooks/brain/gbrain-nightly.sh"',
               '0 12,23 * * * /usr/bin/env python3 "$HOME/.claude/hooks/brain/daily-reflection.py"',
               '0 8 * * 1 /bin/bash "$HOME/.claude/hooks/brain/gbrain-lint.sh"')
@@ -967,7 +971,7 @@ def check_linux_scheduler(t, opts):
     t.details["minuteurs"] = systemctl("list-timers", "--all", "--no-pager")[1].splitlines()[:8]
     linger = LINGER_DIR / getpass.getuser()
     t.details["linger"] = linger.exists()
-    if want == "systemd":
+    if (LINUX_ATTENDU.get(opts.parcours) or {}).get("linger"):
         t.check(linger.exists(), "lingering absent alors que l'installation a répondu oui")
 
 

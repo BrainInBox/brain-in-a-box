@@ -4,8 +4,8 @@ name: terrain
 # a fresh install with its real nightly, an upgrade (Windows from v0.2.0, macOS from #27; Linux, where no
 # earlier version ran, a reinstallation over an install its user changed), seven nights of the night
 # check in time travel, the real Claude on a synthetic corpus (engine/tests/terrain.py), and the desktop app
-# downloaded, installed and clicked through in its real window on both systems, a capture of every screen
-# (terrain_app.py).
+# downloaded, installed and clicked through in its real window on all three systems, a capture of every
+# screen (terrain_app.py).
 # Each job leaves a table in its summary and a JSON artifact; the scheduled run keeps one
 # issue labelled "terrain" up to date, read by the repair agent (docs/terrain-agent.md).
 #
@@ -844,9 +844,170 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+  # The same on Ubuntu 24.04: the AppImage (master: the newest preview, checked; a branch: built as
+  # release.yml builds it, here on 24.04), run from ~/Applications as a user runs it, on a desktop
+  # of the job's own: Xvfb, a window manager (openbox), the user's session bus and systemd. The
+  # window is read through AT-SPI and clicked with the mouse (xdotool). The VM is first made an
+  # Ubuntu desktop as it comes, without git nor curl (terrain_app.py, PiloteLinux.poste_neuf): the
+  # app's « Outils de base » step installs them, as root through pkexec, after the system's password
+  # window. That window needs a person: a polkit rule for this user stands in for the password
+  # typed there (the only stand-in), and the journal shows what ran as root.
+  app-linux:
+    name: The app, clicked through (Linux)
+    needs: ref
+    runs-on: ubuntu-latest
+    timeout-minutes: 185
+    permissions:
+      contents: read
+      attestations: read
+    env:
+      PARCOURS: app
+      TERRAIN_SHA: ${{ needs.ref.outputs.sha }}
+    steps:
+      - name: Where the results and the captures go
+        run: |
+          echo "TERRAIN_JSON=$RUNNER_TEMP/terrain-linux-app.json" >> "$GITHUB_ENV"
+          echo "TERRAIN_CAPTURES=$RUNNER_TEMP/captures-linux-app" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.ref.outputs.sha }}
+          persist-credentials: false
+
+      - name: Where the app comes from (master downloads the preview, a branch builds)
+        id: source
+        run: python3 -I engine/tests/terrain_app.py source --ref "$TERRAIN_REF" | tee -a "$GITHUB_OUTPUT"
+
+      # A branch's build only, from caches of the terrain's own (release.yml restores none of
+      # them), saved right after the build: nothing the app and what it starts later ever gets
+      # into a cache. Never saved on master, whose caches every branch restores.
+      - name: Tauri CLI, cached (branch build)
+        id: tauri-cli
+        if: steps.source.outputs.source == 'build'
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cargo/bin/cargo-tauri
+          key: terrain-tauri-cli-2.11.5-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Cargo cache (branch build)
+        id: cargo
+        if: steps.source.outputs.source == 'build'
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            app/src-tauri/target
+          key: terrain-build-${{ runner.os }}-x86_64-unknown-linux-gnu-${{ hashFiles('app/src-tauri/Cargo.lock') }}
+          restore-keys: terrain-build-${{ runner.os }}-x86_64-unknown-linux-gnu-
+
+      # The command of release.yml, its AppImage only (what this job installs); its tools pinned.
+      - name: Build the app from the tested commit (branch)
+        if: steps.source.outputs.source == 'build'
+        timeout-minutes: 40
+        working-directory: app/src-tauri
+        env:
+          TAURI_CLI_VERSION: "2.11.5"
+          TARGET: x86_64-unknown-linux-gnu
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev \
+            libssl-dev libxdo-dev patchelf file
+          bash "$GITHUB_WORKSPACE/.github/ci/appimage-tools.sh"
+          command -v cargo-tauri >/dev/null || cargo install tauri-cli --version "=$TAURI_CLI_VERSION" --locked
+          build() {
+            rm -rf "target/$TARGET/release/bundle"
+            cargo tauri build --ci --target "$TARGET" --bundles appimage -- --locked
+          }
+          build || { echo "::warning::bundling failed once, trying again"; build; }
+          shopt -s nullglob
+          images=(target/"$TARGET"/release/bundle/appimage/*.AppImage)
+          [ "${#images[@]}" -eq 1 ] || { echo "::error::expected one AppImage, found ${#images[@]}"; exit 1; }
+          version=$(python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1]))["version"])' tauri.conf.json)
+          mkdir -p "$RUNNER_TEMP/app"
+          image="$RUNNER_TEMP/app/Brain-in-a-Box_${version}-terrain.${TERRAIN_SHA:0:7}_linux-x86_64.AppImage"
+          cp "${images[0]}" "$image"
+          echo "APP_FICHIER=$image" >> "$GITHUB_ENV"
+
+      - name: Tauri CLI saved, before anything of the app runs (branch build)
+        if: steps.source.outputs.source == 'build' && github.ref != 'refs/heads/master' && steps.tauri-cli.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cargo/bin/cargo-tauri
+          key: ${{ steps.tauri-cli.outputs.cache-primary-key }}
+
+      - name: Cargo cache saved, before anything of the app runs (branch build)
+        if: steps.source.outputs.source == 'build' && github.ref != 'refs/heads/master' && steps.cargo.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            app/src-tauri/target
+          key: ${{ steps.cargo.outputs.cache-primary-key }}
+
+      # The desktop: an X server (Xvfb) and a window manager (openbox), the user's systemd and
+      # session bus (the accessibility bus answers there, and install.sh finds systemd there), the
+      # robot's eyes and hands (AT-SPI's Python bindings, xdotool, xwininfo, ImageMagick), and
+      # pkexec with the rule that stands in for the password typed in the system's window.
+      - name: A desktop for the app
+        timeout-minutes: 5
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q xvfb openbox xdotool x11-utils imagemagick at-spi2-core python3-gi \
+            gir1.2-atspi-2.0 dbus-user-session pkexec
+          printf '%s\n' 'polkit.addRule(function (action, subject) {' \
+            "  if (action.id == \"org.freedesktop.policykit.exec\" && subject.user == \"$USER\") { return polkit.Result.YES; }" \
+            '});' | sudo tee /etc/polkit-1/rules.d/49-terrain-mot-de-passe.rules
+          run="/run/user/$(id -u)"
+          if [ ! -S "$run/bus" ]; then sudo loginctl enable-linger "$USER"; fi
+          for _ in $(seq 1 30); do [ -S "$run/bus" ] && break; sleep 1; done
+          [ -S "$run/bus" ] || { echo "::error::no session bus for $USER"; exit 1; }
+          XDG_RUNTIME_DIR="$run" systemctl --user show-environment >/dev/null || { echo "::error::the user's systemd does not answer"; exit 1; }
+          setsid nohup Xvfb :99 -screen 0 1280x900x24 -nolisten tcp > "$RUNNER_TEMP/xvfb.log" 2>&1 < /dev/null &
+          for _ in $(seq 1 30); do xdpyinfo -display :99 >/dev/null 2>&1 && break; sleep 1; done
+          DISPLAY=:99 DBUS_SESSION_BUS_ADDRESS="unix:path=$run/bus" setsid nohup openbox > "$RUNNER_TEMP/openbox.log" 2>&1 < /dev/null &
+          sleep 2
+          pgrep -x openbox >/dev/null || { echo "::error::no window manager"; cat "$RUNNER_TEMP/openbox.log"; exit 1; }
+          echo "DISPLAY=:99" >> "$GITHUB_ENV"
+          pkexec --version
+
+      - name: "Scenario: the app installed and clicked through to the brain, then opened again"
+        if: ${{ !cancelled() }}
+        timeout-minutes: 130
+        env:
+          SOURCE: ${{ steps.source.outputs.source }}
+          GH_TOKEN: ${{ steps.source.outputs.source == 'release' && github.token || '' }}
+        run: |
+          python3 -I engine/tests/terrain.py app --parcours "$PARCOURS" --vm --json "$TERRAIN_JSON" \
+            --source "$SOURCE" --fichier "${APP_FICHIER:-}" --captures "$TERRAIN_CAPTURES" --delai-min 125
+
+      - name: Summary
+        if: always()
+        run: python3 -I engine/tests/terrain.py rapport "$TERRAIN_JSON" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: terrain-linux-app
+          path: ${{ env.TERRAIN_JSON }}
+          if-no-files-found: warn
+          retention-days: 14
+
+      # Not "terrain-*": the report job downloads those, and needs the JSON only.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: captures-linux-app
+          path: ${{ env.TERRAIN_CAPTURES }}
+          if-no-files-found: warn
+          retention-days: 14
+
   rapport:
     name: Report (one issue "terrain")
-    needs: [ref, macos, windows, linux, claude, app-macos, app-windows]
+    needs: [ref, macos, windows, linux, claude, app-macos, app-windows, app-linux]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -854,9 +1015,9 @@ jobs:
       contents: read
       issues: write
     env:
-      ATTENDUS: macos-neuf,macos-montee,windows-neuf,windows-montee,linux-neuf,linux-reinstallation,macos-claude,windows-claude,macos-app,windows-app
+      ATTENDUS: macos-neuf,macos-montee,windows-neuf,windows-montee,linux-neuf,linux-reinstallation,macos-claude,windows-claude,macos-app,windows-app,linux-app
       # A job that did not succeed is a failure even when its rows say nothing (terrain.py JOBS).
-      JOBS: ref=${{ needs.ref.result }},macos=${{ needs.macos.result }},windows=${{ needs.windows.result }},linux=${{ needs.linux.result }},claude=${{ needs.claude.result }},app-macos=${{ needs.app-macos.result }},app-windows=${{ needs.app-windows.result }}
+      JOBS: ref=${{ needs.ref.result }},macos=${{ needs.macos.result }},windows=${{ needs.windows.result }},linux=${{ needs.linux.result }},claude=${{ needs.claude.result }},app-macos=${{ needs.app-macos.result }},app-windows=${{ needs.app-windows.result }},app-linux=${{ needs.app-linux.result }}
     steps:
       # The workflow's own commit: the code that writes the issue is the one this file came with.
       - uses: actions/checkout@v4

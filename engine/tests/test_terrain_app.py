@@ -1284,6 +1284,84 @@ class WindowsEnvironment(unittest.TestCase):
             self.assertIn('op == "%s"' % op, src.decode("ascii"))
 
 
+def atspi_page(statut="status bar", boutons=(("Revérifier", True), ("Tout installer", True))):
+    """The helper's tree of the diagnosis screen, as WebKitGTK gives it on Ubuntu 24.04 (recorded, cut)."""
+    ligne = lambda label, statut_, detail: {"r": "list item", "n": label, "v": "%s : %s\n%s\n" % (label, statut_, detail)}
+    return {"r": "frame", "n": "Brain in a Box", "x": [249, 97, 782, 705], "k": [
+        {"r": "filler", "n": "", "k": [{"r": "filler", "n": "", "k": [{"r": "filler", "n": "", "k": [
+            {"r": "scroll pane", "n": "", "k": [{"r": "document web", "n": "Brain in a Box", "x": [250, 117, 780, 680], "k": [
+                {"r": "landmark", "n": "", "k": [{"r": statut, "n": "", "l": "polite", "k": [
+                    {"r": "paragraph", "n": "", "v": "J’ai fait le tour."},
+                    {"r": "paragraph", "n": "", "v": "Il manque Claude Code, Bun et ton cerveau. Je m’en occupe."}]}]},
+                {"r": "landmark", "n": "", "k": [
+                    {"r": "paragraph", "n": "", "v": "Ubuntu 24.04.5 LTS · 12 Go de mémoire · 118 Go libres"},
+                    {"r": "panel", "n": "", "k": [
+                        ligne("Système", "OK", "Ubuntu 24.04.5 LTS"),
+                        ligne("Outils de base (git, python3, curl)", "OK", "git, python3, curl et unzip sont là."),
+                        ligne("Bun (le moteur de la mémoire)", "À installer", "Pas encore installé.")]}]},
+                {"r": "landmark", "n": "", "k": [{"r": "push button", "n": b, "e": on, "x": [700 + 120 * i, 736, 110, 41]}
+                                                 for i, (b, on) in enumerate(boutons)]}]}]}]}]}]}]}
+
+
+class LinuxReading(unittest.TestCase):
+    """PiloteLinux's side of the window: AT-SPI's tree as the robot reads it."""
+
+    def test_bibo_in_the_status_bar_and_the_checks_as_macos_gives_them(self):
+        e = ta.ecran_depuis_arbre([{"titre": "Brain in a Box", "arbre": ta.arbre_atspi(atspi_page())}])
+        self.assertEqual((e.titre, e.texte, e.lecture), ("J'ai fait le tour.", "Il manque Claude Code, Bun et ton cerveau. Je m'en occupe.",
+                                                         "statut"))
+        self.assertEqual(e.boutons, [("Revérifier", True), ("Tout installer", True)])
+        self.assertEqual(ta.cle_ecran(e), ("diagnostic", None))
+        # The window's path to Bibo's region: a quick read follows it in the app's own tree.
+        self.assertEqual(e.statut, (0, (0, 0, 0, 0, 0, 0, 0)))
+        self.assertEqual(ta.deja_presents(e.textes, ta.PiloteLinux.neufs),
+                         [("Outils de base (git, python3, curl)", "git, python3, curl et unzip sont là.")])
+        self.assertEqual(e.textes[e.textes.index("Bun (le moteur de la mémoire)") + 1], ": À installer")
+
+    def test_a_live_region_stands_for_a_status_bar_and_a_disabled_button_says_so(self):
+        e = ta.ecran_depuis_arbre([{"titre": "x", "arbre": ta.arbre_atspi(atspi_page("section", (("Plus tard", False),)))}])
+        self.assertEqual(e.titre, "J'ai fait le tour.")
+        self.assertEqual(e.bouton("Plus tard"), False)
+
+    def test_lines_of_a_text_and_a_checks_status_apart(self):
+        self.assertEqual(ta.lignes("Connexion à Claude\u00a0: À noter\nTu te connecteras une fois Claude Code installé.\n"),
+                         ["Connexion à Claude", ": À noter", "Tu te connecteras une fois Claude Code installé."])
+        self.assertEqual(ta.lignes("Il te faut un abonnement Claude Pro ou Max."), ["Il te faut un abonnement Claude Pro ou Max."])
+        self.assertEqual(ta.lignes("L'heure : 12 h\n\n"), ["L'heure : 12 h"])
+
+    def test_the_window_where_x_says_it_is(self):
+        out = ("xwininfo: Window id: 0x400003 \"Brain in a Box\"\n\n  Absolute upper-left X:  250\n  Absolute upper-left Y:  117\n"
+               "  Relative upper-left X:  1\n  Relative upper-left Y:  20\n  Width: 780\n  Height: 680\n")
+        self.assertEqual(ta.place_xwininfo(out), [250, 117, 780, 680])
+        self.assertIsNone(ta.place_xwininfo("X Error of failed request: BadWindow"))
+
+    def test_what_pkexec_ran_from_its_journal(self):
+        cmd = "/bin/sh -c export DEBIAN_FRONTEND=noninteractive\napt-get update -q || true\napt-get install -y -q \"$@\"\n sh git curl"
+        lines = [json.dumps({"MESSAGE": "runner: Executing command [USER=root] [TTY=unknown] [CWD=/home/runner] [COMMAND=%s]" % cmd}),
+                 json.dumps({"MESSAGE": list(("runner: Executing command [USER=root] [TTY=unknown] [CWD=/] [COMMAND=/bin/sh -c x]")
+                                             .encode("utf-8"))}),
+                 json.dumps({"MESSAGE": "runner: Error executing command as another user: Not authorized"}), "not json"]
+        self.assertEqual(ta.commandes_root("\n".join(lines)), [cmd, "/bin/sh -c x"])
+
+    def test_the_app_gets_a_desktops_environment_never_a_token(self):
+        with mock.patch.dict(os.environ, {"GH_TOKEN": "ghs_x", "GITHUB_TOKEN": "ghs_y", "CI": "true", "USER": "runner"}):
+            env = ta.env_linux("/home/runner", ":99", 1001, {"BIAB_ARCHIVE": "/tmp/k.zip"})
+        self.assertEqual(sorted(env), ["BIAB_ARCHIVE", "DBUS_SESSION_BUS_ADDRESS", "DISPLAY", "HOME", "LANG", "LOGNAME", "PATH",
+                                       "SHELL", "USER", "XDG_RUNTIME_DIR", "XDG_SESSION_TYPE"])
+        self.assertEqual((env["DBUS_SESSION_BUS_ADDRESS"], env["XDG_RUNTIME_DIR"]), ("unix:path=/run/user/1001/bus", "/run/user/1001"))
+        self.assertTrue(env["PATH"].startswith("/usr/local/sbin:") and "/home/" not in env["PATH"])
+
+    def test_the_helper_is_ascii_compiles_and_answers_every_request(self):
+        self.assertTrue(all(ord(c) < 128 for c in ta.ATSPI), "written and read as ASCII")
+        compile(ta.ATSPI, "pilote-atspi.py", "exec")
+        with open(ta.__file__, encoding="utf-8") as f:
+            py = f.read()
+        asked = set(re.findall(r'_helper\(\{"op": "([a-z]+)"', py))
+        self.assertEqual(asked, {"lire", "rapide", "bouton"})
+        for op in asked:
+            self.assertIn('"%s": %s' % (op, op), ta.ATSPI)
+
+
 class Scenario(Base):
     """The whole scenario on the build path, a fake window and a fake check of the kit: what reaches
     the app, what the results say."""
@@ -1379,6 +1457,19 @@ class Scenario(Base):
         self.assertIn("gbq query ne trouve pas Profile/lessons.md (code 127) ; Bibo : « Ton second cerveau est prêt !",
                       row["raison"])
         self.assertTrue(row["details"]["captures"][-1].endswith("-echec.png"))
+
+    def test_the_machine_users_have_before_the_first_start_and_its_own_checks_after(self):
+        # Linux: git and curl taken away once the app is installed, before it starts; what ran as
+        # root checked once everything is installed.
+        p = FauxPilote(self.h, home=Path(self.tmp) / "home")
+        order = []
+        p.poste_neuf = lambda: order.append(("poste", p.etat)) or {"retires": ["git", "curl"], "aussi": []}
+        p.constats = lambda t, details: order.append(("constats", t.nom)) or details.update(root=["/bin/sh -c ... apt-get install"])
+        row, _, _, _, _, _ = self.run_it(pilote=p)
+        self.assertEqual(row["statut"], "ok", row["raison"])
+        self.assertEqual(order, [("poste", None), ("constats", "app-outils")])
+        self.assertEqual(row["details"]["poste_neuf"], {"retires": ["git", "curl"], "aussi": []})
+        self.assertEqual(row["details"]["root"], ["/bin/sh -c ... apt-get install"])
 
     def test_sources_the_app_did_not_take_fail(self):
         p = FauxPilote(self.h, home=Path(self.tmp) / "home")

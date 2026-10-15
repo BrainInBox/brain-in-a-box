@@ -406,7 +406,8 @@ class Workflow(unittest.TestCase):
 
 
     def test_the_app_jobs_get_the_app_as_a_user_and_never_a_claude_token(self):
-        for name, os_name, ref in (("app-macos", "macos", '"$TERRAIN_REF"'), ("app-windows", "windows", '"$env:TERRAIN_REF"')):
+        for name, os_name, ref in (("app-macos", "macos", '"$TERRAIN_REF"'), ("app-windows", "windows", '"$env:TERRAIN_REF"'),
+                                   ("app-linux", "linux", '"$TERRAIN_REF"')):
             job = self.jobs[name]
             steps = job["steps"]
             text = json.dumps(steps)
@@ -454,7 +455,7 @@ class Workflow(unittest.TestCase):
         for name, job in self.jobs.items():
             steps = job["steps"]
             caches = [(i, st) for i, st in enumerate(steps) if str(st.get("uses", "")).startswith("actions/cache")]
-            if name not in ("app-macos", "app-windows"):
+            if name not in ("app-macos", "app-windows", "app-linux"):
                 self.assertEqual(caches, [], name)
                 continue
             app = min(i for i, st in enumerate(steps) if "terrain.py app" in st.get("run", "")
@@ -474,6 +475,26 @@ class Workflow(unittest.TestCase):
                     self.assertIn("github.ref != 'refs/heads/master'", st["if"])
                     self.assertRegex(key, r"^\$\{\{ steps\.[a-z-]+\.outputs\.cache-primary-key \}\}$")
             self.assertEqual(sorted(kinds), ["restore", "restore", "save", "save"], name)
+
+    def test_the_linux_app_job_has_a_desktop_and_one_stand_in_only(self):
+        # The window needs a display, a window manager and the session bus before the scenario; the
+        # system's password window needs a person: one polkit rule, for pkexec, for this user only.
+        steps = self.jobs["app-linux"]["steps"]
+        desktop = [i for i, st in enumerate(steps) if st.get("name") == "A desktop for the app"]
+        scenario = [i for i, st in enumerate(steps) if "terrain.py app" in st.get("run", "")]
+        self.assertEqual(len(desktop), 1)
+        self.assertLess(desktop[0], scenario[0])
+        run = steps[desktop[0]]["run"]
+        for need in ("Xvfb :99", "openbox", "xdotool", "gir1.2-atspi-2.0", "imagemagick", "pkexec", 'echo "DISPLAY=:99"'):
+            self.assertIn(need, run)
+        rules = re.findall(r"action\.id == \\?\"([a-z.]+)\\?\"", run)
+        self.assertEqual(rules, ["org.freedesktop.policykit.exec"])
+        self.assertIn('subject.user == \\"$USER\\"', run)
+        self.assertNotIn("sudo -n true", run)
+        # The build runs release.yml's command with its pinned AppImage tools.
+        build = next(st for st in steps if st.get("name") == "Build the app from the tested commit (branch)")
+        self.assertIn("appimage-tools.sh", build["run"])
+        self.assertIn("--bundles appimage -- --locked", build["run"])
 
     def test_a_fresh_windows_has_no_python_in_both_workflows(self):
         # One description of a fresh PC (.github/ci/poste-neuf.ps1), used by both installs: the
