@@ -12,7 +12,9 @@
 //!
 //! On Linux an app started from the desktop's menu gets the session's PATH, which may
 //! lack ~/.local/bin until the next login: the same places are added. Links open with
-//! xdg-open, and the command window is whichever terminal the desktop has.
+//! xdg-open, and the command window is whichever terminal the desktop has. Run from an
+//! AppImage, the app has the AppImage's own libraries and Python in its environment:
+//! none of that reaches the programs it starts (see `APPIMAGE_ENV`).
 
 use std::collections::HashSet;
 use std::ffi::OsString;
@@ -24,6 +26,8 @@ use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(target_os = "linux")]
+use std::sync::LazyLock;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -95,9 +99,10 @@ pub fn exe(name: &str) -> String {
 }
 
 /// The inherited PATH first (a test can put stubs in front), then our install locations.
+/// Never a folder of the AppImage the app runs from.
 pub fn tool_path() -> OsString {
     let mut dirs: Vec<PathBuf> = std::env::var_os("PATH")
-        .map(|p| std::env::split_paths(&p).filter(|d| !d.as_os_str().is_empty()).collect())
+        .map(|p| std::env::split_paths(&p).filter(|d| !d.as_os_str().is_empty() && !in_appimage(d)).collect())
         .unwrap_or_default();
     dirs.extend(install_dirs(&home()));
     let mut seen = HashSet::new();
@@ -124,6 +129,68 @@ fn install_dirs(h: &Path) -> Vec<PathBuf> {
 
 /// Claude Code and gbq in ~/.local/bin, Bun in ~/.bun/bin, the system's, then the snaps'
 /// (Obsidian may come as one).
+/// The folder an AppImage runs the app from (its AppRun sets APPDIR), when it is one.
+#[cfg(target_os = "linux")]
+static APPDIR: LazyLock<Option<PathBuf>> =
+    LazyLock::new(|| std::env::var_os("APPDIR").map(PathBuf::from).filter(|d| d.is_absolute() && d.join("AppRun").is_file()));
+
+#[cfg(target_os = "linux")]
+fn in_appimage(dir: &Path) -> bool {
+    APPDIR.as_deref().is_some_and(|a| dir.starts_with(a))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn in_appimage(_: &Path) -> bool {
+    false
+}
+
+/// What an AppImage's AppRun put in the app's environment for its own libraries (PYTHONHOME,
+/// LD_LIBRARY_PATH, GTK's modules...), taken back out of what the app starts: the system's
+/// python3 stops on the AppImage's PYTHONHOME, git or curl could load its libraries. Lists keep
+/// their own entries, variables that only point into the AppImage go.
+#[cfg(target_os = "linux")]
+static APPIMAGE_ENV: LazyLock<Vec<(OsString, Option<OsString>)>> =
+    LazyLock::new(|| appimage_env(std::env::vars_os(), APPDIR.as_deref()));
+
+/// Set by the AppImage's runtime and its hooks whatever the user had: never passed on.
+#[cfg(target_os = "linux")]
+const APPIMAGE_OWN: &[&str] = &["APPDIR", "APPIMAGE", "OWD", "ARGV0", "GTK_THEME", "GDK_BACKEND", "PYTHONDONTWRITEBYTECODE"];
+
+#[cfg(target_os = "linux")]
+fn appimage_env(vars: impl Iterator<Item = (OsString, OsString)>, appdir: Option<&Path>) -> Vec<(OsString, Option<OsString>)> {
+    let Some(dir) = appdir else { return Vec::new() };
+    let mut out = Vec::new();
+    for (key, value) in vars {
+        if key == "PATH" {
+            continue; // tool_path() keeps the AppImage out of it
+        }
+        if key.to_str().is_some_and(|k| APPIMAGE_OWN.contains(&k)) {
+            out.push((key, None));
+            continue;
+        }
+        let parts: Vec<PathBuf> = std::env::split_paths(&value).collect();
+        if !parts.iter().any(|p| p.starts_with(dir)) {
+            continue;
+        }
+        let kept: Vec<PathBuf> = parts.into_iter().filter(|p| !p.as_os_str().is_empty() && !p.starts_with(dir)).collect();
+        let kept = (!kept.is_empty()).then(|| std::env::join_paths(kept).ok()).flatten();
+        out.push((key, kept));
+    }
+    out
+}
+
+/// `cmd` without what the AppImage added to the app's environment.
+fn outside_appimage(cmd: &mut Command) -> &mut Command {
+    #[cfg(target_os = "linux")]
+    for (k, v) in APPIMAGE_ENV.iter() {
+        match v {
+            Some(v) => cmd.env(k, v),
+            None => cmd.env_remove(k),
+        };
+    }
+    cmd
+}
+
 #[cfg(target_os = "linux")]
 fn install_dirs(h: &Path) -> Vec<PathBuf> {
     vec![
@@ -349,7 +416,7 @@ pub fn run_isolated(program: &Path, args: &[&str], iso: &Isolated, on_line: &mut
 
 fn command(program: &Path) -> Command {
     let mut cmd = Command::new(program);
-    cmd.env("PATH", tool_path());
+    outside_appimage(&mut cmd).env("PATH", tool_path());
     #[cfg(windows)]
     if program == powershell() {
         without_ps7_modules(&mut cmd);
@@ -471,7 +538,7 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 #[cfg(unix)]
 fn kill_group(child: &mut Child) {
     let group = format!("-{}", child.id());
-    let _ = Command::new("/bin/kill")
+    let _ = outside_appimage(&mut Command::new("/bin/kill"))
         .args(["-KILL", "--", &group])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -515,7 +582,7 @@ pub fn open_with_system(target: &str) -> bool {
 /// not wait for it; a thread reaps it once it ends.
 #[cfg(target_os = "linux")]
 pub fn spawn_detached(program: &Path, args: &[&str]) -> io::Result<()> {
-    let mut child = Command::new(program)
+    let mut child = outside_appimage(&mut Command::new(program))
         .args(args)
         .env("PATH", tool_path())
         .stdin(Stdio::null())
@@ -552,7 +619,8 @@ pub fn open_terminal_window(script: &Path) -> Result<(), String> {
     let plain = !file.chars().any(|c| c.is_whitespace() || "'\"\\$`;&|<>(){}*?[]~#!".contains(c));
     for (name, flag) in TERMINALS.iter().filter(|(n, _)| plain || *n != "x-terminal-emulator") {
         let Some(term) = find_tool(name) else { continue };
-        let started = Command::new(&term)
+        let started = outside_appimage(&mut Command::new(&term))
+            .env("PATH", tool_path())
             .args([flag, file.as_ref()])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -916,6 +984,47 @@ mod tests {
         let mut lines = Vec::new();
         assert_eq!(run_isolated(&dir.path().join("missing"), &[], &iso, &mut |l| lines.push(l)), -1);
         assert!(lines[0].starts_with("impossible de lancer"), "{lines:?}");
+    }
+
+    /// Linux: what an AppImage's AppRun sets (AppImageKit's and linuxdeploy's GTK hook), as the
+    /// app inherits it, and what its children get.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn nothing_of_the_appimage_reaches_the_programs_it_starts() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = dir.path().join("Brain in a Box.AppDir");
+        let a = app.to_string_lossy();
+        let vars = [
+            ("PYTHONHOME", format!("{a}/usr/")),
+            ("PYTHONPATH", format!("{a}/usr/share/pyshared/:")),
+            ("LD_LIBRARY_PATH", format!("{a}/usr/lib/:{a}/lib64/:/opt/mine/lib")),
+            ("XDG_DATA_DIRS", format!("{a}/usr/share:/usr/share:/usr/local/share")),
+            ("GDK_PIXBUF_MODULE_FILE", format!("{a}//usr/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache")),
+            ("GTK_THEME", "Adwaita:light".into()),
+            ("APPIMAGE", "/home/jo/Applications/x.AppImage".into()),
+            ("APPDIR", a.to_string()),
+            ("PATH", format!("{a}/usr/bin/:/usr/bin")),
+            ("HOME", "/home/jo".into()),
+            ("LANG", "fr_FR.UTF-8".into()),
+        ];
+        let got = appimage_env(vars.iter().map(|(k, v)| (OsString::from(k), OsString::from(v))), Some(&app));
+        let got: Vec<(String, Option<String>)> =
+            got.into_iter().map(|(k, v)| (k.to_string_lossy().into_owned(), v.map(|v| v.to_string_lossy().into_owned()))).collect();
+        let want: Vec<(String, Option<String>)> = [
+            ("PYTHONHOME", None),
+            ("PYTHONPATH", None),
+            ("LD_LIBRARY_PATH", Some("/opt/mine/lib")),
+            ("XDG_DATA_DIRS", Some("/usr/share:/usr/local/share")),
+            ("GDK_PIXBUF_MODULE_FILE", None),
+            ("GTK_THEME", None),
+            ("APPIMAGE", None),
+            ("APPDIR", None),
+        ]
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.map(String::from)))
+        .collect();
+        assert_eq!(got, want);
+        assert!(appimage_env(vars.iter().map(|(k, v)| (OsString::from(k), OsString::from(v))), None).is_empty(), "not an AppImage");
     }
 
     #[test]
