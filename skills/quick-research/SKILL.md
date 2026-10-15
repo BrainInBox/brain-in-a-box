@@ -91,7 +91,7 @@ without a URL. For a key claim, check it yourself with one WebFetch.
 ## PDFs WebFetch can't read
 
 If WebFetch fails on a PDF, download it with curl, then open it with Read.
-This works on macOS and on Windows (Git Bash):
+This works on macOS, Linux and Windows (Git Bash):
 
 ```bash
 d=$(mktemp -d) && curl -fsSL --proto '=http,https' --max-time 60 --max-filesize 50000000 \

@@ -12,12 +12,12 @@ Everyone gets the **same engine**, with **their own data** — everything stays 
 | **Skills** (`~/.claude/skills`) | `brain-boost` (what the setup does, how to grow it safely) · `controle` (the night check: what it fixed, undo, GBrain updates) · `quick-research` · `html-artifact` · `convert-documents-to-markdown`. Installed with the box; a skill of yours with the same name, or one you edited, is never overwritten |
 | **Hooks** (`~/.claude/hooks/brain`) | Auto-capture: corrections → `lessons.md`, sessions → `Journal/`, summaries → `memory.md` |
 | **GBrain** (`~/.gbrain`) | Search over the vault (`gbq query "..."`): by meaning with a Voyage AI key, by keywords without one |
-| **Nightly** (launchd 04:00) | update GBrain → night check → commit vault → sync → dream cycle (dedup, facts, consolidation). Windows (Task Scheduler 04:00, catches up when the PC wakes): update GBrain → night check → commit vault → sync → embed |
+| **Nightly** (launchd 04:00; Linux: a systemd user timer, else cron) | update GBrain → night check → commit vault → sync → dream cycle (dedup, facts, consolidation). Windows (Task Scheduler 04:00, catches up when the PC wakes): update GBrain → night check → commit vault → sync → embed |
 | **GBrain updates** (in the nightly) | the newest release this machine has known for at least 7 days: never master, never lower, with the exact Bun gbrain's release uses (checksum verified). Code, Bun, config and brain are snapshotted first; if `gbrain doctor` fails after the switch, all of it is restored. A new install starts at the release CI tests (`engine/gbrain-pin.json`) |
 | **Night check** (in the nightly, `/controle`) | Fixes what is safe by itself, one git commit per fix: masks passwords and keys written in clear (the value stays in a local quarantine, outside the vault, never pushed, 30 days or as long as its mask is in a note), puts a warning above commands that erase things, removes hidden characters, moves `memory.md` entries older than 15 days to `Profile/Archive/`, sets aside duplicate or pasted lessons, deletes exact copies (frontmatter included) and empty notes (no text, title or property of yours), repairs broken frontmatter. With Claude Code logged in, Claude (no tools, masked excerpts) also points out contradictions and replaced decisions; the script checks its quotes and writes the warnings. The rest is listed in `Profile/controle.md`. A vault without git, or in the middle of a merge or rebase, is left untouched |
 | **Session start** (SessionStart) | one line on what the night check did, or on a job that stopped (no check for 48 h, no update check for 72 h). If no GBrain update check succeeded for 36 h (machine off at 04:00), one starts in the background |
-| **Reflection** (launchd 12:00 + 23:00) | LLM summary of the day's sessions and your git commits → `Journal/` + the day's entry in `memory.md` (the night check archives entries older than 15 days). Claude answers with no tool; the script writes. Secrets masked before sending; a failing run pins a warning in `memory.md`. Missed a day? `daily-reflection.py --day YYYY-MM-DD` (`--dry-run` to preview) |
-| **Weekly lint** (launchd Monday 08:00) | Verifies the whole pipeline (doctor, lint, orphans, nightly freshness) → 🟢/🟠/🔴 verdict pinned in `memory.md` + report in `Profile/lint.md` |
+| **Reflection** (launchd or systemd/cron 12:00 + 23:00) | LLM summary of the day's sessions and your git commits → `Journal/` + the day's entry in `memory.md` (the night check archives entries older than 15 days). Claude answers with no tool; the script writes. Secrets masked before sending; a failing run pins a warning in `memory.md`. Missed a day? `daily-reflection.py --day YYYY-MM-DD` (`--dry-run` to preview) |
+| **Weekly lint** (launchd or systemd/cron Monday 08:00) | Verifies the whole pipeline (doctor, lint, orphans, nightly freshness) → 🟢/🟠/🔴 verdict pinned in `memory.md` + report in `Profile/lint.md` |
 
 It all runs inside Claude Code (terminal/IDE). No bot, no server, no shared cloud.
 
@@ -75,6 +75,24 @@ cd ~/Documents/Brain && claude
 ```bash
 ./test-hooks.sh    # runs all hooks + gbrain self-update end-to-end, reports pass/fail
 ```
+
+### Linux (Debian, Ubuntu)
+
+Tested on **Ubuntu 24.04** x86-64 (CI and the nightly field tests). Expected to work on Debian 12+, Ubuntu 22.04+ and their derivatives (Mint, Pop!_OS), x86-64 or arm64, WSL 2 included. A fresh Ubuntu desktop has no git or curl:
+
+```bash
+sudo apt install -y git curl
+git clone <URL_OF_THIS_REPO> brain-in-a-box
+cd brain-in-a-box
+./install.sh        # as yourself, not with sudo: everything goes in your home folder
+```
+
+It installs Bun, GBrain and Claude Code (Anthropic's official installer) in your home folder, and runs `sudo` only after you say yes in the terminal: to install a missing package (python3 3.9+, git, curl, unzip, procps, with apt-get), to turn on lingering, or to install Obsidian. Started without a terminal (a script, an app), it asks nothing: it prints the exact command and goes on, or stops when a prerequisite is missing. Then the onboarding, as on macOS.
+
+- **Scheduled jobs**: systemd user timers (`gbrain-nightly`, `brain-reflection`, `gbrain-lint` in `~/.config/systemd/user`; see them with `systemctl --user list-timers`). A time missed while the computer was off runs at the next start. They run while you are logged in; say yes to *lingering* (`loginctl enable-linger $USER`) for them to run logged out too, on a server for instance. Where your user has no systemd (WSL without `systemd=true` in `/etc/wsl.conf`, a container), the installer uses cron instead and says so: lines between `# >>> brain-in-a-box` markers in your crontab, the rest of it untouched. Cron does not catch up a missed night, and its service must run (`sudo service cron start` on WSL).
+- **Obsidian**, on Debian or Ubuntu x86-64: its official `.deb` (pinned version, SHA-256 checked), installed with `sudo apt-get` once you say yes, else the one line to paste. Not the AppImage: Ubuntu 24.04 lacks the libfuse2 it needs, and restricts the user namespaces of Electron's sandbox, so it would only run with `--no-sandbox`. On arm64 (no `.deb`) or another distribution: [obsidian.md](https://obsidian.md/download), or `flatpak install --user flathub md.obsidian.Obsidian`.
+- **Other distributions** (Fedora, Arch…): `install.sh` runs there too, untested; it names a missing prerequisite instead of installing it.
+- `gbq` and the nightly scripts are bash: no zsh needed.
 
 ## Optional: gstack (23 AI specialists)
 
@@ -159,18 +177,18 @@ PRs welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) for the workflow (the `mast
 
 ## Updating & undo
 
-Update: on Windows, run the install line again; a hook, `gbq` or search script that differs from the new version (one you adapted) is copied to `~\.brain-in-a-box\backups\<date>\` before being replaced, `settings.json` to `settings.json.bak-<date>`, and the installer lists them. On macOS:
+Update: on Windows, run the install line again; a hook, `gbq` or search script that differs from the new version (one you adapted) is copied to `~\.brain-in-a-box\backups\<date>\` before being replaced, `settings.json` to `settings.json.bak-<date>`, and the installer lists them. On macOS and Linux (a file you changed, a timer or cron line included, is kept; the new version waits in `~/.brain-in-a-box/pending`):
 ```bash
 cd brain-in-a-box && git pull && ./install.sh   # idempotent, re-applies without breaking
 ```
 
 Undo any part. Your vault (`Documents/Brain`) is never touched by these:
 
-| What | macOS | Windows (PowerShell) |
+| What | macOS (Linux: the same, except where said) | Windows (PowerShell) |
 |---|---|---|
 | Hooks | `rm -rf ~/.claude/hooks/brain`, then remove their entries in `~/.claude/settings.json` | `Remove-Item -Recurse ~\.claude\hooks\brain`, same for `settings.json` |
 | One skill | `rm -rf ~/.claude/skills/<name>` | `Remove-Item -Recurse ~\.claude\skills\<name>` |
-| Scheduled jobs | `launchctl bootout gui/$(id -u)/com.$USER.gbrain-nightly` (same for `brain-reflection`, `gbrain-lint`) | `Unregister-ScheduledTask BrainNightly, BrainReflection -Confirm:$false` |
+| Scheduled jobs | `launchctl bootout gui/$(id -u)/com.$USER.gbrain-nightly` (same for `brain-reflection`, `gbrain-lint`). Linux: `systemctl --user disable --now gbrain-nightly.timer brain-reflection.timer gbrain-lint.timer`, or `crontab -e` and delete the `brain-in-a-box` block | `Unregister-ScheduledTask BrainNightly, BrainReflection -Confirm:$false` |
 | GBrain and its index | `rm -rf ~/DEV/gbrain ~/.gbrain` | `Remove-Item -Recurse ~\DEV\gbrain, ~\.gbrain, ~\.brain-search`; Bun: Settings → Apps → Bun |
 | Global directives | in `~/.claude/CLAUDE.md`, delete the block that starts with `<!-- brain-in-a-box -->` | same file |
 

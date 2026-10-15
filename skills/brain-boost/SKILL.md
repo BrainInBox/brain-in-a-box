@@ -136,7 +136,8 @@ Pin a tag (`#v1.2.0`) when the project publishes one.
 
 ### A scheduled job: "every morning, do X"
 
-Use the computer's scheduler: Task Scheduler on Windows, launchd on macOS.
+Use the computer's scheduler: Task Scheduler on Windows, launchd on macOS,
+a systemd user timer on Linux (cron where the user's systemd does not run).
 This install already runs its nightly jobs that way. The job runs
 `claude -p "<task>"` from the folder it works in, with `--allowedTools`
 listing only the tools it needs.

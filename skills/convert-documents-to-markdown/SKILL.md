@@ -21,6 +21,7 @@ node --version
 If `node` is missing or older than v20, tell the user and ask before installing it:
 
 - macOS: the LTS installer from https://nodejs.org, or `brew install node` if Homebrew is installed.
+- Linux: the distribution's `nodejs` only if it is v20 or newer (Ubuntu 24.04's is v18), otherwise the LTS from https://nodejs.org.
 - Windows: `winget install -e --id OpenJS.NodeJS.LTS --source winget --accept-package-agreements --accept-source-agreements`. Windows asks for permission: the user clicks Yes.
 
 Then the user closes and reopens Claude Code so it finds `node`.
@@ -64,6 +65,7 @@ Open the PDF with the Read tool instead. Read shows you each page as an image, a
 `pages` needs a free program called poppler. If Read says `pdftoppm is not installed`, ask the user before installing it, then have them restart Claude Code:
 
 - macOS: `brew install poppler` (needs Homebrew)
+- Linux (Debian, Ubuntu): `sudo apt install poppler-utils`
 - Windows: `winget install -e --id oschwartz10612.Poppler --source winget --accept-package-agreements --accept-source-agreements`
 
 If that is not possible, tell the user which pages you could not read.
