@@ -25,6 +25,8 @@ It all runs inside Claude Code (terminal/IDE). No bot, no server, no shared clou
 
 ### Download the app (preview)
 
+**[brain-in-a-box.vercel.app](https://brain-in-a-box.vercel.app)**: the download for your system and a step-by-step guide in French, with the real screens (`site/`).
+
 No terminal: a window checks your Mac or PC (Windows or Linux), installs what is missing and sets up your brain (the interface is in French). Every change to the app publishes an **unsigned preview** on the [Releases page](https://github.com/BrainInBox/brain-in-a-box/releases?q=pr%C3%A9version&expanded=true) (tags `app-v<version>-preview.<n>`, the 5 newest are kept), with a `SHA256SUMS` file and a build attestation (how to check one: `app/README.md`).
 
 **Mac** (macOS 13+, Apple Silicon and Intel)

@@ -8,7 +8,7 @@ One static page, in French like the app: download the app, then a guide to each 
 
 ## Publish
 
-On Vercel, a project with **Root Directory** `site`, framework preset **Other**, no build command, no output directory. Or from this folder: `vercel` (preview), `vercel --prod`.
+Live at https://brain-in-a-box.vercel.app (Vercel project `brain-in-a-box`, deployed from this folder with the CLI). On Vercel, a project with **Root Directory** `site`, framework preset **Other**, no build command, no output directory. Or from this folder: `vercel` (preview), `vercel --prod`.
 
 Locally: `python3 -m http.server -d site 8000`, then http://localhost:8000 (without the headers of `vercel.json`).
 
