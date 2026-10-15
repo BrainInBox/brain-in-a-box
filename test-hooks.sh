@@ -910,7 +910,7 @@ lx(){ ( H="$LH" HOME="$LH" U=tester OS_RELEASE="${OSR:-$LX/os/ubuntu}" SYSTEMD_D
         ok(){ echo "OK $*"; }; warn(){ echo "WARN $*"; }; die(){ echo "DIED $*"; exit 1; }
         [ -z "${YES:-}" ] || ask(){ echo "ASKED $*"; return 0; }
         "$@"; echo "SCHEDULER=${SCHEDULER:-}" ) < /dev/null 2>&1; }
-calls(){ cat "$LX/calls" 2>/dev/null; rm -f "$LX/calls"; }
+lxcalls(){ cat "$LX/calls" 2>/dev/null; rm -f "$LX/calls"; }
 
 # Prerequisites. A PATH with python3 and git only: curl, pgrep and unzip are missing.
 mkdir -p "$LX/min"
@@ -918,24 +918,24 @@ for t in python3 git id env sh cat cut tr; do ln -sf "$(command -v "$t")" "$LX/m
 ln -sf "$LB/apt-get" "$LX/min/apt-get"; ln -sf "$LB/sudo" "$LX/min/sudo"
 WANT_APT="${SUDO}apt-get update && ${SUDO}apt-get install -y curl procps unzip"
 out=$(LPATH="$LX/min" lx linux_prereqs)
-echo "$out" | grep -qF "DIED Install them with: $WANT_APT   then re-run ./install.sh" && [ -z "$(calls)" ] \
+echo "$out" | grep -qF "DIED Install them with: $WANT_APT   then re-run ./install.sh" && [ -z "$(lxcalls)" ] \
   && ok "linux: a missing prerequisite without a terminal: the exact apt-get line, nothing run as root" || no "linux: missing prerequisites mishandled: $out"
-out=$(LPATH="$LX/min" YES=1 lx linux_prereqs); c=$(calls)
+out=$(LPATH="$LX/min" YES=1 lx linux_prereqs); c=$(lxcalls)
 echo "$out" | grep -qF "ASKED Install them now? This runs: $WANT_APT" && ! echo "$out" | grep -q DIED \
   && [ "$(echo "$c" | grep '^apt-get')" = "$(printf 'apt-get update\napt-get install -y curl procps unzip')" ] \
   && ok "linux: after a yes, apt-get installs exactly what is missing, then the install goes on" || no "linux: yes path wrong: $out | $c"
 rm -f "$LX/min/curl" "$LX/min/pgrep" "$LX/min/unzip"
 out=$(OSR="$LX/os/fedora" LPATH="$LX/min" YES=1 lx linux_prereqs)
-echo "$out" | grep -q "DIED missing: curl procps unzip. Install them with your distribution's package manager" && [ -z "$(calls)" ] \
+echo "$out" | grep -q "DIED missing: curl procps unzip. Install them with your distribution's package manager" && [ -z "$(lxcalls)" ] \
   && ok "linux: not Debian or Ubuntu: what is missing, and no apt-get" || no "linux: other distribution mishandled: $out"
 mkdir -p "$LX/root"; printf '#!/bin/sh\necho 0\n' > "$LX/root/id"; chmod +x "$LX/root/id"
 out=$( (export SUDO_USER=tester; LPATH="$LX/root:$LX/min" YES=1 lx linux_prereqs) )
-echo "$out" | grep -q "DIED Run ./install.sh without sudo" && [ -z "$(calls)" ] \
+echo "$out" | grep -q "DIED Run ./install.sh without sudo" && [ -z "$(lxcalls)" ] \
   && ok "linux: run with sudo: refused (it would install in root's home)" || no "linux: sudo run not refused: $out"
 
 # The scheduler. cron first (no systemd for this user), over a crontab the user already has.
 printf 'MAILTO=me@example.org\n0 9 * * * echo mine\n' > "$LX/crontab"; cp "$LX/crontab" "$LX/crontab.user"
-out=$(lx linux_schedule); c=$(calls)
+out=$(lx linux_schedule); c=$(lxcalls)
 python3 - "$LX/crontab" "$LX/crontab.user" <<'PY' && echo "$out" | grep -q "SCHEDULER=cron" && echo "$c" | grep -q "crontab install" \
   && ok "linux cron: the user's lines kept, the kit's block added once (nightly, reflection, lint)" || no "linux cron: block not added as expected: $out"
 import sys
@@ -945,18 +945,18 @@ assert '0 4 * * * /bin/bash "$HOME/.claude/hooks/brain/gbrain-nightly.sh"' in ta
 assert '0 12,23 * * * /usr/bin/env python3 "$HOME/.claude/hooks/brain/daily-reflection.py"' in tab
 assert '0 8 * * 1 /bin/bash "$HOME/.claude/hooks/brain/gbrain-lint.sh"' in tab
 PY
-cp "$LX/crontab" "$LX/crontab.1"; out=$(lx linux_schedule); c=$(calls)
+cp "$LX/crontab" "$LX/crontab.1"; out=$(lx linux_schedule); c=$(lxcalls)
 cmp -s "$LX/crontab" "$LX/crontab.1" && ! echo "$c" | grep -q "crontab install" && echo "$out" | grep -q "(unchanged)" \
   && ok "linux cron: a second run writes nothing" || no "linux cron: second run rewrote the crontab: $c"
-out=$(CRONTAB_BROKEN=1 lx linux_schedule); c=$(calls)
+out=$(CRONTAB_BROKEN=1 lx linux_schedule); c=$(lxcalls)
 cmp -s "$LX/crontab" "$LX/crontab.1" && ! echo "$c" | grep -q "crontab install" && echo "$out" | grep -q "WARN crontab -l failed" \
   && ok "linux cron: a crontab that cannot be read is left as it is" || no "linux cron: unreadable crontab overwritten: $out"
-mkdir -p "$LX/run/systemd/system"; out=$(lx linux_schedule); calls >/dev/null
+mkdir -p "$LX/run/systemd/system"; out=$(lx linux_schedule); lxcalls >/dev/null
 echo "$out" | grep -qF "no session): ${SUDO}loginctl enable-linger tester, then re-run ./install.sh" \
   && ok "linux cron: systemd runs the machine but not for the user here: the lingering command, to move to timers" || no "linux cron: no lingering hint: $out"
 # systemd answers now (a desktop session): timers on, the cron block gone, no lingering without a yes.
 touch "$LX/systemd-up"; mkdir -p "$LX/run/systemd/system"
-out=$(lx linux_schedule); c=$(calls); U_DIR="$LH/.config/systemd/user"; bad=""
+out=$(lx linux_schedule); c=$(lxcalls); U_DIR="$LH/.config/systemd/user"; bad=""
 for t in gbrain-nightly brain-reflection gbrain-lint; do
   for k in service timer; do
     cmp -s "$REPO/engine/nightly/systemd/$t.$k" "$U_DIR/$t.$k" && [ "$(mode "$U_DIR/$t.$k")" = 644 ] || bad="$bad $t.$k"
@@ -969,48 +969,48 @@ grep -qx "Persistent=true" "$U_DIR/gbrain-nightly.timer" || bad="$bad persistent
 cmp -s "$LX/crontab" "$LX/crontab.user" && ! echo "$c" | grep -q "enable-linger" && echo "$out" | grep -q "loginctl enable-linger tester" \
   && ok "linux systemd: the cron block of a run without systemd removed, the user's lines kept; lingering only said" \
   || no "linux systemd: cron block left, user lines lost, or linger turned on without a yes: $c"
-out=$(YES=1 lx linux_schedule); c=$(calls)
+out=$(YES=1 lx linux_schedule); c=$(lxcalls)
 echo "$c" | grep -qx "loginctl --no-ask-password enable-linger tester" && echo "$out" | grep -q "OK lingering is on" \
   && ok "linux systemd: lingering turned on after a yes" || no "linux systemd: linger yes path: $out"
 # systemd for this user does not answer from here, but its timers are on: cron stays out of it.
 rm -f "$LX/systemd-up" "$LX/linger/tester"; mkdir -p "$U_DIR/timers.target.wants"; ln -sf ../gbrain-nightly.timer "$U_DIR/timers.target.wants/gbrain-nightly.timer"
-out=$(lx linux_schedule); c=$(calls)
+out=$(lx linux_schedule); c=$(lxcalls)
 cmp -s "$LX/crontab" "$LX/crontab.user" && ! echo "$c" | grep -q "crontab install" && echo "$out" | grep -q "cron is left alone" \
   && ok "linux: timers on but systemd unreachable from here: no cron block, nothing runs twice" || no "linux: cron added beside the timers: $out"
 # A block the user changed (another hour) is kept, the new one waits in pending/.
-rm -rf "$U_DIR/timers.target.wants"; lx linux_schedule >/dev/null; calls >/dev/null
+rm -rf "$U_DIR/timers.target.wants"; lx linux_schedule >/dev/null; lxcalls >/dev/null
 python3 -c 'import sys; p = sys.argv[1]; t = open(p).read().replace("0 4 * * *", "30 5 * * *"); open(p, "w").write(t)' "$LX/crontab"
-cp "$LX/crontab" "$LX/crontab.mine"; out=$(lx linux_schedule); c=$(calls)
+cp "$LX/crontab" "$LX/crontab.mine"; out=$(lx linux_schedule); c=$(lxcalls)
 cmp -s "$LX/crontab" "$LX/crontab.mine" && grep -q '^0 4 \* \* \* /bin/bash' "$LX/pending/crontab" && echo "$out" | grep -q "WARN crontab: the brain-in-a-box lines were changed" \
   && ok "linux cron: a block the user changed is kept, the new one in pending/crontab" || no "linux cron: user's block overwritten: $out"
 
 # Moving to systemd while the user had changed the kit's cron lines: kept, and the risk said.
-touch "$LX/systemd-up"; out=$(lx linux_schedule); calls >/dev/null; rm -f "$LX/systemd-up"
+touch "$LX/systemd-up"; out=$(lx linux_schedule); lxcalls >/dev/null; rm -f "$LX/systemd-up"
 cmp -s "$LX/crontab" "$LX/crontab.mine" && echo "$out" | grep -q "each job would run twice: remove them (crontab -e)" \
   && ok "linux systemd: cron lines the user changed stay, and the double run is said" || no "linux systemd: changed cron lines mishandled: $out"
 rm -rf "$LH/.config/systemd/user/timers.target.wants"
 # Claude Code: Anthropic's installer, for the user, without the Voyage key.
-out=$(lx linux_claude); c=$(calls)
+out=$(lx linux_claude); c=$(lxcalls)
 echo "$c" | grep -q "curl -fsSL https://claude.ai/install.sh" && [ -x "$LH/.local/bin/claude" ] && echo "$out" | grep -q "OK Claude Code installed" \
   && grep -qx "HOME=$LH" "$LX/claude-installer-env" && ! grep -q canari-voyage "$LX/claude-installer-env" && ! echo "$c" | grep -q sudo \
   && ok "linux: Claude Code from Anthropic's installer, in the home folder, without VOYAGE_API_KEY or sudo" || no "linux: Claude Code step wrong: $out | $c"
-out=$(lx linux_claude); [ -z "$(calls)" ] && echo "$out" | grep -q "already installed" \
+out=$(lx linux_claude); [ -z "$(lxcalls)" ] && echo "$out" | grep -q "already installed" \
   && ok "linux: Claude Code already there: nothing downloaded" || no "linux: Claude Code reinstalled: $out"
 
 # Obsidian: without a terminal, the one line to paste; after a yes, a download that does not match
 # the pinned SHA-256 is never installed; on arm64 (no .deb) or another distribution, where to get it.
-out=$(lx linux_obsidian); c=$(calls)
+out=$(lx linux_obsidian); c=$(lxcalls)
 line="d=\$(mktemp -d) && curl -fL -o \"\$d/obsidian.deb\" https://github.com/obsidianmd/obsidian-releases/releases/download/v1.14.4/obsidian_1.14.4_amd64.deb && echo \"85b10dcba6edfc1c0460a6d18260cf31c30447a444bd858a6440b9c9c8806d25  \$d/obsidian.deb\" | sha256sum -c - && ${SUDO}apt-get install -y \"\$d/obsidian.deb\""
 echo "$out" | grep -qxF "      $line" && [ -z "$c" ] \
   && ok "linux Obsidian: no terminal: the official .deb's line (pinned, checked), nothing run" || no "linux Obsidian: no-terminal path: $out | $c"
-out=$(YES=1 lx linux_obsidian); c=$(calls)
+out=$(YES=1 lx linux_obsidian); c=$(lxcalls)
 echo "$out" | grep -q "does not match the pinned SHA-256" && echo "$c" | grep -q "^curl -fL" && ! echo "$c" | grep -qE "apt-get|sudo" \
   && ok "linux Obsidian: a download that is not the pinned one is never installed" || no "linux Obsidian: checksum not enforced: $out | $c"
-out=$(DPKG_ARCH=arm64 YES=1 lx linux_obsidian); c=$(calls)
+out=$(DPKG_ARCH=arm64 YES=1 lx linux_obsidian); c=$(lxcalls)
 echo "$out" | grep -q "flatpak install --user flathub md.obsidian.Obsidian" && [ -z "$c" ] \
   && ok "linux Obsidian: arm64 (no official .deb): where to get it, nothing run" || no "linux Obsidian: arm64 path: $out | $c"
 mkdir -p "$LH/Applications"; : > "$LH/Applications/Obsidian-1.14.4.AppImage"
-out=$(YES=1 lx linux_obsidian); [ -z "$(calls)" ] && echo "$out" | grep -q "OK Obsidian already installed" \
+out=$(YES=1 lx linux_obsidian); [ -z "$(lxcalls)" ] && echo "$out" | grep -q "OK Obsidian already installed" \
   && ok "linux Obsidian: an AppImage in ~/Applications counts as installed" || no "linux Obsidian: existing AppImage not seen: $out"
 
 echo ""
