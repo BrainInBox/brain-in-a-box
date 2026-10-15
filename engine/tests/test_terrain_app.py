@@ -1351,6 +1351,36 @@ class LinuxReading(unittest.TestCase):
         self.assertEqual((env["DBUS_SESSION_BUS_ADDRESS"], env["XDG_RUNTIME_DIR"]), ("unix:path=/run/user/1001/bus", "/run/user/1001"))
         self.assertTrue(env["PATH"].startswith("/usr/local/sbin:") and "/home/" not in env["PATH"])
 
+    def test_the_vm_loses_git_and_curl_only_when_apt_can_put_them_back(self):
+        class Apt(ta.PiloteLinux):
+            def __init__(self, reinstallable):
+                self.reinstallable, self.calls = reinstallable, []
+
+            def _run(self, argv, timeout=120, env=None, creationflags=0):
+                self.calls.append(argv)
+                if "--reinstall" in argv:
+                    ok = argv[-1] in self.reinstallable
+                    return (0, "Inst %s" % argv[-1]) if ok else (100, "E: Reinstallation of %s is not possible, it cannot be downloaded." % argv[-1])
+                if "remove" in argv:
+                    return 0, "".join("Removing %s (1.0) ...\n" % p for p in argv[6:]) + "Removing git-lfs (3.8.0) ...\n"
+                return 0, ""
+
+        with mock.patch.object(ta.shutil, "which", return_value=None):
+            p = Apt(("git", "curl"))
+            out = p.poste_neuf()
+            self.assertEqual((out["retires"], out["aussi"], out["gardes"]), (["git", "curl"], ["git-lfs"], {}))
+            self.assertNotIn("note", out)
+            self.assertEqual(p.calls[0][:6], ["sudo", "-n", "apt-get", "install", "-y", "-q"], "brought up to date first")
+            self.assertIn("--only-upgrade", p.calls[0])
+            p = Apt(("git",))
+            out = p.poste_neuf()
+            self.assertEqual(out["retires"], ["git"])
+            self.assertIn("curl", out["gardes"])
+            self.assertIn("gardé sur la VM, apt ne pourrait pas le remettre : curl", out["note"])
+            self.assertNotIn("curl", [a for c in p.calls if "remove" in c for a in c])
+            with self.assertRaises(ta.ErreurPilote):
+                Apt(()).poste_neuf()
+
     def test_the_helper_is_ascii_compiles_and_answers_every_request(self):
         self.assertTrue(all(ord(c) < 128 for c in ta.ATSPI), "written and read as ASCII")
         compile(ta.ATSPI, "pilote-atspi.py", "exec")

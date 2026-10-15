@@ -1923,15 +1923,36 @@ class PiloteLinux(Pilote):
 
     def poste_neuf(self):
         """Ubuntu's desktop has neither git nor curl: taken away, as Ubuntu comes (apt, not hidden: the
-        app's step puts them back with apt)."""
-        rc, out = self._run(["sudo", "-n", "apt-get", "remove", "-y", "-q"] + list(SANS_PAQUETS), timeout=600,
-                            env=dict(os.environ, DEBIAN_FRONTEND="noninteractive"))
+        app's step puts them back with apt). A desktop keeps its packages up to date, a runner's image is
+        older than its package lists: each is first brought to its newest version, so that apt can put
+        it back without upgrading what else the image pinned; one apt could not put back stays (said)."""
+        env = dict(os.environ, DEBIAN_FRONTEND="noninteractive")
+        out = {}
+        rc, said = self._run(["sudo", "-n", "apt-get", "install", "-y", "-q", "--only-upgrade"] + list(SANS_PAQUETS),
+                             timeout=900, env=env)
+        out["mis_a_jour"] = rc == 0
+        retires, gardes = [], {}
+        for p in SANS_PAQUETS:
+            rc, said = self._run(["apt-get", "-s", "-q", "install", "--reinstall", p], timeout=300)
+            if rc == 0:
+                retires.append(p)
+            else:
+                gardes[p] = [l for l in said.splitlines() if l.strip()][-4:]
+        out["gardes"] = gardes
+        if not retires:
+            raise ErreurPilote("apt ne pourrait remettre ni git ni curl sur cette VM : %s" % json.dumps(gardes, ensure_ascii=False)[:400])
+        rc, said = self._run(["sudo", "-n", "apt-get", "remove", "-y", "-q"] + retires, timeout=600, env=env)
         if rc != 0:
-            raise ErreurPilote("apt-get remove %s : %s" % (" ".join(SANS_PAQUETS), out.strip()[-300:]))
-        left = [p for p in SANS_PAQUETS if shutil.which(p, path=PATH_UBUNTU)]
+            raise ErreurPilote("apt-get remove %s : %s" % (" ".join(retires), said.strip()[-300:]))
+        left = [p for p in retires if shutil.which(p, path=PATH_UBUNTU)]
         if left:
             raise ErreurPilote("toujours là après apt-get remove : %s" % ", ".join(left))
-        return {"retires": list(SANS_PAQUETS), "aussi": sorted(set(re.findall(r"^Removing (\S+) ", out, re.M)) - set(SANS_PAQUETS))}
+        out["retires"] = retires
+        out["aussi"] = sorted(set(re.findall(r"^Removing (\S+) ", said, re.M)) - set(retires))
+        if gardes:
+            out["note"] = "gardé sur la VM, apt ne pourrait pas le remettre : %s ; son installation par l'app n'est pas testée" % (
+                ", ".join(gardes))
+        return out
 
     def environnement(self, home, extra=None):
         return env_linux(home, self.display, os.getuid(), extra)
@@ -2569,6 +2590,8 @@ def scenario(t, opts, kit, pilote=None, horloge=time.monotonic, dormir=time.slee
         poste = pilote.poste_neuf()
         if poste:
             details["poste_neuf"] = poste
+            if poste.get("note"):
+                t.notes.append(poste["note"])
 
         details["duree_parcours_s"] = parcours.premier_lancement(env)
         t("app-fermeture")
