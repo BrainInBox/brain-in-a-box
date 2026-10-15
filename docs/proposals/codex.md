@@ -1,7 +1,7 @@
 # Plan : brancher Codex dans Brain in a Box
 
 Statut : proposition en cours, livrée phase par phase (§6) ; Codex reste fermé sur tous les systèmes tant que son parcours n'y est pas vert. Base : master 407444e. Version 2 du plan : relecture sécurité + faisabilité intégrée (§8).
-**Étapes 0 et 1 faites le 2026-10-15** : résultats, corrections et écarts dans les deux dernières sections (« Étape 0 — résultats », « Étape 1 — fait et écarts »). En cas de conflit, elles priment sur le corps du plan.
+**Étapes 0 et 1 faites le 2026-10-15** : résultats, corrections et écarts dans les trois dernières sections (« Étape 0 — résultats », « Étape 1 — fait et écarts », « Étape 1 — relecture et corrections »). En cas de conflit, elles priment sur le corps du plan, la plus récente d'abord.
 Sources : **VM** = constaté dans les runs du spike (Codex 0.162.1, faux serveur, aucun secret) ; **doc** = doc officielle ; **code** = github.com/openai/codex, commit 3ee47c1 ; **dépôt** = notre code. Ce qui n'a pas de source est marqué **non vérifié**.
 
 ## 0. En bref
@@ -341,7 +341,7 @@ Tous les constats sont retenus ; 3 doublons fusionnés, 3 correctifs adaptés.
 - run 2 : https://github.com/BrainInBox/brain-in-a-box/actions/runs/38779052837
 - run 3 : https://github.com/BrainInBox/brain-in-a-box/actions/runs/38780332011
 
-Sonde réutilisable (faux serveur, MCP, proxy) : dans `.github/workflows/phase0-codex.yml`, commit `0c90cc1` de `feat/codex`. Captures pour les fixtures (rollouts exec et TUI, payloads de hooks, `features list`, classement, `classify-<os>.json`) : gardées hors du dépôt, sans secret (jetons factices), versées en fixtures avec les phases 2 et 4.
+Sonde réutilisable (faux serveur, MCP, proxy) : dans `.github/workflows/phase0-codex.yml`, commit `0c90cc1` de `feat/codex`. Captures pour les fixtures (rollouts exec et TUI, payloads de hooks, `features list`, classement, `classify-<os>.json`) et faits de chaque run (`results.json`) : `engine/tests/fixtures/codex/phase0/`, sans secret (jetons factices).
 
 ### Faits
 
@@ -416,3 +416,18 @@ Sonde réutilisable (faux serveur, MCP, proxy) : dans `.github/workflows/phase0-
 8. **Sortie de `_agents.py choisir`** : une ligne ASCII (`agents=… prefere=… source=… ecrit=…` ou `erreur=<code>`, code 2). Chaque installeur écrit le message dans sa langue (install.ps1 reste ASCII). install.ps1 refuse avant Python tout `-Agents`/`-Prefere` qui contient autre chose que des lettres, des virgules et des espaces (Windows PowerShell 5.1 coupe un argument qui contient un guillemet).
 9. **README** : pas touché (phase 12). `--agents` n'accepte que `claude` tant que Codex est fermé.
 10. **Coût** : `test-hooks.sh` §16 prend environ 15 s, y compris quand install.sh lance `test-hooks.sh` en fin d'installation.
+
+---
+
+## Étape 1 — relecture et corrections (2026-10-15)
+
+Neuf constats de relecture (sécurité, non-régression), tous vérifiés. Ces corrections priment sur le corps du plan et sur « Étape 1 — fait et écarts ».
+
+1. **§1.1 « Illisible ou invalide » (et écarts 3, 4)** : un `agents.json` non fiable ne donne **aucun agent**, plus Claude. Qui a choisi Codex seul a exclu Claude : un fichier abîmé, d'une autre version ou fermé sur ce système ne doit pas renvoyer ses sessions et son coffre chez Claude. `lire()` rend `AUCUN` (liste vide) avec la raison : `illisible`, `invalide`, `ferme`, `droits`. Les lecteurs (phases 2 à 6) mettent alors les tâches sans outils en pause, les hooks `--agent codex` se taisent, le contrôle de nuit passe à l'orange (« relance l'installation »). Seul un fichier **absent** veut dire Claude seul, comme aujourd'hui.
+2. **Lecture et écriture d'`agents.json`** : `lire()` n'ouvre qu'un fichier ordinaire, sans suivre de lien ni attendre sur un tube (`O_NOFOLLOW`, `O_NONBLOCK`, `fstat`) ; un JSON trop imbriqué est `illisible` (plus d'exception). POSIX : un fichier qui n'est ni à l'utilisateur ni à root, ou modifiable par le groupe ou les autres, est `droits` (sinon un autre compte local pourrait rediriger `codex_home`). Windows : pas de contrôle de propriétaire (risque restant). `ecrire()` met de côté ce qu'il remplace sans jamais lire à travers un lien : les octets d'un fichier ordinaire, la cible d'un lien en texte, rien pour un tube.
+3. **Captures de l'étape 0** : versées dans le dépôt, `engine/tests/fixtures/codex/phase0/` (par système et version : rollouts, payloads de hooks, `features list`, classement ; par run et système : `facts/run<n>-<id>/<os>/results.json`, source des lignes FACT, et `lock-request.json`). Octets gardés tels quels (`-text`), jetons factices seulement, scan de secrets. `test_codex_phase0.py` échoue si une capture manque ou si un fait du plan change (aucun appel forcé n'a tourné ; `request_user_input_async` accepté en 0.162.1 seulement). Les artefacts des runs expirent le 2026-10-20, leurs journaux 90 jours après.
+4. **Écart 5, Windows** : le choix passe après Python (et, en mode `irm | iex`, après les sources), que `_agents.py` exige ; il passe maintenant **avant** Git et le journal d'installation. « Refusé avant tout changement » veut donc dire, sous Windows : Python (et les sources) peuvent avoir été installés, rien d'autre. Le contrôle CI compare aussi `install.log`.
+5. **Écart 1 et §4.1, installations existantes** : sur une installation existante (`installed.json` présent) sans `agents.json`, **aucune question**, Claude seul, sauf option ou variable explicite ; Bibo y présélectionne Claude seul (pas de présélection d'après un Codex installé). §1.4 tient ainsi pour un utilisateur Claude qui a aussi Codex. Phase 6 : test pty (`.github/ci/terminal.py`) d'une relance Claude seul dans un terminal, identique à aujourd'hui.
+6. **Écart 10, coût** : `install.sh` lance `test-hooks.sh` avec `BIAB_FROM_INSTALL=1` et le §16 se saute alors (13 s de moins pour chaque utilisateur) ; CI et `./test-hooks.sh` le gardent. Banc non isolé : le §16 s'arrête au lieu de lancer des installations.
+7. **CI Windows** : l'étape `irm | iex` tourne de nouveau sans choix (la commande du README), et les étapes suivantes sans `agents.json` ; `BIAB_AGENTS=claude` par `irm | iex` devient la dernière étape du job.
+8. **Fait de l'étape 0, précisé** : 11 appels forcés, tous refusés **sauf** `request_user_input_async` (accepté en 0.162.1, sans accès, run 3 ; refusé en 0.163.0-alpha.11). Le tableau des faits le disait déjà ; le premier compte rendu disait « tous refusés ».
