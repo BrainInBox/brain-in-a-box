@@ -40,6 +40,7 @@ import os
 import plistlib
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -1821,6 +1822,25 @@ TITRE_FENETRE = "Brain in a Box"
 NOM_ATSPI = "brain-in-a-box"
 
 
+def fusermount_setuid(path=PATH_UBUNTU):
+    """The fusermount the AppImage's runtime mounts it with (type2-runtime: the first fusermount* of
+    the PATH that is setuid root), or None."""
+    for d in path.split(":"):
+        try:
+            names = sorted(os.listdir(d))
+        except OSError:
+            continue
+        for n in names:
+            p = os.path.join(d, n)
+            try:
+                st = os.stat(p)
+            except OSError:
+                continue
+            if n.startswith("fusermount") and st.st_uid == 0 and st.st_mode & stat.S_ISUID:
+                return p
+    return None
+
+
 def place_xwininfo(out):
     """[x, y, width, height] of a window from xwininfo's answer, or None."""
     want = ("Absolute upper-left X", "Absolute upper-left Y", "Width", "Height")
@@ -1846,6 +1866,71 @@ def commandes_root(journal):
         if m:
             out.append(m.group(1))
     return out
+
+
+# What root may run, as the app is built: its two scripts, their labels ("$0"), the packages of their list.
+ROOT_RS = Path(__file__).resolve().parents[2] / "app" / "src-tauri" / "src" / "root.rs"
+# The polkit rule that stands in for the password (terrain.yml) logs the window's text under this tag.
+FENETRE = "fenetre-mot-de-passe"
+
+
+def chaine_rust(texte, debut):
+    """(value, end) of the Rust string literal of `texte` whose opening quote is at `debut`."""
+    out, i = [], debut + 1
+    while texte[i] != '"':
+        c = texte[i]
+        if c != "\\":
+            out.append(c)
+            i += 1
+            continue
+        e = texte[i + 1]
+        if e == "\n":  # a backslash at the end of a line: the line break and the next line's indent go
+            i += 2
+            while texte[i] in " \t\r\n":
+                i += 1
+        elif e == "u":
+            fin = texte.index("}", i)
+            out.append(chr(int(texte[i + 3:fin], 16)))
+            i = fin + 1
+        elif e == "x":
+            out.append(chr(int(texte[i + 2:i + 4], 16)))
+            i += 4
+        else:
+            out.append({"n": "\n", "t": "\t", "r": "\r", "0": "\0", "\\": "\\", '"': '"', "'": "'"}[e])
+            i += 2
+    return "".join(out), i + 1
+
+
+def scripts_root(texte):
+    """root.rs's string constants by name, and PACKAGES, read from its source."""
+    out = {m.group(1): chaine_rust(texte, m.end() - 1)[0]
+           for m in re.finditer(r'^(?:pub )?const ([A-Z0-9_]+): &str = "', texte, re.M)}
+    m = re.search(r'^pub const PACKAGES: &\[&str\] = &\[([^\]]*)\];', texte, re.M)
+    out["PACKAGES"] = re.findall(r'"([^"]+)"', m.group(1)) if m else []
+    return out
+
+
+def forme_root(cmd, s, home):
+    """("paquets", [packages]) or ("obsidian", its path) when the command pkexec ran is one of
+    root.rs's, to the letter: its script, its label, then arguments it accepts (packages of its
+    list; Obsidian's package downloaded by the app in ~/.brain-in-a-box). None for anything else."""
+    paquets = "/bin/sh -c %s %s " % (s["APT_INSTALL"], s["PACKAGES_LABEL"])
+    if cmd.startswith(paquets):
+        noms = cmd[len(paquets):].split(" ")
+        return ("paquets", noms) if all(n in s["PACKAGES"] for n in noms) else None
+    deb = "/bin/sh -c %s %s " % (s["APT_INSTALL_DEB"], s["OBSIDIAN_LABEL"])
+    chemin = cmd[len(deb):]
+    dossier = re.escape(str(Path(home) / ".brain-in-a-box"))
+    if cmd.startswith(deb) and re.fullmatch(dossier + r"/\.biab-[0-9a-f]{16}/obsidian\.deb", chemin):
+        return ("obsidian", chemin)
+    return None
+
+
+def ligne_mot_de_passe(cmd):
+    """The command as pkexec 124 shows it in the system's password window ($(cmdline_short)):
+    past 80 bytes, its first 38, « ... » and its last 37."""
+    b = cmd.encode("utf-8")
+    return cmd if len(b) <= 80 else (b[:38] + b" ... " + b[-37:]).decode("utf-8", "replace")
 
 
 class PiloteLinux(Pilote):
@@ -1897,8 +1982,8 @@ class PiloteLinux(Pilote):
 
     def installer(self, fichier, details, capturer=None):
         """The AppImage put in ~/Applications and allowed to run as a program (Files' « Exécutable
-        comme un programme »), with FUSE, which AppImages need and Ubuntu 24.04 lacks: the README's
-        command, typed as the user would (sudo stands in for their password)."""
+        comme un programme »). Its runtime mounts it with the system's fusermount3 (fuse3, on every
+        Ubuntu desktop since 22.04): a VM without it gets it, and the results say so."""
         notes = []
         apps = Path.home() / "Applications"
         apps.mkdir(exist_ok=True)
@@ -1911,16 +1996,17 @@ class PiloteLinux(Pilote):
         if head[:4] != b"\x7fELF" or head[8:11] != b"AI\x02":
             raise ErreurPilote("%s n'est pas une AppImage (type 2)" % dest.name)
         os.chmod(dest, 0o755)
-        rc, out = self._run(["/sbin/ldconfig", "-p"], timeout=60)
-        if "libfuse.so.2" not in out:
-            rc, out = self._run(["sudo", "-n", "apt-get", "install", "-y", "-q", "libfuse2t64"], timeout=600,
+        fusermount = fusermount_setuid()
+        if not fusermount:
+            rc, out = self._run(["sudo", "-n", "apt-get", "install", "-y", "-q", "fuse3"], timeout=600,
                                 env=dict(os.environ, DEBIAN_FRONTEND="noninteractive"))
-            if rc != 0:
-                raise ErreurPilote("libfuse2t64 ne s'installe pas : %s" % out.strip()[-300:])
-            notes.append("FUSE absent de la VM, installé comme le README le dit (apt install libfuse2t64)")
-            details["fuse"] = "installé par le robot (libfuse2t64)"
+            fusermount = fusermount_setuid()
+            if rc != 0 or not fusermount:
+                raise ErreurPilote("pas de fusermount3 setuid root, même après apt-get install fuse3 : %s" % out.strip()[-300:])
+            notes.append("pas de fusermount3 sur la VM, qu'un bureau Ubuntu a (fuse3) : installé par le robot")
+            details["fuse"] = "fuse3 installé par le robot (%s)" % fusermount
         else:
-            details["fuse"] = "déjà là"
+            details["fuse"] = "déjà là (%s)" % fusermount
         self.exe = dest
         details["installee_dans"] = str(dest).replace(str(Path.home()), "~")
         return notes
@@ -1983,17 +2069,45 @@ class PiloteLinux(Pilote):
                     ("%s (paquet du système)" % p, [Path("/usr/bin") / p]) for p in SANS_PAQUETS]
 
     def constats(self, t, details):
-        """What ran as root: through pkexec only (the system's password window), the app's two fixed
-        apt commands, and nothing else."""
+        """What ran as root: through pkexec only (the system's password window), root.rs's two
+        scripts to the letter, with arguments they accept, and nothing else; the packages the VM
+        was made to lack among them, and Obsidian's package once; each named in the window."""
         t("app-root")
-        rc, out = self._run(["sudo", "-n", "journalctl", "-t", "pkexec", "-o", "json", "--no-pager",
-                             "--since", "@%d" % int(self.debut)], timeout=60)
+        since = "@%d" % int(self.debut)
+        rc, out = self._run(["sudo", "-n", "journalctl", "-t", "pkexec", "-o", "json", "--no-pager", "--since", since], timeout=60)
         t.check(rc == 0, "journalctl ne dit pas ce que pkexec a lancé : %s" % out.strip()[-200:])
         cmds = commandes_root(out)
         details["root"] = [c[:160] for c in cmds]
-        t.check(cmds, "rien n'a été installé par pkexec : les outils du système et Obsidian demandent le mot de passe")
+        retires = (details.get("poste_neuf") or {}).get("retires") or []
+        t.check(retires, "rien n'a été retiré de la VM : l'étape « Outils de base » (pkexec, apt) n'a pas été testée")
+        try:
+            with open(ROOT_RS, encoding="utf-8") as f:
+                scripts = scripts_root(f.read())
+        except OSError as e:
+            scripts = {}
+            details["root_rs"] = str(e)
+        t.check(all(k in scripts for k in ("APT_INSTALL", "APT_INSTALL_DEB", "PACKAGES_LABEL", "OBSIDIAN_LABEL")) and scripts["PACKAGES"],
+                "les scripts de root.rs sont illisibles : rien à quoi comparer ce que root a lancé")
+        rc, said = self._run(["sudo", "-n", "journalctl", "-t", FENETRE, "-o", "cat", "--no-pager", "--since", since], timeout=60)
+        fenetres = set(said.splitlines()) if rc == 0 else set()
+        details["fenetre_mot_de_passe"] = sorted(fenetres)
+        paquets, obsidian = set(), []
         for c in cmds:
-            t.check(c.startswith("/bin/sh -c ") and "apt-get install" in c, "pkexec a lancé autre chose qu'apt-get : %s" % c[:200])
+            forme = forme_root(c, scripts, Path.home())
+            t.check(forme, "pkexec a lancé autre chose que les scripts de root.rs : %s" % c[:200])
+            ligne = ligne_mot_de_passe(c)
+            t.check(ligne in fenetres, "la fenêtre du mot de passe n'a pas montré « %s » (journal : %s)" % (ligne, sorted(fenetres)[:4]))
+            if forme[0] == "paquets":
+                paquets.update(forme[1])
+                t.check(ligne.startswith("/bin/sh -c # Brain in a Box installe") and ligne.endswith(forme[1][-1]),
+                        "la fenêtre du mot de passe ne nomme pas l'app et les paquets : %s" % ligne)
+            else:
+                obsidian.append(forme[1])
+                t.check("Obsidian" in ligne and ligne.endswith("obsidian.deb"),
+                        "la fenêtre du mot de passe ne nomme pas Obsidian : %s" % ligne)
+        manque = [p for p in retires if p not in paquets]
+        t.check(not manque, "pkexec n'a pas installé %s, que la VM n'avait pas" % ", ".join(manque))
+        t.check(len(obsidian) == 1, "le paquet d'Obsidian installé par pkexec %d fois (une attendue)" % len(obsidian))
 
     def journaux(self):
         """apt's own logs, pkexec's and polkit's journal since the job began, what the kernel denied

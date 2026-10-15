@@ -951,7 +951,8 @@ jobs:
       # The desktop: an X server (Xvfb) and a window manager (openbox), the user's systemd and
       # session bus (the accessibility bus answers there, and install.sh finds systemd there), the
       # robot's eyes and hands (AT-SPI's Python bindings, xdotool, xwininfo, ImageMagick), and
-      # pkexec with the rule that stands in for the password typed in the system's window.
+      # pkexec with the rule that stands in for the password typed in the system's window; it logs
+      # the window's text (pkexec's cmdline_short) under fenetre-mot-de-passe, which the results check.
       - name: A desktop for the app
         timeout-minutes: 5
         run: |
@@ -959,7 +960,10 @@ jobs:
           sudo apt-get install -y -q xvfb openbox xdotool x11-utils imagemagick at-spi2-core python3-gi \
             gir1.2-atspi-2.0 dbus-user-session pkexec
           printf '%s\n' 'polkit.addRule(function (action, subject) {' \
-            "  if (action.id == \"org.freedesktop.policykit.exec\" && subject.user == \"$USER\") { return polkit.Result.YES; }" \
+            "  if (action.id == \"org.freedesktop.policykit.exec\" && subject.user == \"$USER\") {" \
+            '    polkit.spawn(["/usr/bin/logger", "-t", "fenetre-mot-de-passe", "--", "" + action.lookup("cmdline_short")]);' \
+            '    return polkit.Result.YES;' \
+            '  }' \
             '});' | sudo tee /etc/polkit-1/rules.d/49-terrain-mot-de-passe.rules
           run="/run/user/$(id -u)"
           if [ ! -S "$run/bus" ]; then sudo loginctl enable-linger "$USER"; fi

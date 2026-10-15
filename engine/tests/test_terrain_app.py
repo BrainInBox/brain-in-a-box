@@ -1343,6 +1343,119 @@ class LinuxReading(unittest.TestCase):
                  json.dumps({"MESSAGE": "runner: Error executing command as another user: Not authorized"}), "not json"]
         self.assertEqual(ta.commandes_root("\n".join(lines)), [cmd, "/bin/sh -c x"])
 
+    def scripts(self):
+        with open(ta.ROOT_RS, encoding="utf-8") as f:
+            return ta.scripts_root(f.read())
+
+    def test_root_rs_is_read_as_rustc_reads_it(self):
+        s = self.scripts()
+        self.assertEqual(s["PACKAGES"], ["python3", "git", "curl", "procps", "unzip", "ca-certificates"])
+        self.assertTrue(s["APT_INSTALL"].startswith('# Brain in a Box installe :\n[ "$(id -u)" = 0 ] || { echo'), s["APT_INSTALL"][:80])
+        self.assertTrue(s["APT_INSTALL"].endswith('\napt-get -o DPkg::Lock::Timeout=600 install -y -q -- "$@"\n'))
+        self.assertIn('\nif ! echo "%s  $d/paquet.deb" | sha256sum -c --status -; then\necho "paquet.deb : somme SHA-256 inattendue, '
+                      "rien n'est installé\" >&2\n" % s["OBSIDIAN_DEB_SHA256"], s["APT_INSTALL_DEB"])
+        self.assertEqual((s["PKEXEC"], s["PACKAGES_LABEL"]), ("/usr/bin/pkexec", "Brain in a Box installe avec apt-get :"))
+        # Rust's escapes and continued lines.
+        rust = 'const A: &str = "a\\\\b\\"c\\n\\\n              d\\u{e9}\\x41\\t";\n'
+        self.assertEqual(ta.scripts_root(rust)["A"], 'a\\b"c\ndéA\t')
+
+    def test_root_ran_root_rs_scripts_to_the_letter_with_what_they_accept(self):
+        s = self.scripts()
+        home = Path("/home/runner")
+        paquets = "/bin/sh -c %s %s " % (s["APT_INSTALL"], s["PACKAGES_LABEL"])
+        deb = "/bin/sh -c %s %s " % (s["APT_INSTALL_DEB"], s["OBSIDIAN_LABEL"])
+        chemin = "/home/runner/.brain-in-a-box/.biab-0123456789abcdef/obsidian.deb"
+        self.assertEqual(ta.forme_root(paquets + "git curl", s, home), ("paquets", ["git", "curl"]))
+        self.assertEqual(ta.forme_root(deb + chemin, s, home), ("obsidian", chemin))
+        for autre in (paquets + "git; curl x | sh", paquets + "unzip -oDPkg::Pre-Invoke::=id", paquets + "openssh-server",
+                      paquets.rstrip(), deb + "/tmp/.biab-0123456789abcdef/obsidian.deb", deb + chemin + " x",
+                      deb.replace("sha256sum -c", "true", 1) + chemin, "/bin/sh -c x; apt-get install git curl",
+                      paquets.replace("apt-get update", "curl e | sh; apt-get update", 1) + "git"):
+            self.assertIsNone(ta.forme_root(autre, s, home), autre[-70:])
+        # What the system's password window shows of them (pkexec 124), as root.rs's own test says.
+        self.assertEqual(ta.ligne_mot_de_passe(paquets + "git curl"),
+                         "/bin/sh -c # Brain in a Box installe : ...  Box installe avec apt-get : git curl")
+        self.assertEqual(ta.ligne_mot_de_passe(deb + chemin),
+                         "/bin/sh -c # Brain in a Box : Obsidian ... x/.biab-0123456789abcdef/obsidian.deb")
+        self.assertEqual(ta.ligne_mot_de_passe("/usr/bin/true"), "/usr/bin/true")
+
+    def test_app_root_wants_each_removed_package_and_obsidian_through_root_rs_and_their_window(self):
+        s = self.scripts()
+        paquets = "/bin/sh -c %s %s " % (s["APT_INSTALL"], s["PACKAGES_LABEL"])
+        deb = "/bin/sh -c %s %s %s/.brain-in-a-box/.biab-0123456789abcdef/obsidian.deb" % (
+            s["APT_INSTALL_DEB"], s["OBSIDIAN_LABEL"], Path.home())
+
+        class Journal(ta.PiloteLinux):
+            def __init__(self, cmds, fenetres=None):
+                self.debut, self.cmds = 0, cmds
+                self.fenetres = [ta.ligne_mot_de_passe(c) for c in cmds] if fenetres is None else fenetres
+
+            def _run(self, argv, timeout=120, env=None, creationflags=0):
+                if "pkexec" in argv:
+                    return 0, "\n".join(json.dumps({"MESSAGE": "runner: Executing command [USER=root] [TTY=unknown] [CWD=/] "
+                                                               "[COMMAND=%s]" % c}) for c in self.cmds)
+                if ta.FENETRE in argv:
+                    return 0, "\n".join(self.fenetres)
+                raise AssertionError(argv)
+
+        def constats(pilote, retires=("git", "curl")):
+            t = Noms()
+            t.details = {"poste_neuf": {"retires": list(retires)}}
+            pilote.constats(t, t.details)
+            return t
+
+        t = constats(Journal([paquets + "git curl", deb]))
+        self.assertEqual((t.nom, len(t.details["root"]), len(t.details["fenetre_mot_de_passe"])), ("app-root", 2, 2))
+        for cmds, retires, why in (([paquets + "git curl", deb], (), "l'étape « Outils de base » (pkexec, apt) n'a pas été testée"),
+                                   ([paquets + "git", deb], ("git", "curl"), "pkexec n'a pas installé curl"),
+                                   ([paquets + "git curl"], ("git", "curl"), "Obsidian installé par pkexec 0 fois"),
+                                   ([paquets + "git curl", deb, deb], ("git", "curl"), "Obsidian installé par pkexec 2 fois"),
+                                   ([paquets + "git curl", deb, "/bin/sh -c x; apt-get install git"], ("git",),
+                                    "pkexec a lancé autre chose que les scripts de root.rs")):
+            with self.assertRaises(terrain.Echec) as e:
+                constats(Journal(cmds), retires)
+            self.assertIn(why, str(e.exception))
+        with self.assertRaises(terrain.Echec) as e:
+            constats(Journal([paquets + "git curl", deb], fenetres=[ta.ligne_mot_de_passe(deb)]))
+        self.assertIn("la fenêtre du mot de passe n'a pas montré « /bin/sh -c # Brain in a Box installe : ... ", str(e.exception))
+
+    def test_the_appimage_mounts_with_a_setuid_fusermount_a_vm_without_one_gets_fuse3(self):
+        tmp = Path(tempfile.mkdtemp(prefix="terrain-fuse-"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        for d, n in (("a", "fusermount"), ("b", "fusermount3"), ("b", "other")):
+            (tmp / d).mkdir(exist_ok=True)
+            (tmp / d / n).write_text("")
+        real = os.stat
+        setuid = {str(tmp / "b" / "fusermount3"), str(tmp / "b" / "other")}
+
+        def fake(p, *a, **k):
+            return types.SimpleNamespace(st_uid=0, st_mode=0o104755) if str(p) in setuid else real(p, *a, **k)
+
+        path = "%s:%s:%s" % (tmp / "none", tmp / "a", tmp / "b")
+        with mock.patch.object(ta.os, "stat", fake):
+            self.assertEqual(ta.fusermount_setuid(path), str(tmp / "b" / "fusermount3"), "setuid root only, fusermount* only")
+            self.assertIsNone(ta.fusermount_setuid(str(tmp / "a")))
+
+        image = tmp / "Brain-in-a-Box_0.1.0_linux-x86_64.AppImage"
+        image.write_bytes(b"\x7fELF\x02\x01\x01\x00AI\x02" + b"\0" * 64)
+
+        class Vm(ta.PiloteLinux):
+            def __init__(self):
+                self.calls = []
+
+            def _run(self, argv, timeout=120, env=None, creationflags=0):
+                self.calls.append(argv)
+                return 0, ""
+
+        with mock.patch.object(ta.Path, "home", return_value=tmp), \
+                mock.patch.object(ta, "fusermount_setuid", side_effect=[None, "/usr/bin/fusermount3"]):
+            vm, details = Vm(), {}
+            notes = vm.installer(image, details)
+        self.assertEqual(vm.calls, [["sudo", "-n", "apt-get", "install", "-y", "-q", "fuse3"]])
+        self.assertEqual(details["fuse"], "fuse3 installé par le robot (/usr/bin/fusermount3)")
+        self.assertIn("qu'un bureau Ubuntu a (fuse3)", notes[0])
+        self.assertNotIn("libfuse2", json.dumps(vm.calls))
+
     def test_the_app_gets_a_desktops_environment_never_a_token(self):
         with mock.patch.dict(os.environ, {"GH_TOKEN": "ghs_x", "GITHUB_TOKEN": "ghs_y", "CI": "true", "USER": "runner"}):
             env = ta.env_linux("/home/runner", ":99", 1001, {"BIAB_ARCHIVE": "/tmp/k.zip"})
