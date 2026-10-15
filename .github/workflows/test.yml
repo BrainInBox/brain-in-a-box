@@ -652,6 +652,7 @@ jobs:
           }
           if (Test-Path "$H\.brain-in-a-box\agents.json") { throw 'a refused choice was written' }
           if (((& $snap) -join "`n") -ne $before) { throw 'a refused choice changed the install' }
+          exit 0   # the step would otherwise end with the last refused run's exit code
 
       - name: Unit tests (engine/tests) with the Python the installer set up
         run: |
