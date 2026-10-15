@@ -14,6 +14,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 HOOKS = Path(__file__).resolve().parent.parent / "hooks"
 sys.path.insert(0, str(HOOKS))
@@ -31,9 +32,12 @@ class Home(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.home, True)
         self.p = Path(ag.fichier(self.home))
 
-    def put(self, d):
+    def put(self, d, mode=0o600):
         self.p.parent.mkdir(parents=True, exist_ok=True)
+        if os.path.lexists(self.p):
+            self.p.unlink()
         self.p.write_bytes(d if isinstance(d, bytes) else (d if isinstance(d, str) else json.dumps(d)).encode("utf-8"))
+        os.chmod(self.p, mode)   # whatever the umask
 
     def lire(self, ouvert=None):
         return ag.lire(self.home, codex_ouvert=ouvert)
@@ -45,7 +49,7 @@ class Home(unittest.TestCase):
         e = {k: v for k, v in os.environ.items() if k not in ("CODEX_HOME", "BIAB_AGENTS", "BIAB_PREFERE")}
         e.update(HOME=self.home, USERPROFILE=self.home, **(env or {}))
         p = subprocess.run([sys.executable, "-I", str(HOOKS / "_agents.py"), "choisir", *args],
-                           env=e, capture_output=True)
+                           env=e, capture_output=True, timeout=20)
         return p.returncode, p.stdout.decode("ascii").strip(), p.stderr.decode("utf-8", "replace")
 
 
@@ -80,7 +84,7 @@ class Read(Home):
         self.put(b"\xef\xbb\xbf" + json.dumps({"version": 1, "agents": ["claude"], "prefere": "claude"}).encode())
         self.assertEqual(self.lire(), (ag.DEFAUT, "ok"))
 
-    def test_untrusted_files_fall_back_to_claude_and_say_why(self):
+    def test_untrusted_files_give_no_agent_and_say_why(self):
         ok = {"version": 1, "agents": ["claude"], "prefere": "claude"}
         bad = {
             "illisible": [b"{", b"", b"\xff\xfe{", b"x" * (ag.FICHIER_MAX + 1)],
@@ -97,16 +101,71 @@ class Read(Home):
             for d in cases:
                 with self.subTest(d=str(d)[:60]):
                     self.put(d)
-                    self.assertEqual(self.lire(TOUT), (ag.DEFAUT, etat))
+                    self.assertEqual(self.lire(TOUT), (ag.AUCUN, etat))
+
+    def test_an_untrusted_file_never_sends_anything_to_claude(self):
+        # Someone who chose Codex alone excluded Claude: a file gone bad must not bring it back.
+        self.assertEqual(ag.AUCUN.agents, ())
+        seul = {"version": 1, "agents": ["codex"], "prefere": "codex", "codex_home": CH}
+        for d, ouvert in (({**seul, "version": 2}, TOUT), ({**seul, "codex_home": "rel"}, TOUT),
+                          (json.dumps(seul)[:-9], TOUT), (b"[" * 60000, TOUT), (seul, None)):
+            with self.subTest(d=str(d)[:60]):
+                self.put(d)
+                choix, etat = self.lire(ouvert)
+                self.assertNotEqual(etat, "ok")
+                self.assertNotIn("claude", choix.agents)
+                self.assertIsNone(choix.prefere)
 
     def test_a_folder_in_its_place_is_unreadable(self):
         self.p.mkdir(parents=True)
-        self.assertEqual(self.lire(), (ag.DEFAUT, "illisible"))
+        self.assertEqual(self.lire(), (ag.AUCUN, "illisible"))
 
     def test_codex_listed_on_a_closed_system_is_not_trusted(self):
         self.put({"version": 1, "agents": ["claude", "codex"], "prefere": "claude", "codex_home": self.home})
-        self.assertEqual(self.lire(), (ag.DEFAUT, "ferme"))
+        self.assertEqual(self.lire(), (ag.AUCUN, "ferme"))
         self.assertEqual(self.lire(TOUT)[1], "ok")
+
+    def test_a_deeply_nested_file_is_unreadable_not_a_crash(self):
+        self.put(b"[" * 60000)
+        self.assertEqual(self.lire(), (ag.AUCUN, "illisible"))
+        self.assertEqual(self.run_cli("--pose-par=install.sh")[:2], (2, "erreur=fichier:illisible"))
+
+    @unittest.skipUnless(POSIX, "named pipes")
+    def test_a_pipe_in_its_place_is_never_waited_on(self):
+        self.p.parent.mkdir(parents=True)
+        os.mkfifo(self.p)
+        self.assertEqual(self.run_cli("--pose-par=install.sh")[:2], (2, "erreur=fichier:illisible"))
+        self.assertEqual(self.lire(), (ag.AUCUN, "illisible"))
+
+    @unittest.skipUnless(POSIX, "symlinks")
+    def test_a_link_in_its_place_is_not_followed(self):
+        target = Path(self.home) / "elsewhere.json"
+        target.write_text(json.dumps({"version": 1, "agents": ["claude"], "prefere": "claude"}), encoding="utf-8")
+        os.chmod(target, 0o600)
+        self.p.parent.mkdir(parents=True)
+        self.p.symlink_to(target)
+        self.assertEqual(self.lire(), (ag.AUCUN, "illisible"))
+
+    @unittest.skipUnless(POSIX, "modes")
+    def test_a_file_another_account_can_change_is_not_trusted(self):
+        ok = {"version": 1, "agents": ["claude"], "prefere": "claude"}
+        for mode, etat in ((0o666, "droits"), (0o620, "droits"), (0o602, "droits"), (0o600, "ok"),
+                           (0o644, "ok"), (0o400, "ok")):
+            with self.subTest(mode=oct(mode)):
+                self.put(ok, mode)
+                self.assertEqual(self.lire(), (ag.DEFAUT if etat == "ok" else ag.AUCUN, etat))
+        self.put(ok)
+        with mock.patch.object(ag.os, "geteuid", return_value=os.geteuid() + 1):
+            self.assertEqual(self.lire(), (ag.AUCUN, "droits"))
+
+    def test_owner_and_mode_rule(self):
+        def st(mode, uid):
+            return os.stat_result((stat.S_IFREG | mode, 0, 0, 1, uid, 0, 10, 0, 0, 0))
+        self.assertTrue(ag.a_soi(st(0o600, 501), 501))
+        self.assertTrue(ag.a_soi(st(0o644, 0), 501), "root's own file: only root could have put it")
+        self.assertFalse(ag.a_soi(st(0o600, 502), 501))
+        self.assertFalse(ag.a_soi(st(0o660, 501), 501))
+        self.assertFalse(ag.a_soi(st(0o646, 0), 501))
 
 
 class Choose(Home):
@@ -128,6 +187,11 @@ class Choose(Home):
         with self.assertRaises(ag.Refus) as r:
             self.choisir()
         self.assertEqual(r.exception.code, "fichier:ferme")
+        if POSIX:
+            self.put({"version": 1, "agents": ["claude"], "prefere": "claude"}, 0o666)
+            with self.assertRaises(ag.Refus) as r:
+                self.choisir()
+            self.assertEqual(r.exception.code, "fichier:droits")
 
     def test_claude_chosen(self):
         for agents in ("claude", " Claude ", "claude,claude"):
@@ -231,6 +295,42 @@ class Write(Home):
         self.assertFalse(self.p.is_symlink())
         self.assertEqual(self.lire(), (ag.DEFAUT, "ok"))
 
+    @unittest.skipUnless(POSIX, "symlinks")
+    def test_a_link_to_a_private_file_is_never_copied(self):
+        target = Path(self.home) / "id_secret"
+        target.write_text("PRIVATE-KEY-MATERIAL\n", encoding="utf-8")
+        os.chmod(target, 0o600)
+        self.p.parent.mkdir(parents=True)
+        self.p.symlink_to(target)
+        self.assertTrue(self.write("claude"))
+        self.assertEqual(target.read_text(encoding="utf-8"), "PRIVATE-KEY-MATERIAL\n")
+        for f in self.p.parent.iterdir():
+            self.assertNotIn(b"PRIVATE-KEY-MATERIAL", f.read_bytes(), f.name)
+        baks = [f for f in self.p.parent.iterdir() if f.name.startswith("agents.json.bak-")]
+        self.assertEqual(len(baks), 1, "where the link pointed is kept aside")
+        self.assertFalse(baks[0].is_symlink())
+        self.assertIn(str(target), baks[0].read_text(encoding="utf-8"))
+        self.assertEqual(stat.S_IMODE(baks[0].stat().st_mode), 0o600)
+
+    @unittest.skipUnless(POSIX, "named pipes")
+    def test_a_pipe_in_its_place_is_replaced_by_a_choice(self):
+        self.p.parent.mkdir(parents=True)
+        os.mkfifo(self.p)
+        self.assertEqual(self.run_cli("--agents=claude", "--pose-par=install.sh")[:2],
+                         (0, "agents=claude prefere=claude source=choix ecrit=oui"))
+        self.assertTrue(stat.S_ISREG(os.lstat(self.p).st_mode))
+        self.assertEqual(self.lire(), (ag.DEFAUT, "ok"))
+
+    @unittest.skipUnless(POSIX, "modes")
+    def test_a_file_others_could_change_replaced_by_a_choice_is_kept_aside(self):
+        self.put({"version": 1, "agents": ["claude"], "prefere": "claude", "mine": 1}, 0o666)
+        self.assertTrue(self.write("claude"))
+        baks = [f for f in self.p.parent.iterdir() if f.name.startswith("agents.json.bak-")]
+        self.assertEqual(len(baks), 1)
+        self.assertIn('"mine": 1', baks[0].read_text(encoding="utf-8"))
+        self.assertEqual(stat.S_IMODE(self.p.stat().st_mode), 0o600)
+        self.assertEqual(self.lire(), (ag.DEFAUT, "ok"))
+
     def test_an_accented_home(self):
         self.home = os.path.join(self.home, "Hélène Ünal")
         self.p = Path(ag.fichier(self.home))
@@ -264,6 +364,10 @@ class Cli(Home):
         self.put("[]")
         self.assertEqual(self.run_cli("--pose-par=install.sh")[:2], (2, "erreur=fichier:invalide"))
         self.assertEqual(self.p.read_text(encoding="utf-8"), "[]")
+        if POSIX:
+            self.put({"version": 1, "agents": ["claude"], "prefere": "claude"}, 0o666)
+            self.assertEqual(self.run_cli("--pose-par=install.sh")[:2], (2, "erreur=fichier:droits"))
+            self.assertEqual(stat.S_IMODE(self.p.stat().st_mode), 0o666, "left as it was")
 
     def test_codex_home_is_not_read_without_codex(self):
         code, out, _ = self.run_cli("--agents=claude", "--pose-par=install.sh", env={"CODEX_HOME": "rel"})
