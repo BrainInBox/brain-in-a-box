@@ -1,0 +1,588 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Brain in a Box · un second cerveau pour Claude</title>
+  <meta name="description" content="Télécharge l'app Brain in a Box : Bibo installe un second cerveau pour Claude Code sur ton Mac, ton PC Windows ou Linux, sans une commande à taper. Le guide pas à pas.">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#fbf5ec" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#1c1715" media="(prefers-color-scheme: dark)">
+  <meta property="og:title" content="Brain in a Box · un second cerveau pour Claude">
+  <meta property="og:description" content="Bibo installe un second cerveau pour Claude Code, sans une commande à taper. Mac, Windows et Linux.">
+  <meta property="og:type" content="website">
+  <link rel="icon" href="img/bibo.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#contenu">Aller au contenu</a>
+
+<header class="top">
+  <div class="wrap top-in">
+    <a class="brand" href="#contenu"><img src="img/bibo.svg" alt="" width="34" height="34">Brain in a Box</a>
+    <nav class="top-nav" aria-label="Sections de la page">
+      <a href="#avant">Avant de commencer</a>
+      <a href="#installer">Installer</a>
+      <a href="#bibo">Ce que fait Bibo</a>
+      <a href="#logiciels">Les logiciels</a>
+      <a href="#aide">Un souci ?</a>
+    </nav>
+    <a class="top-gh" href="https://github.com/BrainInBox/brain-in-a-box" rel="noopener">GitHub</a>
+  </div>
+</header>
+
+<main id="contenu">
+
+<section class="hero" aria-labelledby="titre">
+  <div class="wrap hero-in">
+    <div class="hero-text">
+      <p class="badge">Préversion · open source</p>
+      <h1 id="titre">Un second cerveau pour Claude, installé par Bibo.</h1>
+      <p class="lead">Brain in a Box donne une mémoire à Claude Code : il retient ce que tu lui apprends, résume tes journées dans tes notes et retrouve ce que tu y as écrit. Bibo installe tout en 10 à 20 minutes, sans une seule commande à taper.</p>
+      <p class="for">Pour toi si tu as un abonnement Claude Pro ou Max, même si tu n’as jamais ouvert de terminal.</p>
+
+      <div class="dl" id="telecharger">
+        <a class="btn btn-primary btn-big" id="dl-main" href="https://github.com/BrainInBox/brain-in-a-box/releases?q=pr%C3%A9version&amp;expanded=true" rel="noopener">
+          <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 4v11m0 0l-4.5-4.5M12 15l4.5-4.5M5 19h14"/></svg>
+          <span id="dl-main-label">Télécharger l’app</span>
+        </a>
+        <p class="dl-meta" id="dl-main-meta">Mac, Windows et Linux, sur la page des versions (GitHub).</p>
+        <p class="dl-mobile" id="dl-mobile" hidden>Brain in a Box s’installe sur un ordinateur : ouvre cette page sur ton Mac ou ton PC.</p>
+        <div class="dl-others">
+          <span id="dl-others-label">Tous les systèmes :</span>
+          <ul>
+            <li data-for="mac"><a data-dl="mac" href="https://github.com/BrainInBox/brain-in-a-box/releases?q=pr%C3%A9version&amp;expanded=true" rel="noopener">Mac</a> <span class="ext">.dmg</span></li>
+            <li data-for="windows"><a data-dl="windows" href="https://github.com/BrainInBox/brain-in-a-box/releases?q=pr%C3%A9version&amp;expanded=true" rel="noopener">Windows</a> <span class="ext">.exe</span></li>
+            <li data-for="linux"><a data-dl="appimage" href="https://github.com/BrainInBox/brain-in-a-box/releases?q=pr%C3%A9version&amp;expanded=true" rel="noopener">Linux</a> <span class="ext">AppImage</span></li>
+            <li data-for="deb"><a data-dl="deb" href="https://github.com/BrainInBox/brain-in-a-box/releases?q=pr%C3%A9version&amp;expanded=true" rel="noopener">Linux</a> <span class="ext">.deb</span></li>
+          </ul>
+        </div>
+        <p class="dl-version"><span id="version">Dernière préversion sur GitHub</span> · <a href="https://github.com/BrainInBox/brain-in-a-box/releases?q=pr%C3%A9version&amp;expanded=true" rel="noopener">toutes les versions</a></p>
+        <p class="dl-warn">Pas encore signée par Apple ni par Microsoft : la première fois, ton ordinateur te met en garde. C’est prévu, <a href="#installer">voici quoi faire</a>.</p>
+      </div>
+    </div>
+    <div class="hero-art">
+      <img src="img/bibo.svg" alt="Bibo, la mascotte : un cerveau rose souriant qui sort d'un carton." width="300" height="300">
+    </div>
+  </div>
+</section>
+
+<section class="section" id="avant" aria-labelledby="avant-t">
+  <div class="wrap">
+    <h2 id="avant-t">Avant de commencer</h2>
+    <p class="section-lead">Quatre choses, et c’est tout.</p>
+    <ul class="needs">
+      <li class="card">
+        <svg class="need-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3" y="6" width="18" height="13" rx="2.5"/><path d="M3 10h18M7 15h4"/></svg>
+        <h3>Un abonnement Claude Pro ou Max</h3>
+        <p>Claude Code en a besoin. Tu connectes ton compte pendant l’installation, directement chez Anthropic : Bibo ne voit jamais ton mot de passe.</p>
+        <p><a href="https://claude.com/pricing" rel="noopener">Voir les abonnements Claude</a></p>
+      </li>
+      <li class="card">
+        <svg class="need-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>
+        <h3>10 à 20 minutes</h3>
+        <p>Le temps d’installer ce qui manque. Sur Mac, si les outils Apple ne sont pas encore là, compte un peu plus : leur téléchargement peut prendre une dizaine de minutes à lui seul.</p>
+      </li>
+      <li class="card">
+        <svg class="need-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="4" y="5" width="16" height="11" rx="1.5"/><path d="M2 19h20"/></svg>
+        <h3>Un ordinateur pris en charge</h3>
+        <ul class="plain">
+          <li><strong>Mac</strong> : macOS 13 ou plus récent, puce Apple ou Intel.</li>
+          <li><strong>Windows</strong> : 10 (version 1809 ou plus) ou 11, 64 bits.</li>
+          <li><strong>Linux</strong> : Ubuntu 22.04 ou plus, Debian 12, ou une dérivée (Mint, Pop!_OS), processeur x86-64. Testé sur Ubuntu 24.04.</li>
+          <li>Au moins 3 Go libres, 10 Go pour être tranquille.</li>
+        </ul>
+      </li>
+      <li class="card">
+        <svg class="need-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M2.5 9.5a14 14 0 0119 0M5.5 12.8a9.5 9.5 0 0113 0M8.6 16a5 5 0 016.8 0"/><circle cx="12" cy="19" r="1.2"/></svg>
+        <h3>Une connexion internet</h3>
+        <p>Bibo télécharge Claude Code, Obsidian et le reste pendant l’installation. Il vérifie d’abord que github.com et claude.ai répondent.</p>
+      </li>
+    </ul>
+  </div>
+</section>
+
+<section class="section section-alt" id="installer" aria-labelledby="installer-t">
+  <div class="wrap">
+    <h2 id="installer-t">Installer l’app</h2>
+    <p class="section-lead">Choisis ton système. L’app est une préversion, pas encore signée par Apple ni par Microsoft : la première fois, ton ordinateur te met en garde. Voici comment passer ce message.</p>
+
+    <nav class="tabs" data-tabs aria-label="Systèmes">
+      <a href="#installer-mac">Mac</a>
+      <a href="#installer-windows">Windows</a>
+      <a href="#installer-linux">Linux</a>
+    </nav>
+
+    <div class="panel" id="installer-mac">
+      <h3 class="panel-title">Sur Mac</h3>
+      <ol class="steps">
+        <li>
+          <div class="step-text">
+            <h4>Télécharge l’app</h4>
+            <p>Un seul fichier pour les puces Apple et Intel : <code class="file" data-file="mac">Brain-in-a-Box_…_macos-universal.dmg</code></p>
+            <p><a class="btn btn-secondary" data-dl="mac" href="https://github.com/BrainInBox/brain-in-a-box/releases?q=pr%C3%A9version&amp;expanded=true" rel="noopener">Télécharger pour Mac</a></p>
+          </div>
+        </li>
+        <li>
+          <div class="step-text">
+            <h4>Glisse-la dans Applications</h4>
+            <p>Ouvre le fichier téléchargé (dans Téléchargements). Une fenêtre s’ouvre : glisse <strong>Brain in a Box</strong> sur le dossier <strong>Applications</strong>.</p>
+          </div>
+          <figure class="shot shot-small">
+            <a class="zoom" href="img/mac-dmg.webp"><img src="img/mac-dmg.webp" width="440" height="150" loading="lazy" decoding="async" alt="La fenêtre du fichier téléchargé : le dossier Applications à gauche, l'icône Brain in a Box à droite."></a>
+          </figure>
+        </li>
+        <li>
+          <div class="step-text">
+            <h4>Ouvre-la une première fois</h4>
+            <p>Ouvre Brain in a Box depuis Applications. macOS l’arrête avec un message : Apple n’a pas pu vérifier l’app. Clique sur <strong>Terminé</strong>, surtout pas sur « Placer dans la corbeille ».</p>
+          </div>
+          <figure class="shot shot-small shot-dialog">
+            <a class="zoom" href="img/mac-bloquee.webp"><img src="img/mac-bloquee.webp" width="260" height="284" loading="lazy" decoding="async" alt="Le message de macOS : Apple n'a pas pu vérifier Brain in a Box. Deux boutons : Placer dans la corbeille, et Terminé."></a>
+            <figcaption>Ici sur un Mac en anglais : « Done » veut dire « Terminé ».</figcaption>
+          </figure>
+        </li>
+        <li>
+          <div class="step-text">
+            <h4>Autorise-la dans les Réglages</h4>
+            <p>Ouvre <strong>Réglages Système › Confidentialité et sécurité</strong>. Descends jusqu’à « Sécurité » : à côté de Brain in a Box, clique sur <strong>Ouvrir quand même</strong>, puis confirme. Ton Mac peut te demander ton mot de passe.</p>
+            <p>C’est tout : ensuite, l’app s’ouvre normalement.</p>
+          </div>
+        </li>
+      </ol>
+      <aside class="callout">
+        <h4>Pourquoi ce blocage ?</h4>
+        <p>Pour qu’un Mac ouvre une app sans prévenir, il faut qu’Apple l’ait signée, ce qui demande un compte développeur Apple. La préversion ne l’est pas encore : macOS dit seulement qu’il ne la connaît pas. Pour vérifier que ton fichier vient bien du projet : <a href="#verifier">vérifier le fichier téléchargé</a>.</p>
+      </aside>
+    </div>
+
+    <div class="panel" id="installer-windows">
+      <h3 class="panel-title">Sur Windows</h3>
+      <ol class="steps">
+        <li>
+          <div class="step-text">
+            <h4>Télécharge l’installeur et ouvre-le</h4>
+            <p>Le fichier : <code class="file" data-file="windows">Brain-in-a-Box_…_windows-x64-setup.exe</code></p>
+            <p><a class="btn btn-secondary" data-dl="windows" href="https://github.com/BrainInBox/brain-in-a-box/releases?q=pr%C3%A9version&amp;expanded=true" rel="noopener">Télécharger pour Windows</a></p>
+          </div>
+        </li>
+        <li>
+          <div class="step-text">
+            <h4>« Windows a protégé votre ordinateur »</h4>
+            <p>Un message bleu s’affiche. Clique sur <strong>Informations complémentaires</strong>.</p>
+          </div>
+          <figure class="shot">
+            <a class="zoom" href="img/win-smartscreen-1.webp"><img src="img/win-smartscreen-1.webp" width="532" height="150" loading="lazy" decoding="async" alt="Le message bleu de Windows : Windows a protégé votre ordinateur, avec le lien Informations complémentaires sous le texte."></a>
+            <figcaption>Le haut du message, ici sur un Windows en anglais : « More info ».</figcaption>
+          </figure>
+        </li>
+        <li>
+          <div class="step-text">
+            <h4>Exécuter quand même</h4>
+            <p>Le nom du fichier apparaît, avec « Éditeur inconnu ». Clique sur <strong>Exécuter quand même</strong>.</p>
+          </div>
+          <figure class="shot shot-narrow">
+            <a class="zoom" href="img/win-smartscreen-2.webp"><img src="img/win-smartscreen-2.webp" width="532" height="498" loading="lazy" decoding="async" alt="Le même message, avec le nom du fichier Brain in a Box et deux boutons : Exécuter quand même, et Ne pas exécuter."></a>
+            <figcaption>« Run anyway » sur un Windows en anglais.</figcaption>
+          </figure>
+        </li>
+        <li>
+          <div class="step-text">
+            <h4>Suis l’assistant d’installation</h4>
+            <p>Il est en français. Clique sur <strong>Suivant</strong> jusqu’au bout (garde le dossier proposé), puis sur <strong>Fermer</strong> en laissant « Lancer Brain in a Box » coché. Bibo s’ouvre.</p>
+            <p>Aucun droit administrateur à donner : l’app s’installe pour toi seul.</p>
+          </div>
+          <div class="shot-pair">
+            <figure class="shot">
+              <a class="zoom" href="img/win-installeur.webp"><img src="img/win-installeur.webp" width="497" height="386" loading="lazy" decoding="async" alt="Premier écran de l'assistant : Bienvenue dans le programme d'installation de Brain in a Box, bouton Suivant."></a>
+            </figure>
+            <figure class="shot">
+              <a class="zoom" href="img/win-installeur-fin.webp"><img src="img/win-installeur-fin.webp" width="497" height="386" loading="lazy" decoding="async" alt="Dernier écran : Fin de l'installation de Brain in a Box, cases Lancer Brain in a Box et Créer un raccourci sur le bureau cochées, bouton Fermer."></a>
+            </figure>
+          </div>
+        </li>
+      </ol>
+      <aside class="callout">
+        <h4>Pourquoi ce message ?</h4>
+        <p>Windows (SmartScreen) prévient pour toute app qui n’est pas signée avec un certificat de signature de code. La préversion n’en a pas encore. Pour vérifier que ton fichier vient bien du projet : <a href="#verifier">vérifier le fichier téléchargé</a>.</p>
+      </aside>
+    </div>
+
+    <div class="panel" id="installer-linux">
+      <h3 class="panel-title">Sur Linux</h3>
+      <p>Deux formats, au choix. Le plus simple : l’<strong>AppImage</strong>, rien à installer.</p>
+      <ol class="steps">
+        <li>
+          <div class="step-text">
+            <h4>Télécharge l’AppImage</h4>
+            <p>Le fichier : <code class="file" data-file="appimage">Brain-in-a-Box_…_linux-x86_64.AppImage</code></p>
+            <p><a class="btn btn-secondary" data-dl="appimage" href="https://github.com/BrainInBox/brain-in-a-box/releases?q=pr%C3%A9version&amp;expanded=true" rel="noopener">Télécharger l’AppImage</a></p>
+          </div>
+        </li>
+        <li>
+          <div class="step-text">
+            <h4>Rends-la exécutable</h4>
+            <p>Clic droit sur le fichier › <strong>Propriétés</strong> › active <strong>Exécutable comme un programme</strong>.</p>
+            <p class="note">Dans un terminal, c’est pareil : <code>chmod +x Brain-in-a-Box_*.AppImage</code></p>
+          </div>
+        </li>
+        <li>
+          <div class="step-text">
+            <h4>Double-clique dessus</h4>
+            <p>Sur Ubuntu 22.04 et 24.04, rien d’autre à installer : Bibo s’ouvre.</p>
+            <p class="note">Rien ne se passe, sur une autre distribution ? Il manque sans doute FUSE : installe-le avec <code>sudo apt install fuse3</code>, ou lance l’app avec <code>./Brain-in-a-Box_*.AppImage --appimage-extract-and-run</code></p>
+          </div>
+        </li>
+      </ol>
+
+      <div class="alt-box card">
+        <h4>Ou le paquet .deb</h4>
+        <p>Télécharge <code class="file" data-file="deb">Brain-in-a-Box_…_linux-amd64.deb</code>, puis, dans un terminal ouvert dans ton dossier Téléchargements :</p>
+        <pre class="cmd"><code data-deb-cmd>sudo apt install ./Brain-in-a-Box_*_linux-amd64.deb</code></pre>
+        <p>Ensuite, ouvre Brain in a Box depuis le menu des applications. Avec un lecteur d’écran sur Ubuntu 24.04, préfère le .deb : l’AppImage y annonce mal certains éléments.</p>
+        <p><a class="btn btn-secondary" data-dl="deb" href="https://github.com/BrainInBox/brain-in-a-box/releases?q=pr%C3%A9version&amp;expanded=true" rel="noopener">Télécharger le .deb</a></p>
+      </div>
+
+      <aside class="callout">
+        <h4>Ton mot de passe, une ou deux fois</h4>
+        <p>Pour installer les outils du système qui manquent (git, python3, curl…) et Obsidian, la fenêtre de ton système te demande ton mot de passe. Elle affiche « Brain in a Box installe » et ce qu’elle installe. C’est normal : tape-le. Tout le reste s’installe dans ton dossier personnel.</p>
+        <p>Une autre distribution (Fedora, Arch…) ? Bibo te dit quoi installer avec ton gestionnaire de paquets.</p>
+      </aside>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="bibo" aria-labelledby="bibo-t">
+  <div class="wrap">
+    <h2 id="bibo-t">Ce que fait Bibo, écran par écran</h2>
+    <p class="section-lead">Une fois l’app ouverte, Bibo te guide : tu cliques, il installe. Ces captures viennent du robot qui teste l’app chaque nuit sur des ordinateurs neufs, ici un Mac. Sur Windows et Linux, c’est la même fenêtre, avec les étapes de ton système.</p>
+
+    <ol class="journey">
+      <li>
+        <div class="j-text">
+          <p class="j-num">Écran 1</p>
+          <h3>« Salut, moi c’est Bibo ! »</h3>
+          <p>Bibo annonce le programme : il regarde ce qui manque, installe Claude, te fait connecter ton compte, puis installe le reste. Clique sur <strong>Vérifier mon Mac</strong> (ou « Vérifier mon PC »).</p>
+        </div>
+        <figure class="shot">
+          <a class="zoom" href="img/bibo-1-bienvenue.webp"><img src="img/bibo-1-bienvenue.webp" width="780" height="674" loading="lazy" decoding="async" alt="L'écran d'accueil : Bibo dit « Salut, moi c'est Bibo ! », trois étapes numérotées, et le bouton Vérifier mon Mac."></a>
+        </figure>
+      </li>
+      <li>
+        <div class="j-text">
+          <p class="j-num">Écran 2</p>
+          <h3>« J’ai fait le tour. »</h3>
+          <p>En quelques secondes, Bibo vérifie ton système, la place libre, internet et ce qui est déjà installé.</p>
+          <ul class="legend">
+            <li><svg class="ic ic-ok" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle class="ic-bg" cx="10" cy="10" r="9"/><path class="ic-fg" d="M6 10.4l2.7 2.6L14 7.6"/></svg>Coche verte : c’est bon.</li>
+            <li><svg class="ic ic-missing" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle class="ic-ring" cx="10" cy="10" r="8.2"/><path class="ic-line" d="M10 5.8v7M6.9 10.2L10 13.2l3.1-3"/></svg>Flèche dans un cercle pointillé : Bibo va l’installer.</li>
+            <li><svg class="ic ic-warn" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle class="ic-bg" cx="10" cy="10" r="9"/><path class="ic-fg" d="M10 5.6v5"/><circle class="ic-dot" cx="10" cy="14" r="1.3"/></svg>Point d’exclamation orange : à noter, rien de grave.</li>
+            <li><svg class="ic ic-error" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle class="ic-bg" cx="10" cy="10" r="9"/><path class="ic-fg" d="M7 7l6 6M13 7l-6 6"/></svg>Croix rouge : à régler avant de continuer. Bibo te dit comment, puis « Revérifier ».</li>
+          </ul>
+          <p>Clique sur <strong>Tout installer</strong>.</p>
+        </div>
+        <figure class="shot">
+          <a class="zoom" href="img/bibo-2-diagnostic.webp"><img src="img/bibo-2-diagnostic.webp" width="780" height="674" loading="lazy" decoding="async" alt="Le diagnostic : une liste de vérifications (version de macOS, espace disque, internet en vert ; outils Apple, Bun, Claude Code, Obsidian et le dossier Brain à installer) et le bouton Tout installer."></a>
+        </figure>
+      </li>
+      <li>
+        <div class="j-text">
+          <p class="j-num">Écran 3 · optionnel</p>
+          <h3>« Une option avant de commencer »</h3>
+          <p>Ton cerveau retrouve tes notes par mots-clés. Avec une clé Voyage AI, il les retrouve aussi par le sens. Pas de clé ? Clique sur <strong>Passer (recherche par mots-clés)</strong> : tu pourras l’ajouter plus tard.</p>
+          <p><a href="#voyage">Comment avoir une clé, et ce que ça coûte</a></p>
+        </div>
+        <figure class="shot">
+          <a class="zoom" href="img/bibo-3-voyage.webp"><img src="img/bibo-3-voyage.webp" width="780" height="674" loading="lazy" decoding="async" alt="L'écran Voyage : trois étapes pour créer une clé, un champ « Ta clé Voyage » avec le bouton Vérifier, et en bas Passer (recherche par mots-clés) ou Continuer avec cette clé."></a>
+        </figure>
+      </li>
+      <li>
+        <div class="j-text">
+          <p class="j-num">Écran 4</p>
+          <h3>« Connecte ton compte Claude maintenant »</h3>
+          <p>Dès que Claude Code est installé, Bibo te propose de connecter ton compte, si ce n’est pas déjà fait. Clique sur le bouton : une fenêtre Terminal s’ouvre (PowerShell sur Windows), ton navigateur te demande de te connecter à Claude, puis tu reviens. Bibo continue tout seul.</p>
+          <p>Connecté, Claude pourra aider Bibo si une étape coince. Tu peux aussi choisir <strong>Plus tard</strong>.</p>
+        </div>
+        <figure class="shot">
+          <a class="zoom" href="img/bibo-4-connexion.webp"><img src="img/bibo-4-connexion.webp" width="780" height="674" loading="lazy" decoding="async" alt="Pendant l'installation, Bibo propose de connecter le compte Claude : trois étapes, les boutons Plus tard et Connecter mon compte Claude."></a>
+        </figure>
+      </li>
+      <li>
+        <div class="j-text">
+          <p class="j-num">Écran 5</p>
+          <h3>L’installation, étape par étape</h3>
+          <p>Bibo installe seulement ce qui manque, une étape après l’autre, avec une barre de progression. « Détails » montre le journal, si tu es curieux. Ce que tu pourrais avoir à faire :</p>
+          <ul class="plain">
+            <li><strong>Mac</strong> : une fenêtre d’Apple s’ouvre pour les outils Apple. Clique sur « Installer », puis accepte la licence. macOS peut aussi demander l’accès à ton dossier Documents : clique sur « Autoriser ».</li>
+            <li><strong>Windows</strong> : deux étapes seulement. Windows peut demander une autorisation pour installer Git ou Python : clique sur « Oui ».</li>
+            <li><strong>Linux</strong> : ton mot de passe, pour les outils du système et Obsidian.</li>
+          </ul>
+        </div>
+        <figure class="shot">
+          <a class="zoom" href="img/bibo-6-cerveau.webp"><img src="img/bibo-6-cerveau.webp" width="780" height="580" loading="lazy" decoding="async" alt="L'installation sur Mac : Claude Code, Outils Apple, Bun et Obsidian sont faits, Ton cerveau est en cours, la barre de progression est presque pleine."></a>
+        </figure>
+      </li>
+    </ol>
+
+    <div class="systems">
+      <h3 class="systems-t">La même étape, selon ton système</h3>
+      <p class="note systems-note">Clique sur une capture pour la voir en grand.</p>
+      <div class="systems-grid">
+        <figure class="shot">
+          <a class="zoom" href="img/bibo-5-outils-apple.webp"><img src="img/bibo-5-outils-apple.webp" width="780" height="580" loading="lazy" decoding="async" alt="Sur Mac, la fenêtre d'Apple installe les outils de base par-dessus la fenêtre de Bibo, avec une barre de progression."></a>
+          <figcaption><strong>Mac</strong> · 5 étapes : Claude Code, Outils Apple, Bun, Obsidian, Ton cerveau. La fenêtre d’Apple travaille quelques minutes.</figcaption>
+        </figure>
+        <figure class="shot">
+          <a class="zoom" href="img/bibo-windows.webp"><img src="img/bibo-windows.webp" width="780" height="400" loading="lazy" decoding="async" alt="Sur Windows, deux étapes : Claude Code est fait, Ton cerveau est en cours."></a>
+          <figcaption><strong>Windows</strong> · 2 étapes : Claude Code, puis Ton cerveau, qui amène Python, Git, Bun et Obsidian.</figcaption>
+        </figure>
+        <figure class="shot">
+          <a class="zoom" href="img/bibo-linux.webp"><img src="img/bibo-linux.webp" width="780" height="580" loading="lazy" decoding="async" alt="Sur Linux, cinq étapes : Outils de base, Claude Code et Bun sont faits, Obsidian est en cours ; Bibo prévient que l'ordinateur va demander le mot de passe."></a>
+          <figcaption><strong>Linux</strong> · Outils de base (s’il en manque), Claude Code, Bun, Obsidian, Ton cerveau.</figcaption>
+        </figure>
+      </div>
+    </div>
+
+    <ol class="journey" start="6">
+      <li>
+        <div class="j-text">
+          <p class="j-num">Écran 6 · si besoin</p>
+          <h3>« Dernière étape : ton compte Claude »</h3>
+          <p>Si ton compte n’est pas encore connecté, Bibo te le redemande à la fin. Même chose : une fenêtre s’ouvre, tu te connectes dans ton navigateur, et Bibo voit tout seul quand c’est bon.</p>
+        </div>
+        <figure class="shot">
+          <a class="zoom" href="img/bibo-7-compte.webp"><img src="img/bibo-7-compte.webp" width="780" height="674" loading="lazy" decoding="async" alt="L'écran Dernière étape : ton compte Claude, avec trois étapes et les boutons Plus tard et Connecter mon compte Claude."></a>
+        </figure>
+      </li>
+      <li>
+        <div class="j-text">
+          <p class="j-num">Écran 7</p>
+          <h3>« Ton second cerveau est prêt ! »</h3>
+          <p>Deux boutons : <strong>Personnaliser mon cerveau (15 min)</strong>, pour te présenter à Claude, et <strong>Ouvrir mon cerveau dans Obsidian</strong>. Sans clé Voyage, tu peux encore activer la recherche par le sens ici.</p>
+          <p><a href="#apres">Et après ?</a></p>
+        </div>
+        <figure class="shot">
+          <a class="zoom" href="img/bibo-8-pret.webp"><img src="img/bibo-8-pret.webp" width="780" height="674" loading="lazy" decoding="async" alt="L'écran final : Bibo content dit « Ton second cerveau est prêt ! », avec les boutons Activer la recherche par le sens, Ouvrir mon cerveau dans Obsidian et Personnaliser mon cerveau (15 min)."></a>
+        </figure>
+      </li>
+    </ol>
+
+    <div class="stuck card" id="coince">
+      <h3>Si une étape coince</h3>
+      <p>Bibo affiche « Oups, ça a coincé. » et te propose, dans l’ordre :</p>
+      <ol class="stuck-list">
+        <li><strong>Réessayer</strong> : il relance l’étape.</li>
+        <li><strong>Demander à Claude de réparer</strong>, si ton compte est connecté. Claude lit le journal de l’étape (clés masquées, jamais tes fichiers personnels), puis Bibo te dit ce qui coince et ce qu’il propose. Rien ne change avant que tu cliques sur « Réparer ». S’il met quelque chose de côté, rien n’est effacé : « Remettre comme avant » le remet. Ça utilise un peu de ton abonnement Claude, et tu peux voir exactement ce qui lui est envoyé.</li>
+        <li><strong>Le plan B, Claude dans le Terminal</strong> (PowerShell sur Windows). Bibo t’explique d’abord comment ça se passe. Claude t’explique le problème avec des mots simples et te demande ton accord avant chaque commande. Ses questions sont en anglais : « Yes » veut dire oui, « No » non. Évite « Yes, and don’t ask again » : il ne te demanderait plus ton accord.</li>
+        <li><strong>Copier le rapport</strong>, en dernier recours, et l’envoyer au projet : <a href="https://github.com/BrainInBox/brain-in-a-box/issues" rel="noopener">ouvre un ticket sur GitHub</a> et colle-le. Les clés y sont masquées, mais relis-le avant : un ticket est public.</li>
+      </ol>
+    </div>
+  </div>
+</section>
+
+<section class="section section-alt" id="logiciels" aria-labelledby="logiciels-t">
+  <div class="wrap">
+    <h2 id="logiciels-t">Les logiciels installés</h2>
+    <p class="section-lead">Ce que Bibo installe, à quoi ça te sert, et ce que tu as à faire. Souvent : rien.</p>
+
+    <div class="softs">
+      <article class="soft card">
+        <h3>Claude Code</h3>
+        <h4>Ce qu’il fait pour toi</h4>
+        <p class="soft-what">L’outil officiel d’Anthropic : Claude, directement sur ton ordinateur. C’est avec lui que tu travailles, et c’est lui qui se sert de ton cerveau.</p>
+        <h4>Ce que tu as à faire</h4>
+        <ul class="plain">
+          <li>Connecter ton compte, une fois. Bibo ouvre la fenêtre pour toi.</li>
+          <li>Ensuite, pour lui parler : ouvre le Terminal (sur Mac : Applications › Utilitaires › Terminal ; sur Windows : PowerShell, dans le menu Démarrer ; sur Linux : ton terminal), tape <code>claude</code> et appuie sur Entrée.</li>
+        </ul>
+      </article>
+
+      <article class="soft card">
+        <h3>Obsidian</h3>
+        <h4>Ce qu’il fait pour toi</h4>
+        <p class="soft-what">Pour feuilleter ton cerveau. Tes notes sont de simples fichiers texte, dans le dossier Documents › Brain. Obsidian les affiche joliment, avec les liens entre elles.</p>
+        <h4>Ce que tu as à faire</h4>
+        <ul class="plain">
+          <li>Rien à installer.</li>
+          <li>Pour l’ouvrir sur ton cerveau : le bouton « Ouvrir mon cerveau dans Obsidian », à la fin. Plus tard, dans Obsidian : ouvre un dossier comme coffre (« Open folder as vault ») et choisis Documents › Brain.</li>
+        </ul>
+      </article>
+
+      <article class="soft card">
+        <h3>La mémoire : GBrain et Bun</h3>
+        <h4>Ce qu’il fait pour toi</h4>
+        <p class="soft-what">GBrain range tes notes dans un index de recherche ; Bun est le moteur qui le fait tourner. Quand tu demandes à Claude « qu’est-ce qu’on avait décidé pour… ? », il cherche dans ta mémoire et te cite la note.</p>
+        <h4>Ce que tu as à faire</h4>
+        <ul class="plain">
+          <li>Rien. La nuit, la mémoire se range et se met à jour toute seule, avec une semaine de recul sur chaque nouvelle version. Si une mise à jour casse quelque chose, elle revient en arrière.</li>
+        </ul>
+      </article>
+
+      <article class="soft card" id="voyage">
+        <h3>La recherche par le sens : Voyage AI <span class="tag">optionnel</span></h3>
+        <h4>Ce qu’il fait pour toi</h4>
+        <p class="soft-what">Sans clé, ton cerveau cherche par mots-clés. Avec une clé Voyage AI, il retrouve aussi une note par le sens, même si tu as oublié les mots exacts.</p>
+        <h4>Ce que tu as à faire, si tu la veux</h4>
+        <ol class="mini-steps">
+          <li>Crée un compte sur <a href="https://dashboard.voyageai.com" rel="noopener">dashboard.voyageai.com</a>.</li>
+          <li>Ajoute une carte bancaire (menu Billing). Sans carte, Voyage limite à 3 requêtes par minute : trop lent pour ton cerveau.</li>
+          <li>Crée une clé (menu API Keys). Elle commence par <code>pa-</code>.</li>
+          <li>Colle-la dans Bibo : à l’écran « Une option avant de commencer », ou plus tard avec « Activer la recherche par le sens » (rouvre l’app).</li>
+        </ol>
+        <p class="note"><strong>Ce que ça coûte</strong> : Voyage offre 200 millions de tokens (carte demandée), et un cerveau perso en utilise moins de 1 %. Au-delà, Voyage facture au mois. <a href="https://docs.voyageai.com/docs/pricing" rel="noopener">Les tarifs de Voyage</a>.</p>
+        <p class="note"><strong>Vie privée</strong> : le texte de tes notes part chez Voyage pour être analysé. Dans leur tableau de bord, règle Organization › Terms of Service sur « Opted Out » pour qu’il ne serve pas à entraîner leurs modèles.</p>
+      </article>
+
+      <article class="soft card">
+        <h3>Les automatismes et compétences de Claude</h3>
+        <h4>Ce qu’il fait pour toi</h4>
+        <p class="soft-what">Des automatismes : quand tu corriges Claude, il note la leçon ; tes séances sont résumées dans ton Journal. Des compétences : le contrôle de nuit (<code>/controle</code>), une recherche rapide sur le web, une page HTML pour expliquer ou présenter quelque chose, la conversion de documents (Word, PDF…) en notes et « brain-boost », qui t’explique ce que ton installation sait faire.</p>
+        <h4>Ce que tu as à faire</h4>
+        <ul class="plain">
+          <li>Rien. Pour découvrir, demande à Claude : « qu’est-ce que tu peux faire pour moi ? »</li>
+        </ul>
+      </article>
+
+      <article class="soft card">
+        <h3>Les outils du système</h3>
+        <h4>Ce qu’il fait pour toi</h4>
+        <p class="soft-what">Ce dont tout le reste a besoin pour tourner.</p>
+        <h4>Ce que tu as à faire</h4>
+        <ul class="plain">
+          <li><strong>Mac</strong> : les outils Apple (git, python3). Une fenêtre d’Apple s’ouvre : clique sur « Installer » et accepte la licence. Ça peut prendre une dizaine de minutes.</li>
+          <li><strong>Windows</strong> : Python et Git, installés avec ton cerveau. Si Windows demande une autorisation, clique sur « Oui ».</li>
+          <li><strong>Linux</strong> : git, python3, curl, unzip et procps, s’il en manque. Ton système te demande ton mot de passe.</li>
+        </ul>
+      </article>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="apres" aria-labelledby="apres-t">
+  <div class="wrap">
+    <h2 id="apres-t">Après l’installation</h2>
+    <div class="after">
+      <div class="after-item">
+        <h3>Présente-toi à Claude (15 min)</h3>
+        <p>Clique sur « Personnaliser mon cerveau » à la fin. Une fenêtre s’ouvre avec Claude, qui te pose quelques questions par petits groupes : qui tu es, ton travail, tes projets, les gens avec qui tu travailles, ta façon de travailler. Il remplit ton profil avec tes réponses. Jamais de mot de passe ni de clé : il note seulement où ils sont rangés.</p>
+      </div>
+      <div class="after-item">
+        <h3>Ouvre ton cerveau</h3>
+        <p>Ton cerveau est un dossier : <strong>Documents › Brain</strong>. Dedans : ton profil, tes leçons, ton journal, tes projets, tes décisions… Ce sont tes fichiers : tu peux les lire, les modifier, les sauvegarder.</p>
+        <p class="note">Sur Windows, si ton dossier Documents est protégé contre les rançongiciels, ton cerveau est dans ton dossier personnel, sous Brain.</p>
+      </div>
+      <div class="after-item">
+        <h3>Parle à Claude, corrige-le</h3>
+        <p>Dans le Terminal (PowerShell sur Windows), tape <code>claude</code>. Quand il se trompe, dis-le : « désormais… », « la prochaine fois… », « évite de… ». Il retient la leçon pour les fois suivantes.</p>
+      </div>
+      <div class="after-item">
+        <h3>Le contrôle de nuit</h3>
+        <p>Chaque nuit à 4 h, un script vérifie tes notes : il masque les mots de passe écrits en clair, archive les vieux souvenirs, retire les doublons, et note le reste pour toi. Le matin, la première ligne de Claude dit ce qu’il a fait.</p>
+        <p>Tape <code>/controle</code> pour qu’il t’explique. Pour défaire une correction : <code>/controle annuler</code> suivi de son identifiant, par exemple <code>S2-261014-02</code>. Tu le trouves dans le compte rendu de la nuit, Profile › controle.md dans ton cerveau. Pour défaire toute la nuit, dis à Claude : « annule le contrôle de cette nuit ».</p>
+      </div>
+      <div class="after-item">
+        <h3>Les mises à jour</h3>
+        <p>La mémoire se met à jour toute seule, la nuit. L’app, les automatismes et les compétences se mettent à jour à la main, en quelques minutes : <a href="#mettre-a-jour">comment faire</a>.</p>
+      </div>
+      <div class="after-item" id="donnees">
+        <h3>Tes données restent chez toi</h3>
+        <p>Tes notes, ta mémoire et son index sont sur ton ordinateur : pas de serveur, pas de cloud partagé. Ce qui sort : ce que tu dis à Claude (chez Anthropic, avec ton abonnement), des extraits pour le résumé du jour et le contrôle de nuit (mots de passe et clés masqués avant l’envoi) et, avec une clé Voyage, le texte envoyé à Voyage AI.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section section-alt" id="aide" aria-labelledby="aide-t">
+  <div class="wrap wrap-narrow">
+    <h2 id="aide-t">Un souci ?</h2>
+
+    <div class="faq">
+      <details>
+        <summary>Mac : l’app est bloquée au premier lancement</summary>
+        <p>C’est le premier lancement d’une app pas encore signée par Apple. Clique sur « Terminé », puis ouvre Réglages Système › Confidentialité et sécurité et clique sur « Ouvrir quand même » à côté de Brain in a Box. <a href="#installer-mac">Les étapes avec les images</a>.</p>
+      </details>
+      <details>
+        <summary>Windows : « Windows a protégé votre ordinateur »</summary>
+        <p>Clique sur « Informations complémentaires », puis sur « Exécuter quand même ». <a href="#installer-windows">Les étapes avec les images</a>.</p>
+      </details>
+      <details>
+        <summary>Linux : l’AppImage ne se lance pas</summary>
+        <p>Vérifie qu’elle est exécutable (clic droit › Propriétés › « Exécutable comme un programme »). Si elle ne démarre toujours pas : <code>sudo apt install fuse3</code>, ou <code>./Brain-in-a-Box_*.AppImage --appimage-extract-and-run</code>. Sinon, prends le <a href="#installer-linux">paquet .deb</a>.</p>
+      </details>
+      <details>
+        <summary>Mon compte Claude est refusé</summary>
+        <p>Brain in a Box demande un abonnement Claude Pro ou Max. Vérifie le tien sur claude.ai, puis clique de nouveau sur « Connecter mon compte Claude » dans Bibo. Si Bibo dit que ton forfait est à sa limite, attends un peu : il se recharge tout seul en quelques heures.</p>
+      </details>
+      <details>
+        <summary>Une étape échoue</summary>
+        <p>Clique sur « Réessayer ». Si ça coince encore, demande à Claude de réparer, ou suis le plan B dans le Terminal. En dernier recours, copie le rapport et ouvre un ticket. <a href="#coince">Comment ça se passe</a>.</p>
+      </details>
+      <details id="sans-app">
+        <summary>Installer sans l’app, en ligne de commande</summary>
+        <p><strong>Windows</strong> : appuie sur Win + R, colle cette ligne, puis Entrée.</p>
+        <pre class="cmd"><code>powershell -NoExit -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/BrainInBox/brain-in-a-box/master/install.ps1 | iex"</code></pre>
+        <p><strong>Mac</strong> : installe d’abord <a href="https://code.claude.com/docs/fr/quickstart" rel="noopener">Claude Code</a>, puis, dans le Terminal :</p>
+        <pre class="cmd"><code>git clone https://github.com/BrainInBox/brain-in-a-box.git
+cd brain-in-a-box
+./install.sh</code></pre>
+        <p><strong>Linux</strong> (Debian, Ubuntu), dans un terminal, sans sudo devant install.sh :</p>
+        <pre class="cmd"><code>sudo apt install -y git curl
+git clone https://github.com/BrainInBox/brain-in-a-box.git
+cd brain-in-a-box
+./install.sh</code></pre>
+        <p>À la fin, l’installation affiche la suite, dont la personnalisation. Tous les détails dans le <a href="https://github.com/BrainInBox/brain-in-a-box#install-per-person" rel="noopener">README</a>.</p>
+      </details>
+      <details id="mettre-a-jour">
+        <summary>Mettre à jour</summary>
+        <p>La mémoire se met à jour toute seule, la nuit. Le reste, à la main.</p>
+        <p><strong>L’app</strong>, quand une nouvelle préversion sort : télécharge-la ici, puis :</p>
+        <ul class="plain">
+          <li><strong>Mac</strong> : ferme l’app, ouvre le nouveau fichier .dmg, glisse Brain in a Box dans Applications et choisis « Remplacer ». Ton Mac peut te redemander « Ouvrir quand même », comme la première fois.</li>
+          <li><strong>Windows</strong> : lance le nouvel installeur, comme la première fois.</li>
+          <li><strong>Linux</strong> : remplace l’ancienne AppImage par la nouvelle, et rends-la exécutable comme la première fois. Pour le .deb, dans un terminal ouvert dans ton dossier Téléchargements, ajoute <code>--reinstall</code> : toutes les préversions portent le même numéro de version, et sans lui rien ne change.</li>
+        </ul>
+        <pre class="cmd"><code data-deb-cmd>sudo apt install --reinstall ./Brain-in-a-Box_*_linux-amd64.deb</code></pre>
+        <p><strong>Les automatismes et compétences</strong> : rouvrir l’app ne suffit pas, Bibo voit qu’ils sont là et n’y touche pas. Refais l’installation en ligne de commande de la question <a href="#sans-app">Installer sans l’app</a>. Sur Windows, la ligne Win + R. Sur Mac et Linux, les lignes <code>git clone</code>, puis les fois suivantes : <code>cd brain-in-a-box &amp;&amp; git pull &amp;&amp; ./install.sh</code></p>
+        <p class="note">Ce que tu as modifié n’est pas perdu. Sur Mac et Linux, un fichier que tu as changé reste tel quel, et la nouvelle version attend à côté, dans <code>~/.brain-in-a-box/pending</code>. Sur Windows, ton fichier est d’abord copié dans <code>~\.brain-in-a-box\backups</code>.</p>
+      </details>
+      <details id="verifier">
+        <summary>Vérifier le fichier téléchargé</summary>
+        <p>Pour les curieux. Chaque préversion publie un fichier <a data-dl="sums" href="https://github.com/BrainInBox/brain-in-a-box/releases?q=pr%C3%A9version&amp;expanded=true" rel="noopener">SHA256SUMS</a> : calcule l’empreinte de ton fichier et compare-la avec sa ligne. Si elles sont identiques, le fichier est arrivé intact.</p>
+        <pre class="cmd"><code># Mac
+shasum -a 256 ~/Downloads/Brain-in-a-Box_*_macos-universal.dmg
+# Linux
+sha256sum "$(xdg-user-dir DOWNLOAD)"/Brain-in-a-Box_*
+# Windows (PowerShell)
+(Get-FileHash $HOME\Downloads\Brain-in-a-Box_*_windows-x64-setup.exe).Hash.ToLower()</code></pre>
+        <p>GitHub atteste aussi chaque fichier : avec l’outil <code>gh</code> (GitHub CLI), cette commande dit s’il a bien été construit par le projet, depuis sa branche principale (ici pour le fichier Mac ; même chose avec le tien).</p>
+        <pre class="cmd"><code>gh attestation verify ~/Downloads/Brain-in-a-Box_*_macos-universal.dmg -R BrainInBox/brain-in-a-box --signer-workflow BrainInBox/brain-in-a-box/.github/workflows/release.yml --source-ref refs/heads/master</code></pre>
+      </details>
+      <details>
+        <summary>Mes données, ma vie privée</summary>
+        <p>Tout reste sur ton ordinateur, sauf ce que tu dis à Claude, des extraits masqués pour le résumé du jour et le contrôle de nuit, et, si tu as mis une clé Voyage, le texte envoyé à Voyage AI. <a href="#donnees">Le détail</a>.</p>
+      </details>
+      <details>
+        <summary>Désinstaller</summary>
+        <p><strong>L’app</strong> : sur Mac, glisse Brain in a Box (dans Applications) dans la corbeille. Sur Windows : Paramètres › Applications, puis Brain in a Box › Désinstaller. Sur Linux : supprime le fichier AppImage, ou, pour le .deb, <code>sudo apt remove brain-in-a-box</code>. Claude Code, Obsidian et Bun restent installés : chacun se désinstalle à part.</p>
+        <p>Tes notes (Documents › Brain) ne sont jamais touchées. Pour retirer le reste morceau par morceau (automatismes, compétences, tâches de nuit, mémoire, consignes de Claude), le README donne la commande de chaque morceau, pour Mac, Linux et Windows : section <a href="https://github.com/BrainInBox/brain-in-a-box#updating--undo" rel="noopener">« Updating &amp; undo »</a>.</p>
+      </details>
+      <details>
+        <summary>Combien ça coûte ?</summary>
+        <p>L’app et le kit sont open source (licence MIT) : rien à payer pour eux. Il te faut un abonnement Claude Pro ou Max. Voyage AI est optionnel : <a href="#voyage">ce que ça coûte</a>.</p>
+      </details>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="foot">
+  <div class="wrap foot-in">
+    <img src="img/bibo.svg" alt="" width="40" height="40">
+    <p><strong>Brain in a Box</strong> · open source, <a href="https://github.com/BrainInBox/brain-in-a-box/blob/master/LICENSE" rel="noopener">licence MIT</a> · <a href="https://github.com/BrainInBox/brain-in-a-box" rel="noopener">code source sur GitHub</a></p>
+    <p class="note">Préversion : l’app change souvent et n’est pas encore signée. Claude et Claude Code sont des produits d’Anthropic ; ce projet n’est pas affilié à Anthropic.</p>
+  </div>
+</footer>
+</body>
+</html>

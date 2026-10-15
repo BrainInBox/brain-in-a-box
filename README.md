@@ -25,7 +25,9 @@ It all runs inside Claude Code (terminal/IDE). No bot, no server, no shared clou
 
 ### Download the app (preview)
 
-No terminal: a window checks your Mac or PC (Windows or Linux), installs what is missing and sets up your brain (the interface is in French). Every change to the app publishes an **unsigned preview** on the [Releases page](https://github.com/BrainInBox/brain-in-a-box/releases?q=app-v&expanded=true) (tags `app-v<version>-preview.<n>`, the 5 newest are kept), with a `SHA256SUMS` file and a build attestation (how to check one: `app/README.md`).
+**[brain-in-a-box.vercel.app](https://brain-in-a-box.vercel.app)**: the download for your system and a step-by-step guide in French, with the real screens (`site/`).
+
+No terminal: a window checks your Mac or PC (Windows or Linux), installs what is missing and sets up your brain (the interface is in French). Every change to the app publishes an **unsigned preview** on the [Releases page](https://github.com/BrainInBox/brain-in-a-box/releases?q=pr%C3%A9version&expanded=true) (tags `app-v<version>-preview.<n>`, the 5 newest are kept), with a `SHA256SUMS` file and a build attestation (how to check one: `app/README.md`).
 
 **Mac** (macOS 13+, Apple Silicon and Intel)
 
@@ -61,7 +63,7 @@ GBrain starts at the release the Windows CI tests (`engine/gbrain-pin.json`), th
 
 ### macOS
 
-Requirements: [Claude Code](https://claude.ai/code). Optional: a [Voyage AI](https://dashboard.voyageai.com) key, so your brain finds notes by meaning, not just keywords. Voyage asks for a card (without one it allows 3 requests a minute); 200M tokens are free and a personal brain uses well under 1% of that.
+Requirements: [Claude Code](https://code.claude.com/docs/en/setup). Optional: a [Voyage AI](https://dashboard.voyageai.com) key, so your brain finds notes by meaning, not just keywords. Voyage asks for a card (without one it allows 3 requests a minute); 200M tokens are free and a personal brain uses well under 1% of that.
 
 ```bash
 git clone <URL_OF_THIS_REPO> brain-in-a-box
