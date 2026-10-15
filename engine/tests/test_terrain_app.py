@@ -1361,7 +1361,7 @@ class LinuxReading(unittest.TestCase):
 
     def test_root_ran_root_rs_scripts_to_the_letter_with_what_they_accept(self):
         s = self.scripts()
-        home = Path("/home/runner")
+        home = "/home/runner"
         paquets = "/bin/sh -c %s %s " % (s["APT_INSTALL"], s["PACKAGES_LABEL"])
         deb = "/bin/sh -c %s %s " % (s["APT_INSTALL_DEB"], s["OBSIDIAN_LABEL"])
         chemin = "/home/runner/.brain-in-a-box/.biab-0123456789abcdef/obsidian.deb"
@@ -1422,38 +1422,49 @@ class LinuxReading(unittest.TestCase):
     def test_the_appimage_mounts_with_a_setuid_fusermount_a_vm_without_one_gets_fuse3(self):
         tmp = Path(tempfile.mkdtemp(prefix="terrain-fuse-"))
         self.addCleanup(shutil.rmtree, tmp, True)
-        for d, n in (("a", "fusermount"), ("b", "fusermount3"), ("b", "other")):
+        for d, n in (("a", "fusermount"), ("b", "fusermount3"), ("b", "other"), ("c", "fusermount")):
             (tmp / d).mkdir(exist_ok=True)
             (tmp / d / n).write_text("")
         real = os.stat
-        setuid = {str(tmp / "b" / "fusermount3"), str(tmp / "b" / "other")}
+        setuid = {str(tmp / "b" / "fusermount3"), str(tmp / "b" / "other"), str(tmp / "c" / "fusermount")}
 
         def fake(p, *a, **k):
             return types.SimpleNamespace(st_uid=0, st_mode=0o104755) if str(p) in setuid else real(p, *a, **k)
 
-        path = "%s:%s:%s" % (tmp / "none", tmp / "a", tmp / "b")
+        path = os.pathsep.join(str(tmp / d) for d in ("none", "a", "c", "b"))
         with mock.patch.object(ta.os, "stat", fake):
-            self.assertEqual(ta.fusermount_setuid(path), str(tmp / "b" / "fusermount3"), "setuid root only, fusermount* only")
-            self.assertIsNone(ta.fusermount_setuid(str(tmp / "a")))
+            self.assertEqual(ta.fusermount_setuid(path), [str(tmp / "c" / "fusermount"), str(tmp / "b" / "fusermount3")],
+                             "setuid root only, fusermount* only, in the PATH's order")
+            self.assertEqual(ta.fusermount_setuid(str(tmp / "a")), [])
 
         image = tmp / "Brain-in-a-Box_0.1.0_linux-x86_64.AppImage"
         image.write_bytes(b"\x7fELF\x02\x01\x01\x00AI\x02" + b"\0" * 64)
 
         class Vm(ta.PiloteLinux):
+            """A server's image: libEGL and Mesa's EGL driver missing."""
+
             def __init__(self):
                 self.calls = []
 
             def _run(self, argv, timeout=120, env=None, creationflags=0):
+                if argv[0] == "dpkg-query":
+                    return 0, "" if argv[-1] in ("libegl1", "libegl-mesa0") else "install ok installed"
                 self.calls.append(argv)
                 return 0, ""
 
         with mock.patch.object(ta.Path, "home", return_value=tmp), \
-                mock.patch.object(ta, "fusermount_setuid", side_effect=[None, "/usr/bin/fusermount3"]):
+                mock.patch.object(ta, "fusermount_setuid", side_effect=[["/usr/bin/fusermount"], ["/usr/bin/fusermount",
+                                                                                                    "/usr/bin/fusermount3"]]):
             vm, details = Vm(), {}
             notes = vm.installer(image, details)
-        self.assertEqual(vm.calls, [["sudo", "-n", "apt-get", "install", "-y", "-q", "fuse3"]])
-        self.assertEqual(details["fuse"], "fuse3 installé par le robot (/usr/bin/fusermount3)")
+        self.assertEqual(vm.calls, [["sudo", "-n", "apt-get", "install", "-y", "-q", "fuse3"],
+                                    ["sudo", "-n", "apt-get", "update", "-q"],
+                                    ["sudo", "-n", "apt-get", "install", "-y", "-q", "--no-install-recommends", "libegl1",
+                                     "libegl-mesa0"]])
+        self.assertEqual((details["fuse"], details["bureau"]), ("fuse3 installé par le robot (/usr/bin/fusermount, /usr/bin/fusermount3)",
+                                                                ["libegl1", "libegl-mesa0"]))
         self.assertIn("qu'un bureau Ubuntu a (fuse3)", notes[0])
+        self.assertIn("installées par le robot : libegl1, libegl-mesa0", notes[1])
         self.assertNotIn("libfuse2", json.dumps(vm.calls))
 
     def test_the_app_gets_a_desktops_environment_never_a_token(self):

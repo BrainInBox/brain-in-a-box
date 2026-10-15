@@ -38,6 +38,7 @@ import hashlib
 import json
 import os
 import plistlib
+import posixpath
 import re
 import shutil
 import stat
@@ -1811,6 +1812,14 @@ def env_linux(home, display, uid, extra=None):
     return env
 
 
+# What every Ubuntu 24.04 desktop has (ubuntu-24.04.4-desktop-amd64.manifest) and the AppImage leaves to
+# the system (linuxdeploy's exclusions, seen with ldd in its files): EGL, GL and GBM with Mesa's drivers,
+# X11's libraries, fonts and text shaping. The runner's image is a server's, without libEGL: those it
+# lacks are installed before the app starts, said in the results. One the app needs and no desktop has
+# is not here: the app then does not start, as it would not on a desktop.
+BUREAU = ("libegl1", "libgl1", "libgles2", "libgbm1", "libegl-mesa0", "libglx-mesa0", "libgl1-mesa-dri", "libdrm2",
+          "libx11-6", "libx11-xcb1", "libxcb1", "libexpat1", "libfontconfig1", "libfreetype6", "libfribidi0",
+          "libharfbuzz0b", "fonts-dejavu-core")
 # The packages a fresh Ubuntu desktop does not have and the app's « Outils de base » step installs.
 SANS_PAQUETS = ("git", "curl")
 # Removed with them: git's manual, which a desktop without git has not either. The runner's image has
@@ -1823,9 +1832,10 @@ NOM_ATSPI = "brain-in-a-box"
 
 
 def fusermount_setuid(path=PATH_UBUNTU):
-    """The fusermount the AppImage's runtime mounts it with (type2-runtime: the first fusermount* of
-    the PATH that is setuid root), or None."""
-    for d in path.split(":"):
+    """The fusermount* of the PATH that are setuid root, in its order: the AppImage's runtime
+    (type2-runtime) mounts it with one of them. A desktop's is fuse3's fusermount3."""
+    out = []
+    for d in path.split(os.pathsep):
         try:
             names = sorted(os.listdir(d))
         except OSError:
@@ -1837,8 +1847,8 @@ def fusermount_setuid(path=PATH_UBUNTU):
             except OSError:
                 continue
             if n.startswith("fusermount") and st.st_uid == 0 and st.st_mode & stat.S_ISUID:
-                return p
-    return None
+                out.append(p)
+    return out
 
 
 def place_xwininfo(out):
@@ -1920,7 +1930,7 @@ def forme_root(cmd, s, home):
         return ("paquets", noms) if all(n in s["PACKAGES"] for n in noms) else None
     deb = "/bin/sh -c %s %s " % (s["APT_INSTALL_DEB"], s["OBSIDIAN_LABEL"])
     chemin = cmd[len(deb):]
-    dossier = re.escape(str(Path(home) / ".brain-in-a-box"))
+    dossier = re.escape(posixpath.join(str(home), ".brain-in-a-box"))
     if cmd.startswith(deb) and re.fullmatch(dossier + r"/\.biab-[0-9a-f]{16}/obsidian\.deb", chemin):
         return ("obsidian", chemin)
     return None
@@ -1983,7 +1993,8 @@ class PiloteLinux(Pilote):
     def installer(self, fichier, details, capturer=None):
         """The AppImage put in ~/Applications and allowed to run as a program (Files' « Exécutable
         comme un programme »). Its runtime mounts it with the system's fusermount3 (fuse3, on every
-        Ubuntu desktop since 22.04): a VM without it gets it, and the results say so."""
+        Ubuntu desktop since 22.04), and it loads the desktop's graphics and X11 libraries (BUREAU):
+        a VM without them gets them, and the results say so."""
         notes = []
         apps = Path.home() / "Applications"
         apps.mkdir(exist_ok=True)
@@ -1997,16 +2008,28 @@ class PiloteLinux(Pilote):
             raise ErreurPilote("%s n'est pas une AppImage (type 2)" % dest.name)
         os.chmod(dest, 0o755)
         fusermount = fusermount_setuid()
-        if not fusermount:
+        if not any(p.endswith("/fusermount3") for p in fusermount):
             rc, out = self._run(["sudo", "-n", "apt-get", "install", "-y", "-q", "fuse3"], timeout=600,
                                 env=dict(os.environ, DEBIAN_FRONTEND="noninteractive"))
             fusermount = fusermount_setuid()
-            if rc != 0 or not fusermount:
+            if rc != 0 or not any(p.endswith("/fusermount3") for p in fusermount):
                 raise ErreurPilote("pas de fusermount3 setuid root, même après apt-get install fuse3 : %s" % out.strip()[-300:])
             notes.append("pas de fusermount3 sur la VM, qu'un bureau Ubuntu a (fuse3) : installé par le robot")
-            details["fuse"] = "fuse3 installé par le robot (%s)" % fusermount
+            details["fuse"] = "fuse3 installé par le robot (%s)" % ", ".join(fusermount)
         else:
-            details["fuse"] = "déjà là (%s)" % fusermount
+            details["fuse"] = "déjà là (%s)" % ", ".join(fusermount)
+        manque = [p for p in BUREAU if self._run(["dpkg-query", "-W", "-f=${Status}", p], timeout=60)[1].strip()
+                  != "install ok installed"]
+        details["bureau"] = manque or "déjà là"
+        if manque:
+            env = dict(os.environ, DEBIAN_FRONTEND="noninteractive")
+            self._run(["sudo", "-n", "apt-get", "update", "-q"], timeout=900, env=env)
+            rc, out = self._run(["sudo", "-n", "apt-get", "install", "-y", "-q", "--no-install-recommends"] + manque,
+                                timeout=900, env=env)
+            if rc != 0:
+                raise ErreurPilote("les bibliothèques d'un bureau Ubuntu ne s'installent pas : %s" % out.strip()[-300:])
+            notes.append("VM de serveur : bibliothèques qu'un bureau Ubuntu 24.04 a et que l'AppImage laisse au système, "
+                         "installées par le robot : %s" % ", ".join(manque))
         self.exe = dest
         details["installee_dans"] = str(dest).replace(str(Path.home()), "~")
         return notes

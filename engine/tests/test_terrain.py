@@ -505,7 +505,7 @@ class Workflow(unittest.TestCase):
         self.assertIn('appimage-tools.sh" check "${images[0]}"', build["run"])
         tools = [st for st in build_job["steps"] if "appimage-tools.sh" in st.get("run", "") and st is not build]
         self.assertEqual(len(tools), 1, "the tools, and LDAI_RUNTIME_FILE, in a step before the build's")
-        with open(WORKFLOW.replace("workflows/terrain.yml", "ci/app-release-plan.py"), encoding="utf-8") as f:
+        with open(os.path.join(os.path.dirname(os.path.dirname(WORKFLOW)), "ci", "app-release-plan.py"), encoding="utf-8") as f:
             self.assertIn('"os": "ubuntu-22.04"', f.read(), "release.yml builds on 22.04 too")
 
     def test_a_fresh_windows_has_no_python_in_both_workflows(self):
