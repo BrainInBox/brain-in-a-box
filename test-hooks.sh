@@ -1015,8 +1015,9 @@ out=$(YES=1 lx linux_obsidian); [ -z "$(lxcalls)" ] && echo "$out" | grep -q "OK
   && ok "linux Obsidian: an AppImage in ~/Applications counts as installed" || no "linux Obsidian: existing AppImage not seen: $out"
 
 echo "════ 16) install.sh end to end, against stand-ins: the AI agents' choice ════"
-# The whole install.sh, from a copy of the kit whose test-hooks.sh does nothing (install.sh runs
-# it last), in a home of its own, with an environment and a PATH of their own. What would
+install_e2e(){   # the section's body: an unisolated harness stops it with return
+# The whole install.sh, from a copy of the kit whose test-hooks.sh only records how install.sh
+# runs it (last, and without this section), in a home of its own, with an environment and a PATH of their own. What would
 # download, schedule or reach the user's own jobs is a stand-in that records its calls; a proxy
 # that refuses everything catches any other way out. gbrain is already cloned there: no clone.
 IX="$H/install-e2e"; IB="$IX/bin"; KIT="$IX/kit"
@@ -1041,7 +1042,7 @@ done
 printf '#!/bin/sh\necho "$(basename "$0") $*" >> "%s/calls"\n' "$IX" > "$IX/stub"
 chmod +x "$IB"/* "$IX/stub"
 cp -R "$REPO/install.sh" "$REPO/engine" "$REPO/skills" "$REPO/vault-skeleton" "$REPO/onboarding" "$KIT/"
-printf '#!/bin/sh\nexit 0\n' > "$KIT/test-hooks.sh"
+printf '#!/bin/sh\necho "test-hooks.sh BIAB_FROM_INSTALL=${BIAB_FROM_INSTALL:-}" >> "%s/calls"\n' "$IX" > "$KIT/test-hooks.sh"
 # The same kit with Codex open on every system, as phases 6 and 7 will make it: the path without Claude.
 cp -R "$KIT" "$IX/kit-codex"
 sed -i.bak 's/^CODEX_OUVERT = frozenset()$/CODEX_OUVERT = frozenset({"darwin", "linux", "windows"})/' "$IX/kit-codex/engine/hooks/_agents.py"
@@ -1050,8 +1051,8 @@ bad=""
 for t in launchctl systemctl loginctl crontab curl brew; do [ "$(PATH="$IXPATH" command -v "$t")" = "$IB/$t" ] || bad="$bad $t"; done
 for t in claude codex bun gbrain; do [ -z "$(PATH="$IXPATH" command -v "$t")" ] || bad="$bad $t"; done
 grep -qx 'CODEX_OUVERT = frozenset({"darwin", "linux", "windows"})' "$IX/kit-codex/engine/hooks/_agents.py" || bad="$bad gate"
-[ -z "$bad" ] && ok "e2e: the stand-ins come first, nothing of this machine's claude, bun or gbrain is in reach" \
-  || no "e2e: harness not isolated:$bad (nothing below would be trustworthy)"
+[ -z "$bad" ] || { no "e2e: harness not isolated:$bad (the rest of this section is not run: it would not be trustworthy)"; return; }
+ok "e2e: the stand-ins come first, nothing of this machine's claude, bun or gbrain is in reach"
 ixhome(){ rm -rf "${IX:?}/home" "$IX/calls" "$IX/crontab"; mkdir -p "$IX/home/.bun/bin" "$IX/home/DEV/gbrain/.git"
           cp "$IX/stub" "$IX/home/.bun/bin/bun"; cp "$IX/stub" "$IX/home/.bun/bin/gbrain"; }
 IXENV=(); IXUSER=$(id -un)
@@ -1109,6 +1110,9 @@ else
 fi
 grep -q "cd $IX/home/Documents/Brain && claude" "$IX/out-default" \
   && ok "e2e: nothing chosen: the onboarding opens Claude in the vault" || no "e2e: default onboarding line lost"
+[ "$(grep '^test-hooks.sh ' "$IX/calls-default")" = "test-hooks.sh BIAB_FROM_INSTALL=1" ] \
+  && ok "e2e: install.sh runs test-hooks.sh once, last, telling it to leave this section out" \
+  || no "e2e: install.sh runs test-hooks.sh with this section: $(grep '^test-hooks.sh ' "$IX/calls-default")"
 
 # Claude chosen, on the command line or through the app's variable: the same install, one file
 # and one line more.
@@ -1150,9 +1154,15 @@ CASES
   || no "e2e: a refused choice went on or changed the home:$bad"
 ixhome; mkdir -p "$IX/home/.brain-in-a-box"; printf '{"agents": ' > "$IX/home/.brain-in-a-box/agents.json"
 ixtree > "$IX/tree-broken"; ixrun "$KIT"; rc=$?
-[ "$rc" != 0 ] && grep -q "agents.json cannot be read. It was left untouched" "$IX/out" && ixtree | cmp -s - "$IX/tree-broken" \
+[ "$rc" != 0 ] && grep -q "agents.json cannot be read, or is a link. It was left untouched" "$IX/out" && ixtree | cmp -s - "$IX/tree-broken" \
   && [ ! -e "$IX/home/.brain-in-a-box/install.log" ] \
   && ok "e2e: an unreadable agents.json, nothing chosen: left untouched, the install stops before anything" || no "e2e: unreadable agents.json mishandled (rc $rc): $(tail -3 "$IX/out")"
+ixhome; mkdir -p "$IX/home/.brain-in-a-box"; printf '{"version": 1, "agents": ["claude"], "prefere": "claude"}' > "$IX/home/.brain-in-a-box/agents.json"
+chmod 666 "$IX/home/.brain-in-a-box/agents.json"; ixtree > "$IX/tree-shared"; ixrun "$KIT"; rc=$?
+[ "$rc" != 0 ] && grep -q "agents.json can be changed by another account. It was left untouched" "$IX/out" && ixtree | cmp -s - "$IX/tree-shared" \
+  && [ ! -e "$IX/home/.brain-in-a-box/install.log" ] \
+  && ok "e2e: an agents.json another account could change, nothing chosen: not trusted, left untouched, the install stops before anything" \
+  || no "e2e: agents.json writable by others mishandled (rc $rc): $(tail -3 "$IX/out")"
 
 # Codex open (a copy of the kit): Codex alone wires nothing of Claude's and never installs it;
 # both keep Claude's install exactly as the default does.
@@ -1177,6 +1187,14 @@ nogate "$IX/tree-default" > "$IX/tree-default-ng"; ixtree | nogate > "$IX/tree-b
   && ixout | grep -qF "✓ AI agents: Claude Code and Codex (preferred: Codex), recorded in" \
   && ok "e2e codex open: both, Codex preferred: Claude's install byte for byte as the default's, plus agents.json" \
   || no "e2e codex open: both differs from the default: $(added "$IX/tree-default-ng" "$IX/tree-both") / $(gone "$IX/tree-default-ng" "$IX/tree-both")"
+}
+# install.sh runs this file at the end of every install: about 15 s of installs in a sandbox say
+# nothing about this machine's hooks. ./test-hooks.sh and CI run it.
+if [ -n "${BIAB_FROM_INSTALL:-}" ]; then
+  echo "  - skipped: run by install.sh (./test-hooks.sh runs it)"
+else
+  install_e2e
+fi
 
 echo ""
 if [ "$FAIL" -eq 0 ]; then

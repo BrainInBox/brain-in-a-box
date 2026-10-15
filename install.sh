@@ -175,7 +175,8 @@ choose_agents() {
     erreur=ferme) die "Codex is coming soon on this system. Re-run with --agents claude, or without --agents and BIAB_AGENTS." ;;
     erreur=prefere) die "--prefere (or BIAB_PREFERE) names an agent that is not chosen." ;;
     erreur=fichier:ferme) die "$STATE/agents.json asks for Codex, which is not available on this system yet. Re-run with --agents claude to replace it." ;;
-    erreur=fichier:illisible) die "$STATE/agents.json cannot be read. It was left untouched: fix it, or re-run with --agents claude (or codex, or claude,codex) to replace it." ;;
+    erreur=fichier:illisible) die "$STATE/agents.json cannot be read, or is a link. It was left untouched: fix it, or re-run with --agents claude (or codex, or claude,codex) to replace it." ;;
+    erreur=fichier:droits) die "$STATE/agents.json can be changed by another account. It was left untouched: chmod 600 it, or re-run with --agents claude (or codex, or claude,codex) to replace it." ;;
     erreur=fichier:*) die "$STATE/agents.json is not a choice this kit knows. It was left untouched: re-run with --agents claude (or codex, or claude,codex) to replace it." ;;
     erreur=codex_home) die "CODEX_HOME must be an absolute path." ;;
     erreur=ecriture:*) die "could not write $STATE/agents.json (${out#erreur=ecriture:})." ;;
@@ -849,7 +850,7 @@ fi
 
 # ── 15. Verify (hooks healthy) ──────────────────────────────────────────────
 say "Verifying hooks"
-bash "$REPO/test-hooks.sh" >/dev/null 2>&1 && ok "hooks + gbrain self-update healthy" || warn "hook check reported issues — run ./test-hooks.sh to see them"
+BIAB_FROM_INSTALL=1 bash "$REPO/test-hooks.sh" >/dev/null 2>&1 && ok "hooks + gbrain self-update healthy" || warn "hook check reported issues — run ./test-hooks.sh to see them"
 
 # ── Done ─────────────────────────────────────────────────────────────────────
 printf "\n\033[1;32m✅ brain-in-a-box installed.\033[0m\n"
