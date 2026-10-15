@@ -926,10 +926,13 @@ def check_git(t, opts):
             "Profile/lessons.md (code %d : %s)" % (rc, out.strip()[-200:]))
 
     os.environ["PATH"] = dossier + os.pathsep + os.environ.get("PATH", "")
+    # Where it went, not only what was asked: the VM's user is an administrator, Git's installer then
+    # installs for all users whatever the scope winget asked for.
     reussi = next(m.group("args") for m in essais if m.group("code") == "0")
-    git["resume"] = "Git absent au départ, installé par winget (%s), %s dans un nouveau processus, coffre versionné " \
-                    "(« brain init »), Git Bash trouvé par Claude Code, gbq y répond" % (
-                        "portée utilisateur" if "--scope user" in reussi else "portée par défaut du paquet", version)
+    git["resume"] = "Git absent au départ, installé par winget (portée demandée : %s) dans %s, %s dans un nouveau " \
+                    "processus, coffre versionné (« brain init »), Git Bash trouvé par Claude Code, gbq y répond" % (
+                        "utilisateur" if "--scope user" in reussi else "celle du paquet",
+                        os.path.dirname(dossier), version)
 
 
 def check_install(t, opts, kept=(), fresh=True, query=True):
