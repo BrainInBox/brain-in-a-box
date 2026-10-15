@@ -36,6 +36,7 @@ always terrain.py's own Echec, even when terrain.py runs as __main__.
 """
 import hashlib
 import json
+import ntpath
 import os
 import plistlib
 import posixpath
@@ -1120,6 +1121,40 @@ Get-ScheduledTask -TaskName 'Brain*' | Enable-ScheduledTask | Out-Null
   ConvertTo-Json -Depth 4 -Compress
 '''
 
+# A PC as users have it has no Git: terrain.yml asks for the runner's to go (TERRAIN_SANS_GIT, where
+# .github/ci/sans-git.ps1 writes its proof), once the harness no longer needs it, before the app's
+# first start. The app's brain step (install.ps1) then has to bring it through winget.
+SANS_GIT = "TERRAIN_SANS_GIT"
+SANS_GIT_PS1 = Path(__file__).resolve().parent.parent.parent / ".github" / "ci" / "sans-git.ps1"
+# The diagnosis' line for Git (app/src-tauri/src/diagnose.rs) and its word for what is missing (app.js).
+LIGNE_GIT = "Git (l'historique de tes notes)"
+A_INSTALLER = ": À installer"
+
+
+def racines_git(environ=None):
+    """Where Git for Windows installs, for all users or for one (install.ps1's Find-Git looks there)."""
+    environ = os.environ if environ is None else environ
+    out = []
+    for var, sous in (("ProgramFiles", "Git"), ("ProgramFiles(x86)", "Git"), ("LOCALAPPDATA", "Programs\\Git")):
+        if environ.get(var):
+            out.append(ntpath.join(environ[var], sous))
+    return out
+
+
+def sans_git_path(path, racines):
+    """A Windows PATH without the folders of a Git install (racines: racines_git())."""
+    tops = [ntpath.normcase(r.rstrip("\\/")) for r in racines]
+
+    def git(d):
+        d = ntpath.normcase(d.strip().strip('"').rstrip("\\/"))
+        return any(d == r or d.startswith(r + "\\") for r in tops)
+    return ";".join(d for d in path.split(";") if d and not git(d))
+
+
+def statut_diagnostic(textes, ligne):
+    """What the app's diagnosis said of one line (« : OK », « : À installer »...), or None."""
+    return next((textes[i + 1] for i, x in enumerate(textes[:-1]) if x == ligne), None)
+
 # What a user clicks to open a downloaded setup.exe all the same: SmartScreen's window, or the
 # Attachment Manager's question when SmartScreen is off.
 SMARTSCREEN_PLUS = ("More info", "Informations complémentaires", "Plus d'infos", "Plus d'informations")
@@ -1206,7 +1241,7 @@ class PiloteWindows(Pilote):
 
     machine = "PC"
     suffixe = "_windows-x64-setup.exe"
-    neufs = ("Python (pour les automatismes)", "Git (l'historique de tes notes)")
+    neufs = ("Python (pour les automatismes)", LIGNE_GIT)
     # In front, yet no dialog: the desktop, the taskbar, a console.
     IGNORER = ("Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd", "ConsoleWindowClass",
                "CASCADIA_HOSTING_WINDOW_CLASS", "Windows.UI.Core.CoreWindow")
@@ -1266,6 +1301,31 @@ class PiloteWindows(Pilote):
                 ("Obsidian", [local / "Programs" / "Obsidian" / "Obsidian.exe", local / "Obsidian" / "Obsidian.exe",
                               pf / "Obsidian" / "Obsidian.exe"]),
                 ("Python de winget", python or [local / "Programs" / "Python" / "Python3xx" / "python.exe"])]
+
+    def poste_neuf(self):
+        """No Git, when terrain.yml asks for it (SANS_GIT): sans-git.ps1 uninstalls the runner's and
+        proves nothing finds it any more; this process's PATH loses its folders first, so nothing the
+        robot starts from here finds it either. The app's environment is read from the registry after."""
+        preuve = os.environ.get(SANS_GIT)
+        if not preuve:
+            return None
+        os.environ["PATH"] = sans_git_path(os.environ.get("PATH", ""), racines_git())
+        rc, out = self._run(["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",
+                             SANS_GIT_PS1, "-Preuve", preuve], timeout=15 * 60, creationflags=SANS_CONSOLE)
+        lignes = [l.strip() for l in out.splitlines() if l.strip()]
+        if rc != 0:
+            raise ErreurPilote("Git n'a pas quitté la VM (sans-git.ps1, code %d) : %s" % (rc, " ".join(lignes[-4:])[-500:]))
+        return {"sans_git": lignes[-6:]}
+
+    def constats(self, t, details):
+        """The app saw no Git before it installed one: its diagnosis said « À installer » for Git."""
+        if not os.environ.get(SANS_GIT):
+            return
+        t("app-git-diagnostic")
+        statut = statut_diagnostic((details.get("diagnostic") or {}).get("textes") or [], LIGNE_GIT)
+        t.check(statut is not None, "le diagnostic de l'app ne dit rien de Git")
+        t.check(statut == A_INSTALLER, "avant d'installer, le diagnostic de l'app disait Git « %s » : la VM avait "
+                                       "encore Git" % statut.lstrip(": "))
 
     def marquer_telecharge(self, fichier):
         # What a browser writes on a download: the Mark of the Web (zone 3, Internet), which the
@@ -2760,12 +2820,15 @@ def scenario(t, opts, kit, pilote=None, horloge=time.monotonic, dormir=time.slee
 
         t("app-installation")
         t.notes.extend(pilote.installer(fichier, details, parcours.capturer))
-        env = pilote.environnement(home, extra)
+        # What the app's steps must bring, taken away now (the harness needs nothing of it any more),
+        # then the environment the app gets, read after.
+        t("app-poste-neuf")
         poste = pilote.poste_neuf()
         if poste:
             details["poste_neuf"] = poste
             if poste.get("note"):
                 t.notes.append(poste["note"])
+        env = pilote.environnement(home, extra)
 
         details["duree_parcours_s"] = parcours.premier_lancement(env)
         t("app-fermeture")
@@ -2800,8 +2863,9 @@ def scenario(t, opts, kit, pilote=None, horloge=time.monotonic, dormir=time.slee
             details["nuit_rendue"] = rendue
         kit.run_nightly(t, opts)
         t.resume = "app %s installée, %d écrans cliqués à la souris jusqu'au cerveau en %d min, vérifications conformes, " \
-                   "deuxième lancement : déjà installé, une nuit lancée par le planificateur" % (
-                       details.get("release") or "construite", len(parcours.ecrans), details["duree_parcours_s"] // 60)
+                   "deuxième lancement : déjà installé, une nuit lancée par le planificateur%s" % (
+                       details.get("release") or "construite", len(parcours.ecrans), details["duree_parcours_s"] // 60,
+                       " ; " + details["git"]["resume"] if (details.get("git") or {}).get("resume") else "")
     except ErreurPilote as e:
         if parcours:
             parcours.sur_echec()

@@ -118,14 +118,21 @@ function Place-File([string]$Dest, [byte[]]$Bytes) {
 if ($psISE) { Fail "tu es dans PowerShell ISE. Ouvre 'Windows PowerShell' (pas ISE), puis recolle la commande." }
 
 function Winget-Install($id, $label) {
-    if (-not (Have winget)) { Warn "$label absent et winget indisponible"; return }
+    if (-not (Have winget)) {
+        Warn "$label absent et winget indisponible"
+        Add-Content -LiteralPath $LOG -Value "`r`n> winget absent : $label non installe" -Encoding utf8
+        return
+    }
     Write-Host "  ... $label : installation (winget)"
     # Portee utilisateur d'abord (pas de fenetre admin), sinon l'installeur par defaut du paquet.
     foreach ($scope in @("user", "")) {
         $a = @("install", "-e", "--id", $id, "--source", "winget", "--silent", "--accept-package-agreements", "--accept-source-agreements")
         if ($scope) { $a += @("--scope", $scope) }
         Invoke-Native { & winget @a }
-        if ($LASTEXITCODE -eq 0) { break }
+        $code = $LASTEXITCODE
+        # Chaque essai dans le journal : un Python ou un Git absent apres l'installation s'y explique.
+        Add-Content -LiteralPath $LOG -Value "`r`n> winget $($a -join ' ')`r`nwinget : code $code" -Encoding utf8
+        if ($code -eq 0) { break }
     }
     Refresh-Path
 }
@@ -322,6 +329,10 @@ $GBRAIN_TAG = [string]$pin.tag
 $GBRAIN_REF = [string]$pin.sha
 $BUN_VERSION = [string]$pin.bun
 
+# Le journal d'installation est ouvert avant le preflight : winget y note ce qu'il installe.
+New-Item -ItemType Directory -Path (Split-Path -Parent $LOG) -Force | Out-Null
+Add-Content -LiteralPath $LOG -Value "`r`n===== $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') install =====" -Encoding utf8
+
 # 1. Preflight : Python (obligatoire), Git (historique du vault, et Git Bash pour l'outil Bash de Claude Code)
 Say "Preflight"
 $Py = Find-Python
@@ -335,8 +346,6 @@ if ($Git) {
     if (($env:Path -split ";") -notcontains $gitDir) { $env:Path = "$gitDir;$env:Path" }
     Ok "git ($Git)"
 } else { Warn "Git absent : vault non versionne, et Claude utilisera PowerShell au lieu de Bash. Installe Git (https://git-scm.com) puis relance." }
-New-Item -ItemType Directory -Path (Split-Path -Parent $LOG) -Force | Out-Null
-Add-Content -LiteralPath $LOG -Value "`r`n===== $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') install =====" -Encoding utf8
 
 # 1bis. Recherche par le sens : cle Voyage AI (optionnelle). Un cerveau qui a deja ses
 # embeddings les garde. Sans cle, la recherche marche par mots-cles ; relancer pour en ajouter une.
