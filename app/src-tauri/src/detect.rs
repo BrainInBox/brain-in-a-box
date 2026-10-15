@@ -704,18 +704,21 @@ pub(crate) mod tests {
         assert_eq!(missing_from(&|_| false, true), ["python3", "git", "curl", "procps", "unzip", "ca-certificates"]);
     }
 
-    /// The packages install.sh asks for are the app's too: what install.sh would stop on, the
-    /// paquets step installs first.
+    /// The packages install.sh asks for are the app's, and the only ones root installs: what
+    /// install.sh would stop on, the paquets step installs first, and nothing more (root.rs).
     #[cfg(target_os = "linux")]
     #[test]
-    fn the_app_installs_every_package_install_sh_needs() {
+    fn the_app_installs_the_packages_install_sh_needs_and_root_no_other() {
         let script = include_str!("../../../install.sh");
         let body = script.split("missing_packages() {").nth(1).and_then(|b| b.split("\n}").next()).unwrap();
-        let named: Vec<&str> = body.lines().filter_map(|l| l.split("p=\"$p ").nth(1)).filter_map(|r| r.split('"').next()).collect();
-        assert!(named.len() >= 5, "{named:?}");
-        for pkg in named {
-            assert!(SYSTEM_TOOLS.iter().any(|(_, p)| *p == pkg) || pkg == "ca-certificates", "{pkg}");
+        let mut named: Vec<&str> = body.lines().filter_map(|l| l.split("p=\"$p ").nth(1)).filter_map(|r| r.split('"').next()).collect();
+        let mut app: Vec<&str> = SYSTEM_TOOLS.iter().map(|(_, p)| *p).chain(["ca-certificates"]).collect();
+        let mut root = crate::root::PACKAGES.to_vec();
+        for v in [&mut named, &mut app, &mut root] {
+            v.sort_unstable();
         }
+        assert_eq!(named, app);
+        assert_eq!(app, root);
     }
 
     #[cfg(target_os = "linux")]

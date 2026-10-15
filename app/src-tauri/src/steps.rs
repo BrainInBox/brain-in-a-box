@@ -35,7 +35,7 @@ use crate::model::StepResult;
 use crate::sys::minutes;
 use crate::{perms, sys, voyage};
 #[cfg(target_os = "linux")]
-use crate::root;
+use crate::root::{self, OBSIDIAN_DEB_SHA256};
 
 /// Claude Code first: its installer needs none of Apple's tools, and once the user is
 /// logged in, Claude can help repair the steps that follow.
@@ -59,13 +59,12 @@ const OBSIDIAN_SIZE: u64 = 233_704_463;
 /// Obsidian's Apple developer id: a copy signed by anyone else is thrown away.
 #[cfg(target_os = "macos")]
 const OBSIDIAN_TEAM: &str = "6JSW4SJWN9";
-/// Obsidian's official package, the one install.sh pins (a test holds them equal).
+/// Obsidian's official package, the one install.sh pins (a test holds them equal); its SHA-256
+/// is root.rs's, the only package root installs from a file.
 #[cfg(target_os = "linux")]
 const OBSIDIAN_DEB_URL: &str = "https://github.com/obsidianmd/obsidian-releases/releases/download/v1.14.4/obsidian_1.14.4_amd64.deb";
 #[cfg(target_os = "linux")]
 const OBSIDIAN_DEB_SIZE: u64 = 108_364_996;
-#[cfg(target_os = "linux")]
-const OBSIDIAN_DEB_SHA256: &str = "85b10dcba6edfc1c0460a6d18260cf31c30447a444bd858a6440b9c9c8806d25";
 
 const BRAIN_ZIP: &str = "https://github.com/BrainInBox/brain-in-a-box/archive/refs/heads/master.zip";
 /// The installer in the sources: the brain step runs it, and its presence says the
@@ -313,7 +312,7 @@ fn paquets(pkexec: &Path, log: &mut dyn FnMut(String)) -> Step {
     }
     log(format!("Il manque {listed}. Ton ordinateur va te demander ton mot de passe : c'est pour les installer."));
     let by_hand = format!("sudo apt-get install -y {}", missing.join(" "));
-    root::run(pkexec, root::APT_INSTALL, &missing, &listed, &by_hand, log)?;
+    root::install_packages(pkexec, &missing, &listed, &by_hand, log)?;
     let still: Vec<String> = detect::missing_packages(debian).iter().map(|p| p.to_string()).collect();
     if still.is_empty() {
         Ok(format!("{} {} installés.", capitalize(&listed), if names.len() > 1 { "sont" } else { "est" }))
@@ -474,11 +473,10 @@ fn obsidian(pkexec: &Path, log: &mut dyn FnMut(String)) -> Step {
         return Err("Le paquet d'Obsidian téléchargé n'est pas celui attendu : je l'ai supprimé par sécurité. Réessaie plus tard.".into());
     }
     log("Ton ordinateur va te demander ton mot de passe : c'est pour installer Obsidian.".into());
-    let deb_arg = deb.to_string_lossy();
     let by_hand = format!(
         "d=$(mktemp -d) && curl -fL -o \"$d/obsidian.deb\" {OBSIDIAN_DEB_URL} && echo \"{OBSIDIAN_DEB_SHA256}  $d/obsidian.deb\" | sha256sum -c - && sudo apt-get install -y \"$d/obsidian.deb\""
     );
-    root::run(pkexec, root::APT_INSTALL_DEB, &[deb_arg.as_ref(), OBSIDIAN_DEB_SHA256], "Obsidian", &by_hand, log)?;
+    root::install_obsidian_deb(pkexec, &deb, &by_hand, log)?;
     match detect::obsidian(&home) {
         Found::Absent => Err("Obsidian n'apparaît pas après l'installation. Relance l'étape.".into()),
         found => Ok(format!("{} est installé.", found.label("Obsidian"))),

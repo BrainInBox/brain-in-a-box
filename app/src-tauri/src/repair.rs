@@ -1767,7 +1767,7 @@ fn system_facts(home: &Path) -> Map<String, Value> {
     m.insert("outils".into(), Value::Object(tools));
     m.insert("paquets_manquants".into(), json!(detect::missing_packages(debian)));
     m.insert("famille_debian".into(), json!(debian));
-    m.insert("pkexec".into(), json!(sys::is_executable(Path::new("/usr/bin/pkexec"))));
+    m.insert("pkexec".into(), json!(sys::is_executable(Path::new(crate::root::PKEXEC))));
     m.insert("obsidian".into(), json!(detect::obsidian_install(home).map(|o| format!("{:?}", o.kind))));
     m.insert("proxy_systeme".into(), json!(env_proxy || gnome_proxy));
     m.insert("gbrain_en_cours".into(), json!(pgrep.is_some_and(|p| sys::run(&p, &["-f", "gbrain"], PROBE_TIMEOUT).ok())));
