@@ -873,8 +873,8 @@ jobs:
                         ("spawn_agent", fn_call("spawn_agent", {"message": "read " + str(SECRET)}, "call_sa_1")),
                         ("view_image", fn_call("view_image", {"path": str(SECRET)}, "call_vi_1")),
                         ("imagegen", fn_call("image_gen__imagegen", {"prompt": "x"}, "call_ig_1"))]
-              forced += [("request_user_input_async_valid", fn_call("request_user_input_async", {"questions": [{"id": "q1", "header": "P0", "question": "Pick one?",
-                           "options": [{"label": "A", "description": "a"}, {"label": "B", "description": "b"}]}]}, "call_rui_1", namespace="functions")),
+              forced += [("request_user_input_async_valid", fn_call("request_user_input_async", {"questions": [{"title": "Pick one?", "options": ["A", "B"]}]},
+                                                                   "call_rui_1", namespace="functions")),
                          ("wait_valid", fn_call("wait", {"cell_id": "1"}, "call_wait_1", namespace="functions"))]
               seen = set(x[0] for x in forced)
               for t in base_tools:
@@ -1148,7 +1148,7 @@ jobs:
           names = sorted(os.environ)
           rec = {"event": event, "variant": variant, "stdin": data, "parent": parent(), "cwd": os.getcwd(), "argv": sys.argv,
                  "env_names": names, "rust_log": os.environ.get("RUST_LOG"), "codex_vars": {k: os.environ[k] for k in names if k.startswith("CODEX") and "KEY" not in k and "TOKEN" not in k}}
-          with open(LOG, "a", encoding="utf-8") as f:
+          with open("%s.%s.%s.%d" % (LOG, variant, event, os.getpid()), "w", encoding="utf-8") as f:
               f.write(json.dumps(rec, ensure_ascii=False) + "\n")
           if variant.startswith("NZ"):
               sys.stdout.write("PROFILE-NOISE-INLINE\n")
@@ -1232,10 +1232,14 @@ jobs:
 
 
           def read_hook_log():
-              if not HOOK_LOG.exists():
-                  return []
-              recs = [json.loads(l) for l in HOOK_LOG.read_text(encoding="utf-8").splitlines() if l.strip()]
-              HOOK_LOG.unlink()
+              recs = []
+              for p in sorted(HOOK_LOG.parent.glob(HOOK_LOG.name + ".*")):
+                  for l in p.read_text(encoding="utf-8", errors="replace").splitlines():
+                      try:
+                          recs.append(json.loads(l))
+                      except Exception:
+                          recs.append({"event": "?", "variant": "unparsed", "stdin": None, "parent": l[:200]})
+                  p.unlink()
               return recs
 
 
@@ -1542,11 +1546,14 @@ jobs:
                       for ch in prompt:
                           write(ch.encode())
                           time.sleep(0.04)
-                      time.sleep(0.8)
+                      time.sleep(1.5)
                       write(b"\r")
-                      state["typed"], state["sent_at"] = True, now
+                      state["typed"], state["sent_at"], state["enters"] = True, now, 1
                   if state["typed"] and not state["quit_at"]:
                       done = any(prompt in json.dumps(x["body"] or {}, ensure_ascii=False) for x in mock.responses())
+                      if not done and state["enters"] < 4 and now - state["sent_at"] > 6 * state["enters"]:
+                          write(b"\r")
+                          state["enters"] += 1
                       if (done and now - state["sent_at"] > 8) or now - state["sent_at"] > 45:
                           write(b"\x03")
                           time.sleep(0.6)
@@ -1574,7 +1581,7 @@ jobs:
               (OUT / log_name).write_bytes(raw)
               text = ANSI.sub("", raw.decode("utf-8", "replace"))
               (OUT / (log_name + ".txt")).write_text(text, encoding="utf-8")
-              return {"exited": exited, "typed": state["typed"], "reply_on_screen": "SPIKE-REPLY" in text, "screen_tail": text[-1500:],
+              return {"exited": exited, "typed": state["typed"], "enters": state.get("enters"), "reply_on_screen": "SPIKE-REPLY" in text, "screen_tail": text[-1500:],
                       "seconds": round(time.time() - t0, 1)}
 
 
@@ -1731,41 +1738,7 @@ jobs:
         run: |
           if [ "$RUNNER_OS" = "Windows" ]; then PY=python; else PY=python3; fi
           codex --version
-          "$PY" -u "$RUNNER_TEMP/probe.py" version login features lock rollout layers hooks profile tui classify sandbox
-
-      - name: Newest Codex prerelease (GitHub release asset, SHA-256 checked), probe again
-        shell: bash
-        env:
-          OUT: ${{ runner.temp }}/p0-out/newest
-          P0_TAG: newest
-          PYTHONUTF8: "1"
-          PYTHONIOENCODING: utf-8
-        run: |
-          if [ "$RUNNER_OS" = "Windows" ]; then PY=python; else PY=python3; fi
-          case "$RUNNER_OS-$(uname -m)" in
-            Linux-x86_64) T=x86_64-unknown-linux-musl ;;
-            Linux-aarch64) T=aarch64-unknown-linux-musl ;;
-            macOS-arm64) T=aarch64-apple-darwin ;;
-            macOS-x86_64) T=x86_64-apple-darwin ;;
-            *) T=x86_64-pc-windows-msvc ;;
-          esac
-          if command -v cygpath >/dev/null; then D="$(cygpath -u "$RUNNER_TEMP")/newest"; else D="$RUNNER_TEMP/newest"; fi
-          mkdir -p "$D/x"
-          cd "$D"
-          V=""
-          for c in 0.163.0-alpha.13 0.163.0-alpha.12 0.163.0-alpha.11; do
-            B="https://github.com/openai/codex/releases/download/rust-v$c"
-            if curl -fsSL "$B/codex-package_SHA256SUMS" -o sums && curl -fsSL "$B/codex-package-$T.tar.gz" -o pkg.tar.gz; then V=$c; break; fi
-          done
-          [ -n "$V" ] || { echo "no prerelease package found"; exit 1; }
-          want=$(grep " codex-package-$T.tar.gz\$" sums | cut -d' ' -f1)
-          got=$("$PY" -c 'import hashlib, sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' pkg.tar.gz)
-          [ -n "$want" ] && [ "$want" = "$got" ] || { echo "sha256 mismatch for $V"; exit 1; }
-          tar -xzf pkg.tar.gz -C x
-          export PATH="$D/x/bin:$PATH"
-          echo "newest prerelease with assets: $V"
-          codex --version
-          "$PY" -u "$RUNNER_TEMP/probe.py" version features lock hooks classify
+          "$PY" -u "$RUNNER_TEMP/probe.py" version lock hooks tui
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
