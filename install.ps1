@@ -331,21 +331,12 @@ $Py = Find-Python
 if (-not $Py) { Winget-Install "Python.Python.3.12" "Python"; $Py = Find-Python }
 if (-not $Py) { Fail "Python introuvable. Installe Python 3 depuis https://www.python.org/downloads/ puis relance la meme commande." }
 Ok "python ($Py)"
-$Git = Find-Git
-if (-not $Git) { Winget-Install "Git.Git" "Git"; $Git = Find-Git }
-if ($Git) {
-    $gitDir = Split-Path -Parent $Git
-    if (($env:Path -split ";") -notcontains $gitDir) { $env:Path = "$gitDir;$env:Path" }
-    Ok "git ($Git)"
-} else { Warn "Git absent : vault non versionne, et Claude utilisera PowerShell au lieu de Bash. Installe Git (https://git-scm.com) puis relance." }
-New-Item -ItemType Directory -Path (Split-Path -Parent $LOG) -Force | Out-Null
-Add-Content -LiteralPath $LOG -Value "`r`n===== $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') install =====" -Encoding utf8
-
 # >>> agents
 # L'IA que le kit branche : -Agents/-Prefere, sinon BIAB_AGENTS/BIAB_PREFERE (ce que passe l'app),
 # sinon le choix d'avant (~\.brain-in-a-box\agents.json), sinon Claude seul, comme avant le choix.
 # engine\hooks\_agents.py tranche, et note un choix avant toute installation ; sans choix, il
-# n'ecrit rien. Codex est refuse sur un systeme tant qu'il n'y est pas ouvert.
+# n'ecrit rien. Codex est refuse sur un systeme tant qu'il n'y est pas ouvert. Juste apres Python,
+# dont _agents.py a besoin (et les sources en mode irm | iex) : avant Git et le journal.
 $AgentsFile = "$H\.brain-in-a-box\agents.json"
 $agentsArg = if ($Agents) { $Agents } else { "$env:BIAB_AGENTS" }
 $prefereArg = if ($Prefere) { $Prefere } else { "$env:BIAB_PREFERE" }
@@ -378,6 +369,15 @@ $agentsLabel = switch ("$ChosenAgents $PreferredAgent") {
 if ($agentsSource -eq "choix" -and $agentsWritten -eq "oui") { Ok "agents IA : $agentsLabel, note dans $AgentsFile" }
 elseif ($agentsSource -ne "defaut") { Ok "agents IA : $agentsLabel, comme choisi avant ($AgentsFile)" }
 # <<< agents
+$Git = Find-Git
+if (-not $Git) { Winget-Install "Git.Git" "Git"; $Git = Find-Git }
+if ($Git) {
+    $gitDir = Split-Path -Parent $Git
+    if (($env:Path -split ";") -notcontains $gitDir) { $env:Path = "$gitDir;$env:Path" }
+    Ok "git ($Git)"
+} else { Warn "Git absent : vault non versionne, et Claude utilisera PowerShell au lieu de Bash. Installe Git (https://git-scm.com) puis relance." }
+New-Item -ItemType Directory -Path (Split-Path -Parent $LOG) -Force | Out-Null
+Add-Content -LiteralPath $LOG -Value "`r`n===== $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') install =====" -Encoding utf8
 
 # 1bis. Recherche par le sens : cle Voyage AI (optionnelle). Un cerveau qui a deja ses
 # embeddings les garde. Sans cle, la recherche marche par mots-cles ; relancer pour en ajouter une.
