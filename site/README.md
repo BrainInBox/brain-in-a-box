@@ -3,7 +3,7 @@
 One static page, in French like the app: download the app, then a guide to each step and each piece of software. No build, no npm, no third-party script, no tracker, system fonts.
 
 - `index.html`, `style.css` (the app's colours and type, dark mode included), `app.js`, `img/`.
-- `app.js` asks GitHub's public API for the releases, keeps the newest `app-v<version>-preview.<n>` and points every download link at its files, found by their suffix (`_macos-universal.dmg`, `_windows-x64-setup.exe`, `_linux-x86_64.AppImage`, `_linux-amd64.deb`, `SHA256SUMS`). The big button is for the visitor's system. If the call fails (no network, the API's 60 calls an hour per address), the links stay on the Releases page and the page says which file to take. Without JavaScript, the three systems show one under the other.
+- `app.js` asks GitHub's public API for the releases, keeps the newest `app-v<version>-preview.<n>` and points every download link at its files, found by their suffix (`_macos-universal.dmg`, `_windows-x64-setup.exe`, `_linux-x86_64.AppImage`, `_linux-amd64.deb`, `SHA256SUMS`). The big button is for the visitor's system. If the call fails (no network, the API's 60 calls an hour per address), the links stay on the Releases page, searched for `préversion` (the word in every app preview's title, set by `release.yml`), and the page says which file to take. Without JavaScript, the three systems show one under the other.
 - `vercel.json`: a strict CSP (scripts, styles and images from the site only; the only connection is `api.github.com`) and the usual security headers. `.vercelignore` keeps this README and `captures.sh` off the site.
 
 ## Publish
@@ -13,6 +13,12 @@ On Vercel, a project with **Root Directory** `site`, framework preset **Other**,
 Locally: `python3 -m http.server -d site 8000`, then http://localhost:8000 (without the headers of `vercel.json`).
 
 Nothing to redeploy when a new app preview comes out: the page finds it by itself.
+
+Before publishing, check that the fallback link still lists the previews (GitHub's release search does not match every word: `app-v` finds nothing):
+
+```bash
+curl -sL 'https://github.com/BrainInBox/brain-in-a-box/releases?q=pr%C3%A9version&expanded=true' | grep -c 'releases/tag/app-v'   # 1 or more
+```
 
 ## Update the captures
 

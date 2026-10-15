@@ -98,8 +98,9 @@ function fillLinks(release) {
     if (file) el.textContent = file.name;
   }
   const deb = release.files.deb;
-  const debCmd = document.querySelector('[data-deb-cmd]');
-  if (deb && debCmd) debCmd.textContent = `sudo apt install ./${deb.name}`;
+  for (const cmd of deb ? document.querySelectorAll('[data-deb-cmd]') : []) {
+    cmd.textContent = cmd.textContent.replace(/\.\/\S+\.deb$/, `./${deb.name}`);
+  }
   const date = frenchDate(release.date);
   document.getElementById('version').textContent = `Préversion ${release.version}${date ? `, du ${date}` : ''}`;
 }
@@ -152,7 +153,10 @@ function setupTabs(preferred) {
   }
   if (!tabs.length) return;
 
-  function select(id, focus) {
+  // A tab the visitor picks goes in the address too: a link to that system
+  // (#installer-windows) must still change something when clicked later.
+  function select(id, { focus = false, remember = false } = {}) {
+    if (remember) history.replaceState(null, '', `#${id}`);
     tabs.forEach((tab, i) => {
       const on = panels[i].id === id;
       tab.setAttribute('aria-selected', String(on));
@@ -163,16 +167,13 @@ function setupTabs(preferred) {
   }
 
   tabs.forEach((tab, i) => {
-    tab.addEventListener('click', () => {
-      select(panels[i].id, false);
-      history.replaceState(null, '', `#${panels[i].id}`);
-    });
+    tab.addEventListener('click', () => select(panels[i].id, { remember: true }));
     tab.addEventListener('keydown', (e) => {
       const moves = { ArrowRight: 1, ArrowLeft: -1, Home: -i, End: tabs.length - 1 - i };
       if (!(e.key in moves)) return;
       e.preventDefault();
       const next = (i + moves[e.key] + tabs.length) % tabs.length;
-      select(panels[next].id, true);
+      select(panels[next].id, { focus: true, remember: true });
     });
   });
 
@@ -180,12 +181,12 @@ function setupTabs(preferred) {
   function fromHash() {
     const id = location.hash.slice(1);
     if (!panels.some((p) => p.id === id)) return false;
-    select(id, false);
+    select(id);
     document.getElementById('installer').scrollIntoView();
     return true;
   }
   window.addEventListener('hashchange', fromHash);
-  if (!fromHash()) select(`installer-${preferred}`, false);
+  if (!fromHash()) select(`installer-${preferred}`);
 }
 
 // A link to a question of the FAQ (#verifier) opens it.

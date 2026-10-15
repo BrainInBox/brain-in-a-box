@@ -11,10 +11,13 @@
   --accent-hover: #a92f5e;
   --accent-ink: #ffffff;
   --accent-soft: #fbe3ec;
+  /* The accent as text on --accent-soft or --bg-alt: #c23a6e falls under 4.5:1 there. */
+  --accent-text: #a92f5e;
   --ok: #287c4e;
   --missing: #5f6886;
   --warn: #a35f09;
   --error: #c0392b;
+  --on-status: #ffffff;
   --code-bg: #2a211f;
   --code-ink: #f3e9da;
   --shadow: 0 1px 2px rgba(70, 45, 30, 0.06), 0 8px 24px rgba(70, 45, 30, 0.08);
@@ -35,10 +38,12 @@
     --accent-hover: #f79abb;
     --accent-ink: #2a0e19;
     --accent-soft: #46222f;
+    --accent-text: var(--accent);
     --ok: #63d296;
     --missing: #aab2cc;
     --warn: #f2c04e;
     --error: #ff8a7a;
+    --on-status: #1c1715;
     --code-bg: #120e0d;
     --code-ink: #e9ddd2;
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.25);
@@ -46,6 +51,8 @@
 }
 
 * { box-sizing: border-box; }
+
+[hidden] { display: none !important; }
 
 html { scroll-behavior: smooth; scroll-padding-top: 16px; }
 
@@ -135,8 +142,17 @@ code {
 }
 
 @media (max-width: 880px) {
-  .top-nav { display: none; }
+  .top-in { flex-wrap: wrap; row-gap: 0; }
   .top-gh { margin-left: auto; }
+  .top-nav {
+    order: 3;
+    width: 100%;
+    margin-left: 0;
+    gap: 18px;
+    padding: 4px 4px 12px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
 }
 
 /* Buttons, as in the app */
@@ -179,7 +195,7 @@ code {
   padding: 4px 12px;
   border-radius: 999px;
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-text);
   font-size: 14px;
   font-weight: 700;
   letter-spacing: 0.01em;
@@ -337,7 +353,7 @@ code {
   place-items: center;
   border-radius: 50%;
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-text);
   font-weight: 800;
 }
 .steps > li::after {
@@ -370,9 +386,9 @@ code {
   box-shadow: var(--shadow);
   background: var(--card);
 }
-.shot-small img { width: auto; }
 .shot-dialog img { border-radius: 20px; }
 .shot-narrow img { width: 380px; }
+.shot .zoom { display: block; width: fit-content; max-width: 100%; border-radius: 12px; cursor: zoom-in; }
 .shot figcaption { margin-top: 8px; font-size: 14px; color: var(--ink-2); }
 .shot-pair { display: grid; gap: 14px; }
 
@@ -384,6 +400,7 @@ code {
 }
 .callout h4 { font-size: 17px; margin-bottom: 6px; }
 .callout p { font-size: 15.5px; }
+.callout a { color: var(--accent-text); }
 
 .alt-box { margin: 8px 0 20px; padding: 22px; }
 .alt-box h4 { font-size: 19px; margin-bottom: 8px; }
@@ -439,16 +456,24 @@ pre.cmd code { background: none; padding: 0; color: inherit; overflow-wrap: norm
 }
 
 .legend { margin: 0; padding: 0; list-style: none; font-size: 15.5px; }
-.legend li { display: flex; align-items: baseline; gap: 10px; }
+.legend li { display: flex; align-items: flex-start; gap: 10px; }
 .legend li + li { margin-top: 4px; }
-.dot { flex: none; width: 11px; height: 11px; border-radius: 50%; transform: translateY(1px); }
-.dot-ok { background: var(--ok); }
-.dot-missing { border: 2px dashed var(--missing); }
-.dot-warn { background: var(--warn); }
-.dot-error { background: var(--error); }
+/* The app's status icons (app/src/app.js, ICONS). */
+.ic { flex: none; width: 18px; height: 18px; margin-top: 4px; }
+.ic-ok { color: var(--ok); }
+.ic-missing { color: var(--missing); }
+.ic-warn { color: var(--warn); }
+.ic-error { color: var(--error); }
+.ic .ic-bg { fill: currentColor; }
+.ic .ic-fg { fill: none; stroke: var(--on-status); stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.ic .ic-dot { fill: var(--on-status); }
+.ic .ic-ring { fill: none; stroke: currentColor; stroke-width: 1.8; }
+.ic-missing .ic-ring { stroke-dasharray: 3 2.4; }
+.ic .ic-line { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 
 .systems { margin: 12px 0 8px; padding: 28px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
-.systems-t { font-size: 20px; margin-bottom: 18px; }
+.systems-t { font-size: 20px; }
+.systems-note { margin: 4px 0 18px; }
 .systems-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; align-items: start; }
 .systems-grid figcaption { font-size: 15px; }
 @media (max-width: 860px) {
@@ -524,7 +549,7 @@ pre.cmd code { background: none; padding: 0; color: inherit; overflow-wrap: norm
 .faq summary::after { content: "+"; color: var(--accent); font-size: 22px; line-height: 1; font-weight: 500; }
 .faq details[open] summary::after { content: "−"; }
 .faq details > :not(summary) { margin: 0 18px 14px; }
-.faq details > p { font-size: 16px; }
+.faq details > p, .faq details > ul { font-size: 16px; }
 
 /* Footer */
 
