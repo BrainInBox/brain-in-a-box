@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # try-it-locally.sh — install brain-in-a-box into an ISOLATED home so you can
 # experience the full product (vault, hooks, gbq, onboarding, Obsidian) WITHOUT
-# touching your real ~/Documents/Brain, ~/.gbrain, ~/.claude, or your launchd.
+# touching your real ~/Documents/Brain, ~/.gbrain, ~/.claude, or your scheduled jobs.
 #
 # For someone who already has gbrain installed (like the author) and wants to
 # dogfood the package before giving it to a friend. A fresh machine just runs
@@ -9,7 +9,8 @@
 #
 # Safe by design:
 #   - HOME is redirected to $TRYHOME (default ~/biab-tryit) → all data isolated
-#   - launchctl is stubbed → no real launchd job is loaded
+#   - launchctl, systemctl, loginctl and crontab are stubbed → no real job is loaded
+#     (a crontab and the user's systemd belong to the user, not to a HOME)
 #   - gbrain + bun are symlinked from your real install → `bun link` is a no-op
 #     on your real repo (your global gbrain never changes)
 #   - your real Voyage key is reused (read locally, never printed) so search by meaning works
@@ -39,7 +40,7 @@ fi
 mkdir -p "$TRYHOME/DEV" "$STUB"
 ln -sfn "$REAL_BUN" "$TRYHOME/.bun"
 ln -sfn "$REAL_GBRAIN" "$TRYHOME/DEV/gbrain"
-printf '#!/bin/zsh\nexit 0\n' > "$STUB/launchctl"; chmod +x "$STUB/launchctl"
+for c in launchctl systemctl loginctl crontab; do printf '#!/bin/sh\nexit 0\n' > "$STUB/$c"; chmod +x "$STUB/$c"; done
 
 if [ "$SKIP_INSTALL" = "0" ]; then
   # reuse the real Voyage key so search by meaning works (read locally, never printed);
@@ -70,7 +71,7 @@ cat <<EOF
    open -a Obsidian   # then "Open folder as vault" → $TRYHOME/Documents/Brain
 
 5) Run the nightly maintenance manually (no cron was loaded):
-   HOME=$TRYHOME zsh $TRYHOME/.claude/hooks/brain/gbrain-nightly.sh ; cat $TRYHOME/.gbrain/nightly.log
+   HOME=$TRYHOME bash $TRYHOME/.claude/hooks/brain/gbrain-nightly.sh ; cat $TRYHOME/.gbrain/nightly.log
 
 When done:  ./try-it-locally.sh --teardown
 EOF
