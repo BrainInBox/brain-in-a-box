@@ -636,10 +636,11 @@ jobs:
           if (Test-Path "$H\.brain-in-a-box\agents.json") { throw 'nothing was chosen, yet agents.json was written' }
           if ((Get-Content "$env:RUNNER_TEMP\install-1.txt" -Raw) -match 'agents IA') { throw 'a line about agents with nothing chosen' }
 
+      # Python comes first: _agents.py decides. Nothing after it runs: not even the install log.
       - name: Codex is refused on this system (-Agents or BIAB_AGENTS), before anything changes
         run: |
           $H = $env:USERPROFILE
-          $snap = { foreach ($f in "$H\.claude\settings.json", "$H\.claude\CLAUDE.md", "$H\.brain-in-a-box\installed.json") { "$f $((Get-FileHash $f).Hash)" } }
+          $snap = { foreach ($f in "$H\.claude\settings.json", "$H\.claude\CLAUDE.md", "$H\.brain-in-a-box\installed.json", "$H\.brain-in-a-box\install.log") { "$f $((Get-FileHash $f).Hash)" } }
           $before = (& $snap) -join "`n"
           foreach ($case in @(@('-Agents', 'codex'), @('-Agents', 'claude,codex', '-Prefere', 'codex'), @('env'))) {
             if ($case[0] -eq 'env') { $env:BIAB_AGENTS = 'codex'; $case = @() }
@@ -843,22 +844,20 @@ jobs:
           $n = @((& "$env:USERPROFILE\.bun\bin\gbrain.exe" sources list) | Select-String '^\s+vault\s').Count
           if ($n -ne 1) { throw "vault source listed $n times after a second run" }
 
-      # irm | iex passes no parameter: the choice comes through BIAB_AGENTS, as the app passes it.
-      - name: One-liner mode (irm | iex) under the Restricted policy of a fresh PC, Claude chosen through BIAB_AGENTS
+      # The README's command: no choice, as every Windows user has run it so far.
+      - name: One-liner mode (irm | iex) under the Restricted policy of a fresh PC
         run: |
           Unregister-ScheduledTask -TaskName BrainNightly, BrainReflection -Confirm:$false
           git archive --format=zip --prefix=brain-in-a-box-master/ -o "$env:RUNNER_TEMP\src.zip" HEAD
           $env:BIAB_ARCHIVE = "$env:RUNNER_TEMP\src.zip"
           $env:BRAIN_DIR = "$env:RUNNER_TEMP\Brain2"
-          $env:BIAB_AGENTS = 'claude'
           powershell -NoProfile -ExecutionPolicy Restricted -Command "Get-Content -Raw '$PWD\install.ps1' | Invoke-Expression" *>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\install-iex.txt"
           if ($LASTEXITCODE) { exit 1 }
           if (-not (Test-Path "$env:USERPROFILE\.brain-in-a-box\src\vault-skeleton")) { throw 'sources not unpacked' }
           if (-not (Test-Path "$env:RUNNER_TEMP\Brain2\Profile")) { throw 'vault not created in BRAIN_DIR' }
           Get-ScheduledTask -TaskName BrainNightly, BrainReflection | Format-Table TaskName, State
-          $a = Get-Content "$env:USERPROFILE\.brain-in-a-box\agents.json" -Raw | ConvertFrom-Json
-          if ("$($a.version) $($a.agents -join ',') $($a.prefere) $($a.pose_par)" -ne '1 claude claude install.ps1' -or $a.codex_home) { throw "agents.json: $($a | ConvertTo-Json -Compress)" }
-          if ((Get-Content "$env:RUNNER_TEMP\install-iex.txt" -Raw) -notmatch 'agents IA : Claude Code, note dans') { throw 'the choice was not said' }
+          if (Test-Path "$env:USERPROFILE\.brain-in-a-box\agents.json") { throw 'nothing was chosen, yet agents.json was written' }
+          if ((Get-Content "$env:RUNNER_TEMP\install-iex.txt" -Raw) -match 'agents IA') { throw 'a line about agents with nothing chosen' }
 
       - name: A Voyage key added later turns on search by meaning (fake Voyage, no secret)
         run: |
@@ -948,3 +947,15 @@ jobs:
           if ($LASTEXITCODE) { exit 1 }
           if ((git -C $G rev-parse HEAD).Trim() -ne $head) { throw "the installer moved gbrain from $tag back to $($pin.tag)" }
           if ((Get-Content "$env:RUNNER_TEMP\install-newer.txt" -Raw) -notmatch 'gbrain deja a jour \(v') { throw "the installer did not see gbrain is past the pin" }
+
+      # Last, so that every step above runs as users who never chose do: irm | iex passes no
+      # parameter, the choice comes through BIAB_AGENTS, as the app passes it.
+      - name: One-liner mode, Claude chosen through BIAB_AGENTS
+        run: |
+          $env:BIAB_ARCHIVE = "$env:RUNNER_TEMP\src.zip"
+          $env:BIAB_AGENTS = 'claude'
+          powershell -NoProfile -ExecutionPolicy Restricted -Command "Get-Content -Raw '$PWD\install.ps1' | Invoke-Expression" *>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\install-iex-claude.txt"
+          if ($LASTEXITCODE) { exit 1 }
+          $a = Get-Content "$env:USERPROFILE\.brain-in-a-box\agents.json" -Raw | ConvertFrom-Json
+          if ("$($a.version) $($a.agents -join ',') $($a.prefere) $($a.pose_par)" -ne '1 claude claude install.ps1' -or $a.codex_home) { throw "agents.json: $($a | ConvertTo-Json -Compress)" }
+          if ((Get-Content "$env:RUNNER_TEMP\install-iex-claude.txt" -Raw) -notmatch 'agents IA : Claude Code, note dans') { throw 'the choice was not said' }
