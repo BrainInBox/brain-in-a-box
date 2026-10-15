@@ -4,7 +4,7 @@ Thanks for wanting to make this better. The project is small, the workflow is st
 
 ## Quick rules
 
-- **macOS first** (the nightly + reflection rely on `launchd`). Windows has an experimental `install.ps1` that still needs a real-Windows smoke test — see [docs/proposals/windows-port.md](docs/proposals/windows-port.md). Linux ports welcome via discussion first — propose the approach before coding.
+- **macOS, Windows and Linux.** The nightly and the reflection run from `launchd` on a Mac, the Task Scheduler on Windows (`install.ps1`), systemd user timers on Linux (cron where the user's systemd does not answer: WSL, containers). Linux is Debian and Ubuntu first (tested on Ubuntu 24.04); another distribution, open an issue first.
 - **One concern per PR.** Schema change in one PR, doc change in another. Easier to review, easier to revert.
 - **No secrets, ever.** Not in the vault, not in tests, not in code. Nothing in the repo scans for them, so read your own diff before pushing.
 - **Match the existing style.** Concise English, no corporate fluff. Read what's there before writing.
@@ -38,7 +38,7 @@ gh pr create                             # or use the GitHub UI
 - **New skills** (`vault-skeleton/Skills/` templates) — gstack-compatible SKILL.md format
 - **Docs** (`README.md`, `CONTRIBUTING.md`, this one) — clarity > completeness
 - **CI improvements** (`.github/workflows/`) — make tests faster, add coverage
-- **Linux port** (open an issue first to discuss approach — launchd needs replacement)
+- **Other Linux distributions** (open an issue first: `install.sh` and the app install Debian packages with apt)
 - **Ollama variant** (`engine/bin/gbq`, install.sh) — opt-in offline embeddings
 - **Translations** (vault-skeleton templates) — keep the structure, swap the prose
 

@@ -23,9 +23,10 @@ The maintainer is one person. Reasonable response targets:
 
 ## What's in scope
 
-- The `install.sh` script (running it on a clean Mac shouldn't be exploitable)
+- The `install.sh` and `install.ps1` scripts (running them on a clean Mac, PC or Linux machine shouldn't be exploitable), and what `install.sh` runs as root on Linux (apt, after a yes)
 - The hooks (`engine/hooks/*.py`) — they execute on every Claude Code session
-- The nightly script (`engine/nightly/gbrain-nightly.sh`) — runs as launchd
+- The nightly script (`engine/nightly/gbrain-nightly.sh`) — runs from launchd on a Mac, a systemd user timer (or cron) on Linux
+- The desktop app (`app/`), and on Linux the two fixed commands it runs as root through pkexec (`app/src-tauri/src/root.rs`)
 - The `gbq` wrapper — runs against your local gbrain
 - Path-traversal / injection in any of the above
 

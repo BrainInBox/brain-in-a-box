@@ -40,10 +40,10 @@ No terminal: a window checks your Mac or PC (Windows or Linux), installs what is
 
 **Linux** (Ubuntu 22.04+, Debian 12, x86-64; tested on Ubuntu 24.04)
 
-- **AppImage**, nothing to install: download `Brain-in-a-Box_<version>-preview.<n>_linux-x86_64.AppImage`, make it executable (right click → Properties → « Exécutable comme un programme », or `chmod +x` it), then double-click it. AppImages need FUSE, which Ubuntu 24.04 no longer ships: install it once with `sudo apt install libfuse2t64` (Ubuntu 22.04: `libfuse2`). Without it, `./Brain-in-a-Box_…AppImage --appimage-extract-and-run` works too.
+- **AppImage**, nothing to install: download `Brain-in-a-Box_<version>-preview.<n>_linux-x86_64.AppImage`, make it executable (right click → Properties → « Exécutable comme un programme », or `chmod +x` it), then double-click it. Nothing else to install on Ubuntu 22.04 or 24.04: it mounts itself with the system's FUSE (`fusermount3`, package `fuse3`, on every Ubuntu desktop). Elsewhere, if it does not start: `sudo apt install fuse3`, or `./Brain-in-a-Box_…AppImage --appimage-extract-and-run`.
 - **.deb**: `sudo apt install ./Brain-in-a-Box_<version>-preview.<n>_linux-amd64.deb`, then open Brain in a Box from the applications menu.
 
-The app installs git, python3 and curl when the system lacks them (a fresh Ubuntu desktop has neither git nor curl), and Obsidian's official package: for those two steps only, the system's own window asks for your password (pkexec), for a fixed `apt-get install`. Everything else lands in your home folder, as on a Mac. Another distribution: the app says what to install with its package manager. arm64: no Obsidian package, the app says where to get it.
+The app installs git, python3 and curl when the system lacks them (a fresh Ubuntu desktop has neither git nor curl), and Obsidian's official package: for those two steps only, the system's own window asks for your password (pkexec): it shows « Brain in a Box installe » and the packages, or Obsidian. What runs as root is two fixed scripts that install only those packages, and only Obsidian's pinned package (`app/src-tauri/src/root.rs`). Everything else lands in your home folder, as on a Mac. Another distribution: the app says what to install with its package manager. arm64: no Obsidian package, the app says where to get it.
 
 ### Windows
 

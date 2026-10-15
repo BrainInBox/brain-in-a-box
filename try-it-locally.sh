@@ -55,6 +55,7 @@ if [ "$SKIP_INSTALL" = "0" ]; then
 fi
 
 printf "\n\033[1;32m✅ Sandbox ready at %s — go play (your real brain is untouched).\033[0m\n" "$TRYHOME"
+if [ "$(uname -s)" = Darwin ]; then OPEN_OBSIDIAN="open -a Obsidian"; else OPEN_OBSIDIAN="xdg-open obsidian://open"; fi
 cat <<EOF
 
 1) Query the memory (works now):
@@ -68,7 +69,7 @@ cat <<EOF
    echo '{"prompt":"no, actually do it differently"}' | HOME=$TRYHOME python3 $TRYHOME/.claude/hooks/brain/correction-detector.py
 
 4) Browse the vault in Obsidian:
-   open -a Obsidian   # then "Open folder as vault" → $TRYHOME/Documents/Brain
+   $OPEN_OBSIDIAN   # then "Open folder as vault" → $TRYHOME/Documents/Brain
 
 5) Run the nightly maintenance manually (no cron was loaded):
    HOME=$TRYHOME bash $TRYHOME/.claude/hooks/brain/gbrain-nightly.sh ; cat $TRYHOME/.gbrain/nightly.log
