@@ -67,6 +67,29 @@ runner: the cron fallback), changed by its user (`montee-avant`, step `etat-avan
 again (`installeur-montee`), then checked as an upgrade (`montee`, with cron expected). Timers and
 cron lines both present (`deux fois`) is a failure: every job would run twice.
 
+## Read a failure of Git on Windows
+
+The fresh install (`windows`, path `neuf`) and the app (`app-windows`) start on a PC without Git, as
+users' come: `.github/ci/sans-git.ps1` uninstalls the runner's Git for Windows (its own uninstaller,
+then what is left of its folder, its uninstall entry, and its folders on the Machine PATH, the user's
+and the installer's process's), proves nothing finds Git any more (Get-Command, where.exe and cmd.exe
+here and in a new process whose PATH is read again from the registry, Git's bash where Claude Code
+looks, its folders, App Paths, the uninstall entry) and checks winget is there. Git still found
+stops it; its proof goes to the file `TERRAIN_SANS_GIT` names. In `windows`, `terrain-install.ps1`
+runs it once the tested sources are zipped (step `installeur`); in the app, the robot runs it once
+the app is installed, before its first start (step `app-poste-neuf`), then `app-git-diagnostic`
+checks the app's own diagnosis said Git « À installer ». The checks of the install then start with:
+`git-absent-au-depart` (the proof, probe by probe, and the uninstaller's code: `details.git.avant`),
+`git-winget` (install.ps1's lines in `~/.brain-in-a-box/install.log`, `> winget install -e --id
+Git.Git ...` then `winget : code N`, one per attempt: `details.git.winget`), `git-nouveau-processus`
+(`where git` and `git --version` through cmd.exe in the environment Windows builds from the
+registry, and the folder of that git.exe created after the proof), `git-coffre` (the vault's first
+commit is the installer's « brain init »), `git-bash` (Claude Code, without a token and its
+PowerShell tool off, names the bash it uses in its debug log, `details.git.bash`, its last words in
+`claude_dit`; it must be that Git's, and the kit's `~/.local/bin/gbq` must answer in it). The VM's
+user is an administrator without UAC: the question Windows may ask a user for Git's installer is
+not seen there.
+
 ## Read a failure of the app scenario
 
 The jobs `app-macos`, `app-windows` and `app-linux` get the desktop app as a user does (master: the newest
@@ -76,7 +99,7 @@ it, open it and click through its real window to the final screen, then check th
 (`engine/tests/terrain_app.py`; the robot skips the Voyage key and clicks « Plus tard » at the
 Claude login.) Every click is the mouse's, as a user clicks. On a Mac, Xcode and Apple's command
 line tools are set aside first: the app's step « Outils Apple » opens Apple's window, which the
-robot clicks through. On Windows the PC has no Python but the Store's stub (`poste-neuf.ps1`),
+robot clicks through. On Windows the PC has no Python but the Store's stub (`poste-neuf.ps1`) and no Git (above),
 `setup.exe` carries the Mark of the Web and is opened by the shell (SmartScreen answered if it
 asks), the installer's pages are clicked too, and the window is read through UI Automation by
 `engine/tests/pilote_windows.cs`, compiled on the VM. On Linux (Ubuntu 24.04) the job builds a
@@ -110,12 +133,13 @@ gh run download <run-id> --name captures-macos-app --dir "$(mktemp -d)"    # the
   `app-construction` (getting the app; on master the preview must hold master's last change to
   the app, a day late is a failure), `app-installation` (the DMG's window and Gatekeeper's refusal;
   on Windows SmartScreen, the setup's pages, then: installed for the user alone, Start menu
-  shortcut), `app-lancement`, then one per screen of the window (`app-bienvenue`, `app-diagnostic`,
+  shortcut), `app-poste-neuf` (what the app must bring taken away: git and curl on Linux, Git on
+  Windows), `app-lancement`, then one per screen of the window (`app-bienvenue`, `app-diagnostic`,
   `app-voyage`, `app-connexion-installation`, `app-connexion`, `app-fini`), `app-etape-<id>` for an
   install step running in the app (`paquets`, `claude`, `clt`, `bun`, `obsidian`, `brain`; every step
   of the plan must get its screen), `app-nuit` (Windows: the `Brain*` tasks disabled, a nightly
-  already started waited for), `app-outils`, `app-root` (Linux), `app-sources`, the checks of
-  `installation` (`hooks` to
+  already started waited for), `app-outils`, `app-root` (Linux), `app-git-diagnostic` (Windows),
+  `app-sources`, the checks of `installation` (on Windows `git-*` first, then `hooks` to
   `planificateur`), `app-relance-*` for the second launch, `app-clics` (a click that was not the
   mouse's: AXPress, Invoke, Toggle, an AT-SPI action), `app-nuit-rendue` and `nuit-reelle`.
 - `raison` « interrompu pendant l'étape … »: the job step's timeout killed the scenario there; the
