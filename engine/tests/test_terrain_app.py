@@ -1375,6 +1375,9 @@ class LinuxReading(unittest.TestCase):
             p = Apt(("git", "curl"))
             out = p.poste_neuf()
             self.assertEqual((out["retires"], out["aussi"], out["gardes"]), (["git", "curl"], ["git-lfs"], {}))
+            # git's manual goes with git: the runner's is a PPA's, which would bar Ubuntu's git.
+            removal = next(c for c in p.calls if "remove" in c)
+            self.assertEqual(removal[-3:], ["git", "curl", "git-man"])
             self.assertNotIn("note", out)
             self.assertIn("update", p.calls[0], "the lists the app will see")
             self.assertIn("--only-upgrade", p.calls[1], "at their newest, which the lists hold")
@@ -1391,6 +1394,14 @@ class LinuxReading(unittest.TestCase):
             out = Apt(()).poste_neuf()
             self.assertEqual((out["retires"], sorted(out["gardes"])), ([], ["curl", "git"]))
             self.assertIn("git, curl ; son installation par l'app n'est pas testée", out["note"])
+            # A version apt can no longer download (its PPA's source gone): it stays removed, the app says the rest.
+            p = Apt(("curl",))
+            real = p._run
+            p._run = lambda argv, **kw: (100, "E: Can't find a source to download version") if any("=" in a for a in argv[5:]) \
+                else real(argv, **kw)
+            out = p.poste_neuf()
+            self.assertEqual((out["retires"], out["gardes"]), (["git", "curl"], {}))
+            self.assertIn("git", out["sans_retour"])
 
     def test_the_helper_is_ascii_compiles_and_answers_every_request(self):
         self.assertTrue(all(ord(c) < 128 for c in ta.ATSPI), "written and read as ASCII")

@@ -82,8 +82,9 @@ asks), the installer's pages are clicked too, and the window is read through UI 
 `engine/tests/pilote_windows.cs`, compiled on the VM. On Linux (Ubuntu 24.04) the job builds a
 desktop first (Xvfb, openbox, the user's session bus and systemd); the AppImage goes to
 `~/Applications`, made executable (FUSE, `libfuse2t64`, installed as the README says when missing),
-then git and curl are removed (`details.poste_neuf`: an Ubuntu desktop as it comes; each first brought
-up to date, and one apt could not put back is kept, said in `a_noter`) and the app is started: its step « Outils de base » (`app-etape-paquets`) puts them back with apt, as root through
+then git and curl are removed (`details.poste_neuf`: an Ubuntu desktop as it comes; git's manual too,
+the runner's being a PPA's whose source is gone; the app's apt command is first simulated as root, and
+one apt would refuse is kept, said in `a_noter` with apt's reasons) and the app is started: its step « Outils de base » (`app-etape-paquets`) puts them back with apt, as root through
 pkexec, like Obsidian's package. The system's password window needs a person: a polkit rule for the
 runner's user stands in for the password (the only stand-in); `app-root` then checks in pkexec's
 journal that only the app's two `apt-get install` scripts ran as root (`details.root`). The window

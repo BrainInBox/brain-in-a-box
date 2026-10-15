@@ -1812,6 +1812,10 @@ def env_linux(home, display, uid, extra=None):
 
 # The packages a fresh Ubuntu desktop does not have and the app's « Outils de base » step installs.
 SANS_PAQUETS = ("git", "curl")
+# Removed with them: git's manual, which a desktop without git has not either. The runner's image has
+# git and git-man from a PPA whose source it then drops: Ubuntu's git needs Ubuntu's git-man, apt
+# would not replace the PPA's by itself (« held broken packages », seen on the VM).
+AUSSI_RETIRES = ("git-man",)
 TITRE_FENETRE = "Brain in a Box"
 # The app's own name for AT-SPI (its program's name).
 NOM_ATSPI = "brain-in-a-box"
@@ -1940,9 +1944,9 @@ class PiloteLinux(Pilote):
             rc, said = self._run(["dpkg-query", "-W", "-f=${Version}", p], timeout=60)
             if rc == 0 and said.strip():
                 versions[p] = said.strip()
-        rc, said = self._run(sudo_apt + ["remove", "-y", "-q"] + list(SANS_PAQUETS), timeout=600, env=env)
+        rc, said = self._run(sudo_apt + ["remove", "-y", "-q"] + list(SANS_PAQUETS + AUSSI_RETIRES), timeout=600, env=env)
         if rc != 0:
-            raise ErreurPilote("apt-get remove %s : %s" % (" ".join(SANS_PAQUETS), said.strip()[-300:]))
+            raise ErreurPilote("apt-get remove %s : %s" % (" ".join(SANS_PAQUETS + AUSSI_RETIRES), said.strip()[-300:]))
         out["aussi"] = sorted(set(re.findall(r"^Removing (\S+) ", said, re.M)) - set(SANS_PAQUETS))
         retires = list(SANS_PAQUETS)
         rc, said = self._run(sudo_apt + ["-s", "-q", "install"] + retires, timeout=300, env=env)
@@ -1952,11 +1956,14 @@ class PiloteLinux(Pilote):
                 if rc == 0:
                     continue
                 out["gardes"][p] = [l.strip() for l in said.splitlines() if l.strip()][-6:]
-                retires.remove(p)
-                if p in versions:
-                    rc, said = self._run(sudo_apt + ["install", "-y", "-q", "%s=%s" % (p, versions[p])], timeout=600, env=env)
-                    if rc != 0:
-                        raise ErreurPilote("%s ne revient pas à sa version (%s) : %s" % (p, versions[p], said.strip()[-300:]))
+                rc, said = self._run(sudo_apt + ["install", "-y", "-q", "%s=%s" % (p, versions.get(p, ""))], timeout=600,
+                                     env=env) if p in versions else (1, "pas de version d'avant")
+                if rc == 0:
+                    retires.remove(p)
+                else:
+                    # Gone for good: the app's step will meet apt's refusal, and say it.
+                    del out["gardes"][p]
+                    out.setdefault("sans_retour", {})[p] = [l.strip() for l in said.splitlines() if l.strip()][-3:]
         left = [p for p in retires if shutil.which(p, path=PATH_UBUNTU)]
         if left:
             raise ErreurPilote("toujours là après apt-get remove : %s" % ", ".join(left))
