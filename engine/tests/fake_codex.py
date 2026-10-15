@@ -19,7 +19,8 @@ Driven by files in $HOME/.codex-fake/ (HOME is one of the few variables the laun
 Each run appends to calls.jsonl; `exec` also records argv.json, env.json, cwd.json and stdin.txt.
 As the real one, `exec` refuses `-c mcp_servers.<name>...` for a server its layers do not
 define: with --ignore-user-config, the user's servers are not among them (config/src/mcp_types.rs,
-"invalid transport").
+"invalid transport"); and every command that loads the configuration refuses an empty
+model_instructions_file.
 """
 import json
 import os
@@ -178,6 +179,13 @@ def main(args):
         with open(setting("help", HELP), encoding="utf-8") as f:
             sys.stdout.write(f.read())
         return 0
+    instructions = c.get("model_instructions_file")
+    if instructions:
+        # As Codex loads its configuration: an empty instructions file is an error (core/src/config/mod.rs).
+        with open(json.loads(instructions), encoding="utf-8") as f:
+            if not f.read().strip():
+                sys.stderr.write("Error loading configuration: model instructions file is empty\n")
+                return 1
     if words[:2] == ["login", "status"]:
         line = setting("login", "Logged in using ChatGPT")
         sys.stderr.write(line + "\n")

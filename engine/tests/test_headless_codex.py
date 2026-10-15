@@ -304,6 +304,14 @@ class Command(Base):
                           work_root=self.tmp)
         self.assertEqual(self.calls(), [])
 
+    def test_instructions_are_never_empty(self):
+        # Codex refuses an empty model_instructions_file, and every probe reads it.
+        with self.assertRaises(ValueError):
+            codex.run("x", SCHEMA, " \n", codex_home=self.codex_home, timeout=10, command=self.command(),
+                      work_root=self.tmp)
+        self.assertEqual(self.calls(), [])
+        self.assertEqual(codex.check(self.codex_home, command=self.command(), work_root=self.tmp), "0.162.1")
+
     def test_the_prompt_goes_through_stdin_whole(self):
         unit = "Ligne é à ü ç — 漢字 🙂 «guillemets»\r\nsecond line\n"
         big = "DEBUT " + unit * (150000 // len(unit)) + " FIN"

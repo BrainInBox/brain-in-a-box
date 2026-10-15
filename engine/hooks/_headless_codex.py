@@ -622,7 +622,9 @@ def _write(path, text):
         f.write(text)
 
 
-def _choices(model, effort):
+def _choices(system_prompt, model, effort):
+    if not system_prompt.strip():
+        raise ValueError("Codex refuses empty instructions")
     if model is not None and not MODEL_NAME.fullmatch(model):
         raise ValueError("not a model name: %r" % _brief(model, 80))
     if effort is not None and not EFFORT.fullmatch(effort):
@@ -636,17 +638,18 @@ def check(codex_home, command=None, *, work_root=None, features_file=None):
     codex_home = _codex_home(codex_home)
     coupees = load_features(features_file)
     with _cage(argv0, codex_home, work_root) as cage:
-        _write(cage.system, "")
+        # Codex refuses an empty instructions file, and the probes read it.
+        _write(cage.system, "Answer only with the JSON object of the schema.")
         return preflight(argv0, cage, codex_home, coupees)[0]
 
 
 def run(prompt, schema, system_prompt, *, codex_home, timeout, model=None, effort=None, command=None,
         work_root=None, features_file=None):
     """One isolated question to Codex. Returns an Answer, or raises HeadlessError (ValueError for
-    a schema, model or effort the call cannot take). codex_home: agents.json's. command: argv
+    a schema, system prompt, model or effort the call cannot take). codex_home: agents.json's. command: argv
     that stands for codex (tests, the CI's wrapper); default, the user's codex."""
     strict_schema(schema)
-    _choices(model, effort)
+    _choices(system_prompt, model, effort)
     argv0 = _codex(command)
     codex_home = _codex_home(codex_home)
     coupees = load_features(features_file)
