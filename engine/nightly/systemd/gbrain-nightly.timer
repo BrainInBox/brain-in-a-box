@@ -1,0 +1,11 @@
+# brain-in-a-box, Linux: the nightly at 04:00. Persistent: a night the computer was off or
+# asleep runs at the next start (or login, without lingering), as launchd does on a Mac.
+[Unit]
+Description=brain-in-a-box nightly at 04:00
+
+[Timer]
+OnCalendar=*-*-* 04:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

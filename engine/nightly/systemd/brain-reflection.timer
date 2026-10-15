@@ -1,0 +1,11 @@
+# brain-in-a-box, Linux: the daily reflection at 12:00 and 23:00, a missed one caught up.
+[Unit]
+Description=brain-in-a-box daily reflection at 12:00 and 23:00
+
+[Timer]
+OnCalendar=*-*-* 12:00:00
+OnCalendar=*-*-* 23:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

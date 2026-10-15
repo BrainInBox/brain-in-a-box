@@ -1,0 +1,10 @@
+# brain-in-a-box, Linux: the weekly lint, Monday 08:00, a missed one caught up.
+[Unit]
+Description=brain-in-a-box weekly lint, Monday 08:00
+
+[Timer]
+OnCalendar=Mon *-*-* 08:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

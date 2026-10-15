@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 # brain-in-a-box — installs a personal second brain (Brain vault + hooks +
-# GBrain + gbq + nightly) for the current user. Idempotent and non-destructive:
-# it never overwrites an existing vault or CLAUDE.md, it merges.
+# GBrain + gbq + nightly) for the current user, on macOS or Linux (Debian, Ubuntu;
+# Windows: install.ps1). Idempotent and non-destructive: it never overwrites an
+# existing vault or CLAUDE.md, it merges.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 H="$HOME"
 U="$(whoami)"
+OS="$(uname -s)"
+ORIG_PATH="$PATH"
 BRAIN="$H/Documents/Brain"
 BRAIN_CO="$H/Documents/BrainCo"
 HOOKS="$H/.claude/hooks/brain"
@@ -147,20 +150,285 @@ PY
 }
 # <<< settings
 
+# >>> linux
+# Linux only. sudo never runs without a yes typed in a terminal: without one, the
+# installer says the exact command and stops (prerequisites) or goes on without
+# (Obsidian, lingering). The paths below are variables for test-hooks.sh.
+OS_RELEASE=/etc/os-release
+SYSTEMD_DIR=/run/systemd/system      # present when systemd runs the machine
+RUNTIME_ROOT=/run/user               # <uid>/bus: the user's systemd, when it runs
+LINGER_DIR=/var/lib/systemd/linger   # <user>: the user's systemd runs without a session
+CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+OBSIDIAN_BINS="/opt/Obsidian/obsidian /snap/bin/obsidian"   # the .deb's, the snap's
+UNITS="${XDG_CONFIG_HOME:-$H/.config}/systemd/user"
+TIMERS="gbrain-nightly brain-reflection gbrain-lint"
+OBSIDIAN_VERSION=1.14.4
+OBSIDIAN_DEB_URL="https://github.com/obsidianmd/obsidian-releases/releases/download/v$OBSIDIAN_VERSION/obsidian_${OBSIDIAN_VERSION}_amd64.deb"
+OBSIDIAN_DEB_SHA256=85b10dcba6edfc1c0460a6d18260cf31c30447a444bd858a6440b9c9c8806d25
+ask() {  # ask <question>: yes only when a person typed it in a terminal
+  local a
+  [ -t 0 ] || return 1
+  read -r -p "  $1 [y/N] " a || return 1
+  case "$a" in [yYoO]*) return 0;; *) return 1;; esac
+}
+debian_like() {  # Debian, Ubuntu and their derivatives (Mint, Pop!_OS…): apt-get is there
+  local id like
+  # shellcheck source=/dev/null
+  id="$(. "$OS_RELEASE" 2>/dev/null; printf '%s' "${ID:-}")"
+  # shellcheck source=/dev/null
+  like="$(. "$OS_RELEASE" 2>/dev/null; printf '%s' "${ID_LIKE:-}")"
+  case " $id $like " in *" debian "*|*" ubuntu "*) command -v apt-get >/dev/null 2>&1;; *) return 1;; esac
+}
+as_root() {  # the command a person types to run "$@" as root
+  if [ "$(id -u)" = 0 ]; then echo "$*"; else echo "sudo $*"; fi
+}
+missing_packages() {  # Debian package names of what the kit needs and this machine lacks
+  local p=""
+  command -v python3 >/dev/null 2>&1 || p="$p python3"
+  command -v git >/dev/null 2>&1 || p="$p git"
+  command -v curl >/dev/null 2>&1 || p="$p curl"
+  command -v pgrep >/dev/null 2>&1 || p="$p procps"     # gbq and the nightly tell a running gbrain from a stale lock
+  command -v bun >/dev/null 2>&1 || [ -x "$H/.bun/bin/bun" ] || command -v unzip >/dev/null 2>&1 || p="$p unzip"  # Bun's installer
+  if debian_like && [ ! -s "$CA_BUNDLE" ]; then p="$p ca-certificates"; fi
+  echo "${p# }"
+}
+linux_prereqs() {
+  local pkgs cmd
+  if [ "$(id -u)" = 0 ] && [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ]; then
+    die "Run ./install.sh without sudo: it installs in your own home folder, and asks before anything that needs root."
+  fi
+  pkgs="$(missing_packages)"
+  if [ -n "$pkgs" ]; then
+    if ! debian_like; then
+      die "missing: $pkgs. Install them with your distribution's package manager, then re-run ./install.sh"
+    fi
+    cmd="$(as_root apt-get update) && $(as_root apt-get install -y "$pkgs")"
+    warn "missing: $pkgs"
+    if ask "Install them now? This runs: $cmd"; then
+      env -u VOYAGE_API_KEY sh -c "$cmd" || die "the install of $pkgs failed (see above)"
+    else
+      die "Install them with: $cmd   then re-run ./install.sh"
+    fi
+    pkgs="$(missing_packages)"
+    [ -z "$pkgs" ] || die "still missing after apt-get: $pkgs"
+  fi
+  python3 -c 'import sys; sys.exit(sys.version_info < (3, 9))' \
+    || die "python3 is $(python3 -c 'import platform; print(platform.python_version())'), the kit needs 3.9 or newer"
+}
+user_systemd() {  # does this user's systemd answer? (no: WSL without systemd, a container, no session)
+  command -v systemctl >/dev/null 2>&1 && [ -d "$SYSTEMD_DIR" ] || return 1
+  if [ -z "${XDG_RUNTIME_DIR:-}" ] && [ -S "$RUNTIME_ROOT/$(id -u)/bus" ]; then
+    XDG_RUNTIME_DIR="$RUNTIME_ROOT/$(id -u)"   # a shell without a session (su, a script): the manager runs anyway
+    export XDG_RUNTIME_DIR
+  fi
+  systemctl --user show-environment >/dev/null 2>&1
+}
+enable_linger() {  # only ever after a yes: as the user (a desktop session may), else through sudo
+  if ! loginctl --no-ask-password enable-linger "$U" 2>/dev/null \
+     && { [ "$(id -u)" = 0 ] || ! command -v sudo >/dev/null 2>&1 || ! sudo loginctl enable-linger "$U"; }; then
+    warn "loginctl enable-linger failed: run $(as_root loginctl enable-linger "$U") then re-run ./install.sh"
+    return 1
+  fi
+  for _ in 1 2 3 4 5 6 7 8 9 10; do user_systemd && return 0; sleep 1; done
+  return 0
+}
+crontab_py() {  # crontab_py <action> <current crontab> <new crontab> <recorded sha256> <pending dir>
+  python3 - "$@" <<'PY'
+import hashlib, os, sys
+action, cur, out, recorded, pending = sys.argv[1:6]
+BEGIN, END = "# >>> brain-in-a-box", "# <<< brain-in-a-box"
+want = "\n".join([
+    BEGIN + ": nightly 04:00, reflection 12:00 and 23:00, lint Monday 08:00 (install.sh; a block you change is kept)",
+    '0 4 * * * /bin/bash "$HOME/.claude/hooks/brain/gbrain-nightly.sh" >> "$HOME/.gbrain/nightly.cron.out" 2>&1',
+    '0 12,23 * * * /usr/bin/env python3 "$HOME/.claude/hooks/brain/daily-reflection.py" >> "$HOME/.claude/logs/daily-reflection.out" 2>&1',
+    '0 8 * * 1 /bin/bash "$HOME/.claude/hooks/brain/gbrain-lint.sh" >> "$HOME/.gbrain/lint.cron.out" 2>&1',
+    END])
+with open(cur, encoding="utf-8", errors="surrogateescape") as f:
+    lines = f.read().split("\n")
+while lines and lines[-1] == "":
+    lines.pop()
+start = next((i for i, l in enumerate(lines) if l.startswith(BEGIN)), None)
+end = next((i for i, l in enumerate(lines) if start is not None and i > start and l == END), None)
+block = "\n".join(lines[start:end + 1]) if end is not None else None
+sha = lambda t: hashlib.sha256(t.encode("utf-8")).hexdigest()
+mine = block is not None and (block == want or sha(block) == recorded)
+if action == "remove":
+    status = "absent" if block is None else "removed" if mine else "kept"
+    if status == "removed":
+        del lines[start:end + 1]
+        while lines and lines[-1] == "":   # the blank line "added" put before the block
+            lines.pop()
+elif block is None:
+    status = "added"
+    lines += [""] * bool(lines and lines[-1]) + want.split("\n")
+elif block == want:
+    status = "unchanged"
+elif mine:
+    status = "updated"
+    lines[start:end + 1] = want.split("\n")
+else:
+    status = "kept"
+    os.makedirs(pending, exist_ok=True)
+    with open(os.path.join(pending, "crontab"), "w", encoding="utf-8") as f:
+        f.write(want + "\n")
+with open(out, "w", encoding="utf-8", errors="surrogateescape") as f:
+    f.write("\n".join(lines) + "\n" if lines else "")
+print(status, sha(want))
+PY
+}
+crontab_block() {  # crontab_block write|remove: the kit's lines between two markers, the rest untouched
+  local cur rc tmp out status sha
+  if cur="$(crontab -l 2>&1)"; then rc=0; else rc=$?; fi
+  if [ "$rc" != 0 ]; then
+    case "$cur" in
+      *"no crontab for"*) cur="" ;;
+      *) warn "crontab -l failed ($cur): your crontab is left as it is"; return 1 ;;
+    esac
+  fi
+  tmp="$(mktemp -d)"
+  printf '%s\n' "$cur" > "$tmp/current"
+  out="$(crontab_py "$1" "$tmp/current" "$tmp/new" "$(manifest get "crontab#brain-in-a-box")" "$PENDING")" \
+    || { rm -rf "$tmp"; warn "could not read your crontab: left as it is"; return 1; }
+  status="${out%% *}"; sha="${out#* }"
+  case "$status" in
+    added|updated|removed)
+      if ! crontab "$tmp/new"; then rm -rf "$tmp"; warn "crontab refused the new table: left as it was"; return 1; fi ;;
+  esac
+  rm -rf "$tmp"
+  case "$status" in
+    added|updated|unchanged) manifest set "crontab#brain-in-a-box" "$sha" ;;
+    kept)
+      if [ "$1" = remove ]; then
+        warn "crontab: you changed the brain-in-a-box lines, so they stay; beside the systemd timers each job would run twice: remove them (crontab -e)"
+      else
+        KEPT="$KEPT crontab"
+        warn "crontab: the brain-in-a-box lines were changed on this machine, kept as is; the new ones are in $PENDING/crontab"
+      fi ;;
+  esac
+  CRON_STATUS="$status"
+}
+linux_schedule() {  # systemd --user timers, else cron; the scheduler used goes in $SCHEDULER
+  local t
+  mkdir -p "$H/.gbrain" "$H/.claude/logs"   # where the units and cron append their output
+  if ! user_systemd && [ -d "$SYSTEMD_DIR" ] && command -v loginctl >/dev/null 2>&1 && [ ! -e "$LINGER_DIR/$U" ] \
+     && ask "Your user's systemd is not running here (no desktop session). Turn on lingering for $U (loginctl enable-linger; sudo may ask for your password), so it runs the nightly even when you are logged out?"; then
+    enable_linger || true
+  fi
+  if user_systemd; then
+    SCHEDULER=systemd
+    mkdir -p "$UNITS"
+    for t in $TIMERS; do
+      place "$REPO/engine/nightly/systemd/$t.service" "$UNITS/$t.service"
+      place "$REPO/engine/nightly/systemd/$t.timer" "$UNITS/$t.timer"
+    done
+    systemctl --user daemon-reload || warn "systemctl --user daemon-reload failed"
+    for t in $TIMERS; do   # restart: a timer whose hours changed counts from the new ones
+      systemctl --user enable "$t.timer" >/dev/null 2>&1 && systemctl --user restart "$t.timer" \
+        || warn "$t.timer could not be enabled: systemctl --user status $t.timer"
+    done
+    if command -v crontab >/dev/null 2>&1; then crontab_block remove || true; fi  # cron from a run without systemd: never twice
+    ok "systemd --user timers on (nightly 04:00, reflection 12:00/23:00, lint Monday 08:00); a time missed while the computer was off runs at the next start"
+    if [ -e "$LINGER_DIR/$U" ]; then
+      ok "lingering is on: they run even when you are logged out"
+    elif ask "Run them even when you are logged out, as a server would (loginctl enable-linger $U; sudo may ask for your password)?"; then
+      enable_linger && ok "lingering is on: they run even when you are logged out"
+    else
+      ok "they run while you are logged in (a missed one runs at your next login). To run them logged out too: loginctl enable-linger $U"
+    fi
+    return 0
+  fi
+  SCHEDULER=cron
+  if [ -e "$UNITS/timers.target.wants/gbrain-nightly.timer" ]; then
+    warn "the systemd timers of an earlier install are on, but your user's systemd does not answer from here: cron is left alone, so nothing runs twice. Re-run ./install.sh from your desktop session to update them."
+    SCHEDULER=systemd-unreachable
+    return 0
+  fi
+  if ! command -v crontab >/dev/null 2>&1; then
+    warn "no systemd for your user here (WSL without systemd? a container?) and no cron: nothing is scheduled. Install cron ($(as_root apt-get install -y cron)) and re-run ./install.sh, or run the nightly by hand: bash ~/.claude/hooks/brain/gbrain-nightly.sh"
+    SCHEDULER=none
+    return 0
+  fi
+  CRON_STATUS=""
+  crontab_block write || { SCHEDULER=none; return 0; }
+  ok "cron, as systemd does not run for your user here (WSL? a container?): nightly 04:00, reflection 12:00/23:00, lint Monday 08:00 ($CRON_STATUS)"
+  if [ -d "$SYSTEMD_DIR" ]; then
+    warn "cron does not catch up a time the computer was off. systemd runs this machine, but not for $U from here (no session): $(as_root loginctl enable-linger "$U"), then re-run ./install.sh, moves these jobs to systemd timers that do"
+  else
+    warn "cron does not catch up a time the computer was off; with systemd it would (WSL: systemd=true in /etc/wsl.conf)"
+  fi
+  if ! pgrep -x cron >/dev/null 2>&1 && ! pgrep -x crond >/dev/null 2>&1; then
+    warn "the cron service is not running: start it ($(as_root service cron start)), or nothing runs"
+  fi
+}
+claude_found() { command -v claude >/dev/null 2>&1 || [ -x "$H/.local/bin/claude" ]; }
+linux_claude() {  # Anthropic's official installer, for this user only: it checks the binary's SHA-256 itself
+  if claude_found; then ok "Claude Code already installed"; return 0; fi
+  echo "  … Claude Code: Anthropic's official installer (in your home folder, no sudo)"
+  if logged env -u VOYAGE_API_KEY bash -o pipefail -c 'curl -fsSL https://claude.ai/install.sh | bash' && claude_found; then
+    ok "Claude Code installed ($H/.local/bin/claude)"
+  else
+    warn_log "Claude Code did not install (the log says why): re-run ./install.sh, or see https://code.claude.com/docs/en/setup"
+  fi
+}
+obsidian_found() {  # the .deb, a snap, a Flatpak, an AppImage in ~/Applications or ~/.local/bin
+  local f
+  command -v obsidian >/dev/null 2>&1 && return 0
+  if command -v flatpak >/dev/null 2>&1 && flatpak info md.obsidian.Obsidian >/dev/null 2>&1; then return 0; fi
+  for f in $OBSIDIAN_BINS "$H"/Applications/Obsidian*.AppImage "$H"/.local/bin/Obsidian*.AppImage; do [ -e "$f" ] && return 0; done
+  return 1
+}
+obsidian_line() {  # one line a person can paste: download, check, install
+  printf 'd=$(mktemp -d) && curl -fL -o "$d/obsidian.deb" %s && echo "%s  $d/obsidian.deb" | sha256sum -c - && %s "$d/obsidian.deb"' \
+    "$OBSIDIAN_DEB_URL" "$OBSIDIAN_DEB_SHA256" "$(as_root apt-get install -y)"
+}
+linux_obsidian() {
+  # The official .deb, as root: /opt/Obsidian with its SUID chrome-sandbox, which Ubuntu 24.04's
+  # AppArmor profile also expects. The per-user AppImage needs libfuse2 (gone from 24.04) and runs
+  # there only with --no-sandbox (unprivileged user namespaces are restricted): not for notes.
+  local d f
+  if obsidian_found; then ok "Obsidian already installed"; return 0; fi
+  if ! debian_like || [ "$(dpkg --print-architecture 2>/dev/null)" != amd64 ]; then
+    warn "Obsidian not installed: get it at https://obsidian.md/download, or for you alone from Flathub: flatpak install --user flathub md.obsidian.Obsidian"
+    return 0
+  fi
+  if ! ask "Install Obsidian $OBSIDIAN_VERSION (its official .deb, checked against a pinned SHA-256) with $(as_root apt-get install)?"; then
+    warn "Obsidian not installed. Its official package, checked, in one line:"
+    echo "      $(obsidian_line)"
+    return 0
+  fi
+  d="$(mktemp -d)"; f="$d/obsidian_${OBSIDIAN_VERSION}_amd64.deb"
+  if ! logged curl -fL --retry 2 -o "$f" "$OBSIDIAN_DEB_URL"; then
+    rm -rf "$d"; warn_log "Obsidian: download failed (network?)"; return 0
+  fi
+  if [ "$(sha256 "$f")" != "$OBSIDIAN_DEB_SHA256" ]; then
+    rm -rf "$d"; warn "Obsidian: the download does not match the pinned SHA-256, nothing installed"; return 0
+  fi
+  chmod 755 "$d"; chmod 644 "$f"   # apt reads it as its own user
+  if env -u VOYAGE_API_KEY sh -c "$(as_root apt-get install -y) \"\$1\"" sh "$f"; then ok "Obsidian $OBSIDIAN_VERSION installed"; else warn "Obsidian: apt-get failed (see above)"; fi
+  rm -rf "$d"
+}
+# <<< linux
+
 # ── 1. Preflight ────────────────────────────────────────────────────────────
 say "Preflight"
-[ "$(uname)" = "Darwin" ] || die "macOS required (launchd)."
+case "$OS" in
+  Darwin) ;;
+  Linux) linux_prereqs ;;
+  *) die "macOS or Linux required (Windows: install.ps1)." ;;
+esac
 command -v git >/dev/null   || die "git missing."
 command -v python3 >/dev/null || die "python3 missing."
 merge_settings "$H" --check   # a settings.json we cannot read stops us before anything is changed
 mkdir -p "$STATE"
 ( umask 077; : >> "$LOG" ); chmod 600 "$LOG"
 printf '\n===== install.sh %s =====\n' "$(date '+%Y-%m-%d %H:%M:%S')" >> "$LOG"
-command -v claude >/dev/null || warn "claude CLI not found — install Claude Code first."
+[ "$OS" = Linux ] || command -v claude >/dev/null || warn "claude CLI not found — install Claude Code first."
+# Bun at the version CI tests with gbrain (engine/gbrain-pin.json), through its official installer.
+BUN_PIN="$(python3 -I -c 'import json, re, sys; v = json.load(open(sys.argv[1])).get("bun") or ""; print(v if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", v) else "")' "$REPO/engine/gbrain-pin.json" 2>/dev/null || true)"
+export PATH="$H/.bun/bin:$H/.local/bin:$PATH"
 if ! command -v bun >/dev/null; then
-  warn "bun missing → installing…"
-  curl -fsSL https://bun.sh/install | env -u VOYAGE_API_KEY bash
-  export PATH="$H/.bun/bin:$PATH"
+  warn "bun missing → installing${BUN_PIN:+ $BUN_PIN}…"
+  curl -fsSL https://bun.sh/install | env -u VOYAGE_API_KEY bash -s ${BUN_PIN:+"bun-v$BUN_PIN"}
 fi
 command -v bun >/dev/null || die "bun unavailable after install."
 ok "deps OK"
@@ -260,7 +528,9 @@ MANIFEST="$STATE/installed.json"
 PENDING="$STATE/pending"
 KEPT=""
 # >>> place
-sha256() { shasum -a 256 < "${1:-/dev/stdin}" | cut -d' ' -f1; }
+sha256() {  # sha256 [file]: coreutils' sha256sum (Linux), else shasum (macOS)
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum < "${1:-/dev/stdin}"; else shasum -a 256 < "${1:-/dev/stdin}"; fi | cut -d' ' -f1
+}
 fill() { sed -e "s#__HOME__#$H#g" -e "s#__USER__#$U#g" "$@"; }
 manifest() {  # manifest get <path> | manifest set <path> <sha256>; never fails the install
   python3 - "$MANIFEST" "$@" <<'PY'
@@ -313,7 +583,7 @@ replaceable() {  # replaceable <source> <destination>: may the new version of <s
 place() {  # place <source> <destination> [label]
   local tmp name label mode=755
   name="$(basename "$2")"; label="${3:-$name}"
-  case "$name" in *.plist) mode=644;; esac
+  case "$name" in *.plist|*.service|*.timer) mode=644;; esac
   tmp="$(mktemp)"
   fill "$1" > "$tmp"
   chmod "$mode" "$tmp"  # before it lands: a hook that fires meanwhile finds it whole and executable
@@ -348,18 +618,25 @@ for s in gbrain-nightly gbrain-lint gbrain-selfupdate; do
 done
 place "$REPO/engine/nightly/gbrain-sync-vault.py" "$HOOKS/gbrain-sync-vault.py"
 
-# ── 7. launchd jobs (nightly maintenance + daily reflection + weekly lint) ───
-say "launchd (nightly 04:00 + reflection 12:00/23:00 + lint Monday 08:00)"
-mkdir -p "$H/Library/LaunchAgents"
+# ── 7. Scheduled jobs (nightly maintenance + daily reflection + weekly lint) ──
+# macOS: launchd. Linux: systemd --user timers, else cron (WSL without systemd, containers).
 load_agent() {  # <label> <template>; a plist you changed (another hour) is kept, like the hooks
   local label="$1" plist="$H/Library/LaunchAgents/$1.plist"
   place "$REPO/engine/nightly/$2" "$plist" "$label"
   launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
   launchctl bootstrap "gui/$(id -u)" "$plist" 2>/dev/null || true
 }
-load_agent "com.$U.gbrain-nightly"   "com.USER.gbrain-nightly.plist.template"
-load_agent "com.$U.brain-reflection" "com.USER.brain-reflection.plist.template"
-load_agent "com.$U.gbrain-lint"      "com.USER.gbrain-lint.plist.template"
+SCHEDULER=launchd
+if [ "$OS" = Linux ]; then
+  say "Scheduled jobs (nightly 04:00 + reflection 12:00/23:00 + lint Monday 08:00)"
+  linux_schedule
+else
+  say "launchd (nightly 04:00 + reflection 12:00/23:00 + lint Monday 08:00)"
+  mkdir -p "$H/Library/LaunchAgents"
+  load_agent "com.$U.gbrain-nightly"   "com.USER.gbrain-nightly.plist.template"
+  load_agent "com.$U.brain-reflection" "com.USER.brain-reflection.plist.template"
+  load_agent "com.$U.gbrain-lint"      "com.USER.gbrain-lint.plist.template"
+fi
 if [ "$BACKED_UP" -gt 0 ]; then warn "$BACKED_UP file(s) you had changed were replaced; your versions are in $BACKUP"; fi
 
 # ── 8. settings.json (merge hooks, non-destructive) ─────────────────────────
@@ -477,12 +754,18 @@ if [ -n "$COMPANY_URL" ]; then
 fi
 
 # ── 13. Obsidian (to browse/visualize the vault) ────────────────────────────
-say "Obsidian (to browse your brain)"
-if [ -d "/Applications/Obsidian.app" ] || [ -d "$H/Applications/Obsidian.app" ]; then
+if [ "$OS" = Linux ]; then
+  say "Claude Code + Obsidian (to browse your brain)"
+  linux_claude
+  linux_obsidian
+elif [ -d "/Applications/Obsidian.app" ] || [ -d "$H/Applications/Obsidian.app" ]; then
+  say "Obsidian (to browse your brain)"
   ok "already installed"
 elif command -v brew >/dev/null; then
+  say "Obsidian (to browse your brain)"
   env -u VOYAGE_API_KEY brew install --cask obsidian >/dev/null 2>&1 && ok "installed via brew" || warn "brew install failed — get it free at https://obsidian.md"
 else
+  say "Obsidian (to browse your brain)"
   warn "not installed — download free at https://obsidian.md"
 fi
 
@@ -514,6 +797,16 @@ fi
 if [ -n "$KEPT" ]; then
   printf "\033[1;33m⚠ Kept as you changed them:%s\n  The new versions are in %s: compare (diff), keep what you want.\033[0m\n" "$KEPT" "$PENDING"
 fi
+case "$SCHEDULER" in
+  launchd)  SCHED_CHECK="launchctl list | grep $U          # the nightly, reflection and lint jobs" ;;
+  systemd)  SCHED_CHECK="systemctl --user list-timers         # when the nightly, reflection and lint run next" ;;
+  cron)     SCHED_CHECK="crontab -l                           # the nightly, reflection and lint (cron)" ;;
+  *)        SCHED_CHECK="(nothing scheduled: see the warning above)" ;;
+esac
+case ":$ORIG_PATH:" in
+  *":$H/.local/bin:"*) ;;
+  *) [ "$OS" = Linux ] && printf "\n\033[1;33m⚠ ~/.local/bin (claude, gbq, controle) is not on your PATH yet: log out and back in (it is added at login once it exists), or run: export PATH=\"\$HOME/.local/bin:\$HOME/.bun/bin:\$PATH\"\033[0m\n" ;;
+esac
 cat <<EOF
 
 Last step — the ONBOARDING (15 min) that fills in YOUR profile:
@@ -528,5 +821,6 @@ Checks:
   ~/.local/bin/gbq query "test"          # the memory answers
   gbrain doctor --fast                    # health (aim for 85+)
   cat ~/.gbrain/nightly.log              # tomorrow morning: the nightly ran
+  $SCHED_CHECK
   tail ~/.brain-in-a-box/install.log     # what clone, bun and gbrain said during this install
 EOF

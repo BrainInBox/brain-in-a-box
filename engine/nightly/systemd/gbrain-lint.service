@@ -1,0 +1,10 @@
+# brain-in-a-box, Linux: the weekly lint (install.sh places it in ~/.config/systemd/user).
+# Started by gbrain-lint.timer; by hand: systemctl --user start gbrain-lint.service
+[Unit]
+Description=brain-in-a-box weekly lint: Profile/lint.md and a line in memory.md
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash "%h/.claude/hooks/brain/gbrain-lint.sh"
+StandardOutput=append:%h/.gbrain/lint.systemd.out
+StandardError=append:%h/.gbrain/lint.systemd.err
