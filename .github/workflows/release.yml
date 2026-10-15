@@ -97,7 +97,8 @@ jobs:
         with:
           persist-credentials: false
 
-      # WebKitGTK and GTK to build against (Ubuntu's own archive), and the AppImage tools, pinned.
+      # WebKitGTK and GTK to build against (Ubuntu's own archive), and the AppImage tools and runtime,
+      # pinned (the runtime through LDAI_RUNTIME_FILE, for the build step).
       - name: Linux build dependencies
         if: runner.os == 'Linux'
         run: |
@@ -194,8 +195,9 @@ jobs:
             echo "::notice::no Rosetta on this runner: the x86_64 slice was checked with lipo only"
           fi
 
-      # The .deb installs with apt (its dependencies from Ubuntu's archive), the AppImage runs
-      # without installing (unpacked: a runner may lack FUSE); each answers --diagnose.
+      # The .deb installs with apt (its dependencies from Ubuntu's archive), the AppImage starts with
+      # the pinned runtime and runs without installing (unpacked: a runner may lack FUSE); each
+      # answers --diagnose.
       - name: The .deb installs and runs, the AppImage runs
         if: runner.os == 'Linux'
         timeout-minutes: 10
@@ -221,6 +223,7 @@ jobs:
           [ "$(head -c 4 "$image" | od -An -tx1 | tr -d ' ')" = 7f454c46 ] || { echo "::error::the AppImage is not an ELF program"; exit 1; }
           [ "$(dd if="$image" bs=1 skip=8 count=3 2>/dev/null | od -An -tx1 | tr -d ' ')" = 414902 ] \
             || { echo "::error::not a type 2 AppImage"; exit 1; }
+          bash .github/ci/appimage-tools.sh check "$image"
 
           check='import json, sys; d = json.load(sys.stdin); ids = [c["id"] for c in d["checks"]]; assert "paquets" in ids and "linux" in ids, ids; print(sys.argv[1], "ok:", d["os"], len(ids), "checks")'
           sudo apt-get install -y -q "./$deb"
@@ -329,7 +332,7 @@ jobs:
               echo
               echo "**Linux** (Ubuntu 22.04 ou plus récent, Debian 12, processeur Intel ou AMD 64 bits)"
               echo
-              echo "- **AppImage**, sans installation : téléchargez \`$image\`, rendez-le exécutable (clic droit > Propriétés > « Exécutable comme un programme », ou \`chmod +x\`), puis double-cliquez dessus. Sur Ubuntu 24.04, installez une fois FUSE, que les AppImage utilisent : \`sudo apt install libfuse2t64\`."
+              echo "- **AppImage**, sans installation : téléchargez \`$image\`, rendez-le exécutable (clic droit > Propriétés > « Exécutable comme un programme », ou \`chmod +x\`), puis double-cliquez dessus. Rien d'autre à installer sur Ubuntu 22.04 ou 24.04 ; ailleurs, si elle ne démarre pas : \`sudo apt install fuse3\`."
               echo "- **.deb** : \`sudo apt install ./$deb\`, puis ouvrez Brain in a Box depuis le menu des applications."
               echo
               echo "Pendant l'installation, l'app demande votre mot de passe (fenêtre du système) pour installer git, curl ou Obsidian s'ils manquent."

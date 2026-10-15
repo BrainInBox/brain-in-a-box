@@ -78,16 +78,20 @@ Built on Ubuntu 22.04 for the release (what it builds runs on 22.04 and later), 
 
 ```bash
 sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev libssl-dev libxdo-dev patchelf file
-bash ../../.github/ci/appimage-tools.sh      # the AppImage tools, pinned and checked (else tauri-bundler downloads them unchecked)
+bash ../../.github/ci/appimage-tools.sh      # the AppImage tools and runtime, pinned and checked (else downloaded unchecked)
+export LDAI_RUNTIME_FILE=~/.cache/tauri/runtime-x86_64   # the pinned runtime, not type2-runtime's "continuous" of the day
 cargo tauri build --ci --target x86_64-unknown-linux-gnu --bundles deb,appimage -- --locked
+bash ../../.github/ci/appimage-tools.sh check target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage
 # target/x86_64-unknown-linux-gnu/release/bundle/{deb,appimage}/
 ```
 
-`tauri.linux.conf.json` makes the AppImage (no install, for the user alone) and the `.deb` (`/usr/bin/brain-in-a-box`, a desktop entry, depends on `libwebkit2gtk-4.1-0`). Neither is signed; `SHA256SUMS` and the attestation are the check.
+`tauri.linux.conf.json` makes the AppImage (no install, for the user alone; it mounts itself with the system's `fusermount3`, on every Ubuntu desktop since 22.04) and the `.deb` (`/usr/bin/brain-in-a-box`, a desktop entry, depends on `libwebkit2gtk-4.1-0`). Neither is signed; `SHA256SUMS` and the attestation are the check.
 
 - **Run from an AppImage**, the app has the AppImage's own Python home, libraries and GTK modules in its environment (AppImageKit's AppRun, linuxdeploy's GTK hook): none of it reaches the programs it starts (`sys.rs`, `APPIMAGE_ENV`), or the system's python3 would not start (`tests/appimage_env.rs`).
 - **Work folders** go to the session's own `/run/user/<uid>` (private, named after no one), else `~/.brain-in-a-box/tmp`: never `/tmp`, which every account shares.
 - **The terminal** for the login, the onboarding and Plan B is the desktop's (`x-terminal-emulator`, else GNOME Terminal, Ptyxis, Console, Konsole, Xfce's, MATE's, xterm). Links open with `xdg-open`. No settings pane: a repair's human action is said in words.
 - `/home/<name>` is masked like `/Users/<name>`, and the user's own home wherever it is.
 
-The CI (`test.yml`) runs `cargo test` and clippy on Ubuntu 24.04 (the real `install.sh` under the configuration guard, the brain step from an AppImage-like environment, the root scripts against a stand-in pkexec), checks `--diagnose`, and builds both packages as the release does: the `.deb` installs with apt and answers, the AppImage too. Every night, `terrain.yml` (job `app-linux`) runs the AppImage on an Ubuntu 24.04 desktop without git nor curl and clicks through its real window.
+The CI (`test.yml`) runs `cargo test` and clippy on Ubuntu 24.04 (the real `install.sh` under the configuration guard, the brain step from an AppImage-like environment, the root scripts against a stand-in pkexec), checks `--diagnose`, and builds both packages as the release does, on 22.04: the AppImage starts with the pinned runtime, the `.deb` installs with apt and answers, the AppImage too, on 22.04 and on 24.04. Every night, `terrain.yml` runs the AppImage built that way (job `app-linux-build`) on an Ubuntu 24.04 desktop without git nor curl and clicks through its real window (job `app-linux`).
+
+- **Root** (`src/root.rs`, reviewed by the maintainer): two fixed scripts through pkexec, one for the packages of its list, one for the file whose SHA-256 it holds (Obsidian's). The password window shows a command's first 38 and last 37 characters (pkexec 124): each script starts with a comment naming what it does, and its `$0` is a label, so both ends read « Brain in a Box installe » and the packages, or Obsidian.

@@ -94,7 +94,7 @@ JOBS = {"ref": ("tous", ()), "macos": ("macos", ("macos-neuf", "macos-montee")),
         "linux": ("linux", ("linux-neuf", "linux-reinstallation")),
         "claude": ("macos+windows", ("macos-claude", "windows-claude")),
         "app-macos": ("macos", ("macos-app",)), "app-windows": ("windows", ("windows-app",)),
-        "app-linux": ("linux", ("linux-app",))}
+        "app-linux-build": ("linux", ("linux-app",)), "app-linux": ("linux", ("linux-app",))}
 JOB_RESULTS = ("success", "failure", "cancelled", "skipped")
 ETAPE_RE = re.compile(r"^[a-z0-9][a-z0-9.-]{0,40}$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")

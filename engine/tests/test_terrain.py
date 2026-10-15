@@ -417,9 +417,11 @@ class Workflow(unittest.TestCase):
             source = [st for st in steps if st.get("id") == "source"]
             self.assertEqual(len(source), 1, name)
             self.assertIn("terrain_app.py source --ref " + ref, source[0]["run"])
-            builds = [st for st in steps if "cargo" in json.dumps(st)]
+            # Linux builds in a job of its own, on 22.04 as release.yml does (app-linux-build).
+            builder = self.jobs.get(name + "-build", job)
+            builds = [st for st in builder["steps"] if "cargo" in json.dumps(st)]
             self.assertGreaterEqual(len(builds), 2, name)
-            for st in builds:
+            for st in builds + [st for st in steps if "download-artifact" in st.get("uses", "")]:
                 self.assertTrue(st["if"].startswith("steps.source.outputs.source == 'build'"), st.get("name"))
             # The read-only token reaches the scenario step only, and only to download a release.
             holders = [st for st in steps if "github.token" in json.dumps(st)]
@@ -455,11 +457,11 @@ class Workflow(unittest.TestCase):
         for name, job in self.jobs.items():
             steps = job["steps"]
             caches = [(i, st) for i, st in enumerate(steps) if str(st.get("uses", "")).startswith("actions/cache")]
-            if name not in ("app-macos", "app-windows", "app-linux"):
+            if name not in ("app-macos", "app-windows", "app-linux-build"):
                 self.assertEqual(caches, [], name)
                 continue
-            app = min(i for i, st in enumerate(steps) if "terrain.py app" in st.get("run", "")
-                      or "poste-neuf.ps1" in st.get("run", ""))
+            app = min([i for i, st in enumerate(steps) if "terrain.py app" in st.get("run", "")
+                       or "poste-neuf.ps1" in st.get("run", "")] or [len(steps)])
             kinds = []
             for i, st in caches:
                 m = pinned.match(st["uses"])
@@ -491,10 +493,20 @@ class Workflow(unittest.TestCase):
         self.assertEqual(rules, ["org.freedesktop.policykit.exec"])
         self.assertIn('subject.user == \\"$USER\\"', run)
         self.assertNotIn("sudo -n true", run)
-        # The build runs release.yml's command with its pinned AppImage tools.
-        build = next(st for st in steps if st.get("name") == "Build the app from the tested commit (branch)")
-        self.assertIn("appimage-tools.sh", build["run"])
+        # The polkit rule says what the window would show: the results compare it with root.rs.
+        self.assertIn('polkit.spawn(["/usr/bin/logger", "-t", "fenetre-mot-de-passe", "--", "" + action.lookup("cmdline_short")])', run)
+        # The AppImage is release.yml's: built on Ubuntu 22.04 with its command, its tools and runtime
+        # pinned and checked, then handed to the 24.04 desktop.
+        build_job = self.jobs["app-linux-build"]
+        self.assertEqual(build_job["runs-on"], "ubuntu-22.04")
+        self.assertEqual(self.jobs["app-linux"]["needs"], ["ref", "app-linux-build"])
+        build = next(st for st in build_job["steps"] if st.get("name") == "Build the app from the tested commit (branch)")
         self.assertIn("--bundles appimage -- --locked", build["run"])
+        self.assertIn('appimage-tools.sh" check "${images[0]}"', build["run"])
+        tools = [st for st in build_job["steps"] if "appimage-tools.sh" in st.get("run", "") and st is not build]
+        self.assertEqual(len(tools), 1, "the tools, and LDAI_RUNTIME_FILE, in a step before the build's")
+        with open(WORKFLOW.replace("workflows/terrain.yml", "ci/app-release-plan.py"), encoding="utf-8") as f:
+            self.assertIn('"os": "ubuntu-22.04"', f.read(), "release.yml builds on 22.04 too")
 
     def test_a_fresh_windows_has_no_python_in_both_workflows(self):
         # One description of a fresh PC (.github/ci/poste-neuf.ps1), used by both installs: the

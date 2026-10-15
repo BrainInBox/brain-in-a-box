@@ -483,10 +483,11 @@ jobs:
           if ($d.os -notlike 'Windows 1*' -or @($d.checks).Count -lt 10) { throw "the installed app answered: $(Get-Content $diag -Raw)" }
           "installed app: $($d.os), $(@($d.checks).Count) checks"
 
-  # The Linux packages, built as release.yml builds them (its AppImage tools pinned): the .deb
-  # installs with apt, its dependencies from Ubuntu's archive, and the installed app answers;
-  # the AppImage answers too, unpacked (a runner may lack FUSE). The night's terrain (app-linux)
-  # runs the AppImage in a real window.
+  # The Linux packages, built as release.yml builds them (on 22.04, its AppImage tools and runtime
+  # pinned): the .deb installs with apt, its dependencies from Ubuntu's archive, and the installed
+  # app answers; the AppImage starts with the pinned runtime and answers too, unpacked (a runner may
+  # lack FUSE). Both again on Ubuntu 24.04, where most users are. The night's terrain (app-linux)
+  # runs the AppImage built the same way in a real window on 24.04.
   app-linux-bundle:
     needs: changes
     if: needs.changes.outputs.app == 'true'
@@ -499,7 +500,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Build dependencies, Tauri CLI, the AppImage tools pinned
+      - name: Build dependencies, Tauri CLI, the AppImage tools and runtime pinned
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev \
@@ -515,6 +516,7 @@ jobs:
           images=(target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage)
           [ "${#debs[@]}" -eq 1 ] && [ "${#images[@]}" -eq 1 ] || { echo "::error::packages: ${debs[*]} ${images[*]}"; exit 1; }
           ls -la "${debs[0]}" "${images[0]}"
+          bash "$GITHUB_WORKSPACE/.github/ci/appimage-tools.sh" check "${images[0]}"
           dpkg-deb -I "${debs[0]}"
           deps=$(dpkg-deb -f "${debs[0]}" Depends)
           case "$deps" in *libwebkit2gtk-4.1-0*) ;; *) echo "::error::the .deb does not depend on WebKitGTK 4.1: $deps"; exit 1 ;; esac
@@ -525,6 +527,18 @@ jobs:
           brain-in-a-box --diagnose | python3 -I -c "$check" deb
           chmod +x "${images[0]}"
           APPIMAGE_EXTRACT_AND_RUN=1 "${images[0]}" --diagnose | python3 -I -c "$check" AppImage
+      # The same files on Ubuntu 24.04 (its image pinned): the .deb installs there with apt, both answer.
+      - name: The 22.04 build installs and answers on Ubuntu 24.04
+        env:
+          NOBLE: ubuntu:24.04@sha256:534baea6a22c03a63003dbc8dbe78fe34bc0d7e595d9a9dc9834884ff530eb55
+        run: |
+          check='import json, sys; d = json.load(sys.stdin); ids = [c["id"] for c in d["checks"]]; assert "paquets" in ids, ids; assert "24.04" in d["os"], d["os"]; print(sys.argv[1], d["os"], len(ids), "checks")'
+          docker run --rm -e "CHECK=$check" -v "$PWD/target/x86_64-unknown-linux-gnu/release/bundle:/bundle:ro" "$NOBLE" bash -euc '
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -q >/dev/null
+            apt-get install -y -q python3 /bundle/deb/*.deb >/dev/null
+            brain-in-a-box --diagnose | python3 -I -c "$CHECK" deb
+            APPIMAGE_EXTRACT_AND_RUN=1 /bundle/appimage/*.AppImage --diagnose | python3 -I -c "$CHECK" AppImage'
 
   # A real install on a real Windows, the way a user runs it: no Python but the
   # Microsoft Store stub (what broke installs in the field), so Python comes from winget.
