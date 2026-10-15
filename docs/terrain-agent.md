@@ -69,7 +69,7 @@ cron lines both present (`deux fois`) is a failure: every job would run twice.
 
 ## Read a failure of the app scenario
 
-The jobs `app-macos` and `app-windows` get the desktop app as a user does (master: the newest
+The jobs `app-macos`, `app-windows` and `app-linux` get the desktop app as a user does (master: the newest
 `app-v*-preview.*`, SHA256SUMS and attestation checked; a branch: built from the branch), install
 it, open it and click through its real window to the final screen, then check the kit like
 `installation` does and open the app a second time, which must say « Tout est déjà installé ».
@@ -79,12 +79,21 @@ line tools are set aside first: the app's step « Outils Apple » opens Apple's 
 robot clicks through. On Windows the PC has no Python but the Store's stub (`poste-neuf.ps1`),
 `setup.exe` carries the Mark of the Web and is opened by the shell (SmartScreen answered if it
 asks), the installer's pages are clicked too, and the window is read through UI Automation by
-`engine/tests/pilote_windows.cs`, compiled on the VM. Once all is checked, the nightly the app
-registered is started by the scheduler (`nuit-reelle`).
+`engine/tests/pilote_windows.cs`, compiled on the VM. On Linux (Ubuntu 24.04) the job builds a
+desktop first (Xvfb, openbox, the user's session bus and systemd); the AppImage goes to
+`~/Applications`, made executable (FUSE, `libfuse2t64`, installed as the README says when missing),
+then git and curl are removed (`details.poste_neuf`: an Ubuntu desktop as it comes) and the app is
+started: its step « Outils de base » (`app-etape-paquets`) puts them back with apt, as root through
+pkexec, like Obsidian's package. The system's password window needs a person: a polkit rule for the
+runner's user stands in for the password (the only stand-in); `app-root` then checks in pkexec's
+journal that only the app's two `apt-get install` scripts ran as root (`details.root`). The window
+is read through AT-SPI (the system's Python and its bindings, `ATSPI` in `terrain_app.py`), clicked
+with the mouse through xdotool, captured with ImageMagick's `import`. Once all is checked, the
+nightly the app registered is started by the scheduler (`nuit-reelle`).
 
 ```bash
-gh run download <run-id> --name terrain-macos-app --dir "$(mktemp -d)"     # the JSON (terrain-windows-app)
-gh run download <run-id> --name captures-macos-app --dir "$(mktemp -d)"    # the captures (captures-windows-app)
+gh run download <run-id> --name terrain-macos-app --dir "$(mktemp -d)"     # the JSON (terrain-windows-app, terrain-linux-app)
+gh run download <run-id> --name captures-macos-app --dir "$(mktemp -d)"    # the captures (captures-windows-app, captures-linux-app)
 ```
 
 - `etape` says where: `app-preparation`, `app-telechargement`, `app-verification` or
@@ -93,11 +102,12 @@ gh run download <run-id> --name captures-macos-app --dir "$(mktemp -d)"    # the
   on Windows SmartScreen, the setup's pages, then: installed for the user alone, Start menu
   shortcut), `app-lancement`, then one per screen of the window (`app-bienvenue`, `app-diagnostic`,
   `app-voyage`, `app-connexion-installation`, `app-connexion`, `app-fini`), `app-etape-<id>` for an
-  install step running in the app (`claude`, `clt`, `bun`, `obsidian`, `brain`; every step of the
-  plan must get its screen), `app-nuit` (Windows: the `Brain*` tasks disabled, a nightly already
-  started waited for), `app-outils`, `app-sources`, the checks of `installation` (`hooks` to
+  install step running in the app (`paquets`, `claude`, `clt`, `bun`, `obsidian`, `brain`; every step
+  of the plan must get its screen), `app-nuit` (Windows: the `Brain*` tasks disabled, a nightly
+  already started waited for), `app-outils`, `app-root` (Linux), `app-sources`, the checks of
+  `installation` (`hooks` to
   `planificateur`), `app-relance-*` for the second launch, `app-clics` (a click that was not the
-  mouse's: AXPress, Invoke, Toggle), `app-nuit-rendue` and `nuit-reelle`.
+  mouse's: AXPress, Invoke, Toggle, an AT-SPI action), `app-nuit-rendue` and `nuit-reelle`.
 - `raison` « interrompu pendant l'étape … »: the job step's timeout killed the scenario there; the
   walk itself stops 5 minutes before (« fin du temps du scénario »).
 - `raison` ends with `Bibo : « … »`: the last thing the window said (title, then text). « Oups, ça
@@ -159,6 +169,8 @@ Open the PR and leave a comment asking the maintainer to review it when the diff
   sha256, the URLs the installers and the workflows download from;
 - secret detection: `engine/hooks/_redact.py`, and any change to how the S1 fix masks, quarantines
   or puts back a secret, wherever that code lives (the rest of the night check is yours to fix);
+- what the app runs as root on Linux: `app/src-tauri/src/root.rs` (the two `apt-get install` scripts
+  pkexec runs after the user's password);
 - the Claude token: `engine/hooks/_headless_claude.py` (environment, login and start-up checks),
   anything that reads `CLAUDE_CODE_OAUTH_TOKEN`, and `engine/tests/terrain.py`,
   `engine/tests/terrain_app.py`, `engine/tests/pilote_windows.cs` and `engine/tests/vault_piege.py`,

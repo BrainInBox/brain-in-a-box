@@ -25,7 +25,7 @@ It all runs inside Claude Code (terminal/IDE). No bot, no server, no shared clou
 
 ### Download the app (preview)
 
-No terminal: a window checks your Mac or PC, installs what is missing and sets up your brain (the interface is in French). Every change to the app publishes an **unsigned preview** on the [Releases page](https://github.com/BrainInBox/brain-in-a-box/releases?q=app-v&expanded=true) (tags `app-v<version>-preview.<n>`, the 5 newest are kept), with a `SHA256SUMS` file and a build attestation (how to check one: `app/README.md`).
+No terminal: a window checks your Mac or PC (Windows or Linux), installs what is missing and sets up your brain (the interface is in French). Every change to the app publishes an **unsigned preview** on the [Releases page](https://github.com/BrainInBox/brain-in-a-box/releases?q=app-v&expanded=true) (tags `app-v<version>-preview.<n>`, the 5 newest are kept), with a `SHA256SUMS` file and a build attestation (how to check one: `app/README.md`).
 
 **Mac** (macOS 13+, Apple Silicon and Intel)
 
@@ -37,6 +37,13 @@ No terminal: a window checks your Mac or PC, installs what is missing and sets u
 
 1. Download `Brain-in-a-Box_<version>-preview.<n>_windows-x64-setup.exe` and run it (no administrator rights asked).
 2. If Windows says « Windows a protégé votre ordinateur » (SmartScreen, the app is not signed yet), click **Informations complémentaires**, then **Exécuter quand même**.
+
+**Linux** (Ubuntu 22.04+, Debian 12, x86-64; tested on Ubuntu 24.04)
+
+- **AppImage**, nothing to install: download `Brain-in-a-Box_<version>-preview.<n>_linux-x86_64.AppImage`, make it executable (right click → Properties → « Exécutable comme un programme », or `chmod +x` it), then double-click it. AppImages need FUSE, which Ubuntu 24.04 no longer ships: install it once with `sudo apt install libfuse2t64` (Ubuntu 22.04: `libfuse2`). Without it, `./Brain-in-a-Box_…AppImage --appimage-extract-and-run` works too.
+- **.deb**: `sudo apt install ./Brain-in-a-Box_<version>-preview.<n>_linux-amd64.deb`, then open Brain in a Box from the applications menu.
+
+The app installs git, python3 and curl when the system lacks them (a fresh Ubuntu desktop has neither git nor curl), and Obsidian's official package: for those two steps only, the system's own window asks for your password (pkexec), for a fixed `apt-get install`. Everything else lands in your home folder, as on a Mac. Another distribution: the app says what to install with its package manager. arm64: no Obsidian package, the app says where to get it.
 
 ### Windows
 
