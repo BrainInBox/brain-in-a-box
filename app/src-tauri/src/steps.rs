@@ -49,8 +49,9 @@ pub const ORDER: &[&str] = &["paquets", "claude", "bun", "obsidian", "brain"];
 #[cfg(windows)]
 pub const ORDER: &[&str] = &["claude", "brain"];
 
+/// engine/gbrain-pin.json's, which install.sh follows (a test holds them equal).
 #[cfg(not(windows))]
-const BUN_PIN: &str = "bun-v1.4.2";
+const BUN_PIN: &str = "bun-v1.4.3";
 #[cfg(target_os = "macos")]
 const OBSIDIAN_URL: &str = "https://github.com/obsidianmd/obsidian-releases/releases/download/v1.14.4/Obsidian-1.14.4.dmg";
 #[cfg(target_os = "macos")]
@@ -1862,6 +1863,14 @@ mod tests {
         assert_eq!(value("OBSIDIAN_DEB_SHA256"), OBSIDIAN_DEB_SHA256);
         let url = value("OBSIDIAN_DEB_URL").replace("$OBSIDIAN_VERSION", &version).replace("${OBSIDIAN_VERSION}", &version);
         assert_eq!(url, OBSIDIAN_DEB_URL);
+    }
+
+    /// The Bun the app installs is the one gbrain is tested with, which install.sh installs.
+    #[cfg(not(windows))]
+    #[test]
+    fn bun_is_the_one_gbrain_pin_json_names() {
+        let pin: Value = serde_json::from_str(include_str!("../../../engine/gbrain-pin.json")).unwrap();
+        assert_eq!(BUN_PIN, format!("bun-v{}", pin["bun"].as_str().unwrap()));
     }
 
     #[cfg(windows)]
