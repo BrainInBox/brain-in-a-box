@@ -91,7 +91,12 @@ runner's user stands in for the password (the only stand-in) and logs the window
 `app/src-tauri/src/root.rs`'s two scripts ran as root, to the letter, with arguments they accept
 (`details.root`), that git and curl were among the packages and Obsidian's package installed once,
 each named in the window. On a branch the AppImage comes from `app-linux-build`, built on Ubuntu
-22.04 as `release.yml` builds it. The window
+22.04 as `release.yml` builds it. The runner's image is a server's: the libraries every Ubuntu
+desktop has and the AppImage leaves to the system (`BUREAU`: EGL, Mesa, X11, fonts) are installed
+first when missing (`details.bureau`, in `a_noter`); one the app needs beyond that list is a real
+gap of the AppImage, not a VM to fix. That AppImage reaches 24.04's AT-SPI with some roles one below
+theirs (`details.roles_atspi_decales`, in `a_noter`: « document text » for the page): the robot reads
+either, a screen reader announces them that way. The window
 is read through AT-SPI (the system's Python and its bindings, `ATSPI` in `terrain_app.py`), clicked
 with the mouse through xdotool, captured with ImageMagick's `import`. Once all is checked, the
 nightly the app registered is started by the scheduler (`nuit-reelle`).
