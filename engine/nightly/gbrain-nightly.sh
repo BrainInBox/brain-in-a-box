@@ -1,25 +1,25 @@
-#!/bin/zsh
+#!/usr/bin/env bash
 # brain-in-a-box nightly maintenance (generic, no Hermes).
-# Invoked by launchd (com.<user>.gbrain-nightly) at 04:00. Absolute paths on
-# purpose: launchd starts without the user shell PATH.
+# Invoked at 04:00 by launchd on macOS (com.<user>.gbrain-nightly, with /bin/zsh), by
+# systemd --user (gbrain-nightly.timer) or cron on Linux (with /bin/bash): written for
+# both shells. Absolute paths on purpose: the scheduler starts without the user shell PATH.
 #
 # Steps: stale-lock recovery → self-update GBrain → night check of the vault
 # (controle.py) → commit + push personal vault → sync personal
 # (gbrain-sync-vault.py) → [if company vault present: git pull + sync 'company'
 # source] → dream cycle.
 
-export PATH="$HOME/.bun/bin:/opt/homebrew/bin:/usr/bin:/bin"
+export PATH="$HOME/.bun/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/local/bin"
 # gbrain is third-party code, updated every week: never the Claude setup-token. The night check
 # and the reflection read it from ~/.brain-in-a-box/claude-oauth-token when they ask Claude.
 unset CLAUDE_CODE_OAUTH_TOKEN
 GBRAIN="$HOME/.bun/bin/gbrain"
-BUN="$HOME/.bun/bin/bun"
 VAULT="$HOME/Documents/Brain"
 VAULT_CO="$HOME/Documents/BrainCo"
-GREPO="$HOME/DEV/gbrain"
 LOG="$HOME/.gbrain/nightly.log"
-SYNC_VAULT="${0:A:h}/gbrain-sync-vault.py"   # absolute: the steps below cd
-CONTROLE="${0:A:h}/controle.py"
+HERE="$(cd "$(dirname "$0")" >/dev/null && pwd -P)"   # absolute: the steps below cd
+SYNC_VAULT="$HERE/gbrain-sync-vault.py"
+CONTROLE="$HERE/controle.py"
 
 # Sweep an orphan .git/index.lock that silently breaks `git commit` (a crashed
 # git leaves it behind → the vault never commits → gbrain sync stalls on "No
@@ -66,7 +66,7 @@ sweep_git_lock "$VAULT"
 # full rollback on a broken one: gbrain-selfupdate.sh relays to gbrain_update.py
 # (also started by the SessionStart catch-up hook when no check succeeded for
 # 36 h). Resilient: a failure must never block the rest of the cycle.
-"$(dirname "$0")/gbrain-selfupdate.sh" "$LOG"
+"$HERE/gbrain-selfupdate.sh" "$LOG"
 
 # 0bis. Self-update gstack (if installed via --with-gstack). Same shape: pull + re-setup if HEAD moved.
 GSTACK="$HOME/.claude/skills/gstack"

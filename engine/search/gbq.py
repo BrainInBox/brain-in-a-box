@@ -8,7 +8,7 @@ empty-handed: if gbrain is missing, broken, or busy with a long write, the
 answer comes from brain_search, the offline keyword index kept next to it.
 Without gbrain, sync/embed/import rebuild that keyword index instead.
 
-macOS keeps engine/bin/gbq (zsh): reads there hang on PGLite and are force-killed;
+macOS and Linux keep engine/bin/gbq (bash): reads there hang on PGLite and are force-killed;
 on Windows they exit on their own. A read that still runs after READ_TIMEOUT
 seconds (network gone mid-request, a stuck gbrain) is killed, tree included,
 and answered by keywords: Claude Code's Bash tool gives up at 120 s.

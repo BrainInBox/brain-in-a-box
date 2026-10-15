@@ -6,7 +6,8 @@
 set -u
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-H="$(mktemp -d -t biab-hooktest)"
+TMP0="${TMPDIR:-/tmp}"
+H="$(mktemp -d "${TMP0%/}/biab-hooktest.XXXXXX")"   # GNU mktemp wants the XXXXXX; macOS's TMPDIR ends with a /
 export TMPDIR="$H/tmp"             # isolate hook locks (tempfile.gettempdir()) in the throwaway HOME
 DAY=$(date +%Y-%m-%d)
 SID="biabtest$(date +%s)"          # unique per run → no stale-lock collisions
@@ -170,7 +171,7 @@ answer() { printf '%s' "$1" > "$FK/answer.json"; }
 scenario() { echo "$1" > "$FK/scenario"; }
 calls() { local n; n=$(grep -c . "$FK/calls" 2>/dev/null); rm -f "$FK/calls"; echo "${n:-0}"; }
 cause() { python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['last_error'] or '')" "$ST" 2>/dev/null; }
-sha() { shasum -a 256 "$1" | cut -d' ' -f1; }
+sha() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1; }
 stamp() { python3 -c "from datetime import datetime,timedelta; print((datetime.now().astimezone().replace(hour=12,minute=0,second=0,microsecond=0)-timedelta(days=$1)).isoformat())"; }
 T0=$(stamp 0); T1=$(stamp 1)
 HOME="$H" git config --global user.email builder@example.com
@@ -410,8 +411,10 @@ echo "════ 9) gbrain-nightly — night check, then commit; waits for the
 # through ~/.bun/bin, which comes first on the nightly's PATH: a dead resolver is
 # faked without waiting 5 min, no real DNS is needed, and the check (controle.py,
 # tested in engine/tests) only records how it was called and exits with $3.
+# Under each shell that starts it: zsh (launchd, macOS), bash (systemd and cron, Linux).
+NIGHT_SHELLS="bash"; command -v zsh >/dev/null 2>&1 && NIGHT_SHELLS="zsh bash"
 nightly_run() {   # $1 = probe exit code (0 = network up), $2 = vault remote ("" = a local bare repo), $3 = check's exit code
-  NH="$(mktemp -d -t biab-nightly)"
+  NH="$(mktemp -d "${TMPDIR:-/tmp}/biab-nightly.XXXXXX")"
   mkdir -p "$NH/.bun/bin" "$NH/.gbrain" "$NH/nightly" "$NH/Documents/Brain"
   printf '#!/bin/sh\necho "gbrain $1" >> "$HOME/gbrain-calls"\n[ -z "$CLAUDE_CODE_OAUTH_TOKEN" ] || echo "gbrain $1" >> "$HOME/gbrain-saw-token"\nexit 0\n' > "$NH/.bun/bin/gbrain"
   printf '#!/bin/sh\nexit 0\n' > "$NH/.bun/bin/sleep"
@@ -424,32 +427,34 @@ nightly_run() {   # $1 = probe exit code (0 = network up), $2 = vault remote (""
   git -C "$NH/Documents/Brain" init -q
   git -C "$NH/Documents/Brain" remote add origin "${2:-$NH/remote.git}"
   echo note > "$NH/Documents/Brain/a.md"
-  CLAUDE_CODE_OAUTH_TOKEN=canari-claude-token HOME="$NH" zsh "$NH/nightly/gbrain-nightly.sh" 2>/dev/null
+  CLAUDE_CODE_OAUTH_TOKEN=canari-claude-token HOME="$NH" "$NSH" "$NH/nightly/gbrain-nightly.sh" 2>/dev/null
   NLOG="$NH/.gbrain/nightly.log"
 }
+first(){ grep -n -m1 -- "$1" "$NLOG" | cut -d: -f1; }
+for NSH in $NIGHT_SHELLS; do
 nightly_run 0 ""
 grep -q "vault pushed to origin (attempt 1)" "$NLOG" && git --git-dir="$NH/remote.git" rev-parse -q --verify HEAD >/dev/null \
-  && ok "network up: vault committed and pushed" || no "network up: vault not pushed"
-first(){ grep -n -m1 -- "$1" "$NLOG" | cut -d: -f1; }
+  && ok "$NSH: network up: vault committed and pushed" || no "$NSH: network up: vault not pushed"
 [ "$(cat "$NH/controle.calls" 2>/dev/null)" = "-I $(cd "$NH/nightly" && pwd -P)/controle.py nuit --brain $NH/Documents/Brain" ] \
   && [ -n "$(first '^\[controle\] exit 0$')" ] && [ "$(first '^\[controle\] exit')" -lt "$(first 'vault pushed')" ] \
-  && ok "night check: python -I controle.py nuit on the vault, '[controle] exit 0' logged before the push" || no "night check not run as expected: $(cat "$NH/controle.calls" 2>/dev/null)"
+  && ok "$NSH: night check: python -I controle.py nuit on the vault, '[controle] exit 0' logged before the push" || no "$NSH: night check not run as expected: $(cat "$NH/controle.calls" 2>/dev/null)"
 grep -q "gbrain embed" "$NH/gbrain-calls" 2>/dev/null && [ ! -f "$NH/gbrain-saw-token" ] \
-  && ok "nightly: gbrain never gets a CLAUDE_CODE_OAUTH_TOKEN the job was started with" || no "nightly: gbrain got the Claude token ($(tr '\n' ' ' < "$NH/gbrain-saw-token"))"
+  && ok "$NSH: nightly: gbrain never gets a CLAUDE_CODE_OAUTH_TOKEN the job was started with" || no "$NSH: nightly: gbrain got the Claude token ($(tr '\n' ' ' < "$NH/gbrain-saw-token"))"
 rm -rf "$NH"
 nightly_run 0 "" 1
 grep -q '^\[controle\] exit 1$' "$NLOG" && [ -z "$(git -C "$NH/Documents/Brain" status --porcelain)" ] \
   && grep -q "vault pushed to origin (attempt 1)" "$NLOG" && git --git-dir="$NH/remote.git" rev-parse -q --verify HEAD >/dev/null \
-  && ok "night check crashed (exit 1): the vault is still committed and pushed" || no "a crashed night check stopped the commit or the push"
+  && ok "$NSH: night check crashed (exit 1): the vault is still committed and pushed" || no "$NSH: a crashed night check stopped the commit or the push"
 rm -rf "$NH"
 nightly_run 1 ""
 grep -q "still unresolvable" "$NLOG" && grep -q "push SKIPPED — no network" "$NLOG" \
-  && ok "no network: waits, then says why the push was skipped" || no "no network: cause not logged"
+  && ok "$NSH: no network: waits, then says why the push was skipped" || no "$NSH: no network: cause not logged"
 rm -rf "$NH"
 nightly_run 0 "/nonexistent/remote.git"
 [ "$(grep -c '^fatal:' "$NLOG")" -ge 3 ] && grep -q "push FAILED after 3 attempts" "$NLOG" \
-  && ok "push error: retried 3 times, then reported" || no "push error: not retried or not reported"
+  && ok "$NSH: push error: retried 3 times, then reported" || no "$NSH: push error: not retried or not reported"
 rm -rf "$NH"
+done
 
 echo "════ 9bis) gbrain-sync-vault.py — the vault's source, read from gbrain sources list ════"
 # A stub gbrain: `sources list --json` prints $HOME/sources.json (no file: it fails),
@@ -532,7 +537,7 @@ printf '#!/bin/sh\nexit 0\n' > "$T/.bun/bin/sleep"; printf '#!/bin/sh\nexit 0\n'
 cp "$REPO/engine/nightly/gbrain-nightly.sh" "$REPO/engine/nightly/gbrain-sync-vault.py" "$T/nightly/"
 chmod +x "$T/.bun/bin/sleep" "$T/nightly/"*
 ( cd "$V" && git init -q && echo note > a.md )
-HOME="$T" zsh "$T/nightly/gbrain-nightly.sh" 2>/dev/null
+HOME="$T" bash "$T/nightly/gbrain-nightly.sh" 2>/dev/null   # zsh: section 9
 [ -z "$(git -C "$V" status --porcelain)" ] && called "sources add vault --path $V --federated" \
   && called "sync --source vault --no-pull --no-embed" && called "delete a --source-id default --force" \
   && grep -q "^\[vault\] vault registered" "$T/.gbrain/nightly.log" \
@@ -550,12 +555,12 @@ case "$1" in
 esac
 STUB
 chmod +x "$GQ/.bun/bin/gbrain"
-HOME="$GQ" GBQ_STUB_RC=3 zsh "$REPO/engine/bin/gbq" sync >/dev/null 2>&1; rc=$?
+HOME="$GQ" GBQ_STUB_RC=3 bash "$REPO/engine/bin/gbq" sync >/dev/null 2>&1; rc=$?
 [ "$rc" = 3 ] && ok "gbq: a write returns gbrain's exit code" || no "gbq: write returned $rc, want 3"
-t0=$(date +%s); out=$(HOME="$GQ" zsh "$REPO/engine/bin/gbq" query pricing 2>&1); rc=$?; took=$(( $(date +%s) - t0 ))
+t0=$(date +%s); out=$(HOME="$GQ" bash "$REPO/engine/bin/gbq" query pricing 2>&1); rc=$?; took=$(( $(date +%s) - t0 ))
 [ "$rc" = 0 ] && echo "$out" | grep -q "hit: pricing.md" && [ "$took" -lt 15 ] \
   && ok "gbq: a read that never exits is cut once its output settles (${took}s)" || no "gbq: hung read not handled (rc=$rc, ${took}s)"
-HOME="$GQ" GBQ_STUB_RC=2 zsh "$REPO/engine/bin/gbq" query pricing >/dev/null 2>&1; rc=$?
+HOME="$GQ" GBQ_STUB_RC=2 bash "$REPO/engine/bin/gbq" query pricing >/dev/null 2>&1; rc=$?
 [ "$rc" = 2 ] && ok "gbq: a read that fails on its own reports the failure" || no "gbq: failing read returned $rc, want 2"
 # The real gbrain is a script run by `#!/usr/bin/env bun`: a shell opened before Bun was installed
 # (or Claude Code started then) has no ~/.bun/bin on its PATH, and gbq used to fail with 127.
@@ -563,7 +568,7 @@ GB="$H/gbq-bun-home"; mkdir -p "$GB/.bun/bin" "$GB/.gbrain"
 printf '#!/bin/sh\necho "bun ran $(basename "$1") $2"\n' > "$GB/.bun/bin/bun"
 printf '#!/usr/bin/env bun\n' > "$GB/.bun/bin/gbrain"
 chmod +x "$GB/.bun/bin/bun" "$GB/.bun/bin/gbrain"
-out=$(HOME="$GB" PATH="/usr/bin:/bin" zsh "$REPO/engine/bin/gbq" sync 2>&1); rc=$?
+out=$(HOME="$GB" PATH="/usr/bin:/bin" bash "$REPO/engine/bin/gbq" sync 2>&1); rc=$?
 [ "$rc" = 0 ] && echo "$out" | grep -q "bun ran gbrain sync" \
   && ok "gbq: finds Bun without ~/.bun/bin on the PATH (a terminal opened before the install)" \
   || no "gbq: without ~/.bun/bin on the PATH: rc=$rc, $out"

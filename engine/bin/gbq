@@ -1,5 +1,6 @@
-#!/bin/zsh
-# gbq — safe universal wrapper around `gbrain`.
+#!/usr/bin/env bash
+# gbq — safe universal wrapper around `gbrain`. Bash (3.2 and up), not zsh: Linux often has
+# no zsh, and the same file runs on macOS.
 #
 # Two regimes:
 #   READS   (query, search, ask, graph-query)  → force-kill after output stabilizes.
@@ -20,7 +21,8 @@ GBRAIN="$HOME/.bun/bin/gbrain"
 # gbrain is a `#!/usr/bin/env bun` script: a shell opened before Bun was installed (or Claude Code
 # started from it) has no ~/.bun/bin on its PATH, and every call failed with 127.
 export PATH="$HOME/.bun/bin:$PATH"
-TMP=$(mktemp -t gbq)
+# A template of its own: GNU mktemp refuses `-t gbq` (no XXX), BSD mktemp accepts both.
+TMP=$(mktemp "${TMPDIR:-/tmp}/gbq.XXXXXX")
 LOCK="$HOME/.gbrain/brain.pglite/.gbrain-lock"
 
 # Read vs write — only known-buggy reads get the force-kill dance.
