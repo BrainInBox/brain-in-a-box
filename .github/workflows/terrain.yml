@@ -1,7 +1,8 @@
 name: terrain
 
-# The kit as a user gets it, every night, on GitHub VMs nobody keeps (macOS and Windows):
-# a fresh install with its real nightly, an upgrade (Windows from v0.2.0, macOS from #27), seven nights of the night
+# The kit as a user gets it, every night, on GitHub VMs nobody keeps (macOS, Windows and Linux):
+# a fresh install with its real nightly, an upgrade (Windows from v0.2.0, macOS from #27; Linux, where no
+# earlier version ran, a reinstallation over an install its user changed), seven nights of the night
 # check in time travel, the real Claude on a synthetic corpus (engine/tests/terrain.py), and the desktop app
 # downloaded, installed and clicked through in its real window on both systems, a capture of every screen
 # (terrain_app.py).
@@ -311,6 +312,137 @@ jobs:
         if: always()
         with:
           name: terrain-windows-${{ matrix.parcours }}
+          path: ${{ env.TERRAIN_JSON }}
+          if-no-files-found: warn
+          retention-days: 14
+
+  # Linux (ubuntu-latest: Ubuntu 24.04). neuf: clone, then ./install.sh in a real terminal
+  # (.github/ci/terminal.py), its questions answered as a user would: no Voyage key, lingering yes
+  # (through sudo, as the runner has no desktop session), Obsidian yes (its official .deb, checked
+  # against the pinned SHA-256); then the nightly started by systemd --user, and seven nights.
+  # reinstallation: no earlier version of the kit installs on Linux, so the tested version is
+  # installed without a terminal (no session, no question: cron, as in a container or a WSL
+  # without systemd), changed by its user, then installed again over it.
+  linux:
+    name: Linux (${{ matrix.parcours }})
+    needs: ref
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        parcours: [neuf, reinstallation]
+    env:
+      PARCOURS: ${{ matrix.parcours }}
+      TERRAIN_SHA: ${{ needs.ref.outputs.sha }}
+    steps:
+      - name: Where the results go
+        run: echo "TERRAIN_JSON=$RUNNER_TEMP/terrain-linux-$PARCOURS.json" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.ref.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      # As on a server a script reaches: no session for the user's systemd (a runner may keep one
+      # lingering), and cron, which every Ubuntu has.
+      - name: No session for the user's systemd, cron there
+        run: |
+          if [ -e "/var/lib/systemd/linger/$USER" ]; then sudo loginctl disable-linger "$USER"; fi
+          if XDG_RUNTIME_DIR="/run/user/$(id -u)" systemctl --user show-environment >/dev/null 2>&1; then
+            sudo systemctl stop "user@$(id -u).service"
+          fi
+          if XDG_RUNTIME_DIR="/run/user/$(id -u)" systemctl --user show-environment >/dev/null 2>&1; then
+            echo "::error::the user's systemd still answers"; exit 1
+          fi
+          command -v crontab >/dev/null || sudo apt-get install -y cron
+
+      # --- fresh install, in a terminal: a question nobody expected stops it, an expected one never asked fails it
+      - name: Fresh install (clone, ./install.sh in a terminal; no Voyage key, lingering yes, Obsidian yes)
+        id: installeur
+        if: matrix.parcours == 'neuf'
+        timeout-minutes: 40
+        run: |
+          git clone --quiet "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" "$HOME/brain-in-a-box"
+          cd "$HOME/brain-in-a-box" || exit 1
+          [ "$(git rev-parse HEAD)" = "$TERRAIN_SHA" ] || git -c advice.detachedHead=false checkout -q "$TERRAIN_SHA"
+          python3 -I "$GITHUB_WORKSPACE/.github/ci/terminal.py" --answer 'Voyage key:=' --answer 'logged out=y' \
+            --answer 'Obsidian=y' -- ./install.sh
+
+      - name: Installer outcome, in the results
+        if: ${{ !cancelled() && matrix.parcours == 'neuf' }}
+        env:
+          OUTCOME: ${{ steps.installeur.outcome }}
+        run: python3 -I engine/tests/terrain.py etape installeur --resultat "$OUTCOME" --parcours "$PARCOURS" --vm --json "$TERRAIN_JSON"
+
+      - name: "Scenario: the install did what it says, its nightly included (started by systemd --user)"
+        if: ${{ !cancelled() && matrix.parcours == 'neuf' }}
+        timeout-minutes: 45
+        run: python3 -I engine/tests/terrain.py installation --parcours "$PARCOURS" --vm --json "$TERRAIN_JSON"
+
+      # --- reinstallation: the tested version, changed by its user, installed again
+      - name: First install (the tested version, ./install.sh with no terminal)
+        id: premier
+        if: matrix.parcours == 'reinstallation'
+        timeout-minutes: 30
+        run: |
+          git clone --quiet "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" "$HOME/brain-in-a-box"
+          cd "$HOME/brain-in-a-box" || exit 1
+          [ "$(git rev-parse HEAD)" = "$TERRAIN_SHA" ] || git -c advice.detachedHead=false checkout -q "$TERRAIN_SHA"
+          ./install.sh </dev/null
+
+      - name: First installer outcome, in the results
+        if: ${{ !cancelled() && matrix.parcours == 'reinstallation' }}
+        env:
+          OUTCOME: ${{ steps.premier.outcome }}
+        run: python3 -I engine/tests/terrain.py etape installeur --resultat "$OUTCOME" --parcours "$PARCOURS" --vm --json "$TERRAIN_JSON"
+
+      - name: "Scenario: what a user changed on it"
+        if: ${{ !cancelled() && matrix.parcours == 'reinstallation' }}
+        timeout-minutes: 10
+        run: python3 -I engine/tests/terrain.py montee-avant --parcours "$PARCOURS" --vm --json "$TERRAIN_JSON"
+
+      - name: Reinstall over it (./install.sh again, no terminal)
+        id: upgrade
+        if: ${{ !cancelled() && matrix.parcours == 'reinstallation' }}
+        timeout-minutes: 30
+        run: |
+          cd "$HOME/brain-in-a-box" || exit 1
+          ./install.sh </dev/null
+
+      - name: Reinstall outcome, in the results
+        if: ${{ !cancelled() && matrix.parcours == 'reinstallation' }}
+        env:
+          OUTCOME: ${{ steps.upgrade.outcome }}
+        run: python3 -I engine/tests/terrain.py etape installeur-montee --resultat "$OUTCOME" --parcours "$PARCOURS" --vm --json "$TERRAIN_JSON"
+
+      - name: "Scenario: nothing of the user lost, all the new there"
+        if: ${{ !cancelled() && matrix.parcours == 'reinstallation' }}
+        timeout-minutes: 20
+        run: python3 -I engine/tests/terrain.py montee --parcours "$PARCOURS" --vm --json "$TERRAIN_JSON"
+
+      # --- from here on, the real nightly of this machine stays out of the way
+      - name: The scheduled jobs are stopped for the rest of the job
+        if: ${{ !cancelled() }}
+        run: |
+          XDG_RUNTIME_DIR="/run/user/$(id -u)"; export XDG_RUNTIME_DIR
+          if [ -S "$XDG_RUNTIME_DIR/bus" ]; then systemctl --user stop gbrain-nightly.timer brain-reflection.timer gbrain-lint.timer || true; fi
+          crontab -r 2>/dev/null || true
+
+      - name: "Scenario: seven nights of the night check, then J+20"
+        if: ${{ !cancelled() && matrix.parcours == 'neuf' }}
+        timeout-minutes: 20
+        run: python3 -I engine/tests/terrain.py nuits --parcours "$PARCOURS" --vm --json "$TERRAIN_JSON"
+
+      - name: Summary
+        if: always()
+        run: python3 -I engine/tests/terrain.py rapport "$TERRAIN_JSON" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: terrain-linux-${{ matrix.parcours }}
           path: ${{ env.TERRAIN_JSON }}
           if-no-files-found: warn
           retention-days: 14
@@ -714,7 +846,7 @@ jobs:
 
   rapport:
     name: Report (one issue "terrain")
-    needs: [ref, macos, windows, claude, app-macos, app-windows]
+    needs: [ref, macos, windows, linux, claude, app-macos, app-windows]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -722,9 +854,9 @@ jobs:
       contents: read
       issues: write
     env:
-      ATTENDUS: macos-neuf,macos-montee,windows-neuf,windows-montee,macos-claude,windows-claude,macos-app,windows-app
+      ATTENDUS: macos-neuf,macos-montee,windows-neuf,windows-montee,linux-neuf,linux-reinstallation,macos-claude,windows-claude,macos-app,windows-app
       # A job that did not succeed is a failure even when its rows say nothing (terrain.py JOBS).
-      JOBS: ref=${{ needs.ref.result }},macos=${{ needs.macos.result }},windows=${{ needs.windows.result }},claude=${{ needs.claude.result }},app-macos=${{ needs.app-macos.result }},app-windows=${{ needs.app-windows.result }}
+      JOBS: ref=${{ needs.ref.result }},macos=${{ needs.macos.result }},windows=${{ needs.windows.result }},linux=${{ needs.linux.result }},claude=${{ needs.claude.result }},app-macos=${{ needs.app-macos.result }},app-windows=${{ needs.app-windows.result }}
     steps:
       # The workflow's own commit: the code that writes the issue is the one this file came with.
       - uses: actions/checkout@v4

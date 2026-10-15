@@ -1,8 +1,9 @@
 # Terrain: instructions for the repair agent
 
-Every night `.github/workflows/terrain.yml` installs the kit on fresh GitHub VMs (macOS and
-Windows, a fresh install and an upgrade from v0.2.0) and runs the scenarios of
-`engine/tests/terrain.py`. You read the result each morning, fix what failed, and log it.
+Every night `.github/workflows/terrain.yml` installs the kit on fresh GitHub VMs (macOS,
+Windows and Linux; a fresh install, and an upgrade from v0.2.0, or on Linux a reinstallation)
+and runs the scenarios of `engine/tests/terrain.py`. You read the result each morning, fix what
+failed, and log it.
 
 ## Read the last run
 
@@ -24,7 +25,7 @@ gh run download <run-id> --pattern 'terrain-*' --dir "$(mktemp -d)"
 gh issue list --label terrain --state open --author app/github-actions
 ```
 
-One JSON per OS and path (`terrain-macos-neuf.json`, `terrain-windows-montee.json`, `terrain-macos-app.json`...):
+One JSON per OS and path (`terrain-macos-neuf.json`, `terrain-windows-montee.json`, `terrain-linux-reinstallation.json`, `terrain-macos-app.json`...):
 `{os, parcours, ref, run_url, scenarios: [{scenario, statut, etape, raison, details, reproduire}]}`,
 `statut` being `ok`, `echec` or `saute`. `etape` names the step that failed, `details` holds the
 measures and log tails. The issue only lists OS, path, scenario and step: the reasons are in the JSON.
@@ -48,6 +49,23 @@ python3 -I -m unittest discover -s engine/tests     # and: bash test-hooks.sh
 repository's branches can be tested: never a fork's pull request. Off master, `vrai-claude` says
 "jeton réservé" and is skipped: check a fix of it with `engine/tests` (a stand-in for claude), and on
 the next scheduled night.
+
+## Read a failure on Linux
+
+The job `linux` runs on `ubuntu-latest` (Ubuntu 24.04, x86-64). Path `neuf`: `install.sh` runs in
+a real terminal through `.github/ci/terminal.py`, which answers each question by its words (no
+Voyage key, lingering yes, Obsidian yes) and prints `terminal.py: answered ...` in the step's log.
+`no answer for the question` (exit 3): the installer asks something new; an answer is added in
+`terrain.yml` only for a question a user really gets, never to get past a bug. `never asked
+about` (exit 4): a question the user expects is gone (the Obsidian or lingering step broke). After
+it, `installation` expects systemd user timers (`planificateur`: the three timers enabled and
+active, `Persistent=true`, lingering on), Obsidian in `/opt/Obsidian` (`obsidian`), Claude Code in
+`~/.local/bin` (`claude-code`), and `nuit-reelle` starts `gbrain-nightly.service` through systemd
+(`details.service`: `Result`, `ExecMainStatus`). Path `reinstallation`: no earlier kit installs on
+Linux, so the tested version is installed with no terminal (no session for the user's systemd on a
+runner: the cron fallback), changed by its user (`montee-avant`, step `etat-avant`), installed
+again (`installeur-montee`), then checked as an upgrade (`montee`, with cron expected). Timers and
+cron lines both present (`deux fois`) is a failure: every job would run twice.
 
 ## Read a failure of the app scenario
 
