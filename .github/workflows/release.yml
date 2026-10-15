@@ -22,6 +22,9 @@ name: app-release
 # Windows: built once the Tauri config declares an NSIS installer ("nsis" or "all" in
 # bundle.targets of tauri.windows.conf.json, or of tauri.conf.json), see
 # .github/ci/app-release-plan.py. Until then the matrix is macOS only and nothing else changes.
+# Linux: an AppImage (runs without installing, for the user alone) and a .deb, built on Ubuntu
+# 22.04 so that both run on 22.04 and later, once tauri.linux.conf.json declares them. The tools
+# an AppImage is made with are fetched pinned and checked (.github/ci/appimage-tools.sh).
 
 on:
   pull_request:
@@ -93,6 +96,15 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
+
+      # WebKitGTK and GTK to build against (Ubuntu's own archive), and the AppImage tools, pinned.
+      - name: Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev \
+            libssl-dev libxdo-dev patchelf file
+          bash .github/ci/appimage-tools.sh
 
       - name: Rust targets
         run: |
@@ -181,6 +193,38 @@ jobs:
           else
             echo "::notice::no Rosetta on this runner: the x86_64 slice was checked with lipo only"
           fi
+
+      # The .deb installs with apt (its dependencies from Ubuntu's archive), the AppImage runs
+      # without installing (unpacked: a runner may lack FUSE); each answers --diagnose.
+      - name: The .deb installs and runs, the AppImage runs
+        if: runner.os == 'Linux'
+        timeout-minutes: 10
+        run: |
+          shopt -s nullglob
+          debs=(app/src-tauri/target/"$TARGET"/release/bundle/deb/*.deb)
+          images=(app/src-tauri/target/"$TARGET"/release/bundle/appimage/*.AppImage)
+          [ "${#debs[@]}" -eq 1 ] || { echo "::error::expected one .deb, found ${#debs[@]}"; exit 1; }
+          [ "${#images[@]}" -eq 1 ] || { echo "::error::expected one AppImage, found ${#images[@]}"; exit 1; }
+          mkdir -p dist
+          deb="dist/Brain-in-a-Box_${LABEL}_linux-amd64.deb"
+          image="dist/Brain-in-a-Box_${LABEL}_linux-x86_64.AppImage"
+          cp "${debs[0]}" "$deb"
+          cp "${images[0]}" "$image"
+          chmod 755 "$image"
+
+          dpkg-deb -I "$deb"
+          [ "$(dpkg-deb -f "$deb" Package)" = brain-in-a-box ] || { echo "::error::not the brain-in-a-box package"; exit 1; }
+          [ "$(dpkg-deb -f "$deb" Architecture)" = amd64 ] || { echo "::error::not an amd64 package"; exit 1; }
+          dpkg-deb -c "$deb" | grep -q ' ./usr/bin/brain-in-a-box$' || { echo "::error::no /usr/bin/brain-in-a-box in the .deb"; exit 1; }
+          [ "$(head -c 4 "$image" | od -An -tx1 | tr -d ' ')" = 7f454c46 ] || { echo "::error::the AppImage is not an ELF program"; exit 1; }
+          [ "$(dd if="$image" bs=1 skip=8 count=3 2>/dev/null | od -An -tx1 | tr -d ' ')" = 414902 ] \
+            || { echo "::error::not a type 2 AppImage"; exit 1; }
+
+          check='import json, sys; d = json.load(sys.stdin); ids = [c["id"] for c in d["checks"]]; assert "paquets" in ids and "linux" in ids, ids; print(sys.argv[1], "ok:", d["os"], len(ids), "checks")'
+          sudo apt-get install -y -q "./$deb"
+          /usr/bin/brain-in-a-box --diagnose | python3 -I -c "$check" deb
+          APPIMAGE_EXTRACT_AND_RUN=1 "./$image" --diagnose | python3 -I -c "$check" AppImage
+          sudo apt-get remove -y -q brain-in-a-box
 
       - name: The Windows installer is there
         if: runner.os == 'Windows'
@@ -279,8 +323,17 @@ jobs:
               echo "1. Téléchargez \`$exe\` et lancez-le (aucun droit administrateur demandé)."
               echo "2. Si Windows affiche « Windows a protégé votre ordinateur », cliquez sur **Informations complémentaires**, puis **Exécuter quand même**."
             fi
+            if image=$(cd dist && ls -- *.AppImage 2>/dev/null) && deb=$(cd dist && ls -- *.deb 2>/dev/null); then
+              echo
+              echo "**Linux** (Ubuntu 22.04 ou plus récent, Debian 12, processeur Intel ou AMD 64 bits)"
+              echo
+              echo "- **AppImage**, sans installation : téléchargez \`$image\`, rendez-le exécutable (clic droit > Propriétés > « Exécutable comme un programme », ou \`chmod +x\`), puis double-cliquez dessus. Sur Ubuntu 24.04, installez une fois FUSE, que les AppImage utilisent : \`sudo apt install libfuse2t64\`."
+              echo "- **.deb** : \`sudo apt install ./$deb\`, puis ouvrez Brain in a Box depuis le menu des applications."
+              echo
+              echo "Pendant l'installation, l'app demande votre mot de passe (fenêtre du système) pour installer git, curl ou Obsidian s'ils manquent."
+            fi
             echo
-            echo "Vérifier un téléchargement : \`shasum -a 256 <fichier>\` (Mac) ou \`certutil -hashfile <fichier> SHA256\` (Windows) doit donner la ligne du fichier dans \`SHA256SUMS\`. Vérifier qu'il a bien été construit ici, depuis \`master\` : \`gh attestation verify <fichier> -R $GH_REPO --signer-workflow $GH_REPO/.github/workflows/release.yml --source-ref refs/heads/master\`."
+            echo "Vérifier un téléchargement : \`shasum -a 256 <fichier>\` (Mac), \`certutil -hashfile <fichier> SHA256\` (Windows) ou \`sha256sum <fichier>\` (Linux) doit donner la ligne du fichier dans \`SHA256SUMS\`. Vérifier qu'il a bien été construit ici, depuis \`master\` : \`gh attestation verify <fichier> -R $GH_REPO --signer-workflow $GH_REPO/.github/workflows/release.yml --source-ref refs/heads/master\`."
           } > "$RUNNER_TEMP/notes.md"
           cat "$RUNNER_TEMP/notes.md"
 
