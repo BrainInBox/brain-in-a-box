@@ -1,0 +1,1049 @@
+{
+ "os": "macos",
+ "python": "3.14.7",
+ "codex_path": "/Users/runner/work/_temp/newest/x/bin/codex",
+ "version": {
+  "codex": "codex-cli 0.163.0-alpha.11",
+  "exec_flags": {
+   "--json": true,
+   "--ephemeral": true,
+   "--ignore-user-config": true,
+   "--ignore-rules": true,
+   "--output-schema": true,
+   "--output-last-message": true,
+   "--skip-git-repo-check": true,
+   "--cd": true,
+   "--sandbox": true,
+   "--dangerously-bypass-hook-trust": true
+  },
+  "exec_help_stdin_lines": [
+   "instructions are read from stdin. If stdin is piped and a prompt is also provided, stdin",
+   "is appended as a `<stdin>` block"
+  ],
+  "mcp_list_has_json": true,
+  "_seconds": 0.3
+ },
+ "features": {
+  "count": 176,
+  "default_true_count": 59,
+  "default_true": [
+   "api_key_cyber_access_programs",
+   "api_key_model_discovery",
+   "apps",
+   "auth_elicitation",
+   "browser_annotation_api",
+   "browser_use",
+   "browser_use_external",
+   "browser_use_full_cdp_access",
+   "cli_daybreak",
+   "code_mode_host",
+   "code_mode_interrupt",
+   "collaboration_modes",
+   "compaction_image_budget",
+   "computer_use",
+   "content_item_kinds",
+   "daemon_auto_start",
+   "enable_request_compression",
+   "fast_mode",
+   "goals",
+   "guardian_approval",
+   "guardian_reuse_parent_compaction",
+   "hooks",
+   "image_generation",
+   "in_app_browser",
+   "in_app_chat",
+   "in_app_dictation",
+   "in_app_local_automation",
+   "in_app_updates",
+   "in_app_voice",
+   "instant_interrupt",
+   "item_ids",
+   "mentions_v2",
+   "multi_agent",
+   "plugin_sharing",
+   "plugins",
+   "realtime_conversation",
+   "remote_plugin",
+   "resize_all_images",
+   "shell_snapshot",
+   "shell_tool",
+   "skill_mcp_dependency_install",
+   "skill_search",
+   "sleep_tool",
+   "sqlite",
+   "steer",
+   "system_proxy_fallback",
+   "terminal_resize_reflow",
+   "tool_call_mcp_elicitation",
+   "tool_search_always_defer_mcp_tools",
+   "tool_suggest",
+   "tui_app_server",
+   "ultrafast_mode",
+   "unbounded_connection_retries",
+   "unified_exec",
+   "unified_exec_tty",
+   "view_image",
+   "workspace_dependencies",
+   "worktrees",
+   "write_stdin_approval"
+  ],
+  "default_true_removed_stage": [
+   "collaboration_modes",
+   "item_ids",
+   "resize_all_images",
+   "sqlite",
+   "steer",
+   "terminal_resize_reflow",
+   "tool_search_always_defer_mcp_tools",
+   "tui_app_server"
+  ],
+  "root_c_before_subcommand": {
+   "rc": 0,
+   "shell_tool": [
+    "stable",
+    false
+   ],
+   "hooks": [
+    "stable",
+    false
+   ]
+  },
+  "c_after_subcommand": {
+   "rc": 0,
+   "shell_tool": [
+    "stable",
+    false
+   ],
+   "stderr": ""
+  },
+  "user_config_true_vs_c_false": {
+   "rc": 0,
+   "shell_tool": [
+    "stable",
+    false
+   ],
+   "code_mode_host_from_user_config": [
+    "stable",
+    true
+   ],
+   "stderr": ""
+  },
+  "unknown_feature_key": {
+   "rc": 0,
+   "stderr": "",
+   "listed": false
+  },
+  "lockc_still_true": [
+   "api_key_cyber_access_programs",
+   "api_key_model_discovery",
+   "auth_elicitation",
+   "browser_annotation_api",
+   "browser_use_external",
+   "browser_use_full_cdp_access",
+   "cli_daybreak",
+   "code_mode_interrupt",
+   "collaboration_modes",
+   "compaction_image_budget",
+   "content_item_kinds",
+   "daemon_auto_start",
+   "enable_request_compression",
+   "fast_mode",
+   "guardian_approval",
+   "guardian_reuse_parent_compaction",
+   "in_app_chat",
+   "in_app_dictation",
+   "in_app_local_automation",
+   "in_app_updates",
+   "in_app_voice",
+   "instant_interrupt",
+   "item_ids",
+   "mentions_v2",
+   "plugin_sharing",
+   "realtime_conversation",
+   "remote_plugin",
+   "resize_all_images",
+   "shell_snapshot",
+   "skill_mcp_dependency_install",
+   "sqlite",
+   "steer",
+   "system_proxy_fallback",
+   "terminal_resize_reflow",
+   "tool_call_mcp_elicitation",
+   "tool_search_always_defer_mcp_tools",
+   "tui_app_server",
+   "ultrafast_mode",
+   "unbounded_connection_retries",
+   "unified_exec",
+   "unified_exec_tty",
+   "workspace_dependencies",
+   "worktrees",
+   "write_stdin_approval"
+  ],
+  "lockc_known_off_missing": [],
+  "lockc_known_off_still_true": [
+   "unified_exec"
+  ],
+  "all_default_true_off_still_true": [
+   "collaboration_modes",
+   "item_ids",
+   "resize_all_images",
+   "sqlite",
+   "steer",
+   "terminal_resize_reflow",
+   "tool_search_always_defer_mcp_tools",
+   "tui_app_server",
+   "unified_exec"
+  ],
+  "_seconds": 0.4
+ },
+ "lock": {
+  "LC_chatgpt": {
+   "rc": 0,
+   "dt": 1.3,
+   "thread": "01a140a9-9691-7151-ab41-0178764419f5",
+   "types": [
+    "thread.started",
+    "item.completed:error",
+    "turn.started",
+    "item.completed:agent_message",
+    "turn.completed"
+   ],
+   "n_model_calls": 1,
+   "tools": [
+    "functions.exec",
+    "functions.exec>apply_patch",
+    "functions.exec>clock__curr_time",
+    "functions.exec>list_mcp_resource_templates",
+    "functions.exec>list_mcp_resources",
+    "functions.exec>read_mcp_resource",
+    "functions.wait"
+   ],
+   "endpoints": {
+    "GET /v1/models": 4,
+    "GET /backend-api/wham/accounts/check": 2,
+    "GET /v1/responses": 1,
+    "GET /backend-api/wham/settings/user": 1,
+    "POST /v1/responses": 1
+   },
+   "last_message": "{\"verdict\":\"ok\",\"n\":1}",
+   "markers": [
+    "GLOBAL-AGENTS-MARKER",
+    "INSTR-FILE-MARKER"
+   ],
+   "auth_kinds": [
+    "fake-chatgpt"
+   ],
+   "unreadable_bodies": [],
+   "stderr_errors": [
+    "2026-10-15T17:43:38.369353Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 404 Not Found: Unknown error, url: http://127.0.0.1:51001/v1/models?client_version=0.163.0",
+    "2026-10-15T17:43:38.402884Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 404 Not Found: Unknown error, url: http://127.0.0.1:51001/v1/models?client_version=0.163.0",
+    "2026-10-15T17:43:38.405361Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 404 Not Found: Unknown error, url: http://127.0.0.1:51001/v1/models?client_version=0.163.0",
+    "2026-10-15T17:43:38.676479Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 404 Not Found: Unknown error, url: http://127.0.0.1:51001/v1/models?client_version=0.163.0",
+    "2026-10-15T17:43:38.864991Z ERROR codex_api::endpoint::responses_websocket: failed to connect to websocket: HTTP error: 426 Upgrade Required, url: ws://127.0.0.1:51001/v1/responses"
+   ],
+   "proxy": [],
+   "answer_file": "{\"verdict\":\"ok\",\"n\":1}",
+   "answer_matches_last_message": true,
+   "trap_hits": {},
+   "markers_on_disk": [],
+   "input": {
+    "instructions_len": 0,
+    "instructions_head": "",
+    "input": [
+     {
+      "role": "developer",
+      "len": 0,
+      "head": ""
+     },
+     {
+      "role": "developer",
+      "len": 46,
+      "head": "You are a strict JSON judge. INSTR-FILE-MARKER"
+     },
+     {
+      "role": "user",
+      "len": 99,
+      "head": "# AGENTS.md instructions\n\n<INSTRUCTIONS>\nGLOBAL-AGENTS-MARKER: global instructions.\n</INSTRUCTIONS>"
+     },
+     {
+      "role": "user",
+      "len": 60,
+      "head": "Judge this text and answer with the schema. P0-SENTINEL-LOCK"
+     }
+    ],
+    "model": "gpt-6.1-sol",
+    "reasoning": {
+     "effort": "low",
+     "context": "all_turns"
+    }
+   }
+  },
+  "LC_files_codex_home": {
+   "new_count": 12,
+   "new": [
+    "/Users/runner/work/_temp/p0-newest/cages/001-lock/answer.json",
+    "goals_1.sqlite",
+    "goals_1.sqlite-shm",
+    "goals_1.sqlite-wal",
+    "installation_id",
+    "logs_2.sqlite",
+    "memories_1.sqlite",
+    "queue_1.sqlite",
+    "queue_1.sqlite-shm",
+    "queue_1.sqlite-wal",
+    "state_5.sqlite",
+    "state_5.sqlite-wal"
+   ],
+   "changed": [],
+   "removed": []
+  },
+  "LC_files_elsewhere": {
+   "codex_or_openai": [],
+   "other_count": 12,
+   "other_sample": [
+    "/Users/runner/Library/Caches/bazel/_bazel_runner/install/e15394ac7311f82db7c708c94ae7eeac/process-wrapper",
+    "/Users/runner/Library/Caches/bazel/_bazel_runner/install/e15394ac7311f82db7c708c94ae7eeac/libcpu_profiler.dylib",
+    "/Users/runner/Library/Caches/bazel/_bazel_runner/install/e15394ac7311f82db7c708c94ae7eeac/daemonize",
+    "/Users/runner/Library/Caches/bazel/_bazel_runner/install/e15394ac7311f82db7c708c94ae7eeac/linux-sandbox",
+    "/Users/runner/Library/Caches/bazel/_bazel_runner/install/e15394ac7311f82db7c708c94ae7eeac/install_base_key",
+    "/Users/runner/Library/Caches/bazel/_bazel_runner/install/e15394ac7311f82db7c708c94ae7eeac/A-server.jar",
+    "/Users/runner/Library/Caches/bazel/_bazel_runner/install/e15394ac7311f82db7c708c94ae7eeac/build-label.txt",
+    "/Users/runner/Library/Caches/bazel/_bazel_runner/install/e15394ac7311f82db7c708c94ae7eeac/xcode-locator",
+    "/Users/runner/Library/Caches/bazel/_bazel_runner/install/e15394ac7311f82db7c708c94ae7eeac/platforms/WORKSPACE",
+    "/Users/runner/Library/Caches/bazel/_bazel_runner/install/e15394ac7311f82db7c708c94ae7eeac/platforms/BUILD",
+    "/Users/runner/Library/Caches/bazel/_bazel_runner/install/e15394ac7311f82db7c708c94ae7eeac/embedded_tools/WORKSPACE",
+    "/Users/runner/Library/Caches/bazel/_bazel_runner/install/e15394ac7311f82db7c708c94ae7eeac/embedded_tools/MODULE.bazel"
+   ]
+  },
+  "LC_procs_after": [],
+  "LALL_chatgpt": {
+   "rc": 0,
+   "dt": 0.6,
+   "thread": "01a140a9-9f4c-7202-9185-6bec158c2ce2",
+   "types": [
+    "thread.started",
+    "item.completed:error",
+    "turn.started",
+    "item.completed:agent_message",
+    "turn.completed"
+   ],
+   "n_model_calls": 1,
+   "tools": [
+    "functions.exec",
+    "functions.exec>apply_patch",
+    "functions.exec>clock__curr_time",
+    "functions.exec>list_mcp_resource_templates",
+    "functions.exec>list_mcp_resources",
+    "functions.exec>read_mcp_resource",
+    "functions.wait"
+   ],
+   "endpoints": {
+    "GET /backend-api/wham/accounts/check": 2,
+    "GET /v1/models": 3,
+    "GET /v1/responses": 1,
+    "GET /backend-api/wham/settings/user": 1,
+    "POST /v1/responses": 1
+   },
+   "last_message": "{\"verdict\":\"ok\",\"n\":1}",
+   "markers": [
+    "GLOBAL-AGENTS-MARKER",
+    "INSTR-FILE-MARKER"
+   ],
+   "auth_kinds": [
+    "fake-chatgpt"
+   ],
+   "unreadable_bodies": [],
+   "stderr_errors": [
+    "2026-10-15T17:43:40.621505Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 404 Not Found: Unknown error, url: http://127.0.0.1:51001/v1/models?client_version=0.163.0",
+    "2026-10-15T17:43:40.622529Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 404 Not Found: Unknown error, url: http://127.0.0.1:51001/v1/models?client_version=0.163.0",
+    "2026-10-15T17:43:40.625014Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 404 Not Found: Unknown error, url: http://127.0.0.1:51001/v1/models?client_version=0.163.0",
+    "2026-10-15T17:43:40.982175Z ERROR codex_api::endpoint::responses_websocket: failed to connect to websocket: HTTP error: 426 Upgrade Required, url: ws://127.0.0.1:51001/v1/responses"
+   ]
+  },
+  "LC_forced_calls": {
+   "exec_js": {
+    "rc": 0,
+    "tool_outputs": [
+     "code-mode host is disabled"
+    ],
+    "secret_leaked": false,
+    "files_written": [],
+    "stream_types": [
+     "thread.started",
+     "item.completed:error",
+     "turn.started",
+     "item.completed:agent_message",
+     "turn.completed"
+    ],
+    "proxy": []
+   },
+   "exec_command": {
+    "rc": 0,
+    "tool_outputs": [
+     "unsupported call: exec_command"
+    ],
+    "secret_leaked": false,
+    "files_written": [],
+    "stream_types": [
+     "thread.started",
+     "item.completed:error",
+     "turn.started",
+     "item.completed:agent_message",
+     "turn.completed"
+    ],
+    "proxy": []
+   },
+   "apply_patch": {
+    "rc": 0,
+    "tool_outputs": [
+     "patch rejected: writing is blocked by read-only sandbox; rejected by user approval settings"
+    ],
+    "secret_leaked": false,
+    "files_written": [],
+    "stream_types": [
+     "thread.started",
+     "item.completed:error",
+     "turn.started",
+     "item.completed:agent_message",
+     "turn.completed"
+    ],
+    "proxy": []
+   },
+   "shell": {
+    "rc": 0,
+    "tool_outputs": [
+     "unsupported call: shell"
+    ],
+    "secret_leaked": false,
+    "files_written": [],
+    "stream_types": [
+     "thread.started",
+     "item.completed:error",
+     "turn.started",
+     "item.completed:agent_message",
+     "turn.completed"
+    ],
+    "proxy": []
+   },
+   "spawn_agent": {
+    "rc": 0,
+    "tool_outputs": [
+     "unsupported call: spawn_agent"
+    ],
+    "secret_leaked": false,
+    "files_written": [],
+    "stream_types": [
+     "thread.started",
+     "item.completed:error",
+     "turn.started",
+     "item.completed:agent_message",
+     "turn.completed"
+    ],
+    "proxy": []
+   },
+   "view_image": {
+    "rc": 0,
+    "tool_outputs": [
+     "unsupported call: view_image"
+    ],
+    "secret_leaked": false,
+    "files_written": [],
+    "stream_types": [
+     "thread.started",
+     "item.completed:error",
+     "turn.started",
+     "item.completed:agent_message",
+     "turn.completed"
+    ],
+    "proxy": []
+   },
+   "imagegen": {
+    "rc": 0,
+    "tool_outputs": [
+     "unsupported call: image_gen__imagegen"
+    ],
+    "secret_leaked": false,
+    "files_written": [],
+    "stream_types": [
+     "thread.started",
+     "item.completed:error",
+     "turn.started",
+     "item.completed:agent_message",
+     "turn.completed"
+    ],
+    "proxy": []
+   },
+   "request_user_input_async_valid": {
+    "rc": 0,
+    "tool_outputs": [
+     "unsupported call: request_user_input_async"
+    ],
+    "secret_leaked": false,
+    "files_written": [],
+    "stream_types": [
+     "thread.started",
+     "item.completed:error",
+     "turn.started",
+     "item.completed:agent_message",
+     "turn.completed"
+    ],
+    "proxy": []
+   },
+   "wait_valid": {
+    "rc": 0,
+    "tool_outputs": [
+     "code-mode host is disabled"
+    ],
+    "secret_leaked": false,
+    "files_written": [],
+    "stream_types": [
+     "thread.started",
+     "item.completed:error",
+     "turn.started",
+     "item.completed:agent_message",
+     "turn.completed"
+    ],
+    "proxy": []
+   },
+   "announced_wait": {
+    "rc": 0,
+    "tool_outputs": [
+     "failed to parse function arguments: missing field `cell_id` at line 1 column 2"
+    ],
+    "secret_leaked": false,
+    "files_written": [],
+    "stream_types": [
+     "thread.started",
+     "item.completed:error",
+     "turn.started",
+     "item.completed:agent_message",
+     "turn.completed"
+    ],
+    "proxy": []
+   }
+  },
+  "LC_official_urls": {
+   "rc": 1,
+   "proxy": [
+    "CONNECT auth.openai.com:443",
+    "CONNECT chatgpt.com:443"
+   ],
+   "mock_hits": {},
+   "types": [
+    "thread.started",
+    "item.completed:error",
+    "turn.started",
+    "error",
+    "error",
+    "error",
+    "error",
+    "item.completed:error",
+    "error",
+    "error",
+    "error",
+    "error"
+   ],
+   "stderr_tail": "2026-10-15T17:43:49.327542Z ERROR codex_models_manager::manager: failed to refresh available models: Connection failed: error sending request\n2026-10-15T17:43:49.334251Z ERROR codex_models_manager::manager: failed to refresh available models: Connection failed: error sending request\n2026-10-15T17:43:52.398208Z ERROR codex_models_manager::manager: failed to refresh available models: Connection failed: error sending request\n2026-10-15T17:43:55.372405Z ERROR codex_models_manager::manager: failed to refresh available models: Connection failed: error sending request\n"
+  },
+  "_seconds": 69.6
+ },
+ "hooks": {
+  "variants": {
+   "U0": [
+    "echo U0-{ev} >> /Users/runner/work/_temp/p0-newest/u0-marker.txt",
+    null
+   ],
+   "U1": [
+    "/opt/homebrew/opt/python@3.14/bin/python3.14 /Users/runner/work/_temp/p0-newest/hooks/hook.py {ev} U1",
+    null
+   ],
+   "U2": [
+    "\"/opt/homebrew/opt/python@3.14/bin/python3.14\" \"/Users/runner/work/_temp/p0-newest/hooks/hook.py\" {ev} U2",
+    null
+   ],
+   "U4": [
+    "'/Users/runner/work/_temp/p0-newest/py space/python3.14' '/Users/runner/work/_temp/p0-newest/dir with space/hook.py' {ev} U4",
+    null
+   ]
+  },
+  "bypass": {
+   "rc": 0,
+   "ran": {
+    "U4": [
+     "SessionStart",
+     "UserPromptSubmit",
+     "Stop"
+    ],
+    "U1": [
+     "SessionStart",
+     "UserPromptSubmit",
+     "Stop"
+    ],
+    "U2": [
+     "SessionStart",
+     "UserPromptSubmit",
+     "Stop"
+    ],
+    "U0": [
+     "U0-SessionStart",
+     "U0-UserPromptSubmit",
+     "U0-Stop"
+    ]
+   },
+   "context": {
+    "U0/SessionStart": "absent",
+    "U0/UserPromptSubmit": "absent",
+    "U1/SessionStart": "exact",
+    "U1/UserPromptSubmit": "exact",
+    "U2/SessionStart": "exact",
+    "U2/UserPromptSubmit": "exact",
+    "U4/SessionStart": "exact",
+    "U4/UserPromptSubmit": "exact"
+   },
+   "parents": [
+    "U1: /Users/runner/work/_temp/newest/x/bin/codex exec --json --skip-git-repo-check --dangerously-bypass-hook-trust -c openai_base_url=\"http://127.0.0.1:51219/v1\" -c chatgpt_base_url=\"http://127.0.0.1:51219",
+    "U2: /Users/runner/work/_temp/newest/x/bin/codex exec --json --skip-git-repo-check --dangerously-bypass-hook-trust -c openai_base_url=\"http://127.0.0.1:51219/v1\" -c chatgpt_base_url=\"http://127.0.0.1:51219",
+    "U4: /Users/runner/work/_temp/newest/x/bin/codex exec --json --skip-git-repo-check --dangerously-bypass-hook-trust -c openai_base_url=\"http://127.0.0.1:51219/v1\" -c chatgpt_base_url=\"http://127.0.0.1:51219"
+   ],
+   "stderr_hook_lines": [],
+   "types": [
+    "thread.started",
+    "item.completed:error",
+    "item.completed:error",
+    "turn.started",
+    "item.completed:agent_message",
+    "turn.completed"
+   ],
+   "rust_log_seen_by_hook": [
+    "codex_hooks=trace,codex_core::hook_runtime=trace,warn"
+   ],
+   "payload_keys": {
+    "SessionStart": [
+     "cwd",
+     "hook_event_name",
+     "model",
+     "permission_mode",
+     "session_id",
+     "source",
+     "transcript_path"
+    ],
+    "UserPromptSubmit": [
+     "cwd",
+     "hook_event_name",
+     "model",
+     "permission_mode",
+     "prompt",
+     "session_id",
+     "transcript_path",
+     "turn_id"
+    ],
+    "Stop": [
+     "cwd",
+     "hook_event_name",
+     "last_assistant_message",
+     "model",
+     "permission_mode",
+     "session_id",
+     "stop_hook_active",
+     "transcript_path",
+     "turn_id"
+    ]
+   },
+   "payload_sample": {
+    "SessionStart": {
+     "hook_event_name": "SessionStart",
+     "source": "startup",
+     "transcript_path": "/Users/runner/work/_temp/p0-newest/homes/hooks-bypass/sessions/2026/10/15/rollout-2026-10-15T17-44-12-01a140aa-1c22-7683-8afe-9ae057ac6906.jsonl",
+     "permission_mode": "bypassPermissions",
+     "model": "gpt-6.1-sol",
+     "cwd": "/Users/runner/work/_temp/p0-newest/work",
+     "session_id": "01a140aa-1c22-7683-8afe-9ae057ac6906"
+    },
+    "UserPromptSubmit": {
+     "hook_event_name": "UserPromptSubmit",
+     "source": null,
+     "transcript_path": "/Users/runner/work/_temp/p0-newest/homes/hooks-bypass/sessions/2026/10/15/rollout-2026-10-15T17-44-12-01a140aa-1c22-7683-8afe-9ae057ac6906.jsonl",
+     "permission_mode": "bypassPermissions",
+     "model": "gpt-6.1-sol",
+     "cwd": "/Users/runner/work/_temp/p0-newest/work",
+     "session_id": "01a140aa-1c22-7683-8afe-9ae057ac6906"
+    },
+    "Stop": {
+     "hook_event_name": "Stop",
+     "source": null,
+     "transcript_path": "/Users/runner/work/_temp/p0-newest/homes/hooks-bypass/sessions/2026/10/15/rollout-2026-10-15T17-44-12-01a140aa-1c22-7683-8afe-9ae057ac6906.jsonl",
+     "permission_mode": "bypassPermissions",
+     "model": "gpt-6.1-sol",
+     "cwd": "/Users/runner/work/_temp/p0-newest/work",
+     "session_id": "01a140aa-1c22-7683-8afe-9ae057ac6906"
+    }
+   }
+  },
+  "trusted_hash": {
+   "rc": 0,
+   "ran": {
+    "U1": [
+     "SessionStart",
+     "UserPromptSubmit",
+     "Stop"
+    ],
+    "U2": [
+     "SessionStart",
+     "UserPromptSubmit",
+     "Stop"
+    ],
+    "U4": [
+     "SessionStart",
+     "UserPromptSubmit",
+     "Stop"
+    ],
+    "U0": [
+     "U0-SessionStart",
+     "U0-UserPromptSubmit",
+     "U0-Stop"
+    ]
+   },
+   "context": {
+    "U0/SessionStart": "absent",
+    "U0/UserPromptSubmit": "absent",
+    "U1/SessionStart": "exact",
+    "U1/UserPromptSubmit": "exact",
+    "U2/SessionStart": "exact",
+    "U2/UserPromptSubmit": "exact",
+    "U4/SessionStart": "exact",
+    "U4/UserPromptSubmit": "exact"
+   },
+   "parents": [
+    "U1: /Users/runner/work/_temp/newest/x/bin/codex exec --json --skip-git-repo-check -c openai_base_url=\"http://127.0.0.1:51239/v1\" -c chatgpt_base_url=\"http://127.0.0.1:51239/backend-api/\" -c features.enabl",
+    "U2: /Users/runner/work/_temp/newest/x/bin/codex exec --json --skip-git-repo-check -c openai_base_url=\"http://127.0.0.1:51239/v1\" -c chatgpt_base_url=\"http://127.0.0.1:51239/backend-api/\" -c features.enabl",
+    "U4: /Users/runner/work/_temp/newest/x/bin/codex exec --json --skip-git-repo-check -c openai_base_url=\"http://127.0.0.1:51239/v1\" -c chatgpt_base_url=\"http://127.0.0.1:51239/backend-api/\" -c features.enabl"
+   ],
+   "stderr_hook_lines": [],
+   "types": [
+    "thread.started",
+    "turn.started",
+    "item.completed:agent_message",
+    "turn.completed"
+   ],
+   "rust_log_seen_by_hook": [
+    "codex_hooks=trace,codex_core::hook_runtime=trace,warn"
+   ],
+   "payload_keys": {
+    "SessionStart": [
+     "cwd",
+     "hook_event_name",
+     "model",
+     "permission_mode",
+     "session_id",
+     "source",
+     "transcript_path"
+    ],
+    "UserPromptSubmit": [
+     "cwd",
+     "hook_event_name",
+     "model",
+     "permission_mode",
+     "prompt",
+     "session_id",
+     "transcript_path",
+     "turn_id"
+    ],
+    "Stop": [
+     "cwd",
+     "hook_event_name",
+     "last_assistant_message",
+     "model",
+     "permission_mode",
+     "session_id",
+     "stop_hook_active",
+     "transcript_path",
+     "turn_id"
+    ]
+   },
+   "payload_sample": {
+    "SessionStart": {
+     "hook_event_name": "SessionStart",
+     "source": "startup",
+     "transcript_path": "/Users/runner/work/_temp/p0-newest/homes/hooks-trusted/sessions/2026/10/15/rollout-2026-10-15T17-44-13-01a140aa-214f-77a2-a956-56d1bd31785e.jsonl",
+     "permission_mode": "bypassPermissions",
+     "model": "gpt-6.1-sol",
+     "cwd": "/Users/runner/work/_temp/p0-newest/work",
+     "session_id": "01a140aa-214f-77a2-a956-56d1bd31785e"
+    },
+    "UserPromptSubmit": {
+     "hook_event_name": "UserPromptSubmit",
+     "source": null,
+     "transcript_path": "/Users/runner/work/_temp/p0-newest/homes/hooks-trusted/sessions/2026/10/15/rollout-2026-10-15T17-44-13-01a140aa-214f-77a2-a956-56d1bd31785e.jsonl",
+     "permission_mode": "bypassPermissions",
+     "model": "gpt-6.1-sol",
+     "cwd": "/Users/runner/work/_temp/p0-newest/work",
+     "session_id": "01a140aa-214f-77a2-a956-56d1bd31785e"
+    },
+    "Stop": {
+     "hook_event_name": "Stop",
+     "source": null,
+     "transcript_path": "/Users/runner/work/_temp/p0-newest/homes/hooks-trusted/sessions/2026/10/15/rollout-2026-10-15T17-44-13-01a140aa-214f-77a2-a956-56d1bd31785e.jsonl",
+     "permission_mode": "bypassPermissions",
+     "model": "gpt-6.1-sol",
+     "cwd": "/Users/runner/work/_temp/p0-newest/work",
+     "session_id": "01a140aa-214f-77a2-a956-56d1bd31785e"
+    }
+   }
+  },
+  "_seconds": 2.1
+ },
+ "classify": {
+  "baseline_all_off": {
+   "rc": 0,
+   "tools": [
+    "functions.exec",
+    "functions.exec>apply_patch",
+    "functions.exec>clock__curr_time",
+    "functions.exec>list_mcp_resource_templates",
+    "functions.exec>list_mcp_resources",
+    "functions.exec>read_mcp_resource",
+    "functions.wait"
+   ],
+   "endpoints": [
+    "GET /backend-api/wham/accounts/check",
+    "GET /backend-api/wham/settings/user",
+    "GET /v1/models",
+    "GET /v1/responses",
+    "POST /v1/responses"
+   ],
+   "dev_len": 46,
+   "unreadable": false,
+   "err": [
+    "2026-10-15T17:44:14.655329Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 404 Not Found: Unknown error, url: http://127.0.0.1:51259/v1/models?client_versio",
+    "2026-10-15T17:44:14.665973Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 404 Not Found: Unknown error, url: http://127.0.0.1:51259/v1/models?client_versio",
+    "2026-10-15T17:44:14.667747Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 404 Not Found: Unknown error, url: http://127.0.0.1:51259/v1/models?client_versio"
+   ]
+  },
+  "baseline_all_on": {
+   "rc": 0,
+   "tools": [
+    "clock.sleep",
+    "functions.exec",
+    "functions.exec>apply_patch",
+    "functions.exec>clock__curr_time",
+    "functions.exec>create_goal",
+    "functions.exec>exec_command",
+    "functions.exec>get_goal",
+    "functions.exec>image_gen__imagegen",
+    "functions.exec>list_mcp_resource_templates",
+    "functions.exec>list_mcp_resources",
+    "functions.exec>read_mcp_resource",
+    "functions.exec>update_goal",
+    "functions.exec>view_image",
+    "functions.exec>write_stdin",
+    "functions.wait"
+   ],
+   "endpoints": [
+    "GET /backend-api/plugins/featured",
+    "GET /backend-api/ps/plugins/installed",
+    "GET /backend-api/ps/plugins/list",
+    "GET /backend-api/ps/plugins/suggested/codex",
+    "GET /backend-api/wham/accounts/check",
+    "GET /backend-api/wham/settings/user",
+    "GET /v1/models",
+    "GET /v1/responses",
+    "POST /backend-api/ps/mcp",
+    "POST /v1/responses"
+   ],
+   "dev_len": 46,
+   "unreadable": false,
+   "err": [
+    "2026-10-15T17:44:15.060264Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 404 Not Found: Unknown error, url: http://127.0.0.1:51259/v1/models?client_versio",
+    "2026-10-15T17:44:15.062948Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 404 Not Found: Unknown error, url: http://127.0.0.1:51259/v1/models?client_versio",
+    "2026-10-15T17:44:15.064248Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 404 Not Found: Unknown error, url: http://127.0.0.1:51259/v1/models?client_versio"
+   ]
+  },
+  "enable_request_compression_solo": {
+   "rc": 1,
+   "tools": [],
+   "endpoints": [
+    "GET /backend-api/wham/accounts/check",
+    "GET /backend-api/wham/settings/user",
+    "GET /v1/models",
+    "GET /v1/responses",
+    "POST /v1/responses"
+   ],
+   "dev_len": 0,
+   "unreadable": true,
+   "err": [
+    "2026-10-15T17:44:15.426716Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 404 Not Found: Unknown error, url: http://127.0.0.1:51259/v1/models?client_versio",
+    "2026-10-15T17:44:15.433320Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 404 Not Found: Unknown error, url: http://127.0.0.1:51259/v1/models?client_versio",
+    "2026-10-15T17:44:15.435769Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 404 Not Found: Unknown error, url: http://127.0.0.1:51259/v1/models?client_versio"
+   ]
+  },
+  "tools_by_feature": {
+   "goals": {
+    "solo": [
+     "functions.exec>create_goal",
+     "functions.exec>get_goal",
+     "functions.exec>update_goal"
+    ],
+    "drop": [
+     "functions.exec>create_goal",
+     "functions.exec>get_goal",
+     "functions.exec>update_goal"
+    ]
+   },
+   "image_generation": {
+    "solo": [
+     "functions.exec>image_gen__imagegen"
+    ],
+    "drop": [
+     "functions.exec>image_gen__imagegen"
+    ]
+   },
+   "shell_tool": {
+    "solo": [
+     "functions.exec>exec_command",
+     "functions.exec>write_stdin"
+    ],
+    "drop": [
+     "functions.exec>exec_command",
+     "functions.exec>write_stdin"
+    ]
+   },
+   "sleep_tool": {
+    "solo": [
+     "clock.sleep"
+    ],
+    "drop": [
+     "clock.sleep"
+    ]
+   },
+   "view_image": {
+    "solo": [
+     "functions.exec>view_image"
+    ],
+    "drop": [
+     "functions.exec>view_image"
+    ]
+   }
+  },
+  "network_by_feature": {
+   "apps": {
+    "solo": [
+     "POST /backend-api/ps/mcp"
+    ],
+    "drop": [
+     "POST /backend-api/ps/mcp"
+    ]
+   },
+   "compaction_image_budget": {
+    "solo": [],
+    "drop": [
+     "GET /backend-api/wham/accounts/check"
+    ]
+   },
+   "in_app_local_automation": {
+    "solo": [],
+    "drop": [
+     "GET /backend-api/wham/accounts/check"
+    ]
+   },
+   "plugins": {
+    "solo": [
+     "GET /backend-api/plugins/featured",
+     "GET /backend-api/ps/plugins/installed"
+    ],
+    "drop": [
+     "GET /backend-api/plugins/featured",
+     "GET /backend-api/ps/plugins/installed",
+     "GET /backend-api/ps/plugins/list",
+     "GET /backend-api/ps/plugins/suggested/codex"
+    ]
+   },
+   "remote_plugin": {
+    "solo": [],
+    "drop": [
+     "GET /backend-api/ps/plugins/list",
+     "GET /backend-api/ps/plugins/suggested/codex"
+    ]
+   },
+   "unified_exec_tty": {
+    "solo": [],
+    "drop": [
+     "GET /backend-api/wham/accounts/check"
+    ]
+   }
+  },
+  "prompt_by_feature": {},
+  "failures": {},
+  "behaviour_code_mode_host_off": {
+   "rc": 0,
+   "tool_output": [
+    "code-mode host is disabled"
+   ]
+  },
+  "behaviour_code_mode_host_on": {
+   "rc": 0,
+   "tool_output": [
+    "[{'type': 'input_text', 'text': 'Script completed\\nWall time 0.1 seconds\\nOutput:\\n'}, {'type': 'input_text', 'text': 'P0-CODE-MODE-RAN 42'}]"
+   ]
+  },
+  "hosted_mcp_apps_off": {
+   "rc": 0,
+   "tools": [
+    "functions.exec",
+    "functions.exec>apply_patch",
+    "functions.exec>clock__curr_time",
+    "functions.exec>list_mcp_resource_templates",
+    "functions.exec>list_mcp_resources",
+    "functions.exec>read_mcp_resource",
+    "functions.wait"
+   ],
+   "mcp_methods": []
+  },
+  "hosted_mcp_apps_on": {
+   "rc": 0,
+   "tools": [
+    "functions.exec",
+    "functions.exec>apply_patch",
+    "functions.exec>clock__curr_time",
+    "functions.exec>list_mcp_resource_templates",
+    "functions.exec>list_mcp_resources",
+    "functions.exec>read_mcp_resource",
+    "functions.wait"
+   ],
+   "mcp_methods": [
+    "initialize",
+    "notifications/initialized",
+    null,
+    "tools/list",
+    null
+   ]
+  },
+  "hosted_mcp_all_default_on": {
+   "rc": 0,
+   "tools": [
+    "clock.sleep",
+    "functions.exec",
+    "functions.exec>apply_patch",
+    "functions.exec>clock__curr_time",
+    "functions.exec>create_goal",
+    "functions.exec>exec_command",
+    "functions.exec>get_goal",
+    "functions.exec>image_gen__imagegen",
+    "functions.exec>list_mcp_resource_templates",
+    "functions.exec>list_mcp_resources",
+    "functions.exec>read_mcp_resource",
+    "functions.exec>update_goal",
+    "functions.exec>view_image",
+    "functions.exec>write_stdin",
+    "functions.wait"
+   ],
+   "mcp_methods": [
+    "initialize",
+    "notifications/initialized",
+    null,
+    "tools/list",
+    null
+   ]
+  },
+  "_seconds": 55.7
+ }
+}

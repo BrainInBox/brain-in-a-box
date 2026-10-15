@@ -22,11 +22,18 @@ LOG="$STATE/install.log"
 # Flags:
 #   --company <git-url>   join a team (clone company vault as 2nd GBrain source)
 #   --with-gstack         also install gstack (Garry Tan's 23 AI specialists for Claude Code)
+#   --agents <list>       the AI agents to wire: claude (the default), codex, or claude,codex
+#   --prefere <agent>     the one that writes the evening summary when both are chosen
+#                         (or BIAB_AGENTS / BIAB_PREFERE; Codex is not open on any system yet)
 COMPANY_URL=""
 WITH_GSTACK=""
+AGENTS_OPT=""
+PREFERE_OPT=""
 while [ $# -gt 0 ]; do case "$1" in
   --company)     COMPANY_URL="${2:-}"; shift 2;;
   --with-gstack) WITH_GSTACK=1; shift;;
+  --agents)      AGENTS_OPT="${2:-}"; shift; [ $# -eq 0 ] || shift;;
+  --prefere)     PREFERE_OPT="${2:-}"; shift; [ $# -eq 0 ] || shift;;
   *) shift;;
 esac; done
 
@@ -149,6 +156,47 @@ print("settings.json: hooks registered" + (" (previous version: %s)" % bak if ba
 PY
 }
 # <<< settings
+
+# >>> agents
+# Which AI agents the kit wires: --agents/--prefere, else BIAB_AGENTS/BIAB_PREFERE (how the
+# app passes it), else the choice made before (~/.brain-in-a-box/agents.json), else Claude
+# alone, as before there was a choice. engine/hooks/_agents.py decides and records a choice
+# before anything is installed; with none, it writes nothing. Codex is refused on a system
+# until it opens there.
+AGENTS=claude
+PREFERE=claude
+choose_agents() {
+  local out label
+  out="$(python3 -I "$REPO/engine/hooks/_agents.py" choisir --pose-par=install.sh \
+         --agents="${AGENTS_OPT:-${BIAB_AGENTS:-}}" --prefere="${PREFERE_OPT:-${BIAB_PREFERE:-}}")" || true
+  case "$out" in
+    "agents=claude prefere=claude "*|"agents=codex prefere=codex "*|"agents=claude,codex prefere=claude "*|"agents=claude,codex prefere=codex "*) ;;
+    erreur=inconnu) die "--agents takes claude, codex or claude,codex, and --prefere one of the chosen ones (BIAB_AGENTS and BIAB_PREFERE too)." ;;
+    erreur=ferme) die "Codex is coming soon on this system. Re-run with --agents claude, or without --agents and BIAB_AGENTS." ;;
+    erreur=prefere) die "--prefere (or BIAB_PREFERE) names an agent that is not chosen." ;;
+    erreur=fichier:ferme) die "$STATE/agents.json asks for Codex, which is not available on this system yet. Re-run with --agents claude to replace it." ;;
+    erreur=fichier:illisible) die "$STATE/agents.json cannot be read, or is a link. It was left untouched: fix it, or re-run with --agents claude (or codex, or claude,codex) to replace it." ;;
+    erreur=fichier:droits) die "$STATE/agents.json can be changed by another account. It was left untouched: chmod 600 it, or re-run with --agents claude (or codex, or claude,codex) to replace it." ;;
+    erreur=fichier:*) die "$STATE/agents.json is not a choice this kit knows. It was left untouched: re-run with --agents claude (or codex, or claude,codex) to replace it." ;;
+    erreur=codex_home) die "CODEX_HOME must be an absolute path." ;;
+    erreur=ecriture:*) die "could not write $STATE/agents.json (${out#erreur=ecriture:})." ;;
+    *) die "engine/hooks/_agents.py did not answer (see above). Download brain-in-a-box again, then re-run ./install.sh" ;;
+  esac
+  AGENTS="${out#agents=}"; AGENTS="${AGENTS%% *}"
+  PREFERE="${out#* prefere=}"; PREFERE="${PREFERE%% *}"
+  case "$AGENTS:$PREFERE" in
+    claude:*) label="Claude Code" ;;
+    codex:*) label="Codex" ;;
+    *:codex) label="Claude Code and Codex (preferred: Codex)" ;;
+    *) label="Claude Code and Codex (preferred: Claude Code)" ;;
+  esac
+  case "$out" in
+    *" source=choix ecrit=oui") ok "AI agents: $label, recorded in $STATE/agents.json" ;;
+    *" source=choix ecrit=non"|*" source=fichier "*) ok "AI agents: $label, as chosen before ($STATE/agents.json)" ;;
+  esac
+}
+with_agent() { case ",$AGENTS," in *",$1,"*) return 0 ;; *) return 1 ;; esac; }
+# <<< agents
 
 # >>> linux
 # Linux only. sudo never runs without a yes typed in a terminal: without one, the
@@ -419,11 +467,16 @@ case "$OS" in
 esac
 command -v git >/dev/null   || die "git missing."
 command -v python3 >/dev/null || die "python3 missing."
-merge_settings "$H" --check   # a settings.json we cannot read stops us before anything is changed
+choose_agents                 # a choice refused stops us before anything is changed
+if with_agent claude; then
+  merge_settings "$H" --check   # a settings.json we cannot read stops us before anything is changed
+fi
 mkdir -p "$STATE"
 ( umask 077; : >> "$LOG" ); chmod 600 "$LOG"
 printf '\n===== install.sh %s =====\n' "$(date '+%Y-%m-%d %H:%M:%S')" >> "$LOG"
-[ "$OS" = Linux ] || command -v claude >/dev/null || warn "claude CLI not found — install Claude Code first."
+if with_agent claude; then
+  [ "$OS" = Linux ] || command -v claude >/dev/null || warn "claude CLI not found — install Claude Code first."
+fi
 # Bun at the version CI tests with gbrain (engine/gbrain-pin.json), through its official installer.
 BUN_PIN="$(python3 -I -c 'import json, re, sys; v = json.load(open(sys.argv[1])).get("bun") or ""; print(v if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", v) else "")' "$REPO/engine/gbrain-pin.json" 2>/dev/null || true)"
 export PATH="$H/.bun/bin:$H/.local/bin:$PATH"
@@ -640,25 +693,28 @@ else
 fi
 if [ "$BACKED_UP" -gt 0 ]; then warn "$BACKED_UP file(s) you had changed were replaced; your versions are in $BACKUP"; fi
 
-# ── 8. settings.json (merge hooks, non-destructive) ─────────────────────────
-say "Registering hooks (~/.claude/settings.json)"
-merge_settings "$H"
+# ── 8-9bis. Claude Code: its hooks, CLAUDE.md and skills, when it is chosen ─────
+if with_agent claude; then
+  # ── 8. settings.json (merge hooks, non-destructive) ───────────────────────
+  say "Registering hooks (~/.claude/settings.json)"
+  merge_settings "$H"
 
-# ── 9. Global CLAUDE.md (append, never overwrite) ────────────────────────────
-say "Global CLAUDE.md"
-GC="$H/.claude/CLAUDE.md"
-MARK="<!-- brain-in-a-box -->"
-if [ -f "$GC" ] && grep -q "$MARK" "$GC"; then
-  ok "already present (skip)"
-else
-  { echo; echo "$MARK"; cat "$REPO/engine/CLAUDE.global.template.md"; } >> "$GC"
-  ok "appended (your existing content preserved)"
+  # ── 9. Global CLAUDE.md (append, never overwrite) ──────────────────────────
+  say "Global CLAUDE.md"
+  GC="$H/.claude/CLAUDE.md"
+  MARK="<!-- brain-in-a-box -->"
+  if [ -f "$GC" ] && grep -q "$MARK" "$GC"; then
+    ok "already present (skip)"
+  else
+    { echo; echo "$MARK"; cat "$REPO/engine/CLAUDE.global.template.md"; } >> "$GC"
+    ok "appended (your existing content preserved)"
+  fi
+
+  # ── 9bis. Claude Code skills (never overwrites one of yours, see the script)
+  say "Claude Code skills"
+  python3 "$REPO/engine/install_skills.py" --src "$REPO/skills" --dest "$H/.claude/skills" \
+    && ok "skills up to date" || warn "skills: see above"
 fi
-
-# ── 9bis. Claude Code skills (never overwrites one of yours, see the script) ─
-say "Claude Code skills"
-python3 "$REPO/engine/install_skills.py" --src "$REPO/skills" --dest "$H/.claude/skills" \
-  && ok "skills up to date" || warn "skills: see above"
 
 # ── 10. git init vault ──────────────────────────────────────────────────────
 say "git init vault"
@@ -756,8 +812,12 @@ fi
 
 # ── 13. Obsidian (to browse/visualize the vault) ────────────────────────────
 if [ "$OS" = Linux ]; then
-  say "Claude Code + Obsidian (to browse your brain)"
-  linux_claude
+  if with_agent claude; then
+    say "Claude Code + Obsidian (to browse your brain)"
+    linux_claude
+  else
+    say "Obsidian (to browse your brain)"
+  fi
   linux_obsidian
 elif [ -d "/Applications/Obsidian.app" ] || [ -d "$H/Applications/Obsidian.app" ]; then
   say "Obsidian (to browse your brain)"
@@ -771,7 +831,9 @@ else
 fi
 
 # ── 14. GStack (optional — 23 AI specialists for Claude Code) ───────────────
-if [ -n "$WITH_GSTACK" ]; then
+if [ -n "$WITH_GSTACK" ] && ! with_agent claude; then
+  warn "--with-gstack: gstack is made for Claude Code, which is not chosen here: skipped"
+elif [ -n "$WITH_GSTACK" ]; then
   say "GStack (23 AI specialists — gstack.com)"
   GS="$H/.claude/skills/gstack"
   if [ -d "$GS/.git" ]; then
@@ -788,7 +850,7 @@ fi
 
 # ── 15. Verify (hooks healthy) ──────────────────────────────────────────────
 say "Verifying hooks"
-bash "$REPO/test-hooks.sh" >/dev/null 2>&1 && ok "hooks + gbrain self-update healthy" || warn "hook check reported issues — run ./test-hooks.sh to see them"
+BIAB_FROM_INSTALL=1 bash "$REPO/test-hooks.sh" >/dev/null 2>&1 && ok "hooks + gbrain self-update healthy" || warn "hook check reported issues — run ./test-hooks.sh to see them"
 
 # ── Done ─────────────────────────────────────────────────────────────────────
 printf "\n\033[1;32m✅ brain-in-a-box installed.\033[0m\n"
@@ -804,15 +866,21 @@ case "$SCHEDULER" in
   cron)     SCHED_CHECK="crontab -l                           # the nightly, reflection and lint (cron)" ;;
   *)        SCHED_CHECK="(nothing scheduled: see the warning above)" ;;
 esac
+LOCAL_TOOLS="gbq, controle"
+if with_agent claude; then LOCAL_TOOLS="claude, $LOCAL_TOOLS"; fi
 case ":$ORIG_PATH:" in
   *":$H/.local/bin:"*) ;;
-  *) [ "$OS" = Linux ] && printf "\n\033[1;33m⚠ ~/.local/bin (claude, gbq, controle) is not on your PATH yet: log out and back in (it is added at login once it exists), or run: export PATH=\"\$HOME/.local/bin:\$HOME/.bun/bin:\$PATH\"\033[0m\n" ;;
+  *) [ "$OS" = Linux ] && printf "\n\033[1;33m⚠ ~/.local/bin ($LOCAL_TOOLS) is not on your PATH yet: log out and back in (it is added at login once it exists), or run: export PATH=\"\$HOME/.local/bin:\$HOME/.bun/bin:\$PATH\"\033[0m\n" ;;
 esac
-cat <<EOF
+if with_agent claude; then
+  cat <<EOF
 
 Last step — the ONBOARDING (15 min) that fills in YOUR profile:
   cd $BRAIN && claude
   then paste:  "Read $REPO/onboarding/ONBOARDING.md and run it to personalize me."
+EOF
+fi
+cat <<EOF
 
 Browse your brain visually in Obsidian:
   open it → "Open folder as vault" → $BRAIN

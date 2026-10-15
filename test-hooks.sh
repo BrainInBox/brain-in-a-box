@@ -1014,6 +1014,188 @@ mkdir -p "$LH/Applications"; : > "$LH/Applications/Obsidian-1.14.4.AppImage"
 out=$(YES=1 lx linux_obsidian); [ -z "$(lxcalls)" ] && echo "$out" | grep -q "OK Obsidian already installed" \
   && ok "linux Obsidian: an AppImage in ~/Applications counts as installed" || no "linux Obsidian: existing AppImage not seen: $out"
 
+echo "════ 16) install.sh end to end, against stand-ins: the AI agents' choice ════"
+install_e2e(){   # the section's body: an unisolated harness stops it with return
+# The whole install.sh, from a copy of the kit whose test-hooks.sh only records how install.sh
+# runs it (last, and without this section), in a home of its own, with an environment and a PATH of their own. What would
+# download, schedule or reach the user's own jobs is a stand-in that records its calls; a proxy
+# that refuses everything catches any other way out. gbrain is already cloned there: no clone.
+IX="$H/install-e2e"; IB="$IX/bin"; KIT="$IX/kit"
+mkdir -p "$IB" "$IX/sys" "$KIT"
+for t in bash sh env mkdir chmod cat cp rm mv date tail sed grep mktemp touch ln dirname basename rmdir id whoami \
+         python3 git cut tr uname sleep ls wc cmp shasum sha256sum pgrep dpkg flatpak; do
+  w=$(command -v "$t") && ln -sf "$w" "$IX/sys/$t"
+done
+for t in launchctl systemctl loginctl crontab sudo apt-get brew curl; do
+  cat > "$IB/$t" <<STUB
+#!/bin/sh
+echo "$t \$*" >> "$IX/calls"
+case "$t \$*" in
+  "launchctl "*|"loginctl "*|"brew "*) exit 0;;
+  "crontab -l") [ -f "$IX/crontab" ] && exec cat "$IX/crontab"; echo "no crontab for \$USER" >&2; exit 1;;
+  "crontab "*) cp "\$1" "$IX/crontab";;
+  *claude.ai/install.sh*) printf 'mkdir -p "\$HOME/.local/bin" && printf "#!/bin/sh\\\\n" > "\$HOME/.local/bin/claude" && chmod +x "\$HOME/.local/bin/claude"\\n';;
+  *) exit 1;;
+esac
+STUB
+done
+printf '#!/bin/sh\necho "$(basename "$0") $*" >> "%s/calls"\n' "$IX" > "$IX/stub"
+chmod +x "$IB"/* "$IX/stub"
+cp -R "$REPO/install.sh" "$REPO/engine" "$REPO/skills" "$REPO/vault-skeleton" "$REPO/onboarding" "$KIT/"
+printf '#!/bin/sh\necho "test-hooks.sh BIAB_FROM_INSTALL=${BIAB_FROM_INSTALL:-}" >> "%s/calls"\n' "$IX" > "$KIT/test-hooks.sh"
+# The same kit with Codex open on every system, as phases 6 and 7 will make it: the path without Claude.
+cp -R "$KIT" "$IX/kit-codex"
+sed -i.bak 's/^CODEX_OUVERT = frozenset()$/CODEX_OUVERT = frozenset({"darwin", "linux", "windows"})/' "$IX/kit-codex/engine/hooks/_agents.py"
+IXPATH="$IB:$IX/sys"
+bad=""
+for t in launchctl systemctl loginctl crontab curl brew; do [ "$(PATH="$IXPATH" command -v "$t")" = "$IB/$t" ] || bad="$bad $t"; done
+for t in claude codex bun gbrain; do [ -z "$(PATH="$IXPATH" command -v "$t")" ] || bad="$bad $t"; done
+grep -qx 'CODEX_OUVERT = frozenset({"darwin", "linux", "windows"})' "$IX/kit-codex/engine/hooks/_agents.py" || bad="$bad gate"
+[ -z "$bad" ] || { no "e2e: harness not isolated:$bad (the rest of this section is not run: it would not be trustworthy)"; return; }
+ok "e2e: the stand-ins come first, nothing of this machine's claude, bun or gbrain is in reach"
+ixhome(){ rm -rf "${IX:?}/home" "$IX/calls" "$IX/crontab"; mkdir -p "$IX/home/.bun/bin" "$IX/home/DEV/gbrain/.git"
+          cp "$IX/stub" "$IX/home/.bun/bin/bun"; cp "$IX/stub" "$IX/home/.bun/bin/gbrain"; }
+IXENV=(); IXUSER=$(id -un)
+ixrun(){ local kit="$1"; shift   # ixrun <kit> [install.sh's options]: in the current home; output in $IX/out
+  env -i HOME="$IX/home" PATH="$IXPATH" USER="$IXUSER" LOGNAME="$IXUSER" TMPDIR="$TMPDIR" LANG="${LANG:-en_US.UTF-8}" \
+    http_proxy=http://127.0.0.1:9 https_proxy=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9 ALL_PROXY=http://127.0.0.1:9 \
+    GIT_TERMINAL_PROMPT=0 ${IXENV[@]+"${IXENV[@]}"} "$IX/sys/bash" "$kit/install.sh" "$@" < /dev/null > "$IX/out" 2>&1; }
+ix(){ ixhome; ixrun "$@"; }
+# What the home holds (path, mode, sha256), the vault's git objects and the install log aside (dates).
+ixtree(){ python3 - "$IX/home" <<'PY'
+import hashlib, os, stat, sys
+root = sys.argv[1]
+skip = {os.path.join(root, "Documents", "Brain", ".git"), os.path.join(root, ".brain-in-a-box", "install.log")}
+lines = []
+for d, dirs, files in os.walk(root):
+    dirs[:] = [x for x in dirs if os.path.join(d, x) not in skip]
+    for name in files + [x for x in dirs if os.path.islink(os.path.join(d, x))]:
+        p = os.path.join(d, name)
+        if p in skip:
+            continue
+        st = os.lstat(p)
+        body = os.readlink(p).encode() if stat.S_ISLNK(st.st_mode) else open(p, "rb").read()
+        lines.append("%s %s %s" % (os.path.relpath(p, root), oct(stat.S_IMODE(st.st_mode)), hashlib.sha256(body).hexdigest()))
+print("\n".join(sorted(lines)))
+PY
+}
+ESC=$(printf '\033')
+ixout(){ sed -E -e "s/$ESC\[[0-9;]*m//g" -e 's/\[[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}\]/[date]/' "$IX/out"; }
+added(){ diff "$1" "$2" | grep '^>' | sed 's/^> //'; }   # the lines only the second has
+gone(){ diff "$1" "$2" | grep '^<'; }                     # the lines the second lost
+ixcalls(){ cat "$IX/calls" 2>/dev/null; }
+nogate(){ grep -v -e '^\.claude/hooks/brain/_agents\.py ' -e '^\.brain-in-a-box/installed\.json ' "$@"; }   # the open copy's own _agents.py
+ajson(){ python3 -c 'import json, sys; d = json.load(open(sys.argv[1], encoding="utf-8")); print(" ".join("%s=%s" % (k, ",".join(v) if isinstance(v, list) else v) for k, v in sorted(d.items())))' "$IX/home/.brain-in-a-box/agents.json"; }
+TODAY=$(date +%Y-%m-%d)
+
+# Nothing chosen: today's install, and no agents.json.
+ix "$KIT"; rc=$?
+ixtree > "$IX/tree-default"; ixout > "$IX/out-default"; ixcalls > "$IX/calls-default"
+python3 - "$IX/home" <<'PY' && [ "$rc" = 0 ] && [ ! -e "$IX/home/.brain-in-a-box/agents.json" ] && ! grep -q "AI agents" "$IX/out-default" \
+  && ok "e2e: nothing chosen: Claude's hooks, CLAUDE.md and skills, as before, and no agents.json" || no "e2e: the default install changed (rc $rc): $(tail -5 "$IX/out")"
+import json, os, sys
+h = sys.argv[1]
+d = json.load(open(os.path.join(h, ".claude", "settings.json"), encoding="utf-8"))
+assert any("correction-detector.py" in x["command"] for g in d["hooks"]["UserPromptSubmit"] for x in g["hooks"])
+assert open(os.path.join(h, ".claude", "CLAUDE.md"), encoding="utf-8").read().count("<!-- brain-in-a-box -->") == 1
+assert os.path.isfile(os.path.join(h, ".claude", "skills", "brain-boost", "SKILL.md"))
+assert os.path.isfile(os.path.join(h, ".claude", "hooks", "brain", "_agents.py"))
+PY
+if [ "$(uname -s)" = Linux ]; then
+  grep -q "^curl -fsSL https://claude.ai/install.sh" "$IX/calls-default" && [ -x "$IX/home/.local/bin/claude" ] \
+    && ok "e2e linux: nothing chosen: Claude Code installed, as before" || no "e2e linux: Claude Code not installed by default"
+else
+  grep -q "claude CLI not found — install Claude Code first" "$IX/out-default" && grep -q "^launchctl bootstrap" "$IX/calls-default" \
+    && ok "e2e mac: nothing chosen: the 'install Claude Code first' warning, the launchd jobs, as before" || no "e2e mac: default install lost its Claude warning or launchd"
+fi
+grep -q "cd $IX/home/Documents/Brain && claude" "$IX/out-default" \
+  && ok "e2e: nothing chosen: the onboarding opens Claude in the vault" || no "e2e: default onboarding line lost"
+[ "$(grep '^test-hooks.sh ' "$IX/calls-default")" = "test-hooks.sh BIAB_FROM_INSTALL=1" ] \
+  && ok "e2e: install.sh runs test-hooks.sh once, last, telling it to leave this section out" \
+  || no "e2e: install.sh runs test-hooks.sh with this section: $(grep '^test-hooks.sh ' "$IX/calls-default")"
+
+# Claude chosen, on the command line or through the app's variable: the same install, one file
+# and one line more.
+ix "$KIT" --agents claude; rc=$?
+ixtree > "$IX/tree-claude"; ixout > "$IX/out-claude"
+[ "$rc" = 0 ] && [ "$(added "$IX/tree-default" "$IX/tree-claude" | cut -d' ' -f1-2)" = ".brain-in-a-box/agents.json 0o600" ] \
+  && [ -z "$(gone "$IX/tree-default" "$IX/tree-claude")" ] && [ "$(ajson)" = "agents=claude date=$TODAY pose_par=install.sh prefere=claude version=1" ] \
+  && ok "e2e: --agents claude: the default's files byte for byte, plus agents.json (0600, Claude, install.sh)" \
+  || no "e2e: --agents claude differs from the default: $(added "$IX/tree-default" "$IX/tree-claude") / $(gone "$IX/tree-default" "$IX/tree-claude")"
+[ "$(added "$IX/out-default" "$IX/out-claude")" = "  ✓ AI agents: Claude Code, recorded in $IX/home/.brain-in-a-box/agents.json" ] \
+  && [ -z "$(gone "$IX/out-default" "$IX/out-claude")" ] \
+  && ok "e2e: --agents claude: the default's output, plus the line that says it was recorded" || no "e2e: --agents claude output differs: $(diff "$IX/out-default" "$IX/out-claude")"
+# A re-run without a choice keeps the one made before; BIAB_PREFERE alone (the app's way) changes nothing then.
+IXENV=(BIAB_PREFERE=claude); ixrun "$KIT"; rc=$?; IXENV=()
+[ "$rc" = 0 ] && ixout | grep -qxF "  ✓ AI agents: Claude Code, as chosen before ($IX/home/.brain-in-a-box/agents.json)" \
+  && ixtree | grep '^\.brain-in-a-box/agents.json ' | cmp -s - <(grep '^\.brain-in-a-box/agents.json ' "$IX/tree-claude") \
+  && ok "e2e: a re-run keeps agents.json as it was and says so" || no "e2e: re-run lost or rewrote the choice: $(ixout | grep 'AI agents')"
+
+# Refused before anything is installed: Codex (closed on every system), an unknown name, a
+# preferred agent not chosen, an agents.json the kit cannot read. The option wins over the variable.
+ixhome; ixtree > "$IX/tree-empty"
+bad=""
+while IFS='|' read -r envs args want; do
+  ixhome; read -r -a IXENV <<< "$envs"; read -r -a a <<< "$args"
+  ixrun "$KIT" ${a[@]+"${a[@]}"}; rc=$?; IXENV=()
+  { [ "$rc" != 0 ] && grep -qF -- "$want" "$IX/out" && ixtree | cmp -s - "$IX/tree-empty" && [ ! -e "$IX/home/.brain-in-a-box" ] \
+    && [ -z "$(ixcalls)" ]; } || bad="$bad | $envs $args (rc $rc)"
+done <<'CASES'
+|--agents codex|Codex is coming soon on this system
+|--agents claude,codex|Codex is coming soon on this system
+|--agents codex,claude --prefere claude|Codex is coming soon on this system
+BIAB_AGENTS=codex||Codex is coming soon on this system
+BIAB_AGENTS=claude,codex BIAB_PREFERE=codex||Codex is coming soon on this system
+BIAB_AGENTS=claude|--agents codex|Codex is coming soon on this system
+|--agents gemini|--agents takes claude, codex or claude,codex
+|--prefere codex|names an agent that is not chosen
+CASES
+[ -z "$bad" ] && ok "e2e: Codex (option or BIAB_AGENTS), an unknown name, a preferred agent not chosen: refused, said, nothing installed" \
+  || no "e2e: a refused choice went on or changed the home:$bad"
+ixhome; mkdir -p "$IX/home/.brain-in-a-box"; printf '{"agents": ' > "$IX/home/.brain-in-a-box/agents.json"
+ixtree > "$IX/tree-broken"; ixrun "$KIT"; rc=$?
+[ "$rc" != 0 ] && grep -q "agents.json cannot be read, or is a link. It was left untouched" "$IX/out" && ixtree | cmp -s - "$IX/tree-broken" \
+  && [ ! -e "$IX/home/.brain-in-a-box/install.log" ] \
+  && ok "e2e: an unreadable agents.json, nothing chosen: left untouched, the install stops before anything" || no "e2e: unreadable agents.json mishandled (rc $rc): $(tail -3 "$IX/out")"
+ixhome; mkdir -p "$IX/home/.brain-in-a-box"; printf '{"version": 1, "agents": ["claude"], "prefere": "claude"}' > "$IX/home/.brain-in-a-box/agents.json"
+chmod 666 "$IX/home/.brain-in-a-box/agents.json"; ixtree > "$IX/tree-shared"; ixrun "$KIT"; rc=$?
+[ "$rc" != 0 ] && grep -q "agents.json can be changed by another account. It was left untouched" "$IX/out" && ixtree | cmp -s - "$IX/tree-shared" \
+  && [ ! -e "$IX/home/.brain-in-a-box/install.log" ] \
+  && ok "e2e: an agents.json another account could change, nothing chosen: not trusted, left untouched, the install stops before anything" \
+  || no "e2e: agents.json writable by others mishandled (rc $rc): $(tail -3 "$IX/out")"
+
+# Codex open (a copy of the kit): Codex alone wires nothing of Claude's and never installs it;
+# both keep Claude's install exactly as the default does.
+ix "$IX/kit-codex" --agents codex --with-gstack; rc=$?
+ixtree > "$IX/tree-codex"; ixout > "$IX/out-codex"
+bad=""
+[ "$rc" = 0 ] || bad="$bad rc=$rc"
+[ "$(ajson)" = "agents=codex codex_home=$IX/home/.codex date=$TODAY pose_par=install.sh prefere=codex version=1" ] || bad="$bad agents.json=$(ajson)"
+for f in .claude/settings.json .claude/CLAUDE.md .claude/skills .local/bin/claude; do [ ! -e "$IX/home/$f" ] || bad="$bad $f"; done
+[ -f "$IX/home/.claude/hooks/brain/correction-detector.py" ] && [ -x "$IX/home/.local/bin/gbq" ] || bad="$bad no-hooks-or-gbq"
+grep -q "claude.ai/install" "$IX/calls" && bad="$bad claude-installer"
+grep -qE "install Claude Code first|&& claude$|Claude Code \+ Obsidian|Claude Code skills|settings.json" "$IX/out-codex" && bad="$bad claude-text"
+grep -q "gstack is made for Claude Code, which is not chosen here: skipped" "$IX/out-codex" || bad="$bad gstack-not-said"
+[ -e "$IX/home/.claude/skills/gstack" ] && bad="$bad gstack"
+[ -z "$bad" ] && ok "e2e codex open: Codex alone: no settings.json, CLAUDE.md, Claude skills nor gstack, Claude Code never installed; hooks and gbq in place" \
+  || no "e2e codex open: Codex alone touched Claude:$bad"
+ix "$IX/kit-codex" --agents claude,codex --prefere codex; rc=$?
+nogate "$IX/tree-default" > "$IX/tree-default-ng"; ixtree | nogate > "$IX/tree-both"
+[ "$rc" = 0 ] && [ "$(added "$IX/tree-default-ng" "$IX/tree-both" | cut -d' ' -f1-2)" = ".brain-in-a-box/agents.json 0o600" ] \
+  && [ -z "$(gone "$IX/tree-default-ng" "$IX/tree-both")" ] \
+  && [ "$(ajson)" = "agents=claude,codex codex_home=$IX/home/.codex date=$TODAY pose_par=install.sh prefere=codex version=1" ] \
+  && ixout | grep -qF "✓ AI agents: Claude Code and Codex (preferred: Codex), recorded in" \
+  && ok "e2e codex open: both, Codex preferred: Claude's install byte for byte as the default's, plus agents.json" \
+  || no "e2e codex open: both differs from the default: $(added "$IX/tree-default-ng" "$IX/tree-both") / $(gone "$IX/tree-default-ng" "$IX/tree-both")"
+}
+# install.sh runs this file at the end of every install: about 15 s of installs in a sandbox say
+# nothing about this machine's hooks. ./test-hooks.sh and CI run it.
+if [ -n "${BIAB_FROM_INSTALL:-}" ]; then
+  echo "  - skipped: run by install.sh (./test-hooks.sh runs it)"
+else
+  install_e2e
+fi
+
 echo ""
 if [ "$FAIL" -eq 0 ]; then
   printf "\033[1;32m✅ All hooks healthy: %s/%s passed.\033[0m\n" "$PASS" "$((PASS+FAIL))"

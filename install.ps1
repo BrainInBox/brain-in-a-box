@@ -21,6 +21,9 @@
   Cle Voyage : demandee si une console est la, sinon lue dans VOYAGE_API_KEY. Jamais en argument, jamais dans un log.
   Le cerveau va dans -BrainDir, sinon BRAIN_DIR, sinon Documents\Brain ; un cerveau neuf va dans
   %USERPROFILE%\Brain quand l'acces controle aux dossiers de Windows protege Documents.
+  L'IA branchee : -Agents (claude, codex ou claude,codex) et -Prefere, sinon BIAB_AGENTS et
+  BIAB_PREFERE (irm | iex ne passe aucun parametre), sinon le choix d'avant
+  (~\.brain-in-a-box\agents.json), sinon Claude seul. Codex n'est encore ouvert sur aucun systeme.
 
 .EXAMPLE
   # Rien a installer avant : Win+R (ou PowerShell, ou l'invite de commandes), colle, Entree
@@ -32,7 +35,7 @@
 #>
 
 [CmdletBinding()]
-param([string]$BrainDir = "")
+param([string]$BrainDir = "", [string]$Agents = "", [string]$Prefere = "")
 
 $ErrorActionPreference = "Stop"
 if ($ExecutionContext.SessionState.LanguageMode -ne "FullLanguage") {
@@ -328,6 +331,44 @@ $Py = Find-Python
 if (-not $Py) { Winget-Install "Python.Python.3.12" "Python"; $Py = Find-Python }
 if (-not $Py) { Fail "Python introuvable. Installe Python 3 depuis https://www.python.org/downloads/ puis relance la meme commande." }
 Ok "python ($Py)"
+# >>> agents
+# L'IA que le kit branche : -Agents/-Prefere, sinon BIAB_AGENTS/BIAB_PREFERE (ce que passe l'app),
+# sinon le choix d'avant (~\.brain-in-a-box\agents.json), sinon Claude seul, comme avant le choix.
+# engine\hooks\_agents.py tranche, et note un choix avant toute installation ; sans choix, il
+# n'ecrit rien. Codex est refuse sur un systeme tant qu'il n'y est pas ouvert. Juste apres Python,
+# dont _agents.py a besoin (et les sources en mode irm | iex) : avant Git et le journal.
+$AgentsFile = "$H\.brain-in-a-box\agents.json"
+$agentsArg = if ($Agents) { $Agents } else { "$env:BIAB_AGENTS" }
+$prefereArg = if ($Prefere) { $Prefere } else { "$env:BIAB_PREFERE" }
+$badChoice = "-Agents prend claude, codex ou claude,codex, et -Prefere l'un des agents choisis (de meme BIAB_AGENTS et BIAB_PREFERE)."
+# Rien d'autre que des noms : Windows PowerShell 5.1 couperait un argument qui contient un guillemet.
+if ("$agentsArg$prefereArg" -cnotmatch '^[A-Za-z, ]*$') { Fail $badChoice }
+$agentsOut = Invoke-Native { & $Py -I "$REPO\engine\hooks\_agents.py" choisir --pose-par=install.ps1 "--agents=$agentsArg" "--prefere=$prefereArg" }
+$agentsOut = "$(@($agentsOut) | Select-Object -Last 1)".Trim()
+if ($agentsOut -cnotmatch '^agents=(claude|codex|claude,codex) prefere=(claude|codex) source=(defaut|fichier|choix) ecrit=(oui|non)$') {
+  switch -Regex ($agentsOut) {
+    '^erreur=inconnu$' { Fail $badChoice }
+    '^erreur=ferme$' { Fail "Codex arrive bientot sur ce systeme. Relance avec -Agents claude, ou sans -Agents ni BIAB_AGENTS." }
+    '^erreur=prefere$' { Fail "-Prefere (ou BIAB_PREFERE) nomme un agent qui n'est pas choisi." }
+    '^erreur=fichier:ferme$' { Fail "$AgentsFile demande Codex, pas encore disponible sur ce systeme. Relance avec -Agents claude pour le remplacer." }
+    '^erreur=fichier:illisible$' { Fail "$AgentsFile est illisible. Laisse tel quel : corrige-le, ou relance avec -Agents claude (ou codex, ou claude,codex) pour le remplacer." }
+    '^erreur=fichier:' { Fail "$AgentsFile n'est pas un choix que ce kit connait. Laisse tel quel : relance avec -Agents claude (ou codex, ou claude,codex) pour le remplacer." }
+    '^erreur=codex_home$' { Fail "CODEX_HOME doit etre un chemin absolu." }
+    '^erreur=ecriture:' { Fail "impossible d'ecrire $AgentsFile ($($agentsOut.Substring(16)))." }
+    default { Fail "engine\hooks\_agents.py n'a pas repondu (code $LASTEXITCODE). Retelecharge brain-in-a-box puis relance." }
+  }
+}
+$ChosenAgents, $PreferredAgent, $agentsSource, $agentsWritten = $Matches[1], $Matches[2], $Matches[3], $Matches[4]
+$WithClaude = (",$ChosenAgents," -like "*,claude,*")
+$agentsLabel = switch ("$ChosenAgents $PreferredAgent") {
+    "claude claude" { "Claude Code" }
+    "codex codex" { "Codex" }
+    "claude,codex codex" { "Claude Code et Codex (prefere : Codex)" }
+    default { "Claude Code et Codex (prefere : Claude Code)" }
+}
+if ($agentsSource -eq "choix" -and $agentsWritten -eq "oui") { Ok "agents IA : $agentsLabel, note dans $AgentsFile" }
+elseif ($agentsSource -ne "defaut") { Ok "agents IA : $agentsLabel, comme choisi avant ($AgentsFile)" }
+# <<< agents
 $Git = Find-Git
 if (-not $Git) { Winget-Install "Git.Git" "Git"; $Git = Find-Git }
 if ($Git) {
@@ -451,6 +492,9 @@ if (($env:Path -split ";") -notcontains $BIN) { $env:Path = "$BIN;$env:Path" }
 Ok "gbq installe ($BIN\gbq.cmd + gbq pour Git Bash)"
 Ok "controle installe ($BIN\controle.cmd + controle pour Git Bash)"
 
+# 5-6bis. Claude Code, quand il est choisi : ses hooks, son CLAUDE.md et ses skills.
+# Sans retrait : le '@ qui ferme le script de fusion doit rester en debut de ligne.
+if ($WithClaude) {
 # 5. settings.json (merge non-destructif des hooks)
 Say "Hooks Claude (settings.json)"
 $settings = "$H\.claude\settings.json"
@@ -534,6 +578,7 @@ if ($cur -match [regex]::Escape($mark)) {
 Say "Skills Claude Code ($H\.claude\skills)"
 Invoke-Native { & $Py -I "$REPO\engine\install_skills.py" --src "$REPO\skills" --dest "$H\.claude\skills" }
 if ($LASTEXITCODE -eq 0) { Ok "skills a jour" } else { Warn "skills : echec (code $LASTEXITCODE)" }
+}
 
 # 7. git init vault (gbrain lit le vault a travers git)
 Say "Historique du vault (git)"
@@ -773,15 +818,17 @@ try {
 
 # 10. Applis : Claude Code (l'agent) et Obsidian (pour voir ton cerveau)
 Say "Claude Code + Obsidian"
-if (-not (Find-Claude)) {
+if ($WithClaude -and -not (Find-Claude)) {
     Write-Host "  ... Claude Code : installation (installeur officiel d'Anthropic)"
     # Processus a part : l'installeur officiel peut faire `exit`, ce qui fermerait cette fenetre en mode `irm | iex`.
     $psExe = if ($PSVersionTable.PSEdition -eq "Core") { Join-Path $PSHOME "pwsh.exe" } else { Join-Path $PSHOME "powershell.exe" }
     Invoke-Native { & $psExe -NoProfile -ExecutionPolicy Bypass -Command '[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; irm https://claude.ai/install.ps1 | iex' }
     Refresh-Path
 }
-$Claude = Find-Claude
-if ($Claude) { Ok "Claude Code ($Claude)" } else { Warn "Claude Code non installe - telecharge-le sur https://claude.com/download puis relance" }
+if ($WithClaude) {
+    $Claude = Find-Claude
+    if ($Claude) { Ok "Claude Code ($Claude)" } else { Warn "Claude Code non installe - telecharge-le sur https://claude.com/download puis relance" }
+}
 if (-not (Find-Obsidian)) { Winget-Install "Obsidian.Obsidian" "Obsidian" }
 $Obsidian = Find-Obsidian
 if ($Obsidian) { Ok "Obsidian ($Obsidian)" } else { Warn "Obsidian non installe - gratuit sur https://obsidian.md" }
@@ -801,12 +848,14 @@ Write-Host ""
 Write-Host "brain-in-a-box est installe (Windows natif)." -ForegroundColor Green
 Write-Host ""
 Write-Host "Prochaines etapes :" -ForegroundColor Cyan
-Write-Host "  1. Ouvre un NOUVEAU terminal PowerShell et tape :"
-Write-Host "       cd `"$BrainDir`""
-Write-Host "       claude"
-Write-Host "     La premiere fois, Claude ouvre ton navigateur pour te connecter (compte Pro ou Max)."
-Write-Host "  2. Personnalise ton cerveau (15 min) : dans Claude, colle"
-Write-Host "       Read $REPO\onboarding\ONBOARDING.md and run it to personalize me."
+if ($WithClaude) {
+    Write-Host "  1. Ouvre un NOUVEAU terminal PowerShell et tape :"
+    Write-Host "       cd `"$BrainDir`""
+    Write-Host "       claude"
+    Write-Host "     La premiere fois, Claude ouvre ton navigateur pour te connecter (compte Pro ou Max)."
+    Write-Host "  2. Personnalise ton cerveau (15 min) : dans Claude, colle"
+    Write-Host "       Read $REPO\onboarding\ONBOARDING.md and run it to personalize me."
+}
 if ($Obsidian) {
     try { Set-Clipboard -Value $BrainDir; $copied = " (chemin deja copie : Ctrl+V dans la barre d'adresse)" } catch { $copied = "" }
     Write-Host "  3. Obsidian : ouvre-le, 'Open folder as vault', choisis $BrainDir$copied"
