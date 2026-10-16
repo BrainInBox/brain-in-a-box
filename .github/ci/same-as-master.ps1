@@ -40,9 +40,10 @@ function Run([string]$Repo) {
     $out = (powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$Repo\install.ps1" 2>&1 | Out-String)
     if ($LASTEXITCODE) { Write-Host $out; throw "install.ps1 of $Repo failed ($LASTEXITCODE)" }
     $all = [IO.File]::ReadAllBytes($Log)
-    $log = [Text.Encoding]::UTF8.GetString($all, [int]$from, $all.Length - [int]$from)
+    # Not $log: PowerShell's names ignore case, and Snap, called from here, would read it as $Log.
+    $added = [Text.Encoding]::UTF8.GetString($all, [int]$from, $all.Length - [int]$from)
     $norm = { param($s) ($s.Replace($Repo, "<kit>") -replace '\d{4}-\d\d-\d\d \d\d:\d\d:\d\d', '<date>') -replace 'backups\\\d{8}-\d{6}', 'backups\<date>' }
-    return @{ Out = (& $norm $out); Calls = @((& $norm $log) -split "`r?`n" | Where-Object { $_ -like '> *' }) -join "`n"; Snap = (Snap) }
+    return @{ Out = (& $norm $out); Calls = @((& $norm $added) -split "`r?`n" | Where-Object { $_ -like '> *' }) -join "`n"; Snap = (Snap) }
 }
 function Differ($a, $b) { return @(@($a.Keys) + @($b.Keys) | Sort-Object -Unique | Where-Object { $a[$_] -ne $b[$_] }) }
 
