@@ -1,7 +1,8 @@
 """The launcher without tools (engine/hooks/_headless_codex.py) with the real Codex CLI, in ChatGPT
 mode, against mock_openai.py: fake tokens, no account, no secret, nothing leaves 127.0.0.1
 (docs/proposals/codex.md, §5.2); then the reflection's and the review's own questions, through the
-choice of engine (_headless.py), with Codex chosen. The job codex-mock of test.yml runs it on macOS, Linux and
+choice of engine (_headless.py), with Codex chosen; then a session the real Codex wrote, read as the
+reflection and Codex's Stop hook read it (_codex_rollout.py). The job codex-mock of test.yml runs it on macOS, Linux and
 Windows once the official installer has put the pinned Codex in place. It writes Codex's system
 settings (/etc/codex, %ProgramData%\\OpenAI\\Codex): on a CI runner only. Every scenario is
 required: a codex missing, or one that cannot run, is a failure.
@@ -28,6 +29,7 @@ for _stream in (sys.stdout, sys.stderr):
     _stream.reconfigure(encoding="utf-8", errors="replace")
 
 import _agents  # noqa: E402
+import _codex_rollout as rollout  # noqa: E402
 import _controle_judge as judge  # noqa: E402
 import _headless_codex as codex  # noqa: E402
 import mock_openai  # noqa: E402
@@ -94,14 +96,15 @@ class Bench:
         return codex.run(PROMPT, SCHEMA, SYSTEM, codex_home=self.home, timeout=180, command=self.command,
                          work_root=self.root, **kw)
 
-    def raw_exec(self, cwd, prompt=b"Reply."):
-        """codex exec as anyone would run it, without the launcher: the control of a trap."""
-        argv = [self.codex[0], "exec", "--json", "--skip-git-repo-check", "--ephemeral",
+    def raw_exec(self, cwd, prompt=b"Reply.", home=None, ephemeral=True):
+        """codex exec as anyone would run it, without the launcher: the control of a trap, or a
+        session of the user's (ephemeral=False: Codex keeps it in home/sessions)."""
+        argv = [self.codex[0], "exec", "--json", "--skip-git-repo-check"] + (["--ephemeral"] if ephemeral else []) + [
                 "-c", 'cli_auth_credentials_store="file"', "-c", "features.enable_request_compression=false",
                 "-c", "openai_base_url=" + json.dumps(self.mock.root + "/v1"),
                 "-c", "chatgpt_base_url=" + json.dumps(self.mock.root + "/backend-api/"), "-"]
         env = {k: v for k, v in os.environ.items() if k not in CANARIES and k != "RUST_LOG"}
-        env["CODEX_HOME"] = self.home
+        env["CODEX_HOME"] = home or self.home
         return subprocess.run(argv, input=prompt, cwd=cwd, env=env, capture_output=True, timeout=180)
 
 
@@ -355,6 +358,67 @@ def the_reflection_and_the_review_ask_codex_through_the_choice():
         B.mock.answer = saved
 
 
+def load_hook(name, module):
+    spec = importlib.util.spec_from_file_location(module, os.path.join(ENGINE, "hooks", name))
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
+def a_real_codex_session_is_read():
+    """A session the real Codex keeps (a user's codex exec, not --ephemeral, a global AGENTS.md), read by
+    _codex_rollout.py as the reflection (codex_sessions) and Codex's Stop hook (parse_rollout) read it:
+    its whole id, what was typed, the answers, the tool called, and nothing Codex added for the model.
+    A session holding the reflection's own prompt is left out."""
+    dr = load_hook("daily-reflection.py", "daily_reflection")
+    rc = load_hook("session-recap.py", "session_recap")
+    home = os.path.join(B.root, "session-home")
+    os.makedirs(home)
+    shutil.copy(os.path.join(B.home, "auth.json"), home)
+    with open(os.path.join(home, "AGENTS.md"), "w", encoding="utf-8") as f:
+        f.write("SESSION-AGENTS-MARKER: global instructions.\n")
+    work = os.path.realpath(tempfile.mkdtemp(dir=B.root))
+    prompt = "SESSION-PROMPT-MARKER é à 漢字 🙂"
+    reply = [mock_openai.message("SESSION-COMMENTARY-MARKER", "msg_s1"),
+             mock_openai.fn_call("brain_no_such_tool", {"path": "SESSION-TOOL-MARKER"}, "call_s1")]
+    B.mock.reset([reply])
+    p = B.raw_exec(work, prompt.encode("utf-8"), home=home, ephemeral=False)
+    started = [json.loads(l) for l in p.stdout.decode("utf-8", "replace").splitlines() if '"thread.started"' in l]
+    thread = started[0].get("thread_id") if started else None
+    check(p.returncode == 0 and thread, "a session of the user's: codex exec ran (%s, %s)"
+          % (p.returncode, p.stderr.decode("utf-8", "replace")[-300:]))
+    check("SESSION-AGENTS-MARKER" in json.dumps(B.mock.reqs), "its AGENTS.md reached the model")
+    paths, packed = rollout.recent(home, 0)
+    check(len(paths) == 1 and packed == [], "Codex kept one rollout: %s %s" % (paths, packed))
+    s = rollout.read(paths[0]) if paths else None
+    if s is None:
+        check(False, "the rollout is read")
+        return
+    check(s.id == thread and len(s.id) == 36, "its whole id, the thread's: %s %s" % (s.id, thread))
+    same = os.path.normcase(os.path.basename(s.cwd or "")) == os.path.normcase(os.path.basename(work))
+    check(s.source == "exec" and same, "its source and folder: %s %s" % (s.source, s.cwd))
+    said = [(i.kind, i.text) for i in s.items if i.kind != "tool"]
+    check(said == [("user", prompt), ("assistant", "SESSION-COMMENTARY-MARKER"), ("assistant", B.mock.answer)],
+          "what was typed and answered, nothing Codex added: %s" % said)
+    tools = [(i.name, i.text) for i in s.items if i.kind == "tool"]
+    check(tools == [("brain_no_such_tool", "SESSION-TOOL-MARKER")], "the tool called: %s" % tools)
+    dump = json.dumps([i.text for i in s.items], ensure_ascii=False)
+    for added in ("SESSION-AGENTS-MARKER", "AGENTS.md", "<environment_context>", "unsupported call"):
+        check(added not in dump, "%s is not read" % added)
+    B.mock.reset([reply])
+    B.raw_exec(work, (dr.SENTINEL + "\nSELF-RUN-MARKER").encode("utf-8"), home=home, ephemeral=False)
+    found, packed = dr.codex_sessions(time.strftime("%Y-%m-%d"), home)
+    labels = [label for label, _, _ in found]
+    check(labels == ["codex %s · cwd=%s" % (thread, s.cwd)],
+          "the reflection reads it, the kit's own left out: %s" % labels)
+    text = found[0][1] if found else ""
+    check(" user: " + prompt in text and "   → brain_no_such_tool SESSION-TOOL-MARKER" in text
+          and "SELF-RUN" not in text, "the reflection's text of it")
+    stats = rc.parse_rollout(paths[0])
+    check((stats["first_prompt"], dict(stats["tools"]), stats["files"]) ==
+          (prompt, {"brain_no_such_tool": 1}, {"SESSION-TOOL-MARKER"}), "Codex's Stop hook reads it: %s" % stats)
+
+
 def main():
     global B
     if os.environ.get("GITHUB_ACTIONS") != "true":
@@ -367,7 +431,8 @@ def main():
         for fn in (answers_with_everything_locked, forced_tool_calls_are_refused, an_unknown_feature_pauses_codex,
                    the_user_s_mcp_server_never_starts, a_system_config_is_neutralised,
                    a_system_otel_exporter_gets_nothing, requirements_pause_codex,
-                   an_api_key_login_is_refused, the_reflection_and_the_review_ask_codex_through_the_choice):
+                   an_api_key_login_is_refused, the_reflection_and_the_review_ask_codex_through_the_choice,
+                   a_real_codex_session_is_read):
             scenario(fn)
     finally:
         B.mock.close()

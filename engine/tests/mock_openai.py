@@ -3,6 +3,7 @@ secret, nothing leaves 127.0.0.1. From step 0's probe (commit 0c90cc1 of feat/co
 
     mock = Mock()                  # serves http://127.0.0.1:<port>
     mock.reset([fn_call(...)])     # the next model replies: forced tool calls, then the answer
+    mock.reset([[message(...), fn_call(...)]])   # several items in one reply
     mock.responses(), mock.tools(), mock.tool_outputs(), mock.endpoints(), mock.auth_kinds()
 
 It answers POST .../responses as an SSE stream (one queued item, else the answer as a message),
@@ -94,13 +95,13 @@ class Mock:
                     item = mock.calls.pop(0) if mock.calls else None
                     rid = "resp_mock_%d" % len(mock.reqs)
                 if item is None:
-                    item = {"type": "message", "role": "assistant", "id": "msg_" + rid,
-                            "content": [{"type": "output_text", "text": mock.answer}]}
-                evs = [{"type": "response.created", "response": {"id": rid}},
-                       {"type": "response.output_item.done", "item": item},
-                       {"type": "response.completed", "response": {"id": rid, "usage": {
-                           "input_tokens": 11, "input_tokens_details": None, "output_tokens": 3,
-                           "output_tokens_details": None, "total_tokens": 14}}}]
+                    item = message(mock.answer, "msg_" + rid)
+                evs = [{"type": "response.created", "response": {"id": rid}}]
+                items = item if isinstance(item, list) else [item]
+                evs += [{"type": "response.output_item.done", "item": i} for i in items]
+                evs.append({"type": "response.completed", "response": {"id": rid, "usage": {
+                    "input_tokens": 11, "input_tokens_details": None, "output_tokens": 3,
+                    "output_tokens_details": None, "total_tokens": 14}}})
                 data = "".join("event: %s\ndata: %s\n\n" % (e["type"], json.dumps(e)) for e in evs).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "text/event-stream")
@@ -204,6 +205,10 @@ def fake_auth(plan="plus"):
 
 
 # --------------------------------------------------------------------------- forced tool calls
+
+def message(text, mid="msg_mock"):
+    return {"type": "message", "role": "assistant", "id": mid, "content": [{"type": "output_text", "text": text}]}
+
 
 def js_exec_call(cmd, cid="call_js_1"):
     js = "const r = await tools.exec_command({cmd: " + json.dumps(cmd) + ", login: false});\ntext(r);"
