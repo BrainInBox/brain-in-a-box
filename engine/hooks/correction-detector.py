@@ -7,6 +7,9 @@ English and French. A bare negation is NOT a correction: "it doesn't build",
 "je sais pas", "no worries" are ordinary prompts. Only signals aimed at the
 assistant's work count. Measured on ~5,300 real prompts, the old bare-negation
 regex fired on 36% of them, mostly on such ordinary negations.
+
+With --agent codex (Codex's hooks.json), only for a prompt typed in a session
+_agents.codex_hook() lets through; the vault is the session's folder.
 """
 import json, sys, re, os
 from pathlib import Path
@@ -20,6 +23,16 @@ try:
     payload = json.load(sys.stdin)
 except Exception:
     sys.exit(0)
+
+CODEX = sys.argv[1:] == ["--agent", "codex"]
+if CODEX:
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import _agents
+        if not _agents.codex_hook("correction-detector", payload):
+            sys.exit(0)
+    except Exception:
+        sys.exit(0)
 
 raw = payload.get("prompt") or payload.get("user_prompt") or ""
 prompt = raw.lower()
@@ -90,7 +103,10 @@ is_confusion = bool(CONFUSION.search(scope))
 if not (is_strong or is_confusion):
     sys.exit(0)
 
-brain = Path(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
+if CODEX:
+    brain = Path(payload.get("cwd") if isinstance(payload.get("cwd"), str) and payload["cwd"] else os.getcwd())
+else:
+    brain = Path(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
 if not (brain / "Profile" / "lessons.md").exists():
     brain = Path.home() / "Documents" / "Brain"
 

@@ -1,17 +1,21 @@
 """Codex sessions for the tests, made from step 0's real captures (fixtures/codex/phase0/): the
 lines Codex 0.162.1 and 0.163.0-alpha.11 wrote, moved to the day a test needs. Every line added
 is a copy of one of the capture's own lines, its text or command changed: the shapes stay Codex's.
+Also what Codex gave its hooks in step 0, and the schemas Codex checks a hook's answer against
+(fixtures/codex/hooks-schema-0.162.1/: codex-rs/hooks/schema/generated, tag rust-v0.162.1).
 """
 import copy
 import json
 from pathlib import Path
 
 P0 = Path(__file__).resolve().parent / "fixtures" / "codex" / "phase0"
+SCHEMAS = P0.parent / "hooks-schema-0.162.1"
 VAULT = "ubuntu-0.162.1/rollout-exec-vault-linux.jsonl"     # AGENTS.md of the vault, "Bonjour"
 LOCK = "ubuntu-0.162.1/rollout-exec-lock-linux.jsonl"       # two tool calls (exec, exec_command)
 TUI = "macos-0.162.1/rollout-tui-apikey-macos.jsonl"        # interactive: source "cli", the hooks' context
 TRUSTED = "ubuntu-0.162.1/rollout-exec-hooks-trusted-linux.jsonl"
 TRUSTED_HOOKS = "ubuntu-0.162.1/hook-payloads-trusted-linux.jsonl"
+TUI_HOOKS = "macos-0.162.1/hook-payloads-tui-apikey-macos.jsonl"
 
 
 def records(name):
@@ -35,11 +39,20 @@ def _message(recs, role):
             and r["payload"].get("role") == role][-1]
 
 
-def moved(name, day, sid=None, said=(), tools=(), hhmm="12:00", cwd=None, prompt=None):
+def hook_payloads(pattern="*/hook-payloads-*.jsonl"):
+    """(capture, record) of every hook Codex ran in step 0: record["event"], and record["stdin"], what
+    Codex gave the hook."""
+    for p in sorted(P0.glob(pattern)):
+        for line in p.read_text(encoding="utf-8").splitlines():
+            yield "%s/%s" % (p.parent.name, p.name), json.loads(line)
+
+
+def moved(name, day, sid=None, said=(), tools=(), hhmm="12:00", cwd=None, prompt=None, source=None):
     """The capture `name` as a session of `day` (every line at hh:mm UTC), its id `sid` when given, what
     the user typed `prompt` when given, then one more user or assistant message per (role, text) of
     `said`, and one more exec_command call per item of `tools` (its command, or its arguments), before
-    its last line. Returns the lines, as text."""
+    its last line. `source`, when given, replaces the session's ("exec" in the exec captures; "cli" is
+    what the terminal's sessions say, TUI). Returns the lines, as text."""
     recs = records(name)
     if prompt is not None:
         typed = _message(recs, "user")["payload"]
@@ -51,6 +64,8 @@ def moved(name, day, sid=None, said=(), tools=(), hhmm="12:00", cwd=None, prompt
                 r["payload"]["id"] = r["payload"]["session_id"] = sid
             if cwd:
                 r["payload"]["cwd"] = cwd
+            if source is not None:
+                r["payload"]["source"] = source
     extra = []
     for role, text in said:
         m = copy.deepcopy(_message(recs, role))
@@ -74,3 +89,50 @@ def put(codex_home, day, text, sid):
     p = folder / ("rollout-%sT12-00-00-%s.jsonl" % (day, sid))
     p.write_bytes(text.encode("utf-8"))   # as Codex writes it: UTF-8, LF, on every system
     return p
+
+
+EVENT_SCHEMA = {"SessionStart": "session-start", "UserPromptSubmit": "user-prompt-submit", "Stop": "stop"}
+
+
+def output_errors(event, answer):
+    """What Codex 0.162.1 would refuse in a hook's answer (`answer`, parsed JSON) to `event`, checked
+    against its own schema: [] when it takes it. Codex refuses the whole answer for one unknown field
+    (deny_unknown_fields). Only the keywords these schemas use are known; any other is an error, so
+    a schema of a newer Codex cannot pass unread."""
+    schema = json.loads((SCHEMAS / ("%s.command.output.schema.json" % EVENT_SCHEMA[event])).read_text(encoding="utf-8"))
+    return _errors(schema, answer, schema, "$")
+
+
+def _errors(node, value, root, where):
+    known = {"$schema", "title", "description", "default", "definitions", "type", "properties",
+             "additionalProperties", "required", "const", "enum", "allOf", "$ref"}
+    if set(node) - known:
+        return ["%s: schema keyword not handled: %s" % (where, sorted(set(node) - known))]
+    if "$ref" in node:
+        name = node["$ref"].rsplit("/", 1)[-1]
+        if not node["$ref"].startswith("#/definitions/") or name not in root.get("definitions", {}):
+            return ["%s: unknown $ref %s" % (where, node["$ref"])]
+        return _errors(root["definitions"][name], value, root, where)
+    out = []
+    for sub in node.get("allOf", ()):
+        out += _errors(sub, value, root, where)
+    kind = node.get("type")
+    types = {"object": dict, "string": str, "boolean": bool}
+    if kind is not None:
+        if kind not in types:
+            return ["%s: type %s not handled" % (where, kind)]
+        if not isinstance(value, types[kind]):
+            return out + ["%s: not a %s: %r" % (where, kind, value)]
+    if "const" in node and value != node["const"]:
+        out.append("%s: %r is not %r" % (where, value, node["const"]))
+    if "enum" in node and value not in node["enum"]:
+        out.append("%s: %r not in %r" % (where, value, node["enum"]))
+    if isinstance(value, dict) and kind == "object":
+        props = node.get("properties", {})
+        if node.get("additionalProperties") is False:
+            out += ["%s: unknown field %s" % (where, k) for k in value if k not in props]
+        out += ["%s: %s missing" % (where, k) for k in node.get("required", ()) if k not in value]
+        for k, sub in props.items():
+            if k in value:
+                out += _errors(sub, value[k], root, "%s.%s" % (where, k))
+    return out

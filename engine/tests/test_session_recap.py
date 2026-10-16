@@ -228,13 +228,14 @@ class Codex(unittest.TestCase):
             p.start()
             self.addCleanup(p.stop)
 
-    def rollout(self, sid, tools=("ssh deploy@example.org",), base=cap.LOCK, said=(), prompt=None):
+    def rollout(self, sid, tools=("ssh deploy@example.org",), base=cap.LOCK, said=(), prompt=None, source="cli"):
+        """A session typed in Codex's terminal (source "cli"): the capture's lines, its source the TUI's."""
         return cap.put(self.codex_home, self.day,
-                       cap.moved(base, self.day, sid=sid, tools=tools, said=said, prompt=prompt), sid)
+                       cap.moved(base, self.day, sid=sid, tools=tools, said=said, prompt=prompt, source=source), sid)
 
     def stop(self, sid, path, argv=("--agent", "codex")):
         """session-recap.py run as Codex's Stop hook, with the payload Codex gave it in step 0."""
-        payload = dict(cap.stop_payload(), session_id=sid, transcript_path=str(path))
+        payload = dict(cap.stop_payload(), session_id=sid, transcript_path=None if path is None else str(path))
         with mock.patch.object(sys, "argv", ["session-recap.py", *argv]), \
                 mock.patch.object(sys, "stdin", io.StringIO(json.dumps(payload))), \
                 contextlib.suppress(SystemExit):
@@ -263,8 +264,8 @@ class Codex(unittest.TestCase):
         a = self.rollout(self.A)
         self.stop(self.A, a)
         self.stop(self.B, self.rollout(self.B, tools=("terraform plan",)))
-        a.write_bytes(cap.moved(cap.LOCK, self.day, sid=self.A, tools=("ssh deploy@example.org", "kubectl get pods"))
-                      .encode("utf-8"))
+        a.write_bytes(cap.moved(cap.LOCK, self.day, sid=self.A, tools=("ssh deploy@example.org", "kubectl get pods"),
+                                source="cli").encode("utf-8"))
         self.stop(self.A, a)   # its second Stop: its own block only is replaced
         heads, text = self.blocks()
         self.assertEqual([h.rsplit("sid:", 1)[1] for h in heads], [f"`{self.B}`", f"`{self.A}`"], text)
@@ -304,6 +305,20 @@ class Codex(unittest.TestCase):
                 self.stop(self.A, path, argv)
                 self.assertFalse(reader.called)
         self.assertFalse(self.journal.exists(), "a rollout read as a Claude transcript gives no tool: nothing")
+
+    def test_an_exec_run_or_a_session_without_a_file_is_not_written(self):
+        """Phase 5's guard (_agents.codex_hook): a script's codex exec, the kit's own runs (--ephemeral: no
+        file), a prompt another agent wrote. Control: the same session typed in the terminal."""
+        self.choose(["codex"])
+        for source in ("exec", "mcp", {"subagent": "review"}):
+            with self.subTest(source=source), mock.patch.object(rc, "parse_rollout", wraps=rc.parse_rollout) as reader:
+                self.stop(self.A, self.rollout(self.A, source=source))
+                self.assertFalse(reader.called)
+        self.stop(self.A, None)
+        self.assertFalse(self.journal.exists())
+        self.assertFalse(self.locks.exists() and any(self.locks.iterdir()), "not even a lock")
+        self.stop(self.A, self.rollout(self.A))
+        self.assertEqual(len(self.blocks()[0]), 1)
 
     def test_the_kits_own_session_is_not_written(self):
         self.choose(["codex"])

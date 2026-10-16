@@ -18,8 +18,11 @@ switch is off without a gbrain clone in ~/DEV/gbrain or beside a
 gbrain-selfupdate.sh of the user's own, as in gbrain-update-check.py.
 
 A green or orange line is shown once per run, a red one once a day while its
-cause lasts (shown.json, next to etat.json). Silent in a headless run
-(claude -p), when the session is resumed, cleared or compacted, and on any error.
+cause lasts (shown.json, next to etat.json), in whichever session starts first,
+Claude Code's or Codex's. Silent in a headless run (claude -p), when the session
+is resumed, cleared or compacted, and on any error. With --agent codex (Codex's
+hooks.json), only in a session _agents.codex_hook() lets through; Codex takes
+the same answer (its schema: additionalContext, systemMessage).
 """
 import json
 import os
@@ -193,6 +196,11 @@ def main():
     if os.environ.get("CLAUDE_CODE_ENTRYPOINT") == "sdk-cli":
         return
     payload = json.loads(sys.stdin.buffer.read().decode("utf-8", "replace") or "{}")
+    if sys.argv[1:] == ["--agent", "codex"]:
+        sys.path.insert(0, HERE)
+        import _agents
+        if not _agents.codex_hook("controle-sessionstart", payload):
+            return
     if not isinstance(payload, dict) or payload.get("source") != "startup":
         return
     home = os.path.expanduser("~")

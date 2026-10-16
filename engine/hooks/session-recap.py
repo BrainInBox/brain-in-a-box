@@ -6,10 +6,10 @@ Stop hook: extracts lightweight stats from a Claude session and appends them to
 Idempotent (replaces the session's earlier block). No LLM call.
 
 With --agent codex (Codex's hooks.json), the session is Codex's: its rollout is read by
-_codex_rollout.py, only when agents.json lists Codex (silent otherwise), and its block, in the
-same section, names Codex and holds the whole session id: Codex's are UUIDv7, whose first 8
-characters are the minute, so two sessions of one minute would share a block. Claude's blocks
-are as before.
+_codex_rollout.py, only for a session _agents.codex_hook() lets through (silent otherwise), and
+its block, in the same section, names Codex and holds the whole session id: Codex's are UUIDv7,
+whose first 8 characters are the minute, so two sessions of one minute would share a block.
+Claude's blocks are as before.
 """
 import json, sys, os, re, time, tempfile
 from pathlib import Path
@@ -295,14 +295,14 @@ def agent_of(argv):
 
 def main():
     agent = agent_of(sys.argv[1:])
-    if agent == "codex":
-        import _agents
-        if "codex" not in _agents.lire()[0].agents:
-            sys.exit(0)   # Codex not chosen, or agents.json not trusted: nothing read, nothing written
     try:
         payload = json.load(sys.stdin)
     except Exception:
         sys.exit(0)
+    if agent == "codex":
+        import _agents
+        if not _agents.codex_hook("session-recap", payload):
+            sys.exit(0)   # Codex not chosen, the kit's own run, a session not typed: nothing read, nothing written
 
     if clean_item is None:
         raise RuntimeError("_vault_write.py or _redact.py not found next to session-recap.py: nothing written")
