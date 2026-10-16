@@ -1593,7 +1593,7 @@ chmod 666 "$IX/home/.brain-in-a-box/agents.json"; ixtree > "$IX/tree-shared"; ix
 
 # Codex open (a copy of the kit): Codex alone wires nothing of Claude's and never installs it, and
 # wires Codex; both keep Claude's install exactly as the default does, plus Codex's files.
-codexfiles(){ grep -E '^(\.codex/|\.agents/skills/|\.local/bin/codex |Documents/Brain/AGENTS\.md |\.brain-in-a-box/(codex-hooks-poses|skills-codex)\.json )' "$@"; }
+codexfiles(){ grep -E '^(\.codex/|\.agents/skills/|\.local/bin/codex |Documents/Brain/AGENTS\.md |\.brain-in-a-box/(codex-hooks-poses|skills-codex)\.json |\.claude/hooks/brain/codex-features\.json )' "$@"; }
 ix "$IX/kit-codex" --agents codex --with-gstack; rc=$?
 ixtree > "$IX/tree-codex"; ixout > "$IX/out-codex"; ixcalls > "$IX/calls-codex"
 bad=""
@@ -1627,9 +1627,13 @@ assert "CLAUDE.md" in open(os.path.join(h, "Documents", "Brain", "AGENTS.md"), e
 assert os.path.isfile(os.path.join(h, ".brain-in-a-box", "codex-hooks-poses.json"))
 PY
 git -C "$IX/home/Documents/Brain" ls-files --error-unmatch AGENTS.md >/dev/null 2>&1 || bad="$bad vault-AGENTS.md-not-committed"
+# The launcher, as installed, finds the list of what Codex must have turned off (without it, Codex is paused).
+cmp -s "$IX/home/.claude/hooks/brain/codex-features.json" "$IX/kit-codex/engine/codex-features.json" \
+  && python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import _headless_codex as c; assert len(c.load_features()) > 50' \
+     "$IX/home/.claude/hooks/brain" || bad="$bad codex-features.json"
 grep -qF "✓ Codex: the kit approved its 6 hooks for you ($IX/home/.codex/config.toml), so Codex runs them without asking. See them, or turn them off, with /hooks in Codex" "$IX/out-codex" || bad="$bad approval-not-said"
 grep -qxF "  codex login" "$IX/out-codex" && grep -qxF "  cd $IX/home/Documents/Brain && codex" "$IX/out-codex" || bad="$bad codex-text"
-[ -z "$bad" ] && ok "e2e codex open: Codex alone: Codex from its pinned installer, hooks.json, the approval said and checked by Codex, AGENTS.md, gbq's rules, skills, the vault's AGENTS.md (committed), codex login" \
+[ -z "$bad" ] && ok "e2e codex open: Codex alone: Codex from its pinned installer, hooks.json, the approval said and checked by Codex, AGENTS.md, gbq's rules, skills, the vault's AGENTS.md (committed), the launcher's list of features, codex login" \
   || no "e2e codex open: Codex alone not wired:$bad"
 ixtree > "$IX/tree-codex1"; rm -f "$IX/calls"; ixrun "$IX/kit-codex"; rc=$?
 [ "$rc" = 0 ] && diff <(grep -v '^\.brain-in-a-box/codex-hooks-poses\.json ' "$IX/tree-codex1") <(ixtree | grep -v '^\.brain-in-a-box/codex-hooks-poses\.json ') >/dev/null \
