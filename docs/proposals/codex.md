@@ -605,3 +605,5 @@ Six constats de relecture (sécurité, non-régression), dont un doublon : cinq 
 **Tests non creux** : les 11 protections ajoutées, retirées une à une (`OverflowError`/`OSError`, lecture fichier par fichier, sorte d'une source objet, sous-agents et sessions internes écartés, source dans le libellé, mot simple seulement, suite d'un message, tous les sauts de ligne, outil sur une ligne, dossier sur une ligne, phrase avec Hermes) : chacune fait échouer au moins un test. `codex-mock` vérifie en plus que la session `exec` du vrai Codex porte `· exec ·` dans son libellé.
 
 **Vérifié en local** : tests unitaires (606 ; sous Python 3.9.6 pour ceux touchés), `test-hooks.sh` (178/178), actionlint, shellcheck, `py_compile`, lecture d'`install.ps1` par pwsh (non touché). Le vrai Codex ne tourne qu'en CI (`codex-mock`).
+
+**CI** : run https://github.com/BrainInBox/brain-in-a-box/actions/runs/38877844853, tous les jobs verts ; `codex-mock` : 82 vérifications sur chacun des 3 OS (une vérification changée : la session `exec` du vrai Codex 0.162.1 est lue avec `· exec ·` dans son libellé, sur les 3 OS).
