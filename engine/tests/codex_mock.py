@@ -561,6 +561,7 @@ def install_sh_wires_codex():
     root = os.path.join(B.root, "install-sh")
     kit, home, stubs = (os.path.join(root, n) for n in ("kit", "home", "bin"))
     os.makedirs(stubs)
+    os.makedirs(kit)
     for name in ("install.sh", "engine", "skills", "vault-skeleton", "onboarding"):
         (shutil.copytree if os.path.isdir(os.path.join(repo, name)) else shutil.copy)(
             os.path.join(repo, name), os.path.join(kit, name))
@@ -623,7 +624,13 @@ def install_sh_wires_codex():
         check(r.returncode == 0, "codex exec in the vault ran (%s, %s)" % (r.returncode, r.stderr.decode("utf-8", "replace")[-300:]))
         return sorted(_agents.vus(home)), json.dumps(B.mock.reqs, ensure_ascii=False)
 
+    # Codex runs one event's hooks together, and a hook may miss another's line in the sign of life
+    # once (_agents.vu): what each session showed, over three sessions at most.
     seen, dump = session()
+    for _ in range(2):
+        if seen == HOOKS6:
+            break
+        seen = sorted(set(seen) | set(session()[0]))
     check(seen == HOOKS6, "the real Codex ran the six hooks install.sh wired and approved, no trust bypassed: %s" % seen)
     check("Codex does not load `CLAUDE.md` files." in dump, "Codex read the kit's block in the global AGENTS.md")
     check("This brain's rules are in `CLAUDE.md`" in dump, "Codex read the vault's AGENTS.md (the vault is a git repository)")
