@@ -153,6 +153,22 @@ jobs:
           test ! -e "$H/.brain-in-a-box/agents.json"
           if grep -q 'AI agents' "$RUNNER_TEMP/install-1.txt"; then echo "::error::a line about agents with nothing chosen"; exit 1; fi
 
+      # Codex runs gbq query and gbq search without asking, outside its sandbox, from a session's folder,
+      # where the session may write a bunfig.toml whose preload Bun runs before gbrain.
+      - name: gbq's reads start gbrain from /, so a folder's bunfig.toml never runs (the real Bun and gbrain)
+        run: |
+          d=$(mktemp -d); cd "$d"
+          printf 'preload = ["./x.ts"]\n' > bunfig.toml
+          printf 'require("fs").writeFileSync("%s/witness", "ran\\n");\n' "$d" > x.ts
+          ~/.bun/bin/gbrain --version >/dev/null 2>&1 || true
+          [ -f witness ] || { echo "::error::control: gbrain started from this folder did not run its preload, so this step proves nothing"; exit 1; }
+          rm witness
+          for c in query search; do
+            out=$(~/.local/bin/gbq "$c" "captured corrections" 2>&1); echo "$out"
+            [ ! -e witness ] || { echo "::error::gbq $c ran the folder's preload"; exit 1; }
+            echo "$out" | grep -qi 'lessons' || { echo "::error::gbq $c from / found nothing"; exit 1; }
+          done
+
       - name: Codex is refused on this system (option or BIAB_AGENTS), before anything changes
         run: |
           snap() { sha256sum ~/.claude/settings.json ~/.claude/CLAUDE.md ~/.brain-in-a-box/installed.json ~/.brain-in-a-box/install.log; }
@@ -763,6 +779,24 @@ jobs:
           # The onboarding's re-index, verbatim.
           & "$H\.local\bin\gbq.cmd" sync --repo "$H\Documents\Brain" --no-pull --no-embed; if ($LASTEXITCODE) { throw 'gbq.cmd sync failed' }
           & "$H\.local\bin\gbq.cmd" embed --stale --max-usd 0.10; if ($LASTEXITCODE) { throw 'gbq.cmd embed failed on a keyword brain' }
+
+      # As on macOS and Linux: an approved gbq query runs gbq, not what a session wrote in its folder.
+      - name: gbq's reads start gbrain from gbq.py's folder, so a folder's bunfig.toml never runs (the real Bun and gbrain)
+        run: |
+          $H = $env:USERPROFILE
+          $d = (New-Item -ItemType Directory "$env:RUNNER_TEMP\bunfig-session" -Force).FullName
+          Set-Location $d
+          $w = "$d\witness"
+          [IO.File]::WriteAllText("$d\bunfig.toml", "preload = [`"./x.ts`"]`n")
+          [IO.File]::WriteAllText("$d\x.ts", "require(`"fs`").writeFileSync(" + ($w | ConvertTo-Json) + ", `"ran`");`n")
+          & "$H\.bun\bin\gbrain.exe" --version *> $null
+          if (-not (Test-Path $w)) { throw 'control: gbrain.exe started from this folder did not run its preload, so this step proves nothing' }
+          Remove-Item $w
+          foreach ($c in 'query', 'search') {
+            $q = (& "$H\.local\bin\gbq.cmd" $c "captured corrections" 2>&1) -join "`n"; $q
+            if (Test-Path $w) { throw "gbq.cmd $c ran the folder's preload" }
+            if ($q -notmatch '(?i)lessons') { throw "gbq.cmd $c from its own folder found nothing" }
+          }
 
       - name: A hook runs the way Claude Code spawns it (exec form)
         run: |

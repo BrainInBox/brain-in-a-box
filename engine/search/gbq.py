@@ -128,6 +128,11 @@ def gbrain_read(exe, args):
 
 def main(argv):
     cmd = argv[0] if argv else ""
+    if cmd in READS:
+        # As gbq: a read starts gbrain from this folder, the kit's, and none of the caller's (Bun reads
+        # a bunfig.toml, whose preload runs before gbrain, a .env and a tsconfig.json where it starts).
+        # A write keeps the caller's folder: gbq import .\notes.
+        os.chdir(str(HERE))
     exe = gbrain_exe() if engine() == "gbrain" else None
 
     if cmd in READS:

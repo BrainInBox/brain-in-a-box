@@ -679,6 +679,18 @@ out=$(HOME="$GB" PATH="/usr/bin:/bin" bash "$REPO/engine/bin/gbq" sync 2>&1); rc
 [ "$rc" = 0 ] && echo "$out" | grep -q "bun ran gbrain sync" \
   && ok "gbq: finds Bun without ~/.bun/bin on the PATH (a terminal opened before the install)" \
   || no "gbq: without ~/.bun/bin on the PATH: rc=$rc, $out"
+# Its reads start gbrain from /, which no session can write to: Bun reads a bunfig.toml (its preload
+# runs first), a .env and a tsconfig.json where it starts, and Codex runs gbq query and gbq search
+# outside its sandbox from a session's folder. A write keeps the caller's (gbq import ./notes).
+# With the real Bun: the linux and windows jobs of test.yml.
+GC="$H/gbq-cwd-home"; GS="$H/gbq-session"; mkdir -p "$GC/.bun/bin" "$GC/.gbrain" "$GS"
+printf '#!/bin/sh\npwd -P > "$HOME/cwd-$1"\n' > "$GC/.bun/bin/gbrain"; chmod +x "$GC/.bun/bin/gbrain"
+for c in query search ask graph-query sync import; do (cd "$GS" && HOME="$GC" bash "$REPO/engine/bin/gbq" "$c" x >/dev/null 2>&1); done
+here=$(cd "$GS" && pwd -P); bad=""
+for c in query search ask graph-query; do [ "$(cat "$GC/cwd-$c" 2>/dev/null)" = / ] || bad="$bad $c:$(cat "$GC/cwd-$c" 2>/dev/null)"; done
+for c in sync import; do [ "$(cat "$GC/cwd-$c" 2>/dev/null)" = "$here" ] || bad="$bad $c:$(cat "$GC/cwd-$c" 2>/dev/null)"; done
+[ -z "$bad" ] && ok "gbq: a read starts gbrain from / (nothing of the caller's folder reaches Bun), a write from the caller's folder" \
+  || no "gbq: gbrain started from the wrong folder:$bad"
 
 BV="$H/bs-vault"; BSI="$H/bs-index.json"; BS="$REPO/engine/search/brain_search.py"
 mkdir -p "$BV/Decisions"
@@ -736,6 +748,15 @@ out=$(gw query "annual plan" 2>/dev/null); rc=$?
 [ "$rc" = 0 ] && echo "$out" | grep -q "Decisions/pricing.md" && [ ! -f "$GW/calls" ] \
   && ok "gbq.py: keyword mode never calls gbrain" || no "gbq.py: keyword mode wrong (rc=$rc)"
 gw embed --stale --max-usd 0.10 >/dev/null 2>&1 && ok "gbq.py: keyword mode maps sync/embed to a reindex" || no "gbq.py: keyword-mode embed failed"
+# As gbq: a read starts gbrain from gbq.py's own folder (the kit's, no session's), a write from the caller's.
+echo gbrain > "$GW/bs/engine"
+printf '#!/bin/sh\npwd -P > "$HOME/cwd-$1"\necho "[0.91] decisions/pricing -- from gbrain"\n' > "$GW/.bun/bin/gbrain"
+for c in query search sync; do (cd "$GS" && gw "$c" x >/dev/null 2>&1); done
+mine=$(cd "$GW/bs" && pwd -P); bad=""
+for c in query search; do [ "$(cat "$GW/cwd-$c" 2>/dev/null)" = "$mine" ] || bad="$bad $c:$(cat "$GW/cwd-$c" 2>/dev/null)"; done
+[ "$(cat "$GW/cwd-sync" 2>/dev/null)" = "$here" ] || bad="$bad sync:$(cat "$GW/cwd-sync" 2>/dev/null)"
+[ -z "$bad" ] && ok "gbq.py: a read starts gbrain from gbq.py's folder, a write from the caller's" \
+  || no "gbq.py: gbrain started from the wrong folder:$bad"
 
 # Windows nightly (engine/nightly/windows-nightly.py), installed next to the hooks as install.ps1 does:
 # gbrain update, night check, then commits the vault, syncs, embeds, reindexes. The update and
