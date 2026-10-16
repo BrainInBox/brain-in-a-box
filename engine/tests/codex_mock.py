@@ -17,6 +17,7 @@ import sys
 import tempfile
 import time
 import traceback
+from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ENGINE = os.path.dirname(HERE)
@@ -28,7 +29,6 @@ for _stream in (sys.stdout, sys.stderr):
 
 import _agents  # noqa: E402
 import _controle_judge as judge  # noqa: E402
-import _headless  # noqa: E402
 import _headless_codex as codex  # noqa: E402
 import mock_openai  # noqa: E402
 from _headless_claude import HeadlessError  # noqa: E402
@@ -78,6 +78,8 @@ class Bench:
             f.write("import pathlib, sys\npathlib.Path(%r, sys.argv[1]).write_text('x')\nsys.exit(1)\n" % self.markers)
         self.codex = codex.find_codex()
         self.mock = mock_openai.Mock(answer='{"verdict":"ok","n":7}')
+        # Where a system config.toml's own URLs and exporter point: nothing of the launcher's may reach it.
+        self.trap = mock_openai.Mock(answer='{"verdict":"ko","n":0}')
         self.command = [sys.executable, "-I", os.path.join(HERE, "mock_openai.py"), "shim", self.mock.root,
                         self.codex[0]]
 
@@ -92,7 +94,7 @@ class Bench:
         return codex.run(PROMPT, SCHEMA, SYSTEM, codex_home=self.home, timeout=180, command=self.command,
                          work_root=self.root, **kw)
 
-    def raw_exec(self, cwd):
+    def raw_exec(self, cwd, prompt=b"Reply."):
         """codex exec as anyone would run it, without the launcher: the control of a trap."""
         argv = [self.codex[0], "exec", "--json", "--skip-git-repo-check", "--ephemeral",
                 "-c", 'cli_auth_credentials_store="file"', "-c", "features.enable_request_compression=false",
@@ -100,7 +102,7 @@ class Bench:
                 "-c", "chatgpt_base_url=" + json.dumps(self.mock.root + "/backend-api/"), "-"]
         env = {k: v for k, v in os.environ.items() if k not in CANARIES and k != "RUST_LOG"}
         env["CODEX_HOME"] = self.home
-        return subprocess.run(argv, input=b"Reply.", cwd=cwd, env=env, capture_output=True, timeout=180)
+        return subprocess.run(argv, input=prompt, cwd=cwd, env=env, capture_output=True, timeout=180)
 
 
 B = None
@@ -229,14 +231,18 @@ def admin_rm(path):
 
 def a_system_config_is_neutralised():
     path = os.path.join(system_dir(), "config.toml")
-    text = ('developer_instructions = "SYSTEM-DEV-MARKER"\nnotify = %s\n\n[mcp_servers.sysmcp]\ncommand = %s\n'
-            'args = %s\n' % (json.dumps(B.marker_argv("notify")), json.dumps(sys.executable),
-                             json.dumps([B.marker_py, "sysmcp"])))
+    text = ('developer_instructions = "SYSTEM-DEV-MARKER"\nnotify = %s\nopenai_base_url = %s\nchatgpt_base_url = %s\n'
+            '\n[mcp_servers.sysmcp]\ncommand = %s\nargs = %s\n'
+            % (json.dumps(B.marker_argv("notify")), json.dumps(B.trap.root + "/v1"),
+               json.dumps(B.trap.root + "/backend-api/"), json.dumps(sys.executable), json.dumps([B.marker_py, "sysmcp"])))
     admin_write(path, text)
     try:
         B.mock.reset()
+        B.trap.reset()
         a = B.run()
         check(a.output == {"verdict": "ok", "n": 7}, "a system config.toml with an MCP server and notify: answered")
+        check(len(B.mock.responses()) == 1 and B.trap.reqs == [],
+              "the URLs the launcher pins pass over the system's: %s" % B.trap.endpoints())
         check(B.found_markers() == [], "its MCP server and its notify program do not run: %s" % B.found_markers())
         check("SYSTEM-DEV-MARKER" not in json.dumps(B.mock.reqs), "its developer instructions are not sent")
         B.mock.reset()
@@ -248,6 +254,35 @@ def a_system_config_is_neutralised():
         admin_rm(path)
         for m in os.listdir(B.markers):
             os.remove(os.path.join(B.markers, m))
+
+
+def a_system_otel_exporter_gets_nothing():
+    """A system config.toml's [otel] is read by `codex exec` (only a project's is refused): its log
+    exporter would get the whole prompt. The launcher turns every exporter off."""
+    path = os.path.join(system_dir(), "config.toml")
+    admin_write(path, '[otel]\nlog_user_prompt = true\nlog_agent_responses = true\n'
+                      'exporter = { otlp-http = { endpoint = %s, protocol = "json" } }\n'
+                % json.dumps(B.trap.root + "/v1/logs"))
+    try:
+        B.mock.reset()
+        B.trap.reset()
+        a = B.run()
+        check(a.output == {"verdict": "ok", "n": 7}, "a system config.toml with an [otel] exporter: answered")
+        check(B.trap.reqs == [], "its exporter gets nothing: %s" % B.trap.endpoints())
+        B.mock.reset()
+        B.trap.reset()
+        B.raw_exec(tempfile.mkdtemp(dir=B.root), prompt=b"Reply. OTEL-PROMPT-MARKER")
+        check("OTEL-PROMPT-MARKER" in json.dumps(B.trap.reqs),
+              "control: without the launcher, its exporter gets the prompt: %s" % B.trap.endpoints())
+        B.mock.reset()
+        B.trap.reset()
+        with mock.patch.object(codex, "SETTINGS", tuple(x for x in codex.SETTINGS if not x.startswith("otel."))):
+            B.run()
+        check("MOCK-PROMPT-SENTINEL" in json.dumps(B.trap.reqs),
+              "control: the launcher without its otel settings, the exporter gets the prompt: %s"
+              % B.trap.endpoints())
+    finally:
+        admin_rm(path)
 
 
 def requirements_pause_codex():
@@ -281,12 +316,14 @@ def an_api_key_login_is_refused():
 
 
 def the_reflection_and_the_review_ask_codex_through_the_choice():
-    """daily-reflection.py's and the review's own schema, instructions and settings, through
-    _headless.py with Codex the one chosen (a reading of agents.json given as is: Codex stays
-    closed on every system). The real Codex must send each schema strict, as it is."""
+    """daily-reflection.py's and the review's own questions, through their own functions (dr.ask,
+    judge.ask: schema, instructions, wait, tries, effort), Codex the one chosen (a reading of
+    agents.json given as is: Codex stays closed on every system). The prompts are the bench's. The
+    real Codex must send each schema strict, as it is."""
     spec = importlib.util.spec_from_file_location("daily_reflection", os.path.join(ENGINE, "hooks", "daily-reflection.py"))
     dr = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(dr)
+    dr.configure(logs=os.path.join(B.root, "logs"))
     chosen = (_agents.Choix(("codex",), "codex", B.home), "ok")
     day = {"what_i_did": ["Shipped the login page"], "key_decisions": [], "projects": ["app"], "todo": [],
            "memory": ["Login page shipped"], "suspect": False}
@@ -295,8 +332,7 @@ def the_reflection_and_the_review_ask_codex_through_the_choice():
     try:
         B.mock.reset()
         B.mock.answer = json.dumps(day)
-        a = _headless.run(dr.SENTINEL + "\n" + PROMPT, dr.SCHEMA, dr.SYSTEM, claude={},
-                          codex=dict(timeout=180, command=B.command, work_root=B.root), agents=chosen)
+        a = dr.ask(dr.SENTINEL + "\n" + PROMPT, chosen, codex_command=B.command)
         check((a.moteur, a.output) == ("codex", day), "the reflection's question: Codex answers, named")
         check(dr.clean_answer(a.output)["what_i_did"] == ["Shipped the login page"], "and its answer is the reflection's")
         sent = B.mock.responses()[0]["body"] if B.mock.responses() else {}
@@ -329,11 +365,13 @@ def main():
     print("codex:", B.codex[0], subprocess.run(B.codex + ["--version"], capture_output=True, text=True).stdout.strip())
     try:
         for fn in (answers_with_everything_locked, forced_tool_calls_are_refused, an_unknown_feature_pauses_codex,
-                   the_user_s_mcp_server_never_starts, a_system_config_is_neutralised, requirements_pause_codex,
+                   the_user_s_mcp_server_never_starts, a_system_config_is_neutralised,
+                   a_system_otel_exporter_gets_nothing, requirements_pause_codex,
                    an_api_key_login_is_refused, the_reflection_and_the_review_ask_codex_through_the_choice):
             scenario(fn)
     finally:
         B.mock.close()
+        B.trap.close()
         shutil.rmtree(B.root, ignore_errors=True)
     print("\n%d failure(s)" % len(FAILURES) + "".join("\n  - " + f for f in FAILURES))
     return 1 if FAILURES else 0

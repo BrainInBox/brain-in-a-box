@@ -14,7 +14,8 @@ mock and changes nothing else:
 
     python mock_openai.py shim <mock root> <codex> [codex arguments...]
 
-Its URLs go after every -c of the call (the last one wins), before the prompt `-`.
+It replaces, where they stand, the launcher's own URL settings by the mock's, and refuses to run
+(exit code 3) a `codex exec` that does not pin the provider and both URLs as the launcher must.
 """
 import base64
 import datetime
@@ -222,10 +223,20 @@ def patch_call(path):
 
 # --------------------------------------------------------------------------- the wrapper
 
+# What _headless_codex.py must pass to `codex exec`, word for word (docs/proposals/codex.md, §2.2).
+PINNED = ('model_provider="openai"', 'openai_base_url=""', 'chatgpt_base_url="https://chatgpt.com/backend-api/"')
+
+
 def shim(root, codex, args):
-    if args[:1] == ["exec"] and args[-1:] == ["-"]:
-        args = args[:-1] + ["-c", "openai_base_url=" + json.dumps(root + "/v1"),
-                            "-c", "chatgpt_base_url=" + json.dumps(root + "/backend-api/"), "-"]
+    if args[:1] == ["exec"]:
+        values = {i + 1 for i, a in enumerate(args[:-1]) if a in ("-c", "--config")}
+        missing = [p for p in PINNED if p not in {args[i] for i in values}]
+        if missing:
+            sys.stderr.write("mock_openai shim: codex exec without %s\n" % ", ".join(missing))
+            return 3
+        to_mock = {PINNED[1]: "openai_base_url=" + json.dumps(root + "/v1"),
+                   PINNED[2]: "chatgpt_base_url=" + json.dumps(root + "/backend-api/")}
+        args = [to_mock.get(a, a) if i in values else a for i, a in enumerate(args)]
     if os.name == "nt":
         # Inherits the pipes; the launcher's taskkill /T reaches codex through this process.
         return subprocess.call([codex] + args)
