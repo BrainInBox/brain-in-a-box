@@ -1716,7 +1716,8 @@ if git -C "$REPO" rev-parse -q --verify origin/master >/dev/null 2>&1 \
   cp "$KIT/test-hooks.sh" "$MK/test-hooks.sh"
   # The sources install.sh copies into the home, by name, that differ from master's.
   changed=$(git -C "$REPO" diff --name-only origin/master -- engine/hooks engine/bin engine/nightly engine/search | sed 's#.*/##' | sort -u)
-  smnorm(){ sed -e "s#$MK#<kit>#g" -e "s#$KIT#<kit>#g"; }
+  # The kits' folders, and mktemp's names (install.sh hands crontab a file of its own).
+  smnorm(){ sed -E -e "s#$MK#<kit>#g" -e "s#$KIT#<kit>#g" -e 's#/tmp\.[A-Za-z0-9]{6,}/#/tmp.<x>/#g'; }
   smrun(){ local name="$1" kit="$2" log="$IX/home/.brain-in-a-box/install.log" from; shift 2
     from=$(( $( [ -f "$log" ] && wc -c < "$log" || echo 0) + 1 ))
     rm -f "$IX/calls"; ixrun "$kit" "$@"; echo "$?" > "$IX/sm-$name.rc"

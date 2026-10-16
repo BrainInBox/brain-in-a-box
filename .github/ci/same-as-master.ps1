@@ -51,10 +51,13 @@ $backups = @(Get-ChildItem -LiteralPath "$H\.brain-in-a-box\backups" -Directory 
 $before = Snap
 $m = Run "$T\master"
 $b = Run $Mine
-# The sources this change touches, among those install.ps1 copies next to the hooks.
-$touched = @(foreach ($f in @(Get-ChildItem "$Mine\engine\hooks" -Filter *.py -File) + @(Get-Item "$Mine\engine\nightly\windows-nightly.py")) {
+# The sources this change touches, among those install.ps1 copies next to the hooks, and into ~\.brain-search.
+$touched = @(foreach ($f in @(Get-ChildItem "$Mine\engine\hooks" -Filter *.py -File) + @(Get-Item "$Mine\engine\nightly\windows-nightly.py") +
+                            @(Get-ChildItem "$Mine\engine\search" -Filter *.py -File)) {
     $theirs = Join-Path "$T\master" ($f.FullName.Substring($Mine.Length + 1))
-    if (-not (Test-Path -LiteralPath $theirs) -or (Get-FileHash $theirs).Hash -ne (Get-FileHash $f.FullName).Hash) { "$H\.claude\hooks\brain\$($f.Name)" }
+    if (-not (Test-Path -LiteralPath $theirs) -or (Get-FileHash $theirs).Hash -ne (Get-FileHash $f.FullName).Hash) {
+        if ($f.Directory.Name -eq "search") { "$H\.brain-search\$($f.Name)" } else { "$H\.claude\hooks\brain\$($f.Name)" }
+    }
 })
 Write-Host "the kit's copies this change touches: $($touched -join ', ')"
 if ($m.Out -cne $b.Out) {
