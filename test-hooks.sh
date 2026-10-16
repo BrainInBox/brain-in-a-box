@@ -25,6 +25,11 @@ chmod +x "$HB/gbrain-selfupdate.sh"
 PASS=0; FAIL=0
 ok(){ printf "  \033[1;32m✓\033[0m %s\n" "$1"; PASS=$((PASS+1)); }
 no(){ printf "  \033[1;31m✗\033[0m %s\n" "$1"; FAIL=$((FAIL+1)); }
+# Codex opened in a copy of the kit's gate, whatever the gate says (closed on every system today, open on
+# some of them once a change opens it): its line replaced, then checked.
+OPEN_GATE='CODEX_OUVERT = frozenset({"darwin", "linux", "windows"})'
+open_gate(){ sed -i.bak -E "s/^CODEX_OUVERT = frozenset\(.*\)\$/$OPEN_GATE/" "$1" && rm -f "$1.bak" && grep -qxF "$OPEN_GATE" "$1" \
+  || { no "the gate's line moved: Codex not opened in $1"; return 1; }; }
 
 # Fake transcript: 1 user prompt + 1 assistant with 3 tool_use (>=3 gate).
 TX="$H/fake-transcript.jsonl"
@@ -178,7 +183,7 @@ cmp -s "$J" "$CJ" && [ ! -e "$LD/recap-$CSID.lock" ] \
   || no "Codex's Stop hook wrote while Codex is not chosen or closed"
 CXH="$H/codex-open"; mkdir -p "$CXH/hooks" "$CXH/Documents/Brain/Journal" "$CXH/.brain-in-a-box"
 cp "$HB/session-recap.py" "$HB/_codex_rollout.py" "$HB/_vault_write.py" "$HB/_redact.py" "$HB/_agents.py" "$CXH/hooks/"
-sed -i.bak 's/^CODEX_OUVERT = frozenset()$/CODEX_OUVERT = frozenset({"darwin", "linux", "windows"})/' "$CXH/hooks/_agents.py"
+open_gate "$CXH/hooks/_agents.py"
 cp "$H/.brain-in-a-box/agents.json" "$CXH/.brain-in-a-box/"
 codex_stop "$CXH" "$CXH/hooks"
 grep -q "codex gpt-6.1-sol · sid:\`$CSID\`\$" "$CXH/Documents/Brain/Journal/$DAY.md" 2>/dev/null \
@@ -431,7 +436,7 @@ echo "════ 7ter) Codex's hooks (--agent codex): the guard, Codex's schem
 # keeps no file of (--ephemeral), nor the kit's own runs (BRAIN_HEADLESS=1).
 XH="$H/codex-hooks"; XO="$XH/open"; XHOME="$XH/home"; mkdir -p "$XO" "$XHOME/.brain-in-a-box/controle" "$XH/tmp"
 cp "$HB"/*.py "$XO/"
-sed -i.bak 's/^CODEX_OUVERT = frozenset()$/CODEX_OUVERT = frozenset({"darwin", "linux", "windows"})/' "$XO/_agents.py"
+open_gate "$XO/_agents.py"
 printf '{"version":1,"agents":["claude","codex"],"prefere":"claude","codex_home":"%s"}\n' "$XHOME/.codex" > "$XHOME/.brain-in-a-box/agents.json"
 chmod 600 "$XHOME/.brain-in-a-box/agents.json"
 python3 - "$REPO/engine/tests" "$XH" <<'PY'
@@ -1358,7 +1363,7 @@ cmp -s "$REPO/engine/codex/AGENTS.vault.md" "$CX/vault/AGENTS.md" && grep -q "CL
 
 # The question: a new install at a terminal, nothing chosen, where Codex can be chosen.
 QK="$CX/kit"; mkdir -p "$QK/engine/hooks"
-sed 's/^CODEX_OUVERT = frozenset()$/CODEX_OUVERT = frozenset({"darwin", "linux", "windows"})/' "$REPO/engine/hooks/_agents.py" > "$QK/engine/hooks/_agents.py"
+cp "$REPO/engine/hooks/_agents.py" "$QK/engine/hooks/_agents.py"; open_gate "$QK/engine/hooks/_agents.py"
 sed -n -e '/^# >>> agents$/,/^# <<< agents$/p' -e '/^# >>> linux$/,/^# <<< linux$/p' "$REPO/install.sh" > "$CX/blocks.sh"
 cat > "$CX/q.sh" <<'Q'
 . "$1"; REPO="$2"; STATE="$3"; HOOKS="$3/hooks"; AGENTS_OPT=""; PREFERE_OPT=""
@@ -1424,14 +1429,14 @@ printf '#!/bin/sh\necho "test-hooks.sh BIAB_FROM_INSTALL=${BIAB_FROM_INSTALL:-}"
 # The same kit with Codex open on every system, as the PR that opens it will make it, and Codex's
 # installer pinned to the stand-in's: the path without Claude, and both.
 cp -R "$KIT" "$IX/kit-codex"
-sed -i.bak 's/^CODEX_OUVERT = frozenset()$/CODEX_OUVERT = frozenset({"darwin", "linux", "windows"})/' "$IX/kit-codex/engine/hooks/_agents.py"
+open_gate "$IX/kit-codex/engine/hooks/_agents.py"; gate=$?
 sed -i.bak "s/^CODEX_INSTALLER_SHA256=.*/CODEX_INSTALLER_SHA256=$(sha256 "$IX/codex-installer")/" "$IX/kit-codex/install.sh"
-rm -f "$IX/kit-codex/engine/hooks/_agents.py.bak" "$IX/kit-codex/install.sh.bak"
+rm -f "$IX/kit-codex/install.sh.bak"
 IXPATH="$IB:$IX/sys"
 bad=""
+[ "$gate" = 0 ] || bad="$bad gate"
 for t in launchctl systemctl loginctl crontab curl brew; do [ "$(PATH="$IXPATH" command -v "$t")" = "$IB/$t" ] || bad="$bad $t"; done
 for t in claude codex bun gbrain; do [ -z "$(PATH="$IXPATH" command -v "$t")" ] || bad="$bad $t"; done
-grep -qx 'CODEX_OUVERT = frozenset({"darwin", "linux", "windows"})' "$IX/kit-codex/engine/hooks/_agents.py" || bad="$bad gate"
 grep -qx "CODEX_INSTALLER_SHA256=$(sha256 "$IX/codex-installer")" "$IX/kit-codex/install.sh" || bad="$bad pin"
 [ -z "$bad" ] || { no "e2e: harness not isolated:$bad (the rest of this section is not run: it would not be trustworthy)"; return; }
 ok "e2e: the stand-ins come first, nothing of this machine's claude, bun or gbrain is in reach"

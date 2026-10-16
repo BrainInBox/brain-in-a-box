@@ -1063,8 +1063,9 @@ jobs:
           [IO.Compression.ZipFile]::ExtractToDirectory("$env:RUNNER_TEMP\kit-open.zip", $K)
           $gate = "$K\engine\hooks\_agents.py"
           $g = [IO.File]::ReadAllText($gate)
-          if (([regex]::Matches($g, '(?m)^CODEX_OUVERT = frozenset\(\)\r?$')).Count -ne 1) { throw "the gate's line moved" }
-          [IO.File]::WriteAllText($gate, ($g -replace '(?m)^CODEX_OUVERT = frozenset\(\)', 'CODEX_OUVERT = frozenset({"darwin", "linux", "windows"})'))
+          # Whatever the gate says: closed today, open on some systems once a change opens them.
+          if (([regex]::Matches($g, '(?m)^CODEX_OUVERT = frozenset\(.*\)\r?$')).Count -ne 1) { throw "the gate's line moved" }
+          [IO.File]::WriteAllText($gate, ($g -replace '(?m)^CODEX_OUVERT = frozenset\(.*\)(?=\r?$)', 'CODEX_OUVERT = frozenset({"darwin", "linux", "windows"})'))
           # Claude's side, but the gate itself (the copy's _agents.py replaces the one in place, and says so).
           $claude = { @(Get-ChildItem "$H\.claude" -Recurse -File -Force) + @(Get-ChildItem "$H\.local\bin" -File) |
                       Where-Object { $_.Name -ne '_agents.py' } | ForEach-Object { "$($_.FullName) $((Get-FileHash $_.FullName).Hash)" } | Sort-Object }

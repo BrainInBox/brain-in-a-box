@@ -3,9 +3,11 @@ lines Codex 0.162.1 and 0.163.0-alpha.11 wrote, moved to the day a test needs. E
 is a copy of one of the capture's own lines, its text or command changed: the shapes stay Codex's.
 Also what Codex gave its hooks in step 0, and the schemas Codex checks a hook's answer against
 (fixtures/codex/hooks-schema-0.162.1/: codex-rs/hooks/schema/generated, tag rust-v0.162.1).
+And open_gate(), which opens Codex in a copy of _agents.py.
 """
 import copy
 import json
+import re
 from pathlib import Path
 
 P0 = Path(__file__).resolve().parent / "fixtures" / "codex" / "phase0"
@@ -16,6 +18,15 @@ TUI = "macos-0.162.1/rollout-tui-apikey-macos.jsonl"        # interactive: sourc
 TRUSTED = "ubuntu-0.162.1/rollout-exec-hooks-trusted-linux.jsonl"
 TRUSTED_HOOKS = "ubuntu-0.162.1/hook-payloads-trusted-linux.jsonl"
 TUI_HOOKS = "macos-0.162.1/hook-payloads-tui-apikey-macos.jsonl"
+OPEN_GATE = 'CODEX_OUVERT = frozenset({"darwin", "linux", "windows"})'
+
+
+def open_gate(text):
+    """_agents.py's text with Codex open on every system, whatever its gate says (closed on every system
+    today, open on some once a change opens them): only the tests that pin the closed gate change then.
+    None when the gate's line moved."""
+    opened, n = re.subn(r"^CODEX_OUVERT = frozenset\(.*\)$", OPEN_GATE, text, flags=re.M)
+    return opened if n == 1 else None
 
 
 def records(name):

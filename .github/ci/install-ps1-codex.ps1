@@ -294,8 +294,9 @@ try {
     $open = Join-Path $T "kit-open"
     New-Item -ItemType Directory -Path (Join-Path $open (Join-Path "engine" "hooks")) -Force | Out-Null
     $gate = Read-Text (Join-Path $Kit (Join-Path "engine" (Join-Path "hooks" "_agents.py")))
-    Check (([regex]::Matches($gate, '(?m)^CODEX_OUVERT = frozenset\(\)\r?$')).Count -eq 1) "codex question: the gate's line, opened in the copy"
-    [IO.File]::WriteAllText((Join-Path $open (Join-Path "engine" (Join-Path "hooks" "_agents.py"))), ($gate -replace '(?m)^CODEX_OUVERT = frozenset\(\)', 'CODEX_OUVERT = frozenset({"darwin", "linux", "windows"})'))
+    # Whatever the gate says (closed today, open on some systems once a change opens them).
+    Check (([regex]::Matches($gate, '(?m)^CODEX_OUVERT = frozenset\(.*\)\r?$')).Count -eq 1) "codex question: the gate's line, opened in the copy"
+    [IO.File]::WriteAllText((Join-Path $open (Join-Path "engine" (Join-Path "hooks" "_agents.py"))), ($gate -replace '(?m)^CODEX_OUVERT = frozenset\(.*\)(?=\r?$)', 'CODEX_OUVERT = frozenset({"darwin", "linux", "windows"})'))
     function Ask([string[]]$Given, [string]$RepoDir = $open) {
         New-Home $RepoDir; $script:Interactive = $true; $script:Answers = $Given
         $null = Said { Ask-Agents }

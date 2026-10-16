@@ -38,6 +38,7 @@ import _agents  # noqa: E402
 import _codex_rollout as rollout  # noqa: E402
 import _controle_judge as judge  # noqa: E402
 import _headless_codex as codex  # noqa: E402
+import codex_captures as cap  # noqa: E402
 import mock_openai  # noqa: E402
 from _headless_claude import HeadlessError  # noqa: E402
 
@@ -519,7 +520,6 @@ def codex_runs_the_kits_hooks():
     As it is, an exec run: from its first hook, Codex has written the session file and it says "exec",
     so the hooks say and write nothing (but the sign that they ran). Handed on as if typed in Codex's
     terminal: their answers reach the model, so Codex took them. The launcher's own call runs none."""
-    import codex_captures as cap
     hooks, home, chome = (os.path.join(B.root, n) for n in ("hooks-open", "hooks-home", "hooks-codex-home"))
     state = os.path.join(home, ".brain-in-a-box", "controle")
     for d in (hooks, state, chome):
@@ -529,10 +529,10 @@ def codex_runs_the_kits_hooks():
             shutil.copy(os.path.join(ENGINE, "hooks", name), hooks)
     gate = os.path.join(hooks, "_agents.py")
     with open(gate, encoding="utf-8") as f:
-        text = f.read()
-    check(text.count("CODEX_OUVERT = frozenset()\n") == 1, "the gate's line, opened in the copy")
+        opened = cap.open_gate(f.read())
+    check(opened is not None, "the gate's line, opened in the copy")
     with open(gate, "w", encoding="utf-8") as f:
-        f.write(text.replace("CODEX_OUVERT = frozenset()\n", 'CODEX_OUVERT = frozenset({"darwin", "linux", "windows"})\n'))
+        f.write(opened or "")
     agents = os.path.join(home, ".brain-in-a-box", "agents.json")
     with open(agents, "w", encoding="utf-8") as f:
         json.dump({"version": 1, "agents": ["claude", "codex"], "prefere": "claude", "codex_home": chome}, f)
@@ -626,10 +626,10 @@ def install_sh_wires_codex():
         f.write("#!/bin/sh\nexit 0\n")
     gate = os.path.join(kit, "engine", "hooks", "_agents.py")
     with open(gate, encoding="utf-8") as f:
-        text = f.read()
-    check(text.count("CODEX_OUVERT = frozenset()\n") == 1, "the gate's line, opened in the kit's copy")
+        opened = cap.open_gate(f.read())
+    check(opened is not None, "the gate's line, opened in the kit's copy")
     with open(gate, "w", encoding="utf-8") as f:
-        f.write(text.replace("CODEX_OUVERT = frozenset()\n", 'CODEX_OUVERT = frozenset({"darwin", "linux", "windows"})\n'))
+        f.write(opened or "")
     # What would schedule jobs, install Obsidian or reach gbrain: stand-ins that do nothing.
     for t in ("launchctl", "systemctl", "loginctl", "crontab", "brew", "sudo", "apt-get"):
         with open(os.path.join(stubs, t), "w", encoding="utf-8") as f:
@@ -757,10 +757,10 @@ def install_ps1_wires_codex():
             os.path.join(repo, name), os.path.join(kit, name))
     gate = os.path.join(kit, "engine", "hooks", "_agents.py")
     with open(gate, encoding="utf-8") as f:
-        text = f.read()
-    check(text.count("CODEX_OUVERT = frozenset()\n") == 1, "the gate's line, opened in the kit's copy")
+        opened = cap.open_gate(f.read())
+    check(opened is not None, "the gate's line, opened in the kit's copy")
     with open(gate, "w", encoding="utf-8") as f:
-        f.write(text.replace("CODEX_OUVERT = frozenset()\n", 'CODEX_OUVERT = frozenset({"darwin", "linux", "windows"})\n'))
+        f.write(opened or "")
     # Bun at the pinned version, a folder where gbrain goes that is not a clone (gbrain left out), Obsidian.
     with open(os.path.join(repo, "engine", "gbrain-pin.json"), encoding="utf-8") as f:
         stand_in_exe(os.path.join(bun, "bin", "bun.exe"), json.load(f)["bun"])
