@@ -19,6 +19,10 @@ jobs:
         with:
           persist-credentials: false
 
+      # test-hooks.sh, section 16, compares install.sh with master's.
+      - name: Master, for test-hooks.sh to compare install.sh with
+        run: git fetch --no-tags --depth 1 origin +refs/heads/master:refs/remotes/origin/master
+
       - name: Run test-hooks.sh (hooks + gbrain self-update + YAML frontmatter validation)
         run: bash test-hooks.sh
 
@@ -72,6 +76,9 @@ jobs:
           # test-hooks.sh sets variables that functions taken from install.sh read.
           shellcheck -S warning -e SC2034 test-hooks.sh
           systemd-analyze verify engine/nightly/systemd/*.service engine/nightly/systemd/*.timer
+
+      - name: Master, for test-hooks.sh to compare install.sh with
+        run: git fetch --no-tags --depth 1 origin +refs/heads/master:refs/remotes/origin/master
 
       - name: "Run test-hooks.sh (no zsh on this runner: the nightly under bash)"
         run: bash test-hooks.sh

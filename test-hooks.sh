@@ -1703,6 +1703,59 @@ done
 [ -z "$bad" ] && ok "e2e: Claude alone, a Codex of the user's own beside it (closed or open): ~/.codex untouched, the output the default's" \
   || no "e2e: Claude alone touched the user's own Codex:$bad"
 
+# Claude alone, install.sh says and does what master's does: master's, then this one's, each in a new
+# home beside a Codex of the user's own (its hooks.json naming one of the kit's hooks, wired by hand),
+# then master's and this one's again over that install; without a choice, then with --agents claude.
+# The same lines on screen, the same calls, the same commands in install.log, the same files but the
+# kit's copies of the sources this change touches and installed.json; this one's re-run leaves the
+# install as it found it; ~/.codex untouched, no ~/.agents. Master is origin/master, which test.yml
+# fetches; .github/ci/same-as-master.ps1 is install.ps1's.
+MK="$IX/master-kit"; rm -rf "$MK"; mkdir -p "$MK"
+if git -C "$REPO" rev-parse -q --verify origin/master >/dev/null 2>&1 \
+   && git -C "$REPO" archive origin/master install.sh engine skills vault-skeleton onboarding | tar -x -C "$MK"; then
+  cp "$KIT/test-hooks.sh" "$MK/test-hooks.sh"
+  # The sources install.sh copies into the home, by name, that differ from master's.
+  changed=$(git -C "$REPO" diff --name-only origin/master -- engine/hooks engine/bin engine/nightly engine/search | sed 's#.*/##' | sort -u)
+  smnorm(){ sed -e "s#$MK#<kit>#g" -e "s#$KIT#<kit>#g"; }
+  smrun(){ local name="$1" kit="$2" log="$IX/home/.brain-in-a-box/install.log" from; shift 2
+    from=$(( $( [ -f "$log" ] && wc -c < "$log" || echo 0) + 1 ))
+    rm -f "$IX/calls"; ixrun "$kit" "$@"; echo "$?" > "$IX/sm-$name.rc"
+    ixout | smnorm > "$IX/sm-$name.out"; ixcalls | smnorm > "$IX/sm-$name.calls"; ixtree > "$IX/sm-$name.tree"
+    tail -c +"$from" "$log" 2>/dev/null | sed -E 's/^\[[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}\] //' | grep '^\$ ' | smnorm > "$IX/sm-$name.log"; }
+  smcodex(){ mkdir -p "$IX/home/.codex"; printf 'Mine.\n' > "$IX/home/.codex/AGENTS.md"
+    printf '{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "%s/.claude/hooks/brain/session-logger.py"}]}]}}\n' "$IX/home" > "$IX/home/.codex/hooks.json"; }
+  bad=""
+  for choice in none claude; do
+    args=(); [ "$choice" = claude ] && args=(--agents claude)
+    ixhome; smcodex; ixtree | grep -E '^\.(codex|agents)/' > "$IX/sm-codex"
+    smrun m "$MK" ${args[@]+"${args[@]}"}
+    ixhome; smcodex
+    smrun b "$KIT" ${args[@]+"${args[@]}"}
+    smrun m2 "$MK" ${args[@]+"${args[@]}"}
+    smrun b2 "$KIT" ${args[@]+"${args[@]}"}
+    for r in m b m2 b2; do [ "$(cat "$IX/sm-$r.rc")" = 0 ] || bad="$bad $choice:$r-rc$(cat "$IX/sm-$r.rc")"; done
+    for pair in m:b m2:b2; do
+      for what in out calls log; do
+        cmp -s "$IX/sm-${pair%:*}.$what" "$IX/sm-${pair#*:}.$what" \
+          || { bad="$bad $choice:${pair#*:}-$what"; diff "$IX/sm-${pair%:*}.$what" "$IX/sm-${pair#*:}.$what" | head -6; }
+      done
+    done
+    [ -s "$IX/sm-b.log" ] || bad="$bad $choice:no-command-in-install.log"
+    cmp -s "$IX/sm-b.tree" "$IX/sm-b2.tree" || bad="$bad $choice:re-run-changed-the-install"
+    apart=$(diff "$IX/sm-m.tree" "$IX/sm-b.tree" | sed -n 's/^[<>] \([^ ]*\) .*/\1/p' | sort -u)
+    want=$(cut -d' ' -f1 "$IX/sm-b.tree" | while read -r f; do printf '%s\n' "$changed" | grep -qxF "$(basename "$f")" && echo "$f"; done)
+    [ -n "$want" ] && want=$(printf '%s\n.brain-in-a-box/installed.json\n' "$want" | sort -u)
+    [ "$apart" = "$want" ] || bad="$bad $choice:files[$(echo $apart)]not[$(echo $want)]"
+    ixtree | grep -E '^\.(codex|agents)/' | cmp -s - "$IX/sm-codex" || bad="$bad $choice:user-codex"
+  done
+  [ -z "$bad" ] && ok "e2e: Claude alone, install.sh says, runs and installs what master's does (new and re-run, no choice and --agents claude), but the copies this change touches ($(echo $want)); the user's Codex untouched" \
+    || no "e2e: Claude alone differs from master's install.sh:$bad"
+elif [ "${GITHUB_ACTIONS:-}" = true ]; then
+  no "e2e: no origin/master to compare Claude alone with (test.yml fetches it before this file)"
+else
+  echo "  - skipped: Claude alone against master's install.sh (no origin/master here)"
+fi
+
 # At a terminal (.github/ci/terminal.py): a new install where Codex is open asks which AI; a re-run
 # of an install from before the choice asks nothing more than today (Voyage, and on Linux lingering
 # and Obsidian), its output the same as with Codex closed.
