@@ -726,6 +726,60 @@ class Agents(Sandbox):
         self.assertNotIn("Claude", report.split("## Santé")[1].split("## Historique")[0])
         self.assertIsNone(self.etat_json()["moteur"])
 
+    CODEX_HOOKS_LINE = "🟠 Les hooks Codex ne tournent pas : ouvre Codex, tape /hooks et approuve-les."
+
+    def codex_night(self, agents=("claude", "codex"), wired_ago=3600, session_ago=60, seen_ago=None):
+        """A night after install.sh wired Codex's hooks `wired_ago` seconds ago, Codex having kept a
+        session `session_ago` seconds ago and run one of the kit's hooks `seen_ago` seconds ago."""
+        codex_home = os.path.join(self.home, ".codex")
+        self.small_vault()
+        self.choose(json.dumps({"version": 1, "agents": list(agents), "prefere": agents[0],
+                                **({"codex_home": codex_home} if "codex" in agents else {})}))
+        utc = lambda ago: time.strftime(_agents.UTC, time.gmtime(time.time() - ago))
+        state = os.path.join(self.home, ".brain-in-a-box")
+        if wired_ago is not None:
+            with open(os.path.join(state, _agents.POSES), "w", encoding="utf-8") as f:
+                json.dump({"version": 1, "date": utc(wired_ago)}, f)
+        if seen_ago is not None:
+            with open(os.path.join(state, _agents.VUS), "w", encoding="utf-8") as f:
+                json.dump({"version": 1, "hooks": {"session-logger": utc(seen_ago)}}, f)
+        if session_ago is not None:
+            day = os.path.join(codex_home, "sessions", "2026", "10", "16")
+            os.makedirs(day)
+            rollout = os.path.join(day, "rollout-2026-10-16T10-00-00-0199f0a0-0000-7000-8000-000000000001.jsonl")
+            with open(rollout, "w", encoding="utf-8") as f:
+                f.write("{}\n")
+            os.utime(rollout, (time.time() - session_ago,) * 2)
+        with mock.patch.object(_agents, "CODEX_OUVERT", frozenset({_agents.systeme()})):
+            self.run_in_process()
+        return read(self.vault, "Profile/controle.md"), self.etat_json()
+
+    def test_codex_hooks_that_never_ran_since_the_install_are_said(self):
+        report, etat = self.codex_night()
+        self.assertIn(self.CODEX_HOOKS_LINE, report)
+        self.assertIn({"niveau": "orange", "code": "codex_hooks"}, etat["alertes"])
+        self.assertEqual(etat["verdict"], "orange")
+        # Ran before the install, not since: still not running.
+        self.tearDown_tmp()
+        report, _ = self.codex_night(seen_ago=7200)
+        self.assertIn(self.CODEX_HOOKS_LINE, report)
+
+    def test_codex_hooks_said_only_when_codex_kept_a_session_since_without_running_one(self):
+        quiet = {"a hook ran since": dict(seen_ago=30), "no session since": dict(session_ago=7200),
+                 "no session at all": dict(session_ago=None), "no record of the install": dict(wired_ago=None),
+                 "Codex not chosen": dict(agents=("claude",))}
+        for why, kw in quiet.items():
+            with self.subTest(why):
+                self.tearDown_tmp()
+                report, etat = self.codex_night(**kw)
+                self.assertNotIn("Les hooks Codex", report)
+                self.assertNotIn("codex_hooks", [a["code"] for a in etat["alertes"]])
+
+    def tearDown_tmp(self):
+        """A fresh sandbox for the next subtest."""
+        shutil.rmtree(self.tmp, True)
+        self.setUp()
+
 
 class SecretShapes(unittest.TestCase):
     def kinds(self, text):
