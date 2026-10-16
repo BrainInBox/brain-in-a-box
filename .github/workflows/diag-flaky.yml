@@ -17,17 +17,19 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { shard: full-1, mode: full }
-          - { shard: variants-1, mode: variants }
-          - { shard: variants-2, mode: variants }
-          - { shard: variants-3, mode: variants }
+          - { shard: confirm, mode: confirm }
+          - { shard: proof-1, mode: full }
+          - { shard: proof-2, mode: full }
+          - { shard: proof-3, mode: full }
+          - { shard: proof-4, mode: full }
+          - { shard: proof-5, mode: full }
     runs-on: windows-latest
     timeout-minutes: 75
     defaults:
       run:
         working-directory: app/src-tauri
     env:
-      RUN: 3
+      RUN: 4
     steps:
       - uses: actions/checkout@v4
         with:
@@ -53,7 +55,7 @@ jobs:
             & $exe @a *> "logs\$name.log"
             $code = $LASTEXITCODE
             "$name exit $code in $([int]((Get-Date) - $t).TotalSeconds)s"
-            Select-String -Path "logs\$name.log" -Pattern 'DIAG cancel ok|^round |^alone ' | ForEach-Object { '  ' + $_.Line }
+            Select-String -Path "logs\$name.log" -Pattern 'test result|windows_cancel|windows_timeout' | ForEach-Object { '  ' + $_.Line }
             if ($code -ne 0) {
               $script:fails++
               "::group::$name output"
@@ -62,11 +64,11 @@ jobs:
             }
           }
           # As in CI: the whole suite, once, on a VM that never ran PowerShell for these tests.
-          go cold @('--nocapture')
+          go cold @()
           switch ($env:MODE) {
-            'full' { foreach ($i in 1..3) { go "full-$i" @('--nocapture') } }
+            'full' { foreach ($i in 1..12) { go "full-$i" @() } }
             'alone' { foreach ($i in 1..50) { go "alone-$i" @('sys::tests::windows_cancel_kills_the_whole_tree', '--exact', '--nocapture') } }
-            'variants' { $env:DIAG_ROUNDS = '3'; go variants @('diag_variants', '--ignored', '--nocapture'); Select-String -Path logs\variants.log -Pattern 'DIAG TALLY' | ForEach-Object Line }
+            'confirm' { go confirm @('diag_confirm', '--ignored', '--nocapture'); Get-Content logs\confirm.log }
           }
           "failures: $script:fails"
           if ($script:fails) { exit 1 }

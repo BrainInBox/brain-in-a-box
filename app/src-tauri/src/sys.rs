@@ -1057,53 +1057,28 @@ mod tests {
         o.stdout.split_whitespace().any(|w| w == pid)
     }
 
-    /// PowerShell starts a ping that outlives it unless the whole tree is stopped,
-    /// writes the ping's pid to $env:BIAB_PIDFILE, and says how far it got.
+    /// PowerShell starts a ping that outlives it unless the whole tree is stopped, and
+    /// writes the ping's pid to $env:BIAB_PIDFILE. Only .NET calls: a cmdlet from a module
+    /// (Start-Process, Set-Content) first makes Windows PowerShell look through every
+    /// installed module, which a runner's own module cache spares only to programs that
+    /// inherit PSModuleAnalysisCachePath: in the cancel test's short environment that took
+    /// 20 s, and over a minute while the other tests ran.
     #[cfg(windows)]
-    const TREE: &str = "'up'; $null = Get-Command Start-Process; 'found'; $p = Start-Process -FilePath ping.exe -ArgumentList '-n','60','127.0.0.1' -PassThru -WindowStyle Hidden; \
-                        \"ping $($p.Id)\"; Set-Content -LiteralPath $env:BIAB_PIDFILE -Value $p.Id; 'written'; $p.WaitForExit()";
+    const TREE: &str = "$i = [Diagnostics.ProcessStartInfo]::new('ping.exe', '-n 60 127.0.0.1'); $i.UseShellExecute = $true; \
+                        $i.WindowStyle = 'Hidden'; $p = [Diagnostics.Process]::Start($i); \"ping $($p.Id)\"; \
+                        [IO.File]::WriteAllText($env:BIAB_PIDFILE, $p.Id); $p.WaitForExit()";
 
+    /// The ping's pid once PowerShell has written it, None after a minute.
     #[cfg(windows)]
-    fn wait_for_pid(file: &Path, within: Duration) -> Option<String> {
+    fn wait_for_pid(file: &Path) -> Option<String> {
         let t = Instant::now();
-        while t.elapsed() < within {
-            if let Ok(pid) = std::fs::read_to_string(file) {
-                if !pid.trim().is_empty() {
-                    return Some(pid.trim().to_string());
-                }
+        while t.elapsed() < Duration::from_secs(60) {
+            if let Some(pid) = std::fs::read_to_string(file).ok().filter(|p| !p.trim().is_empty()) {
+                return Some(pid.trim().to_string());
             }
             thread::sleep(TICK);
         }
         None
-    }
-
-    /// DIAG: what the machine shows of a PowerShell that did not write its pid.
-    #[cfg(windows)]
-    fn diag_dump(why: &str) -> String {
-        let me = std::process::id();
-        let script = format!(
-            r#"
-$ErrorActionPreference = 'Continue'
-"== {why}: tree under the test process {me}, $(Get-Date -f o)"
-$all = Get-CimInstance Win32_Process
-function t($id, $d) {{ $all | Where-Object ParentProcessId -eq $id | ForEach-Object {{ ('  ' * $d) + "$($_.ProcessId) $($_.Name) created $($_.CreationDate.ToString('HH:mm:ss.fff')) :: $($_.CommandLine)"; t $_.ProcessId ($d + 1) }} }}
-t {me} 0
-"== every ping, powershell, conhost, WerFault"
-$all | Where-Object {{ $_.Name -in 'ping.exe','powershell.exe','conhost.exe','WerFault.exe','pwsh.exe' }} | ForEach-Object {{ "$($_.ProcessId) parent $($_.ParentProcessId) $($_.Name) created $($_.CreationDate.ToString('HH:mm:ss.fff'))" }}
-$kids = @($all | Where-Object {{ $_.ParentProcessId -eq {me} -and $_.Name -eq 'powershell.exe' }})
-foreach ($k in $kids) {{
-  "== threads of powershell $($k.ProcessId)"
-  (Get-Process -Id $k.ProcessId -ErrorAction SilentlyContinue).Threads | ForEach-Object {{ "  tid $($_.Id) state $($_.ThreadState) wait $($_.WaitReason) cpu $($_.TotalProcessorTime)" }}
-  "== modules of powershell $($k.ProcessId)"
-  ((Get-Process -Id $k.ProcessId -ErrorAction SilentlyContinue).Modules | ForEach-Object ModuleName) -join ' '
-  "== PowerShell event log for $($k.ProcessId)"
-  Get-WinEvent -LogName 'Microsoft-Windows-PowerShell/Operational' -MaxEvents 400 -ErrorAction SilentlyContinue | Where-Object ProcessId -eq $k.ProcessId | Sort-Object TimeCreated | ForEach-Object {{ "  $($_.TimeCreated.ToString('HH:mm:ss.fff')) $($_.Id) $(($_.Message -split ""`n"")[0])" }}
-}}
-"== end of dump $(Get-Date -f o)"
-"#
-        );
-        let o = run(&powershell(), &["-NoProfile", "-NonInteractive", "-Command", &script], Duration::from_secs(240));
-        format!("{}\n{}\n(dump exit {})", o.stdout, o.stderr, o.code)
     }
 
     #[cfg(windows)]
@@ -1138,88 +1113,15 @@ foreach ($k in $kids) {{
         let pidfile_s = pidfile.to_string_lossy().into_owned();
         let watcher = thread::spawn({
             let pidfile = pidfile.clone();
-            move || wait_for_pid(&pidfile, Duration::from_secs(60))
+            move || wait_for_pid(&pidfile)
         });
         let t = Instant::now();
         let o = run_with(&powershell(), &["-NoProfile", "-Command", TREE], &[("BIAB_PIDFILE", &pidfile_s)], None, Duration::from_secs(20));
-        let took = t.elapsed();
-        let pid = watcher.join().unwrap();
-        let said = format!("PowerShell said {:?} {:?}, code {} after {took:?}", o.stdout, o.stderr, o.code);
-        let pid = pid.unwrap_or_else(|| panic!("no ping pid: {said}\n{}", diag_dump("timeout test")));
+        let said = format!("PowerShell said {:?} {:?} (code {}, after {:?})", o.stdout, o.stderr, o.code, t.elapsed());
+        let pid = watcher.join().unwrap().unwrap_or_else(|| panic!("the ping never started: {said}"));
         assert_eq!(o.code, -1, "{said}");
-        assert!(took < Duration::from_secs(30), "{said}");
+        assert!(t.elapsed() < Duration::from_secs(30), "{said}");
         assert!(gone(&pid), "ping {pid} survived");
-    }
-
-    /// The environment of the cancel test: what PowerShell itself needs to start, and the pid file.
-    #[cfg(windows)]
-    fn diag_small_env(pidfile: &str) -> Vec<(String, String)> {
-        ["SystemRoot", "windir", "USERPROFILE", "TEMP", "TMP", "LOCALAPPDATA", "APPDATA"]
-            .iter()
-            .filter_map(|k| std::env::var(k).ok().map(|v| (k.to_string(), v)))
-            .chain([("PATH".to_string(), system32("").to_string_lossy().into_owned()), ("BIAB_PIDFILE".to_string(), pidfile.to_string())])
-            .collect()
-    }
-
-    /// DIAG: the test's environment, as variants for bisection.
-    #[cfg(windows)]
-    fn diag_env(kind: &str, pidfile: &str) -> Vec<(String, String)> {
-        let full = || -> Vec<(String, String)> {
-            std::env::vars()
-                .filter(|(k, _)| !k.eq_ignore_ascii_case("PSModulePath"))
-                .chain([("BIAB_PIDFILE".to_string(), pidfile.to_string())])
-                .collect()
-        };
-        let add = |mut env: Vec<(String, String)>, keys: &[&str]| {
-            for k in keys {
-                if let Ok(v) = std::env::var(k) {
-                    env.push((k.to_string(), v));
-                }
-            }
-            env
-        };
-        let drop = |env: Vec<(String, String)>, keys: &[&str]| -> Vec<(String, String)> {
-            env.into_iter().filter(|(k, _)| !keys.iter().any(|d| k.eq_ignore_ascii_case(d))).collect()
-        };
-        const IDENT: &[&str] = &["COMPUTERNAME", "USERDOMAIN", "USERDOMAIN_ROAMINGPROFILE", "USERNAME", "HOMEDRIVE", "HOMEPATH", "LOGONSERVER"];
-        const DIRS: &[&str] = &[
-            "ALLUSERSPROFILE", "PUBLIC", "ProgramData", "ProgramFiles", "ProgramFiles(x86)", "ProgramW6432", "CommonProgramFiles",
-            "CommonProgramFiles(x86)", "CommonProgramW6432", "SystemDrive", "ComSpec", "PATHEXT", "DriverData",
-        ];
-        const CPU: &[&str] = &["NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE", "PROCESSOR_IDENTIFIER", "PROCESSOR_LEVEL", "PROCESSOR_REVISION", "OS"];
-        match kind {
-            "small" => diag_small_env(pidfile),
-            "full" => full(),
-            "full-pathsys32" => {
-                let mut e = drop(full(), &["PATH"]);
-                e.push(("PATH".into(), system32("").to_string_lossy().into_owned()));
-                e
-            }
-            "small+ident" => add(diag_small_env(pidfile), IDENT),
-            "small+dirs" => add(diag_small_env(pidfile), DIRS),
-            "small+cpu" => add(diag_small_env(pidfile), CPU),
-            "small+all3" => add(add(add(diag_small_env(pidfile), IDENT), DIRS), CPU),
-            "full-ident" => drop(full(), IDENT),
-            "small+ProgramFiles" => add(diag_small_env(pidfile), &["ProgramFiles"]),
-            "small+psmp-pshome" => {
-                let mut e = diag_small_env(pidfile);
-                e.push(("PSModulePath".into(), system32(r"WindowsPowerShell\v1.0\Modules").to_string_lossy().into_owned()));
-                e
-            }
-            other => panic!("{other}"),
-        }
-    }
-
-    /// DIAG: waits for the pid; if it is late, dumps once at 5 s, then waits on.
-    #[cfg(windows)]
-    fn diag_wait(file: &Path, why: &str) -> (Option<String>, Duration, String) {
-        let t = Instant::now();
-        if let Some(p) = wait_for_pid(file, Duration::from_secs(5)) {
-            return (Some(p), t.elapsed(), String::new());
-        }
-        let dump = diag_dump(why);
-        let pid = wait_for_pid(file, Duration::from_secs(55));
-        (pid, t.elapsed(), dump)
     }
 
     #[cfg(windows)]
@@ -1227,77 +1129,90 @@ foreach ($k in $kids) {{
     fn windows_cancel_kills_the_whole_tree() {
         let dir = tempfile::tempdir().unwrap();
         let pidfile = dir.path().join("pid");
-        let kept = diag_small_env(&pidfile.to_string_lossy());
+        let pidfile_s = pidfile.to_string_lossy().into_owned();
+        // What PowerShell itself needs to start, and the pid file.
+        let kept: Vec<(String, String)> = ["SystemRoot", "windir", "USERPROFILE", "TEMP", "TMP", "LOCALAPPDATA", "APPDATA"]
+            .iter()
+            .filter_map(|k| std::env::var(k).ok().map(|v| (k.to_string(), v)))
+            .chain([("PATH".to_string(), system32("").to_string_lossy().into_owned()), ("BIAB_PIDFILE".to_string(), pidfile_s)])
+            .collect();
         let env: Vec<(&str, &str)> = kept.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
         let cancel = AtomicBool::new(false);
         let iso = Isolated { env: &env, cwd: dir.path(), stdin: "", limit: Duration::from_secs(120), cancel: &cancel };
         let t = Instant::now();
         let mut said = Vec::new();
-        let (code, (pid, at, dump)) = thread::scope(|s| {
+        let (code, pid) = thread::scope(|s| {
             let watcher = s.spawn(|| {
-                let r = diag_wait(&pidfile, "cancel test");
+                let pid = wait_for_pid(&pidfile);
+                // With a pid or without, PowerShell stops now rather than at the limit.
                 cancel.store(true, Ordering::SeqCst);
-                r
+                pid
             });
-            let code = run_isolated(&powershell(), &["-NoProfile", "-Command", TREE], &iso, &mut |l| said.push(format!("{:?} {l}", t.elapsed())));
+            let code = run_isolated(&powershell(), &["-NoProfile", "-Command", TREE], &iso, &mut |l| said.push(l));
             (code, watcher.join().unwrap())
         });
-        let pid = pid.unwrap_or_else(|| panic!("no ping pid after {at:?}, code {code}, PowerShell said {said:?}\n{dump}"));
-        eprintln!("DIAG cancel ok: pid after {at:?}, said {said:?}");
-        if !dump.is_empty() {
-            eprintln!("DIAG cancel slow dump:\n{dump}");
-        }
+        let pid = pid.unwrap_or_else(|| panic!("the ping never started: PowerShell said {said:?} (code {code}, after {:?})", t.elapsed()));
         assert_eq!(code, -1, "{said:?}");
         assert!(gone(&pid), "ping {pid} survived");
     }
 
-    /// DIAG: how long PowerShell takes to find Start-Process, and where it looks.
+    /// DIAG (temporary): how long PowerShell takes to find a cmdlet, per environment.
     #[cfg(windows)]
-    const FIND: &str = "'up'; \"psmp $env:PSModulePath\"; $t = [Diagnostics.Stopwatch]::StartNew(); $c = Get-Command Start-Process; \
-                        \"found in $($t.ElapsedMilliseconds) ms: $($c.Module.Path)\"; \
-                        Set-Content -LiteralPath $env:BIAB_PIDFILE -Value 1";
-
-    /// DIAG: the same PowerShell, launched with a given environment.
-    #[cfg(windows)]
-    fn diag_launch(kind: &str) -> String {
+    fn diag_find(kind: &str, linger: bool) -> String {
         let dir = tempfile::tempdir().unwrap();
-        let pidfile = dir.path().join("pid");
-        let env = diag_env(kind, &pidfile.to_string_lossy());
+        let mut env: Vec<(String, String)> = ["SystemRoot", "windir", "USERPROFILE", "TEMP", "TMP", "LOCALAPPDATA", "APPDATA"]
+            .iter()
+            .filter_map(|k| std::env::var(k).ok().map(|v| (k.to_string(), v)))
+            .chain([("PATH".to_string(), system32("").to_string_lossy().into_owned())])
+            .collect();
+        match kind {
+            "small" => {}
+            "small+cachepath" => env.extend(std::env::var("PSModuleAnalysisCachePath").ok().map(|v| ("PSModuleAnalysisCachePath".to_string(), v))),
+            "full" => env = std::env::vars().filter(|(k, _)| !k.eq_ignore_ascii_case("PSModulePath")).collect(),
+            other => panic!("{other}"),
+        }
+        let script = format!(
+            "\"cache [$env:PSModuleAnalysisCachePath]\"; $t = [Diagnostics.Stopwatch]::StartNew(); $null = Get-Command Start-Process; \
+             \"found in $($t.ElapsedMilliseconds) ms\"; {}",
+            if linger { "Start-Sleep 20" } else { "" }
+        );
         let mut c = Command::new(powershell());
-        c.args(["-NoProfile", "-Command", FIND]).current_dir(dir.path()).stdin(Stdio::null());
+        c.args(["-NoProfile", "-Command", &script]).current_dir(dir.path()).stdin(Stdio::null());
         c.env_clear().envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())));
-        let t = Instant::now();
         let (mut child, rx) = start(&mut c).unwrap();
         let mut said = Vec::new();
-        let code = supervise(&mut child, &rx, Duration::from_secs(120), None, &mut |_, b| said.push(String::from_utf8_lossy(&b).trim_end().to_string()));
-        let found = said.iter().find(|l| l.starts_with("found")).cloned().unwrap_or_else(|| format!("NOT FOUND {said:?}"));
-        let psmp = said.iter().find(|l| l.starts_with("psmp")).cloned().unwrap_or_default();
-        format!("{:.1}s code {code:?} {found} | {psmp}", t.elapsed().as_secs_f64())
+        let code = supervise(&mut child, &rx, Duration::from_secs(150), None, &mut |_, b| said.push(String::from_utf8_lossy(&b).trim_end().to_string()));
+        format!("code {code:?} {said:?}")
     }
 
     #[cfg(windows)]
     #[test]
     #[ignore]
-    fn diag_variants() {
-        let rounds: usize = std::env::var("DIAG_ROUNDS").ok().and_then(|v| v.parse().ok()).unwrap_or(3);
-        let kinds = [
-            "small", "full", "full-pathsys32", "small+ident", "small+dirs", "small+cpu", "small+all3", "full-ident", "small+ProgramFiles",
-            "small+psmp-pshome",
-        ];
-        for round in 0..rounds {
-            let results: Vec<String> = thread::scope(|s| {
-                let hs: Vec<_> = kinds.iter().map(|k| s.spawn(move || diag_launch(k))).collect();
-                hs.into_iter().map(|h| h.join().unwrap()).collect()
-            });
-            for (k, r) in kinds.iter().zip(&results) {
-                eprintln!("round {round} {k}: {r}");
-            }
+    fn diag_confirm() {
+        let cache = std::path::PathBuf::from(std::env::var("LOCALAPPDATA").unwrap()).join(r"Microsoft\Windows\PowerShell\ModuleAnalysisCache");
+        eprintln!("runner PSModuleAnalysisCachePath = {:?}", std::env::var("PSModuleAnalysisCachePath"));
+        eprintln!("default cache {} exists: {}", cache.display(), cache.exists());
+        for (kind, linger) in [("full", false), ("small+cachepath", false), ("small", false), ("small", false), ("small", true), ("small", false)] {
+            eprintln!("CONFIRM {kind}{}: {}", if linger { " (lingers 20 s)" } else { "" }, diag_find(kind, linger));
+            eprintln!("  default cache exists: {}", cache.exists());
         }
-        // One at a time, twice over.
-        for pass in 0..2 {
-            for k in kinds {
-                eprintln!("alone{pass} {k}: {}", diag_launch(k));
+        // The fixed fixture, in the short environment, ten times.
+        for i in 0..10 {
+            let dir = tempfile::tempdir().unwrap();
+            let pidfile = dir.path().join("pid");
+            let mut c = Command::new(powershell());
+            c.args(["-NoProfile", "-Command", TREE]).current_dir(dir.path()).stdin(Stdio::null()).env_clear();
+            for k in ["SystemRoot", "windir", "USERPROFILE", "TEMP", "TMP", "LOCALAPPDATA", "APPDATA"] {
+                if let Ok(v) = std::env::var(k) {
+                    c.env(k, v);
+                }
             }
+            c.env("PATH", system32("")).env("BIAB_PIDFILE", &pidfile);
+            let t = Instant::now();
+            let mut child = c.stdout(Stdio::null()).stderr(Stdio::null()).spawn().unwrap();
+            let pid = wait_for_pid(&pidfile);
+            eprintln!("CONFIRM fixed TREE small env #{i}: pid {pid:?} after {:?}", t.elapsed());
+            kill_group(&mut child);
         }
     }
 
