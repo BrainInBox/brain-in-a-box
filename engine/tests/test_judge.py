@@ -684,6 +684,29 @@ class ShouldAsk(unittest.TestCase):
         self.assertEqual(ask(lessons_left=True), (True, None))
         self.assertEqual(ask(sunday=True), (True, None))
 
+    def test_a_usage_limit_codex_words_its_own_way_skips_the_review_too(self):
+        ask = judge.should_ask
+        # Each wording _headless_codex classes as a usage limit, as the reflection keeps the error
+        # when Codex is one of the agents: the engine named first, or after the preferred one's.
+        for said in ("You've hit your usage limit. Upgrade to Pro", "You've hit your spend cap for this month.",
+                     "Quota exceeded for this workspace.", "Upgrade to Plus to keep using Codex."):
+            self.assertTrue(hx.QUOTA_RE.search(said), said)
+            for error in ("codex: quota: " + said, "claude: quota: " + said,
+                          "claude: api: overloaded; then codex: quota: " + said):
+                with self.subTest(error=error):
+                    self.assertEqual(ask(changed=True, reflection_error=error, reflection_age=60),
+                                     (False, "limite-reflexion"))
+                    self.assertEqual(ask(changed=True, reflection_error=error, reflection_age=7 * 3600), (True, None))
+        # Claude alone names no engine: its error reads as before, with Claude's words only.
+        for error in ("quota: Quota exceeded for this workspace.", "api: quota exceeded upstream",
+                      "codex: api: quota: exceeded"):
+            with self.subTest(error=error):
+                self.assertEqual(ask(changed=True, reflection_error=error, reflection_age=60), (True, None))
+        self.assertEqual(judge.limit_of("quota: You've hit your usage limit"), "claude")
+        self.assertEqual(judge.limit_of("codex: auth: x; then claude: quota: Quota exceeded"), "claude")
+        self.assertEqual(judge.limit_of("claude: api: x; then codex: quota: Quota exceeded"), "codex")
+        self.assertIsNone(judge.limit_of("api: no result"))
+
 
 class Calibration(unittest.TestCase):
     """What a real vault (400 notes, 2026-10-14) showed the dossier was missing."""
@@ -1086,6 +1109,22 @@ class EngineNights(Night):
         self.assertIn(controle.CODEX_SKIP["connexion"], report)
         self.assertNotIn("Relecture par Claude", report)
         self.assertEqual((self.records(), self.codex_runs()), ([], 0))
+
+    def test_a_codex_usage_limit_of_the_reflection_skips_the_review_and_is_said(self):
+        self.choose(["claude", "codex"], "codex")
+        logs = os.path.join(self.home, ".claude", "logs")
+        os.makedirs(logs, exist_ok=True)
+        for error in ("codex: quota: You've hit your spend cap for this month.",
+                      "claude: api: overloaded; then codex: quota: Quota exceeded for this workspace."):
+            with open(os.path.join(logs, "daily-reflection.state.json"), "w", encoding="utf-8") as f:
+                json.dump({"failing_since": "2026-10-14 12:00", "last_error": error}, f)
+            with self.subTest(error=error):
+                self.night_with()
+                self.assertEqual(self.etat_json()["claude"], "saute:limite-reflexion")
+                report = read(self.vault, "Profile/controle.md")
+                self.assertIn("- 🟠 La réflexion du jour échoue depuis le 14/10 (limite d'usage de Codex).\n", report)
+                self.assertIn("- 🟠 Relecture sautée : la réflexion du jour a déjà touché la limite d'usage.\n", report)
+                self.assertEqual((self.records(), self.codex_runs()), ([], None))
 
     def test_a_choice_the_kit_cannot_trust_reviews_nothing_and_says_it_once(self):
         self.choose(raw="{oops")

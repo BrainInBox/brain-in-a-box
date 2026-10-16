@@ -31,6 +31,9 @@ from _redact import find_doubtful_secrets, find_secrets, redact as redact_common
 MIN_CLAUDE = headless.MIN_CLAUDE
 REQUIRED_FLAGS = headless.REQUIRED_FLAGS
 LIMIT_RE = headless.LIMIT_RE
+# A usage limit as _headless.texte() keeps it when Codex is one of the agents: the engine named,
+# first or after the preferred one's error. Codex words its limits its own way ("spend cap").
+NAMED_LIMIT_RE = re.compile(r"(?:^|; then )(claude|codex): quota: ")
 MODEL, EFFORT, BUDGET_USD, MAX_TURNS = "sonnet", "medium", 0.40, 3
 ASK_TIMEOUT = 300
 # Codex has no spending cap (docs/proposals/codex.md, §2.3): a shorter wait. Its model is BRAIN_CODEX_MODEL's.
@@ -731,6 +734,17 @@ def masked_values(original, masked):
 
 # --------------------------------------------------------------------------- when to ask
 
+def limit_of(error):
+    """The engine ("claude" or "codex") whose usage limit the reflection's error shows, else None.
+    An error that names no engine (Claude alone) is read as before: Claude's words only."""
+    m = NAMED_LIMIT_RE.search(error or "")
+    if m:
+        return m.group(1)
+    if error and LIMIT_RE.search(error):
+        return "codex" if error.startswith("codex: ") else "claude"
+    return None
+
+
 def should_ask(sans_claude=False, paused=False, calls_today=0, reflection_error=None, reflection_age=None,
                changed=False, lessons_left=False, sunday=False):
     """(True, None) or (False, why). An idle user costs one review a week at most."""
@@ -740,7 +754,7 @@ def should_ask(sans_claude=False, paused=False, calls_today=0, reflection_error=
         return False, "pause"
     if calls_today >= CALLS_PER_DAY:
         return False, "quota-jour"
-    if reflection_error and LIMIT_RE.search(reflection_error) and reflection_age is not None \
+    if reflection_error and limit_of(reflection_error) and reflection_age is not None \
             and reflection_age < LIMIT_WINDOW:
         return False, "limite-reflexion"
     if not (changed or lessons_left or sunday):

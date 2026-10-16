@@ -673,6 +673,15 @@ class Agents(Sandbox):
             with self.assertRaises(SystemExit):
                 parse(["nuit", "--sans-ia", "--avec-claude"])
 
+    def test_the_abbreviations_of_before_still_work(self):
+        # --sans-ia and --sans-claude are one option: any prefix of --sans-claude means it, as before.
+        parse = controle.parser().parse_args
+        for full, mode, dest in (("--sans-claude", "nuit", "sans_ia"), ("--avec-claude", "essai", "avec_ia"),
+                                 ("--sans-ia", "maintenant", "sans_ia"), ("--avec-ia", "nuit", "avec_ia")):
+            for n in range(3, len(full) + 1):
+                with self.subTest(flag=full[:n]):
+                    self.assertTrue(getattr(parse([mode, full[:n]]), dest))
+
     def test_without_agents_json_the_report_reads_as_before(self):
         self.small_vault()
         self.cli("nuit")

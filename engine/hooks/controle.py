@@ -1318,9 +1318,8 @@ class Run:
         since = st.get("failing_since")
         if isinstance(since, str) and re.match(r"^\d{4}-\d{2}-\d{2}", since):
             d = since[:10]
-            error = str(st.get("last_error") or "")
-            why = " (limite d'usage de %s)" % ("Codex" if error.startswith("codex: ") else "Claude") \
-                if re.search(r"hit your .*limit|session limit|usage limit", error, re.I) else ""
+            limit = judge.limit_of(str(st.get("last_error") or ""))
+            why = " (limite d'usage de %s)" % ("Codex" if limit == "codex" else "Claude") if limit else ""
             self.alert("orange", "reflexion", "%s/%s%s" % (d[8:10], d[5:7], why))
         if self.claude == "fait":
             i = self.judge_info
@@ -1953,14 +1952,25 @@ def cmd_gbrain(opts):
     return 0
 
 
+class Parser(argparse.ArgumentParser):
+    """--sans-ia and its alias --sans-claude are one option: a prefix of both (--sans) is the
+    abbreviation it was before the alias, not an ambiguous one. Same for --avec-*."""
+
+    def _get_option_tuples(self, option_string):
+        found = {}
+        for t in super()._get_option_tuples(option_string):
+            found.setdefault(id(t[0]), t)
+        return list(found.values())
+
+
 def parser():
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--brain", help="the vault (default: BRAIN_DIR, else ~/Documents/Brain)")
     common.add_argument("--git", help="git executable (default: the one on PATH)")
     common.add_argument("--etat", help="state folder (default: BRAIN_CONTROLE_DIR, else ~/.brain-in-a-box/controle)")
     common.add_argument("--maintenant", help="ISO date-time used as 'now' (tests)")
-    ap = argparse.ArgumentParser(prog="controle", description=__doc__.split("\n\n")[0], epilog=ENV_HELP,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = Parser(prog="controle", description=__doc__.split("\n\n")[0], epilog=ENV_HELP,
+                formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd")
     for name, text in (("nuit", "the nightly check"), ("maintenant", "a check now"),
                        ("essai", "what a check would do, writes nothing")):
