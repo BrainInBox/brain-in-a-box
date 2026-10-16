@@ -1628,6 +1628,16 @@ ixrun "$IX/kit-codex" --agents codex; rc=$?
   && ok "e2e codex open: a config.toml the kit will not add to: left as it was, the install goes on and says to approve with /hooks" \
   || no "e2e codex open: a refused config.toml stopped the install or was changed (rc $rc): $(ixout | tail -3)"
 
+# A hooks.json of Codex's that does not parse stops the install at preflight: left as it was, nothing
+# installed (the choice alone is recorded, as for any choice).
+ixhome; mkdir -p "$IX/home/.codex"; printf '{"hooks": {,}}\n' > "$IX/home/.codex/hooks.json"; ixtree > "$IX/tree-hj"
+ixrun "$IX/kit-codex" --agents codex; rc=$?
+[ "$rc" != 0 ] && grep -qF "$IX/home/.codex/hooks.json is not valid JSON (line 1, column" "$IX/out" \
+  && ixtree | grep -v '^\.brain-in-a-box/agents\.json ' | cmp -s - "$IX/tree-hj" && [ ! -e "$IX/home/.brain-in-a-box/install.log" ] \
+  && [ -z "$(ixcalls)" ] \
+  && ok "e2e codex open: a hooks.json that does not parse stops the install at preflight: left as it was, nothing installed" \
+  || no "e2e codex open: a broken hooks.json passed the preflight (rc $rc): $(ixout | tail -3)"
+
 # Claude alone with a Codex of the user's own: nothing of ~/.codex read into the output, nothing written there.
 ixhome; mkdir -p "$IX/home/.codex/sessions/2026/10/16" "$IX/home/.agents"
 printf 'model = "gpt-x"\n[hooks]\n' > "$IX/home/.codex/config.toml"; printf 'Mine.\n' > "$IX/home/.codex/AGENTS.md"
