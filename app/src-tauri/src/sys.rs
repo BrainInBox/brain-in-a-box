@@ -1057,24 +1057,30 @@ mod tests {
         o.stdout.split_whitespace().any(|w| w == pid)
     }
 
-    /// PowerShell starts a ping that outlives it unless the whole tree is stopped,
-    /// and writes the ping's pid to $env:BIAB_PIDFILE.
+    /// PowerShell starts a ping that outlives it unless the whole tree is stopped, and
+    /// writes the ping's pid to $env:BIAB_PIDFILE. Only .NET calls: before its first cmdlet
+    /// (Start-Process, Set-Content), Windows PowerShell reads every installed module its
+    /// module cache does not know. A runner's prebuilt cache is named by PSModuleAnalysisCachePath,
+    /// which the cancel test's short environment drops: there, finding Start-Process took
+    /// 20 s to over a minute, past the wait for the pid.
     #[cfg(windows)]
-    const TREE: &str = "$p = Start-Process -FilePath ping.exe -ArgumentList '-n','60','127.0.0.1' -PassThru -WindowStyle Hidden; \
-                        Set-Content -LiteralPath $env:BIAB_PIDFILE -Value $p.Id; $p.WaitForExit()";
+    const TREE: &str = "$i = [Diagnostics.ProcessStartInfo]::new('ping.exe', '-n 60 127.0.0.1'); $i.UseShellExecute = $true; \
+                        $i.WindowStyle = 'Hidden'; $p = [Diagnostics.Process]::Start($i); \"ping $($p.Id)\"; \
+                        [IO.File]::WriteAllText($env:BIAB_PIDFILE, $p.Id); $p.WaitForExit()";
 
+    /// The ping's pid once PowerShell has written it, None after a minute.
     #[cfg(windows)]
-    fn wait_for_pid(file: &Path) -> String {
+    fn wait_for_pid(file: &Path) -> Option<String> {
         let t = Instant::now();
         while t.elapsed() < Duration::from_secs(60) {
             if let Ok(pid) = std::fs::read_to_string(file) {
                 if !pid.trim().is_empty() {
-                    return pid.trim().to_string();
+                    return Some(pid.trim().to_string());
                 }
             }
             thread::sleep(TICK);
         }
-        panic!("the ping never started");
+        None
     }
 
     #[cfg(windows)]
@@ -1113,9 +1119,10 @@ mod tests {
         });
         let t = Instant::now();
         let o = run_with(&powershell(), &["-NoProfile", "-Command", TREE], &[("BIAB_PIDFILE", &pidfile_s)], None, Duration::from_secs(20));
-        assert_eq!(o.code, -1, "{}", o.stderr);
-        assert!(t.elapsed() < Duration::from_secs(30));
-        let pid = watcher.join().unwrap();
+        let said = format!("PowerShell said {:?} {:?} (code {}, after {:?})", o.stdout, o.stderr, o.code, t.elapsed());
+        let pid = watcher.join().unwrap().unwrap_or_else(|| panic!("the ping never started: {said}"));
+        assert_eq!(o.code, -1, "{said}");
+        assert!(t.elapsed() < Duration::from_secs(30), "{said}");
         assert!(gone(&pid), "ping {pid} survived");
     }
 
@@ -1134,16 +1141,21 @@ mod tests {
         let env: Vec<(&str, &str)> = kept.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
         let cancel = AtomicBool::new(false);
         let iso = Isolated { env: &env, cwd: dir.path(), stdin: "", limit: Duration::from_secs(120), cancel: &cancel };
-        let code = thread::scope(|s| {
-            s.spawn(|| {
-                wait_for_pid(&pidfile);
+        let t = Instant::now();
+        let mut said = Vec::new();
+        let (code, pid) = thread::scope(|s| {
+            let watcher = s.spawn(|| {
+                let pid = wait_for_pid(&pidfile);
+                // With a pid or without, PowerShell stops now rather than at the limit.
                 cancel.store(true, Ordering::SeqCst);
+                pid
             });
-            run_isolated(&powershell(), &["-NoProfile", "-Command", TREE], &iso, &mut |_| {})
+            let code = run_isolated(&powershell(), &["-NoProfile", "-Command", TREE], &iso, &mut |l| said.push(l));
+            (code, watcher.join().unwrap())
         });
-        assert_eq!(code, -1);
-        let pid = std::fs::read_to_string(&pidfile).unwrap();
-        assert!(gone(pid.trim()), "ping {} survived", pid.trim());
+        let pid = pid.unwrap_or_else(|| panic!("the ping never started: PowerShell said {said:?} (code {code}, after {:?})", t.elapsed()));
+        assert_eq!(code, -1, "{said:?}");
+        assert!(gone(&pid), "ping {pid} survived");
     }
 
     #[cfg(windows)]
