@@ -1010,9 +1010,13 @@ class WindowsAcl(unittest.TestCase):
         self.assertEqual({a[3] for a in aces}, {SYSTEM, ADMINS, USERS}, aces)
         codex.check_system_settings()
 
-    def test_as_a_folder_made_in_a_user_s_folder_is(self):
-        # A temporary folder inherits its owner's full control: that account is not an administrator's.
-        self.assertIn("can be changed by another account", self.paused())
+    def test_a_folder_its_users_may_add_to_as_one_made_in_programdata(self):
+        # What a folder made in C:\\ProgramData inherits: Users may add files and folders to it.
+        self.lock(self.openai)
+        self.lock(self.dir)
+        codex.check_system_settings()
+        self.icacls(self.openai, "/grant", "*S-1-5-32-545:(CI)(WD,AD,WEA,WA)")
+        self.assertIn("S-1-5-32-545 may change it", self.paused())
 
     def test_users_who_may_add_files_or_an_owner_of_theirs(self):
         self.lock(self.openai)
