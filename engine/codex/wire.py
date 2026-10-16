@@ -42,6 +42,7 @@ TEXT = {
                "a un \"hooks\".\"%s\" qui n'est pas une liste de groupes de hooks"),
     "there": ("%s: the kit's hooks already there", "%s : les hooks du kit y sont deja"),
     "added": ("%s: the kit's hooks added%s", "%s : hooks du kit ajoutes%s"),
+    "python": ("%s: the kit's hooks now run with %s%s", "%s : les hooks du kit tournent maintenant avec %s%s"),
     "previous": (" (previous version: %s)", " (version precedente : %s)"),
     "notfile": ("%s is not a file", "%s n'est pas un fichier"),
     "notutf8": ("%s is not UTF-8 text", "%s n'est pas du texte UTF-8"),
@@ -120,6 +121,21 @@ def entry(name):
     return {"type": "command", "command": command(name), "timeout": 30}
 
 
+def kit_command(c, name):
+    """c is the kit's command for the hook `name`, as it writes it, whatever the Python (Windows: the
+    one an earlier install found; Python moves when another version is installed)."""
+    if not PS1:
+        return c == command(name)
+    tail = " %s --agent codex" % ps_quote(ntpath.join(arg, name))
+    return (isinstance(c, str) and c.startswith("& ") and c.endswith(tail)
+            and re.fullmatch("'(?:[^'‘’‚‛]|''|‘‘|’’|‚‚|‛‛)*'", c[2:len(c) - len(tail)]) is not None)
+
+
+def kit_entry(h, name):   # an entry exactly as the kit writes it, whatever the Python
+    return (set(h) == set(entry(name)) and h["type"] == "command" and h["timeout"] == 30
+            and h.get("commandWindows", h["command"]) == h["command"] and kit_command(h["command"], name))
+
+
 def ours(h, name):   # an entry of the kit's, as the kit wrote it or since changed by the user
     if not PS1:
         return isinstance(h.get("command"), str) and "/.claude/hooks/brain/" + name in h["command"]
@@ -155,8 +171,12 @@ def hooks_json():
 def merge():
     target, raw, d = hooks_json()
     before = json.dumps(d, sort_keys=True)
+    added = False
     for evt, _, names in EVENTS:
         arr = d.setdefault("hooks", {}).setdefault(evt, [])
+        for g in arr:   # the kit's own entries move to the Python of this install, as Claude's in settings.json do
+            if "hooks" in g:
+                g["hooks"] = [next((entry(n) for n in names if kit_entry(h, n)), h) for h in g["hooks"]]
         missing = [n for n in names if not any(ours(h, n) for g in arr for h in g.get("hooks", []))]
         if missing:   # into the group of the kit's that is there, else one of its own at the end
             grp = next((g for g in arr if "matcher" not in g and any(ours(h, n) for h in g.get("hooks", []) for n in names)), None)
@@ -164,12 +184,22 @@ def merge():
                 grp = {"hooks": []}
                 arr.append(grp)
             grp.setdefault("hooks", []).extend(entry(n) for n in missing)
+            added = True
     if json.dumps(d, sort_keys=True) == before:
         out(t("there") % shown(HJ))
         sys.exit(0)
     bak = keep(HJ, raw) if raw is not None else None
     write(target, (json.dumps(d, indent=2, ensure_ascii=False) + "\n").encode("utf-8"))
-    out(t("added") % (shown(HJ), t("previous") % shown(bak) if bak else ""))
+    was = t("previous") % shown(bak) if bak else ""
+    out(t("added") % (shown(HJ), was) if added else t("python") % (shown(HJ), PY, was))
+
+
+def trust(label, cmd):
+    """Codex's trusted_hash of a hook: the sha256 of its normalized form, whose command is the one it
+    runs, commandWindows on Windows (codex-rs/hooks/src/engine/discovery.rs, hook_hash, 0.162.1)."""
+    ident = {"event_name": label, "hooks": [{"async": False, "command": cmd, "timeout": 30, "type": "command"}]}
+    return "sha256:" + hashlib.sha256(json.dumps(ident, sort_keys=True, separators=(",", ":"),
+                                                 ensure_ascii=False).encode("utf-8")).hexdigest()
 
 
 def approve():
@@ -188,11 +218,8 @@ def approve():
                 n = next((n for n in evnames if h == entry(n)), None)
                 if n is None:
                     continue
-                ident = {"event_name": label, "hooks": [{"async": False, "command": command(n), "timeout": 30, "type": "command"}]}
-                digest = "sha256:" + hashlib.sha256(json.dumps(ident, sort_keys=True, separators=(",", ":"),
-                                                               ensure_ascii=False).encode("utf-8")).hexdigest()
                 names.add(n)
-                want += [("%s:%s:%d:%d" % (join(b, "hooks.json"), label, gi, hi), digest, n) for b in bases]
+                want += [("%s:%s:%d:%d" % (join(b, "hooks.json"), label, gi, hi), trust(label, command(n)), n, label) for b in bases]
     if not want:
         out("none", "0", "-", "-")
         sys.exit(0)
@@ -208,9 +235,11 @@ def approve():
     except UnicodeDecodeError:
         out("refused", t("notutf8") % shown(CT), "-", "-")
         sys.exit(0)
-    # No TOML reader in Python 3.9: tables [hooks.state."<key>"] are only ever added, at the end, one per
-    # key of the kit's that has none; a table already there is never rewritten (the user's say in
-    # /hooks, or a newer Codex's). hooks in any other form, and the file is not touched.
+    # No TOML reader in Python 3.9: tables [hooks.state."<key>"] are added, at the end, one per key of the
+    # kit's that has none, with the command they approve as a comment. A table already there is the
+    # user's say in /hooks, or a newer Codex's, and stays as it is, but for one the kit wrote for a command
+    # of its own that is no longer there (the Python moved): its hash, then its comment, change. hooks in
+    # any other form, and the file is not touched.
     lines, tables, root, quote = text.split("\n"), {}, True, None
     for i, line in enumerate(lines):
         s = line.strip()
@@ -233,23 +262,62 @@ def approve():
     if text.startswith("﻿") or quote:
         out("refused", t("unsafe") % shown(CT), "-", "-")
         sys.exit(0)
-    new, kept = [], set()
-    for key, digest, n in want:
+
+    def body(at):   # a table's settings and comments, by line
+        end = next((j for j in range(at + 1, len(lines)) if lines[j].strip().startswith("[")), len(lines))
+        rows = [(j, lines[j].strip()) for j in range(at + 1, end) if lines[j].strip()]
+        return [r for r in rows if not r[1].startswith("#")], [r for r in rows if r[1].startswith("#")]
+
+    def turned_off(key, label, digest):
+        """A table of the same event elsewhere that turns this hook off: by its hash, or one that turns a
+        hook off without trusting any. Codex knows a hook by its place: one of the user's put before the
+        kit's moves it, and a table at its new place would turn it back on."""
+        here = tuple("%s:%s:" % (join(b, "hooks.json"), label) for b in bases)
+        for k, at in tables.items():
+            if k == key or not k.startswith(here):
+                continue
+            rows = [r for _, r in body(at[0])[0]]
+            hashes = [r for r in rows if re.match(r"trusted_hash\s*=", r)]
+            if (rows != ['trusted_hash = "%s"' % digest] and 'trusted_hash = "%s"' % digest in rows) \
+                    or (not hashes and any(re.fullmatch(r"enabled\s*=\s*false", r) for r in rows)):
+                return True
+        return False
+
+    def comment(cmd):   # TOML takes no control character in a comment
+        return None if re.search(r"[\x00-\x08\x0a-\x1f\x7f]", cmd) else "# command: " + cmd
+
+    def table(key, digest, n):
+        c = comment(command(n))
+        return '[hooks.state.%s]\ntrusted_hash = "%s"\n' % (json.dumps(key, ensure_ascii=False), digest) + (c + "\n" if c else "")
+
+    new, kept, moved = [], set(), {}
+    for key, digest, n, label in want:
         at = tables.get(key)
         if at is None:
-            new.append((key, digest))
+            if turned_off(key, label, digest):
+                kept.add(n)
+            else:
+                new.append((key, digest, n))
             continue
-        end = next((j for j in range(at[0] + 1, len(lines)) if lines[j].strip().startswith("[")), len(lines))
-        body = [lines[j].strip() for j in range(at[0] + 1, end) if lines[j].strip() and not lines[j].strip().startswith("#")]
-        if len(at) > 1 or body != ['trusted_hash = "%s"' % digest]:
-            kept.add(n)
-    if not new:
+        rows, notes = body(at[0])
+        if len(at) == 1 and [r for _, r in rows] == ['trusted_hash = "%s"' % digest]:
+            continue
+        old = [c[len("# command: "):] for _, c in notes if c.startswith("# command: ")]
+        if len(at) == 1 and len(rows) == 1 and len(old) == 1 and kit_command(old[0], n) \
+                and rows[0][1] == 'trusted_hash = "%s"' % trust(label, old[0]):
+            moved[rows[0][0]] = 'trusted_hash = "%s"' % digest   # the kit's own, for its command of before
+            moved[next(j for j, c in notes if c.startswith("# command: "))] = comment(command(n))
+            continue
+        kept.add(n)
+    if not new and not moved:
         out("unchanged", str(len(names - kept)), "-", ",".join(sorted(kept)) or "-")
         sys.exit(0)
-    result = text + ("\n" if text and not text.endswith("\n") else "") + ("\n" if text else "")
-    result += "# brain-in-a-box: the kit's Codex hooks, approved for you by %s (see or turn them off with /hooks)\n" \
-              % ("install.ps1" if PS1 else "install.sh")
-    result += "\n".join('[hooks.state.%s]\ntrusted_hash = "%s"\n' % (json.dumps(k, ensure_ascii=False), v) for k, v in new)
+    result = "\n".join(moved.get(j, l) for j, l in enumerate(lines) if moved.get(j, l) is not None)
+    if new:
+        result += ("\n" if result and not result.endswith("\n") else "") + ("\n" if result else "")
+        result += "# brain-in-a-box: the kit's Codex hooks, approved for you by %s (see or turn them off with /hooks)\n" \
+                  % ("install.ps1" if PS1 else "install.sh")
+        result += "\n".join(table(k, v, n) for k, v, n in new)
     bak = keep(CT, raw) if raw is not None else "-"
     write(target, result.encode("utf-8"))
     out("written", str(len(names - kept)), bak, ",".join(sorted(kept)) or "-")

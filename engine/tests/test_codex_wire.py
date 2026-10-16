@@ -28,7 +28,7 @@ def ps_quote(s):
     return "'" + "".join(c * 2 if c in "'\u2018\u2019\u201a\u201b" else c for c in s) + "'"
 
 
-class Ps1(unittest.TestCase):
+class Ps1Bench(unittest.TestCase):
     def setUp(self):
         self.tmp = os.path.realpath(tempfile.mkdtemp(prefix="codex-wire-"))
         self.addCleanup(shutil.rmtree, self.tmp, True)
@@ -45,6 +45,8 @@ class Ps1(unittest.TestCase):
     def command(self, name):
         return "& %s %s --agent codex" % (ps_quote(self.py), ps_quote(ntpath.join(self.hooks, name)))
 
+
+class Ps1(Ps1Bench):
     def test_the_hooks_in_the_form_codex_runs_on_windows(self):
         code, out = self.wire("merge", self.home, self.hooks)
         self.assertEqual(code, 0, out)
@@ -103,6 +105,146 @@ class Ps1(unittest.TestCase):
         self.assertIn("n'est pas du JSON valide (ligne 1, colonne 2 : ", out)
         self.assertIn("Laisse tel quel : corrige-le, puis relance la meme commande d'installation.", out)
         self.assertNotIn("re-run ./install.sh", out)
+
+
+def digest(label, command):
+    ident = {"event_name": label, "hooks": [{"async": False, "command": command, "timeout": 30, "type": "command"}]}
+    return "sha256:" + hashlib.sha256(json.dumps(ident, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+                                      .encode("utf-8")).hexdigest()
+
+
+class NewPython(Ps1Bench):
+    """Windows: another Python installed, the old one gone. The kit's hooks run with the Python of this
+    install, as Claude's in settings.json do, and their approval follows; what the user changed stays."""
+
+    def setUp(self):
+        super().setUp()
+        self.hooks = os.path.join(os.path.dirname(self.hooks), ".claude", "hooks", "brain")   # as install.ps1 has it
+
+    def move(self):
+        self.old = self.py
+        self.py = os.path.join(self.tmp, "Python 3.13", "python.exe")
+
+    def toml(self):
+        with open(os.path.join(self.home, "config.toml"), encoding="utf-8") as f:
+            return f.read()
+
+    def key(self, evt, i, group=0):
+        return json.dumps(ntpath.join(self.home, "hooks.json") + ":%s:%d:%d" % (LABEL[evt], group, i), ensure_ascii=False)
+
+    def test_the_kit_s_hooks_and_their_approval_move_to_the_new_python(self):
+        self.wire("merge", self.home, self.hooks)
+        self.wire("approve", self.home, self.hooks)
+        self.move()
+        code, out = self.wire("merge", self.home, self.hooks)
+        self.assertEqual(code, 0, out)
+        self.assertRegex(out, r"^~[\\/]\.codex[\\/]hooks\.json : les hooks du kit tournent maintenant avec .*Python 3\.13.*python\.exe "
+                              r"\(version precedente : ~[\\/]\.codex[\\/]hooks\.json\.bak-[0-9-]+\)\n$")
+        with open(os.path.join(self.home, "hooks.json"), encoding="utf-8") as f:
+            d = json.load(f)
+        for evt, names in HOOKS6.items():
+            self.assertEqual(d["hooks"][evt], [{"hooks": [{"type": "command", "command": self.command(n), "commandWindows": self.command(n),
+                                                           "timeout": 30} for n in names]}])
+        code, out = self.wire("approve", self.home, self.hooks)
+        self.assertEqual((code, out.split("\n")[:2], out.split("\n")[3]), (0, ["written", "6"], "-"), out)
+        toml = self.toml()
+        self.assertEqual(toml.count("[hooks.state."), 6, toml)
+        for evt, names in HOOKS6.items():
+            for i, n in enumerate(names):
+                self.assertIn('[hooks.state.%s]\ntrusted_hash = "%s"\n' % (self.key(evt, i), digest(LABEL[evt], self.command(n))), toml)
+                old = "& %s %s --agent codex" % (ps_quote(self.old), ps_quote(ntpath.join(self.hooks, n)))
+                self.assertNotIn(digest(LABEL[evt], old), toml)
+        self.assertEqual(self.wire("approve", self.home, self.hooks)[1].split("\n")[:2], ["unchanged", "6"])
+
+    def test_an_entry_the_user_changed_and_a_hook_turned_off_stay_as_they_are(self):
+        self.wire("merge", self.home, self.hooks)
+        hj = os.path.join(self.home, "hooks.json")
+        with open(hj, encoding="utf-8") as f:
+            d = json.load(f)
+        mine = dict(d["hooks"]["Stop"][0]["hooks"][0], timeout=60)   # session-logger, given more time
+        d["hooks"]["Stop"][0]["hooks"][0] = mine
+        with open(hj, "w", encoding="utf-8") as f:
+            json.dump(d, f)
+        self.wire("approve", self.home, self.hooks)
+        ct = os.path.join(self.home, "config.toml")
+        toml = self.toml()
+        off = '[hooks.state.%s]\ntrusted_hash = "%s"\n' % (self.key("Stop", 1), digest("stop", self.command("session-indexer.py")))
+        self.assertIn(off, toml)
+        with open(ct, "w", encoding="utf-8") as f:
+            f.write(toml.replace(off, off + "enabled = false\n"))
+        before = self.toml()
+        self.move()
+        self.wire("merge", self.home, self.hooks)
+        with open(hj, encoding="utf-8") as f:
+            stop = json.load(f)["hooks"]["Stop"][0]["hooks"]
+        self.assertEqual(stop[0], mine, "an entry of the kit's the user changed is kept as is")
+        self.assertEqual(stop[1]["commandWindows"], self.command("session-indexer.py"))
+        code, out = self.wire("approve", self.home, self.hooks)
+        self.assertEqual((code, out.split("\n")[:2], out.split("\n")[3]), (0, ["written", "4"], "session-indexer.py"), out)
+        toml = self.toml()
+        self.assertIn(off + "enabled = false\n", toml, "the hook turned off in /hooks stays off, its table untouched")
+        self.assertEqual(toml.count("[hooks.state."), 5, toml)   # session-logger, the user's own entry: none
+        self.assertEqual(before.count("[hooks.state."), 5)
+
+
+class Moved(unittest.TestCase):
+    """A hook of the kit's the user turned off in /hooks, whose place then moved (a hook of the user's put
+    before it): Codex knows it by its place, so a table at its new place would turn it back on. The kit
+    adds none, keeps it, and says so; install.sh's form and install.ps1's."""
+
+    def setUp(self):
+        self.tmp = os.path.realpath(tempfile.mkdtemp(prefix="codex-wire-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.home, self.hooks = os.path.join(self.tmp, ".codex"), os.path.join(self.tmp, "hooks")
+        os.makedirs(self.home)
+
+    def wire(self, ps1, *args):
+        env = dict(os.environ, HOME=self.tmp, USERPROFILE=self.tmp)
+        pre = ["--ps1", os.path.join(self.tmp, "python.exe")] if ps1 else []
+        p = subprocess.run([sys.executable, "-I", WIRE] + pre + list(args), capture_output=True, env=env)
+        return p.returncode, p.stdout.decode("utf-8")
+
+    def moved(self, ps1, table):
+        """The kit's hooks approved; correction-detector's table made `table` (of its trusted_hash line);
+        a hook of the user's put first under UserPromptSubmit. approve's answer, and config.toml before it."""
+        shutil.rmtree(self.home)
+        os.makedirs(self.home)
+        self.wire(ps1, "merge", self.home, self.hooks)
+        self.wire(ps1, "approve", self.home, self.hooks)
+        hj, ct = os.path.join(self.home, "hooks.json"), os.path.join(self.home, "config.toml")
+        with open(ct, encoding="utf-8") as f:
+            toml = f.read()
+        head = "[hooks.state.%s]\n" % json.dumps((ntpath if ps1 else os.path).join(self.home, "hooks.json") + ":user_prompt_submit:0:0")
+        at = toml.index(head) + len(head)
+        line = toml[at:toml.index("\n", at) + 1]
+        self.assertTrue(line.startswith("trusted_hash = "), line)
+        with open(ct, "w", encoding="utf-8") as f:
+            f.write(toml[:at] + table(line) + toml[at + len(line):])
+        with open(hj, encoding="utf-8") as f:
+            d = json.load(f)
+        d["hooks"]["UserPromptSubmit"].insert(0, {"hooks": [{"type": "command", "command": "mine.sh"}]})
+        with open(hj, "w", encoding="utf-8") as f:
+            json.dump(d, f)
+        with open(ct, encoding="utf-8") as f:
+            before = f.read()
+        code, out = self.wire(ps1, "approve", self.home, self.hooks)
+        self.assertEqual(code, 0, out)
+        return out.split("\n"), before
+
+    def test_a_hook_turned_off_then_moved_stays_off(self):
+        for ps1 in (False, True):
+            for how, table in (("approved, then off", lambda l: l + "enabled = false\n"),
+                               ("off, never approved", lambda l: "enabled = false\n")):
+                with self.subTest(ps1=ps1, how=how):
+                    out, before = self.moved(ps1, table)
+                    self.assertEqual((out[0], out[1], out[3]), ("unchanged", "5", "correction-detector.py"), out)
+                    with open(os.path.join(self.home, "config.toml"), encoding="utf-8") as f:
+                        self.assertEqual(f.read(), before, "nothing written")
+
+    def test_a_hook_moved_that_was_on_is_approved_at_its_new_place(self):
+        # Control: the same move, the hook still on: approved where it now is.
+        out, before = self.moved(False, lambda l: l)
+        self.assertEqual((out[0], out[1], out[3]), ("written", "6", "-"), out)
 
 
 @unittest.skipUnless(WINDOWS, "PowerShell, as Codex runs a hook on Windows")

@@ -1310,6 +1310,25 @@ cp "$CD/config.toml" "$CX/ref"; out=$(cx codex_py approve "$CD" "$HK")
 [ "$(printf '%s' "$out" | head -2 | tr '\n' ' ')" = "written 5 " ] && [ "$(printf '%s' "$out" | sed -n 4p)" = session-indexer.py ] \
   && [ "$(head -c "$(wc -c < "$CX/ref")" "$CD/config.toml")" = "$(cat "$CX/ref")" ] && [ "$(tables)" = 6 ] \
   && ok "codex approval: a hook the user set in /hooks is left as set, the other five approved" || no "codex approval: the user's setting rewritten: $out"
+# The same, turned off in /hooks, then moved by a hook of the user's put before it: Codex knows a hook by
+# its place, a table at the new one would turn it back on. None is added, and it is said.
+cxhome; cx codex_py merge "$CD" "$HK" >/dev/null; cx codex_py approve "$CD" "$HK" >/dev/null
+python3 - "$CD" <<'PY' || no "codex approval: the moved hook's bench did not set up"
+import json, os, sys
+hj, ct = os.path.join(sys.argv[1], "hooks.json"), os.path.join(sys.argv[1], "config.toml")
+d = json.load(open(hj, encoding="utf-8"))
+d["hooks"]["UserPromptSubmit"].insert(0, {"hooks": [{"type": "command", "command": "mine.sh"}]})
+json.dump(d, open(hj, "w", encoding="utf-8"))
+t = open(ct, encoding="utf-8").read()
+head = "[hooks.state.%s]\n" % json.dumps(hj + ":user_prompt_submit:0:0")
+at = t.index("\n", t.index(head) + len(head)) + 1
+open(ct, "w", encoding="utf-8").write(t[:at] + "enabled = false\n" + t[at:])
+PY
+cp "$CD/config.toml" "$CX/ref"; out=$(cx codex_py approve "$CD" "$HK")
+[ "$(printf '%s' "$out" | head -2 | tr '\n' ' ')" = "unchanged 5 " ] && [ "$(printf '%s' "$out" | sed -n 4p)" = correction-detector.py ] \
+  && cmp -s "$CX/ref" "$CD/config.toml" \
+  && ok "codex approval: a hook turned off in /hooks, then moved by one of the user's, stays off: no table at its new place, said" \
+  || no "codex approval: a moved hook turned back on: $out"
 # CODEX_HOME through a link: Codex names hooks.json by the path it is given when CODEX_HOME is unset,
 # by its real path when it is set; both are approved.
 cxhome; rm -rf "$CD"; mkdir -p "$CX/real-codex"; rm -rf "$CX/real-codex"/*; ln -s "$CX/real-codex" "$CD"

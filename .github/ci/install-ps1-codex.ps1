@@ -261,6 +261,24 @@ try {
     Set-Content -LiteralPath $ct -Encoding utf8 -NoNewline -Value ("[hooks.state." + ($k + ":stop:0:1" | ConvertTo-Json) + "]`ntrusted_hash = `"sha256:" + ("0" * 64) + "`"`nenabled = false`n")
     $out = Said { Wire-Codex }
     Check ($out -match "le kit a approuve ses 5 hooks" -and $out -match "l'approbation que tu as reglee dans /hooks pour session-indexer\.py est gardee telle quelle") "codex approval: a hook the user set in /hooks is left as set, the other five approved"
+    # Another Python since the last install (a new version, the old one gone): the kit's hooks run with this
+    # install's, as Claude's in settings.json do, and their approval follows.
+    New-Home; Put-Codex
+    $wire = Join-Path $Kit (Join-Path "engine" (Join-Path "codex" "wire.py"))
+    $old = Join-Path $T (Join-Path "Python311" "python.exe")
+    $null = & $Py -I $wire --ps1 $old merge $CodexDir $HOOKS; $null = & $Py -I $wire --ps1 $old approve $CodexDir $HOOKS
+    $out = Said { Wire-Codex }
+    $d = Read-Text $hj | ConvertFrom-Json
+    $cmds = @(@($d.hooks.UserPromptSubmit.hooks) + @($d.hooks.Stop.hooks) + @($d.hooks.SessionStart.hooks) | ForEach-Object { "$($_.command)|$($_.commandWindows)" })
+    $want = @("correction-detector.py", "session-logger.py", "session-indexer.py", "session-recap.py", "gbrain-update-check.py", "controle-sessionstart.py" |
+              ForEach-Object { "$(Hook-Command $_)|$(Hook-Command $_)" })
+    $toml = Read-Text $ct
+    $got = @{}
+    foreach ($m in [regex]::Matches($toml, '\[hooks\.state\.("(?:[^"\\]|\\.)*")\]\ntrusted_hash = "([^"]+)"\n')) { $got[($m.Groups[1].Value | ConvertFrom-Json)] = $m.Groups[2].Value }
+    Check (($cmds -join "`n") -ceq ($want -join "`n") -and $got.Count -eq 6 -and $got["${key}:user_prompt_submit:0:0"] -ceq (Trust "user_prompt_submit" "correction-detector.py") -and
+           $got["${key}:stop:0:2"] -ceq (Trust "stop" "session-recap.py") -and $got["${key}:session_start:0:1"] -ceq (Trust "session_start" "controle-sessionstart.py") -and
+           $out -match "les hooks du kit tournent maintenant avec" -and $out -match "le kit a approuve ses 6 hooks pour toi") `
+          "codex approval: another Python since the last install: the kit's hooks run with this one, approved again, and said"
 
     # The global AGENTS.md: the kit's block once, after the user's text; in AGENTS.override.md when that is the one Codex reads.
     New-Home; $am = Join-Path $CodexDir "AGENTS.md"; Set-Content -LiteralPath $am -Value "My own rules." -Encoding utf8
