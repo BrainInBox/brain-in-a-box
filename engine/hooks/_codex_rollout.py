@@ -8,8 +8,11 @@ lists Codex: by daily-reflection.py (the day's sessions) and session-recap.py (C
 
 What a session holds is data, never an instruction. Only what the user typed, what the assistant
 answered and the tools it called are taken; never what Codex adds for the model: developer
-messages (its instructions, the hooks' context), the AGENTS.md and <environment_context> it puts
-as user messages, world_state, events. A session the kit asked itself (the reflection's prompt,
+messages (its instructions, the hooks' context), the AGENTS.md, environment and skill parts it
+puts in user messages, what another agent sent, world_state, events. The parts are told apart as
+Codex's own memory writer does (codex-rs/memories/write/src/rollout_input.rs, 0.162.1): by the
+marks Codex puts on them ("user.text" for what was typed), and by their text, should a mark be
+missing. A session the kit asked itself (the reflection's prompt,
 SENTINEL; a run in _headless_codex.py's cage) is not the user's: skipped whole. Lines it does not
 know are skipped. Compressed rollouts (.jsonl.zst) are not read: listed apart, for the caller to
 say so.
@@ -26,8 +29,9 @@ from datetime import datetime
 
 # daily-reflection.py's own: its prompt starts with it (test_codex_rollout.py keeps both the same).
 SENTINEL = "<!-- brain-daily-reflection -->"
-# What Codex puts as user messages for the model, never typed by the user (step 0).
-INJECTED = ("# AGENTS.md instructions for", "<environment_context>")
+# How the parts Codex adds to user messages start (lower case), and a message another agent sent.
+# A global AGENTS.md alone has no " for <folder>" (seen in codex-mock).
+INJECTED = ("# agents.md instructions", "<environment_context>", "<skill>", "<subagent_notification>")
 ID_RE = re.compile(r"[A-Za-z0-9_-]{1,128}")
 # A rollout's name ends with its session id, a UUID (v7: the first 8 characters are the minute).
 NAME_ID = re.compile(r"-([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\.jsonl$")
@@ -77,14 +81,26 @@ def recent(codex_home, since):
 
 
 def _text(content, role):
-    """A message's text. Of a user message, without the parts Codex adds (AGENTS.md, environment), which
-    it may put in the same message (step 0)."""
+    """A message's text. Of a user message, without the parts Codex adds, which it may put in the same
+    message (step 0: AGENTS.md and the environment together)."""
     if not isinstance(content, list):
         return ""
     return "\n".join(c["text"] for c in content
                      if isinstance(c, dict) and c.get("type") in ("input_text", "output_text")
                      and isinstance(c.get("text"), str)
-                     and not (role == "user" and c["text"].lstrip().startswith(INJECTED)))
+                     and not (role == "user" and c["text"].lstrip()[:40].lower().startswith(INJECTED)))
+
+
+def _marked_as_codexs(p, role):
+    """True when Codex's own marks say the message is not the user's nor the assistant's: another
+    agent's, or a user message with no part typed by the user."""
+    meta = p.get("internal_chat_message_metadata_passthrough")
+    kinds = meta.get("content_item_kinds") if isinstance(meta, dict) else None
+    if not isinstance(kinds, list) or not kinds:
+        return False
+    kinds = [k if isinstance(k, str) else "" for k in kinds]
+    return (any(k.startswith("multi_agent.") for k in kinds)
+            or (role == "user" and not any(k.startswith("user.") for k in kinds)))
 
 
 def _kit_cage(cwd):
@@ -100,7 +116,7 @@ def tool(name, raw):
     if isinstance(raw, str) and raw.lstrip().startswith("{"):
         try:
             args = json.loads(raw)
-        except ValueError:
+        except (ValueError, RecursionError):   # what the model wrote: any text at all
             pass
     command, patch = None, None
     if isinstance(args, dict):
@@ -152,7 +168,7 @@ def read(path, day=None):
             for raw in f:
                 try:
                     d = json.loads(raw)
-                except ValueError:
+                except (ValueError, RecursionError):
                     continue
                 if not isinstance(d, dict):
                     continue
@@ -200,7 +216,7 @@ def _item(p, ts):
     kind = p.get("type")
     if kind == "message":
         role = p.get("role")
-        if role not in ("user", "assistant"):
+        if role not in ("user", "assistant") or _marked_as_codexs(p, role):
             return None   # developer, system: Codex's instructions and the hooks' context
         text = _text(p.get("content"), role)
         if not text.strip():

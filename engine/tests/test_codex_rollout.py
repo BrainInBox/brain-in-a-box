@@ -129,6 +129,48 @@ class Lines(unittest.TestCase):
         self.assertEqual([(i.kind, i.text) for i in s.items], [("user", "Bonjour"), ("assistant", "SPIKE-REPLY")])
         self.assertEqual(s.id, meta["payload"]["id"])
 
+    def test_what_codex_adds_is_left_out_by_its_marks_and_by_its_text(self):
+        # Codex marks each part of a message (content_item_kinds): "user.text" for what was typed. Its own
+        # memory writer leaves out the rest, and AGENTS.md, <environment_context> and <skill> parts, by
+        # their text (codex-rs/memories/write/src/rollout_input.rs, 0.162.1). A global AGENTS.md alone
+        # comes without " for <folder>" (seen with the real Codex in codex-mock).
+        lines = cap.moved(cap.VAULT, DAY).splitlines()
+        added = next(json.loads(l) for l in lines if "AGENTS.md instructions for" in l)
+        self.assertEqual(added["payload"]["internal_chat_message_metadata_passthrough"]["content_item_kinds"],
+                         ["agents_md.instructions", "environments.environment_context"])
+        typed = next(json.loads(l) for l in lines if '"Bonjour"' in l)
+
+        def message(text, kinds, base=typed):
+            m = json.loads(json.dumps(base))
+            m["payload"]["content"] = [dict(m["payload"]["content"][0], text=text)]
+            meta = m["payload"]["internal_chat_message_metadata_passthrough"]
+            if kinds is None:
+                meta.pop("content_item_kinds", None)
+            else:
+                meta["content_item_kinds"] = kinds
+            return json.dumps(m, ensure_ascii=False)
+
+        glob_only = "# AGENTS.md instructions\n\n<INSTRUCTIONS>\nHIDDEN-GLOBAL\n</INSTRUCTIONS>"
+        odd = [message(glob_only, ["agents_md.instructions"]), message(glob_only, None),
+               message("# agents.md INSTRUCTIONS for /x\n\n<INSTRUCTIONS>\nHIDDEN-CASE\n</INSTRUCTIONS>", None),
+               message("HIDDEN-KIND context Codex marked as its own", ["environments.environment_context"]),
+               message("HIDDEN-AGENT from another agent", ["multi_agent.message", "user.text"]),
+               message("<skill>\nHIDDEN-SKILL\n</skill>", None),
+               message("<subagent_notification>HIDDEN-SUB</subagent_notification>", None),
+               message("KEPT typed, no marks", None), message("KEPT typed", ["user.text"])]
+        s = cr.read(self.write("\n".join(lines[:-1] + odd + lines[-1:])))
+        self.assertEqual([i.text for i in s.items if i.kind == "user"], ["Bonjour", "KEPT typed, no marks", "KEPT typed"])
+
+    def test_json_nested_too_deep_is_a_line_skipped_not_a_crash(self):
+        # A line, or a tool's arguments the model wrote (a page can steer it), nested past Python's stack.
+        lines = cap.moved(cap.VAULT, DAY, tools=["ls"]).splitlines()
+        call = json.loads(lines[-2])
+        call["payload"]["arguments"] = '{"a":' * 100_000
+        s = cr.read(self.write("\n".join(lines[:1] + ["[" * 100_000] + lines[1:-2] + [json.dumps(call)] + lines[-1:])))
+        self.assertEqual([(i.kind, i.name) for i in s.items],
+                         [("user", None), ("assistant", None), ("tool", "exec_command")])
+        self.assertEqual(s.items[-1].text, call["payload"]["arguments"][:cr.SUMMARY])
+
     def test_the_kits_own_prompt_skips_the_whole_session_a_mention_does_not(self):
         own = cap.moved(cap.VAULT, DAY, said=[("user", cr.SENTINEL + "\nActivity of 2026-10-14")])
         s = cr.read(self.write(own))

@@ -405,6 +405,15 @@ def a_real_codex_session_is_read():
     dump = json.dumps([i.text for i in s.items], ensure_ascii=False)
     for added in ("SESSION-AGENTS-MARKER", "AGENTS.md", "<environment_context>", "unsupported call"):
         check(added not in dump, "%s is not read" % added)
+    with open(paths[0], encoding="utf-8") as f:
+        msgs = [r["payload"] for r in map(json.loads, f) if r.get("type") == "response_item"
+                and r["payload"].get("type") == "message" and r["payload"].get("role") == "user"]
+    marks = [((m.get("internal_chat_message_metadata_passthrough") or {}).get("content_item_kinds"),
+              [c.get("text", "")[:40] for c in m.get("content", [])]) for m in msgs]
+    agents_md = [m for m in marks if any("SESSION-AGENTS-MARKER" in t or t.startswith("# AGENTS.md") for t in m[1])]
+    check(len(agents_md) == 1 and agents_md[0][0] and not any(k.startswith("user.") for k in agents_md[0][0])
+          and agents_md[0][1][0].lower().startswith("# agents.md instructions"),
+          "the global AGENTS.md: marked as Codex's, its text as Codex's: %s" % marks)
     B.mock.reset([reply])
     B.raw_exec(work, (dr.SENTINEL + "\nSELF-RUN-MARKER").encode("utf-8"), home=home, ephemeral=False)
     found, packed = dr.codex_sessions(time.strftime("%Y-%m-%d"), home)
@@ -413,7 +422,7 @@ def a_real_codex_session_is_read():
           "the reflection reads it, the kit's own left out: %s" % labels)
     text = found[0][1] if found else ""
     check(" user: " + prompt in text and "   → brain_no_such_tool SESSION-TOOL-MARKER" in text
-          and "SELF-RUN" not in text, "the reflection's text of it")
+          and "SELF-RUN" not in text and "SESSION-AGENTS-MARKER" not in text, "the reflection's text of it")
     stats = rc.parse_rollout(paths[0])
     check((stats["first_prompt"], dict(stats["tools"]), stats["files"]) ==
           (prompt, {"brain_no_such_tool": 1}, {"SESSION-TOOL-MARKER"}), "Codex's Stop hook reads it: %s" % stats)
