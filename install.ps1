@@ -120,15 +120,25 @@ function Place-File([string]$Dest, [byte[]]$Bytes) {
 
 if ($psISE) { Fail "tu es dans PowerShell ISE. Ouvre 'Windows PowerShell' (pas ISE), puis recolle la commande." }
 
+# Chaque essai de winget va dans le journal : un Python ou un Git absent apres l'installation s'y
+# explique. Ceux d'avant son ouverture (Python, avant le choix des agents) y entrent avec elle.
+$LogOpen = $false
+$WingetNotes = @()
+function Note-Winget([string]$t) {
+    if ($script:LogOpen) { Add-Content -LiteralPath $LOG -Value "`r`n$t" -Encoding utf8 } else { $script:WingetNotes += $t }
+}
+
 function Winget-Install($id, $label) {
-    if (-not (Have winget)) { Warn "$label absent et winget indisponible"; return }
+    if (-not (Have winget)) { Warn "$label absent et winget indisponible"; Note-Winget "> winget absent : $label non installe"; return }
     Write-Host "  ... $label : installation (winget)"
     # Portee utilisateur d'abord (pas de fenetre admin), sinon l'installeur par defaut du paquet.
     foreach ($scope in @("user", "")) {
         $a = @("install", "-e", "--id", $id, "--source", "winget", "--silent", "--accept-package-agreements", "--accept-source-agreements")
         if ($scope) { $a += @("--scope", $scope) }
         Invoke-Native { & winget @a }
-        if ($LASTEXITCODE -eq 0) { break }
+        $code = $LASTEXITCODE
+        Note-Winget "> winget $($a -join ' ')`r`nwinget : code $code"
+        if ($code -eq 0) { break }
     }
     Refresh-Path
 }
@@ -369,6 +379,12 @@ $agentsLabel = switch ("$ChosenAgents $PreferredAgent") {
 if ($agentsSource -eq "choix" -and $agentsWritten -eq "oui") { Ok "agents IA : $agentsLabel, note dans $AgentsFile" }
 elseif ($agentsSource -ne "defaut") { Ok "agents IA : $agentsLabel, comme choisi avant ($AgentsFile)" }
 # <<< agents
+# Le journal s'ouvre une fois le choix des agents accepte (un choix refuse n'y laisse rien), avant
+# Git : winget y note ce qu'il installe.
+New-Item -ItemType Directory -Path (Split-Path -Parent $LOG) -Force | Out-Null
+Add-Content -LiteralPath $LOG -Value "`r`n===== $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') install =====" -Encoding utf8
+$LogOpen = $true
+foreach ($n in $WingetNotes) { Note-Winget $n }
 $Git = Find-Git
 if (-not $Git) { Winget-Install "Git.Git" "Git"; $Git = Find-Git }
 if ($Git) {
@@ -376,8 +392,6 @@ if ($Git) {
     if (($env:Path -split ";") -notcontains $gitDir) { $env:Path = "$gitDir;$env:Path" }
     Ok "git ($Git)"
 } else { Warn "Git absent : vault non versionne, et Claude utilisera PowerShell au lieu de Bash. Installe Git (https://git-scm.com) puis relance." }
-New-Item -ItemType Directory -Path (Split-Path -Parent $LOG) -Force | Out-Null
-Add-Content -LiteralPath $LOG -Value "`r`n===== $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') install =====" -Encoding utf8
 
 # 1bis. Recherche par le sens : cle Voyage AI (optionnelle). Un cerveau qui a deja ses
 # embeddings les garde. Sans cle, la recherche marche par mots-cles ; relancer pour en ajouter une.

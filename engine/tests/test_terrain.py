@@ -16,6 +16,7 @@ import tempfile
 import types
 import unittest
 from pathlib import Path
+from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TERRAIN = os.path.join(HERE, "terrain.py")
@@ -518,6 +519,156 @@ class Workflow(unittest.TestCase):
             self.assertTrue(st["run"].startswith(". .github/ci/poste-neuf.ps1\n"), st["name"])
         self.assertEqual((len(fresh), len(terrain_fresh)), (1, 1))
         self.assertNotIn("hostedtoolcache", json.dumps(tests), "a second copy of the fresh PC in test.yml")
+
+    def test_windows_starts_without_git_where_the_installer_brings_it(self):
+        # The fresh install and the app: TERRAIN_SANS_GIT set before anything runs (the harness then
+        # wants the proof, and fails without it); the upgrade keeps the runner's Git (v0.2.0's own).
+        proof = '"TERRAIN_SANS_GIT=$env:RUNNER_TEMP\\sans-git.json"'
+        first = self.jobs["windows"]["steps"][0]["run"]
+        self.assertIn("if ($env:PARCOURS -eq 'neuf') {\n  " + proof, first)
+        self.assertIn(proof, self.jobs["app-windows"]["steps"][0]["run"])
+        for name, job in self.jobs.items():
+            if name not in ("windows", "app-windows"):
+                self.assertNotIn("TERRAIN_SANS_GIT", json.dumps(job), name)
+        # windows neuf: terrain-install.ps1 zips the tested sources with git, then takes Git away, then installs.
+        with open(os.path.join(os.path.dirname(os.path.dirname(WORKFLOW)), "ci", "terrain-install.ps1"), encoding="utf-8") as f:
+            install = f.read()
+        order = [install.index(s) for s in ("git archive", "sans-git.ps1') -Preuve $env:TERRAIN_SANS_GIT", "irm https://", "Invoke-Expression")]
+        self.assertEqual(order, sorted(order))
+        steps = self.jobs["windows"]["steps"]
+        names = [st.get("name", "") for st in steps]
+        harness = names.index("Git for the harness (the one the installer brought)")
+        self.assertLess(names.index("Fresh install (irm | iex), no Python but the Store stub, no Git"), harness)
+        self.assertLess(harness, next(i for i, st in enumerate(steps) if "terrain.py nuits" in st.get("run", "")))
+        self.assertIn("matrix.parcours == 'neuf'", steps[harness]["if"])
+        self.assertIn("GITHUB_PATH", steps[harness]["run"])
+
+
+class WindowsWithoutGit(unittest.TestCase):
+    """Windows starts without Git (.github/ci/sans-git.ps1): the proof the harness reads again probe by
+    probe, and install.ps1's journal line for each winget attempt."""
+
+    CI = os.path.join(HERE, "..", "..", ".github", "ci")
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="terrain-sans-git-")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def proof(self, **change):
+        p = {"absent": True, "fin_epoch": 1760000000, "sondes": {k: [] for k in terrain.SONDES_GIT},
+             "nouveau_processus": {"get_command": [], "where": [], "cmd_git_code": 9009},
+             "desinstalle": [{"dossier": "C:\\Program Files\\Git", "version": "2.55.0.5", "code": 0, "secondes": 14}],
+             "winget": {"chemin": "C:\\Users\\r\\AppData\\Local\\Microsoft\\WindowsApps\\winget.exe", "version": "v1.11.430"}}
+        for k, v in change.items():
+            p[k] = v
+        path = os.path.join(self.tmp, "sans-git.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(p, f)
+        return path
+
+    def read(self, path):
+        return terrain.preuve_sans_git(terrain.Etapes(), path)
+
+    def refused(self, path, why):
+        with self.assertRaises(terrain.Echec) as cm:
+            self.read(path)
+        self.assertIn(why, str(cm.exception))
+
+    def test_the_proof_is_read_again_probe_by_probe(self):
+        self.assertEqual(self.read(self.proof())["winget"]["version"], "v1.11.430")
+        for k in terrain.SONDES_GIT:
+            with self.subTest(sonde=k):
+                # Its summary says absent: never trusted, each probe is read.
+                sondes = dict({s: [] for s in terrain.SONDES_GIT}, **{k: ["C:\\Program Files\\Git\\cmd\\git.exe"]})
+                self.refused(self.proof(sondes=sondes), "Git était encore trouvable avant l'installation : %s : C:\\Program" % k)
+        sondes = {s: [] for s in terrain.SONDES_GIT if s != "app_paths"}
+        self.refused(self.proof(sondes=sondes), "la preuve ne dit pas tout : sonde(s) app_paths absente(s)")
+        self.refused(self.proof(nouveau_processus={"get_command": [], "where": ["C:\\Git\\cmd\\git.exe"], "cmd_git_code": 9009}),
+                     "un nouveau processus : C:\\Git\\cmd\\git.exe")
+        self.refused(self.proof(nouveau_processus={"get_command": [], "where": [], "cmd_git_code": 0}),
+                     "un nouveau processus : git --version")
+        self.refused(self.proof(nouveau_processus={"get_command": [], "where": []}), "ce qu'un nouveau processus trouvait")
+        # Its output unread, its probes are empty: never taken for « nothing found ».
+        self.refused(self.proof(nouveau_processus={"get_command": [], "where": [], "cmd_git_code": 9009,
+                                                   "illisible": "powershell.exe : Access denied"}),
+                     "ce qu'un nouveau processus trouvait : sa sortie est illisible (powershell.exe : Access denied)")
+        self.refused(self.proof(nouveau_processus={"get_command": [], "where": [], "cmd_git_code": 9009, "illisible": ""}),
+                     "sa sortie est illisible ()")
+        self.refused(self.proof(desinstalle=[{"dossier": "C:\\Program Files\\Git", "code": 1}]),
+                     "le désinstalleur de Git a échoué : C:\\Program Files\\Git (code 1)")
+        self.refused(self.proof(winget=None), "pas de winget sur la VM")
+        self.refused(self.proof(fin_epoch=None), "quand Git a été retiré")
+        self.refused(os.path.join(self.tmp, "absente.json"), "pas de preuve que Git était absent")
+        self.refused(None, "TERRAIN_SANS_GIT absent")
+
+    def test_sans_git_ps1_writes_every_probe_the_harness_reads(self):
+        with open(os.path.join(self.CI, "sans-git.ps1"), "rb") as f:
+            src = f.read()
+        self.assertEqual([i for i, c in enumerate(src) if c > 0x7f][:3], [], "Windows PowerShell 5.1 reads it as ANSI")
+        text = src.decode("ascii")
+        block = text[text.index("$sondes = [ordered]@{"):]
+        block = block[:block.index("\n}\n")]
+        self.assertEqual(re.findall(r"^    ([a-z_]+) +=", block, re.M), list(terrain.SONDES_GIT))
+        for key in ("nouveau_processus", "cmd_git_code", "fin_epoch", "desinstalle", "winget"):
+            self.assertIn(key, text)
+        self.assertIn("'/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART'", text)
+        self.assertIn('throw "Git est encore trouvable', text)
+
+    def test_claude_s_bash_is_read_from_its_debug_log(self):
+        bash = "C:\\Program Files\\Git\\bin\\bash.exe"
+        debug = '2026-10-15T22:47:01.120Z [DEBUG] Starting\n2026-10-15T22:47:01.124Z [DEBUG] Using bash path: "%s"\n' % bash
+        self.assertEqual(terrain.bash_de_claude(terrain.Etapes(), debug, "Not logged in · Please run /login"), bash)
+
+        def refused(debug, dit, why):
+            with self.assertRaises(terrain.Echec) as cm:
+                terrain.bash_de_claude(terrain.Etapes(), debug, dit)
+            self.assertIn(why, str(cm.exception))
+        # No Git Bash, in its words: the debug log's (2.1), or what it printed before stopping.
+        refused("x\n2026-10-15T22:47:01.124Z [DEBUG] Git Bash not found; BashTool will be unavailable\ny\n", "Not logged in",
+                "Claude Code ne trouve pas Git Bash ; il dit : « 2026-10-15T22:47:01.124Z [DEBUG] Git Bash not found; "
+                "BashTool will be unavailable »")
+        refused("", "Claude Code on Windows requires git-bash (https://git-scm.com/downloads/win).",
+                "Claude Code ne trouve pas Git Bash ; il dit : « Claude Code on Windows requires git-bash")
+        refused("", "Claude Code on Windows requires either Git for Windows (for bash) or PowerShell. Install one of:\n"
+                "  - Git for Windows: https://git-scm.com/downloads/win\n  - PowerShell 7: https://aka.ms/powershell\n"
+                "Or set CLAUDE_CODE_GIT_BASH_PATH to your bash.exe location.",
+                "il dit : « Claude Code on Windows requires either Git for Windows (for bash) or PowerShell.")
+        # Neither: its debug log changed, not Git Bash gone.
+        refused("[DEBUG] a\n\n[DEBUG] Shell: C:\\Program Files\\Git\\bin\\bash.exe\n", "Not logged in",
+                "format du journal de débogage de Claude Code changé : ni « Using bash path » ni « Git Bash not found » ; "
+                "il dit : « Not logged in » ; fin du journal : [DEBUG] a | [DEBUG] Shell: C:\\Program Files")
+        refused("", "(pas de réponse en 180 s)", "fin du journal : (vide)")
+        # Only its last line goes in the reason.
+        refused("", "Welcome\n\nNot logged in · Please run /login\n", "il dit : « Not logged in · Please run /login » ;")
+
+    def test_install_ps1_notes_each_winget_attempt_in_its_journal(self):
+        with open(os.path.join(HERE, "..", "..", "install.ps1"), encoding="utf-8") as f:
+            ps1 = f.read()
+        self.assertIn('Note-Winget "> winget $($a -join \' \')`r`nwinget : code $code"', ps1)
+        self.assertIn('if ($script:LogOpen) { Add-Content -LiteralPath $LOG -Value "`r`n$t" -Encoding utf8 }', ps1)
+        # The journal opens once the choice of agents is accepted (a refused one leaves nothing in it), with
+        # Python's attempts kept until then, and before Git's.
+        order = [ps1.index(s) for s in ('Winget-Install "Python.Python.3.12"', "# <<< agents", 'install =====" -Encoding utf8',
+                                        "foreach ($n in $WingetNotes) { Note-Winget $n }", 'Winget-Install "Git.Git"')]
+        self.assertEqual(order, sorted(order))
+        args = "install -e --id Git.Git --source winget --silent --accept-package-agreements --accept-source-agreements"
+        log = "\r\n===== 2026-10-15 01:20:00 install =====\r\n\r\n> winget %s --scope user\r\nwinget : code -1978335216\r\n" \
+              "\r\n> winget %s\r\nwinget : code 0\r\n\r\n> winget install -e --id Python.Python.3.12 x\r\nwinget : code 0\r\n" % (args, args)
+        found = [(m.group("args").endswith("--scope user"), m.group("code")) for m in terrain.WINGET_GIT.finditer(log)]
+        self.assertEqual(found, [(True, "-1978335216"), (False, "0")])
+
+    def test_a_fresh_windows_install_and_the_app_check_git_first(self):
+        called = []
+
+        def check_git(t, opts):
+            called.append(opts.parcours)
+            raise terrain.Echec("vu")
+        home = Path(self.tmp)
+        with mock.patch.object(terrain, "WINDOWS", True), mock.patch.object(terrain, "check_git", check_git):
+            for parcours, fresh in (("neuf", True), ("app", True), ("montee", False), ("montee", True)):
+                with self.assertRaises(terrain.Echec):
+                    terrain.check_install(terrain.Etapes(), types.SimpleNamespace(home=home, parcours=parcours), fresh=fresh)
+        self.assertEqual(called, ["neuf", "app"])
 
 
 class MergeGuard(unittest.TestCase):

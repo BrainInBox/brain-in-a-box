@@ -801,11 +801,172 @@ def check_settings(t, home):
     return s
 
 
+# Windows, fresh install and app: the job took the runner's Git away first (.github/ci/sans-git.ps1,
+# its proof in TERRAIN_SANS_GIT's file), as on a PC users have. The probes the proof must hold, each
+# a list of what found Git (empty: nothing did).
+SONDES_GIT = ("get_command", "where", "bash", "dossiers", "find_git", "app_paths", "desinstallation",
+              "path_machine", "path_user")
+# install.ps1's line in install.log for each winget attempt (Winget-Install).
+WINGET_GIT = re.compile(r"^> winget install -e --id Git\.Git (?P<args>.*?)\r?\nwinget : code (?P<code>-?\d+)\r?$", re.M)
+# Where Claude Code 2.1 looks for Git Bash on Windows: CLAUDE_CODE_GIT_BASH_PATH, these two, then
+# bin\bash.exe two folders above the git.exe on its PATH. None: no Bash tool, PowerShell instead.
+BASH_CLAUDE = (r"C:\Program Files\Git\bin\bash.exe", r"C:\Program Files (x86)\Git\bin\bash.exe")
+CLAUDE_BASH_RE = re.compile(r'Using bash path: "([^"\r\n]+)"')
+# Its words when it finds none: its debug log's (2.1), or what it prints before stopping (2.1: « requires either
+# Git for Windows (for bash) or PowerShell », older ones « requires git-bash »).
+CLAUDE_SANS_BASH_RE = re.compile(r"^.*(?:Git Bash not found|requires git-bash|requires either Git for Windows).*$",
+                                 re.M | re.I)
+SANS_SECRET_CLAUDE = ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_GIT_BASH_PATH")
+
+
+def preuve_sans_git(t, path):
+    """The proof that nothing found Git before the install, every probe read again (never its summary)."""
+    p = read_json(path) if path else None
+    t.check(p is not None, "pas de preuve que Git était absent avant l'installation (%s) : sans-git.ps1 n'a pas tourné"
+            % (Path(path).name if path else terrain_app.SANS_GIT + " absent"))
+    sondes = p.get("sondes") if isinstance(p.get("sondes"), dict) else {}
+    manque = [k for k in SONDES_GIT if not isinstance(sondes.get(k), list)]
+    t.check(not manque, "la preuve ne dit pas tout : sonde(s) %s absente(s)" % ", ".join(manque))
+    neuf = p.get("nouveau_processus") if isinstance(p.get("nouveau_processus"), dict) else {}
+    # Unread, the new process's probes stay empty: they would say nothing found.
+    t.check("illisible" not in neuf, "la preuve ne dit pas ce qu'un nouveau processus trouvait : sa sortie est "
+            "illisible (%s)" % str(neuf.get("illisible"))[:200])
+    t.check(isinstance(neuf.get("get_command"), list) and isinstance(neuf.get("where"), list)
+            and isinstance(neuf.get("cmd_git_code"), int), "la preuve ne dit pas ce qu'un nouveau processus trouvait")
+    trouve = ["%s : %s" % (k, ", ".join(map(str, sondes[k]))[:200]) for k in SONDES_GIT if sondes[k]]
+    if neuf["get_command"] or neuf["where"] or neuf["cmd_git_code"] == 0:
+        trouve.append("un nouveau processus : %s" % (", ".join(map(str, neuf["get_command"] + neuf["where"])) or "git --version"))
+    t.check(not trouve, "Git était encore trouvable avant l'installation : %s" % " ; ".join(trouve))
+    rates = ["%s (code %s)" % (d.get("dossier"), d.get("code")) for d in p.get("desinstalle") or [] if d.get("code") != 0]
+    t.check(not rates, "le désinstalleur de Git a échoué : %s" % ", ".join(rates))
+    t.check(isinstance(p.get("winget"), dict) and p["winget"].get("version"), "pas de winget sur la VM")
+    t.check(isinstance(p.get("fin_epoch"), int), "la preuve ne dit pas quand Git a été retiré")
+    return p
+
+
+def git_de_session(t):
+    """git as a program started now finds it: the environment Windows builds from the registry (a new
+    terminal, the Start menu), nothing of this harness. (git.exe, its version, that environment)."""
+    env = terrain_app.env_session()
+    cmd = os.path.join(os.environ.get("SystemRoot") or r"C:\Windows", "System32", "cmd.exe")
+    rc, out = run([cmd, "/d", "/c", "where git"], env=env, timeout=60)
+    trouves = [l.strip() for l in out.splitlines() if l.strip().lower().endswith("git.exe")]
+    t.check(rc == 0 and trouves, "un nouveau processus ne trouve pas git (PATH relu du registre) : %s" % out.strip()[-200:])
+    t.check(os.path.isfile(trouves[0]), "%s n'existe pas" % trouves[0])
+    rc, out = run([cmd, "/d", "/c", "git --version"], env=env, timeout=60)
+    t.check(rc == 0 and out.startswith("git version"), "« git --version » dans un nouveau processus : code %d (%s)"
+            % (rc, out.strip()[-200:]))
+    return trouves[0], out.strip(), env
+
+
+def dernier_mot(sortie):
+    return sortie.strip().splitlines()[-1][:200] if sortie.strip() else ""
+
+
+def bash_de_claude(t, debug, sortie):
+    """The bash Claude Code's debug log says it uses. Its words for no Git Bash, in that log or what it
+    printed, fail as such; neither is a Claude Code whose debug log changed, said so with its end: Git Bash
+    may well be there."""
+    m = CLAUDE_BASH_RE.search(debug)
+    if m:
+        return m.group(1)
+    sans = CLAUDE_SANS_BASH_RE.search(debug + "\n" + sortie)
+    dit = dernier_mot(sortie)
+    t.check(not sans, "Claude Code ne trouve pas Git Bash ; il dit : « %s »" % (sans.group(0).strip()[:200] if sans else ""))
+    fin = " | ".join(l.strip() for l in debug.splitlines()[-6:] if l.strip())[-500:]
+    t.check(False, "format du journal de débogage de Claude Code changé : ni « Using bash path » ni « Git Bash not "
+            "found » ; il dit : « %s » ; fin du journal : %s" % (dit, fin or "(vide)"))
+
+
+def claude_et_git_bash(t, opts, env):
+    """(debug log, what Claude Code printed): Claude Code started in that environment, without a token, says
+    in its debug log which bash it uses, or that it found none, then stops at the login. Its PowerShell
+    tool off: Bash is its only shell."""
+    claude = opts.home / ".local" / "bin" / "claude.exe"
+    t.check(claude.is_file(), "Claude Code n'est pas installé (~/.local/bin/claude.exe)")
+    work = workdir(opts, "claude-git-bash")
+    debug = work / "debug.txt"
+    cenv = {k: v for k, v in env.items() if k.upper() not in SANS_SECRET_CLAUDE}
+    cenv.update(CLAUDE_CONFIG_DIR=str(work / "config"), CLAUDE_CODE_USE_POWERSHELL_TOOL="0", DISABLE_AUTOUPDATER="1")
+    try:
+        p = subprocess.run([str(claude), "-p", "ok", "--debug-file", str(debug)], input=b"", stdout=subprocess.PIPE,
+                           stderr=subprocess.STDOUT, env=cenv, cwd=str(work), timeout=180)
+        dit = p.stdout.decode("utf-8", "replace").strip()
+    except subprocess.TimeoutExpired:
+        dit = "(pas de réponse en 180 s)"
+    except OSError as e:
+        raise Echec("claude.exe ne se lance pas (%s)" % (e.strerror or type(e).__name__))
+    return (read(debug) if debug.is_file() else ""), dit
+
+
+def check_git(t, opts):
+    """Windows started without Git: the installer brought it through winget, a new process finds it, the
+    vault has its history, Claude Code finds Git Bash and the kit's gbq runs there. Then the harness's
+    own git calls (coffre, gbrain) go to that Git, as a new terminal's would."""
+    git = t.details["git"] = {}
+    t("git-absent-au-depart")
+    p = preuve_sans_git(t, os.environ.get(terrain_app.SANS_GIT))
+    git["avant"] = {"desinstalle": ["%s %s (code %s, %s s)" % (d.get("dossier"), d.get("version"), d.get("code"),
+                                                                d.get("secondes")) for d in p.get("desinstalle") or []],
+                    "path_retire": p.get("path_retire"), "winget": p["winget"].get("version")}
+
+    t("git-winget")
+    log = opts.home / ".brain-in-a-box" / "install.log"
+    essais = list(WINGET_GIT.finditer(read(log))) if log.is_file() else []
+    t.check(essais, "install.log ne dit pas que l'installeur a demandé Git à winget")
+    git["winget"] = ["%s : code %s" % (m.group("args"), m.group("code")) for m in essais]
+    t.check(any(m.group("code") == "0" for m in essais), "winget n'a pas installé Git : %s" % " ; ".join(git["winget"]))
+
+    t("git-nouveau-processus")
+    exe, version, env = git_de_session(t)
+    git.update(exe=exe, version=version)
+    dossier = os.path.dirname(exe)
+    cree = os.stat(dossier)
+    cree = getattr(cree, "st_birthtime", cree.st_ctime)
+    git["dossier_cree"] = datetime.fromtimestamp(cree, timezone.utc).isoformat(timespec="seconds")
+    t.check(cree > p["fin_epoch"], "%s existait avant que Git soit retiré : ce n'est pas le Git que l'installeur a mis" % dossier)
+
+    t("git-coffre")
+    vault = opts.home / "Documents" / "Brain"
+    rc, out = run([exe, "-C", vault, "rev-list", "--max-parents=0", "HEAD"], env=env, timeout=60)
+    racines = out.split()
+    t.check(rc == 0 and len(racines) == 1, "le coffre n'a pas un premier commit (code %d : %s)" % (rc, out.strip()[-200:]))
+    rc, sujet = run([exe, "-C", vault, "log", "-1", "--format=%s", racines[0]], env=env, timeout=60)
+    git["premier_commit"] = sujet.strip()
+    t.check(rc == 0 and sujet.strip() == "brain init", "le premier commit du coffre n'est pas celui de l'installeur (« %s »)"
+            % sujet.strip()[:80])
+
+    t("git-bash")
+    attendu = next((b for b in BASH_CLAUDE if os.path.isfile(b)), None) or \
+        os.path.normpath(os.path.join(exe, "..", "..", "bin", "bash.exe"))
+    t.check(os.path.isfile(attendu), "pas de Git Bash là où Claude Code le cherche (%s)" % attendu)
+    debug, sortie = claude_et_git_bash(t, opts, env)
+    git["claude_dit"] = dernier_mot(sortie)
+    bash = git["bash"] = bash_de_claude(t, debug, sortie)
+    t.check(os.path.normcase(bash) == os.path.normcase(attendu), "Claude Code prend %s, pas le Git Bash de ce Git (%s)"
+            % (bash, attendu))
+    # The kit's gbq for Git Bash (~/.local/bin/gbq), as Claude's Bash tool runs a command: bash -c.
+    rc, out = run([bash, "-c", '"$HOME/.local/bin/gbq" query "captured corrections"'], env=env, timeout=300)
+    t.check(rc == 0 and "lessons" in out.lower(), "gbq dans Git Bash (l'outil Bash de Claude Code) ne trouve pas "
+            "Profile/lessons.md (code %d : %s)" % (rc, out.strip()[-200:]))
+
+    os.environ["PATH"] = dossier + os.pathsep + os.environ.get("PATH", "")
+    # Where it went, not only what was asked: the VM's user is an administrator, Git's installer then
+    # installs for all users whatever the scope winget asked for.
+    reussi = next(m.group("args") for m in essais if m.group("code") == "0")
+    git["resume"] = "Git absent au départ, installé par winget (portée demandée : %s) dans %s, %s dans un nouveau " \
+                    "processus, coffre versionné (« brain init »), Git Bash trouvé par Claude Code, gbq y répond" % (
+                        "utilisateur" if "--scope user" in reussi else "celle du paquet",
+                        os.path.dirname(dossier), version)
+
+
 def check_install(t, opts, kept=(), fresh=True, query=True):
     """What a fresh install, or an upgrade (fresh=False), says it did. kept: hooks the user changed
     (left to montee); query: a gbq query must answer."""
     home = opts.home
     hooks = home / ".claude" / "hooks" / "brain"
+    if WINDOWS and fresh and opts.parcours in ("neuf", "app"):
+        check_git(t, opts)
     t("hooks")
     t.check(hooks.is_dir(), "aucun hook installé dans ~/.claude/hooks/brain")
     for name, src in kit_files():
@@ -1078,7 +1239,8 @@ def tail(path, offset):
 def installation(t, opts):
     check_install(t, opts)
     run_nightly(t, opts)
-    t.resume = "hooks, settings, lanceurs, skills, coffre, gbrain, planificateur et une nuit réelle : conformes"
+    t.resume = "hooks, settings, lanceurs, skills, coffre, gbrain, planificateur et une nuit réelle : conformes" + \
+        (" ; " + t.details["git"]["resume"] if (t.details.get("git") or {}).get("resume") else "")
 
 
 # --------------------------------------------------------------------------- montee (VM)

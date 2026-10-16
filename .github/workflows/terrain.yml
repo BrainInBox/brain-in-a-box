@@ -205,6 +205,10 @@ jobs:
       - name: Where the results go
         run: |
           "TERRAIN_JSON=$env:RUNNER_TEMP\terrain-windows-$env:PARCOURS.json" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          # The fresh install starts without Git: sans-git.ps1's proof, read by the installation scenario.
+          if ($env:PARCOURS -eq 'neuf') {
+            "TERRAIN_SANS_GIT=$env:RUNNER_TEMP\sans-git.json" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          }
 
       - uses: actions/checkout@v4
         with:
@@ -213,8 +217,9 @@ jobs:
           persist-credentials: false
 
       # --- fresh install: the one-liner a user pastes (the scheduled night: from GitHub itself),
-      # on a PC as users have it: no Python but the Store stub, so Python comes from winget.
-      - name: Fresh install (irm | iex), no Python but the Store stub
+      # on a PC as users have it: no Python but the Store stub, so Python comes from winget, and no
+      # Git (terrain-install.ps1 uninstalls the runner's, sans-git.ps1), so Git comes from winget too.
+      - name: Fresh install (irm | iex), no Python but the Store stub, no Git
         id: installeur
         if: matrix.parcours == 'neuf'
         timeout-minutes: 45
@@ -238,6 +243,18 @@ jobs:
           if (-not $tc) { throw 'no Python in the runner tool cache for the harness' }
           Split-Path $tc.FullName | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
           "harness Python: $($tc.FullName)"
+
+      # The runner's Git is gone: the harness's own git calls (the seven nights' vault) go to the one the
+      # installer brought, found on the PATH a new process gets. Without one, the installation scenario says why.
+      - name: Git for the harness (the one the installer brought)
+        if: ${{ !cancelled() && matrix.parcours == 'neuf' }}
+        run: |
+          $p = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
+          $g = @($p -split ';' | Where-Object { $_ -and (Test-Path -LiteralPath (Join-Path $_ 'git.exe')) }) | Select-Object -First 1
+          if ($g) {
+            $g | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+            "harness git: $g\git.exe"
+          } else { 'no git on the PATH a new process gets' }
 
       - name: Installer outcome, in the results
         if: ${{ !cancelled() && matrix.parcours == 'neuf' }}
@@ -674,7 +691,9 @@ jobs:
   # release.yml builds it), its pages clicked through, then the app's window, read and clicked
   # through UI Automation (engine/tests/pilote_windows.cs, compiled on the VM by Windows' own .NET
   # Framework: nothing downloaded for it). The PC has no Python but the Store's stub, as users'
-  # PCs (poste-neuf.ps1): the app has to bring it. No Claude token here either.
+  # PCs (poste-neuf.ps1), and no Git: once the app is installed, before its first start, the robot
+  # uninstalls the runner's (PiloteWindows.poste_neuf, .github/ci/sans-git.ps1, its proof in
+  # TERRAIN_SANS_GIT's file). The app has to bring both. No Claude token here either.
   app-windows:
     name: The app, clicked through (Windows)
     needs: ref
@@ -694,6 +713,7 @@ jobs:
         run: |
           "TERRAIN_JSON=$env:RUNNER_TEMP\terrain-windows-app.json" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "TERRAIN_CAPTURES=$env:RUNNER_TEMP\captures-windows-app" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "TERRAIN_SANS_GIT=$env:RUNNER_TEMP\sans-git.json" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - uses: actions/checkout@v4
         with:
