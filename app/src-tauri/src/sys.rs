@@ -1058,11 +1058,11 @@ mod tests {
     }
 
     /// PowerShell starts a ping that outlives it unless the whole tree is stopped, and
-    /// writes the ping's pid to $env:BIAB_PIDFILE. Only .NET calls: a cmdlet from a module
-    /// (Start-Process, Set-Content) first makes Windows PowerShell look through every
-    /// installed module, which a runner's own module cache spares only to programs that
-    /// inherit PSModuleAnalysisCachePath: in the cancel test's short environment that took
-    /// 20 s, and over a minute while the other tests ran.
+    /// writes the ping's pid to $env:BIAB_PIDFILE. Only .NET calls: before its first cmdlet
+    /// (Start-Process, Set-Content), Windows PowerShell reads every installed module its
+    /// module cache does not know. A runner's prebuilt cache is named by PSModuleAnalysisCachePath,
+    /// which the cancel test's short environment drops: there, finding Start-Process took
+    /// 20 s to over a minute, past the wait for the pid.
     #[cfg(windows)]
     const TREE: &str = "$i = [Diagnostics.ProcessStartInfo]::new('ping.exe', '-n 60 127.0.0.1'); $i.UseShellExecute = $true; \
                         $i.WindowStyle = 'Hidden'; $p = [Diagnostics.Process]::Start($i); \"ping $($p.Id)\"; \
