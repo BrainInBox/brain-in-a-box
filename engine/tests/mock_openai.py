@@ -16,6 +16,7 @@ mock and changes nothing else:
 
 It replaces, where they stand, the launcher's own URL settings by the mock's, and refuses to run
 (exit code 3) a `codex exec` that does not pin the provider and both URLs as the launcher must.
+`codex exec --help` and the other probes pass through unchanged.
 """
 import base64
 import datetime
@@ -228,7 +229,7 @@ PINNED = ('model_provider="openai"', 'openai_base_url=""', 'chatgpt_base_url="ht
 
 
 def shim(root, codex, args):
-    if args[:1] == ["exec"]:
+    if args[:1] == ["exec"] and args != ["exec", "--help"]:
         values = {i + 1 for i, a in enumerate(args[:-1]) if a in ("-c", "--config")}
         missing = [p for p in PINNED if p not in {args[i] for i in values}]
         if missing:

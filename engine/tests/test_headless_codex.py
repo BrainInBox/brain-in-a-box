@@ -13,6 +13,7 @@ import os
 import plistlib
 import shutil
 import signal
+import subprocess
 import sys
 import tempfile
 import time
@@ -715,6 +716,39 @@ class Stream(Base):
                 os.kill(pid, signal.SIGKILL)
             except OSError:
                 pass
+
+
+@unittest.skipIf(WINDOWS, "the shim execs a program: a .py needs a POSIX launcher script here")
+class Shim(Base):
+    """mock_openai.py's wrapper, as codex_mock.py uses it in CI, around fake_codex.py."""
+
+    def command(self):
+        wrapper = os.path.join(self.tmp, "codex")
+        with open(wrapper, "w", encoding="utf-8") as f:
+            f.write('#!/bin/sh\nexec %s -I %s "$@"\n' % (sys.executable, FAKE))
+        os.chmod(wrapper, 0o755)
+        return [sys.executable, "-I", os.path.join(HERE, "mock_openai.py"), "shim", "http://127.0.0.1:9", wrapper]
+
+    def test_the_probes_pass_through_the_call_gets_the_mock_s_urls_where_the_launcher_s_were(self):
+        self.assertEqual(self.run_codex().output, ANSWER)
+        argv = self.recorded("argv.json")
+        values = [argv[i + 1] for i, a in enumerate(argv[:-1]) if a == "-c"]
+        self.assertIn('model_provider="openai"', values)
+        self.assertEqual([v for v in values if "base_url" in v],
+                         ['openai_base_url="http://127.0.0.1:9/v1"',
+                          'chatgpt_base_url="http://127.0.0.1:9/backend-api/"'])
+        launcher = codex.config_flags(codex.load_features(), instructions="x")[1::2]
+        self.assertLess(launcher.index('openai_base_url=""'), launcher.index("notify=[]"))
+        self.assertLess(values.index('openai_base_url="http://127.0.0.1:9/v1"'), values.index("notify=[]"))
+
+    def test_a_call_without_the_pinned_settings_is_refused(self):
+        for drop in mock_openai.PINNED:
+            args = ["exec", "--json"] + [x for p in mock_openai.PINNED if p != drop for x in ("-c", p)] + ["-"]
+            with self.subTest(drop=drop):
+                p = subprocess.run(self.command() + args, capture_output=True, timeout=60)
+                self.assertEqual(p.returncode, 3, p.stderr)
+                self.assertIn(drop, p.stderr.decode("utf-8"))
+        self.assertEqual(self.exec_calls(), [])
 
 
 class Binary(unittest.TestCase):
