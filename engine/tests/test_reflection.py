@@ -947,15 +947,22 @@ class Engines(Run):
                 (self.fake / "prompt.txt").read_text(encoding="utf-8"))
 
     def test_without_agents_json_the_call_the_state_and_the_line_are_todays(self):
-        st, out = self.reflect_with()
+        with mock.patch.object(hc, "run", wraps=hc.run) as launcher:
+            st, out = self.reflect_with()
         self.assertEqual(set(st), {"last_ok", "failing_since", "last_error"}, "no engine named, nothing added")
         self.assertIsNone(st["last_error"])
         self.assertTrue(out.startswith(f"{DAY} evening: Claude Code 2.1.296, 2 turn(s), $"), out)
         self.assertIn(" at list price; journal updated, memory.md updated", out)
         self.assertIsNone(self.codex_runs(), "codex is not even started")
         through = self.recorded()
-        # The call ask_claude made before the choice existed, word for word.
-        hc.run(through[3], dr.SCHEMA, dr.SYSTEM, budget_usd=dr.BUDGET_USD, timeout=dr.TIMEOUT,
+        # The call ask_claude made before the choice existed, word for word: the same arguments to
+        # the same launcher, and so the same argv, environment, folder and prompt. The prompt is the
+        # one handed to the launcher (fake_claude reads stdin in the locale's encoding: cp1252 on Windows).
+        prompt = launcher.call_args.args[0]
+        before = mock.call(prompt, dr.SCHEMA, dr.SYSTEM, budget_usd=dr.BUDGET_USD, timeout=dr.TIMEOUT,
+                           command=[sys.executable, str(FAKE)])
+        self.assertEqual(launcher.call_args_list, [before])
+        hc.run(prompt, dr.SCHEMA, dr.SYSTEM, budget_usd=dr.BUDGET_USD, timeout=dr.TIMEOUT,
                command=[sys.executable, str(FAKE)])
         self.assertEqual(through, self.recorded())
         self.assertEqual(self.calls(), 2)
