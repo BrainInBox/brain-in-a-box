@@ -2,8 +2,9 @@
 isolated Claude run it relies on (engine/hooks/_headless_claude.py).
 
 Claude is fake_claude.py, which replays the real stream-json captures of
-app/src-tauri/tests/fixtures/repair. Every run happens in a throwaway HOME,
-vault and log folder: the user's brain and ~/.claude are never read nor written.
+app/src-tauri/tests/fixtures/repair; Codex, when agents.json names it,
+fake_codex.py. Every run happens in a throwaway HOME, vault and log folder: the
+user's brain and ~/.claude are never read nor written.
 
     python3 -I -m unittest discover -s engine/tests -v
 """
@@ -12,20 +13,28 @@ import importlib.util
 import io
 import json
 import os
+import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 HOOKS = HERE.parent / "hooks"
 FIXTURES = HERE.parent.parent / "app" / "src-tauri" / "tests" / "fixtures" / "repair"
 FAKE = HERE / "fake_claude.py"
+FAKE_CODEX = HERE / "fake_codex.py"
 sys.path.insert(0, str(HOOKS))
+sys.path.insert(0, str(HERE))
 
+import _agents  # noqa: E402
 import _headless_claude as hc  # noqa: E402
+import _headless_codex as hx  # noqa: E402
+import mock_openai  # noqa: E402
 
 _spec = importlib.util.spec_from_file_location("daily_reflection", str(HOOKS / "daily-reflection.py"))
 dr = importlib.util.module_from_spec(_spec)
@@ -678,8 +687,8 @@ class Guards(unittest.TestCase):
         self.assertEqual(self.path.read_bytes(), b"caf\xe9\n")
 
 
-class Reflect(unittest.TestCase):
-    """The whole run, fake Claude included."""
+class Run(unittest.TestCase):
+    """A throwaway vault, logs, a day of Claude transcripts and fake_claude.py."""
 
     def setUp(self):
         self.root = Path(tempfile.mkdtemp(prefix="biab-refl-run-"))
@@ -744,6 +753,10 @@ class Reflect(unittest.TestCase):
             p.unlink()
         return n
 
+
+class Reflect(Run):
+    """The whole run, fake Claude included."""
+
     def test_a_good_run_writes_both_files_and_nothing_else(self):
         before = {p: p.read_bytes() for p in self.vault.rglob("*") if p.is_file()}
         st = self.run_reflection()
@@ -784,6 +797,31 @@ class Reflect(unittest.TestCase):
         self.assertIn("answer off the schema", st["last_error"])
         self.assertIn("REFLECTION-STATUS", self.memory.read_text(encoding="utf-8"))
         self.assertNotIn("curl", self.memory.read_text(encoding="utf-8"))
+
+    def test_tries_are_logged_and_paused_as_before(self):
+        # Claude alone: ask_claude's lines word for word, and its pause between two tries.
+        dr.RETRY_DELAY = 7
+        with mock.patch.object(dr.headless, "time") as clock:
+            self.run_reflection(scenario="broken-json")
+        self.assertEqual(clock.sleep.call_args_list, [mock.call(7)])
+        log = (self.root / "logs" / "daily-reflection-errors.log").read_text(encoding="utf-8")
+        self.assertEqual([line.split(" ", 1)[1] for line in log.splitlines()],
+                         ["attempt 1/2: api: no result", "attempt 2/2: api: no result",
+                          f"{DAY} evening: api: no result"])
+
+    def test_a_dry_run_prints_what_it_printed_before(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            dr.reflect(DAY, "evening", dry_run=True, command=[sys.executable, str(FAKE)])
+        lines = out.getvalue().splitlines()
+        self.assertEqual(len(lines), 4, lines)
+        self.assertRegex(lines[0], rf"^{DAY} evening: 1 Claude session\(s\), 0 Hermes session\(s\), 0 repo\(s\) with "
+                                   r"commits, 0 secret\(s\) masked, prompt \d+ chars$")
+        self.assertTrue(lines[1].startswith("  claude s · cwd="), lines[1])
+        self.assertRegex(lines[2], r"^dossier sent on stdin: \d+ chars, \d+ bytes \(sessions capped at %d chars\); "
+                                   r"cap \$%.2f, %ds$" % (dr.BUDGET, dr.BUDGET_USD, dr.TIMEOUT))
+        self.assertEqual(lines[3], "answer schema: " + json.dumps(dr.SCHEMA, ensure_ascii=False))
+        self.assertEqual(self.calls(), 0)
 
     def test_the_error_log_is_masked(self):
         dr.log_error("api: proxy said Bearer " + "A" * 40 + " is refused")
@@ -868,6 +906,193 @@ class Reflect(unittest.TestCase):
         mem = self.memory.read_text(encoding="utf-8")
         self.assertIn(dr.MEMORY_SUSPECT.format(day=DAY), mem)
         self.assertNotIn("Login page shipped", mem)
+
+
+
+class Engines(Run):
+    """The AI agents.json names (_headless.py), fake_codex.py standing for codex. Codex is closed
+    on every system (_agents.CODEX_OUVERT): opened here only, in this process."""
+
+    def setUp(self):
+        Run.setUp(self)
+        self.codex_home, self.codex_fake = self.home / ".codex", self.home / ".codex-fake"
+        for d in (self.codex_home, self.codex_fake):
+            d.mkdir(parents=True)
+        (self.codex_home / "auth.json").write_text(
+            json.dumps(mock_openai.fake_auth()), encoding="utf-8")
+        (self.codex_fake / "home").write_text(str(self.codex_home), encoding="utf-8")
+        (self.codex_fake / "answer.json").write_text(json.dumps(ANSWER), encoding="utf-8")
+        for p in (mock.patch.object(_agents, "CODEX_OUVERT", frozenset({_agents.systeme()})),
+                  mock.patch.object(hx, "MANAGED", [str(self.root / "etc" / "requirements.toml")]),
+                  mock.patch.object(hx, "MDM", []),
+                  mock.patch.object(hc, "MANAGED_DIR", str(self.root / "managed")),
+                  mock.patch.object(dr, "TIMEOUT", dr.TIMEOUT), mock.patch.object(dr, "CODEX_TIMEOUT", dr.CODEX_TIMEOUT)):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def choose(self, agents=None, prefere=None, raw=None):
+        folder = self.home / ".brain-in-a-box"
+        folder.mkdir(exist_ok=True)
+        if raw is None:
+            raw = json.dumps({"version": 1, "agents": agents, "prefere": prefere or agents[0],
+                              **({"codex_home": str(self.codex_home)} if "codex" in agents else {})})
+        (folder / "agents.json").write_text(raw, encoding="utf-8")
+        if POSIX:
+            os.chmod(str(folder / "agents.json"), 0o600)
+
+    def reflect_with(self, scenario="plan-ok", codex="ok"):
+        (self.fake / "scenario").write_text(scenario, encoding="utf-8")
+        (self.codex_fake / "scenario").write_text(codex, encoding="utf-8")
+        for lock in self.root.glob("brain-daily-reflection-*.lock"):
+            lock.unlink()
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            dr.reflect(DAY, "evening", command=[sys.executable, str(FAKE)],
+                       codex_command=[sys.executable, "-I", str(FAKE_CODEX)])
+        self.age()
+        st = json.loads((self.root / "logs" / "daily-reflection.state.json").read_text(encoding="utf-8"))
+        return st, out.getvalue()
+
+    def codex_runs(self):
+        """codex exec runs since the last look; None when codex was not even started."""
+        p = self.codex_fake / "calls.jsonl"
+        if not p.exists():
+            return None
+        n = sum(1 for l in p.read_text(encoding="utf-8").splitlines()
+                if json.loads(l)["argv"][:1] == ["exec"] and "--help" not in json.loads(l)["argv"])
+        p.unlink()
+        return n
+
+    def sent_to_codex(self):
+        return (self.codex_fake / "stdin.txt").read_text(encoding="utf-8")
+
+    def recorded(self):
+        env = json.loads((self.fake / "env.json").read_text(encoding="utf-8"))
+        return (json.loads((self.fake / "argv.json").read_text(encoding="utf-8")),
+                {k: re.sub(r"brain-claude-[^/\\]+", "<cage>", v) for k, v in env.items()},
+                json.loads((self.fake / "cwd.json").read_text(encoding="utf-8"))["mode"],
+                (self.fake / "prompt.txt").read_text(encoding="utf-8"))
+
+    def test_without_agents_json_the_call_the_state_and_the_line_are_todays(self):
+        with mock.patch.object(hc, "run", wraps=hc.run) as launcher:
+            st, out = self.reflect_with()
+        self.assertEqual(set(st), {"last_ok", "failing_since", "last_error"}, "no engine named, nothing added")
+        self.assertIsNone(st["last_error"])
+        self.assertTrue(out.startswith(f"{DAY} evening: Claude Code 2.1.296, 2 turn(s), $"), out)
+        self.assertIn(" at list price; journal updated, memory.md updated", out)
+        self.assertIsNone(self.codex_runs(), "codex is not even started")
+        through = self.recorded()
+        # The call ask_claude made before the choice existed, word for word: the same arguments to
+        # the same launcher, and so the same argv, environment, folder and prompt. The prompt is the
+        # one handed to the launcher (fake_claude reads stdin in the locale's encoding: cp1252 on Windows).
+        prompt = launcher.call_args.args[0]
+        before = mock.call(prompt, dr.SCHEMA, dr.SYSTEM, budget_usd=dr.BUDGET_USD, timeout=dr.TIMEOUT,
+                           command=[sys.executable, str(FAKE)])
+        self.assertEqual(launcher.call_args_list, [before])
+        hc.run(prompt, dr.SCHEMA, dr.SYSTEM, budget_usd=dr.BUDGET_USD, timeout=dr.TIMEOUT,
+               command=[sys.executable, str(FAKE)])
+        self.assertEqual(through, self.recorded())
+        self.assertEqual(self.calls(), 2)
+
+    def test_codex_preferred_writes_the_day_and_the_state_says_so(self):
+        self.choose(["claude", "codex"], "codex")
+        with mock.patch.object(_agents, "lire", wraps=_agents.lire) as lire:
+            st, out = self.reflect_with()
+        self.assertEqual(lire.call_count, 1, "agents.json is read once: what is gathered and who is asked agree")
+        self.assertEqual((st["last_error"], st["moteur"], st["secours"]), (None, "codex", None))
+        self.assertIn("## What I did\n- Shipped the login page\n", self.journal.read_text(encoding="utf-8"))
+        self.assertIn("- Login page shipped\n", self.memory.read_text(encoding="utf-8"))
+        self.assertTrue(out.startswith(f"{DAY} evening: Codex 0.162.1, 1 turn(s), 1242 tokens; journal updated"), out)
+        self.assertEqual((self.calls(), self.codex_runs()), (0, 1))
+        sent = self.sent_to_codex()
+        self.assertTrue(sent.startswith(dr.SENTINEL))
+        self.assertIn("ship it", sent, "Claude is listed: its sessions are read")
+        self.assertEqual(json.loads((self.codex_fake / "schema.json").read_text(encoding="utf-8")), dr.SCHEMA)
+
+    def test_codex_alone_never_reads_the_claude_transcripts(self):
+        git = ["git", "-C", str(self.vault), "-c", "user.email=me@example.com", "-c", "user.name=Me"]
+        subprocess.run(["git", "init", "-q", str(self.vault)], check=True, capture_output=True)
+        subprocess.run(git + ["add", "-A"], check=True, capture_output=True)
+        stamp = f"{DAY}T12:00:00"
+        subprocess.run(git + ["commit", "-q", "-m", "vault: the plan for the week"], check=True, capture_output=True,
+                       env=dict(os.environ, GIT_AUTHOR_DATE=stamp, GIT_COMMITTER_DATE=stamp))
+        self.age()
+        self.choose(["codex"])
+        st, _ = self.reflect_with()
+        self.assertIsNone(st["last_error"])
+        sent = self.sent_to_codex()
+        self.assertIn("vault: the plan for the week", sent)
+        for claude_text in ("ship it", "Shipped.", "[session claude"):
+            self.assertNotIn(claude_text, sent)
+        self.assertEqual(self.calls(), 0)
+
+    def test_a_choice_the_kit_cannot_trust_asks_no_one_and_says_so(self):
+        self.choose(raw="{oops")
+        before = self.journal.read_bytes()
+        with contextlib.ExitStack() as stack:
+            readers = [stack.enter_context(mock.patch.object(dr, n, wraps=getattr(dr, n)))
+                       for n in ("hermes_sessions", "claude_sessions", "git_digest")]
+            st, _ = self.reflect_with()
+        self.assertEqual([r.called for r in readers], [False] * 3, "nothing is even read")
+        self.assertTrue(st["last_error"].startswith("agents: ~/.brain-in-a-box/agents.json cannot be trusted "
+                                                    "(illisible)"), st["last_error"])
+        self.assertIn("REFLECTION-STATUS:BEGIN", self.memory.read_text(encoding="utf-8"))
+        self.assertEqual(self.journal.read_bytes(), before)
+        self.assertEqual((self.calls(), self.codex_runs()), (0, None))
+        self.assertFalse((self.fake / "prompt.txt").exists())
+        # A day with nothing to sum up still says it: the pause is never silent.
+        for f in (self.root / "projects").rglob("*.jsonl"):
+            f.unlink()
+        (self.root / "logs" / "daily-reflection.state.json").unlink()
+        st, _ = self.reflect_with()
+        self.assertTrue(st["last_error"].startswith("agents: "))
+
+    def test_codex_using_a_tool_is_shown_not_covered_by_claude(self):
+        self.choose(["claude", "codex"], "codex")
+        before = self.journal.read_bytes()
+        st, _ = self.reflect_with(codex="command")
+        self.assertEqual((st["last_error"], st["moteur"]), ("codex: init: tool used: command_execution", None))
+        self.assertEqual(self.journal.read_bytes(), before)
+        self.assertEqual((self.calls(), self.codex_runs()), (0, 1))
+        log = (self.root / "logs" / "daily-reflection-errors.log").read_text(encoding="utf-8")
+        self.assertIn("codex: attempt 1/2: init: tool used: command_execution", log)
+
+    def test_claude_logged_out_codex_writes_the_day_and_it_is_said(self):
+        self.choose(["claude", "codex"], "claude")
+        (self.fake / "auth").write_text("apiKey", encoding="utf-8")
+        st, out = self.reflect_with()
+        self.assertEqual((st["last_error"], st["moteur"]), (None, "codex"))
+        self.assertTrue(st["secours"].startswith("claude: auth: Claude Code login is apiKey"), st["secours"])
+        self.assertIn("(claude: auth: Claude Code login is apiKey", out)
+        self.assertIn("- Shipped the login page\n", self.journal.read_text(encoding="utf-8"))
+        self.assertEqual((self.calls(), self.codex_runs()), (0, 1))
+
+    def test_what_the_preferred_engine_said_is_masked_before_it_is_kept(self):
+        self.choose(["claude", "codex"], "claude")
+        key = "ghp_" + "K" * 36
+        (self.fake / "version").write_text(key, encoding="utf-8")   # claude --version said a key
+        st, out = self.reflect_with()
+        self.assertEqual(st["moteur"], "codex")
+        self.assertTrue(st["secours"].startswith("claude: start: claude --version said "), st["secours"])
+        self.assertIn("[REDACTED]", st["secours"])
+        log = (self.root / "logs" / "daily-reflection-errors.log").read_text(encoding="utf-8")
+        for where, text in (("state", json.dumps(st)), ("output", out), ("error log", log)):
+            self.assertNotIn(key, text, where)
+
+    def test_codex_out_of_time_is_not_asked_again_claude_answers(self):
+        self.choose(["claude", "codex"], "codex")
+        dr.CODEX_TIMEOUT = 2
+        st, _ = self.reflect_with(codex="hang")
+        self.assertEqual((st["last_error"], st["moteur"], st["secours"]),
+                         (None, "claude", "codex: timeout: no answer in time"))
+        self.assertEqual((self.codex_runs(), self.calls()), (1, 1))
+
+    def test_claude_out_of_time_never_hands_the_day_to_codex(self):
+        self.choose(["claude", "codex"], "claude")
+        dr.TIMEOUT = 2
+        st, _ = self.reflect_with(scenario="hang")
+        self.assertEqual(st["last_error"], "claude: timeout: no answer in time")
+        self.assertEqual((self.calls(), self.codex_runs()), (2, None))
 
 
 if __name__ == "__main__":

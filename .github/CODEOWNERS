@@ -10,6 +10,8 @@
 /engine/gbrain-pin.json                  @El-Kurdi-Chad
 /engine/hooks/gbrain_update.py           @El-Kurdi-Chad
 /engine/hooks/_headless_claude.py        @El-Kurdi-Chad
+/engine/hooks/_headless_codex.py         @El-Kurdi-Chad
+/engine/hooks/_headless.py               @El-Kurdi-Chad
 /engine/hooks/_agents.py                 @El-Kurdi-Chad
 /engine/hooks/_redact.py                 @El-Kurdi-Chad
 /engine/tests/terrain.py                 @El-Kurdi-Chad

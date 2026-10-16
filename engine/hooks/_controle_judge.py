@@ -1,14 +1,16 @@
-"""The Claude review of the night check (controle.py).
+"""The AI review of the night check (controle.py).
 
-Builds a bounded, masked dossier of the notes, asks `claude -p` with no tool at
-all, and checks every field of its answer. Claude only points at excerpts and
-quotes them: controle.py checks each quote against the notes, dates both sides
-itself and picks the fix.
+Builds a bounded, masked dossier of the notes, asks the AI with no tool at all,
+and checks every field of its answer. The AI only points at excerpts and quotes
+them: controle.py checks each quote against the notes, dates both sides itself
+and picks the fix.
 
-Claude is asked through _headless_claude.py, as the daily reflection is: the
-command of the app's repair (app/src-tauri/src/repair.rs) but for the budget and
-the effort, a reduced environment, a fresh private folder, a fail-closed reading
-of the stream. engine/tests/test_judge.py keeps the two in step.
+The AI is the one ~/.brain-in-a-box/agents.json names, asked through _headless.py
+as the daily reflection is; without that file, Claude, as before. Claude is asked
+through _headless_claude.py: the command of the app's repair
+(app/src-tauri/src/repair.rs) but for the budget and the effort, a reduced
+environment, a fresh private folder, a fail-closed reading of the stream.
+engine/tests/test_judge.py keeps the two in step. Codex through _headless_codex.py.
 
 Not a hook: installed next to them, never registered in settings.json.
 """
@@ -22,14 +24,20 @@ from collections import Counter, defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _controle_rules as rules  # noqa: E402
+import _headless as engines  # noqa: E402
 import _headless_claude as headless  # noqa: E402
 from _redact import find_doubtful_secrets, find_secrets, redact as redact_common  # noqa: E402
 
 MIN_CLAUDE = headless.MIN_CLAUDE
 REQUIRED_FLAGS = headless.REQUIRED_FLAGS
 LIMIT_RE = headless.LIMIT_RE
+# A usage limit as _headless.texte() keeps it when Codex is one of the agents: the engine named,
+# first or after the preferred one's error. Codex words its limits its own way ("spend cap").
+NAMED_LIMIT_RE = re.compile(r"(?:^|; then )(claude|codex): quota: ")
 MODEL, EFFORT, BUDGET_USD, MAX_TURNS = "sonnet", "medium", 0.40, 3
 ASK_TIMEOUT = 300
+# Codex has no spending cap (docs/proposals/codex.md, §2.3): a shorter wait. Its model is BRAIN_CODEX_MODEL's.
+CODEX_TIMEOUT, CODEX_EFFORT = 240, "medium"
 CALLS_PER_DAY = 3
 LIMIT_WINDOW = 6 * 3600
 EXCERPT_CHARS = 1500
@@ -188,15 +196,28 @@ def schema(excerpt_ids, lesson_ids):
 
 # --------------------------------------------------------------------------- asking
 
-# What the report says (controle.py CLAUDE_SKIP), from _headless_claude's errors.
+# What the report says (controle.py CLAUDE_SKIP, CODEX_SKIP), from the engines' errors; "agents":
+# agents.json cannot be trusted, no engine. Codex's pauses: a feature, .env, managed settings or
+# MCP server the kit does not know, or BRAIN_CODEX_MODEL that is no model name.
 CAUSES = {"start": "lancement", "unsupported": "version", "auth": "connexion", "init": "demarrage",
-          "timeout": "delai", "quota": "limite", "api": "erreur", "invalid": "reponse"}
-REASONS = {"version": "version", "flags": "options", "logged_out": "connexion", "billed": "abonnement"}
+          "timeout": "delai", "quota": "limite", "api": "erreur", "invalid": "reponse", "agents": "agents"}
+REASONS = {"version": "version", "flags": "options", "logged_out": "connexion", "billed": "abonnement",
+           "features": "pause", "dotenv": "pause", "managed": "pause", "mcp": "pause", "model": "modele"}
 
 
 def default_command():
     """CLAUDE_BIN when set, and then only it; else None: _headless_claude finds the user's claude."""
     return [os.environ["CLAUDE_BIN"]] if os.environ.get("CLAUDE_BIN") else None
+
+
+def default_codex_command():
+    """CODEX_BIN when set, and then only it; else None: _headless_codex finds the user's codex."""
+    return [os.environ["CODEX_BIN"]] if os.environ.get("CODEX_BIN") else None
+
+
+def read_agents():
+    """agents.json, read once for a night: who the review may ask (_headless.lire)."""
+    return engines.lire()
 
 
 def cause(error, probing=False):
@@ -206,36 +227,49 @@ def cause(error, probing=False):
     return REASONS.get(error.reason) or CAUSES.get(error.kind, "erreur")
 
 
-def available(command=None, git_path=None, work_root=None):
-    """(True, None) when Claude may be asked, else (False, cause): absent, version,
-    options, connexion (logged out) or abonnement (an API key or a cloud provider
-    would be billed). Nothing is asked: --version, --help and auth status only."""
-    try:
-        headless.check(command, work_root=work_root, git=git_path)
-    except headless.HeadlessError as e:
-        return False, cause(e, probing=True)
-    return True, None
-
-
 class Outcome:
+    """moteur: the engine that answered, or whose failure `cause` is; named only when Codex is
+    one of the agents (_headless.py), else None. secours: what the preferred one said, when the
+    other one answered."""
+
     def __init__(self):
         self.answer = self.cause = self.detail = self.version = self.cost = self.turns = None
+        self.moteur = self.secours = None
         self.secs = 0.0
 
 
-def ask(dossier_text, schema_obj, command=None, timeout=ASK_TIMEOUT, git_path=None, work_root=None):
-    """One review. `command` is the claude executable as a list (tests pass a stub
-    there, never through the environment: a schema's quotes would not survive a
-    .cmd). The stream is not kept, only what the journal needs."""
+def probe(command=None, git_path=None, work_root=None, codex_command=None, agents=None):
+    """Whether an engine may be asked, in agents.json's order, without asking anything (Claude:
+    --version, --help and auth status; Codex: its checks before a call): an Outcome with the
+    engine and its version, or the report's cause and the engine it is about. Causes: absent,
+    version, options, connexion (logged out), abonnement (an API key or a cloud provider would
+    be billed), pause and modele (Codex), agents (no engine can be trusted)."""
+    out = Outcome()
+    try:
+        out.moteur, out.version = engines.check(claude=dict(command=command, work_root=work_root, git=git_path),
+                                                codex=dict(command=codex_command, work_root=work_root), agents=agents)
+    except headless.HeadlessError as e:
+        out.cause, out.detail, out.moteur = cause(e, probing=True), e.detail, getattr(e, "moteur", None)
+    return out
+
+
+def ask(dossier_text, schema_obj, command=None, timeout=ASK_TIMEOUT, git_path=None, work_root=None,
+        codex_command=None, agents=None):
+    """One review. `command` is the claude executable as a list, `codex_command` the codex
+    one (tests pass a stub there, never through the environment: a schema's quotes would not
+    survive a .cmd). The stream is not kept, only what the journal needs."""
     out, start = Outcome(), time.monotonic()
     try:
-        a = headless.run(dossier_text, schema_obj, SYSTEM_PROMPT, budget_usd=BUDGET_USD, timeout=timeout,
-                         max_turns=MAX_TURNS, model=MODEL, effort=EFFORT, command=command, work_root=work_root,
-                         git=git_path)
+        a = engines.run(dossier_text, schema_obj, SYSTEM_PROMPT,
+                        claude=dict(budget_usd=BUDGET_USD, timeout=timeout, max_turns=MAX_TURNS, model=MODEL,
+                                    effort=EFFORT, command=command, work_root=work_root, git=git_path),
+                        codex=dict(timeout=min(timeout, CODEX_TIMEOUT), effort=CODEX_EFFORT, command=codex_command,
+                                   work_root=work_root),
+                        agents=agents)
     except headless.HeadlessError as e:
-        out.cause, out.detail = cause(e), e.detail
+        out.cause, out.detail, out.moteur = cause(e), e.detail, getattr(e, "moteur", None)
     else:
-        out.answer, out.version = a.output, a.version
+        out.answer, out.version, out.moteur, out.secours = a.output, a.version, a.moteur, a.secours
         out.turns = a.num_turns if isinstance(a.num_turns, int) and not isinstance(a.num_turns, bool) else None
         out.cost = float(a.cost_usd) if isinstance(a.cost_usd, (int, float)) and not isinstance(a.cost_usd, bool) \
             else None
@@ -700,6 +734,17 @@ def masked_values(original, masked):
 
 # --------------------------------------------------------------------------- when to ask
 
+def limit_of(error):
+    """The engine ("claude" or "codex") whose usage limit the reflection's error shows, else None.
+    An error that names no engine (Claude alone) is read as before: Claude's words only."""
+    m = NAMED_LIMIT_RE.search(error or "")
+    if m:
+        return m.group(1)
+    if error and LIMIT_RE.search(error):
+        return "codex" if error.startswith("codex: ") else "claude"
+    return None
+
+
 def should_ask(sans_claude=False, paused=False, calls_today=0, reflection_error=None, reflection_age=None,
                changed=False, lessons_left=False, sunday=False):
     """(True, None) or (False, why). An idle user costs one review a week at most."""
@@ -709,7 +754,7 @@ def should_ask(sans_claude=False, paused=False, calls_today=0, reflection_error=
         return False, "pause"
     if calls_today >= CALLS_PER_DAY:
         return False, "quota-jour"
-    if reflection_error and LIMIT_RE.search(reflection_error) and reflection_age is not None \
+    if reflection_error and limit_of(reflection_error) and reflection_age is not None \
             and reflection_age < LIMIT_WINDOW:
         return False, "limite-reflexion"
     if not (changed or lessons_left or sunday):

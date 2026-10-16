@@ -8,27 +8,29 @@ Scheduled at 12:00 and 23:00 (launchd / Task Scheduler). By hand:
     daily-reflection.py --dry-run          show the sources, the schema and the dossier size, call nothing
 
 Sources, all read-only:
-  - Claude Code transcripts (~/.claude/projects/*/*.jsonl), sliced to the day.
+  - Claude Code transcripts (~/.claude/projects/*/*.jsonl), sliced to the day,
+    when Claude is one of the agents chosen (always without agents.json).
   - Hermes sessions (~/.hermes/state.db), when Hermes is installed.
   - A digest of your own git commits that day: the authoritative record of
     what was produced, since the chat under-reports the busiest days.
 
 Those texts can carry anything a web page, a document or a tool printed, so
-Claude only answers: it runs with no tool at all (_headless_claude.py) and
-returns a JSON object. This program writes it, in two places and nowhere else:
+the AI only answers: it runs with no tool at all and returns a JSON object
+(_headless.py: Claude, or Codex, as ~/.brain-in-a-box/agents.json says; without
+that file Claude, as before). This program writes it, in two places and nowhere else:
 the four sections it manages in the day's journal (What I did, Key decisions,
 Projects I worked on, To do next) and the day's entry under "Recent context"
-in memory.md. Claude only adds: every line already in those places stays as
+in memory.md. The AI only adds: every line already in those places stays as
 it is, where it is (a checkbox keeps its tick, a nested list its nesting, a code
-block its lines), the rest of both files is kept byte for byte, and Claude's text
+block its lines), the rest of both files is kept byte for byte, and the AI's text
 is cleaned before it lands: one line per item, no heading, frontmatter, HTML,
 image, marker block, backquote or Templater command (Obsidian plugins run those),
 secrets masked. Nothing is ever removed from memory.md: archiving old entries is
 another program's job.
 
 Environment: BRAIN_DIR (vault, default ~/Documents/Brain), BRAIN_GIT_ROOTS
-(extra repos to scan, os.pathsep-separated), HERMES_DB, CLAUDE_BIN,
-BRAIN_NO_NOTIFY=1 (no desktop notification on failure).
+(extra repos to scan, os.pathsep-separated), HERMES_DB, CLAUDE_BIN, CODEX_BIN,
+BRAIN_CODEX_MODEL, BRAIN_NO_NOTIFY=1 (no desktop notification on failure).
 For tests and trials: --projects DIR reads the transcripts from DIR instead of
 ~/.claude/projects, --logs DIR keeps the state, error log and run lock there
 instead of ~/.claude/logs.
@@ -52,7 +54,7 @@ try:
 except ImportError:
     redact = clean_item = write_atomic = None
 try:
-    import _headless_claude as headless
+    import _headless as headless
 except ImportError:
     headless = None
 
@@ -70,6 +72,8 @@ RETRY_DELAY = 60
 # ($10/M in, 1.25x to write the cache, $50/M out) costs about $2.30 over the 3
 # turns allowed: $4 leaves room, a smaller cap would throw that day's answer away.
 BUDGET_USD = 4.00
+# Codex has no spending cap (docs/proposals/codex.md, §2.3): a shorter wait, and no second try after it.
+CODEX_TIMEOUT = 600
 # Seconds: a file written this recently is being edited (Obsidian saves ~2 s after a keystroke).
 QUIET = 5
 # pythonw (no console) must not flash a window per git call.
@@ -856,17 +860,15 @@ Activity of {day} ({slot} run, {when}): {sources}, and a digest of the git commi
 """
 
 
-def ask_claude(prompt, command=None):
-    """Claude's answer. One more try only after a timeout or a network/service error: a refused
-    start, a bad answer, a usage limit or a missing login would fail the same way again."""
-    for attempt in (1, 2):
-        try:
-            return headless.run(prompt, SCHEMA, SYSTEM, budget_usd=BUDGET_USD, timeout=TIMEOUT, command=command)
-        except headless.HeadlessError as e:
-            log_error(f"attempt {attempt}/2: {e}")
-            if attempt == 2 or not e.retryable:
-                raise
-            time.sleep(RETRY_DELAY)
+def ask(prompt, agents, command=None, codex_command=None):
+    """The answer of the AI agents.json names (_headless.py: the preferred one, then the other one
+    listed). One more try only after a timeout or a network/service error: a refused start, a bad
+    answer, a usage limit or a missing login would fail the same way again."""
+    def note(moteur, attempt, tries, e):
+        log_error(f"{moteur + ': ' if moteur else ''}attempt {attempt}/{tries}: {e}")
+    return headless.run(prompt, SCHEMA, SYSTEM, claude=dict(budget_usd=BUDGET_USD, timeout=TIMEOUT, command=command),
+                        codex=dict(timeout=CODEX_TIMEOUT, command=codex_command), essais=2, pause=RETRY_DELAY,
+                        journal=note, agents=agents)
 
 
 def _internal(day, slot, e):
@@ -875,26 +877,26 @@ def _internal(day, slot, e):
     return f"internal error ({type(e).__name__}), see daily-reflection-errors.log"
 
 
-def reflect_once(day, slot, sessions, gitlog, command=None):
-    """Asks Claude and writes its answer. Returns None on success, else the cause."""
+def reflect_once(day, slot, sessions, gitlog, agents, command=None, codex_command=None):
+    """Asks the AI and writes its answer. Returns (None on success, else the cause; the Answer or None)."""
     journal_path = BRAIN / "Journal" / f"{day}.md"
     if not BRAIN.is_dir():
         # Never a vault of our own making where the user's is not (moved, unmounted, BRAIN_DIR unset).
-        return f"vault {BRAIN} not found: set BRAIN_DIR"
+        return f"vault {BRAIN} not found: set BRAIN_DIR", None
     try:
         jbase, mbase = read_note(journal_path), read_note(MEMORY)
         prompt = build_prompt(day, slot, sessions, gitlog, journal_now(jbase), memory_now(mbase, day),
                               _read_text(BRAIN / "Profile" / "soul.md", SOUL_CAP))
-        answer = ask_claude(prompt, command)
+        answer = ask(prompt, agents, command, codex_command)
         draft = clean_answer(answer.output)
     except headless.HeadlessError as e:
-        return f"{e.kind}: {e.detail}"
+        return headless.texte(e), None
     except (Refused, ValueError) as e:
-        return str(e)
+        return str(e), None
     except OSError as e:
-        return f"{type(e).__name__}: {e}"[:300]
+        return f"{type(e).__name__}: {e}"[:300], None
     except Exception as e:  # a bug of ours: still a failure the state, memory.md and a notification show
-        return _internal(day, slot, e)
+        return _internal(day, slot, e), None
     # Each file on its own: a journal open in an editor must not cost the day its memory.md entry.
     done, causes = [], []
     for name, path, merge, base in (
@@ -908,10 +910,15 @@ def reflect_once(day, slot, sessions, gitlog, command=None):
             causes.append(f"{name}: {type(e).__name__}: {e}"[:300])
         except Exception as e:
             causes.append(_internal(day, slot, e))
-    print(f"{day} {slot}: Claude Code {answer.version}, {answer.num_turns} turn(s), "
-          f"${answer.cost_usd or 0:.2f} at list price; " + ", ".join(done + causes)
-          + (", suspect text flagged" if draft["suspect"] else ""))
-    return "; ".join(causes) or None
+    if answer.moteur == "codex":
+        used = f"Codex {answer.version}, {answer.num_turns} turn(s), {sum((answer.tokens or {}).values())} tokens"
+    else:
+        used = (f"Claude Code {answer.version}, {answer.num_turns} turn(s), "
+                f"${answer.cost_usd or 0:.2f} at list price")
+    # What the preferred engine said is a service's text: it can carry a key.
+    print(f"{day} {slot}: {used}" + (f" ({clean_item(answer.secours, 300)})" if answer.secours else "") + "; "
+          + ", ".join(done + causes) + (", suspect text flagged" if draft["suspect"] else ""))
+    return "; ".join(causes) or None, answer
 
 
 def _hold(f):
@@ -1000,14 +1007,19 @@ def notify(msg):
         pass
 
 
-def reflect(day, slot, dry_run=False, command=None):
-    """The whole run: sources, Claude, the two files, the state and the warning in memory.md."""
+def reflect(day, slot, dry_run=False, command=None, codex_command=None):
+    """The whole run: sources, the AI, the two files, the state and the warning in memory.md."""
     if redact is None or headless is None:
-        # Never ship raw transcripts to a model, never run Claude outside its cage, never write unclean text.
-        log_error("_redact.py, _vault_write.py or _headless_claude.py not found next to daily-reflection.py — run skipped")
+        # Never ship raw transcripts to a model, never run the AI outside its cage, never write unclean text.
+        log_error("_redact.py, _vault_write.py, _agents.py, _headless.py or _headless_claude.py not found next to "
+                  "daily-reflection.py — run skipped")
         return
-    found = hermes_sessions(day) + claude_sessions(day)
-    gitlog = git_digest(day, git_roots([cwd for _, _, cwd in found]))
+    # Read once: the sessions gathered and the AI asked come from the same choice. No AI (a file
+    # the kit cannot trust): nothing is read, and the run fails below, said in memory.md.
+    agents = headless.lire()
+    chosen = agents[0].agents
+    found = (hermes_sessions(day) + (claude_sessions(day) if "claude" in chosen else [])) if chosen else []
+    gitlog = git_digest(day, git_roots([cwd for _, _, cwd in found])) if chosen else ""
     masked, n_masked = [], 0
     for label, text, _ in found:
         text, n = redact(text)
@@ -1031,8 +1043,12 @@ def reflect(day, slot, dry_run=False, command=None):
         print(f"dossier sent on stdin: {len(prompt)} chars, {len(prompt.encode('utf-8'))} bytes "
               f"(sessions capped at {BUDGET} chars); cap ${BUDGET_USD:.2f}, {TIMEOUT}s")
         print("answer schema: " + json.dumps(SCHEMA, ensure_ascii=False))
+        order, etat = headless.moteurs(agents)
+        if "codex" in chosen or not order:
+            print("asked: " + (" then ".join(order) + f" (Codex: {CODEX_TIMEOUT}s)" if order
+                               else f"no AI (~/.brain-in-a-box/agents.json: {etat})"))
         return
-    if not masked and not gitlog:
+    if not masked and not gitlog and chosen:
         return
 
     # The scheduler may start the same slot twice (a Mac waking up): one run per slot and hour.
@@ -1059,7 +1075,7 @@ def reflect(day, slot, dry_run=False, command=None):
     # (a manual backfill during the 12:00 run, for instance).
     with open(LOGS / "daily-reflection.run.lock", "a") as run_lock:
         _hold(run_lock)
-        reason = reflect_once(day, slot, masked, gitlog, command)
+        reason, answer = reflect_once(day, slot, masked, gitlog, agents, command, codex_command)
         if reason:
             # It lands in memory.md, which every session reads: one clean line.
             reason = clean_item(reason, 300) or "unknown"
@@ -1070,6 +1086,9 @@ def reflect(day, slot, dry_run=False, command=None):
                 pass
 
         st = load_state()
+        if "codex" in chosen:
+            # Which engine wrote the day, and why the preferred one did not.
+            st.update(moteur=answer and answer.moteur, secours=answer and clean_item(answer.secours, 300) or None)
         if reason is None:
             st.update(last_ok=f"{day} {slot}", failing_since=None, last_error=None)
             set_status_block(None)
@@ -1110,7 +1129,8 @@ def main():
     args = parse_args()
     configure(logs=args.logs, projects=args.projects)
     command = [os.environ["CLAUDE_BIN"]] if os.environ.get("CLAUDE_BIN") else None
-    reflect(args.day, args.slot, dry_run=args.dry_run, command=command)
+    codex_command = [os.environ["CODEX_BIN"]] if os.environ.get("CODEX_BIN") else None
+    reflect(args.day, args.slot, dry_run=args.dry_run, command=command, codex_command=codex_command)
 
 
 if __name__ == "__main__":

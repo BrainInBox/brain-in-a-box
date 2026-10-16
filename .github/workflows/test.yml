@@ -257,6 +257,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       app: ${{ steps.diff.outputs.app }}
+      codex: ${{ steps.diff.outputs.codex }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -266,12 +267,59 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
         run: |
-          if [ "$EVENT" != pull_request ]; then echo app=true >> "$GITHUB_OUTPUT"; exit 0; fi
+          if [ "$EVENT" != pull_request ]; then printf 'app=true\ncodex=true\n' >> "$GITHUB_OUTPUT"; exit 0; fi
           # The pull request's merge commit: its first parent is master.
           files=$(git diff --name-only HEAD^1 HEAD)
           echo "$files"
           if grep -qE '^(app/|install\.ps1$|\.github/workflows/test\.yml$|\.github/ci/)' <<< "$files"; then app=true; else app=false; fi
           echo "app=$app" | tee -a "$GITHUB_OUTPUT"
+          if grep -qE '^(engine/hooks/(_headless(_codex|_claude)?|_agents|_controle_judge|daily-reflection)\.py|engine/codex-features\.json|engine/tests/(codex_mock|mock_openai)\.py|\.github/workflows/test\.yml)$' <<< "$files"; then codex=true; else codex=false; fi
+          echo "codex=$codex" | tee -a "$GITHUB_OUTPUT"
+
+  # The launcher without tools for Codex (engine/hooks/_headless_codex.py) with the real Codex CLI,
+  # pinned, in ChatGPT mode against a local fake server (engine/tests/mock_openai.py): fake tokens,
+  # no account, no secret (docs/proposals/codex.md, §5.2). Forced tool calls refused, tools
+  # announced, URLs, the caller's keys, a system config and requirements.toml, the user's MCP server;
+  # then the reflection's and the review's questions through the choice of engine (_headless.py).
+  codex-mock:
+    name: codex-mock (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.codex == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      CODEX_RELEASE: "0.162.1"
+      CODEX_NON_INTERACTIVE: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Codex 0.162.1 from the official installer (macOS, Linux)
+        if: runner.os != 'Windows'
+        run: |
+          curl -fsSL https://chatgpt.com/codex/install.sh -o "$RUNNER_TEMP/codex-install.sh"
+          sh "$RUNNER_TEMP/codex-install.sh"
+          [ "$("$HOME/.local/bin/codex" --version)" = "codex-cli $CODEX_RELEASE" ]
+
+      - name: Codex 0.162.1 from the official installer (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://chatgpt.com/codex/install.ps1 | iex"
+          if ($LASTEXITCODE) { exit 1 }
+          $v = & (Join-Path $env:LOCALAPPDATA 'Programs\OpenAI\Codex\bin\codex.exe') --version
+          if ($v -ne "codex-cli $env:CODEX_RELEASE") { throw "codex --version said: $v" }
+
+      - name: The launcher with the real Codex against the fake server
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then PY=python; else PY=python3; fi
+          "$PY" -I engine/tests/codex_mock.py
 
   # The installer app, on a Mac, on Windows and on Linux (Ubuntu 24.04): diagnosis, install
   # steps, Voyage key check, command runner. (Real downloads are #[ignore] tests, run by hand.)

@@ -3,7 +3,7 @@
 is safe by itself (one git commit per fix, each one undoable) and writes the
 rest in Profile/controle.md for the user to look at.
 
-    controle.py nuit|maintenant [--brain DIR] [--git GIT] [--sans-claude|--avec-claude]
+    controle.py nuit|maintenant [--brain DIR] [--git GIT] [--sans-ia|--avec-ia]
     controle.py essai [--brain DIR]           what a check would do; writes nothing
     controle.py annuler <ID>|derniere-nuit [--nuit RUN] [--essai]
     controle.py annuler S1-... --remettre-le-secret    puts a masked secret back in its note
@@ -39,6 +39,8 @@ ENV_HELP = """environment (all optional):
   BRAIN_CONTROLE_DIR   the state folder (default ~/.brain-in-a-box/controle); --etat wins
   GBRAIN_HOME          the folder that holds .gbrain (default the home folder)
   CLAUDE_BIN           the claude executable of the review (default ~/.local/bin/claude, else PATH)
+  CODEX_BIN            the codex one, when ~/.brain-in-a-box/agents.json lists Codex (default
+                       ~/.local/bin/codex, else PATH); BRAIN_CODEX_MODEL its model
 """
 RUN_ID = re.compile(r"^\d{8}-\d{4}(-\d{1,2})?$")
 # S2-261014-02: type, day (with its year: an id never comes back), rank in the day.
@@ -81,7 +83,7 @@ REPORT_TEXT = {
     "F1": "J'ai réparé une ligne de l'en-tête qui empêchait de lire la note.",
     "C1": "J'ai signalé une contradiction : cette note dit « {quote} », [[{new}]] (plus récente) dit le contraire.",
     "C2": "J'ai marqué une décision comme remplacée par une plus récente.",
-    "C3": "J'ai mis de côté {n} leçon{s} que Claude a jugée{s} inutile{s} ou en double.",
+    "C3": "J'ai mis de côté {n} leçon{s} que {ia} a jugée{s} inutile{s} ou en double.",
     "echec": "Cette correction n'a pas donné le résultat prévu : j'ai remis le fichier comme avant.",
 }
 POINT_TEXT = {
@@ -107,7 +109,7 @@ POINT_TEXT = {
     "version_differente": "[[{n}]] dit {x}.",
     "plafond": "Il reste des corrections « {x} » : la suite la nuit prochaine.",
     "temps": "Le contrôle a atteint sa durée maximale : la suite la nuit prochaine.",
-    "juge_secret": "J'ai laissé [[{n}]] hors de la relecture par Claude : elle contient peut-être encore un secret.",
+    "juge_secret": "J'ai laissé [[{n}]] hors de la relecture par {ia} : elle contient peut-être encore un secret.",
 }
 ALERT_TEXT = {
     "contrat": "La correction {x} n'a pas donné le résultat prévu : j'ai remis le fichier comme avant.",
@@ -127,7 +129,11 @@ ALERT_TEXT = {
     "reflexion": "La réflexion du jour échoue depuis le {x}.",
     "gbrain": "{x}",
     "claude": "{x}",
+    "agents": "Le choix d'IA (~/.brain-in-a-box/agents.json) n'est pas fiable ({x}) : la réflexion et la relecture "
+              "ne demandent plus rien à une IA. Relance l'installation.",
 }
+AGENTS_ETAT = {"illisible": "fichier illisible", "invalide": "contenu invalide", "droits": "modifiable par un autre "
+               "compte", "ferme": "Codex n'est pas encore ouvert sur ce système"}
 # Why the review was skipped, when the report should say it (orange).
 CLAUDE_SKIP = {
     "absent": "Relecture par Claude impossible : Claude Code est introuvable sur cet ordinateur.",
@@ -147,6 +153,42 @@ CLAUDE_SKIP = {
     "erreur-interne": "Relecture par Claude abandonnée après une erreur du contrôle.",
     "suspect": "Claude a repéré un texte qui lui donne des ordres : aucune correction venant de lui cette nuit.",
 }
+# The same when Codex is the engine the review asked; and, when Codex is one of the agents, the
+# skips that come before any engine is asked.
+CODEX_SKIP = {
+    "absent": "Relecture par Codex impossible : Codex est introuvable sur cet ordinateur.",
+    "version": "Relecture par Codex impossible : Codex est trop ancien, mets-le à jour.",
+    "options": "Relecture par Codex impossible : cette version de Codex n'a pas les protections nécessaires.",
+    "connexion": "Relecture par Codex impossible : Codex n'est pas connecté à ton compte ChatGPT.",
+    "abonnement": "Relecture par Codex sautée : Codex est branché sur une clé payante, je ne l'utilise qu'avec ton "
+                  "abonnement ChatGPT.",
+    "pause": "Relecture par Codex en pause : Codex a un réglage ou une fonction que le kit ne connaît pas. Relance "
+             "l'installation.",
+    "modele": "Relecture par Codex impossible : BRAIN_CODEX_MODEL n'est pas un nom de modèle.",
+    "limite": "Codex indisponible cette nuit (limite d'usage).",
+    "demarrage": "Relecture par Codex ignorée : Codex n'a pas tourné avec les protections demandées.",
+    "reponse": "Relecture par Codex ignorée : sa réponse n'était pas conforme.",
+    "delai": "Relecture par Codex abandonnée : pas de réponse à temps.",
+    "erreur": "Relecture par Codex abandonnée : le service de Codex a renvoyé une erreur.",
+    "lancement": "Relecture par Codex impossible : Codex n'a pas pu être lancé.",
+    "suspect": "Codex a repéré un texte qui lui donne des ordres : aucune correction venant de lui cette nuit.",
+}
+IA_SKIP = {
+    "limite-reflexion": "Relecture sautée : la réflexion du jour a déjà touché la limite d'usage.",
+    "quota-jour": "Relecture sautée : déjà 3 relectures aujourd'hui.",
+    "erreur-interne": "Relecture abandonnée après une erreur du contrôle.",
+}
+
+
+def skip_text(why, moteur, nomme):
+    """The report's line for a review skipped (`why`), about this engine; None when it says nothing.
+    Without Codex among the agents, Claude's lines, as before the choice existed. agents.json that
+    cannot be trusted has its own alert."""
+    if not nomme:
+        return CLAUDE_SKIP.get(why)
+    return {"claude": CLAUDE_SKIP, "codex": CODEX_SKIP}.get(moteur, IA_SKIP).get(why) or IA_SKIP.get(why)
+
+
 CAUSES = {
     "pas_de_git": "le cerveau n'est pas un dépôt git", "git_introuvable": "git est introuvable",
     "fusion": "une fusion git est en cours", "rebase": "un rebase git est en cours",
@@ -490,6 +532,7 @@ class State:
 
 class Run:
     judge_command = None              # tests: a stub instead of claude, as a list
+    judge_codex_command = None        # and instead of codex
     judge_timeout = judge.ASK_TIMEOUT
 
     def __init__(self, opts, mode):
@@ -504,6 +547,10 @@ class Run:
         self.points, self.alerts = [], []
         self.touched, self.quarantine = set(), {}
         self.cause, self.claude = None, "saute:sans-claude"
+        # Who the review may ask, read once. The engine is named (etat.json, journal, report) only
+        # when Codex is one of the agents: without it, all reads as before the choice existed.
+        self.agents = judge.read_agents()
+        self.nomme, self.moteur = "codex" in self.agents[0].agents, None
         self.judge_info, self.judge_updates = {}, {}
         self.judge_verdict = self.judge_dossier = None
         self.lessons_kept_open = set()
@@ -606,10 +653,11 @@ class Run:
             self.judge_verdict, self.claude = None, "saute:erreur-interne"
             an.plans.update({"C1": [], "C2": [], "C3": []})
         why = self.claude.split(":", 1)[1] if self.claude.startswith("saute:") else None
-        if why in CLAUDE_SKIP:
-            self.alert("orange", "claude", CLAUDE_SKIP[why])
+        skipped = skip_text(why, self.moteur, self.nomme)
+        if skipped:
+            self.alert("orange", "claude", skipped)
         elif self.judge_verdict is not None and self.judge_verdict.suspect:
-            self.alert("orange", "claude", CLAUDE_SKIP["suspect"])
+            self.alert("orange", "claude", skip_text("suspect", self.moteur, self.nomme))
         self.demoted = self.demoted_types() if self.git_ok else set()
         self.apply_all(an)
         self.after_judge()
@@ -695,6 +743,9 @@ class Run:
     def extra_checks(self, scan, profile):
         if scan.partial:
             self.alert("orange", "partiel")
+        choix, etat = self.agents
+        if not choix.agents:
+            self.alert("orange", "agents", AGENTS_ETAT.get(etat, etat))
         if self.tracked:
             for pair in rules.case_collisions(self.tracked):
                 self.points.append(("dossiers_casse", pair[0], " et ".join(p + "/" for p in pair)))
@@ -741,14 +792,18 @@ class Run:
             out["gbrain"] = pkg["version"]
         return out
 
-    # ---- the Claude review (_controle_judge.py)
+    # ---- the AI review (_controle_judge.py)
+
+    def ia(self):
+        """The review's engine, as the report names it."""
+        return "Codex" if self.moteur == "codex" else "Claude"
 
     def ask_judge(self, an, scan):
-        """Builds the dossier, asks Claude without any tool, validates every
-        quote. Returns (verdict or None, status for etat.json)."""
-        if self.opts.sans_claude:
+        """Builds the dossier, asks the AI agents.json names without any tool,
+        validates every quote. Returns (verdict or None, status for etat.json)."""
+        if self.opts.sans_ia:
             return None, "saute:sans-claude"
-        if self.mode == "essai" and not self.opts.avec_claude:
+        if self.mode == "essai" and not self.opts.avec_ia:
             return None, "saute:essai"
         if self.paused or not self.git_ok:
             return None, "saute:pause" if self.paused else "saute:sans-git"
@@ -782,9 +837,11 @@ class Run:
             return None, "saute:rien-de-neuf"
         git_path = self.git.binary
         command = self.judge_command or judge.default_command()
-        ok, why = judge.available(command, git_path)
-        if not ok:
-            return None, "saute:" + why
+        codex_command = self.judge_codex_command or judge.default_codex_command()
+        probe = judge.probe(command, git_path, codex_command=codex_command, agents=self.agents)
+        self.moteur = probe.moteur
+        if probe.cause:
+            return None, "saute:" + probe.cause
         if self.writes:
             state["appels"] = {"jour": self.today.isoformat(), "n": n_calls + 1}
             self.state.save("juge.json", state)
@@ -793,10 +850,15 @@ class Run:
             os.chmod(str(run_dir), 0o700)
             self.judge_info["dossier_garde"] = True
         out = judge.ask(dossier.text, judge.schema(dossier.excerpts, dossier.lessons), command,
-                        timeout=self.judge_timeout, git_path=git_path)
+                        timeout=self.judge_timeout, git_path=git_path, codex_command=codex_command,
+                        agents=self.agents)
+        self.moteur = out.moteur
         self.judge_info.update(version=out.version, cout=None if out.cost is None else round(out.cost, 4),
                                tours=out.turns, duree_s=out.secs,
                                cause=out.cause, detail=judge.mask_text(out.detail) if out.detail else None)
+        if self.nomme:
+            self.judge_info.update(moteur=out.moteur,
+                                   secours=judge.mask_text(out.secours) if out.secours else None)
         if out.cause:
             return None, "saute:" + out.cause
         try:
@@ -1256,21 +1318,21 @@ class Run:
         since = st.get("failing_since")
         if isinstance(since, str) and re.match(r"^\d{4}-\d{2}-\d{2}", since):
             d = since[:10]
-            why = " (limite d'usage de Claude)" if re.search(r"hit your .*limit|session limit|usage limit",
-                                                             str(st.get("last_error") or ""), re.I) else ""
+            limit = judge.limit_of(str(st.get("last_error") or ""))
+            why = " (limite d'usage de %s)" % ("Codex" if limit == "codex" else "Claude") if limit else ""
             self.alert("orange", "reflexion", "%s/%s%s" % (d[8:10], d[5:7], why))
         if self.claude == "fait":
             i = self.judge_info
             cost = i.get("cout")
             money = (" (≈ %s $ décomptés sur ton abonnement)" % ("%.2f" % cost).replace(".", ",")
                      if isinstance(cost, float) else "")
-            lines.append("🟢 Claude a relu %d extrait%s et %d leçon%s%s" % (
-                i.get("extraits", 0), plural(i.get("extraits", 0)), i.get("lecons_envoyees", 0),
+            lines.append("🟢 %s a relu %d extrait%s et %d leçon%s%s" % (
+                self.ia(), i.get("extraits", 0), plural(i.get("extraits", 0)), i.get("lecons_envoyees", 0),
                 plural(i.get("lecons_envoyees", 0)), money))
         elif self.claude == "saute:sans-claude":
-            lines.append("⚪ Relecture par Claude : désactivée pour ce contrôle.")
+            lines.append("⚪ Relecture%s : désactivée pour ce contrôle." % ("" if self.nomme else " par Claude"))
         elif self.claude == "saute:rien-de-neuf":
-            lines.append("⚪ Relecture par Claude : rien de neuf depuis la dernière.")
+            lines.append("⚪ Relecture%s : rien de neuf depuis la dernière." % ("" if self.nomme else " par Claude"))
         return lines
 
     def secrets_to_change(self):
@@ -1304,7 +1366,7 @@ class Run:
             text = POINT_TEXT[code].format(
                 n=safe_name(rules.note_name(rel)), m=safe_name(rules.note_name(m)) if m else "",
                 x=(rules.size_label(x) if code == "consignes_grosses" else safe_name(str(x)) if x is not None else ""),
-                s=plural(x) if isinstance(x, int) else "", rel=safe_name(rel))
+                s=plural(x) if isinstance(x, int) else "", rel=safe_name(rel), ia=self.ia())
             once = code.startswith(("piege_", "juge_"))
             out.append((self.fp("point", code, rel, str(x if once else "")), text, once))
         for t in sorted(self.leftover):
@@ -1346,6 +1408,8 @@ class Run:
                     "rapport": report_rel or prev.get("rapport"), "rapport_reecrit": bool(report_rel),
                     "claude": self.claude, "cause": self.cause,
                     "alertes": [{"niveau": lv, "code": code} for lv, code, _ in self.alerts]}
+            if self.nomme:
+                etat["moteur"] = self.moteur
             self.state.save("etat.json", etat)
             self.state.purge(self.now, {i for n in scan.notes for i in MASK_ID.findall(n.text)})
         elif self.writes:
@@ -1358,6 +1422,7 @@ class Run:
         return 0
 
     def journal(self, verdict, a_voir, end):
+        named = {"moteur": self.moteur} if self.nomme else {}
         return {"run": self.run, "mode": self.mode, "debut": self.now.isoformat(),
                 "fin": end.replace(microsecond=0).isoformat(), "duree_s": int(time.time() - self.t0),
                 "verdict": verdict, "corrections": sum(1 for a in self.actions if a["statut"] == "fait"),
@@ -1368,7 +1433,7 @@ class Run:
                 "claude": self.claude, "cause": self.cause, "gbrain": self.gbrain_version,
                 "notes_lues": self.notes_count, "exclusions": self.exclusions[:200],
                 "suite": sorted(self.leftover), "juge": self.judge_info, "explications": self.explanations,
-                "annule_le": None}
+                "annule_le": None, **named}
 
     def action_row(self, a):
         r, t = a["resume"], a["type"]
@@ -1411,7 +1476,7 @@ class Run:
         elif t == "C2":
             text, where = REPORT_TEXT["C2"], "%s → [[%s]]" % (where, safe_name(r["new"]))
         elif t == "C3":
-            text = REPORT_TEXT["C3"].format(n=r["n"], s=plural(r["n"]))
+            text = REPORT_TEXT["C3"].format(n=r["n"], s=plural(r["n"]), ia=self.ia())
             where = "lessons.md → [[lessons-ecartees]]"
         else:
             text = REPORT_TEXT.get(t, rules.TYPE_NAMES.get(t, t))
@@ -1504,11 +1569,11 @@ class Run:
             return ""
         out = ""
         if i.get("version"):
-            out += " · Claude Code %s" % i["version"]
+            out += " · %s %s" % ("Codex" if self.moteur == "codex" else "Claude Code", i["version"])
         dropped = sum((i.get("abandons") or {}).values())
         if dropped:
-            out += " · %d constat%s de Claude écarté%s (citation introuvable ou incomplète)" % (
-                dropped, plural(dropped), plural(dropped))
+            out += " · %d constat%s de %s écarté%s (citation introuvable ou incomplète)" % (
+                dropped, plural(dropped), self.ia(), plural(dropped))
         return out + " · dossier envoyé : ~/.brain-in-a-box/controle/runs/%s/dossier.txt" % self.run
 
     def print_summary(self, verdict, shown, scan):
@@ -1887,22 +1952,41 @@ def cmd_gbrain(opts):
     return 0
 
 
+class Parser(argparse.ArgumentParser):
+    """--sans-ia and its alias --sans-claude are one option: a prefix of both (--sans) is the
+    abbreviation it was before the alias, not an ambiguous one. Same for --avec-*.
+    _get_option_tuples is argparse's own: whatever a Python passes it goes through, and a result
+    of another shape is left alone (an abbreviation then says ambiguous, nothing else breaks)."""
+
+    def _get_option_tuples(self, *args, **kwargs):
+        tuples = super()._get_option_tuples(*args, **kwargs)
+        try:
+            found = {}
+            for t in tuples:
+                found.setdefault(id(t[0]), t)
+            return list(found.values())
+        except (TypeError, IndexError, KeyError):
+            return tuples
+
+
 def parser():
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--brain", help="the vault (default: BRAIN_DIR, else ~/Documents/Brain)")
     common.add_argument("--git", help="git executable (default: the one on PATH)")
     common.add_argument("--etat", help="state folder (default: BRAIN_CONTROLE_DIR, else ~/.brain-in-a-box/controle)")
     common.add_argument("--maintenant", help="ISO date-time used as 'now' (tests)")
-    ap = argparse.ArgumentParser(prog="controle", description=__doc__.split("\n\n")[0], epilog=ENV_HELP,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = Parser(prog="controle", description=__doc__.split("\n\n")[0], epilog=ENV_HELP,
+                formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd")
     for name, text in (("nuit", "the nightly check"), ("maintenant", "a check now"),
                        ("essai", "what a check would do, writes nothing")):
         p = sub.add_parser(name, parents=[common], help=text, epilog=ENV_HELP,
                            formatter_class=argparse.RawDescriptionHelpFormatter)
         g = p.add_mutually_exclusive_group()
-        g.add_argument("--sans-claude", action="store_true", help="no Claude review this time")
-        g.add_argument("--avec-claude", action="store_true", help="ask Claude in essai too (nothing is written)")
+        g.add_argument("--sans-ia", "--sans-claude", dest="sans_ia", action="store_true",
+                       help="no AI review this time")
+        g.add_argument("--avec-ia", "--avec-claude", dest="avec_ia", action="store_true",
+                       help="ask the AI in essai too (nothing is written)")
     p = sub.add_parser("annuler", parents=[common], help="undo one fix (ID) or a whole night (derniere-nuit)",
                        epilog=ENV_HELP, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("cible", nargs="?")
