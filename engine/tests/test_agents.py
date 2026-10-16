@@ -391,5 +391,154 @@ class Cli(Home):
         self.assertFalse(os.path.lexists(self.p.parent))
 
 
+class CodexHook(Home):
+    """codex_hook(): whether a hook Codex runs (--agent codex) acts on what Codex gave it
+    (docs/proposals/codex.md, §3.4), and the sign that Codex runs the kit's hooks (§3.3)."""
+
+    CLI = {"type": "session_meta", "payload": {"id": "01a140af-0452-7e81-b849-c24c767660d7", "source": "cli",
+                                               "originator": "codex-tui", "cwd": "/w"}}
+
+    def setUp(self):
+        Home.setUp(self)
+        self.put({"version": 1, "agents": ["claude", "codex"], "prefere": "claude", "codex_home": CH})
+        self.vus = Path(self.home) / ".brain-in-a-box" / ag.VUS
+
+    def rollout(self, first, name="rollout.jsonl"):
+        p = Path(self.home) / name
+        p.write_bytes(first if isinstance(first, bytes) else (json.dumps(first) + "\n").encode("utf-8"))
+        return str(p)
+
+    def payload(self, transcript, **kw):
+        return dict({"session_id": "01a140af-0452-7e81-b849-c24c767660d7", "cwd": "/w", "hook_event_name": "Stop",
+                     "model": "gpt-6.1-sol", "permission_mode": "default", "transcript_path": transcript}, **kw)
+
+    def hook(self, payload, env=None, ouvert=TOUT, nom="session-logger"):
+        return ag.codex_hook(nom, payload, env=env or {}, home=self.home, codex_ouvert=ouvert)
+
+    def test_an_interactive_session_and_the_sign_codex_runs_the_hook(self):
+        self.assertTrue(self.hook(self.payload(self.rollout(self.CLI))))
+        self.assertEqual(list(ag.vus(self.home)), ["session-logger"])
+        self.assertRegex(ag.vus(self.home)["session-logger"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
+        if POSIX:
+            self.assertEqual(stat.S_IMODE(self.vus.stat().st_mode), 0o600)
+        vscode = dict(self.CLI, payload=dict(self.CLI["payload"], source="vscode"))
+        self.assertTrue(self.hook(self.payload(self.rollout(vscode)), nom="correction-detector"))
+        self.assertEqual(sorted(ag.vus(self.home)), ["correction-detector", "session-logger"], "each hook's own")
+
+    def test_a_session_file_not_written_yet_is_interactive(self):
+        for missing in (os.path.join(self.home, "sessions", "rollout-not-yet.jsonl"),
+                        "D:\\a\\_temp\\homes\\sessions\\2026\\10\\15\\rollout-x.jsonl"):
+            with self.subTest(missing):
+                self.assertTrue(self.hook(self.payload(missing)))
+
+    def test_the_kits_own_runs_and_claude_p_are_silent_and_leave_no_sign(self):
+        path = self.rollout(self.CLI)
+        for env in ({"BRAIN_HEADLESS": "1"}, {"CLAUDE_CODE_ENTRYPOINT": "sdk-cli"}):
+            with self.subTest(env):
+                self.assertFalse(self.hook(self.payload(path), env))
+                self.assertFalse(os.path.lexists(self.vus))
+        self.assertTrue(self.hook(self.payload(path), {"BRAIN_HEADLESS": "", "CLAUDE_CODE_ENTRYPOINT": "cli"}))
+
+    def test_silent_and_no_sign_unless_agents_json_lists_codex_and_is_trusted(self):
+        path = self.rollout(self.CLI)
+        cases = [("absent", None, TOUT), ("claude", {"version": 1, "agents": ["claude"], "prefere": "claude"}, TOUT),
+                 ("illisible", b"{", TOUT), ("ferme", None, None)]
+        for name, d, ouvert in cases:
+            with self.subTest(name):
+                if d is None and name == "absent":
+                    self.p.unlink()
+                elif d is not None:
+                    self.put(d)
+                else:
+                    self.put({"version": 1, "agents": ["codex"], "prefere": "codex", "codex_home": CH})
+                self.assertFalse(self.hook(self.payload(path), ouvert=ouvert))
+                self.assertFalse(os.path.lexists(self.vus))
+
+    def test_what_the_user_did_not_type_is_silent_though_the_hook_ran(self):
+        def first(source):
+            return dict(self.CLI, payload=dict(self.CLI["payload"], source=source))
+        cases = {
+            "no file kept (--ephemeral)": [self.payload(None), self.payload(""), self.payload(3),
+                                           {k: v for k, v in self.payload("x").items() if k != "transcript_path"}],
+            "a prompt another agent wrote": [self.payload(self.rollout(self.CLI), agent_id="019a-sub",
+                                                          agent_type="worker")],
+            "exec, mcp, unknown, sub-agents and Codex's own": [
+                self.payload(self.rollout(first(s), "r%d.jsonl" % i)) for i, s in enumerate(
+                    ("exec", "mcp", "unknown", "CLI", None, 1, {"subagent": "review"},
+                     {"subagent": {"thread_spawn": {"parent_thread_id": "x", "depth": 1}}},
+                     {"internal": "memory_consolidation"}, {"custom": "cli"}))],
+            "a first line that does not say": [self.payload(self.rollout(b, "b%d.jsonl" % i)) for i, b in enumerate(
+                (b"", b"\n", b"{", b"not json\n", b"[]\n", json.dumps({"type": "turn_context", "payload": {}}).encode(),
+                 json.dumps({"type": "session_meta", "payload": "cli"}).encode(),
+                 (json.dumps(self.CLI)[:-1] + ', "pad": "' + "x" * ag.LIGNE_MAX + '"}\n').encode(),
+                 b"[" * 60000 + b"\n"))],
+            "not a file": [self.payload(self.home), self.payload([self.rollout(self.CLI)])],
+            "no plain session id": [dict(self.payload(self.rollout(self.CLI)), session_id=v)
+                                    for v in (None, "", "a/../b", "a\\b", "x" * 129, 7)],
+            "not an object": ["x", None, [self.payload(self.rollout(self.CLI))]],
+        }
+        for why, payloads in cases.items():
+            for i, payload in enumerate(payloads):
+                with self.subTest(why=why, i=i):
+                    if os.path.lexists(self.vus):
+                        self.vus.unlink()
+                    self.assertFalse(self.hook(payload))
+                    self.assertEqual(list(ag.vus(self.home)), ["session-logger"], "the hook ran: Codex runs it")
+
+    def test_a_first_line_read_whole_up_to_the_limit(self):
+        big = dict(self.CLI, payload=dict(self.CLI["payload"], base_instructions="x" * (ag.LIGNE_MAX - 4096)))
+        self.assertTrue(self.hook(self.payload(self.rollout(big))))
+        crlf = (json.dumps(self.CLI) + "\r\n{}\n").encode("utf-8")
+        self.assertTrue(self.hook(self.payload(self.rollout(crlf))))
+
+    @unittest.skipUnless(POSIX, "symlinks")
+    def test_a_link_in_place_of_the_session_file_is_not_followed(self):
+        link = Path(self.home) / "link.jsonl"
+        link.symlink_to(self.rollout(self.CLI))
+        self.assertFalse(self.hook(self.payload(str(link))))
+
+    @unittest.skipUnless(POSIX, "named pipes")
+    def test_a_pipe_in_place_of_the_session_file_is_never_waited_on(self):
+        fifo = os.path.join(self.home, "rollout-fifo.jsonl")
+        os.mkfifo(fifo)
+        code = ("import json, sys; sys.path.insert(0, %r); import _agents as ag\n"
+                "print(ag.codex_hook('x', {'transcript_path': %r}, env={}, home=%r, codex_ouvert=frozenset([ag.systeme()])))"
+                % (str(HOOKS), fifo, self.home))
+        p = subprocess.run([sys.executable, "-I", "-c", code], capture_output=True, timeout=20)
+        self.assertEqual(p.stdout.strip(), b"False", p.stderr)
+
+    def test_the_sign_keeps_the_other_hooks_and_mends_a_bad_file(self):
+        path = self.payload(self.rollout(self.CLI))
+        self.vus.parent.mkdir(parents=True, exist_ok=True)
+        self.vus.write_text(json.dumps({"version": 1, "hooks": {"session-recap": "2026-10-15T08:00:00Z", "x": 3}}),
+                            encoding="utf-8")
+        self.assertTrue(self.hook(path))
+        self.assertEqual(sorted(ag.vus(self.home).items())[0], ("session-logger", ag.vus(self.home)["session-logger"]))
+        self.assertEqual(ag.vus(self.home)["session-recap"], "2026-10-15T08:00:00Z")
+        self.assertNotIn("x", ag.vus(self.home))
+        for bad in (b"{", b"[]", b"\xff", b"[" * 60000):
+            with self.subTest(bad=bad[:5]):
+                self.vus.write_bytes(bad)
+                self.assertEqual(ag.vus(self.home), {})
+                self.assertTrue(self.hook(path))
+                self.assertEqual(list(ag.vus(self.home)), ["session-logger"])
+
+    @unittest.skipUnless(POSIX, "symlinks")
+    def test_the_sign_never_writes_through_a_link(self):
+        target = Path(self.home) / "precious"
+        target.write_text("precious", encoding="utf-8")
+        self.vus.parent.mkdir(parents=True, exist_ok=True)
+        self.vus.symlink_to(target)
+        self.assertEqual(ag.vus(self.home), {})
+        self.assertTrue(self.hook(self.payload(self.rollout(self.CLI))))
+        self.assertEqual(target.read_text(encoding="utf-8"), "precious")
+        self.assertFalse(self.vus.is_symlink())
+
+    def test_a_sign_that_cannot_be_written_never_silences_the_hook(self):
+        self.vus.mkdir(parents=True)
+        self.assertTrue(self.hook(self.payload(self.rollout(self.CLI))))
+        self.assertEqual(ag.vus(self.home), {})
+
+
 if __name__ == "__main__":
     unittest.main()
