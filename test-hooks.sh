@@ -1683,10 +1683,13 @@ ixrun "$IX/kit-codex" --agents codex; rc=$?
   && ok "e2e codex open: a hooks.json that does not parse stops the install at preflight: left as it was, nothing installed" \
   || no "e2e codex open: a broken hooks.json passed the preflight (rc $rc): $(ixout | tail -3)"
 
-# Claude alone with a Codex of the user's own: nothing of ~/.codex read into the output, nothing written there.
+# Claude alone with a Codex of the user's own: nothing of ~/.codex read into the output, nothing written there,
+# even when its hooks.json names one of the kit's hooks (wired by hand): only a Codex the kit wired is
+# told it is not chosen any more.
 ixhome; mkdir -p "$IX/home/.codex/sessions/2026/10/16" "$IX/home/.agents"
 printf 'model = "gpt-x"\n[hooks]\n' > "$IX/home/.codex/config.toml"; printf 'Mine.\n' > "$IX/home/.codex/AGENTS.md"
-printf '{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "/x/mine.sh"}]}]}}\n' > "$IX/home/.codex/hooks.json"
+printf '{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "/x/mine.sh"}, {"type": "command", "command": "%s/.claude/hooks/brain/session-logger.py"}]}]}}\n' \
+  "$IX/home" > "$IX/home/.codex/hooks.json"
 printf '{}\n' > "$IX/home/.codex/sessions/2026/10/16/rollout-x.jsonl"
 ixtree | grep -E '^\.(codex|agents)/' > "$IX/codex-mine"
 bad=""

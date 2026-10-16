@@ -1067,6 +1067,9 @@ jobs:
       - name: Claude alone, install.ps1 says and does what master's does (no agents.json)
         run: |
           if (Test-Path "$env:USERPROFILE\.brain-in-a-box\agents.json") { throw 'agents.json is there already' }
+          # A CODEX_HOME on a drive that is not there (a USB key, a volume not mounted): Claude alone never reads it.
+          if (Test-Path 'Q:\') { throw 'a drive Q: on this runner: this step would prove nothing' }
+          $env:CODEX_HOME = 'Q:\codex'
           & .github/ci/same-as-master.ps1
 
       # Last of Claude alone, so that every step above runs as users who never chose do: irm | iex passes no
@@ -1084,6 +1087,13 @@ jobs:
       - name: Claude alone, install.ps1 says and does what master's does (Claude chosen)
         run: |
           if (((Get-Content "$env:USERPROFILE\.brain-in-a-box\agents.json" -Raw | ConvertFrom-Json).agents -join ',') -ne 'claude') { throw 'agents.json does not say Claude alone' }
+          # A Codex whose hooks.json names one of the kit's hooks, wired by hand: only a Codex the kit wired is
+          # told it is not chosen any more.
+          $C = "$env:RUNNER_TEMP\hand-codex"; New-Item -ItemType Directory $C -Force | Out-Null
+          $hook = "$env:USERPROFILE\.claude\hooks\brain\session-logger.py" | ConvertTo-Json
+          [IO.File]::WriteAllText("$C\hooks.json", '{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": ' + $hook + '}]}]}}')
+          if (-not (Select-String -LiteralPath "$C\hooks.json" -SimpleMatch '\\.claude\\hooks\\brain\\' -Quiet)) { throw "this Codex's hooks.json does not name the kit's hook as install.ps1 looks for it" }
+          $env:CODEX_HOME = $C
           & .github/ci/same-as-master.ps1
 
       # Codex is closed on Windows: a copy of the kit where it is open, as the change that opens it will

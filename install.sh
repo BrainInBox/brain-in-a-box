@@ -1041,7 +1041,8 @@ Last step — the ONBOARDING (15 min) that fills in YOUR profile:
 EOF
 fi
 # An agent chosen before and not any more: what the kit put in place for it stays (it has no uninstall).
-if ! with_agent codex && grep -qF "/.claude/hooks/brain/" "${CODEX_HOME:-$H/.codex}/hooks.json" 2>/dev/null; then
+# Codex's, only once the kit has wired it (codex-hooks-poses.json): a Codex of the user's own is not read.
+if ! with_agent codex && [ -f "$STATE/codex-hooks-poses.json" ] && grep -qF "/.claude/hooks/brain/" "${CODEX_HOME:-$H/.codex}/hooks.json" 2>/dev/null; then
   printf "\n\033[1;33m⚠ Codex is not chosen any more: what the kit put in place for it stays, and its hooks keep quiet. To remove it: /hooks in Codex, the block after <!-- brain-in-a-box --> in its AGENTS.md, and the skills %s lists in ~/.agents/skills.\033[0m\n" "$STATE/skills-codex.json"
 fi
 if ! with_agent claude && grep -qF "/.claude/hooks/brain/" "$H/.claude/settings.json" 2>/dev/null; then

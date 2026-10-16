@@ -1122,8 +1122,16 @@ Write-Host "Controle de nuit : il corrige seul ce qui est sans risque (annulable
 Write-Host "Journal d'installation : $LOG" -ForegroundColor Cyan
 Write-Host "Mise a jour : relance la meme commande d'installation." -ForegroundColor Cyan
 # Un agent choisi avant et plus maintenant : ce que le kit a pose pour lui reste (il n'a pas de desinstallation).
-$codexHooks = Join-Path $(if ($env:CODEX_HOME) { $env:CODEX_HOME } else { "$H\.codex" }) "hooks.json"
-if (-not $WithCodex -and (Test-Path -LiteralPath $codexHooks -PathType Leaf) -and (Select-String -LiteralPath $codexHooks -SimpleMatch '\\.claude\\hooks\\brain\\' -Quiet)) {
+# Celui de Codex, seulement une fois que le kit l'a branche (codex-hooks-poses.json) : un Codex a toi n'est pas
+# lu. Et sans jamais arreter la fin : un CODEX_HOME sur un lecteur absent, un hooks.json illisible.
+$codexWired = $false
+if (-not $WithCodex -and (Test-Path -LiteralPath (Join-Path $H (Join-Path ".brain-in-a-box" "codex-hooks-poses.json")) -PathType Leaf)) {
+    try {
+        $codexHooks = [IO.Path]::Combine($(if ($env:CODEX_HOME) { $env:CODEX_HOME } else { "$H\.codex" }), "hooks.json")
+        $codexWired = (Test-Path -LiteralPath $codexHooks -PathType Leaf) -and (Select-String -LiteralPath $codexHooks -SimpleMatch '\\.claude\\hooks\\brain\\' -Quiet)
+    } catch { $codexWired = $false }
+}
+if ($codexWired) {
     Write-Host ""
     Write-Host "Codex n'est plus choisi : ce que le kit a pose pour lui reste, et ses hooks se taisent. Pour le retirer : /hooks dans Codex, le bloc apres <!-- brain-in-a-box --> de son AGENTS.md, et les skills que liste $H\.brain-in-a-box\skills-codex.json dans $H\.agents\skills." -ForegroundColor Yellow
 }
