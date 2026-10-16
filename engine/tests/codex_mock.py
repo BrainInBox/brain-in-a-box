@@ -455,13 +455,15 @@ sys.exit(r.returncode)
 
 def codex_runs_the_kits_hooks():
     """The kit's hooks (a copy where Codex is open), run by the real Codex from a hooks.json, in a user's
-    codex exec session (trust bypassed: approving them is phase 6). A test wrapper notes what each hook
-    was given, then hands it on: SessionStart and UserPromptSubmit as if typed in Codex's terminal (an
-    exec run is left alone), so that Codex has to take their answers; Stop as it is. On Windows, the
-    PowerShell form of the plan (& "python.exe" "hook"). The launcher's own call never runs them."""
+    codex exec session (trust bypassed: approving them is phase 6); on Windows in the PowerShell form of
+    the plan (& "python.exe" "hook"). A test wrapper notes what each hook was given, then hands it on.
+    As it is, an exec run: from its first hook, Codex has written the session file and it says "exec",
+    so the hooks say and write nothing (but the sign that they ran). Handed on as if typed in Codex's
+    terminal: their answers reach the model, so Codex took them. The launcher's own call runs none."""
     import codex_captures as cap
     hooks, home, chome = (os.path.join(B.root, n) for n in ("hooks-open", "hooks-home", "hooks-codex-home"))
-    for d in (hooks, os.path.join(home, ".brain-in-a-box", "controle"), chome):
+    state = os.path.join(home, ".brain-in-a-box", "controle")
+    for d in (hooks, state, chome):
         os.makedirs(d)
     for name in os.listdir(os.path.join(ENGINE, "hooks")):
         if name.endswith(".py"):
@@ -476,7 +478,7 @@ def codex_runs_the_kits_hooks():
     with open(agents, "w", encoding="utf-8") as f:
         json.dump({"version": 1, "agents": ["claude", "codex"], "prefere": "claude", "codex_home": chome}, f)
     os.chmod(agents, 0o600)
-    with open(os.path.join(home, ".brain-in-a-box", "controle", "etat.json"), "w", encoding="utf-8") as f:
+    with open(os.path.join(state, "etat.json"), "w", encoding="utf-8") as f:
         json.dump({"run": "20261014-0407", "mode": "nuit", "dernier_succes": time.strftime("%Y-%m-%dT%H:%M:%S"),
                    "corrections": 2, "a_voir": 0, "secrets_a_changer": 1, "rapport": "Profile/controle.md",
                    "rapport_reecrit": True, "alertes": []}, f)
@@ -485,6 +487,7 @@ def codex_runs_the_kits_hooks():
     with open(wrap, "w", encoding="utf-8") as f:
         f.write(HOOK_WRAP)
     shutil.copy(str(cap.P0 / cap.TUI), typed)   # a session of Codex's terminal (source "cli"), step 0
+    names = ["controle-sessionstart.py", "correction-detector.py", "session-logger.py"]
 
     def handler(hook, given):
         argv = [sys.executable, wrap, os.path.join(hooks, hook + ".py"), facts, given]
@@ -492,41 +495,49 @@ def codex_runs_the_kits_hooks():
         if WINDOWS:
             h["commandWindows"] = "& " + " ".join('"%s"' % a for a in argv)
         return {"hooks": [h]}
-    with open(os.path.join(chome, "hooks.json"), "w", encoding="utf-8") as f:
-        json.dump({"hooks": {"SessionStart": [handler("controle-sessionstart", typed)],
-                             "UserPromptSubmit": [handler("correction-detector", typed)],
-                             "Stop": [handler("session-logger", "-")]}}, f, indent=1)
-    work = os.path.realpath(tempfile.mkdtemp(dir=B.root))
-    B.mock.reset()
-    p = B.raw_exec(work, b"no, actually do it the other way", home=chome, ephemeral=False,
-                   args=["--dangerously-bypass-hook-trust"], env={"HOME": home, "USERPROFILE": home})
-    check(p.returncode == 0, "codex exec with the kit's hooks ran (%s, %s)" % (p.returncode,
-                                                                            p.stderr.decode("utf-8", "replace")[-300:]))
-    seen = []
-    if os.path.exists(facts):
-        with open(facts, encoding="utf-8") as f:
-            seen = [json.loads(l) for l in f]
+
+    def session(given):
+        """A user's codex exec, a correction typed: (what each hook was given, what reached the model)."""
+        with open(os.path.join(chome, "hooks.json"), "w", encoding="utf-8") as f:
+            json.dump({"hooks": {"SessionStart": [handler("controle-sessionstart", given)],
+                                 "UserPromptSubmit": [handler("correction-detector", given)],
+                                 "Stop": [handler("session-logger", "-")]}}, f, indent=1)
+        for p in (facts, os.path.join(state, "shown.json")):
+            if os.path.exists(p):
+                os.remove(p)
+        B.mock.reset()
+        p = B.raw_exec(os.path.realpath(tempfile.mkdtemp(dir=B.root)), b"no, actually do it the other way",
+                       home=chome, ephemeral=False, args=["--dangerously-bypass-hook-trust"],
+                       env={"HOME": home, "USERPROFILE": home})
+        check(p.returncode == 0, "codex exec with the kit's hooks ran (%s, %s)"
+              % (p.returncode, p.stderr.decode("utf-8", "replace")[-300:]))
+        seen = []
+        if os.path.exists(facts):
+            with open(facts, encoding="utf-8") as f:
+                seen = [json.loads(l) for l in f]
+        check(sorted(r["hook"] for r in seen) == names, "Codex ran the three hooks once each: %s" % seen)
+        return seen, json.dumps(B.mock.reqs, ensure_ascii=False)
+
+    seen, dump = session("-")
     print("facts: what each hook was given by Codex 0.162.1 in a codex exec run:", seen)
-    check(sorted(r["hook"] for r in seen) == ["controle-sessionstart.py", "correction-detector.py", "session-logger.py"],
-          "Codex ran the three hooks once each: %s" % seen)
-    dump = json.dumps(B.mock.reqs, ensure_ascii=False)
-    check("CORRECTION DETECTED" in dump, "correction-detector's reminder reached the model: Codex took its answer")
-    check("Contrôle de cette nuit : 2 corrections faites" in dump,
-          "the night check's line reached the model: Codex took its answer, systemMessage included")
-    stop = [r for r in seen if r["hook"] == "session-logger.py"]
-    check(stop and stop[0]["file"] is True and stop[0]["source"] == "exec",
-          "at Stop, Codex has written the session file, source exec: %s" % stop)
-    check(not os.path.exists(os.path.join(home, ".claude", "logs", "sessions.log")),
-          "an exec run's session is left alone: nothing logged")
+    check(len(seen) == 3 and all(r["file"] is True and r["source"] == "exec" for r in seen),
+          "from the first hook (SessionStart), Codex has written the session file and it says exec")
+    check("CORRECTION DETECTED" not in dump and "Contrôle de cette nuit" not in dump,
+          "an exec run: no reminder, no night check's line reach the model")
+    check(not os.path.exists(os.path.join(home, ".claude", "logs", "sessions.log")), "an exec run: nothing logged")
     check(sorted(_agents.vus(home)) == ["controle-sessionstart", "correction-detector", "session-logger"],
           "the sign that Codex runs each hook: %s" % _agents.vus(home))
-    before = len(seen)
+    seen, dump = session(typed)
+    check("CORRECTION DETECTED" in dump, "as if typed in the terminal: correction-detector's reminder reached "
+                                         "the model, Codex took its answer")
+    check("Contrôle de cette nuit : 2 corrections faites" in dump,
+          "as if typed in the terminal: the night check's line reached the model, Codex took its answer, "
+          "systemMessage included")
     B.mock.reset()
+    os.remove(facts)
     a = codex.run(PROMPT, SCHEMA, SYSTEM, codex_home=chome, timeout=180, command=B.command, work_root=B.root)
-    with open(facts, encoding="utf-8") as f:
-        after = sum(1 for _ in f)
-    check(a.output == {"verdict": "ok", "n": 7} and after == before,
-          "the launcher's own call, with that hooks.json in its CODEX_HOME, runs none of them (%d)" % (after - before))
+    check(a.output == {"verdict": "ok", "n": 7} and not os.path.exists(facts),
+          "the launcher's own call, with that hooks.json in its CODEX_HOME, runs none of them")
 
 
 def main():
