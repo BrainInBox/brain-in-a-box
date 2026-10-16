@@ -1119,7 +1119,7 @@ jobs:
           if (([regex]::Matches($g, '(?m)^CODEX_OUVERT = frozenset\(.*\)\r?$')).Count -ne 1) { throw "the gate's line moved" }
           [IO.File]::WriteAllText($gate, ($g -replace '(?m)^CODEX_OUVERT = frozenset\(.*\)(?=\r?$)', 'CODEX_OUVERT = frozenset({"darwin", "linux", "windows"})'))
           # Claude's side, but the gate itself (the copy's _agents.py replaces the one in place, and says so)
-          # and the list of Codex's features, which Codex's launcher reads next to it.
+          # and the list of Codex's features, which Codex's launcher reads next to it (read with -B: no __pycache__).
           $claude = { @(Get-ChildItem "$H\.claude" -Recurse -File -Force) + @(Get-ChildItem "$H\.local\bin" -File) |
                       Where-Object { $_.Name -notin '_agents.py', 'codex-features.json' } | ForEach-Object { "$($_.FullName) $((Get-FileHash $_.FullName).Hash)" } | Sort-Object }
           $before = @(& $claude)
@@ -1142,7 +1142,7 @@ jobs:
           if ($cd.commandWindows -cne $want -or $cd.command -cne $want -or $cd.timeout -ne 30) { throw "correction-detector wired as $($cd | ConvertTo-Json -Compress), not $want" }
           $list = "$H\.claude\hooks\brain\codex-features.json"
           if (-not (Test-Path $list) -or (Get-FileHash $list).Hash -ne (Get-FileHash "$K\engine\codex-features.json").Hash) { throw "the launcher's list of Codex's features is not installed" }
-          & $py -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import _headless_codex as c; assert len(c.load_features()) > 50' "$H\.claude\hooks\brain"
+          & $py -I -B -c 'import sys; sys.path.insert(0, sys.argv[1]); import _headless_codex as c; assert len(c.load_features()) > 50' "$H\.claude\hooks\brain"
           if ($LASTEXITCODE) { throw 'the launcher, as installed, does not read its list of features' }
           $mine = @(@($j.hooks.UserPromptSubmit.hooks) + @($j.hooks.Stop.hooks) + @($j.hooks.SessionStart.hooks) | Where-Object { "$($_.commandWindows)" -like '& *--agent codex' })
           if ($mine.Count -ne 6) { throw "$($mine.Count) of the kit's hooks in hooks.json" }

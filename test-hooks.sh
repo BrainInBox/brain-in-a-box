@@ -1629,7 +1629,7 @@ PY
 git -C "$IX/home/Documents/Brain" ls-files --error-unmatch AGENTS.md >/dev/null 2>&1 || bad="$bad vault-AGENTS.md-not-committed"
 # The launcher, as installed, finds the list of what Codex must have turned off (without it, Codex is paused).
 cmp -s "$IX/home/.claude/hooks/brain/codex-features.json" "$IX/kit-codex/engine/codex-features.json" \
-  && python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import _headless_codex as c; assert len(c.load_features()) > 50' \
+  && python3 -I -B -c 'import sys; sys.path.insert(0, sys.argv[1]); import _headless_codex as c; assert len(c.load_features()) > 50' \
      "$IX/home/.claude/hooks/brain" || bad="$bad codex-features.json"
 grep -qF "✓ Codex: the kit approved its 6 hooks for you ($IX/home/.codex/config.toml), so Codex runs them without asking. See them, or turn them off, with /hooks in Codex" "$IX/out-codex" || bad="$bad approval-not-said"
 grep -qxF "  codex login" "$IX/out-codex" && grep -qxF "  cd $IX/home/Documents/Brain && codex" "$IX/out-codex" || bad="$bad codex-text"
