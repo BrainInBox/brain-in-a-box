@@ -1954,13 +1954,19 @@ def cmd_gbrain(opts):
 
 class Parser(argparse.ArgumentParser):
     """--sans-ia and its alias --sans-claude are one option: a prefix of both (--sans) is the
-    abbreviation it was before the alias, not an ambiguous one. Same for --avec-*."""
+    abbreviation it was before the alias, not an ambiguous one. Same for --avec-*.
+    _get_option_tuples is argparse's own: whatever a Python passes it goes through, and a result
+    of another shape is left alone (an abbreviation then says ambiguous, nothing else breaks)."""
 
-    def _get_option_tuples(self, option_string):
-        found = {}
-        for t in super()._get_option_tuples(option_string):
-            found.setdefault(id(t[0]), t)
-        return list(found.values())
+    def _get_option_tuples(self, *args, **kwargs):
+        tuples = super()._get_option_tuples(*args, **kwargs)
+        try:
+            found = {}
+            for t in tuples:
+                found.setdefault(id(t[0]), t)
+            return list(found.values())
+        except (TypeError, IndexError, KeyError):
+            return tuples
 
 
 def parser():

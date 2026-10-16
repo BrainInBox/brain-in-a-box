@@ -682,6 +682,17 @@ class Agents(Sandbox):
                 with self.subTest(flag=full[:n]):
                     self.assertTrue(getattr(parse([mode, full[:n]]), dest))
 
+    def test_another_python_argparse_never_breaks_the_options(self):
+        # The abbreviations lean on argparse's private _get_option_tuples: a Python that calls it
+        # with more arguments, or returns another shape, still parses every full option.
+        def other(self, option_string, *more):
+            return [option_string]
+        with mock.patch.object(controle.argparse.ArgumentParser, "_get_option_tuples", other):
+            parse = controle.parser().parse_args
+            self.assertTrue(parse(["nuit", "--sans-claude"]).sans_ia)
+            self.assertTrue(parse(["essai", "--avec-ia"]).avec_ia)
+            self.assertEqual(controle.Parser()._get_option_tuples("--x", "extra"), ["--x"])
+
     def test_without_agents_json_the_report_reads_as_before(self):
         self.small_vault()
         self.cli("nuit")

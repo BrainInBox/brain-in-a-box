@@ -521,3 +521,7 @@ Les autres clés que Codex refuse à la couche projet et lit dans celle du syst�
 **Vérifié en local** : 527 tests unitaires (aussi sous Python 3.9.6 pour ceux touchés), `test-hooks.sh` (171/171), actionlint, shellcheck, lecture d'`install.ps1` par pwsh.
 
 **CI** : run https://github.com/BrainInBox/brain-in-a-box/actions/runs/38849701516, tous les jobs verts ; `codex-mock` : 55 vérifications sur chacun des 3 OS (5 de plus : URL du système et `[otel]` avec ses deux témoins). Avec le vrai Codex 0.162.1, le témoin « lanceur sans ses réglages `otel` » envoie le prompt à l'exportateur du système, le lanceur rien : ce sont bien ces réglages qui coupent l'export. Le premier run (38849367461) a échoué sur les 3 OS pour une seule raison, l'enrobage de test : il refusait aussi `codex exec --help`, la sonde des options du lanceur. Corrigé ; des tests unitaires font maintenant passer le lanceur par l'enrobage.
+
+## Décision : le détecteur d'outil (2026-10-16)
+
+Tranché par le mainteneur : **`--ephemeral` sans détecteur** (corrections de l'étape 0, point 4). Codex ne garde aucune copie du coffre ; « aucun outil » tient par la prévention seule (fonctions en liste positive, sandbox en lecture seule, valeurs fixées par `-c`, contrôles d'avant), vérifiée en CI avec le vrai binaire sur les 3 OS. Écrit dans SECURITY.md avec les écarts du §2.3 (phase 12). La trace `CODEX_ROLLOUT_TRACE_ROOT` (étape 2, « dossier jetable ») reste une idée pour plus tard : un filet, jamais la garantie, et seulement après ses quatre vérifications en VM.
