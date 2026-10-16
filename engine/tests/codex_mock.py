@@ -741,9 +741,9 @@ def install_ps1_wires_codex():
     a CODEX_HOME of its own. Then the real Codex, in the vault, runs the six hooks from the hooks.json
     install.ps1 wrote, in the PowerShell form (& '<python.exe>' '<hook>' --agent codex), approved by the
     tables it wrote in config.toml, no trust bypassed (control: without them, none runs), and reads the
-    kit's block in the global AGENTS.md, the vault's AGENTS.md and the skills in ~\\.agents\\skills. gbq's
-    rules allow the kit's gbq.cmd only (control: without host_executable, a gbq.cmd the session writes in
-    its folder would run without asking)."""
+    kit's block in the global AGENTS.md, the vault's AGENTS.md and the skills in ~\\.agents\\skills. No gbq
+    rule: gbq.cmd goes through cmd.exe, which reads an "&" in its arguments again (control: with
+    install.sh's rule at this gbq.cmd, gbq query 'x&cd.>w' would be allowed, and starts a second command)."""
     if not WINDOWS:
         print("install.ps1 is Windows's: install.sh's scenario runs on macOS and Linux")
         return
@@ -832,27 +832,29 @@ def install_ps1_wires_codex():
     seen, _ = session()
     check(seen == [], "control: without the tables install.ps1 wrote, Codex runs none of the hooks: %s" % seen)
     shutil.move(config + ".kept", config)
-    rules = os.path.join(chome, "rules", "brain-in-a-box.rules")
+    # No gbq rule on Windows: gbq is gbq.cmd, and cmd.exe reads its arguments again. Control: the rule
+    # install.sh puts, at this gbq.cmd, would let Codex run gbq query 'x&cd.>w' without asking, and run
+    # through PowerShell as Codex runs it, the "&" starts a second command.
+    check(not os.path.exists(os.path.join(chome, "rules")), "no gbq rule in Codex's home: Codex asks before any gbq")
+    check("Codex demande avant chaque gbq" in out, "that Codex asks before gbq is said")
     gbq = os.path.join(home, ".local", "bin", "gbq.cmd")
-
-    def decision(rules_file, *cmd):
-        r = subprocess.run([codex_bin, "execpolicy", "check", "--resolve-host-executables", "--rules", rules_file, "--"]
-                           + list(cmd), capture_output=True, text=True)
-        try:
-            return json.loads(r.stdout).get("decision")
-        except ValueError:
-            return "error: %s %s" % (r.stdout[-200:], r.stderr[-200:])
-
-    allowed = [c for c in (["gbq", "query", "x"], ["gbq", "search", "x"], [gbq, "query", "x"]) if decision(rules, *c) == "allow"]
-    check(len(allowed) == 3, "gbq query and gbq search allowed, at the kit's gbq.cmd: %s" % allowed)
-    asked = {" ".join(c): decision(rules, *c) for c in ([".\\gbq.cmd", "query", "x"], ["C:\\tmp\\gbq.cmd", "query", "x"],
-                                                      ["gbq", "sync"], ["gbq", "skillify", "https://x"])}
-    check(all(v is None for v in asked.values()), "another gbq, or another gbq command, matches no rule: %s" % asked)
-    bare = os.path.join(root, "no-host.rules")
-    with open(rules, encoding="utf-8") as f, open(bare, "w", encoding="utf-8") as g:
-        g.write("".join(l for l in f if not l.startswith("host_executable(")))
-    check(decision(bare, ".\\gbq.cmd", "query", "x") == "allow",
-          "control: without host_executable, a .\\gbq.cmd the session wrote would run without asking")
+    witness = os.path.join(root, "second-command")
+    arg = "x&cd.>" + witness
+    rules = os.path.join(root, "unix.rules")
+    with open(os.path.join(repo, "engine", "codex", "brain-in-a-box.rules"), encoding="utf-8") as f, \
+            open(rules, "w", encoding="utf-8") as g:
+        g.write(f.read().replace("__HOME__/.local/bin/gbq", gbq.replace("\\", "\\\\")))
+    r = subprocess.run([codex_bin, "execpolicy", "check", "--resolve-host-executables", "--rules", rules, "--", "gbq", "query", arg],
+                       capture_output=True, text=True)
+    try:
+        allowed = json.loads(r.stdout).get("decision")
+    except ValueError:
+        allowed = "error: %s %s" % (r.stdout[-200:], r.stderr[-200:])
+    check(" " not in witness and allowed == "allow",
+          "control: install.sh's rule, at this gbq.cmd, would let Codex run gbq query '%s' without asking (%s)" % (arg, allowed))
+    subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", "& '%s' query '%s'" % (gbq, arg)],
+                   capture_output=True, timeout=120)
+    check(os.path.exists(witness), "control: run through PowerShell, the & of gbq query '%s' starts a second command" % arg)
 
 
 def main():

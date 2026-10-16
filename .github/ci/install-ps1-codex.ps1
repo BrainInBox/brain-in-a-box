@@ -1,6 +1,6 @@
 # install.ps1's Codex functions (its block "# >>> codex") against stand-ins, as test-hooks.sh, section
 # 15bis, runs install.sh's: Codex's installer (the pinned one only, with the right environment),
-# hooks.json and its approval in config.toml, the global AGENTS.md, gbq's rules, the vault's
+# hooks.json and its approval in config.toml, the global AGENTS.md, no gbq rule, the vault's
 # AGENTS.md, the question. What they write, what they say, that nothing of the user's is lost.
 # Under pwsh on macOS and Linux, and on Windows (where the stand-in codex.exe is compiled). The real
 # Codex runs them in test.yml: the Windows job (install.ps1 whole) and codex-mock (Windows).
@@ -273,17 +273,12 @@ try {
     Check ((Read-Text (Join-Path $CodexDir "AGENTS.override.md")).Contains("<!-- brain-in-a-box -->") -and -not (Test-Path (Join-Path $CodexDir "AGENTS.md")) -and
            $out -match "Codex lit ce fichier a la place d'AGENTS\.md") "codex AGENTS.md: an AGENTS.override.md with text gets the block, and that is said"
 
-    # gbq's rules, at the kit's gbq.cmd only; the vault's AGENTS.md only when missing.
+    # gbq's rules: none on Windows. gbq is gbq.cmd there, and cmd.exe reads its arguments again: the "&" of
+    # gbq query 'x&calc' would start a second command, outside Codex's sandbox, without asking. Then the
+    # vault's AGENTS.md, only when missing.
     New-Home; $out = Said { Codex-Rules }
-    $rf = Join-Path $CodexDir (Join-Path "rules" "brain-in-a-box.rules")
-    $rules = @(Get-Content -LiteralPath $rf)
-    Check ($rules -ccontains ('host_executable(name="gbq", paths=["' + (Join-Path $BIN "gbq.cmd").Replace('\', '\\') + '"])') -and
-           @($rules | Where-Object { $_ -like 'prefix_rule(*' }).Count -eq 2 -and $rules -ccontains 'prefix_rule(pattern=["gbq", "query"], decision="allow")' -and
-           $rules -ccontains 'prefix_rule(pattern=["gbq", "search"], decision="allow")' -and $out -match "gbq query et gbq search tournent sans demander") `
-          "codex rules: a file of the kit's own: gbq query and gbq search, at ~\.local\bin\gbq.cmd only, its backslashes written as Starlark reads them"
-    Add-Content -LiteralPath $rf -Value "# mine"; $out = Said { Codex-Rules }
-    Check ($BackedUp.Count -eq 1 -and -not ((Read-Text $rf).Contains("# mine")) -and (Read-Text (Join-Path $BACKUP (Join-Path "rules" "brain-in-a-box.rules"))).Contains("# mine")) `
-          "codex rules: a version the user changed is kept in the backups before the kit's is put"
+    Check (-not (Test-Path -LiteralPath (Join-Path $CodexDir "rules")) -and $out -match "Codex demande avant chaque gbq" -and $out -match "cmd\.exe") `
+          "codex rules: none on Windows (gbq.cmd goes through cmd.exe, which reads an & in its arguments again): Codex asks first, and that is said"
     $vault = Join-Path $T "vault"; New-Item -ItemType Directory -Path $vault -Force | Out-Null; Remove-Item (Join-Path $vault "AGENTS.md") -ErrorAction SilentlyContinue
     $null = Said { Codex-Vault $vault }
     $placed = Same (Join-Path $vault "AGENTS.md") (Join-Path $Kit (Join-Path "engine" (Join-Path "codex" "AGENTS.vault.md")))

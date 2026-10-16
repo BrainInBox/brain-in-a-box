@@ -1131,8 +1131,9 @@ jobs:
           if ($rc) { throw 'Codex does not read config.toml as the kit left it' }
           $am = [IO.File]::ReadAllText("$C\AGENTS.md")
           if (-not $am.StartsWith($user['AGENTS.md'].TrimEnd()) -or ([regex]::Matches($am, '<!-- brain-in-a-box -->')).Count -ne 1) { throw "AGENTS.md: the user's text lost, or the block not there once" }
-          $rules = [IO.File]::ReadAllText("$C\rules\brain-in-a-box.rules")
-          if (-not $rules.Contains('host_executable(name="gbq", paths=["' + "$H\.local\bin\gbq.cmd".Replace('\', '\\') + '"])')) { throw "gbq's rule is not at the kit's gbq.cmd" }
+          # No gbq rule on Windows: gbq.cmd goes through cmd.exe, which reads an & in its arguments again.
+          if (Test-Path "$C\rules") { throw "a rules folder in Codex's home: gbq would run without asking" }
+          if ($out -notmatch 'Codex demande avant chaque gbq') { throw 'that Codex asks before gbq was not said' }
           $V = "$H\Documents\Brain"
           if (-not (Test-Path "$V\AGENTS.md") -or (git -C $V ls-files AGENTS.md) -ne 'AGENTS.md') { throw "the vault's AGENTS.md is not there, or not committed" }
           foreach ($sk in Get-ChildItem skills -Directory) { if (-not (Test-Path "$H\.agents\skills\$($sk.Name)\SKILL.md")) { throw "Codex's skill $($sk.Name) is not installed" } }
@@ -1144,7 +1145,7 @@ jobs:
       - name: Codex chosen, a second run changes nothing and says so
         run: |
           $H = $env:USERPROFILE; $K = "$env:RUNNER_TEMP\kit-open"; $C = "$H\.codex"
-          $snap = { foreach ($f in 'hooks.json', 'config.toml', 'AGENTS.md', 'rules\brain-in-a-box.rules') { "$f $((Get-FileHash "$C\$f").Hash)" } }
+          $snap = { foreach ($f in 'hooks.json', 'config.toml', 'AGENTS.md') { "$f $((Get-FileHash "$C\$f").Hash)" } }
           $before = (& $snap) -join "`n"
           powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$K\install.ps1" *>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\install-codex-2.txt"
           if ($LASTEXITCODE) { exit 1 }

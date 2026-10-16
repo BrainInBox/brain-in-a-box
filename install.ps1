@@ -301,8 +301,8 @@ function Get-BunVersion([string]$Bun) {
 # officiel d'OpenAI pour cet utilisateur, a la version que la CI teste, son script compare a une
 # empreinte SHA-256 epinglee avant de tourner (il verifie ensuite celle de l'archive) ; le bloc du kit
 # dans l'AGENTS.md global que Codex lit ; les hooks dans son hooks.json, approuves pour l'utilisateur,
-# qui le lit a l'ecran ; les deux lectures de gbq permises hors de son bac a sable ; un AGENTS.md dans
-# le vault. engine\codex\wire.py fait les fusions, pour install.sh aussi : ce que l'utilisateur a la
+# qui le lit a l'ecran ; aucune regle gbq (Codex demande avant chaque gbq) ; un AGENTS.md dans le
+# vault. engine\codex\wire.py fait les fusions, pour install.sh aussi : ce que l'utilisateur a la
 # est fusionne ou laisse, jamais remplace (hooks.json et config.toml sauvegardes d'abord).
 # Les chemins donnes a un programme passent par Join-Path : ces fonctions tournent aussi, contre des
 # doublures, sous pwsh sur Mac et Linux (.github/ci/install-ps1-codex.ps1).
@@ -459,17 +459,11 @@ function Wire-Codex {
     if ($kept -ne "-") { Warn "Codex : l'approbation que tu as reglee dans /hooks pour $kept est gardee telle quelle" }
 }
 
-# gbq query et gbq search sans demander, au gbq.cmd du kit seulement : Codex lance ses commandes par
-# PowerShell, qui ne lance pas le gbq de Git Bash.
+# Aucune regle gbq sous Windows : Codex demande avant chaque gbq. gbq y est gbq.cmd, et cmd.exe relit
+# ses arguments : le "&" de gbq query 'x&calc' lancerait une seconde commande, hors du bac a sable de
+# Codex et sans demander (sous macOS et Linux, install.sh pose engine/codex/brain-in-a-box.rules).
 function Codex-Rules {
-    $dir = Join-Path $CodexDir "rules"
-    $tpl = [IO.File]::ReadAllText((Join-Path $REPO (Join-Path "engine" (Join-Path "codex" "brain-in-a-box.rules"))), (New-Object Text.UTF8Encoding $false))
-    $token = '"__HOME__/.local/bin/gbq"'
-    if (([regex]::Matches($tpl, [regex]::Escape($token))).Count -ne 1) { Warn "Codex : engine\codex\brain-in-a-box.rules n'a plus le chemin de gbq attendu : gbq n'est pas permis sans demander"; return }
-    $text = $tpl.Replace($token, '"' + (Join-Path $BIN "gbq.cmd").Replace('\', '\\') + '"')
-    New-Item -ItemType Directory -Path $dir -Force | Out-Null
-    Place-File (Join-Path $dir "brain-in-a-box.rules") (New-Object Text.UTF8Encoding $false).GetBytes($text)
-    Ok "gbq query et gbq search tournent sans demander dans Codex ($(Join-Path $dir 'brain-in-a-box.rules'))"
+    Ok "gbq dans Codex : Codex demande avant chaque gbq (sous Windows, gbq passe par cmd.exe, qui relit ses arguments : aucune regle ne le lance sans demander)"
 }
 
 # Un AGENTS.md a la racine du vault quand il n'en a pas : Codex le lit, jamais CLAUDE.md.
