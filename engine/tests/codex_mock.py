@@ -2,7 +2,8 @@
 mode, against mock_openai.py: fake tokens, no account, no secret, nothing leaves 127.0.0.1
 (docs/proposals/codex.md, §5.2); then the reflection's and the review's own questions, through the
 choice of engine (_headless.py), with Codex chosen; then a session the real Codex wrote, read as the
-reflection and Codex's Stop hook read it (_codex_rollout.py). The job codex-mock of test.yml runs it on macOS, Linux and
+reflection and Codex's Stop hook read it (_codex_rollout.py); then the kit's hooks, run by the real
+Codex from a hooks.json (--agent codex). The job codex-mock of test.yml runs it on macOS, Linux and
 Windows once the official installer has put the pinned Codex in place. It writes Codex's system
 settings (/etc/codex, %ProgramData%\\OpenAI\\Codex): on a CI runner only. Every scenario is
 required: a codex missing, or one that cannot run, is a failure.
@@ -12,6 +13,7 @@ required: a codex missing, or one that cannot run, is a failure.
 import importlib.util
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -96,16 +98,16 @@ class Bench:
         return codex.run(PROMPT, SCHEMA, SYSTEM, codex_home=self.home, timeout=180, command=self.command,
                          work_root=self.root, **kw)
 
-    def raw_exec(self, cwd, prompt=b"Reply.", home=None, ephemeral=True):
+    def raw_exec(self, cwd, prompt=b"Reply.", home=None, ephemeral=True, args=(), env=None):
         """codex exec as anyone would run it, without the launcher: the control of a trap, or a
         session of the user's (ephemeral=False: Codex keeps it in home/sessions)."""
         argv = [self.codex[0], "exec", "--json", "--skip-git-repo-check"] + (["--ephemeral"] if ephemeral else []) + [
                 "-c", 'cli_auth_credentials_store="file"', "-c", "features.enable_request_compression=false",
                 "-c", "openai_base_url=" + json.dumps(self.mock.root + "/v1"),
-                "-c", "chatgpt_base_url=" + json.dumps(self.mock.root + "/backend-api/"), "-"]
-        env = {k: v for k, v in os.environ.items() if k not in CANARIES and k != "RUST_LOG"}
-        env["CODEX_HOME"] = home or self.home
-        return subprocess.run(argv, input=prompt, cwd=cwd, env=env, capture_output=True, timeout=180)
+                "-c", "chatgpt_base_url=" + json.dumps(self.mock.root + "/backend-api/")] + list(args) + ["-"]
+        e = {k: v for k, v in os.environ.items() if k not in CANARIES and k != "RUST_LOG"}
+        e.update(env or {}, CODEX_HOME=home or self.home)
+        return subprocess.run(argv, input=prompt, cwd=cwd, env=e, capture_output=True, timeout=180)
 
 
 B = None
@@ -428,6 +430,105 @@ def a_real_codex_session_is_read():
           (prompt, {"brain_no_such_tool": 1}, {"SESSION-TOOL-MARKER"}), "Codex's Stop hook reads it: %s" % stats)
 
 
+HOOK_WRAP = r'''import json, os, subprocess, sys
+hook, facts, typed = sys.argv[1:4]
+payload = json.loads(sys.stdin.buffer.read().decode("utf-8"))
+path, source = payload.get("transcript_path"), None
+if isinstance(path, str) and os.path.isfile(path):
+    with open(path, "rb") as f:
+        try:
+            source = json.loads(f.readline())["payload"]["source"]
+        except Exception:
+            source = "unreadable"
+with open(facts, "a", encoding="utf-8") as f:
+    f.write(json.dumps({"hook": os.path.basename(hook), "event": payload.get("hook_event_name"),
+                        "file": isinstance(path, str) and os.path.isfile(path), "source": source}) + "\n")
+if typed != "-":
+    payload["transcript_path"] = typed
+r = subprocess.run([sys.executable, hook, "--agent", "codex"], input=json.dumps(payload).encode("utf-8"),
+                   capture_output=True)
+sys.stdout.buffer.write(r.stdout)
+sys.stderr.buffer.write(r.stderr)
+sys.exit(r.returncode)
+'''
+
+
+def codex_runs_the_kits_hooks():
+    """The kit's hooks (a copy where Codex is open), run by the real Codex from a hooks.json, in a user's
+    codex exec session (trust bypassed: approving them is phase 6). A test wrapper notes what each hook
+    was given, then hands it on: SessionStart and UserPromptSubmit as if typed in Codex's terminal (an
+    exec run is left alone), so that Codex has to take their answers; Stop as it is. On Windows, the
+    PowerShell form of the plan (& "python.exe" "hook"). The launcher's own call never runs them."""
+    import codex_captures as cap
+    hooks, home, chome = (os.path.join(B.root, n) for n in ("hooks-open", "hooks-home", "hooks-codex-home"))
+    for d in (hooks, os.path.join(home, ".brain-in-a-box", "controle"), chome):
+        os.makedirs(d)
+    for name in os.listdir(os.path.join(ENGINE, "hooks")):
+        if name.endswith(".py"):
+            shutil.copy(os.path.join(ENGINE, "hooks", name), hooks)
+    gate = os.path.join(hooks, "_agents.py")
+    with open(gate, encoding="utf-8") as f:
+        text = f.read()
+    check(text.count("CODEX_OUVERT = frozenset()\n") == 1, "the gate's line, opened in the copy")
+    with open(gate, "w", encoding="utf-8") as f:
+        f.write(text.replace("CODEX_OUVERT = frozenset()\n", 'CODEX_OUVERT = frozenset({"darwin", "linux", "windows"})\n'))
+    agents = os.path.join(home, ".brain-in-a-box", "agents.json")
+    with open(agents, "w", encoding="utf-8") as f:
+        json.dump({"version": 1, "agents": ["claude", "codex"], "prefere": "claude", "codex_home": chome}, f)
+    os.chmod(agents, 0o600)
+    with open(os.path.join(home, ".brain-in-a-box", "controle", "etat.json"), "w", encoding="utf-8") as f:
+        json.dump({"run": "20261014-0407", "mode": "nuit", "dernier_succes": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                   "corrections": 2, "a_voir": 0, "secrets_a_changer": 1, "rapport": "Profile/controle.md",
+                   "rapport_reecrit": True, "alertes": []}, f)
+    shutil.copy(os.path.join(B.home, "auth.json"), chome)
+    wrap, facts, typed = (os.path.join(B.root, n) for n in ("hookwrap.py", "hook-facts.jsonl", "typed.jsonl"))
+    with open(wrap, "w", encoding="utf-8") as f:
+        f.write(HOOK_WRAP)
+    shutil.copy(str(cap.P0 / cap.TUI), typed)   # a session of Codex's terminal (source "cli"), step 0
+
+    def handler(hook, given):
+        argv = [sys.executable, wrap, os.path.join(hooks, hook + ".py"), facts, given]
+        h = {"type": "command", "command": " ".join(shlex.quote(a) for a in argv), "timeout": 30}
+        if WINDOWS:
+            h["commandWindows"] = "& " + " ".join('"%s"' % a for a in argv)
+        return {"hooks": [h]}
+    with open(os.path.join(chome, "hooks.json"), "w", encoding="utf-8") as f:
+        json.dump({"hooks": {"SessionStart": [handler("controle-sessionstart", typed)],
+                             "UserPromptSubmit": [handler("correction-detector", typed)],
+                             "Stop": [handler("session-logger", "-")]}}, f, indent=1)
+    work = os.path.realpath(tempfile.mkdtemp(dir=B.root))
+    B.mock.reset()
+    p = B.raw_exec(work, b"no, actually do it the other way", home=chome, ephemeral=False,
+                   args=["--dangerously-bypass-hook-trust"], env={"HOME": home, "USERPROFILE": home})
+    check(p.returncode == 0, "codex exec with the kit's hooks ran (%s, %s)" % (p.returncode,
+                                                                            p.stderr.decode("utf-8", "replace")[-300:]))
+    seen = []
+    if os.path.exists(facts):
+        with open(facts, encoding="utf-8") as f:
+            seen = [json.loads(l) for l in f]
+    print("facts: what each hook was given by Codex 0.162.1 in a codex exec run:", seen)
+    check(sorted(r["hook"] for r in seen) == ["controle-sessionstart.py", "correction-detector.py", "session-logger.py"],
+          "Codex ran the three hooks once each: %s" % seen)
+    dump = json.dumps(B.mock.reqs, ensure_ascii=False)
+    check("CORRECTION DETECTED" in dump, "correction-detector's reminder reached the model: Codex took its answer")
+    check("Contrôle de cette nuit : 2 corrections faites" in dump,
+          "the night check's line reached the model: Codex took its answer, systemMessage included")
+    stop = [r for r in seen if r["hook"] == "session-logger.py"]
+    check(stop and stop[0]["file"] is True and stop[0]["source"] == "exec",
+          "at Stop, Codex has written the session file, source exec: %s" % stop)
+    check(not os.path.exists(os.path.join(home, ".claude", "logs", "sessions.log")),
+          "an exec run's session is left alone: nothing logged")
+    check(sorted(_agents.vus(home)) == ["controle-sessionstart", "correction-detector", "session-logger"],
+          "the sign that Codex runs each hook: %s" % _agents.vus(home))
+    before = len(seen)
+    B.mock.reset()
+    a = codex.run(PROMPT, SCHEMA, SYSTEM, codex_home=chome, timeout=180, command=B.command, work_root=B.root)
+    with open(facts, encoding="utf-8") as f:
+        after = sum(1 for _ in f)
+    check(a.output == {"verdict": "ok", "n": 7} and after == before,
+          "the launcher's own call, with that hooks.json in its CODEX_HOME, runs none of them (%d)" % (after - before))
+
+
 def main():
     global B
     if os.environ.get("GITHUB_ACTIONS") != "true":
@@ -441,7 +542,7 @@ def main():
                    the_user_s_mcp_server_never_starts, a_system_config_is_neutralised,
                    a_system_otel_exporter_gets_nothing, requirements_pause_codex,
                    an_api_key_login_is_refused, the_reflection_and_the_review_ask_codex_through_the_choice,
-                   a_real_codex_session_is_read):
+                   a_real_codex_session_is_read, codex_runs_the_kits_hooks):
             scenario(fn)
     finally:
         B.mock.close()
