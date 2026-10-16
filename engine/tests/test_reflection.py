@@ -979,6 +979,27 @@ class EngineRun(Run):
 class Engines(EngineRun):
     """Which engine answers, what it is given, what the state and the output say."""
 
+    def test_the_sources_sentence_with_hermes_is_masters_for_claude_alone(self):
+        hermes = [("hermes 1a2b3c4d · a title", "12:00 user: hi\n12:01 assistant: yo\n12:02 user: ok", None)]
+        master = 'Claude Code sessions (label "claude") and Hermes sessions (label "hermes"), and a digest'
+        for listed in (None, ["claude"]):
+            with self.subTest(listed=listed):
+                if listed:
+                    self.choose(listed)
+                with mock.patch.object(dr, "hermes_sessions", return_value=hermes), \
+                        mock.patch.object(hc, "run", wraps=hc.run) as launcher:
+                    st, _ = self.reflect_with()
+                self.assertIsNone(st["last_error"])
+                self.assertIn(master, launcher.call_args.args[0])
+        built = {agents: dr.build_prompt(DAY, "evening", [hermes[0][:2]], "", agents=agents)
+                 for agents in ((), ("claude",), ("codex",), ("claude", "codex"))}
+        self.assertIn(master, built[()])
+        self.assertIn(master, built[("claude",)])
+        self.assertIn(': Codex sessions (label "codex") and Hermes sessions (label "hermes"), and a digest',
+                      built[("codex",)])
+        self.assertIn(': Claude Code sessions (label "claude"), Codex sessions (label "codex") and Hermes sessions '
+                      '(label "hermes"), and a digest', built[("claude", "codex")])
+
     def test_without_agents_json_the_call_the_state_and_the_line_are_todays(self):
         with mock.patch.object(hc, "run", wraps=hc.run) as launcher:
             st, out = self.reflect_with()
