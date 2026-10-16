@@ -812,6 +812,10 @@ WINGET_GIT = re.compile(r"^> winget install -e --id Git\.Git (?P<args>.*?)\r?\nw
 # bin\bash.exe two folders above the git.exe on its PATH. None: no Bash tool, PowerShell instead.
 BASH_CLAUDE = (r"C:\Program Files\Git\bin\bash.exe", r"C:\Program Files (x86)\Git\bin\bash.exe")
 CLAUDE_BASH_RE = re.compile(r'Using bash path: "([^"\r\n]+)"')
+# Its words when it finds none: its debug log's (2.1), or what it prints before stopping (2.1: « requires either
+# Git for Windows (for bash) or PowerShell », older ones « requires git-bash »).
+CLAUDE_SANS_BASH_RE = re.compile(r"^.*(?:Git Bash not found|requires git-bash|requires either Git for Windows).*$",
+                                 re.M | re.I)
 SANS_SECRET_CLAUDE = ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_GIT_BASH_PATH")
 
 
@@ -824,6 +828,9 @@ def preuve_sans_git(t, path):
     manque = [k for k in SONDES_GIT if not isinstance(sondes.get(k), list)]
     t.check(not manque, "la preuve ne dit pas tout : sonde(s) %s absente(s)" % ", ".join(manque))
     neuf = p.get("nouveau_processus") if isinstance(p.get("nouveau_processus"), dict) else {}
+    # Unread, the new process's probes stay empty: they would say nothing found.
+    t.check("illisible" not in neuf, "la preuve ne dit pas ce qu'un nouveau processus trouvait : sa sortie est "
+            "illisible (%s)" % str(neuf.get("illisible"))[:200])
     t.check(isinstance(neuf.get("get_command"), list) and isinstance(neuf.get("where"), list)
             and isinstance(neuf.get("cmd_git_code"), int), "la preuve ne dit pas ce qu'un nouveau processus trouvait")
     trouve = ["%s : %s" % (k, ", ".join(map(str, sondes[k]))[:200]) for k in SONDES_GIT if sondes[k]]
@@ -852,10 +859,29 @@ def git_de_session(t):
     return trouves[0], out.strip(), env
 
 
+def dernier_mot(sortie):
+    return sortie.strip().splitlines()[-1][:200] if sortie.strip() else ""
+
+
+def bash_de_claude(t, debug, sortie):
+    """The bash Claude Code's debug log says it uses. Its words for no Git Bash, in that log or what it
+    printed, fail as such; neither is a Claude Code whose debug log changed, said so with its end: Git Bash
+    may well be there."""
+    m = CLAUDE_BASH_RE.search(debug)
+    if m:
+        return m.group(1)
+    sans = CLAUDE_SANS_BASH_RE.search(debug + "\n" + sortie)
+    dit = dernier_mot(sortie)
+    t.check(not sans, "Claude Code ne trouve pas Git Bash ; il dit : « %s »" % (sans.group(0).strip()[:200] if sans else ""))
+    fin = " | ".join(l.strip() for l in debug.splitlines()[-6:] if l.strip())[-500:]
+    t.check(False, "format du journal de débogage de Claude Code changé : ni « Using bash path » ni « Git Bash not "
+            "found » ; il dit : « %s » ; fin du journal : %s" % (dit, fin or "(vide)"))
+
+
 def claude_et_git_bash(t, opts, env):
-    """(bash.exe, what Claude Code said): Claude Code started in that environment, without a token, says
-    in its debug log which bash it uses, then stops at the login. Its PowerShell tool off, without Git
-    Bash it would say so and stop."""
+    """(debug log, what Claude Code printed): Claude Code started in that environment, without a token, says
+    in its debug log which bash it uses, or that it found none, then stops at the login. Its PowerShell
+    tool off: Bash is its only shell."""
     claude = opts.home / ".local" / "bin" / "claude.exe"
     t.check(claude.is_file(), "Claude Code n'est pas installé (~/.local/bin/claude.exe)")
     work = workdir(opts, "claude-git-bash")
@@ -870,8 +896,7 @@ def claude_et_git_bash(t, opts, env):
         dit = "(pas de réponse en 180 s)"
     except OSError as e:
         raise Echec("claude.exe ne se lance pas (%s)" % (e.strerror or type(e).__name__))
-    m = CLAUDE_BASH_RE.search(read(debug) if debug.is_file() else "")
-    return (m.group(1) if m else None), dit.splitlines()[-1][:200] if dit else ""
+    return (read(debug) if debug.is_file() else ""), dit
 
 
 def check_git(t, opts):
@@ -915,9 +940,9 @@ def check_git(t, opts):
     attendu = next((b for b in BASH_CLAUDE if os.path.isfile(b)), None) or \
         os.path.normpath(os.path.join(exe, "..", "..", "bin", "bash.exe"))
     t.check(os.path.isfile(attendu), "pas de Git Bash là où Claude Code le cherche (%s)" % attendu)
-    bash, dit = claude_et_git_bash(t, opts, env)
-    git.update(bash=bash, claude_dit=dit)
-    t.check(bash, "Claude Code ne trouve pas Git Bash ; il dit : « %s »" % dit)
+    debug, sortie = claude_et_git_bash(t, opts, env)
+    git["claude_dit"] = dernier_mot(sortie)
+    bash = git["bash"] = bash_de_claude(t, debug, sortie)
     t.check(os.path.normcase(bash) == os.path.normcase(attendu), "Claude Code prend %s, pas le Git Bash de ce Git (%s)"
             % (bash, attendu))
     # The kit's gbq for Git Bash (~/.local/bin/gbq), as Claude's Bash tool runs a command: bash -c.

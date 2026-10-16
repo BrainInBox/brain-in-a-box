@@ -150,7 +150,7 @@ try {
         $nouveau.get_command = @($j.get_command | Where-Object { $_ })
         $nouveau.where = @($j.where | Where-Object { $_ })
         $nouveau.winget = $j.winget
-    } catch { $nouveau.illisible = "$lu".Substring(0, [Math]::Min(300, "$lu".Length)) }
+    } catch { $nouveau.illisible = if ("$lu") { "$lu".Substring(0, [Math]::Min(300, "$lu".Length)) } else { '(rien)' } }
     $null = Invoke-Natif { & "$env:SystemRoot\System32\cmd.exe" /d /c 'git --version' }
     $nouveau.cmd_git_code = [int]$LASTEXITCODE
 } finally { $env:Path = $avant }
@@ -165,7 +165,7 @@ $trouve = @()
 foreach ($k in $sondes.Keys) { if (@($sondes[$k]).Count) { $trouve += "$k : $(@($sondes[$k]) -join ', ')" } }
 if ($nouveau.get_command.Count -or $nouveau.where.Count) { $trouve += "nouveau processus : $(@($nouveau.get_command + $nouveau.where) -join ', ')" }
 if ($nouveau.cmd_git_code -eq 0) { $trouve += 'nouveau processus : cmd.exe lance git --version' }
-if ($nouveau.illisible) { $trouve += "nouveau processus illisible : $($nouveau.illisible)" }
+if ($nouveau.Contains('illisible')) { $trouve += "nouveau processus illisible : $($nouveau.illisible)" }
 
 $preuve_json = [ordered]@{
     absent = ($trouve.Count -eq 0)

@@ -588,6 +588,12 @@ class WindowsWithoutGit(unittest.TestCase):
         self.refused(self.proof(nouveau_processus={"get_command": [], "where": [], "cmd_git_code": 0}),
                      "un nouveau processus : git --version")
         self.refused(self.proof(nouveau_processus={"get_command": [], "where": []}), "ce qu'un nouveau processus trouvait")
+        # Its output unread, its probes are empty: never taken for « nothing found ».
+        self.refused(self.proof(nouveau_processus={"get_command": [], "where": [], "cmd_git_code": 9009,
+                                                   "illisible": "powershell.exe : Access denied"}),
+                     "ce qu'un nouveau processus trouvait : sa sortie est illisible (powershell.exe : Access denied)")
+        self.refused(self.proof(nouveau_processus={"get_command": [], "where": [], "cmd_git_code": 9009, "illisible": ""}),
+                     "sa sortie est illisible ()")
         self.refused(self.proof(desinstalle=[{"dossier": "C:\\Program Files\\Git", "code": 1}]),
                      "le désinstalleur de Git a échoué : C:\\Program Files\\Git (code 1)")
         self.refused(self.proof(winget=None), "pas de winget sur la VM")
@@ -607,6 +613,33 @@ class WindowsWithoutGit(unittest.TestCase):
             self.assertIn(key, text)
         self.assertIn("'/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART'", text)
         self.assertIn('throw "Git est encore trouvable', text)
+
+    def test_claude_s_bash_is_read_from_its_debug_log(self):
+        bash = "C:\\Program Files\\Git\\bin\\bash.exe"
+        debug = '2026-10-15T22:47:01.120Z [DEBUG] Starting\n2026-10-15T22:47:01.124Z [DEBUG] Using bash path: "%s"\n' % bash
+        self.assertEqual(terrain.bash_de_claude(terrain.Etapes(), debug, "Not logged in · Please run /login"), bash)
+
+        def refused(debug, dit, why):
+            with self.assertRaises(terrain.Echec) as cm:
+                terrain.bash_de_claude(terrain.Etapes(), debug, dit)
+            self.assertIn(why, str(cm.exception))
+        # No Git Bash, in its words: the debug log's (2.1), or what it printed before stopping.
+        refused("x\n2026-10-15T22:47:01.124Z [DEBUG] Git Bash not found; BashTool will be unavailable\ny\n", "Not logged in",
+                "Claude Code ne trouve pas Git Bash ; il dit : « 2026-10-15T22:47:01.124Z [DEBUG] Git Bash not found; "
+                "BashTool will be unavailable »")
+        refused("", "Claude Code on Windows requires git-bash (https://git-scm.com/downloads/win).",
+                "Claude Code ne trouve pas Git Bash ; il dit : « Claude Code on Windows requires git-bash")
+        refused("", "Claude Code on Windows requires either Git for Windows (for bash) or PowerShell. Install one of:\n"
+                "  - Git for Windows: https://git-scm.com/downloads/win\n  - PowerShell 7: https://aka.ms/powershell\n"
+                "Or set CLAUDE_CODE_GIT_BASH_PATH to your bash.exe location.",
+                "il dit : « Claude Code on Windows requires either Git for Windows (for bash) or PowerShell.")
+        # Neither: its debug log changed, not Git Bash gone.
+        refused("[DEBUG] a\n\n[DEBUG] Shell: C:\\Program Files\\Git\\bin\\bash.exe\n", "Not logged in",
+                "format du journal de débogage de Claude Code changé : ni « Using bash path » ni « Git Bash not found » ; "
+                "il dit : « Not logged in » ; fin du journal : [DEBUG] a | [DEBUG] Shell: C:\\Program Files")
+        refused("", "(pas de réponse en 180 s)", "fin du journal : (vide)")
+        # Only its last line goes in the reason.
+        refused("", "Welcome\n\nNot logged in · Please run /login\n", "il dit : « Not logged in · Please run /login » ;")
 
     def test_install_ps1_notes_each_winget_attempt_in_its_journal(self):
         with open(os.path.join(HERE, "..", "..", "install.ps1"), encoding="utf-8") as f:

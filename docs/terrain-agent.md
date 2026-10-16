@@ -79,16 +79,24 @@ stops it; its proof goes to the file `TERRAIN_SANS_GIT` names. In `windows`, `te
 runs it once the tested sources are zipped (step `installeur`); in the app, the robot runs it once
 the app is installed, before its first start (step `app-poste-neuf`), then `app-git-diagnostic`
 checks the app's own diagnosis said Git « À installer ». The checks of the install then start with:
-`git-absent-au-depart` (the proof, probe by probe, and the uninstaller's code: `details.git.avant`),
+`git-absent-au-depart` (the proof, probe by probe, and the uninstaller's code: `details.git.avant`;
+« sa sortie est illisible » is the new process sans-git.ps1 starts answering nothing it could read:
+nothing was proved there),
 `git-winget` (install.ps1's lines in `~/.brain-in-a-box/install.log`, `> winget install -e --id
 Git.Git ...` then `winget : code N`, one per attempt: `details.git.winget`), `git-nouveau-processus`
 (`where git` and `git --version` through cmd.exe in the environment Windows builds from the
 registry, and the folder of that git.exe created after the proof), `git-coffre` (the vault's first
 commit is the installer's « brain init »), `git-bash` (Claude Code, without a token and its
 PowerShell tool off, names the bash it uses in its debug log, `details.git.bash`, its last words in
-`claude_dit`; it must be that Git's, and the kit's `~/.local/bin/gbq` must answer in it). The VM's
-user is an administrator without UAC: the question Windows may ask a user for Git's installer is
-not seen there.
+`claude_dit`; it must be that Git's, and the kit's `~/.local/bin/gbq` must answer in it). « Claude
+Code ne trouve pas Git Bash » is Claude Code's own words (`Git Bash not found` in its debug log, or
+« requires either Git for Windows (for bash) or PowerShell » before it stops); « format du journal
+de débogage de Claude Code changé » is a newer Claude Code whose debug log no longer says which bash
+it uses: the end of that log is in the reason; the fix is `CLAUDE_BASH_RE` in terrain.py (the
+maintainer reviews it), not the kit. The VM's user is an administrator without UAC: Git's installer
+puts Git in `C:\Program Files\Git` even when winget asks for the user's scope, so the question
+Windows may ask a user, a Git for one user (`%LOCALAPPDATA%\Programs\Git`) and Claude Code finding
+its bash through `git` on the PATH are not seen there.
 
 ## Read a failure of the app scenario
 
