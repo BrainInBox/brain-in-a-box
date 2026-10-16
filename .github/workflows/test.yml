@@ -167,8 +167,9 @@ jobs:
           d=$(mktemp -d); cd "$d"
           printf 'preload = ["./x.ts"]\n' > bunfig.toml
           printf 'require("fs").writeFileSync("%s/witness", "ran\\n");\n' "$d" > x.ts
-          ~/.bun/bin/gbrain --version >/dev/null 2>&1 || true
-          [ -f witness ] || { echo "::error::control: gbrain started from this folder did not run its preload, so this step proves nothing"; exit 1; }
+          # The control: gbrain started from this folder, Bun on the PATH as gbq puts it (gbrain is a bun script).
+          out=$(PATH="$HOME/.bun/bin:$PATH" ~/.bun/bin/gbrain --version 2>&1) || true
+          [ -f witness ] || { echo "$out"; echo "::error::control: gbrain started from this folder did not run its preload, so this step proves nothing"; exit 1; }
           rm witness
           for c in query search; do
             out=$(~/.local/bin/gbq "$c" "captured corrections" 2>&1); echo "$out"
