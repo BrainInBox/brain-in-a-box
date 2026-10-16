@@ -45,13 +45,19 @@ The maintainer is one person. Reasonable response targets:
 
 ## Codex (built, not open on any system yet)
 
-When you choose Codex (`--agents codex`), `install.sh` **approves the kit's six Codex hooks for you**: it
-adds their trust entries to `~/.codex/config.toml` (only new `[hooks.state."…"]` tables, after a backup,
-checked by Codex itself), and says so on screen. Codex then runs them without asking. The approval covers
-each hook's command line, not the script's content. See them, or turn them off, with `/hooks` in Codex.
-It also lets Codex run `gbq query` and `gbq search` without asking, outside its sandbox, and only for
-`~/.local/bin/gbq` (`~/.codex/rules/brain-in-a-box.rules`). The full picture of what Codex can and
-cannot do with your brain comes with Codex's opening (docs/proposals/codex.md).
+When you choose Codex (`--agents codex`, `-Agents codex` on Windows), the installer (`install.sh`,
+`install.ps1`) **approves the kit's six Codex hooks for you**: it adds their trust entries to
+`~/.codex/config.toml` (only new `[hooks.state."…"]` tables, after a backup, checked by Codex itself),
+and says so on screen. Codex then runs them without asking. The approval covers each hook's command
+line, not the script's content. See them, or turn them off, with `/hooks` in Codex. It also lets Codex
+run `gbq query` and `gbq search` without asking, outside its sandbox, and only for `~/.local/bin/gbq`
+(`~\.local\bin\gbq.cmd` on Windows; `~/.codex/rules/brain-in-a-box.rules`).
+
+On Windows, Codex reads system settings from `%ProgramData%\OpenAI\Codex`, a folder any account can
+create when it is missing. The evening summary and the night review do not ask Codex while that folder,
+or `%ProgramData%\OpenAI`, exists and could be changed by an account other than SYSTEM and the
+administrators. The full picture of what Codex can and cannot do with your brain comes with Codex's
+opening (docs/proposals/codex.md).
 
 ## Hardening recommendations (for users)
 

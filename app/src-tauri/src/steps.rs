@@ -754,6 +754,7 @@ const SECTIONS: &[(&str, &str)] = &[
     ("Hooks Claude", "Je branche les automatismes dans Claude"),
     ("CLAUDE.md global", "J'ajoute tes consignes pour Claude"),
     ("Skills Claude Code", "J'installe les compétences de Claude"),
+    ("Codex", "Je branche Codex"),
     ("Historique du vault", "Je garde l'historique de tes notes"),
     ("Memoire gbrain", "J'installe la mémoire, 2 à 5 minutes"),
     ("Task Scheduler", "Je programme l'entretien de nuit"),
@@ -762,7 +763,7 @@ const SECTIONS: &[(&str, &str)] = &[
 ];
 
 /// Where install.ps1 is: each section it starts becomes one line for the window,
-/// "▸ Je crée ton dossier Brain (3 sur 13)…". The window shows the latest one.
+/// "▸ Je crée ton dossier Brain (3 sur 14)…". The window shows the latest one.
 #[cfg(windows)]
 #[derive(Default)]
 struct Sections {

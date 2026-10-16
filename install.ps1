@@ -6,7 +6,8 @@
   Si gbrain ne s'installe pas, la recherche reste assuree par brain_search (BM25 pur
   Python, hors ligne), qui sert aussi de repli quand gbrain ne repond pas.
   Idempotent et non-destructif (ne remplace jamais un vault/CLAUDE.md existant).
-  Installe ce qui manque : Python, Git, Bun, Claude Code, Obsidian (sans admin quand c'est possible).
+  Installe ce qui manque : Python, Git, Bun, Claude Code, Obsidian, et Codex quand il est choisi (sans admin
+  quand c'est possible).
 
 .NOTES
   Scheduler = Task Scheduler (vs launchd). gbq.cmd et gbq (Git Bash) passent par
@@ -23,7 +24,8 @@
   %USERPROFILE%\Brain quand l'acces controle aux dossiers de Windows protege Documents.
   L'IA branchee : -Agents (claude, codex ou claude,codex) et -Prefere, sinon BIAB_AGENTS et
   BIAB_PREFERE (irm | iex ne passe aucun parametre), sinon le choix d'avant
-  (~\.brain-in-a-box\agents.json), sinon Claude seul. Codex n'est encore ouvert sur aucun systeme.
+  (~\.brain-in-a-box\agents.json), sinon Claude seul. Codex n'est encore ouvert sur aucun systeme ;
+  quand il est choisi, engine\codex\wire.py fusionne ses fichiers (hooks.json, config.toml, AGENTS.md).
 
 .EXAMPLE
   # Rien a installer avant : Win+R (ou PowerShell, ou l'invite de commandes), colle, Entree
@@ -294,6 +296,210 @@ function Get-BunVersion([string]$Bun) {
     try { return [version](([string](& $Bun --version 2>$null | Select-Object -First 1)).Trim() -replace '[-+].*$', '') } catch { return $null }
 }
 
+# >>> codex
+# Codex, quand il est choisi (docs/proposals/codex.md, section 3), comme dans install.sh : l'installeur
+# officiel d'OpenAI pour cet utilisateur, a la version que la CI teste, son script compare a une
+# empreinte SHA-256 epinglee avant de tourner (il verifie ensuite celle de l'archive) ; le bloc du kit
+# dans l'AGENTS.md global que Codex lit ; les hooks dans son hooks.json, approuves pour l'utilisateur,
+# qui le lit a l'ecran ; les deux lectures de gbq permises hors de son bac a sable ; un AGENTS.md dans
+# le vault. engine\codex\wire.py fait les fusions, pour install.sh aussi : ce que l'utilisateur a la
+# est fusionne ou laisse, jamais remplace (hooks.json et config.toml sauvegardes d'abord).
+# Les chemins donnes a un programme passent par Join-Path : ces fonctions tournent aussi, contre des
+# doublures, sous pwsh sur Mac et Linux (.github/ci/install-ps1-codex.ps1).
+$CODEX_VERSION = "0.162.1"
+$CODEX_INSTALLER_URL = "https://github.com/openai/codex/releases/download/rust-v$CODEX_VERSION/install.ps1"
+$CODEX_INSTALLER_SHA256 = "f02eb53365d2bbb91f46c4d46ab8e357d087a8cc100794b3eb0c5b4368d6dc42"
+$CodexDir = ""   # le CODEX_HOME que note agents.json, une fois Codex choisi
+
+# Le codex.exe de l'installeur officiel, sinon un codex.exe du PATH : un .exe seulement (le codex.cmd
+# de npm passe par cmd.exe, que les taches sans outils refusent, comme _headless_codex.py).
+function Find-Codex {
+    $p = Join-Path $env:LOCALAPPDATA (Join-Path "Programs" (Join-Path "OpenAI" (Join-Path "Codex" (Join-Path "bin" "codex.exe"))))
+    if (Test-Path -LiteralPath $p -PathType Leaf) { return $p }
+    $c = Get-Command codex.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($c) { return $c.Source }
+    return $null
+}
+
+function Get-CodexVersion([string]$Exe) {
+    $v = "$(@(Invoke-Native { & $Exe --version 2>$null }) | Select-Object -First 1)"
+    if ($v -cmatch '^codex-cli ([0-9]+\.[0-9]+\.[0-9]+)') { return $Matches[1] }
+    return ""
+}
+
+# Le programme qui lance ce script (powershell.exe ou pwsh) : l'installeur de Codex tourne a part, il
+# peut faire exit.
+function Get-PowerShellExe { return [Diagnostics.Process]::GetCurrentProcess().MainModule.FileName }
+
+function Install-Codex {
+    $cb = Find-Codex
+    if ($cb) {
+        $v = Get-CodexVersion $cb
+        if (-not $v -or [version]$v -lt [version]$CODEX_VERSION) {
+            Warn "Codex $(if ($v) { $v } else { "d'une version inconnue" }) ($cb) est plus ancien que ce qu'il faut au kit ($CODEX_VERSION ou plus recent) : mets-le a jour, puis relance la meme commande"
+        } else { Ok "Codex deja installe ($v)" }
+        return
+    }
+    Write-Host "  ... Codex $CODEX_VERSION : installeur officiel d'OpenAI (dans ton profil, sans droits admin), verifie avant de tourner"
+    $d = Join-Path ([IO.Path]::GetTempPath()) ("brain-in-a-box-codex-" + [guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Path $d -Force | Out-Null
+    try {
+        $f = Join-Path $d "install.ps1"
+        Add-Content -LiteralPath $LOG -Value "`r`n> codex : $CODEX_INSTALLER_URL" -Encoding utf8
+        $pp = $ProgressPreference; $ProgressPreference = "SilentlyContinue"
+        try { Invoke-WebRequest -Uri $CODEX_INSTALLER_URL -OutFile $f -UseBasicParsing }
+        catch {
+            Add-Content -LiteralPath $LOG -Value "$($_.Exception.Message)" -Encoding utf8
+            Warn "Codex : telechargement impossible (reseau ?) : relance la meme commande (details : $LOG)"
+            return
+        } finally { $ProgressPreference = $pp }
+        $hex = ([BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash([IO.File]::ReadAllBytes($f))) -replace '-', '').ToLowerInvariant()
+        if ($hex -ne $CODEX_INSTALLER_SHA256) {
+            Warn "Codex : son installeur ne correspond pas a l'empreinte SHA-256 epinglee, rien n'est lance : relance la meme commande plus tard"
+            return
+        }
+        # La version que la CI teste, sans question, le CODEX_HOME choisi ; rien d'un reglage de
+        # l'installeur que l'environnement aurait (dossier, mise a jour), ni la cle Voyage (Invoke-Logged).
+        $names = "CODEX_RELEASE", "CODEX_NON_INTERACTIVE", "CODEX_HOME", "CODEX_INSTALL_DIR", "CODEX_INSTALL_DAEMON_ONLY",
+                 "CODEX_INSTALL_DEFER_SELECTION", "CODEX_INSTALL_IF_LATEST", "CODEX_INSTALL_IF_CURRENT", "CODEX_UPDATE_FROM_RELEASE",
+                 "CODEX_INSTALLER_USE_RELEASES_OPENAI_COM"
+        # Remove-Item et pas SetEnvironmentVariable : PowerShell y passe $null en "", une variable vide sous Linux.
+        $saved = @{}
+        foreach ($n in $names) { $saved[$n] = [Environment]::GetEnvironmentVariable($n, "Process"); Remove-Item "Env:$n" -ErrorAction SilentlyContinue }
+        $env:CODEX_RELEASE = $CODEX_VERSION; $env:CODEX_NON_INTERACTIVE = "1"; $env:CODEX_HOME = $CodexDir
+        try { $rc = Invoke-Logged (Get-PowerShellExe) @("-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", $f) }
+        finally {
+            foreach ($n in $names) { if ($null -eq $saved[$n]) { Remove-Item "Env:$n" -ErrorAction SilentlyContinue } else { Set-Item "Env:$n" $saved[$n] } }
+        }
+        $cb = Find-Codex
+        if ($rc -eq 0 -and $cb) {
+            Ok "Codex $CODEX_VERSION installe ($cb)"
+            if ($script:LastOut -match 'PATH updated for future PowerShell sessions') { Write-Host "    son installeur a mis $(Split-Path -Parent $cb) sur ton PATH (nouveaux terminaux)" }
+        } else {
+            Warn "Codex ne s'est pas installe (details : $LOG) : relance la meme commande, ou vois https://developers.openai.com/codex/cli"
+        }
+    } finally { Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue }
+}
+
+# engine\codex\wire.py, celui d'install.sh, en francais et pour Windows ; sa sortie lue en UTF-8 (un
+# chemin peut avoir des accents). Ses lignes ; son code dans $script:WireCode.
+function Invoke-Wire([string[]]$WireArgs) {
+    $prev = $null
+    try { $prev = [Console]::OutputEncoding; [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
+    try {
+        $o = @(Invoke-Native { & $Py -I (Join-Path $REPO (Join-Path "engine" (Join-Path "codex" "wire.py"))) --ps1 $Py @WireArgs 2>&1 })
+        $script:WireCode = $LASTEXITCODE
+    } finally { if ($prev) { try { [Console]::OutputEncoding = $prev } catch {} } }
+    return ,@($o | ForEach-Object { "$_" })
+}
+
+# Le CODEX_HOME que note agents.json, en UTF-8 ; "" quand il ne liste pas Codex.
+function Get-CodexHome {
+    $prev = $null
+    try { $prev = [Console]::OutputEncoding; [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
+    try { $o = @(Invoke-Native { & $Py -I (Join-Path $REPO (Join-Path "engine" (Join-Path "hooks" "_agents.py"))) codex-home }); $rc = $LASTEXITCODE }
+    finally { if ($prev) { try { [Console]::OutputEncoding = $prev } catch {} } }
+    if ($rc -ne 0) { return "" }
+    return "$($o | Select-Object -Last 1)".Trim()
+}
+
+# codex, dans le CODEX_HOME choisi, sa sortie dans le journal ; son code de sortie.
+function Invoke-Codex([string]$Exe, [string[]]$CodexArgs) {
+    $prev = $env:CODEX_HOME
+    $env:CODEX_HOME = $CodexDir
+    try { return (Invoke-Logged $Exe $CodexArgs) }
+    finally { if ($null -eq $prev) { Remove-Item Env:CODEX_HOME -ErrorAction SilentlyContinue } else { $env:CODEX_HOME = $prev } }
+}
+
+function Codex-Global {
+    $r = Invoke-Wire @("global", $CodexDir, (Join-Path $REPO (Join-Path "engine" "CLAUDE.global.template.md")))
+    if ($script:WireCode -eq 0) { Ok ($r -join " ") } else { Warn ($r -join " ") }
+}
+
+# Les hooks du kit dans hooks.json, puis leur approbation dans config.toml, que Codex verifie avant et apres.
+function Wire-Codex {
+    $r = Invoke-Wire @("merge", $CodexDir, $HOOKS)
+    if ($script:WireCode -ne 0) { Warn ($r -join " "); return }
+    Ok ($r -join " ")
+    $null = Invoke-Native { & $Py -I (Join-Path $REPO (Join-Path "engine" (Join-Path "hooks" "_agents.py"))) pose-hooks }
+    if ($LASTEXITCODE -ne 0) { Warn "impossible de noter dans $(Join-Path $H '.brain-in-a-box') quand les hooks de Codex ont ete branches" }
+    $cb = Find-Codex
+    if (-not $cb) {
+        Warn "Codex n'est pas installe : le kit n'a pas pu y approuver ses hooks. Relance la meme commande une fois Codex installe (ou approuve-les dans Codex : /hooks)"
+        return
+    }
+    $ct = Join-Path $CodexDir "config.toml"
+    if ((Test-Path -LiteralPath $ct) -and (Invoke-Codex $cb @("features", "list")) -ne 0) {
+        Warn "Codex ne sait pas lire $ct tel quel (codex features list echoue, voir $LOG) : le kit n'a pas approuve ses hooks. Corrige-le et relance la meme commande, ou approuve-les dans Codex : /hooks"
+        return
+    }
+    $r = Invoke-Wire @("approve", $CodexDir, $HOOKS)
+    $st, $n, $bak, $kept = "error", ($r -join " "), "-", "-"
+    if ($script:WireCode -eq 0 -and $r.Count -eq 4) { $st, $n, $bak, $kept = $r }
+    switch ($st) {
+        "unchanged" { Ok "Codex : les $n hooks du kit sont approuves, par le kit pour toi ($ct) : vois-les ou coupe-les avec /hooks dans Codex" }
+        "written" {
+            if ((Invoke-Codex $cb @("features", "list")) -eq 0) {
+                $was = if ($bak -ne "-") { ", version precedente : $bak" } else { "" }
+                Ok "Codex : le kit a approuve ses $n hooks pour toi ($ct$was), Codex les lance donc sans demander. Vois-les, ou coupe-les, avec /hooks dans Codex"
+            } else {
+                $null = Invoke-Wire @("restore", $CodexDir, $bak)
+                Warn "Codex refuse config.toml avec l'approbation du kit (voir $LOG) : remis tel quel. Approuve les hooks du kit dans Codex : /hooks"
+            }
+        }
+        "refused" { Warn "Codex : $n, donc le kit n'a pas approuve ses hooks : ouvre Codex, tape /hooks et approuve-les" }
+        "none" { Warn "Codex : aucun hook du kit n'est dans hooks.json tel que le kit l'ecrit : rien d'approuve (vois-les avec /hooks dans Codex)" }
+        default { Warn "Codex : le kit n'a pas pu approuver ses hooks ($n) : ouvre Codex, tape /hooks et approuve-les" }
+    }
+    if ($kept -ne "-") { Warn "Codex : l'approbation que tu as reglee dans /hooks pour $kept est gardee telle quelle" }
+}
+
+# gbq query et gbq search sans demander, au gbq.cmd du kit seulement : Codex lance ses commandes par
+# PowerShell, qui ne lance pas le gbq de Git Bash.
+function Codex-Rules {
+    $dir = Join-Path $CodexDir "rules"
+    $tpl = [IO.File]::ReadAllText((Join-Path $REPO (Join-Path "engine" (Join-Path "codex" "brain-in-a-box.rules"))), (New-Object Text.UTF8Encoding $false))
+    $token = '"__HOME__/.local/bin/gbq"'
+    if (([regex]::Matches($tpl, [regex]::Escape($token))).Count -ne 1) { Warn "Codex : engine\codex\brain-in-a-box.rules n'a plus le chemin de gbq attendu : gbq n'est pas permis sans demander"; return }
+    $text = $tpl.Replace($token, '"' + (Join-Path $BIN "gbq.cmd").Replace('\', '\\') + '"')
+    New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    Place-File (Join-Path $dir "brain-in-a-box.rules") (New-Object Text.UTF8Encoding $false).GetBytes($text)
+    Ok "gbq query et gbq search tournent sans demander dans Codex ($(Join-Path $dir 'brain-in-a-box.rules'))"
+}
+
+# Un AGENTS.md a la racine du vault quand il n'en a pas : Codex le lit, jamais CLAUDE.md.
+function Codex-Vault([string]$Vault) {
+    $p = Join-Path $Vault "AGENTS.md"
+    if (Get-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue) { Ok "$p deja la (garde tel quel)"; return }
+    try {
+        Copy-Item -LiteralPath (Join-Path $REPO (Join-Path "engine" (Join-Path "codex" "AGENTS.vault.md"))) -Destination $p -ErrorAction Stop
+        Ok "$p pose : Codex y lit qu'il doit suivre le CLAUDE.md du vault"
+    } catch { Warn "impossible d'ecrire $p ($($_.Exception.Message))" }
+}
+
+# Une installation neuve devant une console, sans choix, demande : seulement la ou Codex peut etre
+# choisi (une seule reponse sinon), jamais par-dessus un choix d'avant ni une installation d'avant le
+# choix (Claude seul). Entree : Claude seul, comme avant.
+function Ask-Yes([string]$Question) {
+    try { $a = Read-Host "  $Question [o/N]" } catch { $a = "" }
+    return ("$a".Trim() -match '^(?i:o|oui|y|yes)$')
+}
+function Ask-Agents {
+    if ("$Agents$Prefere$env:BIAB_AGENTS$env:BIAB_PREFERE") { return }
+    foreach ($p in $AgentsFile, (Join-Path $H (Join-Path ".brain-in-a-box" "installed.json")), (Join-Path $HOOKS "correction-detector.py")) {
+        if (Get-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue) { return }
+    }
+    if (-not (Test-Interactive)) { return }
+    $null = Invoke-Native { & $Py -I (Join-Path $REPO (Join-Path "engine" (Join-Path "hooks" "_agents.py"))) ouvert }
+    if ($LASTEXITCODE -ne 0) { return }
+    Write-Host "  Ton cerveau marche avec Claude Code (ton abonnement Claude), Codex (ton abonnement ChatGPT), ou les deux."
+    if (-not (Ask-Yes "Utiliser Codex ?")) { $script:Agents = "claude"; return }
+    if (-not (Ask-Yes "Utiliser aussi Claude Code ?")) { $script:Agents = "codex"; return }
+    $script:Agents = "claude,codex"
+    $script:Prefere = if (Ask-Yes "Codex ecrit-il le resume du soir (non : Claude Code l'ecrit) ?") { "codex" } else { "claude" }
+}
+# <<< codex
+
 # 0. Sources : clone local, ou telechargement quand le script arrive par `irm | iex`
 $REPO = $null
 if ($PSCommandPath) { $REPO = Split-Path -Parent $PSCommandPath }
@@ -348,6 +554,7 @@ Ok "python ($Py)"
 # n'ecrit rien. Codex est refuse sur un systeme tant qu'il n'y est pas ouvert. Juste apres Python,
 # dont _agents.py a besoin (et les sources en mode irm | iex) : avant Git et le journal.
 $AgentsFile = "$H\.brain-in-a-box\agents.json"
+Ask-Agents
 $agentsArg = if ($Agents) { $Agents } else { "$env:BIAB_AGENTS" }
 $prefereArg = if ($Prefere) { $Prefere } else { "$env:BIAB_PREFERE" }
 $badChoice = "-Agents prend claude, codex ou claude,codex, et -Prefere l'un des agents choisis (de meme BIAB_AGENTS et BIAB_PREFERE)."
@@ -370,6 +577,7 @@ if ($agentsOut -cnotmatch '^agents=(claude|codex|claude,codex) prefere=(claude|c
 }
 $ChosenAgents, $PreferredAgent, $agentsSource, $agentsWritten = $Matches[1], $Matches[2], $Matches[3], $Matches[4]
 $WithClaude = (",$ChosenAgents," -like "*,claude,*")
+$WithCodex = (",$ChosenAgents," -like "*,codex,*")
 $agentsLabel = switch ("$ChosenAgents $PreferredAgent") {
     "claude claude" { "Claude Code" }
     "codex codex" { "Codex" }
@@ -378,6 +586,13 @@ $agentsLabel = switch ("$ChosenAgents $PreferredAgent") {
 }
 if ($agentsSource -eq "choix" -and $agentsWritten -eq "oui") { Ok "agents IA : $agentsLabel, note dans $AgentsFile" }
 elseif ($agentsSource -ne "defaut") { Ok "agents IA : $agentsLabel, comme choisi avant ($AgentsFile)" }
+# Ni un hooks.json de Codex qu'on ne sait pas lire : arret ici, avant tout changement, comme install.sh.
+if ($WithCodex) {
+    $CodexDir = Get-CodexHome
+    if (-not $CodexDir) { Fail "$AgentsFile ne dit pas ou vit Codex : relance avec -Agents" }
+    $r = Invoke-Wire @("check", $CodexDir, $HOOKS)
+    if ($script:WireCode -ne 0) { Fail ($r -join " ") }
+}
 # <<< agents
 # Le journal s'ouvre une fois le choix des agents accepte (un choix refuse n'y laisse rien), avant
 # Git : winget y note ce qu'il installe.
@@ -592,6 +807,19 @@ if ($cur -match [regex]::Escape($mark)) {
 Say "Skills Claude Code ($H\.claude\skills)"
 Invoke-Native { & $Py -I "$REPO\engine\install_skills.py" --src "$REPO\skills" --dest "$H\.claude\skills" }
 if ($LASTEXITCODE -eq 0) { Ok "skills a jour" } else { Warn "skills : echec (code $LASTEXITCODE)" }
+}
+
+# 6ter. Codex, quand il est choisi : installe s'il manque, son AGENTS.md, ses hooks et ses skills.
+if ($WithCodex) {
+    Say "Codex ($CodexDir)"
+    New-Item -ItemType Directory -Path $CodexDir -Force | Out-Null   # la ou ira auth.json : dans ton profil
+    Install-Codex
+    Codex-Global
+    Wire-Codex
+    Codex-Rules
+    Codex-Vault $BrainDir
+    Invoke-Native { & $Py -I "$REPO\engine\install_skills.py" --src "$REPO\skills" --dest "$H\.agents\skills" --manifest "$H\.brain-in-a-box\skills-codex.json" }
+    if ($LASTEXITCODE -eq 0) { Ok "skills de Codex a jour ($H\.agents\skills)" } else { Warn "skills de Codex : echec (code $LASTEXITCODE)" }
 }
 
 # 7. git init vault (gbrain lit le vault a travers git)
@@ -862,12 +1090,24 @@ Write-Host ""
 Write-Host "brain-in-a-box est installe (Windows natif)." -ForegroundColor Green
 Write-Host ""
 Write-Host "Prochaines etapes :" -ForegroundColor Cyan
-if ($WithClaude) {
+# La personnalisation s'ouvre avec l'agent prefere.
+if ($WithClaude -and $PreferredAgent -eq "claude") {
     Write-Host "  1. Ouvre un NOUVEAU terminal PowerShell et tape :"
     Write-Host "       cd `"$BrainDir`""
     Write-Host "       claude"
     Write-Host "     La premiere fois, Claude ouvre ton navigateur pour te connecter (compte Pro ou Max)."
     Write-Host "  2. Personnalise ton cerveau (15 min) : dans Claude, colle"
+    Write-Host "       Read $REPO\onboarding\ONBOARDING.md and run it to personalize me."
+}
+if ($WithCodex) {
+    Write-Host "  Connecte Codex a ton compte ChatGPT (le kit ne se sert jamais d'une cle API : elle serait facturee) :"
+    Write-Host "       codex login"
+}
+if ($PreferredAgent -eq "codex") {
+    Write-Host "  1. Ouvre un NOUVEAU terminal PowerShell et tape :"
+    Write-Host "       cd `"$BrainDir`""
+    Write-Host "       codex"
+    Write-Host "  2. Personnalise ton cerveau (15 min) : dans Codex, colle"
     Write-Host "       Read $REPO\onboarding\ONBOARDING.md and run it to personalize me."
 }
 if ($Obsidian) {
@@ -882,6 +1122,16 @@ Write-Host "Memoire : gbq query `"...`", recherche $mem. Mise a jour de l'index 
 Write-Host "Controle de nuit : il corrige seul ce qui est sans risque (annulable), le reste est dans Profile\controle.md. Dans Claude : /controle." -ForegroundColor Cyan
 Write-Host "Journal d'installation : $LOG" -ForegroundColor Cyan
 Write-Host "Mise a jour : relance la meme commande d'installation." -ForegroundColor Cyan
+# Un agent choisi avant et plus maintenant : ce que le kit a pose pour lui reste (il n'a pas de desinstallation).
+$codexHooks = Join-Path $(if ($env:CODEX_HOME) { $env:CODEX_HOME } else { "$H\.codex" }) "hooks.json"
+if (-not $WithCodex -and (Test-Path -LiteralPath $codexHooks -PathType Leaf) -and (Select-String -LiteralPath $codexHooks -SimpleMatch '\\.claude\\hooks\\brain\\' -Quiet)) {
+    Write-Host ""
+    Write-Host "Codex n'est plus choisi : ce que le kit a pose pour lui reste, et ses hooks se taisent. Pour le retirer : /hooks dans Codex, le bloc apres <!-- brain-in-a-box --> de son AGENTS.md, et les skills que liste $H\.brain-in-a-box\skills-codex.json dans $H\.agents\skills." -ForegroundColor Yellow
+}
+if (-not $WithClaude -and (Test-Path -LiteralPath "$H\.claude\settings.json" -PathType Leaf) -and (Select-String -LiteralPath "$H\.claude\settings.json" -SimpleMatch '\\.claude\\hooks\\brain\\' -Quiet)) {
+    Write-Host ""
+    Write-Host "Claude Code n'est plus choisi : ses hooks dans $H\.claude\settings.json, le bloc apres <!-- brain-in-a-box --> de $H\.claude\CLAUDE.md et les skills que liste $H\.brain-in-a-box\skills.json dans $H\.claude\skills restent, et tournent si tu ouvres Claude Code. Pour les retirer : /hooks dans Claude Code, ce bloc, ces skills." -ForegroundColor Yellow
+}
 if ($BackedUp.Count) {
     Write-Host ""
     Write-Host "$($BackedUp.Count) fichier(s) remplace(s) par leur nouvelle version : $(($BackedUp | ForEach-Object { Split-Path -Leaf $_ }) -join ', ')." -ForegroundColor Yellow

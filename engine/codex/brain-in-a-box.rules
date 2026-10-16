@@ -1,10 +1,12 @@
 # brain-in-a-box: gbq's two reads, run by Codex without asking and outside its sandbox (gbq writes a
 # lock in ~/.gbrain and asks Voyage AI). Nothing else: gbq passes every argument to gbrain, and its
-# other commands (sync, embed, skillify <url>...) still ask first. Installed by install.sh; a version
-# you change is kept, the new one waits in ~/.brain-in-a-box/pending.
+# other commands (sync, embed, skillify <url>...) still ask first. Installed by install.sh, which keeps
+# a version you change (the new one waits in ~/.brain-in-a-box/pending), or by install.ps1, which keeps
+# it in ~\.brain-in-a-box\backups before it puts the new one.
 #
-# host_executable: a path to a gbq counts only when it is the kit's. Without it, Codex would match
-# any program named gbq against these rules, ./gbq included, which the sandbox lets a session write.
+# host_executable: a path to a gbq counts only when it is the kit's (~/.local/bin/gbq; gbq.cmd on
+# Windows, which Codex runs through PowerShell). Without it, Codex would match any program named gbq
+# against these rules, ./gbq included, which the sandbox lets a session write.
 host_executable(name="gbq", paths=["__HOME__/.local/bin/gbq"])
 prefix_rule(pattern=["gbq", "query"], decision="allow")
 prefix_rule(pattern=["gbq", "search"], decision="allow")
