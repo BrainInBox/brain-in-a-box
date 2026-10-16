@@ -10,6 +10,8 @@ Scheduled at 12:00 and 23:00 (launchd / Task Scheduler). By hand:
 Sources, all read-only:
   - Claude Code transcripts (~/.claude/projects/*/*.jsonl), sliced to the day,
     when Claude is one of the agents chosen (always without agents.json).
+  - Codex sessions ($CODEX_HOME/sessions, read by _codex_rollout.py), sliced to
+    the day, when Codex is one of them (never without agents.json).
   - Hermes sessions (~/.hermes/state.db), when Hermes is installed.
   - A digest of your own git commits that day: the authoritative record of
     what was produced, since the chat under-reports the busiest days.
@@ -257,6 +259,44 @@ def claude_sessions(day):
         if n >= 3:  # shorter exchanges carry no signal worth a model's attention
             out.append((f"claude {Path(tp).stem[:8]} · cwd={cwd or '?'}", text, cwd))
     return out
+
+
+def codex_sessions(day, codex_home):
+    """(sessions, compressed) as claude_sessions gives Claude's: the Codex sessions active on `day`
+    in agents.json's CODEX_HOME (_codex_rollout.py), and the compressed rollouts left unread. The
+    label holds the whole session id: Codex's are UUIDv7, whose first 8 characters are the minute.
+    A session not typed in Codex's terminal or editor says its source in its label ("exec", "mcp":
+    a program started it, and may have written its prompt); a sub-agent's, whose prompts another
+    agent wrote, and Codex's internal runs are left out. Only an entry starts a line ("HH:MM user:"):
+    a message goes on as "    | ", a tool's summary is one line, so that no text a model wrote (a
+    page can steer it) poses as the user's."""
+    import _codex_rollout as rollout   # here: Claude alone never loads it
+    from _agents import SOURCES_TAPEES
+    day_start, _ = _day_bounds(day)
+    paths, packed = rollout.recent(codex_home, day_start)
+    out = []
+    for path in paths:
+        try:
+            s = rollout.read(path, day)
+        except Exception as e:   # Codex's format, not ours: a file costs only itself, never the day
+            log_error(f"{day}: Codex session {os.path.basename(path)} not read ({type(e).__name__})")
+            continue
+        if s is None or s.source in ("subagent", "internal"):
+            continue   # not the user's; a session the kit asked comes without items
+        lines, n = [], 0
+        for it in s.items:
+            hhmm = rollout.local(it.ts).strftime("%H:%M")
+            if it.kind == "tool":
+                lines.append(f"{hhmm}   → " + " ".join(f"{it.name} {it.text}".split()))
+            else:
+                lines.append(f"{hhmm} {it.kind}: " + "\n    | ".join(_trim(it.text.strip(), MSG_CAP).splitlines()))
+                n += 1
+        if n >= 3:
+            how = "" if s.source in SOURCES_TAPEES else " · " + (
+                s.source if re.fullmatch(r"[a-z_]{1,32}", s.source or "") else "?")
+            cwd = " ".join((s.cwd or "?").splitlines())
+            out.append((f"codex {s.id or '?'}{how} · cwd={cwd}", "\n".join(lines), s.cwd))
+    return out, packed
 
 
 def hermes_sessions(day):
@@ -823,16 +863,19 @@ def memory_now(note, day):
     return redact(_trim("".join(_ended(_c(l), "\n") for l in _day_lines(Doc(note.lines), day)).strip(), MEMORY_CAP))[0]
 
 
-def build_prompt(day, slot, sessions, gitlog, journal="", memory="", soul=""):
+def build_prompt(day, slot, sessions, gitlog, journal="", memory="", soul="", agents=("claude",)):
     if sessions:
         alloc = _allocate([len(text) for _, text in sessions], BUDGET)
         parts = [f"[session {label}]\n{_trim(text, alloc[i])}" for i, (label, text) in enumerate(sessions)]
         body = "\n---SESSION---\n".join(parts)[:BUDGET]
     else:
         body = "(no chat session that day — see the git digest)"
-    sources = "Claude Code sessions (label \"claude\")"
+    kinds = ['Claude Code sessions (label "claude")'] if "claude" in agents or "codex" not in agents else []
+    if "codex" in agents:
+        kinds.append('Codex sessions (label "codex")')
     if any(label.startswith("hermes") for label, _ in sessions):
-        sources += " and Hermes sessions (label \"hermes\")"
+        kinds.append('Hermes sessions (label "hermes")')
+    sources = " and ".join([", ".join(kinds[:-1]), kinds[-1]] if len(kinds) > 1 else kinds)
     when = {"midday": "the day is not over yet", "evening": "end of the day",
             "backfill": "a backfill: the day is over"}[slot]
     return f"""{SENTINEL}
@@ -886,7 +929,7 @@ def reflect_once(day, slot, sessions, gitlog, agents, command=None, codex_comman
     try:
         jbase, mbase = read_note(journal_path), read_note(MEMORY)
         prompt = build_prompt(day, slot, sessions, gitlog, journal_now(jbase), memory_now(mbase, day),
-                              _read_text(BRAIN / "Profile" / "soul.md", SOUL_CAP))
+                              _read_text(BRAIN / "Profile" / "soul.md", SOUL_CAP), agents[0].agents)
         answer = ask(prompt, agents, command, codex_command)
         draft = clean_answer(answer.output)
     except headless.HeadlessError as e:
@@ -1018,7 +1061,8 @@ def reflect(day, slot, dry_run=False, command=None, codex_command=None):
     # the kit cannot trust): nothing is read, and the run fails below, said in memory.md.
     agents = headless.lire()
     chosen = agents[0].agents
-    found = (hermes_sessions(day) + (claude_sessions(day) if "claude" in chosen else [])) if chosen else []
+    codex, packed = codex_sessions(day, agents[0].codex_home) if "codex" in chosen else ([], [])
+    found = (hermes_sessions(day) + (claude_sessions(day) if "claude" in chosen else []) + codex) if chosen else []
     gitlog = git_digest(day, git_roots([cwd for _, _, cwd in found])) if chosen else ""
     masked, n_masked = [], 0
     for label, text, _ in found:
@@ -1034,12 +1078,17 @@ def reflect(day, slot, dry_run=False, command=None, codex_command=None):
             print(e)
             jbase = mbase = None
         prompt = build_prompt(day, slot, masked, gitlog, journal_now(jbase), memory_now(mbase, day),
-                              _read_text(BRAIN / "Profile" / "soul.md", SOUL_CAP))
+                              _read_text(BRAIN / "Profile" / "soul.md", SOUL_CAP), chosen)
         n_h = sum(1 for label, _ in masked if label.startswith("hermes"))
-        print(f"{day} {slot}: {len(masked) - n_h} Claude session(s), {n_h} Hermes session(s), "
+        n_x = sum(1 for label, _ in masked if label.startswith("codex "))
+        counts = f"{len(masked) - n_h - n_x} Claude session(s), " if "claude" in chosen or "codex" not in chosen else ""
+        counts += f"{n_x} Codex session(s), " if "codex" in chosen else ""
+        print(f"{day} {slot}: {counts}{n_h} Hermes session(s), "
               f"{gitlog.count('### ')} repo(s) with commits, {n_masked} secret(s) masked, prompt {len(prompt)} chars")
         for label, text in masked:
             print(f"  {label} ({len(text)} chars)")
+        if packed:
+            print(f"  {len(packed)} compressed Codex session(s) (.jsonl.zst) not read")
         print(f"dossier sent on stdin: {len(prompt)} chars, {len(prompt.encode('utf-8'))} bytes "
               f"(sessions capped at {BUDGET} chars); cap ${BUDGET_USD:.2f}, {TIMEOUT}s")
         print("answer schema: " + json.dumps(SCHEMA, ensure_ascii=False))
@@ -1048,6 +1097,8 @@ def reflect(day, slot, dry_run=False, command=None, codex_command=None):
             print("asked: " + (" then ".join(order) + f" (Codex: {CODEX_TIMEOUT}s)" if order
                                else f"no AI (~/.brain-in-a-box/agents.json: {etat})"))
         return
+    if packed:
+        log_error(f"{day} {slot}: {len(packed)} compressed Codex session(s) (.jsonl.zst) not read")
     if not masked and not gitlog and chosen:
         return
 

@@ -16,11 +16,15 @@ Codex is closed on a system until its whole path is green there (docs/proposals/
 §1.1): every merged phase reaches users at once through master.zip, so asking for it is
 refused there, and a file that lists it there is not trusted.
 
+The hooks Codex runs (hooks.json, --agent codex) ask codex_hook() whether to act; Claude Code's
+never load this module.
+
 Not a hook: installed next to them, never registered in settings.json.
 """
 import argparse
 import json
 import os
+import re
 import shutil
 import stat
 import sys
@@ -33,6 +37,14 @@ AGENTS = ("claude", "codex")
 CODEX_OUVERT = frozenset()
 FICHIER_MAX = 64 * 1024
 POSE_PAR = ("install.sh", "install.ps1")
+# The sign that Codex runs the kit's hooks: per hook, when it last ran (codex_hook()).
+VUS = "codex-hooks-vus.json"
+# The sessions the user types in: Codex's terminal (cli) and its editor's (vscode). "exec" is a script's
+# run or the kit's own, "mcp" another program's; sub-agents and Codex's internal sessions say an
+# object, not a word (codex-rs/protocol/src/protocol.rs, SessionSource, 0.162.1).
+SOURCES_TAPEES = ("cli", "vscode")
+LIGNE_MAX = 1024 * 1024   # a session file's first line: Codex's base instructions, about 23 kB in 0.162.1
+ID = re.compile(r"[A-Za-z0-9_-]{1,128}")
 
 
 class Choix(namedtuple("Choix", "agents prefere codex_home")):
@@ -244,6 +256,93 @@ def ecrire(choix, pose_par, existant, home=None):
             pass
         raise
     return True
+
+
+PAS_ECRIT = object()   # _source(): the session file is not there yet
+
+
+def _source(chemin):
+    """What the first line of a session file says of the session: its source ("cli", "exec"...),
+    PAS_ECRIT when the file is not there, None when it cannot tell (a link, not a regular file, not a
+    session_meta line, a source that is not a word). Never waits on a pipe."""
+    try:
+        fd, _ = _ouvrir(chemin)
+    except FileNotFoundError:
+        return PAS_ECRIT
+    except (OSError, ValueError):   # ValueError: a NUL in the path
+        return None
+    with os.fdopen(fd, "rb") as f:
+        ligne = f.readline(LIGNE_MAX + 1)
+    if len(ligne) > LIGNE_MAX:
+        return None
+    try:
+        d = json.loads(ligne.decode("utf-8"))
+    except (ValueError, RecursionError):
+        return None
+    p = d.get("payload") if isinstance(d, dict) and d.get("type") == "session_meta" else None
+    source = p.get("source") if isinstance(p, dict) else None
+    return source if isinstance(source, str) else None
+
+
+def codex_hook(nom, payload, env=None, home=None, codex_ouvert=None):
+    """Whether the hook `nom`, run by Codex (hooks.json, --agent codex), acts on what Codex gave it
+    (docs/proposals/codex.md, §3.4). Never in a run without tools (BRAIN_HEADLESS=1, the kit's own;
+    claude -p), nor when agents.json does not list Codex or cannot be trusted: nothing read, nothing
+    written then. Otherwise Codex does run the kit's hooks, and vu() notes it (§3.3). Then only for a
+    session the user types in: one Codex keeps a file of (none: --ephemeral), under a plain id, a
+    prompt the user typed (agent_id: another agent's), a file whose first line says "cli" or "vscode",
+    or a file not written yet (Codex may run a session's first hooks before it writes it)."""
+    env = os.environ if env is None else env
+    if env.get("BRAIN_HEADLESS") == "1" or env.get("CLAUDE_CODE_ENTRYPOINT") == "sdk-cli":
+        return False
+    if "codex" not in lire(home, codex_ouvert=codex_ouvert)[0].agents:
+        return False
+    try:
+        vu(nom, home)
+    except (OSError, ValueError):
+        pass   # a sign for later checks: the hook still does its work
+    if not isinstance(payload, dict) or payload.get("agent_id"):
+        return False
+    sid, chemin = payload.get("session_id"), payload.get("transcript_path")
+    if not (isinstance(sid, str) and ID.fullmatch(sid) and isinstance(chemin, str) and chemin):
+        return False
+    source = _source(chemin)
+    return source is PAS_ECRIT or source in SOURCES_TAPEES
+
+
+def vus(home=None):
+    """{hook: when Codex last ran it, UTC} from codex-hooks-vus.json; {} when there is none to trust."""
+    try:
+        fd, _ = _ouvrir(os.path.join(os.path.dirname(fichier(home)), VUS))
+        with os.fdopen(fd, "rb") as f:
+            d = json.loads(f.read(FICHIER_MAX).decode("utf-8"))
+    except (OSError, ValueError, RecursionError):
+        return {}
+    h = d.get("hooks") if isinstance(d, dict) else None
+    return {k: v for k, v in h.items() if isinstance(k, str) and isinstance(v, str)} if isinstance(h, dict) else {}
+
+
+def vu(nom, home=None):
+    """Notes that Codex ran the hook `nom` now: codex-hooks-vus.json, beside agents.json, written in one
+    step (0600); a link in its place is replaced, never followed. Hooks running together may each miss
+    the other's line once: each one's own time is what counts."""
+    p = os.path.join(os.path.dirname(fichier(home)), VUS)
+    d = vus(home)
+    d[nom] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    dossier = os.path.dirname(p)
+    os.makedirs(dossier, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=dossier, prefix=".codex-hooks-vus.")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
+            json.dump({"version": 1, "hooks": d}, f, sort_keys=True)
+            f.write("\n")
+        os.replace(tmp, p)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def main(argv):

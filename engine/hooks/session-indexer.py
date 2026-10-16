@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+"""Stop hook: one line per session, the first time it stops. With --agent codex (Codex's hooks.json),
+only for a session _agents.codex_hook() lets through, and the line says "agent": "codex"."""
 import json, sys, os, time, tempfile
 from pathlib import Path
 
@@ -6,6 +8,16 @@ try:
     payload = json.load(sys.stdin)
 except Exception:
     sys.exit(0)
+
+CODEX = sys.argv[1:] == ["--agent", "codex"]
+if CODEX:
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import _agents
+        if not _agents.codex_hook("session-indexer", payload):
+            sys.exit(0)
+    except Exception:
+        sys.exit(0)
 
 sid = payload.get("session_id") or payload.get("sessionId") or "unknown"
 lock_dir = Path(tempfile.gettempdir()) / "claude-session-locks"
@@ -24,6 +36,8 @@ entry = {
     "cwd": payload.get("cwd") or os.getcwd(),
     "transcript_path": payload.get("transcript_path"),
 }
+if CODEX:
+    entry["agent"] = "codex"
 with (log_dir / f"sessions-{day}.jsonl").open("a", encoding="utf-8") as f:
     f.write(json.dumps(entry) + chr(10))
 sys.exit(0)

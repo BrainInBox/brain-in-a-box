@@ -9,7 +9,8 @@ detached from the session, and returns at once. A check that keeps failing
 (offline) is retried at most once an hour. Nothing happens without a gbrain clone
 in ~/DEV/gbrain, nor beside a gbrain-selfupdate.sh you changed and kept (the
 installer leaves it in place): its own logic runs at night, and two updaters must
-never work on the same clone.
+never work on the same clone. With --agent codex (Codex's hooks.json), only in a
+session _agents.codex_hook() lets through.
 """
 import datetime as dt
 import json
@@ -45,9 +46,18 @@ def own_updater(hooks):
 
 def main():
     try:
-        sys.stdin.read()
+        raw = sys.stdin.read()
     except Exception:
-        pass
+        raw = ""
+    if sys.argv[1:] == ["--agent", "codex"]:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import _agents
+        try:
+            payload = json.loads(raw)
+        except ValueError:
+            payload = None
+        if not _agents.codex_hook("gbrain-update-check", payload):
+            return
     home = Path.home()
     data = Path(os.environ.get("GBRAIN_HOME", "").strip() or str(home)) / ".gbrain"
     script = Path(__file__).resolve().parent / "gbrain_update.py"

@@ -1,22 +1,34 @@
 """Tests of the session recap (engine/hooks/session-recap.py): the block it writes
-for a session in the day's journal. Every file lives in a throwaway folder: the
-user's vault is never read nor written. The lock and the hook's input are tested
-end to end in test-hooks.sh.
+for a session in the day's journal, Claude's and, with --agent codex, Codex's (from
+step 0's real captures). Every file lives in a throwaway folder: the user's vault
+is never read nor written. The lock and the hook's input are tested end to end in
+test-hooks.sh.
 
     python3 -I -m unittest discover -s engine/tests -v
 """
+import contextlib
 import importlib.util
+import io
+import json
+import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
 import unittest
 from collections import Counter
 from pathlib import Path
+from unittest import mock
 
-HOOKS = Path(__file__).resolve().parent.parent / "hooks"
+HERE = Path(__file__).resolve().parent
+HOOKS = HERE.parent / "hooks"
 sys.path.insert(0, str(HOOKS))
+sys.path.insert(0, str(HERE))
+
+import _agents  # noqa: E402
+import codex_captures as cap  # noqa: E402
 
 _spec = importlib.util.spec_from_file_location("session_recap", str(HOOKS / "session-recap.py"))
 rc = importlib.util.module_from_spec(_spec)
@@ -36,6 +48,16 @@ def stats(prompt="build the login page", files=()):
 
 
 class Entry(unittest.TestCase):
+
+    def test_claudes_block_is_as_before(self):
+        st = stats(files=["/p/a.ts"])
+        st["signals"]["ssh"] = 2
+        when = f"{rc.fmt_time(st['first_ts'])}–{rc.fmt_time(st['last_ts'])}"
+        head = f"- **{when}** (5min) `proj` opus-4-7 · sid:`a1b2c3d4`"
+        want = "\n".join([head, "  - tools: Read 2, Edit 1", "  - intent: build the login page", "  - files: a.ts",
+                          "  - infra/cli: ssh×2"])
+        self.assertEqual(rc.render_entry(st, "a1b2c3d4-e5f6-7890", "proj"), want)
+        self.assertEqual(rc.render_entry(st, "a1b2c3d4-e5f6-7890", "proj", "claude"), want)
 
     def test_nothing_obsidian_runs_or_loads(self):
         e = rc.render_entry(stats(RUNS, ["/p/<img src=x>.md", "/p/`$= 1`.md"]), "a1b2c3d4-e5f6", "$= dv.el('b', 2)")
@@ -152,6 +174,205 @@ class Journal(unittest.TestCase):
         text = self.path.read_text(encoding="utf-8")
         self.assertIn(other, text)
         self.assertIn("sid:`a1b2c3d4`", text)
+
+# Claude's or Codex's Stop hook in a fresh Python, Codex opened there for the second: what it imported.
+FRESH = """
+import io, json, runpy, sys
+hooks, recap, agent, sid, path = sys.argv[1:]
+sys.path.insert(0, hooks)
+if agent == "codex":
+    import _agents
+    _agents.CODEX_OUVERT = frozenset({_agents.systeme()})
+sys.stdin = io.StringIO(json.dumps({"session_id": sid, "cwd": "/w/proj", "transcript_path": path}))
+sys.argv = [recap] + (["--agent", "codex"] if agent == "codex" else [])
+try:
+    runpy.run_path(recap, run_name="__main__")
+except SystemExit:
+    pass
+print("LOADED", "_codex_rollout" in sys.modules, "_agents" in sys.modules)
+"""
+
+
+class Codex(unittest.TestCase):
+    """A Codex session's block (--agent codex): read from its rollout, under its whole id. Codex is
+    closed on every system (_agents.CODEX_OUVERT): opened here only, in this process."""
+    A, B = "01a14053-0452-7e81-b849-c24c767660d7", "01a14053-9c1e-7d20-a4b1-5f0e2d3c4b5a"   # the same minute
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp(prefix="biab-recap-codex-"))
+        self.home, self.codex_home = self.root / "home", self.root / "home" / ".codex"
+        self.journals, self.locks = self.root / "Journal", self.root / "locks"
+        self.home.mkdir()
+        day = time.strftime("%Y-%m-%d")
+        self.journal = self.journals / f"{day}.md"
+        self.day = day
+        saved = dict(os.environ)
+        self.addCleanup(lambda: (os.environ.clear(), os.environ.update(saved)))
+        os.environ.update(HOME=str(self.home), USERPROFILE=str(self.home))
+        for p in (mock.patch.object(rc, "JOURNAL_DIR", self.journals), mock.patch.object(rc, "LOCK_DIR", self.locks)):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def choose(self, agents, opened=True):
+        folder = self.home / ".brain-in-a-box"
+        folder.mkdir(exist_ok=True)
+        (folder / "agents.json").write_text(json.dumps(
+            {"version": 1, "agents": agents, "prefere": agents[0],
+             **({"codex_home": str(self.codex_home)} if "codex" in agents else {})}), encoding="utf-8")
+        os.chmod(str(folder / "agents.json"), 0o600)
+        if opened:
+            p = mock.patch.object(_agents, "CODEX_OUVERT", frozenset({_agents.systeme()}))
+            p.start()
+            self.addCleanup(p.stop)
+
+    def rollout(self, sid, tools=("ssh deploy@example.org",), base=cap.LOCK, said=(), prompt=None, source="cli"):
+        """A session typed in Codex's terminal (source "cli"): the capture's lines, its source the TUI's."""
+        return cap.put(self.codex_home, self.day,
+                       cap.moved(base, self.day, sid=sid, tools=tools, said=said, prompt=prompt, source=source), sid)
+
+    def stop(self, sid, path, argv=("--agent", "codex")):
+        """session-recap.py run as Codex's Stop hook, with the payload Codex gave it in step 0."""
+        payload = dict(cap.stop_payload(), session_id=sid, transcript_path=None if path is None else str(path))
+        with mock.patch.object(sys, "argv", ["session-recap.py", *argv]), \
+                mock.patch.object(sys, "stdin", io.StringIO(json.dumps(payload))), \
+                contextlib.suppress(SystemExit):
+            rc.main()
+        for lock in self.locks.glob("recap-*.lock"):
+            os.utime(str(lock), (1, 1))   # past the 30 s debounce
+
+    def blocks(self):
+        text = self.journal.read_text(encoding="utf-8") if self.journal.exists() else ""
+        return [l for l in text.splitlines() if l.startswith("- **")], text
+
+    def test_a_codex_session_from_its_rollout_under_its_whole_id(self):
+        self.choose(["claude", "codex"])
+        self.stop(self.A, self.rollout(self.A))
+        heads, text = self.blocks()
+        self.assertEqual(len(heads), 1, text)
+        self.assertRegex(heads[0], r"^- \*\*\d\d:\d\d–\d\d:\d\d\*\* \(\d+s\) `/home/runner/work/_temp/p0-main/work` "
+                                   r"codex gpt-6\.1-sol · sid:`%s`$" % self.A)
+        self.assertIn("  - tools: exec_command 2, exec 1\n", text)
+        self.assertIn("  - intent: Judge. P0-SENTINEL-ROLLOUT-7f3a\n", text)
+        self.assertIn("  - infra/cli: curl×2, ssh×1", text)
+        self.assertTrue(text.startswith(f"# {self.day} — Daily\n\n## 📊 Claude Sessions\n- **"), text)
+
+    def test_a_time_out_of_range_in_the_rollout_still_gives_the_block(self):
+        # A year 0 or 10000 once in UTC, whatever the local time zone (_codex_rollout.local).
+        self.choose(["claude", "codex"])
+        p = self.rollout(self.A)
+        with open(str(p), "ab") as f:
+            for ts in ("9999-12-31T23:59:59-14:00", "0001-01-01T00:00:00+14:00"):
+                f.write((json.dumps({"timestamp": ts, "type": "event_msg", "payload": {"type": "x"}}) + "\n").encode())
+        self.stop(self.A, p)
+        heads, text = self.blocks()
+        self.assertEqual(len(heads), 1, text)
+        self.assertRegex(heads[0], r"^- \*\*\d\d:\d\d–\d\d:\d\d\*\* \(\d+s\) .* · sid:`%s`$" % self.A)
+
+    def test_two_sessions_of_the_same_minute_keep_a_block_each(self):
+        self.choose(["codex"])
+        a = self.rollout(self.A)
+        self.stop(self.A, a)
+        self.stop(self.B, self.rollout(self.B, tools=("terraform plan",)))
+        a.write_bytes(cap.moved(cap.LOCK, self.day, sid=self.A, tools=("ssh deploy@example.org", "kubectl get pods"),
+                                source="cli").encode("utf-8"))
+        self.stop(self.A, a)   # its second Stop: its own block only is replaced
+        heads, text = self.blocks()
+        self.assertEqual([h.rsplit("sid:", 1)[1] for h in heads], [f"`{self.B}`", f"`{self.A}`"], text)
+        self.assertIn("kubectl", text)
+        self.assertIn("terraform", text)
+
+    def test_a_claude_block_with_the_same_first_characters_is_never_taken(self):
+        self.choose(["claude", "codex"])
+        claude = rc.render_entry(stats(), self.A, "proj")
+        rc.upsert_session(self.journal, self.A, claude)
+        self.stop(self.A, self.rollout(self.A))
+        self.stop(self.A, self.rollout(self.A, tools=("kubectl get pods",)))
+        rc.upsert_session(self.journal, self.A, rc.render_entry(stats("second stop"), self.A, "proj"))
+        heads, text = self.blocks()
+        self.assertEqual([h.rsplit("sid:", 1)[1] for h in heads], [f"`{self.A}`", f"`{self.A[:8]}`"], text)
+        self.assertIn("  - intent: second stop", text)
+        self.assertIn("kubectl", text)
+
+    def test_silent_unless_agents_json_lists_codex_and_codex_is_open(self):
+        for case in ("absent", "closed", "claude"):
+            with self.subTest(case):
+                if case == "closed":
+                    self.choose(["claude", "codex"], opened=False)
+                elif case == "claude":
+                    self.choose(["claude"])   # open: what silences it is the list
+                with mock.patch.object(rc, "parse_rollout", wraps=rc.parse_rollout) as reader:
+                    self.stop(self.A, self.rollout(self.A))
+                self.assertFalse(reader.called)
+                self.assertFalse(self.journal.exists())
+                self.assertFalse(self.locks.exists() and any(self.locks.iterdir()), "not even a lock")
+
+    def test_without_the_argument_the_hook_is_claudes_as_before(self):
+        self.choose(["claude", "codex"])
+        path = self.rollout(self.A)
+        for argv in ((), ("--agent", "claude"), ("--agent", "Codex"), ("--agent", "codex", "x")):
+            with self.subTest(argv=argv), mock.patch.object(rc, "parse_rollout") as reader:
+                self.stop(self.A, path, argv)
+                self.assertFalse(reader.called)
+        self.assertFalse(self.journal.exists(), "a rollout read as a Claude transcript gives no tool: nothing")
+
+    def test_an_exec_run_or_a_session_without_a_file_is_not_written(self):
+        """Phase 5's guard (_agents.codex_hook): a script's codex exec, the kit's own runs (--ephemeral: no
+        file), a prompt another agent wrote. Control: the same session typed in the terminal."""
+        self.choose(["codex"])
+        for source in ("exec", "mcp", {"subagent": "review"}):
+            with self.subTest(source=source), mock.patch.object(rc, "parse_rollout", wraps=rc.parse_rollout) as reader:
+                self.stop(self.A, self.rollout(self.A, source=source))
+                self.assertFalse(reader.called)
+        self.stop(self.A, None)
+        self.assertFalse(self.journal.exists())
+        self.assertFalse(self.locks.exists() and any(self.locks.iterdir()), "not even a lock")
+        self.stop(self.A, self.rollout(self.A))
+        self.assertEqual(len(self.blocks()[0]), 1)
+
+    def test_the_kits_own_session_is_not_written(self):
+        self.choose(["codex"])
+        self.stop(self.A, self.rollout(self.A, said=[("user", rc_sentinel())], tools=("a", "b", "c")))
+        self.assertFalse(self.journal.exists())
+
+    def test_what_a_codex_session_says_lands_as_one_line_of_plain_text(self):
+        self.choose(["codex"])
+        hostile = {"cmd": "cat", "path": "/p/`$= dv.el('b', 2)`\n- **00:01** sid:`victim00`.md"}
+        self.stop(self.A, self.rollout(self.A, base=cap.VAULT, prompt=RUNS + BREAKS, tools=(hostile, RUNS, BREAKS)))
+        heads, text = self.blocks()
+        self.assertEqual(len(heads), 1, text)
+        self.assertIn("  - intent: done '$= dv.el('b', 1)'", text)
+        self.assertIn("  - files: ", text)
+        for bad in ("<%", "<img", "![", "%%", "<!--", "sid:`victim00`"):
+            self.assertNotIn(bad, text)
+        self.assertIsNone(re.search(r"`\s*\$?=", text), "a code span Dataview would run")
+        self.assertEqual(len([l for l in text.splitlines() if l.startswith("#")]), 2)
+
+    def test_claudes_recap_never_loads_codex_code(self):
+        """In a fresh Python, Claude's Stop hook: neither _codex_rollout.py nor _agents.py is imported (a
+        fault in them cannot reach Claude's users). Control: --agent codex with Codex chosen and open."""
+        self.choose(["claude", "codex"], opened=False)
+        tx = self.root / "claude.jsonl"
+        tx.write_text(json.dumps({"type": "assistant", "timestamp": "2026-10-14T10:00:00Z", "message": {"content": [
+            {"type": "tool_use", "name": "Read", "input": {}}] * 3}}) + "\n", encoding="utf-8")
+        for agent, sid, path, loaded in (("claude", "a1b2c3d4-fresh", tx, "False False"),
+                                         ("codex", self.A, self.rollout(self.A), "True True")):
+            with self.subTest(agent):
+                p = subprocess.run([sys.executable, "-I", "-X", "utf8", "-c", FRESH, str(HOOKS),
+                                    str(HOOKS / "session-recap.py"), agent, sid, str(path)],
+                                   env=dict(os.environ, TMPDIR=str(self.root), TEMP=str(self.root), TMP=str(self.root)),
+                                   capture_output=True, timeout=60)
+                self.assertIn("LOADED " + loaded, p.stdout.decode("utf-8", "replace"),
+                              p.stderr.decode("utf-8", "replace")[-800:])
+                journal = self.home / "Documents" / "Brain" / "Journal" / f"{self.day}.md"
+                self.assertIn("sid:`%s`" % rc.shown_id(sid, agent), journal.read_text(encoding="utf-8"))
+
+
+def rc_sentinel():
+    import _codex_rollout
+    return _codex_rollout.SENTINEL + "\nActivity of the day"
 
 
 if __name__ == "__main__":

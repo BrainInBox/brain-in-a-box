@@ -1,7 +1,9 @@
 """The launcher without tools (engine/hooks/_headless_codex.py) with the real Codex CLI, in ChatGPT
 mode, against mock_openai.py: fake tokens, no account, no secret, nothing leaves 127.0.0.1
 (docs/proposals/codex.md, §5.2); then the reflection's and the review's own questions, through the
-choice of engine (_headless.py), with Codex chosen. The job codex-mock of test.yml runs it on macOS, Linux and
+choice of engine (_headless.py), with Codex chosen; then a session the real Codex wrote, read as the
+reflection and Codex's Stop hook read it (_codex_rollout.py); then the kit's hooks, run by the real
+Codex from a hooks.json (--agent codex). The job codex-mock of test.yml runs it on macOS, Linux and
 Windows once the official installer has put the pinned Codex in place. It writes Codex's system
 settings (/etc/codex, %ProgramData%\\OpenAI\\Codex): on a CI runner only. Every scenario is
 required: a codex missing, or one that cannot run, is a failure.
@@ -11,6 +13,7 @@ required: a codex missing, or one that cannot run, is a failure.
 import importlib.util
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -28,6 +31,7 @@ for _stream in (sys.stdout, sys.stderr):
     _stream.reconfigure(encoding="utf-8", errors="replace")
 
 import _agents  # noqa: E402
+import _codex_rollout as rollout  # noqa: E402
 import _controle_judge as judge  # noqa: E402
 import _headless_codex as codex  # noqa: E402
 import mock_openai  # noqa: E402
@@ -94,15 +98,16 @@ class Bench:
         return codex.run(PROMPT, SCHEMA, SYSTEM, codex_home=self.home, timeout=180, command=self.command,
                          work_root=self.root, **kw)
 
-    def raw_exec(self, cwd, prompt=b"Reply."):
-        """codex exec as anyone would run it, without the launcher: the control of a trap."""
-        argv = [self.codex[0], "exec", "--json", "--skip-git-repo-check", "--ephemeral",
+    def raw_exec(self, cwd, prompt=b"Reply.", home=None, ephemeral=True, args=(), env=None):
+        """codex exec as anyone would run it, without the launcher: the control of a trap, or a
+        session of the user's (ephemeral=False: Codex keeps it in home/sessions)."""
+        argv = [self.codex[0], "exec", "--json", "--skip-git-repo-check"] + (["--ephemeral"] if ephemeral else []) + [
                 "-c", 'cli_auth_credentials_store="file"', "-c", "features.enable_request_compression=false",
                 "-c", "openai_base_url=" + json.dumps(self.mock.root + "/v1"),
-                "-c", "chatgpt_base_url=" + json.dumps(self.mock.root + "/backend-api/"), "-"]
-        env = {k: v for k, v in os.environ.items() if k not in CANARIES and k != "RUST_LOG"}
-        env["CODEX_HOME"] = self.home
-        return subprocess.run(argv, input=prompt, cwd=cwd, env=env, capture_output=True, timeout=180)
+                "-c", "chatgpt_base_url=" + json.dumps(self.mock.root + "/backend-api/")] + list(args) + ["-"]
+        e = {k: v for k, v in os.environ.items() if k not in CANARIES and k != "RUST_LOG"}
+        e.update(env or {}, CODEX_HOME=home or self.home)
+        return subprocess.run(argv, input=prompt, cwd=cwd, env=e, capture_output=True, timeout=180)
 
 
 B = None
@@ -355,6 +360,186 @@ def the_reflection_and_the_review_ask_codex_through_the_choice():
         B.mock.answer = saved
 
 
+def load_hook(name, module):
+    spec = importlib.util.spec_from_file_location(module, os.path.join(ENGINE, "hooks", name))
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
+def a_real_codex_session_is_read():
+    """A session the real Codex keeps (a user's codex exec, not --ephemeral, a global AGENTS.md), read by
+    _codex_rollout.py as the reflection (codex_sessions) and Codex's Stop hook (parse_rollout) read it:
+    its whole id, what was typed, the answers, the tool called, and nothing Codex added for the model.
+    A session holding the reflection's own prompt is left out."""
+    dr = load_hook("daily-reflection.py", "daily_reflection")
+    rc = load_hook("session-recap.py", "session_recap")
+    home = os.path.join(B.root, "session-home")
+    os.makedirs(home)
+    shutil.copy(os.path.join(B.home, "auth.json"), home)
+    with open(os.path.join(home, "AGENTS.md"), "w", encoding="utf-8") as f:
+        f.write("SESSION-AGENTS-MARKER: global instructions.\n")
+    work = os.path.realpath(tempfile.mkdtemp(dir=B.root))
+    prompt = "SESSION-PROMPT-MARKER é à 漢字 🙂"
+    reply = [mock_openai.message("SESSION-COMMENTARY-MARKER", "msg_s1"),
+             mock_openai.fn_call("brain_no_such_tool", {"path": "SESSION-TOOL-MARKER"}, "call_s1")]
+    B.mock.reset([reply])
+    p = B.raw_exec(work, prompt.encode("utf-8"), home=home, ephemeral=False)
+    started = [json.loads(l) for l in p.stdout.decode("utf-8", "replace").splitlines() if '"thread.started"' in l]
+    thread = started[0].get("thread_id") if started else None
+    check(p.returncode == 0 and thread, "a session of the user's: codex exec ran (%s, %s)"
+          % (p.returncode, p.stderr.decode("utf-8", "replace")[-300:]))
+    check("SESSION-AGENTS-MARKER" in json.dumps(B.mock.reqs), "its AGENTS.md reached the model")
+    paths, packed = rollout.recent(home, 0)
+    check(len(paths) == 1 and packed == [], "Codex kept one rollout: %s %s" % (paths, packed))
+    s = rollout.read(paths[0]) if paths else None
+    if s is None:
+        check(False, "the rollout is read")
+        return
+    check(s.id == thread and len(s.id) == 36, "its whole id, the thread's: %s %s" % (s.id, thread))
+    same = os.path.normcase(os.path.basename(s.cwd or "")) == os.path.normcase(os.path.basename(work))
+    check(s.source == "exec" and same, "its source and folder: %s %s" % (s.source, s.cwd))
+    said = [(i.kind, i.text) for i in s.items if i.kind != "tool"]
+    check(said == [("user", prompt), ("assistant", "SESSION-COMMENTARY-MARKER"), ("assistant", B.mock.answer)],
+          "what was typed and answered, nothing Codex added: %s" % said)
+    tools = [(i.name, i.text) for i in s.items if i.kind == "tool"]
+    check(tools == [("brain_no_such_tool", "SESSION-TOOL-MARKER")], "the tool called: %s" % tools)
+    dump = json.dumps([i.text for i in s.items], ensure_ascii=False)
+    for added in ("SESSION-AGENTS-MARKER", "AGENTS.md", "<environment_context>", "unsupported call"):
+        check(added not in dump, "%s is not read" % added)
+    with open(paths[0], encoding="utf-8") as f:
+        msgs = [r["payload"] for r in map(json.loads, f) if r.get("type") == "response_item"
+                and r["payload"].get("type") == "message" and r["payload"].get("role") == "user"]
+    marks = [((m.get("internal_chat_message_metadata_passthrough") or {}).get("content_item_kinds"),
+              [c.get("text", "")[:40] for c in m.get("content", [])]) for m in msgs]
+    agents_md = [m for m in marks if any("SESSION-AGENTS-MARKER" in t or t.startswith("# AGENTS.md") for t in m[1])]
+    check(len(agents_md) == 1 and agents_md[0][0] and not any(k.startswith("user.") for k in agents_md[0][0])
+          and agents_md[0][1][0].lower().startswith("# agents.md instructions"),
+          "the global AGENTS.md: marked as Codex's, its text as Codex's: %s" % marks)
+    B.mock.reset([reply])
+    B.raw_exec(work, (dr.SENTINEL + "\nSELF-RUN-MARKER").encode("utf-8"), home=home, ephemeral=False)
+    found, packed = dr.codex_sessions(time.strftime("%Y-%m-%d"), home)
+    labels = [label for label, _, _ in found]
+    check(labels == ["codex %s · exec · cwd=%s" % (thread, s.cwd)],
+          "the reflection reads it, says it was a codex exec, the kit's own left out: %s" % labels)
+    text = found[0][1] if found else ""
+    check(" user: " + prompt in text and "   → brain_no_such_tool SESSION-TOOL-MARKER" in text
+          and "SELF-RUN" not in text and "SESSION-AGENTS-MARKER" not in text, "the reflection's text of it")
+    stats = rc.parse_rollout(paths[0])
+    check((stats["first_prompt"], dict(stats["tools"]), stats["files"]) ==
+          (prompt, {"brain_no_such_tool": 1}, {"SESSION-TOOL-MARKER"}), "Codex's Stop hook reads it: %s" % stats)
+
+
+HOOK_WRAP = r'''import json, os, subprocess, sys
+hook, facts, typed = sys.argv[1:4]
+payload = json.loads(sys.stdin.buffer.read().decode("utf-8"))
+path, source = payload.get("transcript_path"), None
+if isinstance(path, str) and os.path.isfile(path):
+    with open(path, "rb") as f:
+        try:
+            source = json.loads(f.readline())["payload"]["source"]
+        except Exception:
+            source = "unreadable"
+with open(facts, "a", encoding="utf-8") as f:
+    f.write(json.dumps({"hook": os.path.basename(hook), "event": payload.get("hook_event_name"),
+                        "file": isinstance(path, str) and os.path.isfile(path), "source": source}) + "\n")
+if typed != "-":
+    payload["transcript_path"] = typed
+r = subprocess.run([sys.executable, hook, "--agent", "codex"], input=json.dumps(payload).encode("utf-8"),
+                   capture_output=True)
+sys.stdout.buffer.write(r.stdout)
+sys.stderr.buffer.write(r.stderr)
+sys.exit(r.returncode)
+'''
+
+
+def codex_runs_the_kits_hooks():
+    """The kit's hooks (a copy where Codex is open), run by the real Codex from a hooks.json, in a user's
+    codex exec session (trust bypassed: approving them is phase 6); on Windows in the PowerShell form of
+    the plan (& "python.exe" "hook"). A test wrapper notes what each hook was given, then hands it on.
+    As it is, an exec run: from its first hook, Codex has written the session file and it says "exec",
+    so the hooks say and write nothing (but the sign that they ran). Handed on as if typed in Codex's
+    terminal: their answers reach the model, so Codex took them. The launcher's own call runs none."""
+    import codex_captures as cap
+    hooks, home, chome = (os.path.join(B.root, n) for n in ("hooks-open", "hooks-home", "hooks-codex-home"))
+    state = os.path.join(home, ".brain-in-a-box", "controle")
+    for d in (hooks, state, chome):
+        os.makedirs(d)
+    for name in os.listdir(os.path.join(ENGINE, "hooks")):
+        if name.endswith(".py"):
+            shutil.copy(os.path.join(ENGINE, "hooks", name), hooks)
+    gate = os.path.join(hooks, "_agents.py")
+    with open(gate, encoding="utf-8") as f:
+        text = f.read()
+    check(text.count("CODEX_OUVERT = frozenset()\n") == 1, "the gate's line, opened in the copy")
+    with open(gate, "w", encoding="utf-8") as f:
+        f.write(text.replace("CODEX_OUVERT = frozenset()\n", 'CODEX_OUVERT = frozenset({"darwin", "linux", "windows"})\n'))
+    agents = os.path.join(home, ".brain-in-a-box", "agents.json")
+    with open(agents, "w", encoding="utf-8") as f:
+        json.dump({"version": 1, "agents": ["claude", "codex"], "prefere": "claude", "codex_home": chome}, f)
+    os.chmod(agents, 0o600)
+    with open(os.path.join(state, "etat.json"), "w", encoding="utf-8") as f:
+        json.dump({"run": "20261014-0407", "mode": "nuit", "dernier_succes": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                   "corrections": 2, "a_voir": 0, "secrets_a_changer": 1, "rapport": "Profile/controle.md",
+                   "rapport_reecrit": True, "alertes": []}, f)
+    shutil.copy(os.path.join(B.home, "auth.json"), chome)
+    wrap, facts, typed = (os.path.join(B.root, n) for n in ("hookwrap.py", "hook-facts.jsonl", "typed.jsonl"))
+    with open(wrap, "w", encoding="utf-8") as f:
+        f.write(HOOK_WRAP)
+    shutil.copy(str(cap.P0 / cap.TUI), typed)   # a session of Codex's terminal (source "cli"), step 0
+    names = ["controle-sessionstart.py", "correction-detector.py", "session-logger.py"]
+
+    def handler(hook, given):
+        argv = [sys.executable, wrap, os.path.join(hooks, hook + ".py"), facts, given]
+        h = {"type": "command", "command": " ".join(shlex.quote(a) for a in argv), "timeout": 30}
+        if WINDOWS:
+            h["commandWindows"] = "& " + " ".join('"%s"' % a for a in argv)
+        return {"hooks": [h]}
+
+    def session(given):
+        """A user's codex exec, a correction typed: (what each hook was given, what reached the model)."""
+        with open(os.path.join(chome, "hooks.json"), "w", encoding="utf-8") as f:
+            json.dump({"hooks": {"SessionStart": [handler("controle-sessionstart", given)],
+                                 "UserPromptSubmit": [handler("correction-detector", given)],
+                                 "Stop": [handler("session-logger", "-")]}}, f, indent=1)
+        for p in (facts, os.path.join(state, "shown.json")):
+            if os.path.exists(p):
+                os.remove(p)
+        B.mock.reset()
+        p = B.raw_exec(os.path.realpath(tempfile.mkdtemp(dir=B.root)), b"no, actually do it the other way",
+                       home=chome, ephemeral=False, args=["--dangerously-bypass-hook-trust"],
+                       env={"HOME": home, "USERPROFILE": home})
+        check(p.returncode == 0, "codex exec with the kit's hooks ran (%s, %s)"
+              % (p.returncode, p.stderr.decode("utf-8", "replace")[-300:]))
+        seen = []
+        if os.path.exists(facts):
+            with open(facts, encoding="utf-8") as f:
+                seen = [json.loads(l) for l in f]
+        check(sorted(r["hook"] for r in seen) == names, "Codex ran the three hooks once each: %s" % seen)
+        return seen, json.dumps(B.mock.reqs, ensure_ascii=False)
+
+    seen, dump = session("-")
+    print("facts: what each hook was given by Codex 0.162.1 in a codex exec run:", seen)
+    check(len(seen) == 3 and all(r["file"] is True and r["source"] == "exec" for r in seen),
+          "from the first hook (SessionStart), Codex has written the session file and it says exec")
+    check("CORRECTION DETECTED" not in dump and "Contrôle de cette nuit" not in dump,
+          "an exec run: no reminder, no night check's line reach the model")
+    check(not os.path.exists(os.path.join(home, ".claude", "logs", "sessions.log")), "an exec run: nothing logged")
+    check(sorted(_agents.vus(home)) == ["controle-sessionstart", "correction-detector", "session-logger"],
+          "the sign that Codex runs each hook: %s" % _agents.vus(home))
+    seen, dump = session(typed)
+    check("CORRECTION DETECTED" in dump, "as if typed in the terminal: correction-detector's reminder reached "
+                                         "the model, Codex took its answer")
+    check("Contrôle de cette nuit : 2 corrections faites" in dump,
+          "as if typed in the terminal: the night check's line reached the model, Codex took its answer, "
+          "systemMessage included")
+    B.mock.reset()
+    os.remove(facts)
+    a = codex.run(PROMPT, SCHEMA, SYSTEM, codex_home=chome, timeout=180, command=B.command, work_root=B.root)
+    check(a.output == {"verdict": "ok", "n": 7} and not os.path.exists(facts),
+          "the launcher's own call, with that hooks.json in its CODEX_HOME, runs none of them")
+
+
 def main():
     global B
     if os.environ.get("GITHUB_ACTIONS") != "true":
@@ -367,7 +552,8 @@ def main():
         for fn in (answers_with_everything_locked, forced_tool_calls_are_refused, an_unknown_feature_pauses_codex,
                    the_user_s_mcp_server_never_starts, a_system_config_is_neutralised,
                    a_system_otel_exporter_gets_nothing, requirements_pause_codex,
-                   an_api_key_login_is_refused, the_reflection_and_the_review_ask_codex_through_the_choice):
+                   an_api_key_login_is_refused, the_reflection_and_the_review_ask_codex_through_the_choice,
+                   a_real_codex_session_is_read, codex_runs_the_kits_hooks):
             scenario(fn)
     finally:
         B.mock.close()

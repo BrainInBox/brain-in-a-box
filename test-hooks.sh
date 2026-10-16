@@ -153,6 +153,39 @@ mkdir -p "$LD/recap-x"
 echo "{\"session_id\":\"x/../../../escaped\",\"cwd\":\"/Users/builder/proj\",\"transcript_path\":\"$TX\"}" | HOME="$H" python3 "$HB/session-recap.py" 2>/dev/null
 [ ! -e "$H/escaped.lock" ] && ! grep -q 'sid:`x/' "$J" && grep -q "session_id is not a plain id" "$H/.claude/logs/session-recap-errors.log" \
   && ok "a session id that is not a plain id is refused (no path out of the lock folder, nothing in the journal)" || no "odd session id used"
+# Codex's Stop hook (--agent codex), on a session made from step 0's real capture with 3 tool calls,
+# typed in Codex's terminal (source "cli"): silent while agents.json does not list Codex, and while
+# Codex is closed (a file that lists it is not trusted). Control: in a copy of the hooks where Codex is
+# open, the same call writes its block.
+CSID="01a14053-0452-7e81-b849-c24c767660d7"; CXR="$H/codex-rollout.jsonl"; CJ="$J.before-codex"
+python3 - "$REPO/engine/tests" "$DAY" "$CSID" "$CXR" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+import codex_captures as c
+open(sys.argv[4], "w", encoding="utf-8", newline="\n").write(
+    c.moved(c.LOCK, sys.argv[2], sid=sys.argv[3], tools=["ssh deploy@example.org"], source="cli"))
+PY
+cp "$J" "$CJ"
+codex_stop() { echo "{\"session_id\":\"$CSID\",\"cwd\":\"/Users/builder/proj\",\"transcript_path\":\"$CXR\"}" \
+  | HOME="$1" python3 "$2/session-recap.py" --agent codex 2>/dev/null; }
+codex_stop "$H" "$HB"
+mkdir -p "$H/.brain-in-a-box"
+printf '{"version":1,"agents":["claude","codex"],"prefere":"claude","codex_home":"%s"}\n' "$H/.codex" > "$H/.brain-in-a-box/agents.json"
+chmod 600 "$H/.brain-in-a-box/agents.json"
+codex_stop "$H" "$HB"
+cmp -s "$J" "$CJ" && [ ! -e "$LD/recap-$CSID.lock" ] \
+  && ok "Codex's Stop hook: silent without Codex in agents.json, and while Codex is closed (no lock, journal unchanged)" \
+  || no "Codex's Stop hook wrote while Codex is not chosen or closed"
+CXH="$H/codex-open"; mkdir -p "$CXH/hooks" "$CXH/Documents/Brain/Journal" "$CXH/.brain-in-a-box"
+cp "$HB/session-recap.py" "$HB/_codex_rollout.py" "$HB/_vault_write.py" "$HB/_redact.py" "$HB/_agents.py" "$CXH/hooks/"
+sed -i.bak 's/^CODEX_OUVERT = frozenset()$/CODEX_OUVERT = frozenset({"darwin", "linux", "windows"})/' "$CXH/hooks/_agents.py"
+cp "$H/.brain-in-a-box/agents.json" "$CXH/.brain-in-a-box/"
+codex_stop "$CXH" "$CXH/hooks"
+grep -q "codex gpt-6.1-sol · sid:\`$CSID\`\$" "$CXH/Documents/Brain/Journal/$DAY.md" 2>/dev/null \
+  && grep -q "infra/cli: curl×2, ssh×1" "$CXH/Documents/Brain/Journal/$DAY.md" \
+  && ok "control: Codex open and chosen, its Stop hook writes the session's block under its whole id" \
+  || no "control: Codex's Stop hook wrote nothing even with Codex open and chosen"
+rm -rf "$H/.brain-in-a-box" "$CXH" "$CJ"
 
 echo "════ 5) daily-reflection (claude faked: no tool, JSON answer, the program writes) ════"
 # The fake claude (engine/tests/fake_claude.py) replays the real stream-json
@@ -389,6 +422,75 @@ out=$(cs); [ -z "$out" ] && ok "said once: a second session says nothing" || no 
 etat 20261015-0402
 [ -z "$(cs startup sdk-cli)" ] && [ -z "$(cs resume)" ] && [ -n "$(cs)" ] \
   && ok "silent under claude -p (sdk-cli) and on resume; the line waits for the next real start" || no "spoke in a headless or resumed session"
+
+echo "════ 7ter) Codex's hooks (--agent codex): the guard, Codex's schema, the sign of life ════"
+# What Codex 0.162.1 gave its hooks in its terminal (step 0, Linux), a correction typed. The installed
+# hooks: Codex is closed on every system, so each one says and writes nothing, even with agents.json
+# listing Codex. A copy where Codex is open: answers Codex's own schema takes, the session logged as
+# Codex's, the sign that Codex runs the hooks; nothing for a codex exec run's session, a session Codex
+# keeps no file of (--ephemeral), nor the kit's own runs (BRAIN_HEADLESS=1).
+XH="$H/codex-hooks"; XO="$XH/open"; XHOME="$XH/home"; mkdir -p "$XO" "$XHOME/.brain-in-a-box/controle" "$XH/tmp"
+cp "$HB"/*.py "$XO/"
+sed -i.bak 's/^CODEX_OUVERT = frozenset()$/CODEX_OUVERT = frozenset({"darwin", "linux", "windows"})/' "$XO/_agents.py"
+printf '{"version":1,"agents":["claude","codex"],"prefere":"claude","codex_home":"%s"}\n' "$XHOME/.codex" > "$XHOME/.brain-in-a-box/agents.json"
+chmod 600 "$XHOME/.brain-in-a-box/agents.json"
+python3 - "$REPO/engine/tests" "$XH" <<'PY'
+import json, shutil, sys
+sys.path.insert(0, sys.argv[1])
+import codex_captures as c
+xh = sys.argv[2]
+shutil.copy(str(c.P0 / "ubuntu-0.162.1" / "rollout-tui-apikey-linux.jsonl"), xh + "/cli.jsonl")
+shutil.copy(str(c.P0 / c.TRUSTED), xh + "/exec.jsonl")
+for _, rec in c.hook_payloads("ubuntu-0.162.1/hook-payloads-tui-apikey-linux.jsonl"):
+    p = dict(rec["stdin"], prompt="no, actually do it the other way") if rec["event"] == "UserPromptSubmit" else rec["stdin"]
+    for tag, tp in (("cli", xh + "/cli.jsonl"), ("exec", xh + "/exec.jsonl"), ("none", None)):
+        open("%s/%s-%s.json" % (xh, rec["event"], tag), "w", encoding="utf-8").write(json.dumps(dict(p, transcript_path=tp)))
+PY
+cxetat(){ rm -f "$XHOME/.brain-in-a-box/controle/shown.json"
+  printf '{"run": "20261014-0407", "mode": "nuit", "dernier_succes": "%s", "corrections": 3, "a_voir": 0, "secrets_a_changer": 0,
+"rapport": "Profile/controle.md", "rapport_reecrit": true, "alertes": []}\n' "$(date +%Y-%m-%dT%H:%M:%S)" > "$XHOME/.brain-in-a-box/controle/etat.json"; }
+cx(){  # cx <hooks folder> <hook> <event>-<cli|exec|none> [VAR=value...]: the hook as Codex runs it; its answer on stdout
+  local d="$1" hook="$2" p="$3"; shift 3; cxetat
+  env -u CLAUDE_CODE_ENTRYPOINT -u BRAIN_HEADLESS -u CLAUDE_PROJECT_DIR -u GBRAIN_HOME -u BRAIN_CONTROLE_DIR \
+    HOME="$XHOME" TMPDIR="$XH/tmp" "$@" python3 "$d/$hook.py" --agent codex < "$XH/$p.json"
+}
+cxall(){  # cxall <hooks folder> <cli|exec|none> [VAR=value...]: each hook of the three events; what they answered
+  local d="$1" t="$2" h; shift 2
+  for h in controle-sessionstart gbrain-update-check; do cx "$d" "$h" "SessionStart-$t" "$@"; done
+  cx "$d" correction-detector "UserPromptSubmit-$t" "$@"
+  for h in session-logger session-indexer session-recap; do cx "$d" "$h" "Stop-$t" "$@"; done
+}
+cxlog(){ cat "$XHOME/.claude/logs/sessions.log" "$XHOME/.claude/logs/sessions-$DAY.jsonl" 2>/dev/null; }
+cxvus(){ python3 -c 'import json, sys; print(" ".join(sorted(json.load(open(sys.argv[1], encoding="utf-8"))["hooks"])))' \
+  "$XHOME/.brain-in-a-box/codex-hooks-vus.json" 2>/dev/null; }
+codex_takes(){  # codex_takes <event> <text>: the answer on stdin passes Codex's own schema and carries the text
+  python3 -c 'import json, sys; sys.path.insert(0, sys.argv[1]); import codex_captures as c
+d = json.loads(sys.stdin.read())
+sys.exit(1 if c.output_errors(sys.argv[2], d) or sys.argv[3] not in d["hookSpecificOutput"]["additionalContext"] else 0)' \
+    "$REPO/engine/tests" "$@"
+}
+out=$(cxall "$HB" cli 2>&1)
+[ -z "$out" ] && [ -z "$(cxlog)" ] && [ -z "$(cxvus)" ] \
+  && ok "Codex closed on this system: each hook run with --agent codex says and writes nothing, agents.json listing Codex" \
+  || no "a hook spoke or wrote for Codex while it is closed: $out"
+cx "$XO" correction-detector UserPromptSubmit-cli | codex_takes UserPromptSubmit "CORRECTION DETECTED" \
+  && ok "Codex open: a correction typed in Codex's terminal, its reminder as Codex's schema takes it" \
+  || no "correction-detector's answer to Codex: missing, or refused by Codex's schema"
+cx "$XO" controle-sessionstart SessionStart-cli | codex_takes SessionStart "Contrôle de cette nuit : 3 corrections faites" \
+  && ok "Codex open: the night check's line at Codex's start, as Codex's schema takes it" \
+  || no "controle-sessionstart's answer to Codex: missing, or refused by Codex's schema"
+out=$(cx "$XO" gbrain-update-check SessionStart-cli; for h in session-logger session-indexer session-recap; do cx "$XO" "$h" Stop-cli; done)
+[ -z "$out" ] && [ "$(cxlog | grep -c '"agent": "codex"')" = 2 ] \
+  && [ "$(cxvus)" = "controle-sessionstart correction-detector gbrain-update-check session-indexer session-logger session-recap" ] \
+  && ok "Codex open: the session logged as Codex's, and the sign that Codex runs each hook" \
+  || no "Codex's session not logged, or no sign of life: $out / $(cxlog) / $(cxvus)"
+rm -rf "$XHOME/.claude"
+bad=""
+for t in exec none; do out=$(cxall "$XO" "$t" 2>&1); [ -z "$out" ] || bad="$bad $t:$out"; done
+out=$(cxall "$XO" cli BRAIN_HEADLESS=1 2>&1); [ -z "$out" ] || bad="$bad headless:$out"
+[ -z "$bad" ] && [ -z "$(cxlog)" ] && [ ! -e "$XHOME/Documents" ] \
+  && ok "Codex open: nothing for a codex exec run's session, a session without a file (--ephemeral), the kit's own runs" \
+  || no "a hook acted on a session not typed in Codex's terminal:$bad $(cxlog)"
 
 echo "════ 8) vault-skeleton — YAML frontmatters parse cleanly ════"
 # Catches unquoted {{PLACEHOLDER}} that breaks Claude Code / gstack skill loaders.

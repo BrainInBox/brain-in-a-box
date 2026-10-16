@@ -4,6 +4,12 @@ Stop hook: extracts lightweight stats from a Claude session and appends them to
 ~/Documents/Brain/Journal/YYYY-MM-DD.md under the "📊 Claude Sessions" section.
 
 Idempotent (replaces the session's earlier block). No LLM call.
+
+With --agent codex (Codex's hooks.json), the session is Codex's: its rollout is read by
+_codex_rollout.py, only for a session _agents.codex_hook() lets through (silent otherwise), and
+its block, in the same section, names Codex and holds the whole session id: Codex's are UUIDv7,
+whose first 8 characters are the minute, so two sessions of one minute would share a block.
+Claude's blocks are as before.
 """
 import json, sys, os, re, time, tempfile
 from pathlib import Path
@@ -191,20 +197,50 @@ def short_files(files):
     return ", ".join(bases[:3]) + f" (+{len(bases)-3})"
 
 
-def render_entry(stats, session_id, cwd):
+def parse_rollout(path):
+    """parse_transcript's stats, from a Codex session (_codex_rollout.py). A session the kit
+    asked itself comes without items: no tool, so no block."""
+    import _codex_rollout as rollout   # here: Claude's recap never loads it
+    stats = parse_transcript(None)
+    s = rollout.read(path) if isinstance(path, str) and path else None
+    if s is None:
+        return stats
+    stats.update(first_ts=s.first_ts, last_ts=s.last_ts, model=s.model)
+    for it in s.items:
+        if it.kind == "user" and stats["first_prompt"] is None:
+            stats["first_prompt"] = it.text
+        elif it.kind == "tool":
+            stats["tools"][it.name] += 1
+            stats["files"].update(it.files)
+            if it.command:
+                stats["bash_commands"].append(it.command[:200])
+                for label, pat in SIGNAL_PATTERNS:
+                    if pat.search(it.command):
+                        stats["signals"][label] += 1
+    return stats
+
+
+def shown_id(session_id, agent):
+    """The id a block shows and is found again by: Claude's first 8 characters, as before; Codex's whole."""
+    return session_id if agent == "codex" else session_id[:8]
+
+
+def render_entry(stats, session_id, cwd, agent="claude"):
     end = fmt_time(stats["last_ts"])
     dur_str, resumed = fmt_duration(stats["first_ts"], stats["last_ts"])
     header_time = (f"~{end}" if resumed else f"{fmt_time(stats['first_ts'])}–{end}")
     # In a code span: no leading "=" or "$=" either, Dataview would run it as a query.
     cwd_s = clean_item(short_cwd(cwd), 200).lstrip("=$ ") or "?"
     model = clean_item((stats["model"] or "").replace("claude-", ""), 30)
+    if agent == "codex":
+        model = f"codex {model}".rstrip()
     top_tools = ", ".join(f"{clean_item(n, 60)} {c}" for n, c in stats["tools"].most_common(5))
     files_s = short_files(stats["files"])
     prompt = clean_item(stats["first_prompt"], 140)
     signals = ", ".join(f"{s}×{n}" for s, n in stats["signals"].most_common(5))
 
     lines = [
-        f"- **{header_time}** ({dur_str}) `{cwd_s}` {model} · sid:`{session_id[:8]}`",
+        f"- **{header_time}** ({dur_str}) `{cwd_s}` {model} · sid:`{shown_id(session_id, agent)}`",
         f"  - tools: {top_tools or '—'}",
     ]
     if prompt:
@@ -223,7 +259,7 @@ def _read(path):
         return None
 
 
-def upsert_session(journal, session_id, entry):
+def upsert_session(journal, session_id, entry, agent="claude"):
     """Writes this session's block into the day's journal, in place of its earlier one. True if changed.
     Atomically, and re-read just before: a write made meanwhile (another session's recap, the
     reflection, which writes the same file) is merged, not lost."""
@@ -231,7 +267,7 @@ def upsert_session(journal, session_id, entry):
         raise RuntimeError(f"{journal.name} is a link: left as it is")  # as the reflection does
     # Match existing block: header line + nested "  - ..." continuation lines
     pattern = re.compile(
-        rf"^- \*\*[^\n]+sid:`{re.escape(session_id[:8])}`[^\n]*\n(?:  - [^\n]+\n?)*",
+        rf"^- \*\*[^\n]+sid:`{re.escape(shown_id(session_id, agent))}`[^\n]*\n(?:  - [^\n]+\n?)*",
         re.MULTILINE,
     )
     for _ in range(3):
@@ -251,11 +287,22 @@ def upsert_session(journal, session_id, entry):
     raise RuntimeError(f"{journal.name} kept changing: recap not written")
 
 
+def agent_of(argv):
+    """The agent the hook runs for: Codex with exactly --agent codex (hooks.json); else Claude Code
+    (settings.json passes nothing), any other argument ignored as before."""
+    return "codex" if argv == ["--agent", "codex"] else "claude"
+
+
 def main():
+    agent = agent_of(sys.argv[1:])
     try:
         payload = json.load(sys.stdin)
     except Exception:
         sys.exit(0)
+    if agent == "codex":
+        import _agents
+        if not _agents.codex_hook("session-recap", payload):
+            sys.exit(0)   # Codex not chosen, the kit's own run, a session not typed: nothing read, nothing written
 
     if clean_item is None:
         raise RuntimeError("_vault_write.py or _redact.py not found next to session-recap.py: nothing written")
@@ -285,14 +332,14 @@ def main():
     if cwd.startswith(tempfile.gettempdir()) or cwd.startswith("/tmp") or cwd.startswith("/private/tmp"):
         sys.exit(0)
 
-    stats = parse_transcript(transcript_path)
+    stats = parse_rollout(transcript_path) if agent == "codex" else parse_transcript(transcript_path)
     # Skip sessions < 3 tool calls (probablement triviales)
     if sum(stats["tools"].values()) < 3:
         sys.exit(0)
 
     day = time.strftime("%Y-%m-%d")
-    entry = render_entry(stats, sid, cwd)
-    upsert_session(JOURNAL_DIR / f"{day}.md", sid, entry)
+    entry = render_entry(stats, sid, cwd, agent)
+    upsert_session(JOURNAL_DIR / f"{day}.md", sid, entry, agent)
     sys.exit(0)
 
 
