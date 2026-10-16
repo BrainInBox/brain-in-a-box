@@ -784,6 +784,11 @@ def install_ps1_wires_codex():
     print("install.ps1's Codex lines:", "\n".join(l for l in out.splitlines() if "odex" in l))
     check(p.returncode == 0 and "brain-in-a-box est installe" in out, "install.ps1 -Agents codex ran to the end (%s): %s"
           % (p.returncode, out[-800:]))
+    log = os.path.join(home, ".brain-in-a-box", "install.log")
+    if os.path.isfile(log):
+        with open(log, encoding="utf-8", errors="replace") as f:
+            text = f.read()
+        print("install.log, from Codex's installer on:", text[text.rfind("> codex :"):][:6000] if "> codex :" in text else "(not run)")
     codex_bin = os.path.join(lad, "Programs", "OpenAI", "Codex", "bin", "codex.exe")
     v = subprocess.run([codex_bin, "--version"], capture_output=True, text=True) if os.path.isfile(codex_bin) else None
     check(v is not None and v.stdout.strip() == "codex-cli 0.162.1" and "Codex 0.162.1 installe" in out,

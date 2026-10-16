@@ -1070,7 +1070,10 @@ jobs:
           $out = Get-Content "$env:RUNNER_TEMP\install-codex.txt" -Raw
           if ($out -notmatch 'agents IA : Claude Code et Codex \(prefere : Claude Code\), note dans') { throw 'the choice was not said' }
           $cb = "$env:LOCALAPPDATA\Programs\OpenAI\Codex\bin\codex.exe"
-          if (-not (Test-Path $cb) -or (& $cb --version) -ne 'codex-cli 0.162.1' -or $out -notmatch 'Codex 0\.162\.1 installe') { throw 'Codex did not come from its pinned installer' }
+          if (-not (Test-Path $cb) -or (& $cb --version) -ne 'codex-cli 0.162.1' -or $out -notmatch 'Codex 0\.162\.1 installe') {
+            $log = [IO.File]::ReadAllText("$H\.brain-in-a-box\install.log"); $log.Substring([Math]::Max(0, $log.LastIndexOf('> codex :')))
+            throw 'Codex did not come from its pinned installer'
+          }
           if ($out -notmatch 'le kit a approuve ses 6 hooks pour toi' -or $out -notmatch 'avec /hooks dans Codex') { throw 'the approval was not said' }
           $j = Get-Content "$C\hooks.json" -Raw | ConvertFrom-Json
           if ($j.hooks.Stop[0].hooks[0].command -ne 'mine.cmd') { throw "the user's hook was lost" }
