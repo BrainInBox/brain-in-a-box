@@ -3,9 +3,10 @@ mode, against mock_openai.py: fake tokens, no account, no secret, nothing leaves
 (docs/proposals/codex.md, §5.2); then the reflection's and the review's own questions, through the
 choice of engine (_headless.py), with Codex chosen; then a session the real Codex wrote, read as the
 reflection and Codex's Stop hook read it (_codex_rollout.py); then the kit's hooks, run by the real
-Codex from a hooks.json (--agent codex); then, on macOS and Linux, install.sh with Codex chosen, in a
-home of its own: Codex from its pinned installer, and the real Codex running the hooks install.sh wired
-and approved. The job codex-mock of test.yml runs it on macOS, Linux and Windows once the official
+Codex from a hooks.json (--agent codex); then install.sh (macOS, Linux) or install.ps1 (Windows) with
+Codex chosen: Codex from its pinned installer, and the real Codex running the hooks the installer wired
+and approved. On Windows, a %ProgramData%\\OpenAI\\Codex other accounts could change pauses Codex.
+The job codex-mock of test.yml runs it on macOS, Linux and Windows once the official
 installer has put the pinned Codex in place. It writes Codex's system
 settings (/etc/codex, %ProgramData%\\OpenAI\\Codex): on a CI runner only. Every scenario is
 required: a codex missing, or one that cannot run, is a failure.
@@ -15,6 +16,7 @@ required: a codex missing, or one that cannot run, is a failure.
 import importlib.util
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -214,15 +216,26 @@ def the_user_s_mcp_server_never_starts():
 
 def system_dir():
     if WINDOWS:
-        return os.path.join(os.environ.get("ProgramData") or r"C:\ProgramData", "OpenAI", "Codex")
+        return os.path.join(codex.known_program_data(), "OpenAI", "Codex")
     return "/etc/codex"
+
+
+def lock_windows(path):
+    """As an administrator locks it: SYSTEM and the Administrators in full, the users reading, the
+    Administrators its owner. What the launcher requires of %ProgramData%\\OpenAI\\Codex."""
+    for args in (["/reset"], ["/inheritance:r", "/grant:r", "*S-1-5-18:(OI)(CI)F", "*S-1-5-32-544:(OI)(CI)F",
+                              "*S-1-5-32-545:(OI)(CI)RX"], ["/setowner", "*S-1-5-32-544"]):
+        subprocess.run(["icacls", path] + args, check=True, capture_output=True)
 
 
 def admin_write(path, text):
     if WINDOWS:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
+        for d in (os.path.dirname(os.path.dirname(path)), os.path.dirname(path)):
+            os.makedirs(d, exist_ok=True)
+            lock_windows(d)
         with open(path, "w", encoding="utf-8") as f:
             f.write(text)
+        subprocess.run(["icacls", path, "/setowner", "*S-1-5-32-544"], check=True, capture_output=True)
         return
     subprocess.run(["sudo", "-n", "mkdir", "-p", os.path.dirname(path)], check=True)
     subprocess.run(["sudo", "-n", "tee", path], input=text.encode("utf-8"), stdout=subprocess.DEVNULL, check=True)
@@ -302,6 +315,50 @@ def requirements_pause_codex():
         check(e.kind == "unsupported" and e.reason == "managed", "requirements.toml pauses Codex: %s" % e)
     finally:
         admin_rm(path)
+
+
+def a_system_folder_other_accounts_could_change_pauses_codex():
+    """Windows: %ProgramData%\\OpenAI\\Codex as a folder made there is by default (ProgramData's users may
+    add files and folders to what is made in it), a config.toml in it: the launcher pauses Codex before
+    any probe, the folder found as Codex finds it, whatever %ProgramData% says (control: codex exec loads
+    that config.toml, through the known folder too). Locked as an administrator does it: answered."""
+    if not WINDOWS:
+        print("%ProgramData% is Windows's: /etc/codex is root's")
+        return
+    openai = os.path.dirname(system_dir())
+    shutil.rmtree(openai, ignore_errors=True)
+    os.makedirs(system_dir())
+    with open(os.path.join(system_dir(), "config.toml"), "w", encoding="utf-8") as f:
+        f.write('developer_instructions = "PLANTED-SYSTEM-MARKER"\n')
+    empty = tempfile.mkdtemp(dir=B.root)
+    try:
+        owner, aces = codex.security(openai)
+        print("facts: %s as made by the runner's administrator: owner %s, %s" % (openai, owner, aces))
+        for env in ({}, {"ProgramData": empty, "ALLUSERSPROFILE": empty}):
+            B.mock.reset()
+            with mock.patch.dict(os.environ, env):
+                try:
+                    codex.check(B.home, B.command, work_root=B.root)
+                    check(False, "a system folder other accounts could change pauses Codex (%s)" % env)
+                except HeadlessError as e:
+                    check(e.kind == "unsupported" and e.reason == "managed" and "another account" in str(e),
+                          "a system folder other accounts could change pauses Codex, %%ProgramData%% %s: %s"
+                          % ("as it is" if not env else "pointed elsewhere", e))
+            check(B.mock.reqs == [], "and nothing was sent")
+        B.mock.reset()
+        B.raw_exec(tempfile.mkdtemp(dir=B.root), env={"ProgramData": empty, "ALLUSERSPROFILE": empty})
+        check("PLANTED-SYSTEM-MARKER" in json.dumps(B.mock.reqs),
+              "control: codex exec loads that config.toml, found through the known folder, not %ProgramData%")
+        lock_windows(openai)
+        lock_windows(system_dir())
+        subprocess.run(["icacls", os.path.join(system_dir(), "config.toml"), "/setowner", "*S-1-5-32-544"], check=True,
+                       capture_output=True)
+        B.mock.reset()
+        a = B.run()
+        check(a.output == {"verdict": "ok", "n": 7} and "PLANTED-SYSTEM-MARKER" not in json.dumps(B.mock.reqs),
+              "locked as an administrator does it: answered, and its instructions are not sent")
+    finally:
+        shutil.rmtree(openai, ignore_errors=True)
 
 
 def an_api_key_login_is_refused():
@@ -665,6 +722,134 @@ def install_sh_wires_codex():
           "control: without host_executable, a ./gbq the session wrote would run without asking")
 
 
+FAKE_EXE = r"""class P {{ static int Main() {{ System.Console.WriteLine("{}"); return 0; }} }}"""
+
+
+def stand_in_exe(path, line):
+    """A program that prints one line: what install.ps1 asks Bun for, so it does not download one."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    src = path + ".cs"
+    with open(src, "w", encoding="ascii") as f:
+        f.write(FAKE_EXE.format(line))
+    csc = os.path.join(os.environ["WINDIR"], "Microsoft.NET", "Framework64", "v4.0.30319", "csc.exe")
+    subprocess.run([csc, "/nologo", "/out:" + path, src], check=True, capture_output=True)
+
+
+def install_ps1_wires_codex():
+    """install.ps1 -Agents codex, from a copy of the kit where Codex is open, with stand-ins for what would
+    install Bun, gbrain or Obsidian: Codex comes from its pinned installer, for real, into a LOCALAPPDATA and
+    a CODEX_HOME of its own. Then the real Codex, in the vault, runs the six hooks from the hooks.json
+    install.ps1 wrote, in the PowerShell form (& '<python.exe>' '<hook>' --agent codex), approved by the
+    tables it wrote in config.toml, no trust bypassed (control: without them, none runs), and reads the
+    kit's block in the global AGENTS.md, the vault's AGENTS.md and the skills in ~\\.agents\\skills. gbq's
+    rules allow the kit's gbq.cmd only (control: without host_executable, a gbq.cmd the session writes in
+    its folder would run without asking)."""
+    if not WINDOWS:
+        print("install.ps1 is Windows's: install.sh's scenario runs on macOS and Linux")
+        return
+    repo = os.path.dirname(ENGINE)
+    root = os.path.join(B.root, "install-ps1")
+    kit, lad, chome, vault, bun = (os.path.join(root, n) for n in ("kit", "localappdata", "codex-home", "Brain", "bun"))
+    os.makedirs(kit)
+    os.makedirs(chome)
+    for name in ("install.ps1", "engine", "skills", "vault-skeleton", "onboarding"):
+        (shutil.copytree if os.path.isdir(os.path.join(repo, name)) else shutil.copy)(
+            os.path.join(repo, name), os.path.join(kit, name))
+    gate = os.path.join(kit, "engine", "hooks", "_agents.py")
+    with open(gate, encoding="utf-8") as f:
+        text = f.read()
+    check(text.count("CODEX_OUVERT = frozenset()\n") == 1, "the gate's line, opened in the kit's copy")
+    with open(gate, "w", encoding="utf-8") as f:
+        f.write(text.replace("CODEX_OUVERT = frozenset()\n", 'CODEX_OUVERT = frozenset({"darwin", "linux", "windows"})\n'))
+    # Bun at the pinned version, a folder where gbrain goes that is not a clone (gbrain left out), Obsidian.
+    with open(os.path.join(repo, "engine", "gbrain-pin.json"), encoding="utf-8") as f:
+        stand_in_exe(os.path.join(bun, "bin", "bun.exe"), json.load(f)["bun"])
+    obsidian = os.path.join(lad, "Programs", "Obsidian", "Obsidian.exe")
+    os.makedirs(os.path.dirname(obsidian))
+    open(obsidian, "w").close()
+    home = os.path.expanduser("~")
+    gdev = os.path.join(home, "DEV", "gbrain")
+    if not os.path.isdir(gdev):
+        os.makedirs(gdev)
+        with open(os.path.join(gdev, "notes.txt"), "w") as f:
+            f.write("not gbrain\n")
+    # The runner's Codex (the workflow's) out of reach: install.ps1 has to install its own.
+    env = {k: v for k, v in os.environ.items() if k not in CANARIES and k not in ("VOYAGE_API_KEY", "RUST_LOG")}
+    env.update(LOCALAPPDATA=lad, CODEX_HOME=chome, BUN_INSTALL=bun, BRAIN_DIR=vault)
+    env["PATH"] = os.pathsep.join(d for d in env["PATH"].split(os.pathsep) if d and not os.path.exists(os.path.join(d, "codex.exe")))
+    p = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",
+                        os.path.join(kit, "install.ps1"), "-Agents", "codex"], stdin=subprocess.DEVNULL, env=env,
+                       capture_output=True, timeout=900)
+    out = p.stdout.decode("utf-8", "replace") + p.stderr.decode("utf-8", "replace")
+    print("install.ps1's Codex lines:", "\n".join(l for l in out.splitlines() if "odex" in l))
+    check(p.returncode == 0 and "brain-in-a-box est installe" in out, "install.ps1 -Agents codex ran to the end (%s): %s"
+          % (p.returncode, out[-800:]))
+    codex_bin = os.path.join(lad, "Programs", "OpenAI", "Codex", "bin", "codex.exe")
+    v = subprocess.run([codex_bin, "--version"], capture_output=True, text=True) if os.path.isfile(codex_bin) else None
+    check(v is not None and v.stdout.strip() == "codex-cli 0.162.1" and "Codex 0.162.1 installe" in out,
+          "Codex from its pinned installer, checked, in its own LOCALAPPDATA: %s" % (v and v.stdout.strip()))
+    if v is None:
+        return
+    check("le kit a approuve ses 6 hooks pour toi" in out and "avec /hooks dans Codex" in out, "the approval is said")
+    with open(os.path.join(chome, "hooks.json"), encoding="utf-8") as f:
+        wired = [h for groups in json.load(f)["hooks"].values() for g in groups for h in g["hooks"]]
+    check(len(wired) == 6 and all(h["commandWindows"] == h["command"] and h["commandWindows"].startswith("& '")
+                                  and h["commandWindows"].endswith("' --agent codex") for h in wired),
+          "six hooks in hooks.json, in PowerShell's form: %s" % [h.get("commandWindows") for h in wired][:2])
+    config = os.path.join(chome, "config.toml")
+    with open(config, encoding="utf-8") as f:
+        keys = [json.loads(k) for k in re.findall(r'^\[hooks\.state\.("(?:[^"\\]|\\.)*")\]$', f.read(), re.M)]
+    check(len(keys) == 6 and all(k.startswith(os.path.join(chome, "hooks.json") + ":") for k in keys), "six tables in config.toml: %s" % keys[:2])
+    shutil.copy(os.path.join(B.home, "auth.json"), chome)
+    vus = os.path.join(home, ".brain-in-a-box", _agents.VUS)
+
+    def session():
+        if os.path.exists(vus):
+            os.remove(vus)
+        B.mock.reset()
+        r = B.raw_exec(vault, b"Reply.", home=chome, ephemeral=False, binary=codex_bin)
+        check(r.returncode == 0, "codex exec in the vault ran (%s, %s)" % (r.returncode, r.stderr.decode("utf-8", "replace")[-300:]))
+        return sorted(_agents.vus(home)), json.dumps(B.mock.reqs, ensure_ascii=False)
+
+    seen, dump = session()
+    for _ in range(2):
+        if seen == HOOKS6:
+            break
+        seen = sorted(set(seen) | set(session()[0]))
+    check(seen == HOOKS6, "the real Codex ran the six hooks install.ps1 wired and approved, through PowerShell, no trust "
+                          "bypassed: %s" % seen)
+    check("Codex does not load `CLAUDE.md` files." in dump, "Codex read the kit's block in the global AGENTS.md")
+    check("This brain's rules are in `CLAUDE.md`" in dump, "Codex read the vault's AGENTS.md (the vault is a git repository)")
+    with open(os.path.join(repo, "skills", "brain-boost", "SKILL.md"), encoding="utf-8") as f:
+        desc = f.read().split("description:", 1)[1].split("\n", 1)[0].strip()[:60]
+    check("brain-boost" in dump and desc in dump, "Codex announced the kit's skills from ~\\.agents\\skills")
+    shutil.move(config, config + ".kept")
+    seen, _ = session()
+    check(seen == [], "control: without the tables install.ps1 wrote, Codex runs none of the hooks: %s" % seen)
+    shutil.move(config + ".kept", config)
+    rules = os.path.join(chome, "rules", "brain-in-a-box.rules")
+    gbq = os.path.join(home, ".local", "bin", "gbq.cmd")
+
+    def decision(rules_file, *cmd):
+        r = subprocess.run([codex_bin, "execpolicy", "check", "--resolve-host-executables", "--rules", rules_file, "--"]
+                           + list(cmd), capture_output=True, text=True)
+        try:
+            return json.loads(r.stdout).get("decision")
+        except ValueError:
+            return "error: %s %s" % (r.stdout[-200:], r.stderr[-200:])
+
+    allowed = [c for c in (["gbq", "query", "x"], ["gbq", "search", "x"], [gbq, "query", "x"]) if decision(rules, *c) == "allow"]
+    check(len(allowed) == 3, "gbq query and gbq search allowed, at the kit's gbq.cmd: %s" % allowed)
+    asked = {" ".join(c): decision(rules, *c) for c in ([".\\gbq.cmd", "query", "x"], ["C:\\tmp\\gbq.cmd", "query", "x"],
+                                                      ["gbq", "sync"], ["gbq", "skillify", "https://x"])}
+    check(all(v is None for v in asked.values()), "another gbq, or another gbq command, matches no rule: %s" % asked)
+    bare = os.path.join(root, "no-host.rules")
+    with open(rules, encoding="utf-8") as f, open(bare, "w", encoding="utf-8") as g:
+        g.write("".join(l for l in f if not l.startswith("host_executable(")))
+    check(decision(bare, ".\\gbq.cmd", "query", "x") == "allow",
+          "control: without host_executable, a .\\gbq.cmd the session wrote would run without asking")
+
+
 def main():
     global B
     if os.environ.get("GITHUB_ACTIONS") != "true":
@@ -677,8 +862,9 @@ def main():
         for fn in (answers_with_everything_locked, forced_tool_calls_are_refused, an_unknown_feature_pauses_codex,
                    the_user_s_mcp_server_never_starts, a_system_config_is_neutralised,
                    a_system_otel_exporter_gets_nothing, requirements_pause_codex,
-                   an_api_key_login_is_refused, the_reflection_and_the_review_ask_codex_through_the_choice,
-                   a_real_codex_session_is_read, codex_runs_the_kits_hooks, install_sh_wires_codex):
+                   a_system_folder_other_accounts_could_change_pauses_codex, an_api_key_login_is_refused, the_reflection_and_the_review_ask_codex_through_the_choice,
+                   a_real_codex_session_is_read, codex_runs_the_kits_hooks, install_sh_wires_codex,
+                   install_ps1_wires_codex):
             scenario(fn)
     finally:
         B.mock.close()
