@@ -19,21 +19,16 @@ jobs:
         include:
           - { shard: full-1, mode: full }
           - { shard: full-2, mode: full }
-          - { shard: full-3, mode: full }
-          - { shard: full-4, mode: full }
-          - { shard: alone-1, mode: alone }
-          - { shard: alone-2, mode: alone }
           - { shard: variants-1, mode: variants }
           - { shard: variants-2, mode: variants }
           - { shard: variants-3, mode: variants }
-          - { shard: variants-4, mode: variants }
     runs-on: windows-latest
     timeout-minutes: 75
     defaults:
       run:
         working-directory: app/src-tauri
     env:
-      RUN: 1
+      RUN: 2
     steps:
       - uses: actions/checkout@v4
         with:
@@ -59,7 +54,7 @@ jobs:
             & $exe @a *> "logs\$name.log"
             $code = $LASTEXITCODE
             "$name exit $code in $([int]((Get-Date) - $t).TotalSeconds)s"
-            Select-String -Path "logs\$name.log" -Pattern 'DIAG cancel ok' | ForEach-Object { '  ' + $_.Line }
+            Select-String -Path "logs\$name.log" -Pattern 'DIAG cancel ok|^round |^alone ' | ForEach-Object { '  ' + $_.Line }
             if ($code -ne 0) {
               $script:fails++
               "::group::$name output"
@@ -70,9 +65,9 @@ jobs:
           # As in CI: the whole suite, once, on a VM that never ran PowerShell for these tests.
           go cold @('--nocapture')
           switch ($env:MODE) {
-            'full' { foreach ($i in 1..15) { go "full-$i" @('--nocapture') } }
+            'full' { foreach ($i in 1..3) { go "full-$i" @('--nocapture') } }
             'alone' { foreach ($i in 1..50) { go "alone-$i" @('sys::tests::windows_cancel_kills_the_whole_tree', '--exact', '--nocapture') } }
-            'variants' { $env:DIAG_ROUNDS = '25'; go variants @('diag_variants', '--ignored', '--nocapture'); Select-String -Path logs\variants.log -Pattern 'DIAG TALLY' | ForEach-Object Line }
+            'variants' { $env:DIAG_ROUNDS = '3'; go variants @('diag_variants', '--ignored', '--nocapture'); Select-String -Path logs\variants.log -Pattern 'DIAG TALLY' | ForEach-Object Line }
           }
           "failures: $script:fails"
           if ($script:fails) { exit 1 }

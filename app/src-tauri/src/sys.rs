@@ -1060,7 +1060,7 @@ mod tests {
     /// PowerShell starts a ping that outlives it unless the whole tree is stopped,
     /// writes the ping's pid to $env:BIAB_PIDFILE, and says how far it got.
     #[cfg(windows)]
-    const TREE: &str = "'up'; $p = Start-Process -FilePath ping.exe -ArgumentList '-n','60','127.0.0.1' -PassThru -WindowStyle Hidden; \
+    const TREE: &str = "'up'; $null = Get-Command Start-Process; 'found'; $p = Start-Process -FilePath ping.exe -ArgumentList '-n','60','127.0.0.1' -PassThru -WindowStyle Hidden; \
                         \"ping $($p.Id)\"; Set-Content -LiteralPath $env:BIAB_PIDFILE -Value $p.Id; 'written'; $p.WaitForExit()";
 
     #[cfg(windows)]
@@ -1166,6 +1166,61 @@ foreach ($k in $kids) {{
             .collect()
     }
 
+    /// DIAG: the test's environment, as variants for bisection.
+    #[cfg(windows)]
+    fn diag_env(kind: &str, pidfile: &str) -> Vec<(String, String)> {
+        let full = || -> Vec<(String, String)> {
+            std::env::vars()
+                .filter(|(k, _)| !k.eq_ignore_ascii_case("PSModulePath"))
+                .chain([("BIAB_PIDFILE".to_string(), pidfile.to_string())])
+                .collect()
+        };
+        let add = |mut env: Vec<(String, String)>, keys: &[&str]| {
+            for k in keys {
+                if let Ok(v) = std::env::var(k) {
+                    env.push((k.to_string(), v));
+                }
+            }
+            env
+        };
+        let drop = |env: Vec<(String, String)>, keys: &[&str]| -> Vec<(String, String)> {
+            env.into_iter().filter(|(k, _)| !keys.iter().any(|d| k.eq_ignore_ascii_case(d))).collect()
+        };
+        const IDENT: &[&str] = &["COMPUTERNAME", "USERDOMAIN", "USERDOMAIN_ROAMINGPROFILE", "USERNAME", "HOMEDRIVE", "HOMEPATH", "LOGONSERVER"];
+        const DIRS: &[&str] = &[
+            "ALLUSERSPROFILE", "PUBLIC", "ProgramData", "ProgramFiles", "ProgramFiles(x86)", "ProgramW6432", "CommonProgramFiles",
+            "CommonProgramFiles(x86)", "CommonProgramW6432", "SystemDrive", "ComSpec", "PATHEXT", "DriverData",
+        ];
+        const CPU: &[&str] = &["NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE", "PROCESSOR_IDENTIFIER", "PROCESSOR_LEVEL", "PROCESSOR_REVISION", "OS"];
+        match kind {
+            "small" => diag_small_env(pidfile),
+            "full" => full(),
+            "full-pathsys32" => {
+                let mut e = drop(full(), &["PATH"]);
+                e.push(("PATH".into(), system32("").to_string_lossy().into_owned()));
+                e
+            }
+            "small+ident" => add(diag_small_env(pidfile), IDENT),
+            "small+dirs" => add(diag_small_env(pidfile), DIRS),
+            "small+cpu" => add(diag_small_env(pidfile), CPU),
+            "small+all3" => add(add(add(diag_small_env(pidfile), IDENT), DIRS), CPU),
+            "full-ident" => drop(full(), IDENT),
+            other => panic!("{other}"),
+        }
+    }
+
+    /// DIAG: waits for the pid; if it is late, dumps once at 5 s, then waits on.
+    #[cfg(windows)]
+    fn diag_wait(file: &Path, why: &str) -> (Option<String>, Duration, String) {
+        let t = Instant::now();
+        if let Some(p) = wait_for_pid(file, Duration::from_secs(5)) {
+            return (Some(p), t.elapsed(), String::new());
+        }
+        let dump = diag_dump(why);
+        let pid = wait_for_pid(file, Duration::from_secs(55));
+        (pid, t.elapsed(), dump)
+    }
+
     #[cfg(windows)]
     #[test]
     fn windows_cancel_kills_the_whole_tree() {
@@ -1177,61 +1232,50 @@ foreach ($k in $kids) {{
         let iso = Isolated { env: &env, cwd: dir.path(), stdin: "", limit: Duration::from_secs(120), cancel: &cancel };
         let t = Instant::now();
         let mut said = Vec::new();
-        let (code, pid) = thread::scope(|s| {
+        let (code, (pid, at, dump)) = thread::scope(|s| {
             let watcher = s.spawn(|| {
-                let pid = wait_for_pid(&pidfile, Duration::from_secs(60));
-                let dump = if pid.is_none() { diag_dump("cancel test") } else { String::new() };
+                let r = diag_wait(&pidfile, "cancel test");
                 cancel.store(true, Ordering::SeqCst);
-                (pid, dump)
+                r
             });
             let code = run_isolated(&powershell(), &["-NoProfile", "-Command", TREE], &iso, &mut |l| said.push(format!("{:?} {l}", t.elapsed())));
             (code, watcher.join().unwrap())
         });
-        let (pid, dump) = pid;
-        let pid = pid.unwrap_or_else(|| panic!("no ping pid after {:?}, code {code}, PowerShell said {said:?}\n{dump}", t.elapsed()));
-        eprintln!("DIAG cancel ok: pid after {:?}, said {said:?}", t.elapsed());
+        let pid = pid.unwrap_or_else(|| panic!("no ping pid after {at:?}, code {code}, PowerShell said {said:?}\n{dump}"));
+        eprintln!("DIAG cancel ok: pid after {at:?}, said {said:?}");
+        if !dump.is_empty() {
+            eprintln!("DIAG cancel slow dump:\n{dump}");
+        }
         assert_eq!(code, -1, "{said:?}");
         assert!(gone(&pid), "ping {pid} survived");
     }
 
-    /// DIAG: the same PowerShell, launched in several ways at once, round after round.
+    /// DIAG: the same PowerShell, launched with a given environment.
     #[cfg(windows)]
-    fn diag_launch(env: Option<&[(String, String)]>, piped: bool, script: &str, pidfile: &Path, cwd: &Path) -> String {
+    fn diag_launch(kind: &str, script: &str) -> String {
+        let dir = tempfile::tempdir().unwrap();
+        let pidfile = dir.path().join("pid");
+        let env = diag_env(kind, &pidfile.to_string_lossy());
         let mut c = Command::new(powershell());
-        c.args(["-NoProfile", "-Command", script]).current_dir(cwd);
-        match env {
-            Some(e) => {
-                c.env_clear().envs(e.iter().map(|(k, v)| (k.as_str(), v.as_str())));
-            }
-            None => {
-                c.env_remove("PSModulePath").env("BIAB_PIDFILE", pidfile);
-            }
-        }
-        c.stdin(if piped { Stdio::piped() } else { Stdio::null() });
+        c.args(["-NoProfile", "-Command", script]).current_dir(dir.path()).stdin(Stdio::null());
+        c.env_clear().envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())));
         let t = Instant::now();
         let (mut child, rx) = start(&mut c).unwrap();
-        if let Some(mut sin) = child.stdin.take() {
-            thread::spawn(move || {
-                let _ = sin.write_all(b"");
-            });
-        }
         let cancel = AtomicBool::new(false);
         let mut said = Vec::new();
-        let (code, (pid, dump)) = thread::scope(|s| {
+        let (code, (pid, at, dump)) = thread::scope(|s| {
             let watcher = s.spawn(|| {
-                let pid = wait_for_pid(pidfile, Duration::from_secs(60));
-                let at = t.elapsed();
-                let dump = if pid.is_none() { diag_dump("variant") } else { String::new() };
+                let r = diag_wait(&pidfile, kind);
                 cancel.store(true, Ordering::SeqCst);
-                (pid.map(|_| at), dump)
+                r
             });
-            let code = supervise(&mut child, &rx, Duration::from_secs(150), Some(&cancel), &mut |_, b| {
+            let code = supervise(&mut child, &rx, Duration::from_secs(200), Some(&cancel), &mut |_, b| {
                 said.push(format!("{:?} {}", t.elapsed(), String::from_utf8_lossy(&b).trim_end()))
             });
             (code, watcher.join().unwrap())
         });
         match pid {
-            Some(at) => format!("ok {:.1}s", at.as_secs_f64()),
+            Some(_) => format!("ok {:.1}s said {said:?}\n{dump}", at.as_secs_f64()),
             None => format!("HANG code {code:?} said {said:?}\n{dump}"),
         }
     }
@@ -1240,59 +1284,27 @@ foreach ($k in $kids) {{
     #[test]
     #[ignore]
     fn diag_variants() {
-        let rounds: usize = std::env::var("DIAG_ROUNDS").ok().and_then(|v| v.parse().ok()).unwrap_or(10);
-        let nonew = TREE.replace("-WindowStyle Hidden", "-NoNewWindow");
-        let variants: Vec<(&str, bool, bool, bool, String)> = vec![
-            // name, small env?, app env?, stdin piped?, script
-            ("small-piped", true, false, true, TREE.to_string()),
-            ("small-null", true, false, false, TREE.to_string()),
-            ("appenv-piped", true, true, true, TREE.to_string()),
-            ("full-piped", false, false, true, TREE.to_string()),
-            ("full-null", false, false, false, TREE.to_string()),
-            ("small-piped-nonew", true, false, true, nonew),
-        ];
-        let mut tally: Vec<(String, usize, usize, Vec<String>)> = variants.iter().map(|v| (v.0.to_string(), 0, 0, vec![])).collect();
+        let rounds: usize = std::env::var("DIAG_ROUNDS").ok().and_then(|v| v.parse().ok()).unwrap_or(3);
+        let kinds = ["small", "full", "full-pathsys32", "small+ident", "small+dirs", "small+cpu", "small+all3", "full-ident"];
         for round in 0..rounds {
             let results: Vec<String> = thread::scope(|s| {
-                let hs: Vec<_> = variants
-                    .iter()
-                    .map(|(_, small, app, piped, script)| {
-                        s.spawn(move || {
-                            let dir = tempfile::tempdir().unwrap();
-                            let pidfile = dir.path().join("pid");
-                            let p = pidfile.to_string_lossy().into_owned();
-                            let mut env = diag_small_env(&p);
-                            if *app {
-                                for k in [
-                                    "USERNAME", "windir", "SystemDrive", "ComSpec", "PATHEXT", "ProgramFiles", "ProgramFiles(x86)", "ProgramW6432",
-                                    "ProgramData", "CommonProgramFiles", "NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE", "OS",
-                                ] {
-                                    if let Ok(v) = std::env::var(k) {
-                                        env.push((k.to_string(), v));
-                                    }
-                                }
-                            }
-                            diag_launch(small.then_some(env.as_slice()), *piped, script, &pidfile, dir.path())
-                        })
-                    })
-                    .collect();
+                let hs: Vec<_> = kinds.iter().map(|k| s.spawn(move || diag_launch(k, TREE))).collect();
                 hs.into_iter().map(|h| h.join().unwrap()).collect()
             });
-            for (i, r) in results.into_iter().enumerate() {
-                eprintln!("round {round} {} {}", variants[i].0, r.lines().next().unwrap_or(""));
-                if r.starts_with("ok") {
-                    tally[i].1 += 1;
-                } else {
-                    tally[i].2 += 1;
-                    eprintln!("{r}");
-                    tally[i].3.push(r);
+            for (k, r) in kinds.iter().zip(&results) {
+                eprintln!("round {round} {k} {}", r.lines().next().unwrap_or(""));
+            }
+            if round == 0 {
+                for (k, r) in kinds.iter().zip(&results) {
+                    eprintln!("==== DIAG DETAIL {k}\n{r}");
                 }
             }
         }
-        for (name, ok, hang, _) in &tally {
-            eprintln!("DIAG TALLY {name}: ok {ok}, hang {hang}");
+        // One at a time, as the cancel test alone.
+        for k in kinds {
+            let r = diag_launch(k, TREE);
+            eprintln!("alone {k} {}", r.lines().next().unwrap_or(""));
         }
-        assert!(tally.iter().all(|t| t.2 == 0), "some variant hung");
     }
 
     #[cfg(windows)]
