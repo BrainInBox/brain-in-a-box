@@ -82,6 +82,19 @@ class Ps1(unittest.TestCase):
         self.assertEqual(stop, [{"hooks": [mine] + [{"type": "command", "command": self.command(n), "commandWindows": self.command(n),
                                                      "timeout": 30} for n in ("session-indexer.py", "session-recap.py")]}])
 
+    def test_an_entry_that_names_the_hook_in_its_windows_command_only(self):
+        # Codex runs commandWindows (or command_windows) on Windows: the hook is there, never added twice.
+        for key in ("commandWindows", "command_windows"):
+            with self.subTest(key=key):
+                mine = {"type": "command", "command": "echo mine", key: "& py 'C:\\X\\.claude\\hooks\\brain\\session-logger.py' --agent codex"}
+                with open(os.path.join(self.home, "hooks.json"), "w", encoding="utf-8") as f:
+                    json.dump({"hooks": {"Stop": [{"hooks": [mine]}]}}, f)
+                self.wire("merge", self.home, self.hooks)
+                with open(os.path.join(self.home, "hooks.json"), encoding="utf-8") as f:
+                    stop = json.load(f)["hooks"]["Stop"]
+                self.assertEqual(stop, [{"hooks": [mine] + [{"type": "command", "command": self.command(n), "commandWindows": self.command(n),
+                                                             "timeout": 30} for n in ("session-indexer.py", "session-recap.py")]}])
+
     def test_its_lines_in_french(self):
         with open(os.path.join(self.home, "hooks.json"), "w", encoding="utf-8") as f:
             f.write("{,}")
