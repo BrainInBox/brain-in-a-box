@@ -1271,6 +1271,65 @@ class WindowsEnvironment(unittest.TestCase):
         self.assertEqual(sorted(env), ["BIAB_ARCHIVE", "Path", "TEMP", "USERPROFILE"])
         self.assertEqual(ta.env_app_windows(session)["Path"], session["Path"])
 
+    def test_a_pc_without_git_on_its_path(self):
+        env = {"ProgramFiles": "C:\\Program Files", "ProgramFiles(x86)": "C:\\Program Files (x86)",
+               "LOCALAPPDATA": "C:\\Users\\r\\AppData\\Local"}
+        roots = ta.racines_git(env)
+        self.assertEqual(roots, ["C:\\Program Files\\Git", "C:\\Program Files (x86)\\Git", "C:\\Users\\r\\AppData\\Local\\Programs\\Git"])
+        path = ("C:\\Program Files\\Git\\cmd;C:\\Windows\\system32;;c:\\program files\\git\\usr\\bin\\;C:\\Program Files\\GitHub CLI\\;"
+                "C:\\Program Files\\Git;C:\\Users\\r\\AppData\\Local\\Programs\\Git\\cmd;\"C:\\Program Files\\Git\\bin\";C:\\Gitx")
+        self.assertEqual(ta.sans_git_path(path, roots), "C:\\Windows\\system32;C:\\Program Files\\GitHub CLI\\;C:\\Gitx")
+        self.assertEqual(ta.racines_git({}), [])
+
+    def test_git_goes_before_the_first_start_when_the_workflow_asks(self):
+        p = ta.PiloteWindows(Path(tempfile.mkdtemp(prefix="terrain-win-")), outil="pilote-windows.exe")
+        self.addCleanup(shutil.rmtree, p.travail, True)
+        calls = []
+        p._run = lambda argv, timeout=120, env=None, creationflags=0: calls.append([str(a) for a in argv]) or (0, "ok\nGit introuvable\n")
+        with mock.patch.dict(os.environ, {"PATH": "C:\\Program Files\\Git\\cmd;C:\\Windows"}, clear=False):
+            os.environ.pop(ta.SANS_GIT, None)
+            self.assertIsNone(p.poste_neuf())
+            self.assertEqual((calls, os.environ["PATH"]), ([], "C:\\Program Files\\Git\\cmd;C:\\Windows"))
+        env = {ta.SANS_GIT: "C:\\t\\sans-git.json", "PATH": "C:\\Program Files\\Git\\cmd;C:\\Windows", "ProgramFiles": "C:\\Program Files"}
+        with mock.patch.dict(os.environ, env):
+            self.assertEqual(p.poste_neuf(), {"sans_git": ["ok", "Git introuvable"]})
+            self.assertEqual(os.environ["PATH"], "C:\\Windows", "nothing the robot starts finds the runner's Git")
+        self.assertEqual(calls, [["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",
+                                  str(ta.SANS_GIT_PS1), "-Preuve", "C:\\t\\sans-git.json"]])
+        self.assertTrue(ta.SANS_GIT_PS1.is_file())
+        p._run = lambda argv, timeout=120, env=None, creationflags=0: (1, "x\nGit est encore trouvable sur cette VM : where : C:\\Git\n")
+        with mock.patch.dict(os.environ, env), self.assertRaises(ta.ErreurPilote) as cm:
+            p.poste_neuf()
+        self.assertIn("Git n'a pas quitté la VM (sans-git.ps1, code 1) : x Git est encore trouvable", str(cm.exception))
+
+    def test_the_apps_diagnosis_saw_no_git(self):
+        p = ta.PiloteWindows(Path(tempfile.mkdtemp(prefix="terrain-win-")), outil="pilote-windows.exe")
+        self.addCleanup(shutil.rmtree, p.travail, True)
+        textes = lambda statut: ["Python (pour les automatismes)", ": À installer", "x", ta.LIGNE_GIT, statut,
+                                 "Pas encore installé. Je le prends chez Microsoft (winget)."]
+        for statut, why in ((": À installer", None), (": OK", "le diagnostic de l'app disait Git « OK »"),
+                            (None, "ne dit rien de Git")):
+            t = Noms()
+            details = {"diagnostic": {"textes": textes(statut) if statut else ["Python (pour les automatismes)", ": OK"]}}
+            with mock.patch.dict(os.environ, {ta.SANS_GIT: "C:\\t\\sans-git.json"}):
+                if why:
+                    with self.assertRaises(terrain.Echec) as cm:
+                        p.constats(t, details)
+                    self.assertIn(why, str(cm.exception))
+                else:
+                    p.constats(t, details)
+            self.assertEqual(t.vus, ["app-git-diagnostic"])
+        t = Noms()
+        with mock.patch.dict(os.environ, {}):
+            os.environ.pop(ta.SANS_GIT, None)
+            p.constats(t, {"diagnostic": {"textes": textes(": OK")}})
+        self.assertEqual(t.vus, [], "a VM that keeps its Git checks nothing of it")
+        # The app's own words: diagnose.rs' line for Git, app.js' word for what is missing.
+        with open(os.path.join(REPO, "app", "src-tauri", "src", "diagnose.rs"), encoding="utf-8") as f:
+            self.assertIn('Item("git", "%s", Some("brain"))' % ta.LIGNE_GIT, f.read())
+        with open(os.path.join(REPO, "app", "src", "app.js"), encoding="utf-8") as f:
+            self.assertIn("missing: '%s'" % ta.A_INSTALLER.lstrip(": "), f.read())
+
     def test_the_helper_source_is_ascii_and_answers_every_request(self):
         with open(ta.PiloteWindows.SOURCE, "rb") as f:
             src = f.read()
@@ -1685,6 +1744,30 @@ class Scenario(Base):
         self.assertEqual(order, [("poste", None), ("constats", "app-outils")])
         self.assertEqual(row["details"]["poste_neuf"], {"retires": ["git", "curl"], "aussi": []})
         self.assertEqual(row["details"]["root"], ["/bin/sh -c ... apt-get install"])
+
+    def test_the_app_s_environment_is_read_once_the_vm_lost_what_the_app_brings(self):
+        # Windows: the session's PATH comes from the registry, read after Git left it.
+        p = FauxPilote(self.h, home=Path(self.tmp) / "home")
+        order = []
+        p.poste_neuf = lambda: order.append("poste") or {"sans_git": ["Git introuvable"]}
+        p.environnement = lambda home, extra=None: order.append("env") or ta.env_utilisateur(home, extra)
+        row, _, _, _, _, _ = self.run_it(pilote=p)
+        self.assertEqual(row["statut"], "ok", row["raison"])
+        self.assertEqual(order, ["poste", "env"])
+        p = FauxPilote(self.h, home=Path(self.tmp) / "home2")
+        p.poste_neuf = lambda: (_ for _ in ()).throw(ta.ErreurPilote("Git n'a pas quitté la VM (sans-git.ps1, code 1) : où"))
+        row, _, _, _, _, _ = self.run_it(pilote=p)
+        self.assertEqual((row["statut"], row["etape"]), ("echec", "app-poste-neuf"))
+        self.assertIn("Git n'a pas quitté la VM", row["raison"])
+
+    def test_git_s_checks_join_the_summary(self):
+        def check(t, o):
+            t("git-bash")
+            t.details["git"] = {"resume": "Git absent au départ, installé par winget (portée utilisateur)"}
+        row, _, _, _, _, _ = self.run_it(check=check)
+        self.assertEqual(row["statut"], "ok", row["raison"])
+        self.assertIn("une nuit lancée par le planificateur ; Git absent au départ, installé par winget (portée utilisateur)",
+                      row["raison"])
 
     def test_sources_the_app_did_not_take_fail(self):
         p = FauxPilote(self.h, home=Path(self.tmp) / "home")
