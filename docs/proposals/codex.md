@@ -1,7 +1,7 @@
 # Plan : brancher Codex dans Brain in a Box
 
 Statut : proposition en cours, livrée phase par phase (§6) ; Codex reste fermé sur tous les systèmes tant que son parcours n'y est pas vert. Base : master 407444e. Version 2 du plan : relecture sécurité + faisabilité intégrée (§8).
-**Étapes 0 et 1 faites le 2026-10-15, étapes 2 et 3 le 2026-10-16** : résultats, corrections et écarts dans les sections datées de la fin (« Étape 0 — résultats », « Étape 1 — fait et écarts », « Étape 1 — relecture et corrections », « Étape 2 — fait et écarts », « Détecteur : option dossier jetable », « Étape 3 — fait et écarts », « Étape 3 — relecture et corrections »). En cas de conflit, elles priment sur le corps du plan, la plus récente d'abord.
+**Étapes 0 et 1 faites le 2026-10-15, étapes 2, 3 et 4 le 2026-10-16** : résultats, corrections et écarts dans les sections datées de la fin (« Étape 0 — résultats », « Étape 1 — fait et écarts », « Étape 1 — relecture et corrections », « Étape 2 — fait et écarts », « Détecteur : option dossier jetable », « Étape 3 — fait et écarts », « Étape 3 — relecture et corrections », « Décision : le détecteur d'outil », « Étape 4 — fait et écarts »). En cas de conflit, elles priment sur le corps du plan, la plus récente d'abord.
 Sources : **VM** = constaté dans les runs du spike (Codex 0.162.1, faux serveur, aucun secret) ; **doc** = doc officielle ; **code** = github.com/openai/codex, commit 3ee47c1 ; **dépôt** = notre code. Ce qui n'a pas de source est marqué **non vérifié**.
 
 ## 0. En bref
@@ -525,3 +525,33 @@ Les autres clés que Codex refuse à la couche projet et lit dans celle du syst�
 ## Décision : le détecteur d'outil (2026-10-16)
 
 Tranché par le mainteneur : **`--ephemeral` sans détecteur** (corrections de l'étape 0, point 4). Codex ne garde aucune copie du coffre ; « aucun outil » tient par la prévention seule (fonctions en liste positive, sandbox en lecture seule, valeurs fixées par `-c`, contrôles d'avant), vérifiée en CI avec le vrai binaire sur les 3 OS. Écrit dans SECURITY.md avec les écarts du §2.3 (phase 12). La trace `CODEX_ROLLOUT_TRACE_ROOT` (étape 2, « dossier jetable ») reste une idée pour plus tard : un filet, jamais la garantie, et seulement après ses quatre vérifications en VM.
+
+---
+
+## Étape 4 — fait et écarts (2026-10-16)
+
+**Fait** (branche `feat/codex-sessions-hooks`, PR brouillon) : `engine/hooks/_codex_rollout.py` (lecture d'un rollout), branché dans `daily-reflection.py` (`codex_sessions`) et `session-recap.py` (`--agent codex`). Tests : `engine/tests/test_codex_rollout.py` (les 33 rollouts de l'étape 0), `codex_captures.py` (sessions de test faites des lignes réelles de ces captures), classes `CodexSessions` (test_reflection) et `Codex` (test_session_recap), `test-hooks.sh` §4 (+2), et `codex_mock.py` : une vraie session du vrai Codex 0.162.1, lue sur les 3 OS. Codex reste fermé partout : en production, `--agent codex` se tait et la réflexion ne lit aucune session Codex.
+
+**Règles tenues :**
+- lu **seulement** si `codex` est dans `agents.json` (lu une fois par réflexion), dans son `codex_home`, jamais un `~/.codex` deviné ;
+- fichiers : `$CODEX_HOME/sessions/*/*/*/rollout-*.jsonl` modifiés depuis le début du jour, fichiers ordinaires seulement (ouverture non bloquante, `fstat` : un tube ne bloque pas) ; tranche du jour par horodatage local et au moins 3 messages, comme pour Claude ;
+- pris : `response_item` `message` user/assistant ; `function_call` / `custom_tool_call` → nom et résumé (commande, fichiers d'un patch ; 300 caractères) ; `session_meta` → id, dossier, source ; `turn_context` → modèle. Laissés : rôle developer (consignes de Codex, contexte des hooks), parties user `# AGENTS.md instructions for` et `<environment_context>`, `world_state`, `event_msg`, sorties d'outils, raisonnement, lignes inconnues ou illisibles ;
+- prompts du kit : la session entière est écartée si un message user commence par `SENTINEL` (comme pour Claude) ;
+- `.jsonl.zst` : jamais lus ; comptés dans le journal d'erreurs de la réflexion et dans `--dry-run` ;
+- identifiants complets : libellé `codex <UUIDv7 entier> · cwd=…` dans la réflexion ; bloc du récap `codex <modèle> · sid:` + l'id entier, motif de remplacement sur l'id entier. Blocs Claude inchangés (8 caractères) ; un bloc Claude et un bloc Codex qui partagent leurs 8 premiers caractères ne se remplacent jamais.
+
+**Écarts au plan (priment sur lui) :**
+1. **§3.6, filtrage par partie.** Dans les captures, Codex met `AGENTS.md` **et** `<environment_context>` dans le **même** message user (deux parties `input_text`). Le filtre porte sur chaque partie, pas sur le message. Contrôle : sur les 33 rollouts de l'étape 0, le texte lu (user, assistant) est exactement celui des événements `item_completed` (`UserMessage`, `AgentMessage`), où Codex note ce qui a été tapé et répondu.
+2. **§3.6, prompts du kit.** En plus de `SENTINEL`, une session dont le dossier est la cage de `_headless_codex.py` (`brain-codex-*/travail`) est écartée : un filet si `--ephemeral` cessait de tenir, la relecture n'ayant pas de `SENTINEL`. « Rollout du détecteur » : sans objet (décision du 2026-10-16).
+3. **§3.4, récap Codex.** Même section « 📊 Claude Sessions » : le contrôle la reconnaît comme texte du kit (`_controle_rules.AUTO_HEADING`), un titre propre à Codex le toucherait. Le bloc nomme Codex devant le modèle. Titre à revoir avec les écrans (phases 10b, 12).
+4. **Récap, argument.** Seul `--agent codex` exact passe en mode Codex ; tout autre argument est ignoré comme aujourd'hui (Claude). La garde complète (`BRAIN_HEADLESS`, `source == "exec"`, `transcript_path` nul) reste à la phase 5. En phase 4, le récap Codex se tait si `agents.json` ne liste pas Codex, sans rien lire ni poser de verrou.
+5. **Réflexion, phrase des sources.** Elle nomme les agents choisis (« Codex sessions (label "codex") ») ; Codex seul ne dit plus « Claude Code sessions ». `--dry-run` compte les sessions Codex quand Codex est listé. Claude seul : inchangé.
+6. **CI.** `codex-mock` lit en plus une session du vrai Codex (`codex exec` non éphémère, `AGENTS.md` global, un message et un appel d'outil dans la même réponse) : id entier = `thread_id`, seulement ce qui a été tapé et répondu, l'outil, rien de ce que Codex ajoute, session du kit écartée, lue par la réflexion et le récap. Le faux serveur sait rendre plusieurs items dans une réponse. Le job se lance aussi quand `_codex_rollout.py` ou `session-recap.py` changent.
+
+**Preuve « Claude seul, octet pour octet » :**
+- tests : sans `agents.json` ou avec `["claude"]`, et `~/.codex/sessions` rempli, le prompt, l'état, la sortie, le journal et `memory.md` sont ceux d'une réflexion sans aucune session Codex ; dans un Python neuf, `_codex_rollout.py` n'est jamais importé (témoin : Codex listé et ouvert, il l'est) ; le récap de Claude n'importe ni `_codex_rollout.py` ni `_agents.py` ; le bloc de Claude est fixé caractère pour caractère ;
+- comparaison locale `origin/master` (d13f156) / branche, mêmes doublures, `~/.codex/sessions` rempli, sans `agents.json` puis avec `["claude"]` : `--dry-run`, sortie, prompt, argv, environnement, journal (récap compris), `memory.md`, état, journaux d'erreurs identiques.
+
+**Tests non creux** : 31 protections retirées une à une (filtres, prompts du kit, tranche du jour, fichiers ordinaires, ouverture sans attente, id entier et validé, liste des agents, import paresseux, seuil de 3 messages, `.zst` signalé, phrase des sources, comptes du `--dry-run`, garde et argument du récap, signaux, bloc de Claude) : chacune fait échouer au moins un test. Deux contrôles des appelants (`s.own` dans la réflexion et le récap) ne changeaient rien, la lecture rendant déjà une session du kit sans contenu : retirés. Un test qui attendait sur un tube aurait bloqué la suite au lieu d'échouer : il tourne dans un processus à part, avec un délai.
+
+**Vérifié en local** : tests unitaires (569 ; sous Python 3.9.6 aussi pour ceux de l'étape), `test-hooks.sh` (173/173), actionlint, shellcheck, lecture d'`install.ps1` par pwsh (non touché). Le vrai Codex ne tourne qu'en CI (`codex-mock`).
