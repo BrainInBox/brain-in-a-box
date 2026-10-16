@@ -733,8 +733,13 @@ jobs:
           & $py -I -m unittest discover -s engine/tests -v
           if ($LASTEXITCODE) { throw "unit tests failed (exit $LASTEXITCODE)" }
 
+      # poste-neuf.ps1 left only the Store stub on the job's PATH: the script takes the Python the installer set up.
       - name: install.ps1's Codex functions against stand-ins (pwsh)
-        run: pwsh -NoProfile -File .github/ci/install-ps1-codex.ps1
+        run: |
+          $py = (@((Get-Content "$env:USERPROFILE\.claude\settings.json" -Raw | ConvertFrom-Json).hooks.UserPromptSubmit.hooks)[0]).command
+          $env:PATH = "$(Split-Path -Parent $py);$env:PATH"
+          pwsh -NoProfile -File .github/ci/install-ps1-codex.ps1
+          if ($LASTEXITCODE) { throw "install-ps1-codex.ps1 exited $LASTEXITCODE" }
 
       - name: gbrain is the memory (keyword brain, no key)
         run: |

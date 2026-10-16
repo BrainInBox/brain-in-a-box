@@ -28,6 +28,7 @@ function Said([scriptblock]$Do) { return (& $Do 6>&1 *>&1 | Out-String) }
 $T = Join-Path ([IO.Path]::GetTempPath()) ("ps1-codex-" + [guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Path $T | Out-Null
 $Py = if ($Win) { (Get-Command python -CommandType Application | Select-Object -First 1).Source } else { (Get-Command python3 -CommandType Application | Select-Object -First 1).Source }
+if (-not $Py -or $Py -like '*\WindowsApps\*') { throw "no Python on the PATH (only the Store stub?): $Py" }
 # Its real path (no link, no short name): Codex names hooks.json by it, and wire.py approves both when they differ.
 $T = "$(& $Py -I -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' $T)".Trim()
 $saved = @{}
