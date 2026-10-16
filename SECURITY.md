@@ -43,6 +43,16 @@ The maintainer is one person. Reasonable response targets:
 - The brain content is readable to whoever has access to your machine (it's plaintext markdown, by design)
 - An attacker with shell access on your machine can read `~/.gbrain/config.json` (file is `0600`, but root or your own user can still read it — that's local-trust scope)
 
+## Codex (built, not open on any system yet)
+
+When you choose Codex (`--agents codex`), `install.sh` **approves the kit's six Codex hooks for you**: it
+adds their trust entries to `~/.codex/config.toml` (only new `[hooks.state."…"]` tables, after a backup,
+checked by Codex itself), and says so on screen. Codex then runs them without asking. The approval covers
+each hook's command line, not the script's content. See them, or turn them off, with `/hooks` in Codex.
+It also lets Codex run `gbq query` and `gbq search` without asking, outside its sandbox, and only for
+`~/.local/bin/gbq` (`~/.codex/rules/brain-in-a-box.rules`). The full picture of what Codex can and
+cannot do with your brain comes with Codex's opening (docs/proposals/codex.md).
+
 ## Hardening recommendations (for users)
 
 - Enable FileVault on your Mac (encrypts the vault at rest)
