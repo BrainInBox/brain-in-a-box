@@ -159,6 +159,8 @@ try {
            -not (Find-Codex) -and "$Downloads" -ceq $CODEX_INSTALLER_URL) "codex installer: one that is not the pinned one is downloaded from the release, never run"
     New-Home; $Serve = $Installer; $CODEX_INSTALLER_SHA256 = $InstallerSha
     $env:VOYAGE_API_KEY = "pa-canari-voyage"; $env:CODEX_INSTALL_DIR = (Join-Path $T "trap"); $env:CODEX_HOME = (Join-Path $T "other-home")
+    $gnu = Join-Path $T "git-usr-bin"   # where Git's Unix tools, GNU tar among them, sit first on some PATHs
+    $pathPut = $env:PATH; if ($Win) { $env:PATH = "$gnu;$env:PATH" }
     $pathBefore = "$env:Path|$env:PATH"
     $out = Said { Install-Codex }
     $ie = if (Test-Path (Join-Path $T "installer-env")) { @(Get-Content (Join-Path $T "installer-env")) } else { @() }
@@ -168,16 +170,28 @@ try {
           "codex installer: the pinned one runs: its release, no question, the chosen CODEX_HOME, no Voyage key nor install folder of the environment; its PATH line is said"
     $sys = [Environment]::SystemDirectory
     if ($Win) {
-        Check (@($ie | Where-Object { $_ -like "Path=$sys;*" }).Count -eq 1) "codex installer: Windows' own tar first on its PATH (a GNU tar ahead of it breaks the installer)"
+        # The stand-in runs under pwsh, which puts its own folder (no tar there) first as it starts; powershell.exe does not.
+        $ip = @("$(@($ie | Where-Object { $_ -like 'Path=*' }) | Select-Object -First 1)" -replace '^Path=', '' -split ';' |
+                Where-Object { $_ -and $_.TrimEnd('\') -ne $PSHOME.TrimEnd('\') })
+        Check ($ip.Count -gt 1 -and $ip[0] -eq $sys -and $ip[1] -eq $gnu) "codex installer: Windows' own tar first on its PATH (a GNU tar ahead of it breaks the installer): $($ip[0..1] -join ';')"
     }
     Check ($env:VOYAGE_API_KEY -eq "pa-canari-voyage" -and $env:CODEX_INSTALL_DIR -eq (Join-Path $T "trap") -and $env:CODEX_HOME -eq (Join-Path $T "other-home") -and
            "$env:Path|$env:PATH" -ceq $pathBefore) "codex installer: the session's own variables are back as they were, PATH too"
+    $env:PATH = $pathPut
     $Downloads = @(); $out = Said { Install-Codex }
     Check ($out -match "\[OK\] Codex deja installe \($([regex]::Escape($CODEX_VERSION))\)" -and $Downloads.Count -eq 0) "codex installer: already there, nothing downloaded"
     $env:FAKE_CODEX_VERSION = "0.150.0"; $out = Said { Install-Codex }
     Check ($out -match "\[!\]  Codex 0\.150\.0 .* est plus ancien que ce qu'il faut au kit") "codex installer: an older Codex is said, not replaced"
     New-Home; $out = Said { Install-Codex }
     Check ($out -match "telechargement impossible" -and -not (Find-Codex)) "codex installer: no network, said"
+    # npm's codex.cmd (elsewhere, a codex without .exe) is not the kit's Codex: a codex.exe only.
+    New-Home; $npm = Join-Path $T "npm"; New-Item -ItemType Directory -Path $npm -Force | Out-Null
+    $shim = Join-Path $npm $(if ($Win) { "codex.cmd" } else { "codex" })
+    Set-Content -LiteralPath $shim -Value $(if ($Win) { "@exit /b 0" } else { "#!/bin/sh" }) -Encoding ascii
+    if (-not $Win) { chmod 755 $shim }
+    $p = $env:PATH; $env:PATH = "$npm$([IO.Path]::PathSeparator)$p"
+    try { $found = Find-Codex } finally { $env:PATH = $p }
+    Check (-not $found) "codex installer: a codex.cmd on the PATH (npm's) does not count, a codex.exe only: $found"
     New-Home; $Serve = Join-Path $T "empty.ps1"; Set-Content -LiteralPath $Serve -Value "exit 0" -Encoding ascii
     $CODEX_INSTALLER_SHA256 = ([BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash([IO.File]::ReadAllBytes($Serve))) -replace '-', '').ToLowerInvariant()
     $out = Said { Install-Codex }
