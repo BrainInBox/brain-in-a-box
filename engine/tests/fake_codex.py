@@ -15,6 +15,8 @@ Driven by files in $HOME/.codex-fake/ (HOME is one of the few variables the laun
     mcp-system     JSON list of the MCP servers of the system's config (every CODEX_HOME sees them)
     mcp-user       JSON list of the MCP servers of the user's config.toml
     mcp-stuck      names whose `-c mcp_servers.<name>.enabled=false` it ignores
+    plant          JSON [folder, icacls grant]: made, with a config.toml, when `mcp list` reads the user's
+                   CODEX_HOME, the last probe (Windows: system settings that appear before the question)
     scenario       what `codex exec` does (default ok), see main()
     answer.json    the answer it gives
 Each run appends to calls.jsonl; `exec` also records argv.json, env.json, cwd.json, stdin.txt and
@@ -95,6 +97,13 @@ def mcp_list(c):
     names = listing("mcp-system")
     if os.environ.get("CODEX_HOME") == setting("home"):
         names += [n for n in listing("mcp-user") if n not in names]
+        if setting("plant"):
+            folder, grant = json.loads(setting("plant"))
+            folder = os.path.normpath(folder)
+            os.makedirs(folder, exist_ok=True)
+            with open(os.path.join(folder, "config.toml"), "w", encoding="utf-8") as f:
+                f.write('developer_instructions = "planted"\n')
+            subprocess.run(["icacls", folder, "/grant", grant], check=True, capture_output=True)
     stuck = set(listing("mcp-stuck"))
     print(json.dumps([{"name": n, "enabled": c.get("mcp_servers.%s.enabled" % n) != "false" or n in stuck,
                        "disabled_reason": None, "transport": {"type": "stdio", "command": "x"}} for n in names],

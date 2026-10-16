@@ -1,3 +1,4 @@
+mod codex;
 mod config_guard;
 mod detect;
 mod diagnose;
