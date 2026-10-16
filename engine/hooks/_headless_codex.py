@@ -10,6 +10,8 @@ holds by prevention alone, checked before every call, every check failing closed
   MCP servers of the layers the call reads turned off by name;
 - the provider and its URLs fixed by -c, which only requirements.toml and a legacy
   managed_config.toml (file or macOS profile) pass over: either one present pauses Codex;
+  on Windows, so does a %ProgramData%\\OpenAI\\Codex (found as Codex finds it) that an account
+  other than SYSTEM and the administrators could change, before any probe reads it;
 - a ChatGPT login only (auth.json, then `codex login status` compared to fixed lines, never
   copied): an API key would be billed, and no key of the caller's environment reaches Codex;
   a personal plan only: a workspace's administrator sets Codex's settings above every -c;
@@ -37,6 +39,7 @@ import plistlib
 import re
 import shutil
 import stat
+import struct
 import sys
 import tempfile
 from collections import namedtuple
@@ -106,6 +109,21 @@ EXTRA_DIRS = ("/opt/homebrew/bin", "/usr/local/bin")
 # Where an administrator's layers live (None: this system's; tests point them elsewhere).
 MANAGED = None
 MDM = None
+PROGRAM_DATA = None
+# Windows: who may own the folders of Codex's system settings (%ProgramData%\OpenAI\Codex) and
+# change them: SYSTEM, the Administrators, TrustedInstaller (Codex's own list,
+# windows-sandbox-rs/src/acl.rs); CREATOR OWNER and OWNER RIGHTS stand for that owner.
+FOLDERID_PROGRAM_DATA = "62AB5D82-FDC1-4DC3-A9DD-070D1D495D97"
+OWNERS = ("S-1-5-18", "S-1-5-32-544", "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464")
+WRITERS = OWNERS + ("S-1-3-0", "S-1-3-4")
+# What changes a folder or a file: write data or add a file, append or add a folder, extended
+# attributes, attributes, delete a child, delete, permissions, owner (Codex's
+# STANDARD_USER_MUTATION_MASK); the generic rights as they map onto a file's.
+MUTATION = 0x2 | 0x4 | 0x10 | 0x100 | 0x40 | 0x10000 | 0x40000 | 0x80000
+GENERIC = ((0x10000000, 0x1F01FF), (0x40000000, 0x120116), (0x80000000, 0x120089), (0x20000000, 0x1200A0))
+ACE_ALLOWED, ACES_DENIED = 0, (1, 6, 10, 12)
+INHERIT_ONLY, OBJECT_INHERIT = 0x08, 0x01
+REPARSE_POINT = 0x400
 
 Answer = namedtuple("Answer", "output version cost_usd num_turns tokens")
 Cage = namedtuple("Cage", "work schema system answer env empty_env")
@@ -344,11 +362,147 @@ def check_dotenv(codex_home):
                             % ", ".join(refused[:5]), "dotenv")
 
 
+def known_program_data():
+    """%ProgramData% as Codex finds it: the known folder (config/src/loader/mod.rs,
+    windows_codex_system_dir), never the variable, which a parent process may set. None when
+    Windows does not say."""
+    import ctypes
+    import uuid
+    from ctypes import wintypes
+    shell32, ole32 = ctypes.WinDLL("shell32"), ctypes.WinDLL("ole32")
+    shell32.SHGetKnownFolderPath.argtypes = [ctypes.c_char_p, wintypes.DWORD, wintypes.HANDLE,
+                                             ctypes.POINTER(ctypes.c_void_p)]
+    shell32.SHGetKnownFolderPath.restype = ctypes.c_long
+    ole32.CoTaskMemFree.argtypes = [ctypes.c_void_p]
+    found = ctypes.c_void_p()
+    hr = shell32.SHGetKnownFolderPath(uuid.UUID(FOLDERID_PROGRAM_DATA).bytes_le, 0, None, ctypes.byref(found))
+    try:
+        return ctypes.wstring_at(found.value) if hr == 0 and found.value else None
+    finally:
+        ole32.CoTaskMemFree(found)
+
+
+def _program_data():
+    return PROGRAM_DATA if PROGRAM_DATA is not None else known_program_data()
+
+
+def _sid(raw):
+    """S-1-5-32-544 from a SID's bytes, or ValueError."""
+    if len(raw) < 8 or raw[0] != 1 or len(raw) < 8 + 4 * raw[1]:
+        raise ValueError("not a SID")
+    subs = struct.unpack_from("<%dI" % raw[1], raw, 8)
+    return "S-1-%d" % int.from_bytes(raw[2:8], "big") + "".join("-%d" % s for s in subs)
+
+
+def security(path):
+    """(owner, DACL) of a file or folder: the owner's SID, and [(ACE type, flags, mask, SID or None)],
+    None for a NULL DACL (every account may do anything). OSError when Windows does not say."""
+    import ctypes
+    from ctypes import wintypes
+    advapi32, kernel32 = ctypes.WinDLL("advapi32"), ctypes.WinDLL("kernel32")
+    get = advapi32.GetNamedSecurityInfoW
+    get.argtypes = [wintypes.LPCWSTR, ctypes.c_int, wintypes.DWORD] + [ctypes.POINTER(ctypes.c_void_p)] * 5
+    get.restype = wintypes.DWORD
+    kernel32.LocalFree.argtypes = [ctypes.c_void_p]
+    owner, dacl, sd = ctypes.c_void_p(), ctypes.c_void_p(), ctypes.c_void_p()
+    # SE_FILE_OBJECT; OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION
+    rc = get(str(path), 1, 0x1 | 0x4, ctypes.byref(owner), None, ctypes.byref(dacl), None, ctypes.byref(sd))
+    if rc != 0:
+        raise OSError(rc, "GetNamedSecurityInfoW failed", str(path))
+    try:
+        if not owner.value:
+            raise OSError("%s has no owner" % path)
+        head = ctypes.string_at(owner.value, 8)
+        who = _sid(ctypes.string_at(owner.value, 8 + 4 * head[1]))
+        if not dacl.value:
+            return who, None
+        size, count = struct.unpack_from("<HH", ctypes.string_at(dacl.value, 8), 2)
+        raw, at, aces = ctypes.string_at(dacl.value, size), 8, []
+        for _ in range(count):
+            kind, flags, ace_size = struct.unpack_from("<BBH", raw, at)
+            if ace_size < 8 or at + ace_size > size:
+                raise OSError("%s has a DACL the kit cannot read" % path)
+            mask = struct.unpack_from("<I", raw, at + 4)[0]
+            aces.append((kind, flags, mask, _sid(raw[at + 8:at + ace_size]) if kind in (0, 1) else None))
+            at += ace_size
+        return who, aces
+    except (ValueError, struct.error):
+        raise OSError("%s has a SID or a DACL the kit cannot read" % path)
+    finally:
+        kernel32.LocalFree(sd)
+
+
+def unsafe(owner, aces, child_files=False):
+    """Why another account than SYSTEM, the Administrators or TrustedInstaller could change this file or
+    folder (or, child_files, the files it gets), or None. Stricter than Codex's own probe, which only
+    measures, and only for Users, Authenticated Users and Everyone: any other account counts, an allow
+    entry of another kind is not read but refused, a deny entry never loosens."""
+    if owner not in OWNERS:
+        return "its owner is %s" % owner
+    if aces is None:
+        return "it has no access list"
+    for kind, flags, mask, sid in aces:
+        if kind in ACES_DENIED:
+            continue
+        if kind != ACE_ALLOWED:
+            return "it has an access entry of a kind the kit does not read (%d)" % kind
+        if flags & INHERIT_ONLY and not (child_files and flags & OBJECT_INHERIT):
+            continue
+        for generic, rights in GENERIC:
+            if mask & generic:
+                mask |= rights
+        if mask & MUTATION and sid not in WRITERS:
+            return "%s may change %s" % (sid, "what it holds" if flags & INHERIT_ONLY else "it")
+    return None
+
+
+def check_system_settings():
+    """Windows: %ProgramData%\\OpenAI and its Codex folder, when there, and the files Codex reads in it,
+    belong to SYSTEM, the Administrators or TrustedInstaller, and grant no other account a right to
+    change them or what they hold. Otherwise Codex is paused (managed): a standard account can make
+    that folder when it is missing, Codex loads it all the same (config/src/loader/windows.rs only
+    measures), and its settings could change between the kit's probes and the question. Run before
+    any probe, and again just before the question."""
+    if not WINDOWS:
+        return
+
+    def paused(path, why):
+        return HeadlessError("unsupported", "%s, where Codex reads its system settings, %s: another account could "
+                                            "put settings there that pass over the kit's, so Codex is paused"
+                             % (path, why), "managed")
+    root = _program_data()
+    if not root:
+        raise paused("%ProgramData%", "cannot be found")
+    codex_dir = os.path.join(root, "OpenAI", "Codex")
+    for path, folder, child in ((os.path.dirname(codex_dir), True, False), (codex_dir, True, True),
+                                (os.path.join(codex_dir, "config.toml"), False, False),
+                                (os.path.join(codex_dir, "requirements.toml"), False, False),
+                                (os.path.join(codex_dir, "managed_config.toml"), False, False)):
+        try:
+            st = os.lstat(path)
+        except FileNotFoundError:
+            if folder:
+                return
+            continue
+        except OSError:
+            raise paused(path, "cannot be read")
+        if getattr(st, "st_file_attributes", 0) & REPARSE_POINT or stat.S_ISLNK(st.st_mode):
+            raise paused(path, "is a link")
+        if not (stat.S_ISDIR(st.st_mode) if folder else stat.S_ISREG(st.st_mode)):
+            raise paused(path, "is not a %s" % ("folder" if folder else "file"))
+        try:
+            why = unsafe(*security(path), child_files=child)
+        except OSError:
+            raise paused(path, "has permissions the kit cannot read")
+        if why:
+            raise paused(path, "can be changed by another account (%s)" % why)
+
+
 def _managed_files():
     if MANAGED is not None:
         return [Path(p) for p in MANAGED]
     if WINDOWS:
-        root = Path(os.environ.get("ProgramData") or r"C:\ProgramData") / "OpenAI" / "Codex"
+        root = Path(_program_data() or r"C:\ProgramData") / "OpenAI" / "Codex"
     else:
         root = Path("/etc/codex")
     return [root / "requirements.toml", root / "managed_config.toml"]
@@ -529,7 +683,9 @@ def check_mcp(argv0, cage, codex_home, flags_for):
 def preflight(argv0, cage, codex_home, coupees, effort=None):
     """Every check before a question, as the question runs. (version, MCP servers to turn off).
     `features list` reads the user's config.toml, which the call ignores: it is read with the
-    user's CODEX_HOME (a broken config.toml fails it) and with an empty one."""
+    user's CODEX_HOME (a broken config.toml fails it) and with an empty one. Windows: the system
+    settings' folder is checked before any probe loads it."""
+    check_system_settings()
     version = check_version(argv0, cage.env, cage.work)
     check_dotenv(codex_home)
     check_managed()
@@ -696,6 +852,7 @@ def run(prompt, schema, system_prompt, *, codex_home, timeout, model=None, effor
         _write(cage.schema, json.dumps(schema, ensure_ascii=False))
         _write(cage.system, system_prompt)
         version, mcp_off = preflight(argv0, cage, codex_home, coupees, effort)
+        check_system_settings()   # as it is when the question loads it, not only when the probes did
         watch = Watch()
         code, timed_out, _ = supervise(argv0 + exec_argv(cage, coupees, mcp_off, model, effort), cage.env, cage.work,
                                        prompt, timeout, watch.line)
