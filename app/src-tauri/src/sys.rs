@@ -1098,11 +1098,6 @@ foreach ($k in $kids) {{
   ((Get-Process -Id $k.ProcessId -ErrorAction SilentlyContinue).Modules | ForEach-Object ModuleName) -join ' '
   "== PowerShell event log for $($k.ProcessId)"
   Get-WinEvent -LogName 'Microsoft-Windows-PowerShell/Operational' -MaxEvents 400 -ErrorAction SilentlyContinue | Where-Object ProcessId -eq $k.ProcessId | Sort-Object TimeCreated | ForEach-Object {{ "  $($_.TimeCreated.ToString('HH:mm:ss.fff')) $($_.Id) $(($_.Message -split ""`n"")[0])" }}
-  $cdb = "${{env:ProgramFiles(x86)}}\Windows Kits\10\Debuggers\x64\cdb.exe"
-  if (Test-Path $cdb) {{
-    "== stacks of powershell $($k.ProcessId) (cdb)"
-    & $cdb -pv -p $k.ProcessId -c '.loadby sos clr; ~*e !clrstack; ~*kc 40; qd' 2>&1 | Out-String -Width 300
-  }} else {{ "== no cdb at $cdb" }}
 }}
 "== end of dump $(Get-Date -f o)"
 "#
@@ -1205,6 +1200,12 @@ foreach ($k in $kids) {{
             "small+cpu" => add(diag_small_env(pidfile), CPU),
             "small+all3" => add(add(add(diag_small_env(pidfile), IDENT), DIRS), CPU),
             "full-ident" => drop(full(), IDENT),
+            "small+ProgramFiles" => add(diag_small_env(pidfile), &["ProgramFiles"]),
+            "small+psmp-pshome" => {
+                let mut e = diag_small_env(pidfile);
+                e.push(("PSModulePath".into(), system32(r"WindowsPowerShell\v1.0\Modules").to_string_lossy().into_owned()));
+                e
+            }
             other => panic!("{other}"),
         }
     }
@@ -1250,34 +1251,28 @@ foreach ($k in $kids) {{
         assert!(gone(&pid), "ping {pid} survived");
     }
 
+    /// DIAG: how long PowerShell takes to find Start-Process, and where it looks.
+    #[cfg(windows)]
+    const FIND: &str = "'up'; \"psmp $env:PSModulePath\"; $t = [Diagnostics.Stopwatch]::StartNew(); $c = Get-Command Start-Process; \
+                        \"found in $($t.ElapsedMilliseconds) ms: $($c.Module.Path)\"; \
+                        Set-Content -LiteralPath $env:BIAB_PIDFILE -Value 1";
+
     /// DIAG: the same PowerShell, launched with a given environment.
     #[cfg(windows)]
-    fn diag_launch(kind: &str, script: &str) -> String {
+    fn diag_launch(kind: &str) -> String {
         let dir = tempfile::tempdir().unwrap();
         let pidfile = dir.path().join("pid");
         let env = diag_env(kind, &pidfile.to_string_lossy());
         let mut c = Command::new(powershell());
-        c.args(["-NoProfile", "-Command", script]).current_dir(dir.path()).stdin(Stdio::null());
+        c.args(["-NoProfile", "-Command", FIND]).current_dir(dir.path()).stdin(Stdio::null());
         c.env_clear().envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())));
         let t = Instant::now();
         let (mut child, rx) = start(&mut c).unwrap();
-        let cancel = AtomicBool::new(false);
         let mut said = Vec::new();
-        let (code, (pid, at, dump)) = thread::scope(|s| {
-            let watcher = s.spawn(|| {
-                let r = diag_wait(&pidfile, kind);
-                cancel.store(true, Ordering::SeqCst);
-                r
-            });
-            let code = supervise(&mut child, &rx, Duration::from_secs(200), Some(&cancel), &mut |_, b| {
-                said.push(format!("{:?} {}", t.elapsed(), String::from_utf8_lossy(&b).trim_end()))
-            });
-            (code, watcher.join().unwrap())
-        });
-        match pid {
-            Some(_) => format!("ok {:.1}s said {said:?}\n{dump}", at.as_secs_f64()),
-            None => format!("HANG code {code:?} said {said:?}\n{dump}"),
-        }
+        let code = supervise(&mut child, &rx, Duration::from_secs(120), None, &mut |_, b| said.push(String::from_utf8_lossy(&b).trim_end().to_string()));
+        let found = said.iter().find(|l| l.starts_with("found")).cloned().unwrap_or_else(|| format!("NOT FOUND {said:?}"));
+        let psmp = said.iter().find(|l| l.starts_with("psmp")).cloned().unwrap_or_default();
+        format!("{:.1}s code {code:?} {found} | {psmp}", t.elapsed().as_secs_f64())
     }
 
     #[cfg(windows)]
@@ -1285,25 +1280,24 @@ foreach ($k in $kids) {{
     #[ignore]
     fn diag_variants() {
         let rounds: usize = std::env::var("DIAG_ROUNDS").ok().and_then(|v| v.parse().ok()).unwrap_or(3);
-        let kinds = ["small", "full", "full-pathsys32", "small+ident", "small+dirs", "small+cpu", "small+all3", "full-ident"];
+        let kinds = [
+            "small", "full", "full-pathsys32", "small+ident", "small+dirs", "small+cpu", "small+all3", "full-ident", "small+ProgramFiles",
+            "small+psmp-pshome",
+        ];
         for round in 0..rounds {
             let results: Vec<String> = thread::scope(|s| {
-                let hs: Vec<_> = kinds.iter().map(|k| s.spawn(move || diag_launch(k, TREE))).collect();
+                let hs: Vec<_> = kinds.iter().map(|k| s.spawn(move || diag_launch(k))).collect();
                 hs.into_iter().map(|h| h.join().unwrap()).collect()
             });
             for (k, r) in kinds.iter().zip(&results) {
-                eprintln!("round {round} {k} {}", r.lines().next().unwrap_or(""));
-            }
-            if round == 0 {
-                for (k, r) in kinds.iter().zip(&results) {
-                    eprintln!("==== DIAG DETAIL {k}\n{r}");
-                }
+                eprintln!("round {round} {k}: {r}");
             }
         }
-        // One at a time, as the cancel test alone.
-        for k in kinds {
-            let r = diag_launch(k, TREE);
-            eprintln!("alone {k} {}", r.lines().next().unwrap_or(""));
+        // One at a time, twice over.
+        for pass in 0..2 {
+            for k in kinds {
+                eprintln!("alone{pass} {k}: {}", diag_launch(k));
+            }
         }
     }
 

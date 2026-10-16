@@ -18,7 +18,6 @@ jobs:
       matrix:
         include:
           - { shard: full-1, mode: full }
-          - { shard: full-2, mode: full }
           - { shard: variants-1, mode: variants }
           - { shard: variants-2, mode: variants }
           - { shard: variants-3, mode: variants }
@@ -28,7 +27,7 @@ jobs:
       run:
         working-directory: app/src-tauri
     env:
-      RUN: 2
+      RUN: 3
     steps:
       - uses: actions/checkout@v4
         with:
