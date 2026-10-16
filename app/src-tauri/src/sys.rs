@@ -391,15 +391,27 @@ pub struct Isolated<'a> {
 /// and hands every stdout/stderr line to `on_line`, raw. Returns the exit code, -1
 /// if it could not start, was cancelled or ran past `iso.limit`.
 pub fn run_isolated(program: &Path, args: &[&str], iso: &Isolated, on_line: &mut dyn FnMut(String)) -> i32 {
-    let mut cmd = Command::new(program);
-    cmd.args(args).env_clear().envs(iso.env.iter().copied()).current_dir(iso.cwd).stdin(Stdio::piped());
-    let (mut child, rx) = match start(&mut cmd) {
-        Ok(started) => started,
+    match run_alone(program, args, iso, false, &mut |_, line| on_line(line)) {
+        Ok(code) => code.unwrap_or(-1),
         Err(e) => {
             on_line(format!("impossible de lancer {}: {}", program.display(), e));
-            return -1;
+            -1
         }
-    };
+    }
+}
+
+/// `run_isolated`, each line with the pipe it came from (Codex says its login on stderr, its
+/// stream is stdout alone). The exit code, None when it was killed; Err when it could not start.
+/// Once the program has exited, what it left running in its group is killed too, as the kit's
+/// launcher does (engine/hooks/_headless_claude.py, `supervise`).
+pub fn run_isolated_pipes(program: &Path, args: &[&str], iso: &Isolated, on_line: &mut dyn FnMut(Pipe, String)) -> io::Result<Option<i32>> {
+    run_alone(program, args, iso, true, on_line)
+}
+
+fn run_alone(program: &Path, args: &[&str], iso: &Isolated, sweep: bool, on_line: &mut dyn FnMut(Pipe, String)) -> io::Result<Option<i32>> {
+    let mut cmd = Command::new(program);
+    cmd.args(args).env_clear().envs(iso.env.iter().copied()).current_dir(iso.cwd).stdin(Stdio::piped());
+    let (mut child, rx) = start(&mut cmd)?;
     if let Some(mut sin) = child.stdin.take() {
         // On a thread: a program that never reads its stdin must not keep us past the
         // limit. Dropping `sin` closes the pipe, which ends its input.
@@ -408,10 +420,15 @@ pub fn run_isolated(program: &Path, args: &[&str], iso: &Isolated, on_line: &mut
             let _ = sin.write_all(data.as_bytes());
         });
     }
-    let code = supervise(&mut child, &rx, iso.limit, Some(iso.cancel), &mut |_, bytes| {
-        on_line(String::from_utf8_lossy(&bytes).trim_end_matches(['\n', '\r']).to_string());
+    let code = supervise(&mut child, &rx, iso.limit, Some(iso.cancel), &mut |pipe, bytes| {
+        on_line(pipe, String::from_utf8_lossy(&bytes).trim_end_matches(['\n', '\r']).to_string());
     });
-    code.unwrap_or(-1)
+    // Reaped, its pid still names its group while anything is left in it (POSIX reuses no pid
+    // a group still holds). Windows has no group: taskkill /T needs the program alive.
+    if sweep && code.is_some() && cfg!(unix) {
+        kill_group(&mut child);
+    }
+    Ok(code)
 }
 
 fn command(program: &Path) -> Command {
@@ -433,8 +450,8 @@ fn without_ps7_modules(cmd: &mut Command) {
     cmd.env_remove("PSModulePath");
 }
 
-#[derive(Clone, Copy)]
-enum Pipe {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Pipe {
     Out,
     Err,
 }
@@ -984,6 +1001,42 @@ mod tests {
         let mut lines = Vec::new();
         assert_eq!(run_isolated(&dir.path().join("missing"), &[], &iso, &mut |l| lines.push(l)), -1);
         assert!(lines[0].starts_with("impossible de lancer"), "{lines:?}");
+        assert!(run_isolated_pipes(&dir.path().join("missing"), &[], &iso, &mut |_, _| {}).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn each_line_comes_with_its_pipe() {
+        let dir = tempfile::tempdir().unwrap();
+        let cancel = AtomicBool::new(false);
+        let mut lines = Vec::new();
+        let script = "echo out; echo err >&2; exit 3";
+        let code = run_isolated_pipes(Path::new("/bin/sh"), &["-c", script], &isolated(&[], dir.path(), "", &cancel), &mut |p, l| lines.push((p, l)));
+        lines.sort_by_key(|(p, _)| *p == Pipe::Err);
+        assert_eq!(code.unwrap(), Some(3));
+        assert_eq!(lines, [(Pipe::Out, "out".to_string()), (Pipe::Err, "err".to_string())]);
+    }
+
+    /// What a program left running when it exited goes with it (Codex's run), not with the repair's.
+    #[cfg(unix)]
+    #[test]
+    fn what_a_program_leaves_behind_is_swept_with_it() {
+        for (sweep, survives) in [(true, false), (false, true)] {
+            let dir = tempfile::tempdir().unwrap();
+            let cancel = AtomicBool::new(false);
+            let mut lines = Vec::new();
+            let script = "/bin/sleep 30 </dev/null >/dev/null 2>&1 & echo $!; exit 0";
+            let code = run_alone(Path::new("/bin/sh"), &["-c", script], &isolated(&[], dir.path(), "", &cancel), sweep, &mut |_, l| lines.push(l));
+            assert_eq!(code.unwrap(), Some(0));
+            let pid = lines[0].trim().to_string();
+            let t = Instant::now();
+            while alive(&pid) && !survives && t.elapsed() < Duration::from_secs(3) {
+                thread::sleep(TICK);
+            }
+            thread::sleep(if survives { Duration::from_millis(300) } else { Duration::ZERO });
+            assert_eq!(alive(&pid), survives, "sweep {sweep}: sleep {pid}");
+            let _ = Command::new("/bin/kill").args(["-KILL", &pid]).status();
+        }
     }
 
     /// Linux: what an AppImage's AppRun sets (AppImageKit's and linuxdeploy's GTK hook), as the
