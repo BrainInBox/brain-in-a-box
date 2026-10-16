@@ -267,7 +267,9 @@ def codex_sessions(day, codex_home):
     label holds the whole session id: Codex's are UUIDv7, whose first 8 characters are the minute.
     A session not typed in Codex's terminal or editor says its source in its label ("exec", "mcp":
     a program started it, and may have written its prompt); a sub-agent's, whose prompts another
-    agent wrote, and Codex's internal runs are left out."""
+    agent wrote, and Codex's internal runs are left out. Only an entry starts a line ("HH:MM user:"):
+    a message goes on as "    | ", a tool's summary is one line, so that no text a model wrote (a
+    page can steer it) poses as the user's."""
     import _codex_rollout as rollout   # here: Claude alone never loads it
     from _agents import SOURCES_TAPEES
     day_start, _ = _day_bounds(day)
@@ -285,14 +287,15 @@ def codex_sessions(day, codex_home):
         for it in s.items:
             hhmm = rollout.local(it.ts).strftime("%H:%M")
             if it.kind == "tool":
-                lines.append(f"{hhmm}   → {it.name} {it.text}")
+                lines.append(f"{hhmm}   → " + " ".join(f"{it.name} {it.text}".split()))
             else:
-                lines.append(f"{hhmm} {it.kind}: {_trim(it.text.strip(), MSG_CAP)}")
+                lines.append(f"{hhmm} {it.kind}: " + "\n    | ".join(_trim(it.text.strip(), MSG_CAP).splitlines()))
                 n += 1
         if n >= 3:
             how = "" if s.source in SOURCES_TAPEES else " · " + (
                 s.source if re.fullmatch(r"[a-z_]{1,32}", s.source or "") else "?")
-            out.append((f"codex {s.id or '?'}{how} · cwd={s.cwd or '?'}", "\n".join(lines), s.cwd))
+            cwd = " ".join((s.cwd or "?").splitlines())
+            out.append((f"codex {s.id or '?'}{how} · cwd={cwd}", "\n".join(lines), s.cwd))
     return out, packed
 
 
