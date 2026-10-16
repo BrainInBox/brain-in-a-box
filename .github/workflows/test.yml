@@ -467,7 +467,7 @@ jobs:
             if ($LASTEXITCODE) { throw "the $step step failed" }
           }
           # install.ps1's sections reached the window as progress lines, in order.
-          $seen = @(Select-String -Path "$env:RUNNER_TEMP\step-brain.txt" -Pattern '\((\d+) sur 14\)' | ForEach-Object { [int]$_.Matches[0].Groups[1].Value })
+          $seen = @(Select-String -Path "$env:RUNNER_TEMP\step-brain.txt" -Pattern '\((\d+) sur 13\)' | ForEach-Object { [int]$_.Matches[0].Groups[1].Value })
           if ($seen.Count -lt 10) { throw "only $($seen.Count) sections announced: $seen" }
           if (($seen -join ',') -ne (($seen | Sort-Object) -join ',')) { throw "sections out of order: $seen" }
           if (-not (Test-Path "$env:USERPROFILE\.brain-in-a-box\tmp")) { throw "the app's work folders were not in the profile" }
