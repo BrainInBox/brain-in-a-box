@@ -1,0 +1,85 @@
+# Disposable: reproduces the windows_cancel_kills_the_whole_tree flake on fresh VMs.
+# Removed before the PR is merged.
+name: diag-flaky
+
+on:
+  push:
+    branches: [fix/windows-cancel-test]
+    paths: ['.github/workflows/diag-flaky.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  loop:
+    name: loop (${{ matrix.shard }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { shard: full-1, mode: full }
+          - { shard: full-2, mode: full }
+          - { shard: full-3, mode: full }
+          - { shard: full-4, mode: full }
+          - { shard: alone-1, mode: alone }
+          - { shard: alone-2, mode: alone }
+          - { shard: variants-1, mode: variants }
+          - { shard: variants-2, mode: variants }
+          - { shard: variants-3, mode: variants }
+          - { shard: variants-4, mode: variants }
+    runs-on: windows-latest
+    timeout-minutes: 75
+    defaults:
+      run:
+        working-directory: app/src-tauri
+    env:
+      RUN: 1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build the test binary
+        run: cargo test --locked --lib --no-run
+      - name: Loop
+        shell: pwsh
+        env:
+          MODE: ${{ matrix.mode }}
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $exe = (Get-ChildItem target\debug\deps\biab_lib-*.exe | Sort-Object LastWriteTime | Select-Object -Last 1).FullName
+          "exe $exe"
+          $cdb = "${env:ProgramFiles(x86)}\Windows Kits\10\Debuggers\x64\cdb.exe"
+          "cdb present: $(Test-Path $cdb)"
+          Get-MpComputerStatus -ErrorAction SilentlyContinue | Select-Object AMServiceEnabled, RealTimeProtectionEnabled, AntivirusEnabled | Format-List | Out-String
+          "PSModulePath (runner): $env:PSModulePath"
+          New-Item -ItemType Directory -Force logs | Out-Null
+          $script:fails = 0
+          function go($name, [string[]]$a) {
+            $t = Get-Date
+            & $exe @a *> "logs\$name.log"
+            $code = $LASTEXITCODE
+            "$name exit $code in $([int]((Get-Date) - $t).TotalSeconds)s"
+            Select-String -Path "logs\$name.log" -Pattern 'DIAG cancel ok' | ForEach-Object { '  ' + $_.Line }
+            if ($code -ne 0) {
+              $script:fails++
+              "::group::$name output"
+              Get-Content "logs\$name.log"
+              "::endgroup::"
+            }
+          }
+          # As in CI: the whole suite, once, on a VM that never ran PowerShell for these tests.
+          go cold @('--nocapture')
+          switch ($env:MODE) {
+            'full' { foreach ($i in 1..15) { go "full-$i" @('--nocapture') } }
+            'alone' { foreach ($i in 1..50) { go "alone-$i" @('sys::tests::windows_cancel_kills_the_whole_tree', '--exact', '--nocapture') } }
+            'variants' { $env:DIAG_ROUNDS = '25'; go variants @('diag_variants', '--ignored', '--nocapture'); Select-String -Path logs\variants.log -Pattern 'DIAG TALLY' | ForEach-Object Line }
+          }
+          "failures: $script:fails"
+          if ($script:fails) { exit 1 }
+      - name: Logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-${{ matrix.shard }}
+          path: app/src-tauri/logs
+          retention-days: 7
