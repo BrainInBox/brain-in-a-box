@@ -798,6 +798,31 @@ class Reflect(Run):
         self.assertIn("REFLECTION-STATUS", self.memory.read_text(encoding="utf-8"))
         self.assertNotIn("curl", self.memory.read_text(encoding="utf-8"))
 
+    def test_tries_are_logged_and_paused_as_before(self):
+        # Claude alone: ask_claude's lines word for word, and its pause between two tries.
+        dr.RETRY_DELAY = 7
+        with mock.patch.object(dr.headless, "time") as clock:
+            self.run_reflection(scenario="broken-json")
+        self.assertEqual(clock.sleep.call_args_list, [mock.call(7)])
+        log = (self.root / "logs" / "daily-reflection-errors.log").read_text(encoding="utf-8")
+        self.assertEqual([line.split(" ", 1)[1] for line in log.splitlines()],
+                         ["attempt 1/2: api: no result", "attempt 2/2: api: no result",
+                          f"{DAY} evening: api: no result"])
+
+    def test_a_dry_run_prints_what_it_printed_before(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            dr.reflect(DAY, "evening", dry_run=True, command=[sys.executable, str(FAKE)])
+        lines = out.getvalue().splitlines()
+        self.assertEqual(len(lines), 4, lines)
+        self.assertRegex(lines[0], rf"^{DAY} evening: 1 Claude session\(s\), 0 Hermes session\(s\), 0 repo\(s\) with "
+                                   r"commits, 0 secret\(s\) masked, prompt \d+ chars$")
+        self.assertTrue(lines[1].startswith("  claude s · cwd="), lines[1])
+        self.assertRegex(lines[2], r"^dossier sent on stdin: \d+ chars, \d+ bytes \(sessions capped at %d chars\); "
+                                   r"cap \$%.2f, %ds$" % (dr.BUDGET, dr.BUDGET_USD, dr.TIMEOUT))
+        self.assertEqual(lines[3], "answer schema: " + json.dumps(dr.SCHEMA, ensure_ascii=False))
+        self.assertEqual(self.calls(), 0)
+
     def test_the_error_log_is_masked(self):
         dr.log_error("api: proxy said Bearer " + "A" * 40 + " is refused")
         log = (self.root / "logs" / "daily-reflection-errors.log").read_text(encoding="utf-8")

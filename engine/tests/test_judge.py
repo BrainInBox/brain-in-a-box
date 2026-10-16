@@ -9,6 +9,7 @@ and state folder.
 
     python3 -I -m unittest discover -s engine/tests -v
 """
+import inspect
 import io
 import json
 import os
@@ -856,6 +857,47 @@ ANSWER = {"suspect": False, "constats": [
 ], "lecons": [{"id": "@L:bouton bleu", "verdict": "bruit", "doublon_de": "aucun", "confiance": "haute"}]}
 
 
+class ClaudeAloneSkips(Night):
+    """Without agents.json, a review skipped reads exactly as before the choice of engine."""
+
+    def report(self):
+        return read(self.vault, "Profile/controle.md")
+
+    def test_three_reviews_already_today(self):
+        os.makedirs(self.etat, exist_ok=True)
+        with open(os.path.join(self.etat, "juge.json"), "w", encoding="utf-8") as f:
+            json.dump({"appels": {"jour": date.today().isoformat(), "n": 3}}, f)
+        self.night()
+        self.assertEqual(self.etat_json()["claude"], "saute:quota-jour")
+        self.assertIn("- 🟠 Relecture par Claude sautée : déjà 3 relectures aujourd'hui.\n", self.report())
+        self.assertEqual(self.records(), [])
+
+    def test_the_reflection_at_its_usage_limit(self):
+        logs = os.path.join(self.home, ".claude", "logs")
+        os.makedirs(logs)
+        with open(os.path.join(logs, "daily-reflection.state.json"), "w", encoding="utf-8") as f:
+            json.dump({"failing_since": "2026-10-14 12:00", "last_error": "quota: You've hit your usage limit"}, f)
+        self.night()
+        self.assertEqual(self.etat_json()["claude"], "saute:limite-reflexion")
+        report = self.report()
+        self.assertIn("- 🟠 La réflexion du jour échoue depuis le 14/10 (limite d'usage de Claude).\n", report)
+        self.assertIn("- 🟠 Relecture par Claude sautée : la réflexion du jour a déjà touché la limite d'usage.\n",
+                      report)
+        self.assertEqual(self.records(), [])
+
+    def test_a_bug_of_the_check_during_the_review(self):
+        with mock.patch.object(judge, "build_dossier", side_effect=RuntimeError("boom")):
+            self.night()
+        self.assertEqual(self.etat_json()["claude"], "saute:erreur-interne")
+        self.assertIn("- 🟠 Relecture par Claude abandonnée après une erreur du contrôle.\n", self.report())
+
+    def test_nothing_new_since_the_last_review(self):
+        with mock.patch.object(judge, "should_ask", return_value=(False, "rien-de-neuf")):
+            self.night()
+        self.assertEqual(self.etat_json()["claude"], "saute:rien-de-neuf")
+        self.assertIn("- ⚪ Relecture par Claude : rien de neuf depuis la dernière.\n", self.report())
+
+
 class GoodNight(Night):
     def test_correct_answer_on_the_trapped_vault(self):
         base = self.head()
@@ -1035,7 +1077,21 @@ class EngineNights(Night):
             return json.load(f)
 
     def test_without_agents_json_nothing_names_an_engine(self):
-        self.night_with()
+        # The probe and the call of before the choice of engine, argument for argument, with a wait
+        # above Codex's (240 s): Claude's is the night's.
+        real_run, real_check = headless.run, headless.check
+        with mock.patch.object(headless, "run", wraps=real_run) as run, \
+                mock.patch.object(headless, "check", wraps=real_check) as check:
+            self.night_with(timeout=290)
+        self.assertEqual((len(check.call_args_list), len(run.call_args_list)), (1, 1))
+        probed = inspect.signature(real_check).bind(*check.call_args.args, **check.call_args.kwargs).arguments
+        asked = inspect.signature(real_run).bind(*run.call_args.args, **run.call_args.kwargs).arguments
+        git_path, command = shutil.which("git"), probed["command"]
+        self.assertEqual(command[2], self.stub)
+        self.assertEqual(dict(probed), dict(command=command, work_root=None, git=git_path))
+        self.assertEqual({k: v for k, v in asked.items() if k not in ("prompt", "schema")},
+                         dict(system_prompt=judge.SYSTEM_PROMPT, budget_usd=judge.BUDGET_USD, timeout=290, max_turns=3,
+                              model="sonnet", effort="medium", command=command, work_root=None, git=git_path))
         etat, journal = self.etat_json(), self.journal()
         self.assertEqual(etat["claude"], "fait")
         self.assertNotIn("moteur", etat)
