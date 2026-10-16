@@ -12,6 +12,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -538,6 +539,123 @@ class CodexHook(Home):
         self.vus.mkdir(parents=True)
         self.assertTrue(self.hook(self.payload(self.rollout(self.CLI))))
         self.assertEqual(ag.vus(self.home), {})
+
+
+class HooksMuets(Home):
+    """hooks_muets(): Codex kept a session since install.sh wired the kit's hooks (pose_hooks()), and ran
+    none of them since: the night check's orange line (docs/proposals/codex.md, §3.3)."""
+
+    def setUp(self):
+        Home.setUp(self)
+        self.codex = os.path.join(self.home, "codex-home")
+        self.state = Path(self.home) / ".brain-in-a-box"
+
+    @staticmethod
+    def utc(ago):
+        return time.strftime(ag.UTC, time.gmtime(time.time() - ago))
+
+    def wired(self, ago):
+        self.state.mkdir(parents=True, exist_ok=True)
+        (self.state / ag.POSES).write_text(json.dumps({"version": 1, "date": self.utc(ago)}), encoding="utf-8")
+
+    def seen(self, **ago):
+        self.state.mkdir(parents=True, exist_ok=True)
+        (self.state / ag.VUS).write_text(json.dumps({"version": 1, "hooks": {k: self.utc(v) if isinstance(v, int) else v
+                                                                             for k, v in ago.items()}}), encoding="utf-8")
+
+    def session(self, ago, name="rollout-2026-10-16T10-00-00-0199f0a0-0000-7000-8000-000000000001.jsonl"):
+        day = Path(self.codex) / "sessions" / "2026" / "10" / "16"
+        day.mkdir(parents=True, exist_ok=True)
+        p = day / name
+        p.write_text("{}\n", encoding="utf-8")
+        os.utime(p, (time.time() - ago,) * 2)
+        return p
+
+    def muets(self):
+        return ag.hooks_muets(self.codex, self.home)
+
+    def test_a_session_since_the_install_and_no_hook_since(self):
+        self.wired(3600)
+        self.session(60)
+        self.assertTrue(self.muets())
+        self.seen(**{"session-logger": 7200})   # before the install: says nothing of the hooks now
+        self.assertTrue(self.muets())
+        self.seen(**{"session-logger": 7200, "correction-detector": 30})
+        self.assertFalse(self.muets())
+
+    def test_a_compressed_session_counts_too(self):
+        self.wired(3600)
+        self.session(60, "rollout-2026-10-16T10-00-00-0199f0a0-0000-7000-8000-000000000002.jsonl.zst")
+        self.assertTrue(self.muets())
+
+    def test_nothing_to_say_without_a_session_since_or_a_record(self):
+        self.session(60)
+        self.assertFalse(self.muets(), "no record of the install")
+        self.wired(30)
+        self.assertFalse(self.muets(), "the session was before the install")
+        for bad in ("{", "[]", json.dumps({"version": 1, "date": "hier"}), json.dumps({"version": 1})):
+            with self.subTest(record=bad):
+                (self.state / ag.POSES).write_text(bad, encoding="utf-8")
+                self.assertFalse(self.muets())
+
+    def test_a_malformed_sign_is_no_sign(self):
+        self.wired(3600)
+        self.session(60)
+        self.seen(**{"session-logger": "9999-later"})
+        self.assertTrue(self.muets())
+
+    @unittest.skipUnless(POSIX, "named pipes")
+    def test_only_regular_session_files_count(self):
+        self.wired(3600)
+        day = Path(self.codex) / "sessions" / "2026" / "10" / "16"
+        day.mkdir(parents=True)
+        os.mkfifo(str(day / "rollout-x.jsonl"))
+        (day / "rollout-y.jsonl").mkdir()
+        self.assertFalse(self.muets())
+
+    def test_the_installers_record_is_private_and_read_back(self):
+        ag.pose_hooks(self.home)
+        p = self.state / ag.POSES
+        d = json.loads(p.read_text(encoding="utf-8"))
+        self.assertEqual(sorted(d), ["date", "version"])
+        self.assertTrue(ag.UTC_RE.fullmatch(d["date"]))
+        if POSIX:
+            self.assertEqual(stat.S_IMODE(p.stat().st_mode), 0o600)
+        self.session(-5)   # a session written after it
+        self.assertTrue(self.muets())
+
+
+class CliCodex(Home):
+    """The installer's other questions: can Codex be chosen here, where does it live, wired now."""
+
+    def cli(self, *args, env=None):
+        e = {k: v for k, v in os.environ.items() if k != "CODEX_HOME"}
+        e.update(HOME=self.home, USERPROFILE=self.home, **(env or {}))
+        p = subprocess.run([sys.executable, "-I", str(HOOKS / "_agents.py"), *args], env=e, capture_output=True, timeout=20)
+        return p.returncode, p.stdout
+
+    def test_codex_closed_here(self):
+        self.assertEqual(self.cli("ouvert"), (1, b""))
+
+    def test_codex_home_only_from_a_trusted_file_that_lists_codex(self):
+        self.assertEqual(self.cli("codex-home"), (1, b""), "no file")
+        self.put({"version": 1, "agents": ["claude"], "prefere": "claude"})
+        self.assertEqual(self.cli("codex-home"), (1, b""), "Claude alone")
+        self.put({"version": 1, "agents": ["codex"], "prefere": "codex", "codex_home": CH})
+        self.assertEqual(self.cli("codex-home"), (1, b""), "Codex is closed here: the file is not trusted")
+
+    def test_codex_home_printed_whole_whatever_the_locale(self):
+        home = os.path.join(self.home, "Données é")
+        self.put({"version": 1, "agents": ["codex"], "prefere": "codex", "codex_home": home})
+        code = ("import sys; sys.path.insert(0, %r); import _agents as ag; ag.CODEX_OUVERT = frozenset([ag.systeme()]); "
+                "sys.exit(ag.main(['codex-home']))" % str(HOOKS))
+        e = dict(os.environ, HOME=self.home, USERPROFILE=self.home, LC_ALL="C", LANG="C", PYTHONIOENCODING="ascii")
+        p = subprocess.run([sys.executable, "-I", "-c", code], env=e, capture_output=True, timeout=20)
+        self.assertEqual((p.returncode, p.stdout), (0, os.fsencode(home) + b"\n"), p.stderr)
+
+    def test_pose_hooks_writes_the_record(self):
+        self.assertEqual(self.cli("pose-hooks"), (0, b""))
+        self.assertTrue(ag._pose(self.home))
 
 
 if __name__ == "__main__":

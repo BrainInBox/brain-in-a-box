@@ -1,0 +1,14 @@
+# brain-in-a-box: gbq's two reads, run by Codex without asking and outside its sandbox (gbq writes a
+# lock in ~/.gbrain and asks Voyage AI). Nothing else: gbq passes every argument to gbrain, and its
+# other commands (sync, embed, skillify <url>...) still ask first. gbq starts these two reads from /,
+# so nothing of the session's folder reaches Bun (a bunfig.toml and its preload, a .env, a
+# tsconfig.json). Installed by install.sh, which keeps a version you change (the new one waits in
+# ~/.brain-in-a-box/pending). macOS and Linux only: on Windows gbq is gbq.cmd, and cmd.exe reads its
+# arguments again (an "&" would start a second command), so install.ps1 puts no rule: Codex asks.
+#
+# host_executable: a path to a gbq counts only when it is the kit's (~/.local/bin/gbq). Without it,
+# Codex would match any program named gbq against these rules, ./gbq included, which the sandbox lets
+# a session write.
+host_executable(name="gbq", paths=["__HOME__/.local/bin/gbq"])
+prefix_rule(pattern=["gbq", "query"], decision="allow")
+prefix_rule(pattern=["gbq", "search"], decision="allow")

@@ -33,6 +33,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _controle_rules as rules  # noqa: E402
 import _controle_judge as judge  # noqa: E402
+import _agents  # noqa: E402
 
 ENV_HELP = """environment (all optional):
   BRAIN_DIR            the vault (default ~/Documents/Brain); --brain wins
@@ -131,6 +132,7 @@ ALERT_TEXT = {
     "claude": "{x}",
     "agents": "Le choix d'IA (~/.brain-in-a-box/agents.json) n'est pas fiable ({x}) : la réflexion et la relecture "
               "ne demandent plus rien à une IA. Relance l'installation.",
+    "codex_hooks": "Les hooks Codex ne tournent pas : ouvre Codex, tape /hooks et approuve-les.",
 }
 AGENTS_ETAT = {"illisible": "fichier illisible", "invalide": "contenu invalide", "droits": "modifiable par un autre "
                "compte", "ferme": "Codex n'est pas encore ouvert sur ce système"}
@@ -746,6 +748,9 @@ class Run:
         choix, etat = self.agents
         if not choix.agents:
             self.alert("orange", "agents", AGENTS_ETAT.get(etat, etat))
+        elif "codex" in choix.agents and _agents.hooks_muets(choix.codex_home):
+            # Codex kept sessions since install.sh wired its hooks, and ran none of them.
+            self.alert("orange", "codex_hooks")
         if self.tracked:
             for pair in rules.case_collisions(self.tracked):
                 self.points.append(("dossiers_casse", pair[0], " et ".join(p + "/" for p in pair)))

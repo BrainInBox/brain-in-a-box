@@ -93,7 +93,8 @@ class Base(unittest.TestCase):
         patches = [mock.patch.dict(os.environ, {"HOME": self.home, "USERPROFILE": self.home}),
                    mock.patch.object(codex, "MANAGED", [os.path.join(self.managed, "requirements.toml"),
                                                         os.path.join(self.managed, "managed_config.toml")]),
-                   mock.patch.object(codex, "MDM", [os.path.join(self.tmp, "mdm", "com.openai.codex.plist")])]
+                   mock.patch.object(codex, "MDM", [os.path.join(self.tmp, "mdm", "com.openai.codex.plist")]),
+                   mock.patch.object(codex, "PROGRAM_DATA", os.path.join(self.tmp, "programdata"))]
         for p in patches:
             p.start()
             self.addCleanup(p.stop)
@@ -781,6 +782,265 @@ class Binary(unittest.TestCase):
             with self.assertRaises(HeadlessError) as cm:
                 codex._codex(None)
             self.assertEqual(cm.exception.kind, "start")
+
+
+# --------------------------------------------------------------------------- Windows: %ProgramData%\OpenAI\Codex
+
+SYSTEM, ADMINS, USERS = "S-1-5-18", "S-1-5-32-544", "S-1-5-32-545"
+TRUSTED_INSTALLER = "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"
+CREATOR_OWNER, EVERYONE, AUTHENTICATED, INTERACTIVE = "S-1-3-0", "S-1-1-0", "S-1-5-11", "S-1-5-4"
+A_USER = "S-1-5-21-1004336348-1177238915-682003330-1001"
+FULL, MODIFY, READ_EXECUTE = 0x1F01FF, 0x1301BF, 0x1200A9
+OI, CI, IO, INHERITED = 0x01, 0x02, 0x08, 0x10
+# What an administrator who locks the folder leaves: SYSTEM and the Administrators in full, the users reading.
+LOCKED = [(0, OI | CI, FULL, SYSTEM), (0, OI | CI, FULL, ADMINS), (0, OI | CI, READ_EXECUTE, USERS),
+          (0, OI | CI | IO, FULL, CREATOR_OWNER)]
+# What a folder made in C:\ProgramData inherits: its users may add files and folders.
+PROGRAMDATA_LIKE = [(0, INHERITED, FULL, SYSTEM), (0, OI | CI | INHERITED, FULL, ADMINS),
+                    (0, OI | CI | INHERITED, READ_EXECUTE, USERS), (0, CI | INHERITED, 0x6, USERS),
+                    (0, OI | CI | IO | INHERITED, FULL, CREATOR_OWNER)]
+
+
+class SystemSettingsAcl(unittest.TestCase):
+    """unsafe(): who could change a folder of Codex's system settings, from its owner and access list."""
+
+    def test_a_folder_an_administrator_locked(self):
+        for owner in (ADMINS, SYSTEM, TRUSTED_INSTALLER):
+            with self.subTest(owner=owner):
+                self.assertIsNone(codex.unsafe(owner, LOCKED, child_files=True))
+        self.assertIsNone(codex.unsafe(ADMINS, [(0, 0, 0x80000000 | 0x20000000, USERS)]), "generic read and execute")
+
+    def test_an_owner_who_is_not_system_nor_the_administrators(self):
+        for owner in (A_USER, USERS, EVERYONE, CREATOR_OWNER):
+            with self.subTest(owner=owner):
+                self.assertIn("owner", codex.unsafe(owner, LOCKED))
+
+    def test_any_other_account_that_may_change_it(self):
+        for sid in (USERS, EVERYONE, AUTHENTICATED, INTERACTIVE, A_USER):
+            for mask in (0x2, 0x4, 0x10, 0x100, 0x40, 0x10000, 0x40000, 0x80000, MODIFY, FULL, 0x40000000, 0x10000000):
+                with self.subTest(sid=sid, mask=hex(mask)):
+                    self.assertIn(sid, codex.unsafe(ADMINS, LOCKED + [(0, 0, mask, sid)]) or "")
+
+    def test_what_a_folder_made_in_programdata_inherits(self):
+        self.assertIn(USERS, codex.unsafe(ADMINS, PROGRAMDATA_LIKE) or "")
+
+    def test_the_files_it_would_get(self):
+        child = LOCKED + [(0, OI | IO, 0x40000000, USERS)]
+        self.assertIsNone(codex.unsafe(ADMINS, child), "the folder itself")
+        self.assertIn("what it holds", codex.unsafe(ADMINS, child, child_files=True) or "")
+        self.assertIsNone(codex.unsafe(ADMINS, LOCKED + [(0, CI | IO, 0x40000000, USERS)], child_files=True),
+                          "subfolders only: not the files Codex reads")
+
+    def test_no_access_list_an_entry_of_another_kind_and_a_deny_entry(self):
+        self.assertIn("no access list", codex.unsafe(ADMINS, None))
+        for kind in (5, 9, 11, 17):
+            with self.subTest(kind=kind):
+                self.assertIn("kind", codex.unsafe(ADMINS, LOCKED + [(kind, 0, 0x1, None)]) or "")
+        self.assertIsNone(codex.unsafe(ADMINS, LOCKED + [(1, 0, FULL, USERS)]))
+
+    def test_a_sid_read_from_its_bytes(self):
+        raw = bytes([1, 2, 0, 0, 0, 0, 0, 5]) + (32).to_bytes(4, "little") + (544).to_bytes(4, "little")
+        self.assertEqual(codex._sid(raw), ADMINS)
+        for bad in (raw[:7], raw[:12], bytes([2]) + raw[1:]):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                codex._sid(bad)
+
+
+class SystemSettings(unittest.TestCase):
+    """check_system_settings(): the folders and files, as Windows would describe them (security() stood in)."""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="programdata-")
+        self.addCleanup(shutil.rmtree, self.root, True)
+        self.openai = os.path.join(self.root, "OpenAI")
+        self.dir = os.path.join(self.openai, "Codex")
+        self.acl, self.asked = {}, []
+        for p in (mock.patch.object(codex, "WINDOWS", True), mock.patch.object(codex, "PROGRAM_DATA", self.root),
+                  mock.patch.object(codex, "security", self.security)):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def security(self, path):
+        self.asked.append(os.path.relpath(path, self.root))
+        v = self.acl.get(os.path.relpath(path, self.root), (ADMINS, LOCKED))
+        if isinstance(v, Exception):
+            raise v
+        return v
+
+    def put(self, name, text="x = 1\n"):
+        with open(os.path.join(self.dir, name), "w", encoding="utf-8") as f:
+            f.write(text)
+
+    def paused(self):
+        with self.assertRaises(HeadlessError) as cm:
+            codex.check_system_settings()
+        self.assertEqual((cm.exception.kind, cm.exception.reason), ("unsupported", "managed"), cm.exception)
+        return str(cm.exception)
+
+    def test_nothing_there_nothing_read(self):
+        codex.check_system_settings()
+        self.assertEqual(self.asked, [])
+
+    def test_locked_folders_and_files_pass(self):
+        os.makedirs(self.dir)
+        for name in ("config.toml", "requirements.toml", "managed_config.toml"):
+            self.put(name)
+        codex.check_system_settings()
+        self.assertEqual(self.asked, ["OpenAI", os.path.join("OpenAI", "Codex")] +
+                         [os.path.join("OpenAI", "Codex", n) for n in ("config.toml", "requirements.toml", "managed_config.toml")])
+
+    def test_each_one_another_account_could_change_pauses_codex(self):
+        os.makedirs(self.dir)
+        self.put("config.toml")
+        self.put("requirements.toml")
+        for where, acl in (("OpenAI", (A_USER, LOCKED)), ("OpenAI", (ADMINS, PROGRAMDATA_LIKE)),
+                           (os.path.join("OpenAI", "Codex"), (ADMINS, LOCKED + [(0, OI | IO, 0x2, USERS)])),
+                           (os.path.join("OpenAI", "Codex", "config.toml"), (ADMINS, LOCKED + [(0, 0, MODIFY, USERS)])),
+                           (os.path.join("OpenAI", "Codex", "requirements.toml"), (A_USER, LOCKED)),
+                           (os.path.join("OpenAI", "Codex"), OSError(5, "denied"))):
+            self.acl = {where: acl}
+            with self.subTest(where=where, acl=acl):
+                self.assertIn(os.path.join(self.root, where), self.paused())
+
+    def test_only_openai_there(self):
+        os.makedirs(self.openai)
+        codex.check_system_settings()
+        self.assertEqual(self.asked, ["OpenAI"])
+        self.acl = {"OpenAI": (A_USER, LOCKED)}
+        self.paused()
+
+    def test_a_file_where_a_folder_goes_a_folder_where_a_file_goes(self):
+        with open(self.openai, "w") as f:
+            f.write("x")
+        self.assertIn("is not a folder", self.paused())
+        os.remove(self.openai)
+        os.makedirs(os.path.join(self.dir, "config.toml"))
+        self.assertIn("is not a file", self.paused())
+
+    @unittest.skipIf(WINDOWS, "a link on Windows needs a privilege: WindowsAcl makes a junction")
+    def test_a_link(self):
+        os.makedirs(os.path.join(self.root, "elsewhere"))
+        os.symlink(os.path.join(self.root, "elsewhere"), self.openai)
+        self.assertIn("is a link", self.paused())
+        self.assertEqual(self.asked, [])
+
+    def test_programdata_windows_does_not_say(self):
+        with mock.patch.object(codex, "PROGRAM_DATA", None), mock.patch.object(codex, "known_program_data", lambda: None):
+            self.assertIn("%ProgramData%", self.paused())
+
+
+class SystemSettingsInTheCall(Base):
+    def test_checked_before_any_probe_and_again_before_the_question(self):
+        seen = []
+        with mock.patch.object(codex, "check_system_settings", lambda: seen.append(len(self.calls()))):
+            self.assertEqual(self.run_codex().output, ANSWER)
+        probes = [c for c in self.calls() if c not in self.exec_calls()]
+        self.assertEqual(seen, [0, len(probes)])
+
+    def test_a_pause_asks_nothing_and_runs_no_probe(self):
+        def pause():
+            raise HeadlessError("unsupported", "a folder another account could change", "managed")
+        with mock.patch.object(codex, "check_system_settings", pause):
+            self.refused("unsupported", "managed")
+            with self.assertRaises(HeadlessError):
+                codex.check(self.codex_home, command=self.command(), work_root=self.tmp)
+        self.assertEqual(self.calls(), [])
+
+
+@unittest.skipUnless(WINDOWS, "Windows' own permissions")
+class WindowsAcl(unittest.TestCase):
+    """The real thing: folders whose owner and access list icacls sets, read by security()."""
+
+    def setUp(self):
+        self.root = os.path.realpath(tempfile.mkdtemp(prefix="programdata-"))
+        self.addCleanup(self.cleanup)
+        self.openai = os.path.join(self.root, "OpenAI")
+        self.dir = os.path.join(self.openai, "Codex")
+        os.makedirs(self.dir)
+        p = mock.patch.object(codex, "PROGRAM_DATA", self.root)
+        p.start()
+        self.addCleanup(p.stop)
+
+    def cleanup(self):
+        subprocess.run(["icacls", self.root, "/reset", "/T", "/C", "/Q"], capture_output=True)
+        subprocess.run(["takeown", "/F", self.root, "/R", "/D", "Y"], capture_output=True)
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def icacls(self, path, *args):
+        p = subprocess.run(["icacls", path] + list(args), capture_output=True, text=True)
+        self.assertEqual(p.returncode, 0, "icacls %s %s: %s %s" % (path, args, p.stdout, p.stderr))
+
+    def lock(self, path):
+        """As an administrator locks it: SYSTEM and the Administrators in full, the users reading, the
+        Administrators its owner; nothing inherited, no entry left from before."""
+        self.icacls(path, "/reset")
+        self.icacls(path, "/inheritance:r", "/grant:r", "*S-1-5-18:(OI)(CI)F", "*S-1-5-32-544:(OI)(CI)F",
+                    "*S-1-5-32-545:(OI)(CI)RX")
+        self.icacls(path, "/setowner", "*S-1-5-32-544")
+
+    def put(self, name):
+        p = os.path.join(self.dir, name)
+        with open(p, "w") as f:
+            f.write("x = 1\n")
+        self.icacls(p, "/setowner", "*S-1-5-32-544")
+        return p
+
+    def paused(self):
+        with self.assertRaises(HeadlessError) as cm:
+            codex.check_system_settings()
+        self.assertEqual(cm.exception.reason, "managed", cm.exception)
+        return str(cm.exception)
+
+    def test_the_known_folder_not_the_variable(self):
+        p = subprocess.run(["powershell", "-NoProfile", "-Command", "[Environment]::GetFolderPath('CommonApplicationData')"],
+                           capture_output=True, text=True)
+        real = p.stdout.strip()
+        self.assertTrue(real and os.path.isdir(real), p)
+        with mock.patch.dict(os.environ, {"ProgramData": self.root, "ALLUSERSPROFILE": self.root}):
+            self.assertEqual(os.path.normcase(codex.known_program_data()), os.path.normcase(real))
+            with mock.patch.object(codex, "PROGRAM_DATA", None), mock.patch.object(codex, "MANAGED", None):
+                self.assertEqual(codex._managed_files()[0], Path(real) / "OpenAI" / "Codex" / "requirements.toml")
+
+    def test_locked_by_an_administrator(self):
+        self.lock(self.openai)
+        self.lock(self.dir)
+        self.put("config.toml")
+        owner, aces = codex.security(self.dir)
+        self.assertEqual(owner, ADMINS)
+        self.assertEqual({a[3] for a in aces}, {SYSTEM, ADMINS, USERS}, aces)
+        codex.check_system_settings()
+
+    def test_a_folder_its_users_may_add_to_as_one_made_in_programdata(self):
+        # What a folder made in C:\\ProgramData inherits: Users may add files and folders to it.
+        self.lock(self.openai)
+        self.lock(self.dir)
+        codex.check_system_settings()
+        self.icacls(self.openai, "/grant", "*S-1-5-32-545:(CI)(WD,AD,WEA,WA)")
+        self.assertIn("S-1-5-32-545 may change it", self.paused())
+
+    def test_users_who_may_add_files_or_an_owner_of_theirs(self):
+        self.lock(self.openai)
+        self.lock(self.dir)
+        self.icacls(self.dir, "/grant", "*S-1-5-32-545:(OI)(IO)(W)")
+        self.assertIn("what it holds", self.paused())
+        self.lock(self.dir)
+        self.icacls(self.openai, "/grant", "*S-1-5-11:(M)")
+        self.assertIn("S-1-5-11", self.paused())
+        self.lock(self.openai)
+        self.icacls(self.openai, "/setowner", os.environ["USERNAME"])
+        self.assertIn("its owner is", self.paused())
+        self.lock(self.openai)
+        codex.check_system_settings()
+        self.icacls(self.put("requirements.toml"), "/grant", "*S-1-1-0:(M)")
+        self.assertIn("requirements.toml", self.paused())
+
+    def test_a_junction(self):
+        shutil.rmtree(self.openai)
+        target = os.path.join(self.root, "elsewhere")
+        os.makedirs(os.path.join(target, "Codex"))
+        p = subprocess.run(["cmd", "/c", "mklink", "/J", self.openai, target], capture_output=True, text=True)
+        self.assertEqual(p.returncode, 0, p)
+        self.assertIn("is a link", self.paused())
 
 
 if __name__ == "__main__":

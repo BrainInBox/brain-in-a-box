@@ -30,6 +30,11 @@ case "${1:-}" in
   query|search|ask|graph-query) IS_READ=1;;
   *)                            IS_READ=0;;
 esac
+# A read starts gbrain from /, which no session can write to: Bun reads a bunfig.toml (whose preload
+# runs before gbrain), a .env and a tsconfig.json in the folder it starts in, and Codex runs
+# `gbq query` and `gbq search` without asking, outside its sandbox, from a session's folder
+# (engine/codex/brain-in-a-box.rules). A write keeps the caller's folder: `gbq import ./notes`.
+if [ "$IS_READ" = 1 ]; then cd / || exit 1; fi
 
 # Sweep a stale lock left by a previous force-killed read (kill -9 skips cleanup).
 # Only safe when no gbrain is actually running right now.

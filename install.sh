@@ -196,7 +196,131 @@ choose_agents() {
   esac
 }
 with_agent() { case ",$AGENTS," in *",$1,"*) return 0 ;; *) return 1 ;; esac; }
+# A new install at a terminal, with nothing chosen, asks: only where Codex can be chosen (one answer
+# otherwise), never over a choice made before or an install from before the choice (Claude alone).
+agents_question() {
+  [ -z "$AGENTS_OPT$PREFERE_OPT${BIAB_AGENTS:-}${BIAB_PREFERE:-}" ] || return 0
+  [ ! -e "$STATE/agents.json" ] && [ ! -L "$STATE/agents.json" ] || return 0
+  [ ! -e "$STATE/installed.json" ] && [ ! -e "$HOOKS/correction-detector.py" ] || return 0
+  python3 -I "$REPO/engine/hooks/_agents.py" ouvert || return 0
+  [ -t 0 ] || return 0
+  echo "  Your brain works with Claude Code (your Claude subscription), Codex (your ChatGPT subscription), or both."
+  if ! ask "Use Codex?"; then AGENTS_OPT=claude; return 0; fi
+  if ! ask "Use Claude Code too?"; then AGENTS_OPT=codex; return 0; fi
+  AGENTS_OPT=claude,codex
+  if ask "Should Codex write the evening summary (no: Claude Code does)?"; then PREFERE_OPT=codex; else PREFERE_OPT=claude; fi
+}
 # <<< agents
+
+# >>> codex
+# Codex, when it is chosen (docs/proposals/codex.md, §3). OpenAI's official installer, for this user
+# (no sudo), at the version CI tests, its script checked against a pinned SHA-256 before it runs (it
+# then checks the binary's own digest); the kit's block in the global AGENTS.md Codex reads; the
+# hooks in its hooks.json, approved for the user, who is told so; gbq's two reads allowed outside its
+# sandbox; an AGENTS.md in the vault. What the user has there is merged into or left alone, never
+# replaced: hooks.json and config.toml are backed up (0600) first and written in one step.
+CODEX_VERSION=0.162.1
+CODEX_INSTALLER_URL="https://github.com/openai/codex/releases/download/rust-v$CODEX_VERSION/install.sh"
+CODEX_INSTALLER_SHA256=150e3cf675682efeaac115aa3747add3f27887896d04ce6d0b56478d8b428bf6
+CODEX_DIR=""   # the CODEX_HOME agents.json records, once Codex is chosen
+codex_bin() { if [ -x "$H/.local/bin/codex" ]; then echo "$H/.local/bin/codex"; else command -v codex 2>/dev/null || true; fi; }
+codex_older() {  # codex_older <version>: older than CODEX_VERSION, or not a version
+  python3 -I -c 'import re, sys
+v = lambda s: tuple(int(x) for x in s.split("."))
+sys.exit(0 if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", sys.argv[1]) or v(sys.argv[1]) < v(sys.argv[2]) else 1)' "$1" "$CODEX_VERSION"
+}
+codex_install() {
+  local cb v d from
+  cb="$(codex_bin)"
+  if [ -n "$cb" ]; then
+    v="$("$cb" --version 2>/dev/null | sed -n '1s/^codex-cli \([0-9][0-9.]*\).*/\1/p')"
+    if codex_older "$v"; then
+      warn "Codex ${v:-of an unknown version} ($cb) is older than the kit needs ($CODEX_VERSION or newer): update it, then re-run ./install.sh"
+    else
+      ok "Codex already installed ($v)"
+    fi
+    return 0
+  fi
+  echo "  … Codex $CODEX_VERSION: OpenAI's official installer (in your home folder, no sudo), checked before it runs"
+  d="$(mktemp -d)"
+  if ! logged curl -fsSL --retry 2 -o "$d/install.sh" "$CODEX_INSTALLER_URL"; then
+    rm -rf "$d"; warn_log "Codex: download failed (network?): re-run ./install.sh"; return 0
+  fi
+  if [ "$(sha256 "$d/install.sh")" != "$CODEX_INSTALLER_SHA256" ]; then
+    rm -rf "$d"; warn "Codex: its installer does not match the pinned SHA-256, nothing run: re-run ./install.sh later"; return 0
+  fi
+  from=$(( $(wc -c < "$LOG") + 1 ))
+  # With the user's own PATH: the installer puts ~/.local/bin in a shell profile when it is not on it.
+  if logged env -u VOYAGE_API_KEY -u CODEX_INSTALL_DIR -u CODEX_INSTALL_DAEMON_ONLY -u CODEX_INSTALL_DEFER_SELECTION \
+       PATH="$ORIG_PATH" CODEX_HOME="$CODEX_DIR" CODEX_RELEASE="$CODEX_VERSION" CODEX_NON_INTERACTIVE=1 sh "$d/install.sh" \
+     && [ -x "$H/.local/bin/codex" ]; then
+    ok "Codex $CODEX_VERSION installed ($H/.local/bin/codex)"
+    tail -c +"$from" "$LOG" | sed -n -e 's/^==> PATH was added to \(.*\)/    its installer put ~\/.local\/bin on your PATH in \1 (new terminals)/p' \
+                                    -e 's/^==> PATH was updated in \(.*\)/    its installer put ~\/.local\/bin on your PATH in \1 (new terminals)/p'
+  else
+    warn_log "Codex did not install (the log says why): re-run ./install.sh, or see https://developers.openai.com/codex/cli"
+  fi
+  rm -rf "$d"
+}
+codex_py() {  # codex_py check|merge|approve|restore|global <codex home> <arg>: hooks.json, config.toml, AGENTS.md
+  python3 -I "$REPO/engine/codex/wire.py" "$@"
+}
+codex_global() {
+  local out
+  if out="$(codex_py global "$CODEX_DIR" "$REPO/engine/CLAUDE.global.template.md")"; then ok "$out"; else warn "$out"; fi
+}
+codex_wire() {  # the kit's hooks in hooks.json, then their approval in config.toml, which Codex checks
+  local out cb st n bak kept
+  out="$(codex_py merge "$CODEX_DIR" "$HOOKS")" || { warn "$out"; return 0; }
+  ok "$out"
+  python3 -I "$REPO/engine/hooks/_agents.py" pose-hooks >/dev/null || warn "could not note in $STATE when Codex's hooks were wired"
+  cb="$(codex_bin)"
+  if [ -z "$cb" ]; then
+    warn "Codex is not installed, so the kit could not approve its hooks there: re-run ./install.sh once it is (or approve them in Codex: /hooks)"
+    return 0
+  fi
+  if [ -e "$CODEX_DIR/config.toml" ] && ! logged env -u VOYAGE_API_KEY CODEX_HOME="$CODEX_DIR" "$cb" features list; then
+    warn "Codex cannot read $CODEX_DIR/config.toml as it is (codex features list fails, see $LOG): the kit did not approve its hooks. Fix it and re-run ./install.sh, or approve them in Codex: /hooks"
+    return 0
+  fi
+  out="$(codex_py approve "$CODEX_DIR" "$HOOKS")" || out="error"
+  { read -r st; read -r n; read -r bak; read -r kept; } <<EOF || true
+$out
+EOF
+  case "$st" in
+    unchanged)
+      ok "Codex: the kit's $n hooks are approved, by the kit for you ($CODEX_DIR/config.toml): see or turn them off with /hooks in Codex" ;;
+    written)
+      if logged env -u VOYAGE_API_KEY CODEX_HOME="$CODEX_DIR" "$cb" features list; then
+        [ "$bak" = - ] && bak="" || bak=", previous version: $bak"
+        ok "Codex: the kit approved its $n hooks for you ($CODEX_DIR/config.toml$bak), so Codex runs them without asking. See them, or turn them off, with /hooks in Codex"
+      else
+        codex_py restore "$CODEX_DIR" "$bak" || true
+        warn "Codex refused config.toml with the kit's approval (see $LOG): put back as it was. Approve the kit's hooks in Codex: /hooks"
+      fi ;;
+    refused)
+      warn "Codex: $n, so the kit did not approve its hooks: open Codex, type /hooks and approve them" ;;
+    none)
+      warn "Codex: none of the kit's hooks is in hooks.json as the kit writes it: nothing approved (see them with /hooks in Codex)" ;;
+    *)
+      warn "Codex: the kit could not approve its hooks (${out:-no answer}): open Codex, type /hooks and approve them" ;;
+  esac
+  [ "${kept:--}" = - ] || warn "Codex: the approval you set in /hooks for $kept is kept as you set it"
+}
+codex_rules() {  # gbq query and gbq search without asking, at the kit's gbq only
+  case "$H" in
+    *'"'*|*'\'*) warn "Codex: your home folder's path has a quote or a backslash, so gbq is not allowed without asking"; return 0 ;;
+  esac
+  mkdir -p "$CODEX_DIR/rules"
+  place "$REPO/engine/codex/brain-in-a-box.rules" "$CODEX_DIR/rules/brain-in-a-box.rules" \
+    "gbq query and gbq search run without asking in Codex ($CODEX_DIR/rules/brain-in-a-box.rules)"
+}
+codex_vault() {  # codex_vault <vault>: an AGENTS.md at its root when it has none: Codex reads it, never CLAUDE.md
+  if [ -e "$1/AGENTS.md" ] || [ -L "$1/AGENTS.md" ]; then ok "$1/AGENTS.md already there (kept as is)"; return 0; fi
+  cp "$REPO/engine/codex/AGENTS.vault.md" "$1/AGENTS.md" && ok "$1/AGENTS.md placed: Codex reads the vault's CLAUDE.md through it" \
+    || warn "could not write $1/AGENTS.md"
+}
+# <<< codex
 
 # >>> linux
 # Linux only. sudo never runs without a yes typed in a terminal: without one, the
@@ -467,9 +591,14 @@ case "$OS" in
 esac
 command -v git >/dev/null   || die "git missing."
 command -v python3 >/dev/null || die "python3 missing."
+agents_question
 choose_agents                 # a choice refused stops us before anything is changed
 if with_agent claude; then
   merge_settings "$H" --check   # a settings.json we cannot read stops us before anything is changed
+fi
+if with_agent codex; then       # nor a hooks.json of Codex's
+  CODEX_DIR="$(python3 -I "$REPO/engine/hooks/_agents.py" codex-home)" || die "$STATE/agents.json does not say where Codex lives: re-run ./install.sh with --agents"
+  out="$(codex_py check "$CODEX_DIR" "$HOOKS")" || die "$out"
 fi
 mkdir -p "$STATE"
 ( umask 077; : >> "$LOG" ); chmod 600 "$LOG"
@@ -637,7 +766,7 @@ replaceable() {  # replaceable <source> <destination>: may the new version of <s
 place() {  # place <source> <destination> [label]
   local tmp name label mode=755
   name="$(basename "$2")"; label="${3:-$name}"
-  case "$name" in *.plist|*.service|*.timer) mode=644;; esac
+  case "$name" in *.plist|*.service|*.timer|*.rules) mode=644;; esac
   tmp="$(mktemp)"
   fill "$1" > "$tmp"
   chmod "$mode" "$tmp"  # before it lands: a hook that fires meanwhile finds it whole and executable
@@ -713,6 +842,20 @@ if with_agent claude; then
   # ── 9bis. Claude Code skills (never overwrites one of yours, see the script)
   say "Claude Code skills"
   python3 "$REPO/engine/install_skills.py" --src "$REPO/skills" --dest "$H/.claude/skills" \
+    && ok "skills up to date" || warn "skills: see above"
+fi
+
+# ── 9ter. Codex: installed when missing, its AGENTS.md, hooks and skills, when it is chosen ──
+if with_agent codex; then
+  say "Codex ($CODEX_DIR)"
+  ( umask 077; mkdir -p "$CODEX_DIR" ) || die "could not create $CODEX_DIR"   # where auth.json goes: private
+  codex_install
+  codex_global
+  codex_wire
+  codex_rules
+  codex_vault "$BRAIN"
+  say "Codex skills (~/.agents/skills)"
+  python3 "$REPO/engine/install_skills.py" --src "$REPO/skills" --dest "$H/.agents/skills" --manifest "$STATE/skills-codex.json" \
     && ok "skills up to date" || warn "skills: see above"
 fi
 
@@ -867,18 +1010,43 @@ case "$SCHEDULER" in
   *)        SCHED_CHECK="(nothing scheduled: see the warning above)" ;;
 esac
 LOCAL_TOOLS="gbq, controle"
+if with_agent codex; then LOCAL_TOOLS="codex, $LOCAL_TOOLS"; fi
 if with_agent claude; then LOCAL_TOOLS="claude, $LOCAL_TOOLS"; fi
 case ":$ORIG_PATH:" in
   *":$H/.local/bin:"*) ;;
   *) [ "$OS" = Linux ] && printf "\n\033[1;33m⚠ ~/.local/bin ($LOCAL_TOOLS) is not on your PATH yet: log out and back in (it is added at login once it exists), or run: export PATH=\"\$HOME/.local/bin:\$HOME/.bun/bin:\$PATH\"\033[0m\n" ;;
 esac
-if with_agent claude; then
+# The onboarding opens the preferred agent in the vault.
+if with_agent claude && [ "$PREFERE" = claude ]; then
   cat <<EOF
 
 Last step — the ONBOARDING (15 min) that fills in YOUR profile:
   cd $BRAIN && claude
   then paste:  "Read $REPO/onboarding/ONBOARDING.md and run it to personalize me."
 EOF
+fi
+if with_agent codex; then
+  cat <<EOF
+
+Sign in to Codex with your ChatGPT account (the kit never uses an API key: it would be billed):
+  codex login
+EOF
+fi
+if [ "$PREFERE" = codex ]; then
+  cat <<EOF
+
+Last step — the ONBOARDING (15 min) that fills in YOUR profile:
+  cd $BRAIN && codex
+  then paste:  "Read $REPO/onboarding/ONBOARDING.md and run it to personalize me."
+EOF
+fi
+# An agent chosen before and not any more: what the kit put in place for it stays (it has no uninstall).
+# Codex's, only once the kit has wired it (codex-hooks-poses.json): a Codex of the user's own is not read.
+if ! with_agent codex && [ -f "$STATE/codex-hooks-poses.json" ] && grep -qF "/.claude/hooks/brain/" "${CODEX_HOME:-$H/.codex}/hooks.json" 2>/dev/null; then
+  printf "\n\033[1;33m⚠ Codex is not chosen any more: what the kit put in place for it stays, and its hooks keep quiet. To remove it: /hooks in Codex, the block after <!-- brain-in-a-box --> in its AGENTS.md, and the skills %s lists in ~/.agents/skills.\033[0m\n" "$STATE/skills-codex.json"
+fi
+if ! with_agent claude && grep -qF "/.claude/hooks/brain/" "$H/.claude/settings.json" 2>/dev/null; then
+  printf "\n\033[1;33m⚠ Claude Code is not chosen any more: its hooks in ~/.claude/settings.json, the block after <!-- brain-in-a-box --> in ~/.claude/CLAUDE.md and the skills %s lists in ~/.claude/skills stay, and run if you open Claude Code. To remove them: /hooks in Claude Code, that block, those skills.\033[0m\n" "$STATE/skills.json"
 fi
 cat <<EOF
 

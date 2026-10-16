@@ -25,6 +25,11 @@ chmod +x "$HB/gbrain-selfupdate.sh"
 PASS=0; FAIL=0
 ok(){ printf "  \033[1;32m✓\033[0m %s\n" "$1"; PASS=$((PASS+1)); }
 no(){ printf "  \033[1;31m✗\033[0m %s\n" "$1"; FAIL=$((FAIL+1)); }
+# Codex opened in a copy of the kit's gate, whatever the gate says (closed on every system today, open on
+# some of them once a change opens it): its line replaced, then checked.
+OPEN_GATE='CODEX_OUVERT = frozenset({"darwin", "linux", "windows"})'
+open_gate(){ sed -i.bak -E "s/^CODEX_OUVERT = frozenset\(.*\)\$/$OPEN_GATE/" "$1" && rm -f "$1.bak" && grep -qxF "$OPEN_GATE" "$1" \
+  || { no "the gate's line moved: Codex not opened in $1"; return 1; }; }
 
 # Fake transcript: 1 user prompt + 1 assistant with 3 tool_use (>=3 gate).
 TX="$H/fake-transcript.jsonl"
@@ -178,7 +183,7 @@ cmp -s "$J" "$CJ" && [ ! -e "$LD/recap-$CSID.lock" ] \
   || no "Codex's Stop hook wrote while Codex is not chosen or closed"
 CXH="$H/codex-open"; mkdir -p "$CXH/hooks" "$CXH/Documents/Brain/Journal" "$CXH/.brain-in-a-box"
 cp "$HB/session-recap.py" "$HB/_codex_rollout.py" "$HB/_vault_write.py" "$HB/_redact.py" "$HB/_agents.py" "$CXH/hooks/"
-sed -i.bak 's/^CODEX_OUVERT = frozenset()$/CODEX_OUVERT = frozenset({"darwin", "linux", "windows"})/' "$CXH/hooks/_agents.py"
+open_gate "$CXH/hooks/_agents.py"
 cp "$H/.brain-in-a-box/agents.json" "$CXH/.brain-in-a-box/"
 codex_stop "$CXH" "$CXH/hooks"
 grep -q "codex gpt-6.1-sol · sid:\`$CSID\`\$" "$CXH/Documents/Brain/Journal/$DAY.md" 2>/dev/null \
@@ -431,7 +436,7 @@ echo "════ 7ter) Codex's hooks (--agent codex): the guard, Codex's schem
 # keeps no file of (--ephemeral), nor the kit's own runs (BRAIN_HEADLESS=1).
 XH="$H/codex-hooks"; XO="$XH/open"; XHOME="$XH/home"; mkdir -p "$XO" "$XHOME/.brain-in-a-box/controle" "$XH/tmp"
 cp "$HB"/*.py "$XO/"
-sed -i.bak 's/^CODEX_OUVERT = frozenset()$/CODEX_OUVERT = frozenset({"darwin", "linux", "windows"})/' "$XO/_agents.py"
+open_gate "$XO/_agents.py"
 printf '{"version":1,"agents":["claude","codex"],"prefere":"claude","codex_home":"%s"}\n' "$XHOME/.codex" > "$XHOME/.brain-in-a-box/agents.json"
 chmod 600 "$XHOME/.brain-in-a-box/agents.json"
 python3 - "$REPO/engine/tests" "$XH" <<'PY'
@@ -674,6 +679,18 @@ out=$(HOME="$GB" PATH="/usr/bin:/bin" bash "$REPO/engine/bin/gbq" sync 2>&1); rc
 [ "$rc" = 0 ] && echo "$out" | grep -q "bun ran gbrain sync" \
   && ok "gbq: finds Bun without ~/.bun/bin on the PATH (a terminal opened before the install)" \
   || no "gbq: without ~/.bun/bin on the PATH: rc=$rc, $out"
+# Its reads start gbrain from /, which no session can write to: Bun reads a bunfig.toml (its preload
+# runs first), a .env and a tsconfig.json where it starts, and Codex runs gbq query and gbq search
+# outside its sandbox from a session's folder. A write keeps the caller's (gbq import ./notes).
+# With the real Bun: the linux and windows jobs of test.yml.
+GC="$H/gbq-cwd-home"; GS="$H/gbq-session"; mkdir -p "$GC/.bun/bin" "$GC/.gbrain" "$GS"
+printf '#!/bin/sh\npwd -P > "$HOME/cwd-$1"\n' > "$GC/.bun/bin/gbrain"; chmod +x "$GC/.bun/bin/gbrain"
+for c in query search ask graph-query sync import; do (cd "$GS" && HOME="$GC" bash "$REPO/engine/bin/gbq" "$c" x >/dev/null 2>&1); done
+here=$(cd "$GS" && pwd -P); bad=""
+for c in query search ask graph-query; do [ "$(cat "$GC/cwd-$c" 2>/dev/null)" = / ] || bad="$bad $c:$(cat "$GC/cwd-$c" 2>/dev/null)"; done
+for c in sync import; do [ "$(cat "$GC/cwd-$c" 2>/dev/null)" = "$here" ] || bad="$bad $c:$(cat "$GC/cwd-$c" 2>/dev/null)"; done
+[ -z "$bad" ] && ok "gbq: a read starts gbrain from / (nothing of the caller's folder reaches Bun), a write from the caller's folder" \
+  || no "gbq: gbrain started from the wrong folder:$bad"
 
 BV="$H/bs-vault"; BSI="$H/bs-index.json"; BS="$REPO/engine/search/brain_search.py"
 mkdir -p "$BV/Decisions"
@@ -731,6 +748,15 @@ out=$(gw query "annual plan" 2>/dev/null); rc=$?
 [ "$rc" = 0 ] && echo "$out" | grep -q "Decisions/pricing.md" && [ ! -f "$GW/calls" ] \
   && ok "gbq.py: keyword mode never calls gbrain" || no "gbq.py: keyword mode wrong (rc=$rc)"
 gw embed --stale --max-usd 0.10 >/dev/null 2>&1 && ok "gbq.py: keyword mode maps sync/embed to a reindex" || no "gbq.py: keyword-mode embed failed"
+# As gbq: a read starts gbrain from gbq.py's own folder (the kit's, no session's), a write from the caller's.
+echo gbrain > "$GW/bs/engine"
+printf '#!/bin/sh\npwd -P > "$HOME/cwd-$1"\necho "[0.91] decisions/pricing -- from gbrain"\n' > "$GW/.bun/bin/gbrain"
+for c in query search sync; do (cd "$GS" && gw "$c" x >/dev/null 2>&1); done
+mine=$(cd "$GW/bs" && pwd -P); bad=""
+for c in query search; do [ "$(cat "$GW/cwd-$c" 2>/dev/null)" = "$mine" ] || bad="$bad $c:$(cat "$GW/cwd-$c" 2>/dev/null)"; done
+[ "$(cat "$GW/cwd-sync" 2>/dev/null)" = "$here" ] || bad="$bad sync:$(cat "$GW/cwd-sync" 2>/dev/null)"
+[ -z "$bad" ] && ok "gbq.py: a read starts gbrain from gbq.py's folder, a write from the caller's" \
+  || no "gbq.py: gbrain started from the wrong folder:$bad"
 
 # Windows nightly (engine/nightly/windows-nightly.py), installed next to the hooks as install.ps1 does:
 # gbrain update, night check, then commits the vault, syncs, embeds, reindexes. The update and
@@ -1116,6 +1142,294 @@ mkdir -p "$LH/Applications"; : > "$LH/Applications/Obsidian-1.14.4.AppImage"
 out=$(YES=1 lx linux_obsidian); [ -z "$(lxcalls)" ] && echo "$out" | grep -q "OK Obsidian already installed" \
   && ok "linux Obsidian: an AppImage in ~/Applications counts as installed" || no "linux Obsidian: existing AppImage not seen: $out"
 
+echo "════ 15bis) install.sh and Codex: its installer, AGENTS.md, hooks.json and their approval, gbq's rules, the question ════"
+# install.sh's Codex functions, in a home of their own, against stand-ins for curl and for Codex
+# itself (whose installer they get from the stand-in curl). The real Codex runs them in test.yml
+# (codex-mock): this checks what is written, and that nothing of the user's is lost.
+CX="$(cd "$H" && pwd -P)/codex-test"; CXB="$CX/bin"; CXH="$CX/home"; CD="$CXH/.codex"; HK="$CXH/.claude/hooks/brain"
+mkdir -p "$CXB"
+eval "$(sed -n '/^# >>> codex$/,/^# <<< codex$/p' "$REPO/install.sh")"
+cat > "$CXB/curl" <<STUB
+#!/bin/sh
+echo "curl \$*" >> "$CX/calls"
+while [ \$# -gt 0 ]; do [ "\$1" = -o ] && { cp "$CX/installer" "\$2"; exit 0; }; shift; done
+exit 1
+STUB
+# The stand-in installer: Codex's own puts codex in ~/.local/bin and may add it to a shell profile.
+cat > "$CX/installer.ok" <<STUB
+env > "$CX/installer-env"
+mkdir -p "\$HOME/.local/bin"
+cat > "\$HOME/.local/bin/codex" <<'CODEX'
+#!/bin/sh
+echo "codex \$* CODEX_HOME=\$CODEX_HOME" >> "$CX/calls"
+case "\$1" in
+  --version) echo "codex-cli \${FAKE_CODEX_VERSION:-0.162.1}";;
+  features) exit "\${FAKE_FEATURES_RC:-0}";;
+esac
+CODEX
+chmod +x "\$HOME/.local/bin/codex"
+echo "==> PATH was added to \$HOME/.profile"
+STUB
+chmod +x "$CXB"/*
+cxhome(){ rm -rf "$CXH" "$CX/calls" "$CX/installer-env"; mkdir -p "$CD" "$HK" "$CXH/.brain-in-a-box"; }
+# cx <function> [args]: one of install.sh's Codex functions, stdin not a terminal; the installer as given.
+cx(){ ( H="$CXH" HOME="$CXH" U=tester LOG="$CX/install.log" ORIG_PATH="/usr/bin:/bin" CODEX_DIR="${CXDIR:-$CD}" HOOKS="$HK" \
+        STATE="$CXH/.brain-in-a-box" MANIFEST="$CX/installed.json" PENDING="$CX/pending" BACKUP="$CX/backup" BACKED_UP=0 \
+        KEPT="" PATH="$CXB:$LX/sys" CODEX_INSTALLER_SHA256="${CXSHA:-$CODEX_INSTALLER_SHA256}"
+        export VOYAGE_API_KEY=canari-voyage
+        ok(){ echo "OK $*"; }; warn(){ echo "WARN $*"; }; die(){ echo "DIED $*"; exit 1; }
+        "$@" ) < /dev/null 2>&1; }
+cxcalls(){ cat "$CX/calls" 2>/dev/null; rm -f "$CX/calls"; }
+CMD(){ printf '%s/%s --agent codex' "$HK" "$1"; }
+# The trust hash of one of the kit's hooks, built by hand: Codex's normalized hook (event, then one
+# handler: async, command, timeout, type), keys sorted, no spaces, sha256.
+trust(){ printf '{"event_name":"%s","hooks":[{"async":false,"command":"%s","timeout":30,"type":"command"}]}' "$1" "$(CMD "$2")" \
+         | sha256 | sed 's/^/sha256:/'; }
+tables(){ grep -c '^\[hooks\.state\.' "$CD/config.toml" 2>/dev/null || echo 0; }
+baks(){ find "$CD" -maxdepth 1 -name "$1.bak-*" | wc -l | tr -d ' '; }
+
+# Its installer: the pinned one only, never run when it does not match, with the right environment.
+cxhome; printf 'touch "%s/ran"\n' "$CX" > "$CX/installer"
+out=$(cx codex_install); c=$(cxcalls)
+echo "$out" | grep -q "does not match the pinned SHA-256, nothing run" && [ ! -e "$CX/ran" ] && [ ! -e "$CXH/.local/bin/codex" ] \
+  && [ "$(echo "$c" | grep -c "^curl -fsSL --retry 2 -o [^ ]*/install.sh $CODEX_INSTALLER_URL$")" = 1 ] \
+  && ok "codex: an installer that is not the pinned one is downloaded from the release, never run" || no "codex: unpinned installer run or wrong URL: $out | $c"
+case "$CODEX_INSTALLER_URL" in
+  "https://github.com/openai/codex/releases/download/rust-v$CODEX_VERSION/install.sh") ok "codex: the installer is the one of the release CI tests ($CODEX_VERSION)" ;;
+  *) no "codex: the installer's URL is not the pinned release's: $CODEX_INSTALLER_URL" ;;
+esac
+cp "$CX/installer.ok" "$CX/installer"
+out=$(CXSHA=$(sha256 "$CX/installer") cx codex_install); c=$(cxcalls)
+grep -qx "CODEX_RELEASE=$CODEX_VERSION" "$CX/installer-env" && grep -qx "CODEX_NON_INTERACTIVE=1" "$CX/installer-env" \
+  && grep -qx "CODEX_HOME=$CD" "$CX/installer-env" && grep -qx "PATH=/usr/bin:/bin" "$CX/installer-env" \
+  && ! grep -q VOYAGE "$CX/installer-env" && [ -x "$CXH/.local/bin/codex" ] \
+  && echo "$out" | grep -q "OK Codex $CODEX_VERSION installed" && echo "$out" | grep -qF "on your PATH in $CXH/.profile (new terminals)" \
+  && ok "codex: the pinned installer runs: its release, no question, the chosen CODEX_HOME, the user's PATH, no Voyage key; its PATH line is said" \
+  || no "codex: installer run wrong: $out | $(cat "$CX/installer-env" 2>/dev/null | grep -E 'CODEX|PATH|VOYAGE')"
+out=$(cx codex_install); c=$(cxcalls)
+echo "$out" | grep -qx "OK Codex already installed ($CODEX_VERSION)" && ! echo "$c" | grep -q '^curl' \
+  && ok "codex: already there, nothing downloaded" || no "codex: reinstalled: $out | $c"
+out=$(FAKE_CODEX_VERSION=0.150.0 cx codex_install)
+echo "$out" | grep -q "WARN Codex 0.150.0 .* is older than the kit needs ($CODEX_VERSION or newer)" \
+  && ok "codex: an older Codex is said, not replaced" || no "codex: older Codex not said: $out"
+
+# hooks.json: one that does not parse stops the install at preflight, untouched; otherwise merged.
+cxhome; printf '{"hooks": {,}}\n' > "$CD/hooks.json"; cp "$CD/hooks.json" "$CX/ref"
+out=$(cx codex_py check "$CD" "$HK"); rc=$?
+[ "$rc" = 1 ] && echo "$out" | grep -q "$CD/hooks.json is not valid JSON (line 1, column" && cmp -s "$CX/ref" "$CD/hooks.json" \
+  && ok "codex hooks.json: one that does not parse is left untouched, said with its line" || no "codex hooks.json: broken file mishandled: $out"
+printf '{"x": 1, "hooks": {"Stop": [{"matcher": "", "hooks": [{"type": "command", "command": "/x/mine.sh"}]}],
+ "PreToolUse": [{"hooks": [{"type": "command", "command": "/x/pre.sh"}]}]}}\n' > "$CD/hooks.json"; chmod 644 "$CD/hooks.json"
+cp "$CD/hooks.json" "$CX/ref"
+out=$(cx codex_py merge "$CD" "$HK"); bak=$(find "$CD" -maxdepth 1 -name 'hooks.json.bak-*')
+[ "$(baks hooks.json)" = 1 ] && cmp -s "$CX/ref" "$bak" && [ "$(mode "$bak")" = 600 ] && [ "$(mode "$CD/hooks.json")" = 644 ] \
+  && echo "$out" | grep -q "the kit's hooks added (previous version: ~/.codex/hooks.json.bak-" \
+  && python3 - "$CD/hooks.json" "$HK" <<'PY' && ok "codex hooks.json: the user's hooks and keys kept, the kit's in a group of its own at the end (--agent codex, 30 s), previous version in 0600" || no "codex hooks.json: merge wrong: $out"
+import json, sys
+d, hk = json.load(open(sys.argv[1], encoding="utf-8")), sys.argv[2]
+mine = lambda n: {"type": "command", "command": "%s/%s --agent codex" % (hk, n), "timeout": 30}
+assert d["x"] == 1 and d["hooks"]["PreToolUse"] == [{"hooks": [{"type": "command", "command": "/x/pre.sh"}]}]
+assert d["hooks"]["Stop"] == [{"matcher": "", "hooks": [{"type": "command", "command": "/x/mine.sh"}]},
+                              {"hooks": [mine("session-logger.py"), mine("session-indexer.py"), mine("session-recap.py")]}]
+assert d["hooks"]["UserPromptSubmit"] == [{"hooks": [mine("correction-detector.py")]}]
+assert d["hooks"]["SessionStart"] == [{"hooks": [mine("gbrain-update-check.py"), mine("controle-sessionstart.py")]}]
+PY
+cp "$CD/hooks.json" "$CX/ref"; out=$(cx codex_py merge "$CD" "$HK")
+cmp -s "$CX/ref" "$CD/hooks.json" && [ "$(baks hooks.json)" = 1 ] && echo "$out" | grep -q "the kit's hooks already there" \
+  && ok "codex hooks.json: a re-run writes nothing" || no "codex hooks.json: needless rewrite: $out"
+python3 - "$CD/hooks.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1], encoding="utf-8"))
+d["hooks"]["Stop"][1]["hooks"][0]["command"] = "python3 " + d["hooks"]["Stop"][1]["hooks"][0]["command"]   # the user's change
+del d["hooks"]["Stop"][1]["hooks"][2]                                                                    # and one removed
+json.dump(d, open(sys.argv[1], "w", encoding="utf-8"))
+PY
+cx codex_py merge "$CD" "$HK" >/dev/null
+python3 - "$CD/hooks.json" "$HK" <<'PY' && ok "codex hooks.json: an entry of the kit's the user changed is kept, a missing one comes back in the kit's group" || no "codex hooks.json: user's change lost or duplicated"
+import json, sys
+d, hk = json.load(open(sys.argv[1], encoding="utf-8")), sys.argv[2]
+cmds = [h["command"] for h in d["hooks"]["Stop"][1]["hooks"]]
+assert cmds == ["python3 %s/session-logger.py --agent codex" % hk, "%s/session-indexer.py --agent codex" % hk,
+                "%s/session-recap.py --agent codex" % hk], cmds
+assert len(d["hooks"]["Stop"]) == 2
+PY
+
+# Their approval: tables [hooks.state."<hooks.json>:<event>:<group>:<entry>"] added to config.toml,
+# with the hash Codex computes; never over hooks of another form; a table there is never rewritten.
+cxhome; cx codex_py merge "$CD" "$HK" >/dev/null
+out=$(cx codex_py approve "$CD" "$HK")
+python3 - "$CD/config.toml" "$CD/hooks.json" "$(trust user_prompt_submit correction-detector.py)" "$(trust stop session-logger.py)" \
+  "$(trust stop session-recap.py)" "$(trust session_start controle-sessionstart.py)" <<'PY' \
+  && [ "$(printf '%s' "$out" | head -1)" = written ] && [ "$(printf '%s' "$out" | sed -n 2,3p | tr '\n' ' ')" = "6 - " ] \
+  && [ "$(mode "$CD/config.toml")" = 600 ] \
+  && ok "codex approval: a new config.toml (0600) holds one table per hook of the kit's, at its place, with Codex's hash" || no "codex approval: tables wrong: $out"
+import re, sys
+text, hj = open(sys.argv[1], encoding="utf-8").read(), sys.argv[2]
+got = dict(re.findall(r'\[hooks\.state\."([^"]+)"\]\ntrusted_hash = "([^"]+)"\n', text))
+assert len(got) == 6, got
+assert got[hj + ":user_prompt_submit:0:0"] == sys.argv[3]
+assert got[hj + ":stop:0:0"] == sys.argv[4] and got[hj + ":stop:0:2"] == sys.argv[5]
+assert got[hj + ":session_start:0:1"] == sys.argv[6]
+assert text.startswith("# brain-in-a-box: the kit's Codex hooks, approved for you by install.sh (see or turn them off with /hooks)\n")
+PY
+cp "$CD/config.toml" "$CX/ref"; out=$(cx codex_py approve "$CD" "$HK")
+cmp -s "$CX/ref" "$CD/config.toml" && [ "$(baks config.toml)" = 0 ] && [ "$(printf '%s' "$out" | head -2 | tr '\n' ' ')" = "unchanged 6 " ] \
+  && ok "codex approval: a re-run writes nothing" || no "codex approval: re-run rewrote: $out"
+# A config.toml of the user's: kept byte for byte above the kit's tables, backed up first (0600).
+cxhome; cx codex_py merge "$CD" "$HK" >/dev/null
+printf 'model = "gpt-x"\n[sandbox_workspace_write]\nnetwork_access = false\n[features]\nhooks = true\nnote = """\n[hooks]\n"""' > "$CD/config.toml"
+chmod 644 "$CD/config.toml"; cp "$CD/config.toml" "$CX/ref"
+out=$(cx codex_py approve "$CD" "$HK"); bak=$(printf '%s' "$out" | sed -n 3p)
+[ "$(printf '%s' "$out" | head -1)" = written ] && cmp -s "$CX/ref" "$bak" && [ "$(mode "$bak")" = 600 ] && [ "$(mode "$CD/config.toml")" = 644 ] \
+  && [ "$(head -c "$(wc -c < "$CX/ref")" "$CD/config.toml")" = "$(cat "$CX/ref")" ] && [ "$(tables)" = 6 ] \
+  && ok "codex approval: the user's config.toml (features.hooks, a [hooks] inside a string) kept as is above the tables, its mode kept, the previous version in 0600" \
+  || no "codex approval: user's config.toml damaged: $out"
+bad=""
+while IFS='|' read -r why toml; do
+  cxhome; cx codex_py merge "$CD" "$HK" >/dev/null; printf "$toml" > "$CD/config.toml"; cp "$CD/config.toml" "$CX/ref"
+  out=$(cx codex_py approve "$CD" "$HK")
+  { [ "$(printf '%s' "$out" | head -1)" = refused ] && cmp -s "$CX/ref" "$CD/config.toml" && [ "$(baks config.toml)" = 0 ]; } || bad="$bad | $why: $out"
+done <<'CASES'
+a [hooks] table|[hooks]\n
+a [hooks.state] table|[hooks.state]\n
+an array of hooks tables|[[hooks.x]]\n
+a table quoted another way|[hooks.state.'k']\ntrusted_hash = "x"\n
+a header with a comment|[hooks.state."k"] # mine\n
+dotted keys at the top|hooks.state."a".trusted_hash = "sha256:00"\n
+a quoted dotted key|"hooks".state = {}\n
+an inline table at the top|hooks = { state = {} }\n
+a string left open|x = """\nnever closed\n
+CASES
+[ -z "$bad" ] && ok "codex approval: hooks in another form (table, dotted or inline key, other quoting), or a string left open: refused, the file untouched" \
+  || no "codex approval: refused form written anyway:$bad"
+# A table of the kit's keys already there with something else (the user turned a hook off with
+# /hooks, or a newer Codex approved it its own way): never rewritten, said.
+cxhome; cx codex_py merge "$CD" "$HK" >/dev/null
+printf '[hooks.state."%s:stop:0:1"]\ntrusted_hash = "sha256:%064d"\nenabled = false\n' "$CD/hooks.json" 0 > "$CD/config.toml"
+cp "$CD/config.toml" "$CX/ref"; out=$(cx codex_py approve "$CD" "$HK")
+[ "$(printf '%s' "$out" | head -2 | tr '\n' ' ')" = "written 5 " ] && [ "$(printf '%s' "$out" | sed -n 4p)" = session-indexer.py ] \
+  && [ "$(head -c "$(wc -c < "$CX/ref")" "$CD/config.toml")" = "$(cat "$CX/ref")" ] && [ "$(tables)" = 6 ] \
+  && ok "codex approval: a hook the user set in /hooks is left as set, the other five approved" || no "codex approval: the user's setting rewritten: $out"
+# The same, turned off in /hooks, then moved by a hook of the user's put before it: Codex knows a hook by
+# its place, a table at the new one would turn it back on. None is added, and it is said.
+cxhome; cx codex_py merge "$CD" "$HK" >/dev/null; cx codex_py approve "$CD" "$HK" >/dev/null
+python3 - "$CD" <<'PY' || no "codex approval: the moved hook's bench did not set up"
+import json, os, sys
+hj, ct = os.path.join(sys.argv[1], "hooks.json"), os.path.join(sys.argv[1], "config.toml")
+d = json.load(open(hj, encoding="utf-8"))
+d["hooks"]["UserPromptSubmit"].insert(0, {"hooks": [{"type": "command", "command": "mine.sh"}]})
+json.dump(d, open(hj, "w", encoding="utf-8"))
+t = open(ct, encoding="utf-8").read()
+head = "[hooks.state.%s]\n" % json.dumps(hj + ":user_prompt_submit:0:0")
+at = t.index("\n", t.index(head) + len(head)) + 1
+open(ct, "w", encoding="utf-8").write(t[:at] + "enabled = false\n" + t[at:])
+PY
+cp "$CD/config.toml" "$CX/ref"; out=$(cx codex_py approve "$CD" "$HK")
+[ "$(printf '%s' "$out" | head -2 | tr '\n' ' ')" = "unchanged 5 " ] && [ "$(printf '%s' "$out" | sed -n 4p)" = correction-detector.py ] \
+  && cmp -s "$CX/ref" "$CD/config.toml" \
+  && ok "codex approval: a hook turned off in /hooks, then moved by one of the user's, stays off: no table at its new place, said" \
+  || no "codex approval: a moved hook turned back on: $out"
+# CODEX_HOME through a link: Codex names hooks.json by the path it is given when CODEX_HOME is unset,
+# by its real path when it is set; both are approved.
+cxhome; rm -rf "$CD"; mkdir -p "$CX/real-codex"; rm -rf "$CX/real-codex"/*; ln -s "$CX/real-codex" "$CD"
+cx codex_py merge "$CD" "$HK" >/dev/null; cx codex_py approve "$CD" "$HK" >/dev/null
+real=$(cd "$CX/real-codex" && pwd -P)
+[ "$(grep -c "^\[hooks\.state\.\"$CD/hooks.json:" "$CD/config.toml")" = 6 ] && [ "$(grep -c "^\[hooks\.state\.\"$real/hooks.json:" "$CD/config.toml")" = 6 ] \
+  && [ -L "$CD" ] && ok "codex approval: CODEX_HOME through a link: approved under both paths" || no "codex approval: linked CODEX_HOME: $(tables) tables"
+rm -f "$CD"
+# Codex checks the file once written: refused, it is put back as it was; never written over a file it cannot read.
+cxhome; CXSHA=$(sha256 "$CX/installer.ok") cx codex_install >/dev/null; cxcalls >/dev/null
+printf 'model = "gpt-x"\n' > "$CD/config.toml"; cp "$CD/config.toml" "$CX/ref"
+out=$(cx codex_wire); c=$(cxcalls)
+echo "$out" | grep -q "OK Codex: the kit approved its 6 hooks for you ($CD/config.toml, previous version: $CD/config.toml.bak-" \
+  && echo "$out" | grep -q "so Codex runs them without asking. See them, or turn them off, with /hooks in Codex" \
+  && [ "$(echo "$c" | grep -c "^codex features list CODEX_HOME=$CD$")" = 2 ] && [ "$(tables)" = 6 ] \
+  && [ -n "$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import _agents; print(_agents._pose(sys.argv[2]) or "")' "$REPO/engine/hooks" "$CXH")" ] \
+  && ok "codex wire: hooks merged, the install noted, approved, Codex checked config.toml before and after, and the user is told so" \
+  || no "codex wire: approval not said or not checked: $out | $c"
+cxhome; CXSHA=$(sha256 "$CX/installer.ok") cx codex_install >/dev/null; printf 'model = "gpt-x"\n' > "$CD/config.toml"; cp "$CD/config.toml" "$CX/ref"
+printf '#!/bin/sh\necho "codex $* CODEX_HOME=$CODEX_HOME" >> "%s/calls"\ncase "$1" in features) [ -e "%s/after" ] && exit 1; touch "%s/after";; esac\n' "$CX" "$CX" "$CX" > "$CXH/.local/bin/codex"
+rm -f "$CX/after"; out=$(cx codex_wire)
+cmp -s "$CX/ref" "$CD/config.toml" && echo "$out" | grep -q "WARN Codex refused config.toml with the kit's approval (see $CX/install.log): put back as it was" \
+  && ok "codex wire: a config.toml Codex refuses once approved is put back byte for byte, and said" || no "codex wire: not restored: $out"
+rm -f "$CD/config.toml"; touch "$CX/after"; out=$(cx codex_wire)
+[ ! -e "$CD/config.toml" ] && echo "$out" | grep -q "put back as it was" && ok "codex wire: no config.toml before: none after a refusal" || no "codex wire: refused new config.toml left: $out"
+printf 'model = \n' > "$CD/config.toml"; cp "$CD/config.toml" "$CX/ref"; touch "$CX/after"; n=$(baks config.toml); out=$(cx codex_wire)
+cmp -s "$CX/ref" "$CD/config.toml" && [ "$(baks config.toml)" = "$n" ] && echo "$out" | grep -q "WARN Codex cannot read $CD/config.toml as it is" \
+  && ok "codex wire: a config.toml Codex already cannot read is never written to" || no "codex wire: wrote over an unreadable config.toml: $out"
+cxhome; out=$(cx codex_wire)
+[ -s "$CD/hooks.json" ] && [ ! -e "$CD/config.toml" ] && echo "$out" | grep -q "WARN Codex is not installed, so the kit could not approve its hooks there" \
+  && ok "codex wire: without Codex, hooks.json written, nothing approved, and said" || no "codex wire: no-Codex path: $out"
+
+# The global AGENTS.md: the kit's block once, after the user's text; in AGENTS.override.md when that
+# is the one Codex reads; the template's few lines about Claude's own file turned into Codex's.
+cxhome; printf 'My own rules.\n' > "$CD/AGENTS.md"
+out=$(cx codex_global); out2=$(cx codex_global)
+python3 - "$CD/AGENTS.md" "$REPO/engine/CLAUDE.global.template.md" <<'PY' && echo "$out" | grep -q "OK ~/.codex/AGENTS.md: the kit's block appended (your content kept)" \
+  && echo "$out2" | grep -q "already has the kit's block" \
+  && ok "codex AGENTS.md: the user's text kept, the kit's block once: the template, only its lines about CLAUDE.md made Codex's" || no "codex AGENTS.md: $out | $out2"
+import sys
+text, tpl = open(sys.argv[1], encoding="utf-8").read(), open(sys.argv[2], encoding="utf-8").read()
+assert text.startswith("My own rules.\n\n<!-- brain-in-a-box -->\n# AGENTS.md — Global directives ({{NAME}})\n"), text[:120]
+assert text.count("<!-- brain-in-a-box -->") == 1 and "~/.claude/CLAUDE.md" not in text and "If you already had a `~/.codex/AGENTS.md`" in text
+block = text.split("<!-- brain-in-a-box -->\n", 1)[1].split("\n")
+extra = [l for l in block if l not in tpl.split("\n")]
+assert len(extra) == 3 and extra[2].startswith("Codex does not load `CLAUDE.md` files."), extra
+assert [l for l in tpl.split("\n") if l not in block] == [tpl.split("\n")[0], tpl.split("\n")[2]]
+PY
+cxhome; printf '  \n' > "$CD/AGENTS.override.md"; cx codex_global >/dev/null
+grep -q "brain-in-a-box" "$CD/AGENTS.md" && [ "$(cat "$CD/AGENTS.override.md")" = "  " ] \
+  && ok "codex AGENTS.md: an AGENTS.override.md with no text is not the one Codex reads: AGENTS.md gets the block" || no "codex AGENTS.md: blank override mishandled"
+cxhome; printf 'Override.\n' > "$CD/AGENTS.override.md"; out=$(cx codex_global)
+grep -q "brain-in-a-box" "$CD/AGENTS.override.md" && [ ! -e "$CD/AGENTS.md" ] && echo "$out" | grep -q "Codex reads this file instead of AGENTS.md" \
+  && ok "codex AGENTS.md: an AGENTS.override.md with text is the one Codex reads: the block goes there, and that is said" || no "codex AGENTS.md: override not used: $out"
+cxhome; sed 's/^# CLAUDE.md — Global directives/# Directives/' "$REPO/engine/CLAUDE.global.template.md" > "$CX/tpl.md"
+out=$( (H="$CXH" HOME="$CXH" CODEX_DIR="$CD"; codex_py global "$CD" "$CX/tpl.md") ); rc=$?
+[ "$rc" = 1 ] && [ ! -e "$CD/AGENTS.md" ] && echo "$out" | grep -q 'no longer has the line "# CLAUDE.md — Global directives"' \
+  && ok "codex AGENTS.md: a template whose Claude lines moved writes no half-made block for Codex" || no "codex AGENTS.md: changed template: $out"
+
+# gbq's two reads allowed at the kit's gbq only; the vault's AGENTS.md placed only when missing.
+cxhome; out=$(cx codex_rules)
+[ "$(mode "$CD/rules/brain-in-a-box.rules")" = 644 ] && grep -qxF "host_executable(name=\"gbq\", paths=[\"$CXH/.local/bin/gbq\"])" "$CD/rules/brain-in-a-box.rules" \
+  && [ "$(grep -c '^prefix_rule' "$CD/rules/brain-in-a-box.rules")" = 2 ] && grep -qxF 'prefix_rule(pattern=["gbq", "query"], decision="allow")' "$CD/rules/brain-in-a-box.rules" \
+  && grep -qxF 'prefix_rule(pattern=["gbq", "search"], decision="allow")' "$CD/rules/brain-in-a-box.rules" && [ ! -e "$CD/rules/default.rules" ] \
+  && ok "codex rules: a file of the kit's own beside Codex's default.rules: gbq query and gbq search, at ~/.local/bin/gbq only (644)" || no "codex rules: $out"
+out=$( (H="$CX/my \"home"; ok(){ echo "OK $*"; }; warn(){ echo "WARN $*"; }; CODEX_DIR="$CD"; codex_rules) )
+echo "$out" | grep -q "WARN Codex: your home folder's path has a quote" && ok "codex rules: a home path with a quote gets no rule" || no "codex rules: quoted home: $out"
+mkdir -p "$CX/vault"; rm -f "$CX/vault/AGENTS.md"; out=$(cx codex_vault "$CX/vault")
+cmp -s "$REPO/engine/codex/AGENTS.vault.md" "$CX/vault/AGENTS.md" && grep -q "CLAUDE.md" "$CX/vault/AGENTS.md" \
+  && printf 'mine\n' > "$CX/vault/AGENTS.md" && out=$(cx codex_vault "$CX/vault") && [ "$(cat "$CX/vault/AGENTS.md")" = mine ] \
+  && echo "$out" | grep -q "already there (kept as is)" && ok "codex vault: AGENTS.md placed when missing, the user's kept" || no "codex vault: $out"
+
+# The question: a new install at a terminal, nothing chosen, where Codex can be chosen.
+QK="$CX/kit"; mkdir -p "$QK/engine/hooks"
+cp "$REPO/engine/hooks/_agents.py" "$QK/engine/hooks/_agents.py"; open_gate "$QK/engine/hooks/_agents.py"
+sed -n -e '/^# >>> agents$/,/^# <<< agents$/p' -e '/^# >>> linux$/,/^# <<< linux$/p' "$REPO/install.sh" > "$CX/blocks.sh"
+cat > "$CX/q.sh" <<'Q'
+. "$1"; REPO="$2"; STATE="$3"; HOOKS="$3/hooks"; AGENTS_OPT=""; PREFERE_OPT=""
+agents_question; echo "CHOSEN agents=$AGENTS_OPT prefere=$PREFERE_OPT"
+Q
+qa(){ env -u BIAB_AGENTS -u BIAB_PREFERE "$@"; }
+qt(){ qa python3 "$REPO/.github/ci/terminal.py" --timeout 60 "$@" -- bash "$CX/q.sh" "$CX/blocks.sh" "${QKIT:-$QK}" "$CX/qstate" 2>&1 | tr -d '\r' | grep '^CHOSEN'; }
+rm -rf "$CX/qstate"; bad=""
+[ "$(qt --answer 'Use Codex?=n')" = "CHOSEN agents=claude prefere=" ] || bad="$bad no"
+[ "$(qt --answer 'Use Codex?=y' --answer 'Claude Code too=n')" = "CHOSEN agents=codex prefere=" ] || bad="$bad codex"
+[ "$(qt --answer 'Use Codex?=y' --answer 'Claude Code too=y' --answer 'evening summary=y')" = "CHOSEN agents=claude,codex prefere=codex" ] || bad="$bad both-codex"
+[ "$(qt --answer 'Use Codex?=y' --answer 'Claude Code too=y' --answer 'evening summary=')" = "CHOSEN agents=claude,codex prefere=claude" ] || bad="$bad both-claude"
+[ -z "$bad" ] && ok "codex question: at a terminal, a new install where Codex can be chosen asks: Claude alone (the default), Codex, both and who writes the evening summary" \
+  || no "codex question: answers mistaken:$bad"
+bad=""
+[ "$(QKIT=$REPO qt)" = "CHOSEN agents= prefere=" ] || bad="$bad closed"   # the gate as it is in the repository
+[ "$(qa bash "$CX/q.sh" "$CX/blocks.sh" "$QK" "$CX/qstate" < /dev/null | grep '^CHOSEN')" = "CHOSEN agents= prefere=" ] || bad="$bad no-terminal"
+mkdir -p "$CX/qstate"; : > "$CX/qstate/installed.json"
+[ "$(QKIT=$QK qt)" = "CHOSEN agents= prefere=" ] || bad="$bad installed"
+rm -f "$CX/qstate/installed.json"; printf '{}' > "$CX/qstate/agents.json"
+[ "$(QKIT=$QK qt)" = "CHOSEN agents= prefere=" ] || bad="$bad agents.json"
+rm -f "$CX/qstate/agents.json"
+[ "$(QKIT=$QK qa env BIAB_AGENTS=claude python3 "$REPO/.github/ci/terminal.py" --timeout 60 -- bash "$CX/q.sh" "$CX/blocks.sh" "$QK" "$CX/qstate" 2>&1 | tr -d '\r' | grep '^CHOSEN')" = "CHOSEN agents= prefere=" ] || bad="$bad variable"
+[ -z "$bad" ] && ok "codex question: never asked where Codex is closed, without a terminal, over an install from before, an agents.json or a choice given" \
+  || no "codex question: asked when it should not be:$bad"
+
 echo "════ 16) install.sh end to end, against stand-ins: the AI agents' choice ════"
 install_e2e(){   # the section's body: an unisolated harness stops it with return
 # The whole install.sh, from a copy of the kit whose test-hooks.sh only records how install.sh
@@ -1137,22 +1451,33 @@ case "$t \$*" in
   "crontab -l") [ -f "$IX/crontab" ] && exec cat "$IX/crontab"; echo "no crontab for \$USER" >&2; exit 1;;
   "crontab "*) cp "\$1" "$IX/crontab";;
   *claude.ai/install.sh*) printf 'mkdir -p "\$HOME/.local/bin" && printf "#!/bin/sh\\\\n" > "\$HOME/.local/bin/claude" && chmod +x "\$HOME/.local/bin/claude"\\n';;
+  "curl -fsSL --retry 2 -o "*" https://github.com/openai/codex/releases/download/"*) cp "$IX/codex-installer" "\$5";;
   *) exit 1;;
 esac
 STUB
 done
+# Codex's installer as a stand-in: a codex in ~/.local/bin that records its calls.
+cat > "$IX/codex-installer" <<STUB
+mkdir -p "\$HOME/.local/bin"
+printf '#!/bin/sh\necho "codex \$*" >> "$IX/calls"\ncase "\$1" in --version) echo "codex-cli 0.162.1";; esac\n' > "\$HOME/.local/bin/codex"
+chmod +x "\$HOME/.local/bin/codex"
+STUB
 printf '#!/bin/sh\necho "$(basename "$0") $*" >> "%s/calls"\n' "$IX" > "$IX/stub"
 chmod +x "$IB"/* "$IX/stub"
 cp -R "$REPO/install.sh" "$REPO/engine" "$REPO/skills" "$REPO/vault-skeleton" "$REPO/onboarding" "$KIT/"
 printf '#!/bin/sh\necho "test-hooks.sh BIAB_FROM_INSTALL=${BIAB_FROM_INSTALL:-}" >> "%s/calls"\n' "$IX" > "$KIT/test-hooks.sh"
-# The same kit with Codex open on every system, as phases 6 and 7 will make it: the path without Claude.
+# The same kit with Codex open on every system, as the PR that opens it will make it, and Codex's
+# installer pinned to the stand-in's: the path without Claude, and both.
 cp -R "$KIT" "$IX/kit-codex"
-sed -i.bak 's/^CODEX_OUVERT = frozenset()$/CODEX_OUVERT = frozenset({"darwin", "linux", "windows"})/' "$IX/kit-codex/engine/hooks/_agents.py"
+open_gate "$IX/kit-codex/engine/hooks/_agents.py"; gate=$?
+sed -i.bak "s/^CODEX_INSTALLER_SHA256=.*/CODEX_INSTALLER_SHA256=$(sha256 "$IX/codex-installer")/" "$IX/kit-codex/install.sh"
+rm -f "$IX/kit-codex/install.sh.bak"
 IXPATH="$IB:$IX/sys"
 bad=""
+[ "$gate" = 0 ] || bad="$bad gate"
 for t in launchctl systemctl loginctl crontab curl brew; do [ "$(PATH="$IXPATH" command -v "$t")" = "$IB/$t" ] || bad="$bad $t"; done
 for t in claude codex bun gbrain; do [ -z "$(PATH="$IXPATH" command -v "$t")" ] || bad="$bad $t"; done
-grep -qx 'CODEX_OUVERT = frozenset({"darwin", "linux", "windows"})' "$IX/kit-codex/engine/hooks/_agents.py" || bad="$bad gate"
+grep -qx "CODEX_INSTALLER_SHA256=$(sha256 "$IX/codex-installer")" "$IX/kit-codex/install.sh" || bad="$bad pin"
 [ -z "$bad" ] || { no "e2e: harness not isolated:$bad (the rest of this section is not run: it would not be trustworthy)"; return; }
 ok "e2e: the stand-ins come first, nothing of this machine's claude, bun or gbrain is in reach"
 ixhome(){ rm -rf "${IX:?}/home" "$IX/calls" "$IX/crontab"; mkdir -p "$IX/home/.bun/bin" "$IX/home/DEV/gbrain/.git"
@@ -1266,29 +1591,190 @@ chmod 666 "$IX/home/.brain-in-a-box/agents.json"; ixtree > "$IX/tree-shared"; ix
   && ok "e2e: an agents.json another account could change, nothing chosen: not trusted, left untouched, the install stops before anything" \
   || no "e2e: agents.json writable by others mishandled (rc $rc): $(tail -3 "$IX/out")"
 
-# Codex open (a copy of the kit): Codex alone wires nothing of Claude's and never installs it;
-# both keep Claude's install exactly as the default does.
+# Codex open (a copy of the kit): Codex alone wires nothing of Claude's and never installs it, and
+# wires Codex; both keep Claude's install exactly as the default does, plus Codex's files.
+codexfiles(){ grep -E '^(\.codex/|\.agents/skills/|\.local/bin/codex |Documents/Brain/AGENTS\.md |\.brain-in-a-box/(codex-hooks-poses|skills-codex)\.json )' "$@"; }
 ix "$IX/kit-codex" --agents codex --with-gstack; rc=$?
-ixtree > "$IX/tree-codex"; ixout > "$IX/out-codex"
+ixtree > "$IX/tree-codex"; ixout > "$IX/out-codex"; ixcalls > "$IX/calls-codex"
 bad=""
 [ "$rc" = 0 ] || bad="$bad rc=$rc"
 [ "$(ajson)" = "agents=codex codex_home=$IX/home/.codex date=$TODAY pose_par=install.sh prefere=codex version=1" ] || bad="$bad agents.json=$(ajson)"
 for f in .claude/settings.json .claude/CLAUDE.md .claude/skills .local/bin/claude; do [ ! -e "$IX/home/$f" ] || bad="$bad $f"; done
 [ -f "$IX/home/.claude/hooks/brain/correction-detector.py" ] && [ -x "$IX/home/.local/bin/gbq" ] || bad="$bad no-hooks-or-gbq"
-grep -q "claude.ai/install" "$IX/calls" && bad="$bad claude-installer"
+grep -q "claude.ai/install" "$IX/calls-codex" && bad="$bad claude-installer"
 grep -qE "install Claude Code first|&& claude$|Claude Code \+ Obsidian|Claude Code skills|settings.json" "$IX/out-codex" && bad="$bad claude-text"
 grep -q "gstack is made for Claude Code, which is not chosen here: skipped" "$IX/out-codex" || bad="$bad gstack-not-said"
 [ -e "$IX/home/.claude/skills/gstack" ] && bad="$bad gstack"
 [ -z "$bad" ] && ok "e2e codex open: Codex alone: no settings.json, CLAUDE.md, Claude skills nor gstack, Claude Code never installed; hooks and gbq in place" \
   || no "e2e codex open: Codex alone touched Claude:$bad"
+bad=""
+[ "$(grep -c '^curl .*/openai/codex/releases/download/rust-v0.162.1/install.sh$' "$IX/calls-codex")" = 1 ] && [ -x "$IX/home/.local/bin/codex" ] || bad="$bad installer"
+[ "$(grep -c '^codex features list$' "$IX/calls-codex")" = 1 ] || bad="$bad features-list:$(grep -c '^codex ' "$IX/calls-codex")"
+python3 - "$IX/home" <<'PY' || bad="$bad files"
+import json, os, re, sys
+h = sys.argv[1]
+c = os.path.join(h, ".codex")
+d = json.load(open(os.path.join(c, "hooks.json"), encoding="utf-8"))
+cmds = sorted(x["command"] for g in d["hooks"].values() for grp in g for x in grp["hooks"])
+assert cmds == sorted("%s/.claude/hooks/brain/%s.py --agent codex" % (h, n) for n in (
+    "correction-detector", "session-logger", "session-indexer", "session-recap", "gbrain-update-check", "controle-sessionstart")), cmds
+keys = re.findall(r'^\[hooks\.state\."([^"]+)"\]$', open(os.path.join(c, "config.toml"), encoding="utf-8").read(), re.M)
+assert len([k for k in keys if k.startswith(os.path.join(c, "hooks.json:"))]) == 6, keys
+assert open(os.path.join(c, "AGENTS.md"), encoding="utf-8").read().count("<!-- brain-in-a-box -->") == 1
+assert "host_executable" in open(os.path.join(c, "rules", "brain-in-a-box.rules"), encoding="utf-8").read()
+assert os.path.isfile(os.path.join(h, ".agents", "skills", "brain-boost", "SKILL.md"))
+assert "CLAUDE.md" in open(os.path.join(h, "Documents", "Brain", "AGENTS.md"), encoding="utf-8").read()
+assert os.path.isfile(os.path.join(h, ".brain-in-a-box", "codex-hooks-poses.json"))
+PY
+git -C "$IX/home/Documents/Brain" ls-files --error-unmatch AGENTS.md >/dev/null 2>&1 || bad="$bad vault-AGENTS.md-not-committed"
+grep -qF "✓ Codex: the kit approved its 6 hooks for you ($IX/home/.codex/config.toml), so Codex runs them without asking. See them, or turn them off, with /hooks in Codex" "$IX/out-codex" || bad="$bad approval-not-said"
+grep -qxF "  codex login" "$IX/out-codex" && grep -qxF "  cd $IX/home/Documents/Brain && codex" "$IX/out-codex" || bad="$bad codex-text"
+[ -z "$bad" ] && ok "e2e codex open: Codex alone: Codex from its pinned installer, hooks.json, the approval said and checked by Codex, AGENTS.md, gbq's rules, skills, the vault's AGENTS.md (committed), codex login" \
+  || no "e2e codex open: Codex alone not wired:$bad"
+ixtree > "$IX/tree-codex1"; rm -f "$IX/calls"; ixrun "$IX/kit-codex"; rc=$?
+[ "$rc" = 0 ] && diff <(grep -v '^\.brain-in-a-box/codex-hooks-poses\.json ' "$IX/tree-codex1") <(ixtree | grep -v '^\.brain-in-a-box/codex-hooks-poses\.json ') >/dev/null \
+  && ixout | grep -qF "✓ ~/.codex/hooks.json: the kit's hooks already there" && ixout | grep -qF "✓ Codex: the kit's 6 hooks are approved, by the kit for you" \
+  && ! ixcalls | grep -q '^curl ' \
+  && ok "e2e codex open: a re-run with the choice made before: nothing rewritten, nothing downloaded, no backup" || no "e2e codex open: Codex re-run not idempotent (rc $rc): $(diff "$IX/tree-codex1" <(ixtree) | head -5)"
 ix "$IX/kit-codex" --agents claude,codex --prefere codex; rc=$?
 nogate "$IX/tree-default" > "$IX/tree-default-ng"; ixtree | nogate > "$IX/tree-both"
-[ "$rc" = 0 ] && [ "$(added "$IX/tree-default-ng" "$IX/tree-both" | cut -d' ' -f1-2)" = ".brain-in-a-box/agents.json 0o600" ] \
+added "$IX/tree-default-ng" "$IX/tree-both" > "$IX/added-both"
+[ "$rc" = 0 ] && [ "$(grep -v '^\.brain-in-a-box/agents\.json 0o600 ' "$IX/added-both" | codexfiles -v | wc -l | tr -d ' ')" = 0 ] \
+  && grep -q '^\.brain-in-a-box/agents\.json 0o600 ' "$IX/added-both" && [ "$(codexfiles "$IX/added-both" | wc -l | tr -d ' ')" -gt 8 ] \
   && [ -z "$(gone "$IX/tree-default-ng" "$IX/tree-both")" ] \
   && [ "$(ajson)" = "agents=claude,codex codex_home=$IX/home/.codex date=$TODAY pose_par=install.sh prefere=codex version=1" ] \
-  && ixout | grep -qF "✓ AI agents: Claude Code and Codex (preferred: Codex), recorded in" \
-  && ok "e2e codex open: both, Codex preferred: Claude's install byte for byte as the default's, plus agents.json" \
-  || no "e2e codex open: both differs from the default: $(added "$IX/tree-default-ng" "$IX/tree-both") / $(gone "$IX/tree-default-ng" "$IX/tree-both")"
+  && ixout | grep -qF "✓ AI agents: Claude Code and Codex (preferred: Codex), recorded in" && ixout | grep -qxF "  cd $IX/home/Documents/Brain && codex" \
+  && ok "e2e codex open: both, Codex preferred: Claude's install byte for byte as the default's, plus agents.json and Codex's files only" \
+  || no "e2e codex open: both differs from the default: $(grep -v '^\.brain-in-a-box/agents\.json ' "$IX/added-both" | codexfiles -v) / $(gone "$IX/tree-default-ng" "$IX/tree-both")"
+# Both, then Claude alone, then both again: Codex's files stay as they were, it is said, and the way back writes nothing new.
+ixtree | codexfiles | grep -v '^\.brain-in-a-box/codex-hooks-poses' > "$IX/codex-both"
+ixrun "$IX/kit-codex" --agents claude; rc=$?
+ixtree | codexfiles | grep -v '^\.brain-in-a-box/codex-hooks-poses' | cmp -s - "$IX/codex-both" && [ "$rc" = 0 ] \
+  && [ "$(ajson)" = "agents=claude date=$TODAY pose_par=install.sh prefere=claude version=1" ] \
+  && ixout | grep -qF "⚠ Codex is not chosen any more: what the kit put in place for it stays, and its hooks keep quiet." \
+  && ! ixout | grep -qE 'codex login|&& codex$' \
+  && ok "e2e codex open: both then Claude alone: Codex's files untouched, and how to remove them said" || no "e2e codex open: removing Codex touched its files (rc $rc)"
+ixrun "$IX/kit-codex" --agents claude,codex; rc=$?
+ixtree | codexfiles | grep -v '^\.brain-in-a-box/codex-hooks-poses' | cmp -s - "$IX/codex-both" && [ "$rc" = 0 ] \
+  && [ -z "$(find "$IX/home/.codex" -name '*.bak-*')" ] && ! ixout | grep -q "not chosen any more" \
+  && ok "e2e codex open: and both again: Codex's files as they were, no backup made, nothing said removed" || no "e2e codex open: both again rewrote Codex's files (rc $rc)"
+ix "$IX/kit-codex" --agents codex; ixrun "$IX/kit-codex" --agents claude,codex --prefere claude; rc1=$?; ixout > "$IX/out-added"
+ixrun "$IX/kit-codex" --agents codex; rc=$?
+[ "$rc1" = 0 ] && ! grep -q "not chosen any more" "$IX/out-added" && [ "$rc" = 0 ] \
+  && ixout | grep -qF "⚠ Claude Code is not chosen any more: its hooks in ~/.claude/settings.json" && [ -s "$IX/home/.claude/settings.json" ] \
+  && ok "e2e codex open: Claude added, then removed: its files stay, said" || no "e2e codex open: removing Claude not said (rc $rc1/$rc)"
+
+# Codex chosen over a config.toml of the user's with hooks in a form the kit does not add to: the
+# install goes on to the end, says how to approve them, and the file is left as it was.
+ixhome; mkdir -p "$IX/home/.codex"; printf 'model = "gpt-x"\n[hooks]\n' > "$IX/home/.codex/config.toml"; cp "$IX/home/.codex/config.toml" "$IX/ref"
+ixrun "$IX/kit-codex" --agents codex; rc=$?
+[ "$rc" = 0 ] && cmp -s "$IX/ref" "$IX/home/.codex/config.toml" && ixout | grep -qF "⚠ Codex: ~/.codex/config.toml has a [hooks…] table of another form, so the kit did not approve its hooks: open Codex, type /hooks and approve them" \
+  && ixout | grep -q "brain-in-a-box installed" \
+  && ok "e2e codex open: a config.toml the kit will not add to: left as it was, the install goes on and says to approve with /hooks" \
+  || no "e2e codex open: a refused config.toml stopped the install or was changed (rc $rc): $(ixout | tail -3)"
+
+# A hooks.json of Codex's that does not parse stops the install at preflight: left as it was, nothing
+# installed (the choice alone is recorded, as for any choice).
+ixhome; mkdir -p "$IX/home/.codex"; printf '{"hooks": {,}}\n' > "$IX/home/.codex/hooks.json"; ixtree > "$IX/tree-hj"
+ixrun "$IX/kit-codex" --agents codex; rc=$?
+[ "$rc" != 0 ] && grep -qF "$IX/home/.codex/hooks.json is not valid JSON (line 1, column" "$IX/out" \
+  && ixtree | grep -v '^\.brain-in-a-box/agents\.json ' | cmp -s - "$IX/tree-hj" && [ ! -e "$IX/home/.brain-in-a-box/install.log" ] \
+  && [ -z "$(ixcalls)" ] \
+  && ok "e2e codex open: a hooks.json that does not parse stops the install at preflight: left as it was, nothing installed" \
+  || no "e2e codex open: a broken hooks.json passed the preflight (rc $rc): $(ixout | tail -3)"
+
+# Claude alone with a Codex of the user's own: nothing of ~/.codex read into the output, nothing written there,
+# even when its hooks.json names one of the kit's hooks (wired by hand): only a Codex the kit wired is
+# told it is not chosen any more.
+ixhome; mkdir -p "$IX/home/.codex/sessions/2026/10/16" "$IX/home/.agents"
+printf 'model = "gpt-x"\n[hooks]\n' > "$IX/home/.codex/config.toml"; printf 'Mine.\n' > "$IX/home/.codex/AGENTS.md"
+printf '{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "/x/mine.sh"}, {"type": "command", "command": "%s/.claude/hooks/brain/session-logger.py"}]}]}}\n' \
+  "$IX/home" > "$IX/home/.codex/hooks.json"
+printf '{}\n' > "$IX/home/.codex/sessions/2026/10/16/rollout-x.jsonl"
+ixtree | grep -E '^\.(codex|agents)/' > "$IX/codex-mine"
+bad=""
+for kit in "$KIT" "$IX/kit-codex"; do
+  ixrun "$kit"; rc=$?
+  ixtree | grep -E '^\.(codex|agents)/' | cmp -s - "$IX/codex-mine" && [ "$rc" = 0 ] && ixout | sed "s#$IX/kit-codex#$IX/kit#g" | cmp -s - "$IX/out-default" \
+    && [ ! -e "$IX/home/.agents/skills" ] && [ ! -e "$IX/home/.brain-in-a-box/codex-hooks-poses.json" ] || bad="$bad $(basename "$kit")"
+  rm -rf "$IX/home/.brain-in-a-box" "$IX/home/.claude" "$IX/home/Documents" "$IX/home/Library" "$IX/home/.local" "$IX/home/.config" \
+         "$IX/calls" "$IX/crontab"
+done
+[ -z "$bad" ] && ok "e2e: Claude alone, a Codex of the user's own beside it (closed or open): ~/.codex untouched, the output the default's" \
+  || no "e2e: Claude alone touched the user's own Codex:$bad"
+
+# Claude alone, install.sh says and does what master's does: master's, then this one's, each in a new
+# home beside a Codex of the user's own (its hooks.json naming one of the kit's hooks, wired by hand),
+# then master's and this one's again over that install; without a choice, then with --agents claude.
+# The same lines on screen, the same calls, the same commands in install.log, the same files but the
+# kit's copies of the sources this change touches and installed.json; this one's re-run leaves the
+# install as it found it; ~/.codex untouched, no ~/.agents. Master is origin/master, which test.yml
+# fetches; .github/ci/same-as-master.ps1 is install.ps1's.
+MK="$IX/master-kit"; rm -rf "$MK"; mkdir -p "$MK"
+if git -C "$REPO" rev-parse -q --verify origin/master >/dev/null 2>&1 \
+   && git -C "$REPO" archive origin/master install.sh engine skills vault-skeleton onboarding | tar -x -C "$MK"; then
+  cp "$KIT/test-hooks.sh" "$MK/test-hooks.sh"
+  # The sources install.sh copies into the home, by name, that differ from master's.
+  changed=$(git -C "$REPO" diff --name-only origin/master -- engine/hooks engine/bin engine/nightly engine/search | sed 's#.*/##' | sort -u)
+  # The kits' folders, and mktemp's names (install.sh hands crontab a file of its own).
+  smnorm(){ sed -E -e "s#$MK#<kit>#g" -e "s#$KIT#<kit>#g" -e 's#/tmp\.[A-Za-z0-9]{6,}/#/tmp.<x>/#g'; }
+  smrun(){ local name="$1" kit="$2" log="$IX/home/.brain-in-a-box/install.log" from; shift 2
+    from=$(( $( [ -f "$log" ] && wc -c < "$log" || echo 0) + 1 ))
+    rm -f "$IX/calls"; ixrun "$kit" "$@"; echo "$?" > "$IX/sm-$name.rc"
+    ixout | smnorm > "$IX/sm-$name.out"; ixcalls | smnorm > "$IX/sm-$name.calls"; ixtree > "$IX/sm-$name.tree"
+    tail -c +"$from" "$log" 2>/dev/null | sed -E 's/^\[[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}\] //' | grep '^\$ ' | smnorm > "$IX/sm-$name.log"; }
+  smcodex(){ mkdir -p "$IX/home/.codex"; printf 'Mine.\n' > "$IX/home/.codex/AGENTS.md"
+    printf '{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "%s/.claude/hooks/brain/session-logger.py"}]}]}}\n' "$IX/home" > "$IX/home/.codex/hooks.json"; }
+  bad=""
+  for choice in none claude; do
+    args=(); [ "$choice" = claude ] && args=(--agents claude)
+    ixhome; smcodex; ixtree | grep -E '^\.(codex|agents)/' > "$IX/sm-codex"
+    smrun m "$MK" ${args[@]+"${args[@]}"}
+    ixhome; smcodex
+    smrun b "$KIT" ${args[@]+"${args[@]}"}
+    smrun m2 "$MK" ${args[@]+"${args[@]}"}
+    smrun b2 "$KIT" ${args[@]+"${args[@]}"}
+    for r in m b m2 b2; do [ "$(cat "$IX/sm-$r.rc")" = 0 ] || bad="$bad $choice:$r-rc$(cat "$IX/sm-$r.rc")"; done
+    for pair in m:b m2:b2; do
+      for what in out calls log; do
+        cmp -s "$IX/sm-${pair%:*}.$what" "$IX/sm-${pair#*:}.$what" \
+          || { bad="$bad $choice:${pair#*:}-$what"; diff "$IX/sm-${pair%:*}.$what" "$IX/sm-${pair#*:}.$what" | head -6; }
+      done
+    done
+    [ -s "$IX/sm-b.log" ] || bad="$bad $choice:no-command-in-install.log"
+    cmp -s "$IX/sm-b.tree" "$IX/sm-b2.tree" || bad="$bad $choice:re-run-changed-the-install"
+    apart=$(diff "$IX/sm-m.tree" "$IX/sm-b.tree" | sed -n 's/^[<>] \([^ ]*\) .*/\1/p' | sort -u)
+    want=$(cut -d' ' -f1 "$IX/sm-b.tree" | while read -r f; do printf '%s\n' "$changed" | grep -qxF "$(basename "$f")" && echo "$f"; done)
+    [ -n "$want" ] && want=$(printf '%s\n.brain-in-a-box/installed.json\n' "$want" | sort -u)
+    [ "$apart" = "$want" ] || bad="$bad $choice:files[$(echo $apart)]not[$(echo $want)]"
+    ixtree | grep -E '^\.(codex|agents)/' | cmp -s - "$IX/sm-codex" || bad="$bad $choice:user-codex"
+  done
+  [ -z "$bad" ] && ok "e2e: Claude alone, install.sh says, runs and installs what master's does (new and re-run, no choice and --agents claude), but the copies this change touches ($(echo $want)); the user's Codex untouched" \
+    || no "e2e: Claude alone differs from master's install.sh:$bad"
+elif [ "${GITHUB_ACTIONS:-}" = true ]; then
+  no "e2e: no origin/master to compare Claude alone with (test.yml fetches it before this file)"
+else
+  echo "  - skipped: Claude alone against master's install.sh (no origin/master here)"
+fi
+
+# At a terminal (.github/ci/terminal.py): a new install where Codex is open asks which AI; a re-run
+# of an install from before the choice asks nothing more than today (Voyage, and on Linux lingering
+# and Obsidian), its output the same as with Codex closed.
+ixpty(){ local kit="$1"; shift
+  env -i HOME="$IX/home" PATH="$IXPATH" USER="$IXUSER" LOGNAME="$IXUSER" TMPDIR="$TMPDIR" LANG="${LANG:-en_US.UTF-8}" \
+    http_proxy=http://127.0.0.1:9 https_proxy=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9 ALL_PROXY=http://127.0.0.1:9 \
+    GIT_TERMINAL_PROMPT=0 python3 "$REPO/.github/ci/terminal.py" --timeout 300 "$@" -- "$IX/sys/bash" "$kit/install.sh" > "$IX/out" 2>&1; }
+TA=(--answer 'Voyage key:='); [ "$(uname -s)" = Linux ] && TA+=(--answer 'lingering=n' --answer 'Obsidian=n')
+ixhome; ixpty "$IX/kit-codex" --answer 'Use Codex?=y' --answer 'Claude Code too=n' "${TA[@]}"; rc=$?; cp "$IX/out" "$IX/out-pty-new"
+[ "$(ajson)" = "agents=codex codex_home=$IX/home/.codex date=$TODAY pose_par=install.sh prefere=codex version=1" ] && [ -e "$IX/home/.codex/hooks.json" ] \
+  && [ ! -e "$IX/home/.claude/settings.json" ] && { [ "$rc" = 0 ] || [ "$rc" = 4 ]; } \
+  && ok "e2e terminal: a new install where Codex is open asks, and Codex alone is what was answered" || no "e2e terminal: the question's answer not followed (rc $rc): $(ajson 2>/dev/null)"
+ix "$KIT"; ixpty "$KIT" "${TA[@]}"; rc1=$?; ixout | tr -d '\r' > "$IX/pty-closed"
+ix "$IX/kit-codex"; ixpty "$IX/kit-codex" "${TA[@]}"; rc2=$?; ixout | tr -d '\r' | sed "s#$IX/kit-codex#$IX/kit#g" > "$IX/pty-open"
+[ "$rc1" = "$rc2" ] && cmp -s "$IX/pty-closed" "$IX/pty-open" && ! grep -q "Use Codex" "$IX/pty-open" && grep -q "answered '' to 'Voyage key:'" "$IX/pty-open" \
+  && [ ! -e "$IX/home/.brain-in-a-box/agents.json" ] \
+  && ok "e2e terminal: a re-run of an install from before the choice, Codex open: no new question, the same output as Codex closed" \
+  || no "e2e terminal: a re-run asked more or said other things (rc $rc1/$rc2): $(diff "$IX/pty-closed" "$IX/pty-open" | head -5)"
 }
 # install.sh runs this file at the end of every install: about 15 s of installs in a sandbox say
 # nothing about this machine's hooks. ./test-hooks.sh and CI run it.

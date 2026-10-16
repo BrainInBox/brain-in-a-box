@@ -761,6 +761,11 @@ const SECTIONS: &[(&str, &str)] = &[
     ("Verification", "Je vérifie que tout répond"),
 ];
 
+/// install.ps1's sections that run only when an agent is chosen: Codex's, which the app does not choose
+/// yet (phase 10b). Said without a count, so that a brain of Claude alone still counts 13, as before Codex.
+#[cfg(windows)]
+const CHOSEN_SECTIONS: &[(&str, &str)] = &[("Codex", "Je branche Codex")];
+
 /// Where install.ps1 is: each section it starts becomes one line for the window,
 /// "▸ Je crée ton dossier Brain (3 sur 13)…". The window shows the latest one.
 #[cfg(windows)]
@@ -773,6 +778,9 @@ struct Sections {
 impl Sections {
     fn progress(&mut self, line: &str) -> Option<String> {
         let title = line.trim().strip_prefix("=== ")?.strip_suffix(" ===")?;
+        if let Some((_, said)) = CHOSEN_SECTIONS.iter().find(|(start, _)| title.starts_with(start)) {
+            return Some(format!("▸ {said}…"));
+        }
         let n = SECTIONS.iter().position(|(start, _)| title.starts_with(start))?;
         // Never backwards: a title seen twice does not move the count.
         (n >= self.seen).then(|| {
@@ -1882,12 +1890,20 @@ mod tests {
             .filter_map(|l| l.split('"').next())
             .filter(|t| !t.starts_with("Telechargement"))
             .collect();
-        assert_eq!(titles.len(), SECTIONS.len(), "{titles:?}");
+        assert_eq!(titles.len(), SECTIONS.len() + CHOSEN_SECTIONS.len(), "{titles:?}");
         let mut sections = Sections::default();
-        for (i, title) in titles.iter().enumerate() {
+        let mut counted = 0;
+        for title in &titles {
             let said = sections.progress(&format!("=== {title} ===")).unwrap_or_else(|| panic!("{title}"));
-            assert!(said.starts_with("▸ ") && said.ends_with(&format!("({} sur {})…", i + 1, SECTIONS.len())), "{said}");
+            if let Some((_, chosen)) = CHOSEN_SECTIONS.iter().find(|(start, _)| title.starts_with(start)) {
+                // Codex's, which only a brain with Codex runs: no count, Claude alone's stays 13.
+                assert_eq!(said, format!("▸ {chosen}…"));
+                continue;
+            }
+            counted += 1;
+            assert!(said.starts_with("▸ ") && said.ends_with(&format!("({counted} sur {})…", SECTIONS.len())), "{said}");
         }
+        assert_eq!(counted, SECTIONS.len());
         // The download (irm | iex only), an unknown section, a plain line: nothing to say.
         let mut fresh = Sections::default();
         for quiet in ["=== Telechargement de brain-in-a-box ===", "=== Nouveau ===", "  [OK] python", "Preflight"] {

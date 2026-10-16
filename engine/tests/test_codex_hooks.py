@@ -23,8 +23,6 @@ HOOKS = HERE.parent / "hooks"
 sys.path.insert(0, str(HERE))
 import codex_captures as cap  # noqa: E402
 
-GATE = "CODEX_OUVERT = frozenset()\n"
-OPEN = 'CODEX_OUVERT = frozenset({"darwin", "linux", "windows"})\n'
 BY_EVENT = {"SessionStart": ("controle-sessionstart", "gbrain-update-check"),
             "UserPromptSubmit": ("correction-detector",),
             "Stop": ("session-logger", "session-indexer", "session-recap")}
@@ -58,9 +56,9 @@ class Bench(unittest.TestCase):
             d.mkdir()
             for f in HOOKS.glob("*.py"):
                 shutil.copy(str(f), str(d))
-        gate = (self.open / "_agents.py").read_text(encoding="utf-8")
-        self.assertEqual(gate.count(GATE), 1, "the gate's line moved: this bench would not open Codex")
-        (self.open / "_agents.py").write_text(gate.replace(GATE, OPEN), encoding="utf-8")
+        opened = cap.open_gate((self.open / "_agents.py").read_text(encoding="utf-8"))
+        self.assertIsNotNone(opened, "the gate's line moved: this bench would not open Codex")
+        (self.open / "_agents.py").write_text(opened, encoding="utf-8")
         self.brain = self.home / ".brain-in-a-box"
         self.choose(["claude", "codex"])
         self.etat()

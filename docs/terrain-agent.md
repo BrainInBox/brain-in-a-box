@@ -215,6 +215,9 @@ Open the PR and leave a comment asking the maintainer to review it when the diff
   pkexec runs after the user's password);
 - the agents' gate: `engine/hooks/_agents.py` (the systems Codex is open on, and what the installers
   and the hooks trust in `~/.brain-in-a-box/agents.json`);
+- what both installers write into the user's Codex: `engine/codex/` (`wire.py` merges the kit's hooks
+  into `hooks.json` and approves them in `config.toml`; `brain-in-a-box.rules`, which install.sh puts,
+  lets Codex run `gbq query` and `gbq search` without asking, outside its sandbox);
 - the Codex launcher: `engine/hooks/_headless_codex.py` (its checks, settings and environment). Its
   feature list, engine/codex-features.json, is not on this list: adding a name there (a feature a
   new Codex brings, turned off) only makes the launcher stricter; never take a name out;

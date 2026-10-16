@@ -19,11 +19,18 @@ jobs:
         with:
           persist-credentials: false
 
+      # test-hooks.sh, section 16, compares install.sh with master's.
+      - name: Master, for test-hooks.sh to compare install.sh with
+        run: git fetch --no-tags --depth 1 origin +refs/heads/master:refs/remotes/origin/master
+
       - name: Run test-hooks.sh (hooks + gbrain self-update + YAML frontmatter validation)
         run: bash test-hooks.sh
 
       - name: Unit tests (engine/tests; the 7-day gbrain update against a local repository and fake Bun)
         run: python3 -I -m unittest discover -s engine/tests -v
+
+      - name: install.ps1's Codex functions against stand-ins (pwsh)
+        run: pwsh -NoProfile -File .github/ci/install-ps1-codex.ps1
 
       # Each script is parsed by the shell its shebang names: the zsh scripts
       # used to be checked with bash, and new scripts were easy to forget.
@@ -70,11 +77,17 @@ jobs:
           shellcheck -S warning -e SC2034 test-hooks.sh
           systemd-analyze verify engine/nightly/systemd/*.service engine/nightly/systemd/*.timer
 
+      - name: Master, for test-hooks.sh to compare install.sh with
+        run: git fetch --no-tags --depth 1 origin +refs/heads/master:refs/remotes/origin/master
+
       - name: "Run test-hooks.sh (no zsh on this runner: the nightly under bash)"
         run: bash test-hooks.sh
 
       - name: Unit tests (engine/tests)
         run: python3 -I -m unittest discover -s engine/tests -v
+
+      - name: install.ps1's Codex functions against stand-ins (pwsh)
+        run: pwsh -NoProfile -File .github/ci/install-ps1-codex.ps1
 
       # As on a server a script reaches: no session for the user's systemd (a runner may keep one
       # lingering), and cron, which every Ubuntu has.
@@ -146,6 +159,23 @@ jobs:
           # Nothing chosen: Claude alone, as before there was a choice, and no file says so.
           test ! -e "$H/.brain-in-a-box/agents.json"
           if grep -q 'AI agents' "$RUNNER_TEMP/install-1.txt"; then echo "::error::a line about agents with nothing chosen"; exit 1; fi
+
+      # Codex runs gbq query and gbq search without asking, outside its sandbox, from a session's folder,
+      # where the session may write a bunfig.toml whose preload Bun runs before gbrain.
+      - name: gbq's reads start gbrain from /, so a folder's bunfig.toml never runs (the real Bun and gbrain)
+        run: |
+          d=$(mktemp -d); cd "$d"
+          printf 'preload = ["./x.ts"]\n' > bunfig.toml
+          printf 'require("fs").writeFileSync("%s/witness", "ran\\n");\n' "$d" > x.ts
+          # The control: gbrain started from this folder, Bun on the PATH as gbq puts it (gbrain is a bun script).
+          out=$(PATH="$HOME/.bun/bin:$PATH" ~/.bun/bin/gbrain --version 2>&1) || true
+          [ -f witness ] || { echo "$out"; echo "::error::control: gbrain started from this folder did not run its preload, so this step proves nothing"; exit 1; }
+          rm witness
+          for c in query search; do
+            out=$(~/.local/bin/gbq "$c" "captured corrections" 2>&1); echo "$out"
+            [ ! -e witness ] || { echo "::error::gbq $c ran the folder's preload"; exit 1; }
+            echo "$out" | grep -qi 'lessons' || { echo "::error::gbq $c from / found nothing"; exit 1; }
+          done
 
       - name: Codex is refused on this system (option or BIAB_AGENTS), before anything changes
         run: |
@@ -273,7 +303,7 @@ jobs:
           echo "$files"
           if grep -qE '^(app/|install\.ps1$|\.github/workflows/test\.yml$|\.github/ci/)' <<< "$files"; then app=true; else app=false; fi
           echo "app=$app" | tee -a "$GITHUB_OUTPUT"
-          if grep -qE '^(engine/hooks/(_headless(_codex|_claude)?|_agents|_codex_rollout|_controle_judge|daily-reflection|session-recap|session-logger|correction-detector|controle-sessionstart)\.py|engine/codex-features\.json|engine/tests/(codex_mock|mock_openai|codex_captures)\.py|\.github/workflows/test\.yml)$' <<< "$files"; then codex=true; else codex=false; fi
+          if grep -qE '^(engine/hooks/(_headless(_codex|_claude)?|_agents|_codex_rollout|_controle_judge|daily-reflection|session-recap|session-logger|correction-detector|controle-sessionstart)\.py|engine/codex-features\.json|engine/tests/(codex_mock|mock_openai|codex_captures)\.py|\.github/workflows/test\.yml|install\.sh|install\.ps1|engine/codex/[^/]+|engine/CLAUDE\.global\.template\.md|engine/install_skills\.py|skills/[^/]+/SKILL\.md)$' <<< "$files"; then codex=true; else codex=false; fi
           echo "codex=$codex" | tee -a "$GITHUB_OUTPUT"
 
   # The launcher without tools for Codex (engine/hooks/_headless_codex.py) with the real Codex CLI,
@@ -282,7 +312,10 @@ jobs:
   # announced, URLs, the caller's keys, a system config and requirements.toml, the user's MCP server;
   # then the reflection's and the review's questions through the choice of engine (_headless.py); then
   # a session the real Codex keeps, read as the reflection and Codex's Stop hook read it (_codex_rollout.py);
-  # then the kit's hooks run by the real Codex from a hooks.json (--agent codex): their answers taken.
+  # then the kit's hooks run by the real Codex from a hooks.json (--agent codex): their answers taken;
+  # then install.sh (macOS, Linux) or install.ps1 (Windows) with Codex chosen: Codex from its pinned
+  # installer, and the real Codex running the hooks the installer wired and approved (no trust bypassed);
+  # on Windows, a %ProgramData%\OpenAI\Codex other accounts could change pauses Codex.
   codex-mock:
     name: codex-mock (${{ matrix.os }})
     needs: changes
@@ -292,7 +325,7 @@ jobs:
       matrix:
         os: [macos-latest, ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
       CODEX_RELEASE: "0.162.1"
       CODEX_NON_INTERACTIVE: "1"
@@ -636,6 +669,19 @@ jobs:
           $bad = Select-String -Path install.ps1 -Pattern '[^\x00-\x7F]'
           if ($bad) { $bad; exit 1 }
 
+      # A Codex of the user's own, there before the kit: as long as Codex is not chosen, nothing touches
+      # it (.github/ci/same-as-master.ps1 checks it after the installs below).
+      - name: A Codex of the user's own, before anything
+        run: |
+          $C = "$env:USERPROFILE\.codex"
+          New-Item -ItemType Directory "$C\sessions\2026\10\15" -Force | Out-Null
+          Set-Content "$C\config.toml" "model = `"gpt-x`"`n[mcp_servers.mine]`ncommand = `"mine.exe`"" -Encoding ascii
+          Set-Content "$C\AGENTS.md" 'My own rules.' -Encoding ascii
+          Set-Content "$C\hooks.json" '{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "mine.cmd"}]}]}}' -Encoding ascii
+          Set-Content "$C\sessions\2026\10\15\rollout-mine.jsonl" '{"type": "session_meta", "payload": {"source": "cli"}}' -Encoding ascii
+          Get-ChildItem $C -Recurse -File -Force | ForEach-Object { "$($_.FullName) $((Get-FileHash $_.FullName).Hash)" } | Sort-Object |
+            Set-Content "$env:RUNNER_TEMP\user-codex.txt"
+
       - name: Fresh install, only the Store python stub on the PATH, a Voyage key Voyage refuses
         run: |
           . .github/ci/poste-neuf.ps1
@@ -711,6 +757,14 @@ jobs:
           & $py -I -m unittest discover -s engine/tests -v
           if ($LASTEXITCODE) { throw "unit tests failed (exit $LASTEXITCODE)" }
 
+      # poste-neuf.ps1 left only the Store stub on the job's PATH: the script takes the Python the installer set up.
+      - name: install.ps1's Codex functions against stand-ins (pwsh)
+        run: |
+          $py = (@((Get-Content "$env:USERPROFILE\.claude\settings.json" -Raw | ConvertFrom-Json).hooks.UserPromptSubmit.hooks)[0]).command
+          $env:PATH = "$(Split-Path -Parent $py);$env:PATH"
+          pwsh -NoProfile -File .github/ci/install-ps1-codex.ps1
+          if ($LASTEXITCODE) { throw "install-ps1-codex.ps1 exited $LASTEXITCODE" }
+
       - name: gbrain is the memory (keyword brain, no key)
         run: |
           $H = $env:USERPROFILE
@@ -733,6 +787,24 @@ jobs:
           # The onboarding's re-index, verbatim.
           & "$H\.local\bin\gbq.cmd" sync --repo "$H\Documents\Brain" --no-pull --no-embed; if ($LASTEXITCODE) { throw 'gbq.cmd sync failed' }
           & "$H\.local\bin\gbq.cmd" embed --stale --max-usd 0.10; if ($LASTEXITCODE) { throw 'gbq.cmd embed failed on a keyword brain' }
+
+      # As on macOS and Linux: an approved gbq query runs gbq, not what a session wrote in its folder.
+      - name: gbq's reads start gbrain from gbq.py's folder, so a folder's bunfig.toml never runs (the real Bun and gbrain)
+        run: |
+          $H = $env:USERPROFILE
+          $d = (New-Item -ItemType Directory "$env:RUNNER_TEMP\bunfig-session" -Force).FullName
+          Set-Location $d
+          $w = "$d\witness"
+          [IO.File]::WriteAllText("$d\bunfig.toml", "preload = [`"./x.ts`"]`n")
+          [IO.File]::WriteAllText("$d\x.ts", "require(`"fs`").writeFileSync(" + ($w | ConvertTo-Json) + ", `"ran`");`n")
+          & "$H\.bun\bin\gbrain.exe" --version *> $null
+          if (-not (Test-Path $w)) { throw 'control: gbrain.exe started from this folder did not run its preload, so this step proves nothing' }
+          Remove-Item $w
+          foreach ($c in 'query', 'search') {
+            $q = (& "$H\.local\bin\gbq.cmd" $c "captured corrections" 2>&1) -join "`n"; $q
+            if (Test-Path $w) { throw "gbq.cmd $c ran the folder's preload" }
+            if ($q -notmatch '(?i)lessons') { throw "gbq.cmd $c from its own folder found nothing" }
+          }
 
       - name: A hook runs the way Claude Code spawns it (exec form)
         run: |
@@ -998,7 +1070,17 @@ jobs:
           if ((git -C $G rev-parse HEAD).Trim() -ne $head) { throw "the installer moved gbrain from $tag back to $($pin.tag)" }
           if ((Get-Content "$env:RUNNER_TEMP\install-newer.txt" -Raw) -notmatch 'gbrain deja a jour \(v') { throw "the installer did not see gbrain is past the pin" }
 
-      # Last, so that every step above runs as users who never chose do: irm | iex passes no
+      # Claude alone, the same install as master's install.ps1, line for line, command for command,
+      # file for file: without agents.json here, with Claude chosen below.
+      - name: Claude alone, install.ps1 says and does what master's does (no agents.json)
+        run: |
+          if (Test-Path "$env:USERPROFILE\.brain-in-a-box\agents.json") { throw 'agents.json is there already' }
+          # A CODEX_HOME on a drive that is not there (a USB key, a volume not mounted): Claude alone never reads it.
+          if (Test-Path 'Q:\') { throw 'a drive Q: on this runner: this step would prove nothing' }
+          $env:CODEX_HOME = 'Q:\codex'
+          & .github/ci/same-as-master.ps1
+
+      # Last of Claude alone, so that every step above runs as users who never chose do: irm | iex passes no
       # parameter, the choice comes through BIAB_AGENTS, as the app passes it.
       - name: One-liner mode, Claude chosen through BIAB_AGENTS
         run: |
@@ -1009,3 +1091,113 @@ jobs:
           $a = Get-Content "$env:USERPROFILE\.brain-in-a-box\agents.json" -Raw | ConvertFrom-Json
           if ("$($a.version) $($a.agents -join ',') $($a.prefere) $($a.pose_par)" -ne '1 claude claude install.ps1' -or $a.codex_home) { throw "agents.json: $($a | ConvertTo-Json -Compress)" }
           if ((Get-Content "$env:RUNNER_TEMP\install-iex-claude.txt" -Raw) -notmatch 'agents IA : Claude Code, note dans') { throw 'the choice was not said' }
+
+      - name: Claude alone, install.ps1 says and does what master's does (Claude chosen)
+        run: |
+          if (((Get-Content "$env:USERPROFILE\.brain-in-a-box\agents.json" -Raw | ConvertFrom-Json).agents -join ',') -ne 'claude') { throw 'agents.json does not say Claude alone' }
+          # A Codex whose hooks.json names one of the kit's hooks, wired by hand: only a Codex the kit wired is
+          # told it is not chosen any more.
+          $C = "$env:RUNNER_TEMP\hand-codex"; New-Item -ItemType Directory $C -Force | Out-Null
+          $hook = "$env:USERPROFILE\.claude\hooks\brain\session-logger.py" | ConvertTo-Json
+          [IO.File]::WriteAllText("$C\hooks.json", '{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": ' + $hook + '}]}]}}')
+          if (-not (Select-String -LiteralPath "$C\hooks.json" -SimpleMatch '\\.claude\\hooks\\brain\\' -Quiet)) { throw "this Codex's hooks.json does not name the kit's hook as install.ps1 looks for it" }
+          $env:CODEX_HOME = $C
+          & .github/ci/same-as-master.ps1
+
+      # Codex is closed on Windows: a copy of the kit where it is open, as the change that opens it will
+      # have it. Claude's install stays what it was; Codex's files go in beside the user's own, which are
+      # kept and backed up first; Codex comes from its pinned installer.
+      - name: Codex chosen beside Claude (a copy of the kit where Codex is open)
+        run: |
+          $H = $env:USERPROFILE; $K = "$env:RUNNER_TEMP\kit-open"; $C = "$H\.codex"
+          git archive --format=zip -o "$env:RUNNER_TEMP\kit-open.zip" HEAD
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          [IO.Compression.ZipFile]::ExtractToDirectory("$env:RUNNER_TEMP\kit-open.zip", $K)
+          $gate = "$K\engine\hooks\_agents.py"
+          $g = [IO.File]::ReadAllText($gate)
+          # Whatever the gate says: closed today, open on some systems once a change opens them.
+          if (([regex]::Matches($g, '(?m)^CODEX_OUVERT = frozenset\(.*\)\r?$')).Count -ne 1) { throw "the gate's line moved" }
+          [IO.File]::WriteAllText($gate, ($g -replace '(?m)^CODEX_OUVERT = frozenset\(.*\)(?=\r?$)', 'CODEX_OUVERT = frozenset({"darwin", "linux", "windows"})'))
+          # Claude's side, but the gate itself (the copy's _agents.py replaces the one in place, and says so).
+          $claude = { @(Get-ChildItem "$H\.claude" -Recurse -File -Force) + @(Get-ChildItem "$H\.local\bin" -File) |
+                      Where-Object { $_.Name -ne '_agents.py' } | ForEach-Object { "$($_.FullName) $((Get-FileHash $_.FullName).Hash)" } | Sort-Object }
+          $before = @(& $claude)
+          $user = @{}; foreach ($n in 'config.toml', 'AGENTS.md', 'hooks.json') { $user[$n] = [IO.File]::ReadAllText("$C\$n") }
+          powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$K\install.ps1" -Agents claude,codex -Prefere claude *>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\install-codex.txt"
+          if ($LASTEXITCODE) { exit 1 }
+          $out = Get-Content "$env:RUNNER_TEMP\install-codex.txt" -Raw
+          if ($out -notmatch 'agents IA : Claude Code et Codex \(prefere : Claude Code\), note dans') { throw 'the choice was not said' }
+          $cb = "$env:LOCALAPPDATA\Programs\OpenAI\Codex\bin\codex.exe"
+          if (-not (Test-Path $cb) -or (& $cb --version) -ne 'codex-cli 0.162.1' -or $out -notmatch 'Codex 0\.162\.1 installe') {
+            $log = [IO.File]::ReadAllText("$H\.brain-in-a-box\install.log"); $log.Substring([Math]::Max(0, $log.LastIndexOf('> codex :')))
+            throw 'Codex did not come from its pinned installer'
+          }
+          if ($out -notmatch 'le kit a approuve ses 6 hooks pour toi' -or $out -notmatch 'avec /hooks dans Codex') { throw 'the approval was not said' }
+          $j = Get-Content "$C\hooks.json" -Raw | ConvertFrom-Json
+          if ($j.hooks.Stop[0].hooks[0].command -ne 'mine.cmd') { throw "the user's hook was lost" }
+          $py = (@((Get-Content "$H\.claude\settings.json" -Raw | ConvertFrom-Json).hooks.UserPromptSubmit.hooks)[0]).command
+          $want = "& '$py' '$H\.claude\hooks\brain\correction-detector.py' --agent codex"
+          $cd = $j.hooks.UserPromptSubmit[0].hooks[0]
+          if ($cd.commandWindows -cne $want -or $cd.command -cne $want -or $cd.timeout -ne 30) { throw "correction-detector wired as $($cd | ConvertTo-Json -Compress), not $want" }
+          $mine = @(@($j.hooks.UserPromptSubmit.hooks) + @($j.hooks.Stop.hooks) + @($j.hooks.SessionStart.hooks) | Where-Object { "$($_.commandWindows)" -like '& *--agent codex' })
+          if ($mine.Count -ne 6) { throw "$($mine.Count) of the kit's hooks in hooks.json" }
+          $toml = [IO.File]::ReadAllText("$C\config.toml")
+          if (-not $toml.StartsWith($user['config.toml'])) { throw "the user's config.toml was not kept as it was" }
+          if (([regex]::Matches($toml, '(?m)^\[hooks\.state\."')).Count -ne 6) { throw 'not six tables in config.toml' }
+          foreach ($n in 'hooks.json', 'config.toml') { if (@(Get-ChildItem "$C\$n.bak-*").Count -ne 1) { throw "$n was not backed up once" } }
+          $env:CODEX_HOME = $C; & $cb features list | Out-Null; $rc = $LASTEXITCODE; Remove-Item Env:CODEX_HOME
+          if ($rc) { throw 'Codex does not read config.toml as the kit left it' }
+          $am = [IO.File]::ReadAllText("$C\AGENTS.md")
+          if (-not $am.StartsWith($user['AGENTS.md'].TrimEnd()) -or ([regex]::Matches($am, '<!-- brain-in-a-box -->')).Count -ne 1) { throw "AGENTS.md: the user's text lost, or the block not there once" }
+          # No gbq rule on Windows: gbq.cmd goes through cmd.exe, which reads an & in its arguments again.
+          if (Test-Path "$C\rules") { throw "a rules folder in Codex's home: gbq would run without asking" }
+          if ($out -notmatch 'Codex demande avant chaque gbq') { throw 'that Codex asks before gbq was not said' }
+          $V = "$H\Documents\Brain"
+          if (-not (Test-Path "$V\AGENTS.md") -or (git -C $V ls-files AGENTS.md) -ne 'AGENTS.md') { throw "the vault's AGENTS.md is not there, or not committed" }
+          foreach ($sk in Get-ChildItem skills -Directory) { if (-not (Test-Path "$H\.agents\skills\$($sk.Name)\SKILL.md")) { throw "Codex's skill $($sk.Name) is not installed" } }
+          if (-not (Test-Path "$H\.brain-in-a-box\codex-hooks-poses.json")) { throw 'when the hooks were wired was not noted' }
+          if ($out -notmatch 'codex login') { throw 'codex login was not said' }
+          $after = @(& $claude)
+          if (($after -join "`n") -cne ($before -join "`n")) { Compare-Object $before $after; throw "Claude's install changed" }
+
+      - name: Codex chosen, a second run changes nothing and says so
+        run: |
+          $H = $env:USERPROFILE; $K = "$env:RUNNER_TEMP\kit-open"; $C = "$H\.codex"
+          $snap = { foreach ($f in 'hooks.json', 'config.toml', 'AGENTS.md') { "$f $((Get-FileHash "$C\$f").Hash)" } }
+          $before = (& $snap) -join "`n"
+          powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$K\install.ps1" *>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\install-codex-2.txt"
+          if ($LASTEXITCODE) { exit 1 }
+          $out = Get-Content "$env:RUNNER_TEMP\install-codex-2.txt" -Raw
+          if (((& $snap) -join "`n") -ne $before) { throw 'a second run rewrote one of Codex files' }
+          foreach ($n in 'hooks.json', 'config.toml') { if (@(Get-ChildItem "$C\$n.bak-*").Count -ne 1) { throw "$n backed up again" } }
+          foreach ($want in 'les hooks du kit y sont deja', 'les 6 hooks du kit sont approuves', 'a deja le bloc du kit', 'Codex deja installe \(0\.162\.1\)', 'AGENTS\.md deja la') {
+            if ($out -notmatch $want) { throw "a second run did not say: $want" }
+          }
+
+      - name: Codex chosen, a hooks.json of Codex's that does not parse stops install.ps1 before anything
+        run: |
+          $H = $env:USERPROFILE; $K = "$env:RUNNER_TEMP\kit-open"; $C = "$H\.codex"
+          Copy-Item "$C\hooks.json" "$env:RUNNER_TEMP\hooks.json.good"
+          Set-Content "$C\hooks.json" '{"hooks": {,}}' -Encoding ascii -NoNewline
+          $snap = { foreach ($f in "$C\hooks.json", "$C\config.toml", "$H\.brain-in-a-box\install.log", "$H\.brain-in-a-box\agents.json", "$H\.claude\settings.json") { "$f $((Get-FileHash $f).Hash)" } }
+          $before = (& $snap) -join "`n"
+          $out = (powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$K\install.ps1" 2>&1) -join "`n"
+          $rc = $LASTEXITCODE
+          $out
+          if (-not $rc) { throw 'install.ps1 went on over a hooks.json it cannot read' }
+          if ($out -notmatch "hooks\.json n'est pas du JSON valide \(ligne 1, colonne") { throw 'it did not say why' }
+          if (((& $snap) -join "`n") -ne $before) { throw 'something changed before it stopped' }
+          Move-Item "$env:RUNNER_TEMP\hooks.json.good" "$C\hooks.json" -Force
+          exit 0
+
+      - name: Back to Claude alone, Codex's files stay and the way to remove them is said
+        run: |
+          $H = $env:USERPROFILE; $K = "$env:RUNNER_TEMP\kit-open"; $C = "$H\.codex"
+          $before = (Get-FileHash "$C\hooks.json").Hash
+          powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$K\install.ps1" -Agents claude *>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\install-back.txt"
+          if ($LASTEXITCODE) { exit 1 }
+          $out = Get-Content "$env:RUNNER_TEMP\install-back.txt" -Raw
+          if ($out -notmatch "Codex n'est plus choisi : ce que le kit a pose pour lui reste, et ses hooks se taisent") { throw 'leaving Codex was not said' }
+          if ($out -match '=== Codex') { throw 'the Codex section ran with Claude alone' }
+          if ((Get-FileHash "$C\hooks.json").Hash -ne $before) { throw "Codex's hooks.json changed with Claude alone" }
+          if (((Get-Content "$H\.brain-in-a-box\agents.json" -Raw | ConvertFrom-Json).agents -join ',') -ne 'claude') { throw 'agents.json does not say Claude alone' }

@@ -17,11 +17,14 @@ Codex is closed on a system until its whole path is green there (docs/proposals/
 refused there, and a file that lists it there is not trusted.
 
 The hooks Codex runs (hooks.json, --agent codex) ask codex_hook() whether to act; Claude Code's
-never load this module.
+never load this module. install.sh notes when it wired them (pose_hooks()), and the night check
+says when Codex has kept sessions since without running any of them (hooks_muets()).
 
 Not a hook: installed next to them, never registered in settings.json.
 """
 import argparse
+import calendar
+import glob
 import json
 import os
 import re
@@ -39,6 +42,10 @@ FICHIER_MAX = 64 * 1024
 POSE_PAR = ("install.sh", "install.ps1")
 # The sign that Codex runs the kit's hooks: per hook, when it last ran (codex_hook()).
 VUS = "codex-hooks-vus.json"
+# When the installer last wired them in Codex's hooks.json (pose_hooks()).
+POSES = "codex-hooks-poses.json"
+UTC = "%Y-%m-%dT%H:%M:%SZ"
+UTC_RE = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ")
 # The sessions the user types in: Codex's terminal (cli) and its editor's (vscode). "exec" is a script's
 # run or the kit's own, "mcp" another program's; sub-agents and Codex's internal sessions say an
 # object, not a word (codex-rs/protocol/src/protocol.rs, SessionSource, 0.162.1).
@@ -322,19 +329,15 @@ def vus(home=None):
     return {k: v for k, v in h.items() if isinstance(k, str) and isinstance(v, str)} if isinstance(h, dict) else {}
 
 
-def vu(nom, home=None):
-    """Notes that Codex ran the hook `nom` now: codex-hooks-vus.json, beside agents.json, written in one
-    step (0600); a link in its place is replaced, never followed. Hooks running together may each miss
-    the other's line once: each one's own time is what counts."""
-    p = os.path.join(os.path.dirname(fichier(home)), VUS)
-    d = vus(home)
-    d[nom] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+def _d_un_coup(p, d):
+    """Writes the JSON d at p in one step (0600: mkstemp's mode); a link in its place is replaced,
+    never followed."""
     dossier = os.path.dirname(p)
     os.makedirs(dossier, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=dossier, prefix=".codex-hooks-vus.")
+    fd, tmp = tempfile.mkstemp(dir=dossier, prefix="." + os.path.basename(p)[:-len(".json")] + ".")
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
-            json.dump({"version": 1, "hooks": d}, f, sort_keys=True)
+            json.dump(d, f, sort_keys=True)
             f.write("\n")
         os.replace(tmp, p)
     except BaseException:
@@ -345,19 +348,88 @@ def vu(nom, home=None):
         raise
 
 
+def vu(nom, home=None):
+    """Notes that Codex ran the hook `nom` now: codex-hooks-vus.json, beside agents.json, written in one
+    step (0600); a link in its place is replaced, never followed. Hooks running together may each miss
+    the other's line once: each one's own time is what counts."""
+    d = vus(home)
+    d[nom] = time.strftime(UTC, time.gmtime())
+    _d_un_coup(os.path.join(os.path.dirname(fichier(home)), VUS), {"version": 1, "hooks": d})
+
+
+def pose_hooks(home=None):
+    """Notes that the installer wired the kit's hooks in Codex's hooks.json now: codex-hooks-poses.json,
+    beside agents.json, written as vu() writes."""
+    _d_un_coup(os.path.join(os.path.dirname(fichier(home)), POSES),
+               {"version": 1, "date": time.strftime(UTC, time.gmtime())})
+
+
+def _pose(home=None):
+    """When the installer last wired the hooks (UTC, as vu() writes it), or None."""
+    try:
+        fd, _ = _ouvrir(os.path.join(os.path.dirname(fichier(home)), POSES))
+        with os.fdopen(fd, "rb") as f:
+            d = json.loads(f.read(FICHIER_MAX).decode("utf-8"))
+    except (OSError, ValueError, RecursionError):
+        return None
+    t = d.get("date") if isinstance(d, dict) else None
+    return t if isinstance(t, str) and UTC_RE.fullmatch(t) else None
+
+
+def hooks_muets(codex_home, home=None):
+    """True when Codex has kept a session since the installer last wired the kit's hooks, yet has run
+    none of them since: Codex does not run them (not approved, turned off, or no longer trusted after
+    an update). False without a record of that install, or once one of them has run since (§3.3)."""
+    t = _pose(home)
+    if t is None or any(UTC_RE.fullmatch(v) and v >= t for v in vus(home).values()):
+        return False
+    depuis = calendar.timegm(time.strptime(t, UTC)) + 1
+    for motif in ("rollout-*.jsonl", "rollout-*.jsonl.zst"):
+        for p in glob.glob(os.path.join(glob.escape(codex_home), "sessions", "*", "*", "*", motif)):
+            try:
+                st = os.stat(p)
+            except OSError:
+                continue
+            if stat.S_ISREG(st.st_mode) and st.st_mtime > depuis:
+                return True
+    return False
+
+
 def main(argv):
     """_agents.py choisir --agents=<...> --prefere=<...> --pose-par=install.sh|install.ps1
 
     Prints one ASCII line for the installer, "agents=claude,codex prefere=claude
     source=choix ecrit=oui", or "erreur=<code>" with exit code 2: the installer says it
-    in its own language."""
+    in its own language.
+
+    _agents.py ouvert: exit code 0 when Codex can be chosen on this system, 1 otherwise.
+    _agents.py codex-home: the CODEX_HOME agents.json records, when it lists Codex and is trusted
+    (exit code 1 and nothing printed otherwise).
+    _agents.py pose-hooks: notes that the installer has just wired Codex's hooks (pose_hooks())."""
     ap = argparse.ArgumentParser(prog="_agents.py")
     sub = ap.add_subparsers(dest="cmd", required=True)
     c = sub.add_parser("choisir")
     c.add_argument("--agents", default="")
     c.add_argument("--prefere", default="")
     c.add_argument("--pose-par", required=True, choices=POSE_PAR)
+    for name in ("ouvert", "codex-home", "pose-hooks"):
+        sub.add_parser(name)
     a = ap.parse_args(argv)
+    if a.cmd == "ouvert":
+        return 0 if ouvert("codex") else 1
+    if a.cmd == "codex-home":
+        choix, etat = lire()
+        if etat != "ok" or "codex" not in choix.agents:
+            return 1
+        sys.stdout.buffer.write(os.fsencode(choix.codex_home) + b"\n")   # whatever the locale
+        return 0
+    if a.cmd == "pose-hooks":
+        try:
+            pose_hooks()
+        except OSError as e:
+            print("erreur=ecriture:" + type(e).__name__)
+            return 2
+        return 0
     try:
         existant = lire()
         choix, source = choisir(a.agents, a.prefere, existant)

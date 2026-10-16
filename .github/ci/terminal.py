@@ -86,6 +86,9 @@ def main(argv=None):
             code = 3
             break
         used.add(match)
+        # A person reads the question before typing. Answered at once, the reply can reach the
+        # terminal before `read -s` turns its echo off: an echoed Enter adds a blank line, now and then.
+        time.sleep(0.5)
         os.write(fd, (a.answers[match][1] + "\n").encode("utf-8"))
         print("\nterminal.py: answered %r to %r" % (a.answers[match][1], line.strip()), flush=True)
         line = ""
