@@ -1073,8 +1073,10 @@ mod tests {
     fn wait_for_pid(file: &Path) -> Option<String> {
         let t = Instant::now();
         while t.elapsed() < Duration::from_secs(60) {
-            if let Some(pid) = std::fs::read_to_string(file).ok().filter(|p| !p.trim().is_empty()) {
-                return Some(pid.trim().to_string());
+            if let Ok(pid) = std::fs::read_to_string(file) {
+                if !pid.trim().is_empty() {
+                    return Some(pid.trim().to_string());
+                }
             }
             thread::sleep(TICK);
         }
@@ -1154,66 +1156,6 @@ mod tests {
         let pid = pid.unwrap_or_else(|| panic!("the ping never started: PowerShell said {said:?} (code {code}, after {:?})", t.elapsed()));
         assert_eq!(code, -1, "{said:?}");
         assert!(gone(&pid), "ping {pid} survived");
-    }
-
-    /// DIAG (temporary): how long PowerShell takes to find a cmdlet, per environment.
-    #[cfg(windows)]
-    fn diag_find(kind: &str, linger: bool) -> String {
-        let dir = tempfile::tempdir().unwrap();
-        let mut env: Vec<(String, String)> = ["SystemRoot", "windir", "USERPROFILE", "TEMP", "TMP", "LOCALAPPDATA", "APPDATA"]
-            .iter()
-            .filter_map(|k| std::env::var(k).ok().map(|v| (k.to_string(), v)))
-            .chain([("PATH".to_string(), system32("").to_string_lossy().into_owned())])
-            .collect();
-        match kind {
-            "small" => {}
-            "small+cachepath" => env.extend(std::env::var("PSModuleAnalysisCachePath").ok().map(|v| ("PSModuleAnalysisCachePath".to_string(), v))),
-            "full" => env = std::env::vars().filter(|(k, _)| !k.eq_ignore_ascii_case("PSModulePath")).collect(),
-            other => panic!("{other}"),
-        }
-        let script = format!(
-            "\"cache [$env:PSModuleAnalysisCachePath]\"; $t = [Diagnostics.Stopwatch]::StartNew(); $null = Get-Command Start-Process; \
-             \"found in $($t.ElapsedMilliseconds) ms\"; {}",
-            if linger { "Start-Sleep 20" } else { "" }
-        );
-        let mut c = Command::new(powershell());
-        c.args(["-NoProfile", "-Command", &script]).current_dir(dir.path()).stdin(Stdio::null());
-        c.env_clear().envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())));
-        let (mut child, rx) = start(&mut c).unwrap();
-        let mut said = Vec::new();
-        let code = supervise(&mut child, &rx, Duration::from_secs(150), None, &mut |_, b| said.push(String::from_utf8_lossy(&b).trim_end().to_string()));
-        format!("code {code:?} {said:?}")
-    }
-
-    #[cfg(windows)]
-    #[test]
-    #[ignore]
-    fn diag_confirm() {
-        let cache = std::path::PathBuf::from(std::env::var("LOCALAPPDATA").unwrap()).join(r"Microsoft\Windows\PowerShell\ModuleAnalysisCache");
-        eprintln!("runner PSModuleAnalysisCachePath = {:?}", std::env::var("PSModuleAnalysisCachePath"));
-        eprintln!("default cache {} exists: {}", cache.display(), cache.exists());
-        for (kind, linger) in [("full", false), ("small+cachepath", false), ("small", false), ("small", false), ("small", true), ("small", false)] {
-            eprintln!("CONFIRM {kind}{}: {}", if linger { " (lingers 20 s)" } else { "" }, diag_find(kind, linger));
-            eprintln!("  default cache exists: {}", cache.exists());
-        }
-        // The fixed fixture, in the short environment, ten times.
-        for i in 0..10 {
-            let dir = tempfile::tempdir().unwrap();
-            let pidfile = dir.path().join("pid");
-            let mut c = Command::new(powershell());
-            c.args(["-NoProfile", "-Command", TREE]).current_dir(dir.path()).stdin(Stdio::null()).env_clear();
-            for k in ["SystemRoot", "windir", "USERPROFILE", "TEMP", "TMP", "LOCALAPPDATA", "APPDATA"] {
-                if let Ok(v) = std::env::var(k) {
-                    c.env(k, v);
-                }
-            }
-            c.env("PATH", system32("")).env("BIAB_PIDFILE", &pidfile);
-            let t = Instant::now();
-            let mut child = c.stdout(Stdio::null()).stderr(Stdio::null()).spawn().unwrap();
-            let pid = wait_for_pid(&pidfile);
-            eprintln!("CONFIRM fixed TREE small env #{i}: pid {pid:?} after {:?}", t.elapsed());
-            kill_group(&mut child);
-        }
     }
 
     #[cfg(windows)]
