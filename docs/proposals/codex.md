@@ -517,3 +517,7 @@ Les autres clés que Codex refuse à la couche projet et lit dans celle du syst�
 10. **Écart 10 de l'étape 2, reformulé.** Les pièges de configuration (MCP de l'utilisateur, `config.toml` système, `[otel]`) ont leur témoin sans le lanceur. Les appels forcés sont vérifiés par le message de refus propre à chaque outil. `requirements.toml`, la connexion par clé API et la fonction retirée sont des pauses du lanceur, vérifiées sans témoin.
 
 **Reste** : pour une pause `managed`, le rapport dit « Relance l'installation », ce qui n'aide pas un compte d'espace de travail ni un `requirements.toml` : texte à reprendre avec les écrans (phases 6 et 10b).
+
+**Vérifié en local** : 527 tests unitaires (aussi sous Python 3.9.6 pour ceux touchés), `test-hooks.sh` (171/171), actionlint, shellcheck, lecture d'`install.ps1` par pwsh.
+
+**CI** : run https://github.com/BrainInBox/brain-in-a-box/actions/runs/38849701516, tous les jobs verts ; `codex-mock` : 55 vérifications sur chacun des 3 OS (5 de plus : URL du système et `[otel]` avec ses deux témoins). Avec le vrai Codex 0.162.1, le témoin « lanceur sans ses réglages `otel` » envoie le prompt à l'exportateur du système, le lanceur rien : ce sont bien ces réglages qui coupent l'export. Le premier run (38849367461) a échoué sur les 3 OS pour une seule raison, l'enrobage de test : il refusait aussi `codex exec --help`, la sonde des options du lanceur. Corrigé ; des tests unitaires font maintenant passer le lanceur par l'enrobage.
