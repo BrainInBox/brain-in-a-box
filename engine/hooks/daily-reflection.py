@@ -264,8 +264,12 @@ def claude_sessions(day):
 def codex_sessions(day, codex_home):
     """(sessions, compressed) as claude_sessions gives Claude's: the Codex sessions active on `day`
     in agents.json's CODEX_HOME (_codex_rollout.py), and the compressed rollouts left unread. The
-    label holds the whole session id: Codex's are UUIDv7, whose first 8 characters are the minute."""
+    label holds the whole session id: Codex's are UUIDv7, whose first 8 characters are the minute.
+    A session not typed in Codex's terminal or editor says its source in its label ("exec", "mcp":
+    a program started it, and may have written its prompt); a sub-agent's, whose prompts another
+    agent wrote, and Codex's internal runs are left out."""
     import _codex_rollout as rollout   # here: Claude alone never loads it
+    from _agents import SOURCES_TAPEES
     day_start, _ = _day_bounds(day)
     paths, packed = rollout.recent(codex_home, day_start)
     out = []
@@ -275,8 +279,8 @@ def codex_sessions(day, codex_home):
         except Exception as e:   # Codex's format, not ours: a file costs only itself, never the day
             log_error(f"{day}: Codex session {os.path.basename(path)} not read ({type(e).__name__})")
             continue
-        if s is None:
-            continue   # a session the kit asked comes without items
+        if s is None or s.source in ("subagent", "internal"):
+            continue   # not the user's; a session the kit asked comes without items
         lines, n = [], 0
         for it in s.items:
             hhmm = rollout.local(it.ts).strftime("%H:%M")
@@ -286,7 +290,9 @@ def codex_sessions(day, codex_home):
                 lines.append(f"{hhmm} {it.kind}: {_trim(it.text.strip(), MSG_CAP)}")
                 n += 1
         if n >= 3:
-            out.append((f"codex {s.id or '?'} · cwd={s.cwd or '?'}", "\n".join(lines), s.cwd))
+            how = "" if s.source in SOURCES_TAPEES else " · " + (
+                s.source if re.fullmatch(r"[a-z_]{1,32}", s.source or "") else "?")
+            out.append((f"codex {s.id or '?'}{how} · cwd={s.cwd or '?'}", "\n".join(lines), s.cwd))
     return out, packed
 
 

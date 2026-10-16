@@ -189,6 +189,15 @@ class Lines(unittest.TestCase):
                          ["ODD-TIME 9999-12-31T23:59:59-14:00", "ODD-TIME 0001-01-01T00:00:00+14:00", "Bonjour"])
         self.assertTrue(s.first_ts.startswith(DAY) and s.last_ts.startswith(DAY), (s.first_ts, s.last_ts))
 
+    def test_a_session_says_the_kind_of_its_source(self):
+        # SessionSource (codex-rs/protocol/src/protocol.rs, 0.162.1): a word, or an object for a sub-agent,
+        # Codex's own internal runs and a client's custom name.
+        for source, kind in (("cli", "cli"), ("exec", "exec"), ({"subagent": {"thread_spawn": {"depth": 1}}}, "subagent"),
+                             ({"subagent": "review"}, "subagent"), ({"internal": "memory_consolidation"}, "internal"),
+                             ({"custom": "atlas"}, "custom"), ({"a": 1, "b": 2}, None), (["cli"], None), (3, None)):
+            with self.subTest(source=source):
+                self.assertEqual(cr.read(self.write(cap.moved(cap.VAULT, DAY, source=source))).source, kind)
+
     def test_the_kits_own_prompt_skips_the_whole_session_a_mention_does_not(self):
         own = cap.moved(cap.VAULT, DAY, said=[("user", cr.SENTINEL + "\nActivity of 2026-10-14")])
         s = cr.read(self.write(own))

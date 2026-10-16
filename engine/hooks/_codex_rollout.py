@@ -45,8 +45,9 @@ Item = namedtuple("Item", "ts kind text name command files")
 
 
 class Session:
-    """One rollout: id, cwd, source ("cli", "exec"...), model, own (asked by the kit), items, and the
-    first and last timestamps of the whole file."""
+    """One rollout: id, cwd, source (a word: "cli", "exec"...; the kind of an object: "subagent",
+    "internal", "custom"), model, own (asked by the kit), items, and the first and last timestamps of
+    the whole file."""
 
     def __init__(self):
         self.id = self.cwd = self.source = self.model = self.first_ts = self.last_ts = None
@@ -183,6 +184,8 @@ def read(path, day=None):
                     sid, cwd, source = p.get("id"), p.get("cwd"), p.get("source")
                     s.id = sid if isinstance(sid, str) and ID_RE.fullmatch(sid) else None
                     s.cwd = cwd if isinstance(cwd, str) and cwd else s.cwd
+                    if isinstance(source, dict) and len(source) == 1:
+                        source = next(iter(source))   # {"subagent": …}, {"internal": …}, {"custom": …}
                     s.source = source if isinstance(source, str) else None
                     if s.cwd and _kit_cage(s.cwd):
                         return _own(s)

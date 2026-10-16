@@ -420,8 +420,8 @@ def a_real_codex_session_is_read():
     B.raw_exec(work, (dr.SENTINEL + "\nSELF-RUN-MARKER").encode("utf-8"), home=home, ephemeral=False)
     found, packed = dr.codex_sessions(time.strftime("%Y-%m-%d"), home)
     labels = [label for label, _, _ in found]
-    check(labels == ["codex %s · cwd=%s" % (thread, s.cwd)],
-          "the reflection reads it, the kit's own left out: %s" % labels)
+    check(labels == ["codex %s · exec · cwd=%s" % (thread, s.cwd)],
+          "the reflection reads it, says it was a codex exec, the kit's own left out: %s" % labels)
     text = found[0][1] if found else ""
     check(" user: " + prompt in text and "   → brain_no_such_tool SESSION-TOOL-MARKER" in text
           and "SELF-RUN" not in text and "SESSION-AGENTS-MARKER" not in text, "the reflection's text of it")
