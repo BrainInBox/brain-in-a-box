@@ -1,12 +1,14 @@
 """The launcher without tools (engine/hooks/_headless_codex.py) with the real Codex CLI, in ChatGPT
 mode, against mock_openai.py: fake tokens, no account, no secret, nothing leaves 127.0.0.1
-(docs/proposals/codex.md, §5.2). The job codex-mock of test.yml runs it on macOS, Linux and
+(docs/proposals/codex.md, §5.2); then the reflection's and the review's own questions, through the
+choice of engine (_headless.py), with Codex chosen. The job codex-mock of test.yml runs it on macOS, Linux and
 Windows once the official installer has put the pinned Codex in place. It writes Codex's system
 settings (/etc/codex, %ProgramData%\\OpenAI\\Codex): on a CI runner only. Every scenario is
 required: a codex missing, or one that cannot run, is a failure.
 
     python3 -I engine/tests/codex_mock.py
 """
+import importlib.util
 import json
 import os
 import shutil
@@ -24,6 +26,9 @@ sys.path.insert(0, HERE)
 for _stream in (sys.stdout, sys.stderr):
     _stream.reconfigure(encoding="utf-8", errors="replace")
 
+import _agents  # noqa: E402
+import _controle_judge as judge  # noqa: E402
+import _headless  # noqa: E402
 import _headless_codex as codex  # noqa: E402
 import mock_openai  # noqa: E402
 from _headless_claude import HeadlessError  # noqa: E402
@@ -275,6 +280,45 @@ def an_api_key_login_is_refused():
     check(B.mock.reqs == [], "and nothing was sent")
 
 
+def the_reflection_and_the_review_ask_codex_through_the_choice():
+    """daily-reflection.py's and the review's own schema, instructions and settings, through
+    _headless.py with Codex the one chosen (a reading of agents.json given as is: Codex stays
+    closed on every system). The real Codex must send each schema strict, as it is."""
+    spec = importlib.util.spec_from_file_location("daily_reflection", os.path.join(ENGINE, "hooks", "daily-reflection.py"))
+    dr = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(dr)
+    chosen = (_agents.Choix(("codex",), "codex", B.home), "ok")
+    day = {"what_i_did": ["Shipped the login page"], "key_decisions": [], "projects": ["app"], "todo": [],
+           "memory": ["Login page shipped"], "suspect": False}
+    review = {"suspect": False, "constats": [], "lecons": []}
+    saved = B.mock.answer
+    try:
+        B.mock.reset()
+        B.mock.answer = json.dumps(day)
+        a = _headless.run(dr.SENTINEL + "\n" + PROMPT, dr.SCHEMA, dr.SYSTEM, claude={},
+                          codex=dict(timeout=180, command=B.command, work_root=B.root), agents=chosen)
+        check((a.moteur, a.output) == ("codex", day), "the reflection's question: Codex answers, named")
+        check(dr.clean_answer(a.output)["what_i_did"] == ["Shipped the login page"], "and its answer is the reflection's")
+        sent = B.mock.responses()[0]["body"] if B.mock.responses() else {}
+        fmt = (sent.get("text") or {}).get("format") or {}
+        check(fmt.get("strict") is True and fmt.get("schema") == dr.SCHEMA, "the reflection's schema, strict, as is")
+        check(dr.SYSTEM[:60] in json.dumps(B.mock.reqs, ensure_ascii=False), "the reflection's instructions are sent")
+        sch = judge.schema(["E01", "E02"], ["L01"])
+        B.mock.reset()
+        B.mock.answer = json.dumps(review)
+        out = judge.ask('Contrôle.\n<extrait id="E01" note="a.md">La base est sur Neon.</extrait>\n', sch,
+                        codex_command=B.command, work_root=B.root, agents=chosen)
+        check((out.cause, out.moteur, out.answer) == (None, "codex", review),
+              "the review's question: Codex answers, named: %s %s" % (out.cause, out.detail))
+        sent = B.mock.responses()[0]["body"] if B.mock.responses() else {}
+        fmt = (sent.get("text") or {}).get("format") or {}
+        check(fmt.get("strict") is True and fmt.get("schema") == sch, "the review's schema, strict, as is")
+        effort = json.dumps(sent.get("reasoning") or {})
+        check(judge.CODEX_EFFORT in effort, "the review's effort: %s" % effort)
+    finally:
+        B.mock.answer = saved
+
+
 def main():
     global B
     if os.environ.get("GITHUB_ACTIONS") != "true":
@@ -286,7 +330,7 @@ def main():
     try:
         for fn in (answers_with_everything_locked, forced_tool_calls_are_refused, an_unknown_feature_pauses_codex,
                    the_user_s_mcp_server_never_starts, a_system_config_is_neutralised, requirements_pause_codex,
-                   an_api_key_login_is_refused):
+                   an_api_key_login_is_refused, the_reflection_and_the_review_ask_codex_through_the_choice):
             scenario(fn)
     finally:
         B.mock.close()

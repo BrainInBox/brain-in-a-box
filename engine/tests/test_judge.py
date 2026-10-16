@@ -1,10 +1,11 @@
-"""Tests of the Claude review of the night check (engine/hooks/_controle_judge.py).
+"""Tests of the AI review of the night check (engine/hooks/_controle_judge.py).
 
 The real claude is never started. A stub, given as `command=`, answers the
 probes, records what it is given (argv, environment, folder, stdin) and plays
 streams shaped like the ones Claude Code 2.1.296 really wrote, recorded for the
-app in app/src-tauri/tests/fixtures/repair/. Every run happens in a throwaway
-HOME, vault and state folder.
+app in app/src-tauri/tests/fixtures/repair/. When agents.json names Codex,
+fake_codex.py stands for codex. Every run happens in a throwaway HOME, vault
+and state folder.
 
     python3 -I -m unittest discover -s engine/tests -v
 """
@@ -27,6 +28,7 @@ REPO = os.path.dirname(os.path.dirname(HERE))
 FIXTURES = os.path.join(REPO, "app", "src-tauri", "tests", "fixtures", "repair")
 REPAIR_RS = os.path.join(REPO, "app", "src-tauri", "src", "repair.rs")
 HELP = os.path.join(FIXTURES, "claude-help-2.1.296.txt")
+FAKE_CODEX = os.path.join(HERE, "fake_codex.py")
 sys.path.insert(0, HOOKS)
 sys.path.insert(0, HERE)
 
@@ -36,9 +38,11 @@ for _stream in (sys.stdout, sys.stderr):
     if hasattr(_stream, "reconfigure"):
         _stream.reconfigure(encoding="utf-8", errors="replace")
 
+import _agents  # noqa: E402
 import _controle_judge as judge  # noqa: E402
 import _controle_rules as rules  # noqa: E402
 import _headless_claude as headless  # noqa: E402
+import _headless_codex as hx  # noqa: E402
 import controle  # noqa: E402
 import vault_piege  # noqa: E402
 from test_controle import ACTION_TRAILER, all_text_under, isolated_env, read  # noqa: E402
@@ -348,7 +352,7 @@ class Environment(unittest.TestCase):
         absent = os.path.join(home, "absent")
         with mock.patch.dict(os.environ, {"CLAUDE_BIN": absent}):
             self.assertEqual(judge.default_command(), [absent])
-            self.assertEqual(judge.available(judge.default_command(), work_root=home), (False, "absent"))
+            self.assertEqual(judge.probe(judge.default_command(), work_root=home).cause, "absent")
         with mock.patch.dict(os.environ, {"CLAUDE_BIN": ""}):
             self.assertIsNone(judge.default_command())
 
@@ -538,7 +542,10 @@ class Isolation(StubCase):
         self.assertEqual((out.answer, out.cause), (None, "demarrage"))
 
     def test_availability_probes(self):
-        avail = lambda **plan: judge.available(self.command(**plan), work_root=self.tmp)  # noqa: E731
+        def avail(**plan):
+            out = judge.probe(self.command(**plan), work_root=self.tmp)
+            return out.cause is None, out.cause
+
         self.assertEqual(avail(), (True, None))
         self.assertEqual(avail(version="2.1.200 (Claude Code)"), (False, "version"))
         self.assertEqual(avail(version="pas de version"), (False, "absent"))
@@ -938,6 +945,159 @@ class ReportOnlyNights(Night):
         self.assertIn("n'a pas démarré avec les protections demandées", read(self.vault, "Profile/controle.md"))
         self.assertEqual(self.etat_json()["claude"], "saute:demarrage")
         self.assertNotIn("dernier_commit_juge", self.etat_json("juge.json"))
+
+
+
+class EngineNights(Night):
+    """The review asks the AI agents.json names: fake_codex.py stands for codex. Codex is closed
+    on every system (_agents.CODEX_OUVERT): opened here only, in this process."""
+
+    def setUp(self):
+        Night.setUp(self)
+        self.codex_home = os.path.join(self.home, ".codex")
+        self.codex_fake = os.path.join(self.home, ".codex-fake")
+        os.makedirs(self.codex_home)
+        os.makedirs(self.codex_fake)
+        self.put(self.codex_home, "auth.json", json.dumps({"auth_mode": "chatgpt", "tokens": {"refresh_token": "r"}}))
+        self.put(self.codex_fake, "home", self.codex_home)
+        self.put(self.codex_fake, "answer.json", json.dumps(EMPTY))
+        for patch in (mock.patch.object(_agents, "CODEX_OUVERT", frozenset({_agents.systeme()})),
+                      mock.patch.object(hx, "MANAGED", [os.path.join(self.tmp, "etc", "requirements.toml")]),
+                      mock.patch.object(hx, "MDM", [])):
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def put(self, folder, name, text):
+        with open(os.path.join(folder, name), "w", encoding="utf-8") as f:
+            f.write(text)
+
+    def choose(self, agents=None, prefere=None, raw=None):
+        folder = os.path.join(self.home, ".brain-in-a-box")
+        os.makedirs(folder, exist_ok=True)
+        if raw is None:
+            raw = json.dumps({"version": 1, "agents": agents, "prefere": prefere or agents[0],
+                              **({"codex_home": self.codex_home} if "codex" in agents else {})})
+        self.put(folder, "agents.json", raw)
+        if os.name != "nt":
+            os.chmod(os.path.join(folder, "agents.json"), 0o600)
+
+    def night_with(self, answer=EMPTY, timeout=60, **plan):
+        command = self.command(answer=answer, **plan)
+        opts = controle.parser().parse_args(["nuit", "--brain", self.vault, "--etat", self.etat])
+
+        class StubRun(controle.Run):
+            judge_command = command
+            judge_codex_command = [sys.executable, "-I", FAKE_CODEX]
+            judge_timeout = timeout
+
+        with self.in_home(), redirect_stdout(io.StringIO()):
+            StubRun(opts, "nuit").execute()
+
+    def codex_runs(self):
+        p = os.path.join(self.codex_fake, "calls.jsonl")
+        if not os.path.exists(p):
+            return None
+        with open(p, encoding="utf-8") as f:
+            return sum(1 for l in f if json.loads(l)["argv"][:1] == ["exec"] and "--help" not in json.loads(l)["argv"])
+
+    def sent_to_codex(self, name="stdin.txt"):
+        with open(os.path.join(self.codex_fake, name), encoding="utf-8") as f:
+            return f.read()
+
+    def journal(self):
+        runs = os.path.join(self.etat, "runs")
+        name = sorted(n for n in os.listdir(runs) if n.endswith(".json"))[-1]
+        with open(os.path.join(runs, name), encoding="utf-8") as f:
+            return json.load(f)
+
+    def test_without_agents_json_nothing_names_an_engine(self):
+        self.night_with()
+        etat, journal = self.etat_json(), self.journal()
+        self.assertEqual(etat["claude"], "fait")
+        self.assertNotIn("moteur", etat)
+        self.assertNotIn("moteur", journal)
+        self.assertNotIn("moteur", journal["juge"])
+        self.assertIn("🟢 Claude a relu", read(self.vault, "Profile/controle.md"))
+        self.assertEqual((len(self.records()), self.codex_runs()), (1, None), "codex is not even started")
+
+    def test_codex_preferred_reviews_and_the_report_names_it(self):
+        self.choose(["claude", "codex"], "codex")
+        with mock.patch.object(_agents, "lire", wraps=_agents.lire) as lire:
+            self.night_with()
+        self.assertEqual(lire.call_count, 1, "agents.json is read once a night: the probe and the review use it")
+        etat, journal = self.etat_json(), self.journal()
+        self.assertEqual((etat["claude"], etat["moteur"], journal["moteur"]), ("fait", "codex", "codex"))
+        self.assertEqual((journal["juge"]["moteur"], journal["juge"]["secours"]), ("codex", None))
+        report = read(self.vault, "Profile/controle.md")
+        self.assertIn("🟢 Codex a relu", report)
+        self.assertNotIn("Claude a relu", report)
+        self.assertEqual((self.records(), self.codex_runs()), ([], 1), "Claude is not asked")
+        sent = self.sent_to_codex()
+        ids = re.findall(r'<extrait id="(E\d+)"', sent)
+        self.assertTrue(ids)
+        sch = json.loads(self.sent_to_codex("schema.json"))
+        self.assertEqual(sch["properties"]["constats"]["items"]["properties"]["a"]["enum"], ids)
+        for marker in vault_piege.canary_markers() + ["canari-client", "canari-journal", "zz-unusual-shape"]:
+            self.assertNotIn(marker, sent)
+        argv = json.loads(self.sent_to_codex("argv.json"))
+        self.assertIn('model_reasoning_effort="%s"' % judge.CODEX_EFFORT, argv, "the review's effort")
+        self.assertNotIn("-m", argv, "no model unless BRAIN_CODEX_MODEL names one")
+
+    def test_codex_down_claude_reviews_and_why_is_kept(self):
+        self.choose(["claude", "codex"], "codex")
+        self.put(self.codex_fake, "login", "Logged in using an API key - sk-proj-***ABCDE")
+        self.night_with()
+        etat, journal = self.etat_json(), self.journal()
+        self.assertEqual((etat["claude"], etat["moteur"]), ("fait", "claude"))
+        self.assertTrue(journal["juge"]["secours"].startswith("codex: auth: Codex is logged in another way"))
+        self.assertNotIn("ABCDE", json.dumps(journal))
+        self.assertIn("🟢 Claude a relu", read(self.vault, "Profile/controle.md"))
+        self.assertEqual((len(self.records()), self.codex_runs()), (1, 0))
+
+    def test_what_claude_said_is_masked_in_the_journal(self):
+        self.choose(["claude", "codex"], "claude")
+        key = "ghp_" + "K" * 36
+        self.night_with(version=key)   # claude --version said a key
+        journal = self.journal()
+        self.assertEqual((journal["moteur"], journal["juge"]["moteur"]), ("codex", "codex"))
+        self.assertTrue(journal["juge"]["secours"].startswith("claude: start: "), journal["juge"]["secours"])
+        self.assertNotIn(key, json.dumps(journal))
+        self.assertNotIn(key, all_text_under(self.etat))
+
+    def test_codex_gets_the_shorter_wait_and_its_timeout_is_said(self):
+        self.choose(["codex"])
+        self.put(self.codex_fake, "scenario", "hang")
+        t0 = time.monotonic()
+        with mock.patch.object(judge, "CODEX_TIMEOUT", 2):
+            self.night_with(timeout=45)   # Claude's wait: Codex must not get it
+        self.assertLess(time.monotonic() - t0, 30)
+        self.assertEqual((self.etat_json()["claude"], self.etat_json()["moteur"]), ("saute:delai", "codex"))
+        self.assertIn(controle.CODEX_SKIP["delai"], read(self.vault, "Profile/controle.md"))
+        self.assertEqual(self.codex_runs(), 1)
+
+    def test_codex_logged_out_is_said_with_its_name(self):
+        self.choose(["codex"])
+        self.put(self.codex_fake, "login", "Not logged in")
+        self.night_with()
+        etat = self.etat_json()
+        self.assertEqual((etat["claude"], etat["moteur"]), ("saute:connexion", "codex"))
+        report = read(self.vault, "Profile/controle.md")
+        self.assertIn(controle.CODEX_SKIP["connexion"], report)
+        self.assertNotIn("Relecture par Claude", report)
+        self.assertEqual((self.records(), self.codex_runs()), ([], 0))
+
+    def test_a_choice_the_kit_cannot_trust_reviews_nothing_and_says_it_once(self):
+        self.choose(raw="{oops")
+        self.night_with()
+        etat = self.etat_json()
+        self.assertEqual(etat["claude"], "saute:agents")
+        self.assertNotIn("moteur", etat)
+        self.assertEqual([a["code"] for a in etat["alertes"]].count("agents"), 1)
+        self.assertNotIn("claude", [a["code"] for a in etat["alertes"]])
+        self.assertIn("Le choix d'IA (~/.brain-in-a-box/agents.json) n'est pas fiable (fichier illisible)",
+                      read(self.vault, "Profile/controle.md"))
+        self.assertEqual((self.records(), self.codex_runs()), ([], None))
+        self.assertNotIn("appels", self.etat_json("juge.json"))
 
 
 if __name__ == "__main__":

@@ -33,6 +33,7 @@ for _stream in (sys.stdout, sys.stderr):
     if hasattr(_stream, "reconfigure"):
         _stream.reconfigure(encoding="utf-8", errors="replace")
 
+import _agents  # noqa: E402
 import _controle_rules as rules  # noqa: E402
 import _redact  # noqa: E402
 import controle  # noqa: E402
@@ -649,6 +650,61 @@ class Reports(Sandbox):
         out = self.cli("lecons")
         self.assertIn("2 entrées", out)
         self.assertIn("lessons.md", out)
+
+
+class Agents(Sandbox):
+    """Who the review may ask: ~/.brain-in-a-box/agents.json (_headless.py, test_judge.py for the review itself)."""
+
+    def choose(self, raw):
+        folder = os.path.join(self.home, ".brain-in-a-box")
+        os.makedirs(folder, exist_ok=True)
+        with open(os.path.join(folder, "agents.json"), "w", encoding="utf-8") as f:
+            f.write(raw)
+        if os.name != "nt":
+            os.chmod(os.path.join(folder, "agents.json"), 0o600)
+
+    def test_sans_ia_and_sans_claude_are_one_option(self):
+        parse = controle.parser().parse_args
+        for flag in ("--sans-ia", "--sans-claude"):
+            self.assertTrue(parse(["nuit", flag]).sans_ia, flag)
+        for flag in ("--avec-ia", "--avec-claude"):
+            self.assertTrue(parse(["essai", flag]).avec_ia, flag)
+        with redirect_stdout(io.StringIO()), mock.patch("sys.stderr", io.StringIO()):
+            with self.assertRaises(SystemExit):
+                parse(["nuit", "--sans-ia", "--avec-claude"])
+
+    def test_without_agents_json_the_report_reads_as_before(self):
+        self.small_vault()
+        self.cli("nuit")
+        report = read(self.vault, "Profile/controle.md")
+        self.assertIn("⚪ Relecture par Claude : désactivée pour ce contrôle.", report)
+        self.assertNotIn("agents", [a["code"] for a in self.etat_json()["alertes"]])
+        self.assertNotIn("moteur", self.etat_json())
+
+    def test_codex_listed_where_it_is_closed_is_said_even_without_a_review(self):
+        """Codex is closed on every system: a file that lists it is not trusted, and the night says
+        so, review or not, until the install is run again."""
+        self.small_vault()
+        self.choose(json.dumps({"version": 1, "agents": ["claude", "codex"], "prefere": "claude",
+                                "codex_home": os.path.join(self.home, ".codex")}))
+        self.cli("nuit")
+        etat = self.etat_json()
+        self.assertIn({"niveau": "orange", "code": "agents"}, etat["alertes"])
+        self.assertEqual(etat["verdict"], "orange")
+        self.assertIn("Le choix d'IA (~/.brain-in-a-box/agents.json) n'est pas fiable (Codex n'est pas encore ouvert "
+                      "sur ce système) : la réflexion et la relecture ne demandent plus rien à une IA. Relance "
+                      "l'installation.", read(self.vault, "Profile/controle.md"))
+
+    def test_with_codex_listed_the_report_names_no_engine_it_did_not_ask(self):
+        self.small_vault()
+        self.choose(json.dumps({"version": 1, "agents": ["codex"], "prefere": "codex",
+                                "codex_home": os.path.join(self.home, ".codex")}))
+        with mock.patch.object(_agents, "CODEX_OUVERT", frozenset({_agents.systeme()})):
+            self.run_in_process()
+        report = read(self.vault, "Profile/controle.md")
+        self.assertIn("⚪ Relecture : désactivée pour ce contrôle.", report)
+        self.assertNotIn("Claude", report.split("## Santé")[1].split("## Historique")[0])
+        self.assertIsNone(self.etat_json()["moteur"])
 
 
 class SecretShapes(unittest.TestCase):

@@ -22,8 +22,9 @@ other item ends the run), and the answer file must be the streamed answer, a JSO
     answer.output       # the JSON object Codex returned, already parsed
     check(codex_home)   # the same checks, without asking anything
 
-Not wired yet (phase 3 does it), and Codex stays closed on every system (_agents.py). Its
-process handling is _headless_claude.py's. Not a hook: installed next to them, never registered.
+Asked through _headless.py (the reflection, the night's review) only when agents.json lists
+Codex, and Codex stays closed on every system (_agents.py). Its process handling is
+_headless_claude.py's. Not a hook: installed next to them, never registered.
 """
 import json
 import os

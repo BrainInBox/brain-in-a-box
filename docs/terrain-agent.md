@@ -186,6 +186,8 @@ Open the PR and leave a comment asking the maintainer to review it when the diff
 - the Codex launcher: `engine/hooks/_headless_codex.py` (its checks, settings and environment). Its
   feature list, engine/codex-features.json, is not on this list: adding a name there (a feature a
   new Codex brings, turned off) only makes the launcher stricter; never take a name out;
+- the choice of engine: `engine/hooks/_headless.py` (which AI the reflection and the review ask, and
+  when the other one takes over: a mistake there sends the vault to an engine the user did not choose);
 - the Claude token: `engine/hooks/_headless_claude.py` (environment, login and start-up checks),
   anything that reads `CLAUDE_CODE_OAUTH_TOKEN`, and `engine/tests/terrain.py`,
   `engine/tests/terrain_app.py`, `engine/tests/pilote_windows.cs` and `engine/tests/vault_piege.py`,
