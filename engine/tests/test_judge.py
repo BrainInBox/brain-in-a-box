@@ -44,6 +44,7 @@ import _controle_rules as rules  # noqa: E402
 import _headless_claude as headless  # noqa: E402
 import _headless_codex as hx  # noqa: E402
 import controle  # noqa: E402
+import mock_openai  # noqa: E402
 import vault_piege  # noqa: E402
 from test_controle import ACTION_TRAILER, all_text_under, isolated_env, read  # noqa: E402
 from vault_piege import age_files, git, write  # noqa: E402
@@ -958,7 +959,7 @@ class EngineNights(Night):
         self.codex_fake = os.path.join(self.home, ".codex-fake")
         os.makedirs(self.codex_home)
         os.makedirs(self.codex_fake)
-        self.put(self.codex_home, "auth.json", json.dumps({"auth_mode": "chatgpt", "tokens": {"refresh_token": "r"}}))
+        self.put(self.codex_home, "auth.json", json.dumps(mock_openai.fake_auth()))
         self.put(self.codex_fake, "home", self.codex_home)
         self.put(self.codex_fake, "answer.json", json.dumps(EMPTY))
         for patch in (mock.patch.object(_agents, "CODEX_OUVERT", frozenset({_agents.systeme()})),

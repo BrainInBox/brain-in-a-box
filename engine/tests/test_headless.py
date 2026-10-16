@@ -26,6 +26,7 @@ FIXTURES = HERE.parent.parent / "app" / "src-tauri" / "tests" / "fixtures" / "re
 FAKE_CLAUDE = HERE / "fake_claude.py"
 FAKE_CODEX = HERE / "fake_codex.py"
 sys.path.insert(0, str(HOOKS))
+sys.path.insert(0, str(HERE))
 
 for _stream in (sys.stdout, sys.stderr):
     if hasattr(_stream, "reconfigure"):
@@ -35,6 +36,7 @@ import _agents  # noqa: E402
 import _headless  # noqa: E402
 import _headless_claude  # noqa: E402
 import _headless_codex  # noqa: E402
+import mock_openai  # noqa: E402
 from _headless_claude import HeadlessError  # noqa: E402
 
 POSIX = os.name != "nt"
@@ -320,7 +322,7 @@ class Whole(unittest.TestCase):
         self.put(self.claude_fake, "answer.json", json.dumps(ANSWER))
         self.put(self.codex_fake, "answer.json", json.dumps(ANSWER))
         self.put(self.codex_fake, "home", self.codex_home)
-        self.put(self.codex_home, "auth.json", json.dumps({"auth_mode": "chatgpt", "tokens": {"refresh_token": "r"}}))
+        self.put(self.codex_home, "auth.json", json.dumps(mock_openai.fake_auth()))
         patches = [mock.patch.dict(os.environ, {"HOME": self.home, "USERPROFILE": self.home}),
                    mock.patch.object(_agents, "CODEX_OUVERT", OPEN),
                    mock.patch.object(_headless_claude, "MANAGED_DIR", os.path.join(self.tmp, "managed")),

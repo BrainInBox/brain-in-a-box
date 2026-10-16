@@ -184,13 +184,20 @@ def _b64(o):
     return base64.urlsafe_b64encode(json.dumps(o).encode()).decode().rstrip("=")
 
 
-def fake_auth():
+def fake_id_token(plan="plus"):
+    """An unsigned id_token as a ChatGPT login stores it; `plan` in the claim Codex reads (None: no plan)."""
+    claim = {"chatgpt_account_id": "acct-fake", "chatgpt_user_id": "user-fake"}
+    if plan is not None:
+        claim["chatgpt_plan_type"] = plan
+    return (_b64({"alg": "none", "typ": "JWT"}) + "." + _b64({"email": "mock@example.com",
+                                                              "https://api.openai.com/auth": claim}) + ".c2lnbmF0dXJl")
+
+
+def fake_auth(plan="plus"):
     """auth.json as a ChatGPT login writes it, with fake tokens (an unsigned id_token)."""
-    idt = _b64({"alg": "none", "typ": "JWT"}) + "." + _b64({"email": "mock@example.com", "https://api.openai.com/auth": {
-        "chatgpt_plan_type": "plus", "chatgpt_account_id": "acct-fake", "chatgpt_user_id": "user-fake"}}) + ".c2lnbmF0dXJl"
     return {"auth_mode": "chatgpt", "OPENAI_API_KEY": None,
-            "tokens": {"id_token": idt, "access_token": ACCESS_TOKEN, "refresh_token": "fake-refresh-token",
-                       "account_id": "acct-fake"},
+            "tokens": {"id_token": fake_id_token(plan), "access_token": ACCESS_TOKEN,
+                       "refresh_token": "fake-refresh-token", "account_id": "acct-fake"},
             "last_refresh": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")}
 
 

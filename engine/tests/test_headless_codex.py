@@ -26,12 +26,14 @@ ENGINE = os.path.dirname(HERE)
 FAKE = os.path.join(HERE, "fake_codex.py")
 P0 = Path(HERE) / "fixtures" / "codex" / "phase0"
 sys.path.insert(0, HOOKS)
+sys.path.insert(0, HERE)
 
 for _stream in (sys.stdout, sys.stderr):
     if hasattr(_stream, "reconfigure"):
         _stream.reconfigure(encoding="utf-8", errors="replace")
 
 import _headless_codex as codex  # noqa: E402
+import mock_openai  # noqa: E402
 from _headless_claude import HeadlessError  # noqa: E402
 
 WINDOWS = os.name == "nt"
@@ -51,7 +53,8 @@ FAKE_KEY = "sk-proj-canari0123456789ABCD"
 
 def chatgpt_auth(**changes):
     d = {"auth_mode": "chatgpt", "OPENAI_API_KEY": "sk-exchanged-by-a-real-chatgpt-login",
-         "tokens": {"id_token": "x.y.z", "access_token": "fake-access", "refresh_token": "fake-refresh",
+         "tokens": {"id_token": mock_openai.fake_id_token("plus"), "access_token": "fake-access",
+                    "refresh_token": "fake-refresh",
                     "account_id": "acct"}, "last_refresh": "2026-10-15T00:00:00Z"}
     d.update(changes)
     return d
@@ -259,6 +262,9 @@ class Command(Base):
                      "agents.enabled=false", "project_doc_max_bytes=0", "skills.include_instructions=false",
                      "skills.bundled.enabled=false", 'history.persistence="none"',
                      "check_for_update_on_startup=false",
+                     # No telemetry export: a system config.toml's [otel] would send the prompt elsewhere.
+                     'otel.exporter="none"', 'otel.trace_exporter="none"', 'otel.metrics_exporter="none"',
+                     "otel.log_user_prompt=false", "otel.log_agent_responses=false",
                      "model_instructions_file=" + json.dumps(os.path.join(cage, "system.md"))):
             self.assertIn(must, values)
         self.assertEqual(values, codex.config_flags(codex.load_features(),
@@ -405,6 +411,30 @@ class Login(Base):
         self.refused("auth", "logged_out")
         self.assertLess(time.monotonic() - t, 20)
 
+    def test_a_workspace_account_is_paused(self):
+        # Codex downloads a Business, Edu or Enterprise workspace's own settings, which pass over
+        # every -c (cloud-config/src/service.rs, config_requirements.rs): personal plans only.
+        for plan in ("business", "enterprise", "hc", "ent26", "edu", "education", "edu_plus", "k12", "team",
+                     "self_serve_business_usage_based", "enterprise_cbp_automation", "guest", "free_workspace",
+                     "a-plan-of-tomorrow", "", None):
+            self.auth(chatgpt_auth(tokens={"id_token": mock_openai.fake_id_token(plan), "access_token": "a",
+                                           "refresh_token": "r"}))
+            with self.subTest(plan=plan):
+                e = self.refused("unsupported", "managed")
+                self.assertNotIn("mock@example.com", str(e))
+        for id_token in ("x.y.z", "", "a.b", 42, None, mock_openai.fake_id_token("plus").replace(".", "", 1)):
+            self.auth(chatgpt_auth(tokens={"id_token": id_token, "access_token": "a", "refresh_token": "r"}))
+            with self.subTest(id_token=id_token):
+                self.refused("unsupported", "managed")
+        self.assertEqual(self.exec_calls(), [])
+
+    def test_a_personal_plan_is_asked(self):
+        for plan in ("free", "go", "plus", "pro", "prolite", "promax", "Plus"):
+            self.auth(chatgpt_auth(tokens={"id_token": mock_openai.fake_id_token(plan), "access_token": "a",
+                                           "refresh_token": "r"}))
+            with self.subTest(plan=plan):
+                self.assertEqual(self.run_codex().output, ANSWER)
+
     def test_login_status_is_compared_never_copied(self):
         cases = [("Logged in using an API key - " + FAKE_KEY[:8] + "***" + FAKE_KEY[-5:], "billed"),
                  ("Logged in using workload identity", "billed"), ("Logged in using access token", "billed"),
@@ -537,13 +567,25 @@ class Probes(Base):
         self.refused("unsupported", "features")
         self.assertEqual(self.exec_calls(), [])
 
-    def test_features_list_is_read_with_our_settings_and_the_user_s_codex_home(self):
+    def test_features_list_is_read_with_our_settings_the_user_s_codex_home_and_an_empty_one(self):
         self.run_codex()
         lists = [c for c in self.calls() if "features" in c["argv"] and "list" in c["argv"]]
-        self.assertEqual(len(lists), 1)
+        self.assertEqual(len(lists), 2)
         self.assertEqual(lists[0]["codex_home"], self.codex_home)
-        for name in codex.load_features():
-            self.assertIn("features.%s=false" % name, lists[0]["argv"])
+        self.assertNotEqual(lists[1]["codex_home"], self.codex_home)
+        self.assertTrue(lists[1]["codex_home"].endswith("vide"), lists[1]["codex_home"])
+        for c in lists:
+            for name in codex.load_features():
+                self.assertIn("features.%s=false" % name, c["argv"])
+
+    def test_a_feature_only_the_user_s_config_turns_off_pauses_codex(self):
+        # `features list` reads the user's config.toml, which the call ignores (--ignore-user-config):
+        # a feature a system layer turns on and that file turns off is on in the call.
+        self.set("features-extra", "brand_new_tool                           stable             true")
+        self.set("features-user-off", "brand_new_tool")
+        e = self.refused("unsupported", "features")
+        self.assertIn("brand_new_tool", str(e))
+        self.assertEqual(self.exec_calls(), [])
 
     def test_check_asks_nothing(self):
         codex.check(self.codex_home, command=self.command(), work_root=self.tmp)
@@ -570,6 +612,18 @@ class Mcp(Base):
         self.set("mcp-user", '["cloud-tool"]')   # listed with the user's CODEX_HOME, not in its config.toml
         e = self.refused("unsupported", "mcp")
         self.assertIn("cloud-tool", str(e))
+
+    def test_a_server_named_in_a_comment_is_not_declared(self):
+        self.set("mcp-user", '["cloud-tool"]')
+        for text in ("# [mcp_servers.cloud-tool]\n# command = \"x\"\n",
+                     "[mcp_servers]  # cloud-tool = { command = \"x\" }\n",
+                     "[mcp_servers]\n#cloud-tool = { command = \"x\" }\n",
+                     "model = \"o3\"  # mcp_servers.cloud-tool.command = \"x\"\n"):
+            with open(os.path.join(self.codex_home, "config.toml"), "w", encoding="utf-8") as f:
+                f.write(text)
+            with self.subTest(text=text):
+                self.assertIn("cloud-tool", str(self.refused("unsupported", "mcp")))
+        self.assertEqual(self.exec_calls(), [])
 
     def test_a_server_that_stays_on_or_a_name_codex_cannot_take(self):
         self.set("mcp-system", '["corp-search"]')

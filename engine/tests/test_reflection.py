@@ -29,10 +29,12 @@ FIXTURES = HERE.parent.parent / "app" / "src-tauri" / "tests" / "fixtures" / "re
 FAKE = HERE / "fake_claude.py"
 FAKE_CODEX = HERE / "fake_codex.py"
 sys.path.insert(0, str(HOOKS))
+sys.path.insert(0, str(HERE))
 
 import _agents  # noqa: E402
 import _headless_claude as hc  # noqa: E402
 import _headless_codex as hx  # noqa: E402
+import mock_openai  # noqa: E402
 
 _spec = importlib.util.spec_from_file_location("daily_reflection", str(HOOKS / "daily-reflection.py"))
 dr = importlib.util.module_from_spec(_spec)
@@ -892,7 +894,7 @@ class Engines(Run):
         for d in (self.codex_home, self.codex_fake):
             d.mkdir(parents=True)
         (self.codex_home / "auth.json").write_text(
-            json.dumps({"auth_mode": "chatgpt", "tokens": {"refresh_token": "r"}}), encoding="utf-8")
+            json.dumps(mock_openai.fake_auth()), encoding="utf-8")
         (self.codex_fake / "home").write_text(str(self.codex_home), encoding="utf-8")
         (self.codex_fake / "answer.json").write_text(json.dumps(ANSWER), encoding="utf-8")
         for p in (mock.patch.object(_agents, "CODEX_OUVERT", frozenset({_agents.systeme()})),

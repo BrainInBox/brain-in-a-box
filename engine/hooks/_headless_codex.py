@@ -12,7 +12,11 @@ holds by prevention alone, checked before every call, every check failing closed
   managed_config.toml (file or macOS profile) pass over: either one present pauses Codex;
 - a ChatGPT login only (auth.json, then `codex login status` compared to fixed lines, never
   copied): an API key would be billed, and no key of the caller's environment reaches Codex;
+  a personal plan only: a workspace's administrator sets Codex's settings above every -c;
+- no telemetry export: a system config.toml's [otel] would send the prompt to its own server;
 - the names $CODEX_HOME/.env would add to Codex's own environment, checked;
+- `codex features list` read with the user's CODEX_HOME and with an empty one: it reads the
+  user's config.toml, which the call ignores;
 - a fresh private folder, an allow-list environment, the prompt on stdin, --ephemeral (no
   session file, nothing of the vault left in Codex's databases, step 0).
 Then the stream: thread.started first, one turn, answer, reasoning and warning items only (any
@@ -26,6 +30,7 @@ Asked through _headless.py (the reflection, the night's review) only when agents
 Codex, and Codex stays closed on every system (_agents.py). Its process handling is
 _headless_claude.py's. Not a hook: installed next to them, never registered.
 """
+import base64
 import json
 import os
 import plistlib
@@ -68,7 +73,11 @@ SETTINGS = (
     # session (the vault) to its program (hooks/src/registry.rs, `legacy_notify_argv`).
     'developer_instructions=""', "notify=[]",
     'history.persistence="none"', "check_for_update_on_startup=false", "analytics.enabled=false",
-    "feedback.enabled=false")
+    "feedback.enabled=false",
+    # A system config.toml's [otel] is read (only a project's is refused, config/src/loader/mod.rs):
+    # its log exporter would get the whole prompt (otel/src/events/session_telemetry.rs, user_prompt).
+    'otel.exporter="none"', 'otel.trace_exporter="none"', 'otel.metrics_exporter="none"',
+    "otel.log_user_prompt=false", "otel.log_agent_responses=false")
 FEATURE_NAME = re.compile(r"[a-z][a-z0-9_]{0,63}")
 # A row of `codex features list` (0.162.1 lists guardianv2.thread_context, at the removed stage).
 ROW_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,95}")
@@ -78,6 +87,9 @@ MODEL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,63}")
 EFFORT = re.compile(r"[a-z]{1,16}")
 VERSION = re.compile(r"(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.]+)?")
 LOGIN_OK = "Logged in using ChatGPT"
+# Plans without a workspace: Codex fetches a Business, Edu or Enterprise workspace's settings, whose
+# requirements pass over every -c (provider, URLs: cloud-config/src/service.rs, config_requirements.rs).
+PERSONAL_PLANS = ("free", "go", "plus", "pro", "prolite", "promax")
 LOGIN_BILLED = ("Logged in using an API key", "Logged in using workload identity", "Logged in using access token",
                 "Logged in using personal access token", "Logged in using Amazon Bedrock")
 # The items of an answer: the message, its reasoning, warnings ("Code Mode is unavailable...").
@@ -378,9 +390,25 @@ def check_managed():
                                                "Codex is paused while it does" % p.name, "managed")
 
 
+def chatgpt_plan(id_token):
+    """The plan in a ChatGPT id_token, read as Codex reads it (login/src/token_data.rs, the claim
+    https://api.openai.com/auth), or None. The token is not checked: it is the user's own file."""
+    parts = id_token.split(".") if isinstance(id_token, str) else []
+    if len(parts) != 3 or not all(parts):
+        return None
+    try:
+        claims = json.loads(base64.urlsafe_b64decode(parts[1] + "=" * (-len(parts[1]) % 4)))
+    except (ValueError, TypeError, RecursionError):
+        return None
+    auth = claims.get("https://api.openai.com/auth") if isinstance(claims, dict) else None
+    plan = auth.get("chatgpt_plan_type") if isinstance(auth, dict) else None
+    return plan.lower() if isinstance(plan, str) else None
+
+
 def check_auth_file(codex_home):
-    """auth.json says a ChatGPT login, with what refreshes it. Nothing else of it is read: a real
-    ChatGPT login also stores an exchanged OPENAI_API_KEY, which Codex does not use for the model."""
+    """auth.json says a ChatGPT login of a personal plan, with what refreshes it. Nothing else of it
+    is read: a real ChatGPT login also stores an exchanged OPENAI_API_KEY, which Codex does not use
+    for the model."""
     try:
         d = json.loads(_read_small(os.path.join(codex_home, "auth.json")))
     except (OSError, ValueError, RecursionError):
@@ -389,9 +417,14 @@ def check_auth_file(codex_home):
     mode = d.get("auth_mode") if isinstance(d, dict) else None
     if mode == "chatgpt":
         tokens = d.get("tokens")
-        if isinstance(tokens, dict) and isinstance(tokens.get("refresh_token"), str) and tokens["refresh_token"].strip():
-            return
-        raise HeadlessError("auth", "Codex's ChatGPT login is incomplete: run `codex login` again", "logged_out")
+        if not (isinstance(tokens, dict) and isinstance(tokens.get("refresh_token"), str)
+                and tokens["refresh_token"].strip()):
+            raise HeadlessError("auth", "Codex's ChatGPT login is incomplete: run `codex login` again", "logged_out")
+        if chatgpt_plan(tokens.get("id_token")) not in PERSONAL_PLANS:
+            raise HeadlessError("unsupported", "Codex is logged in with a ChatGPT workspace account (Business, Edu, "
+                                               "Enterprise), or one the kit cannot read: its administrator's settings "
+                                               "pass over the kit's, so Codex is paused", "managed")
+        return
     if not mode and not (isinstance(d, dict) and d.get("OPENAI_API_KEY")):
         raise HeadlessError("auth", "Codex is not logged in: run `codex login` with your ChatGPT account",
                             "logged_out")
@@ -455,11 +488,13 @@ def _mcp(argv0, env, cwd, flags):
 
 
 def declared_by_user(codex_home, name):
-    """Whether the user's config.toml defines this MCP server: the call ignores that file."""
+    """Whether the user's config.toml defines this MCP server: the call ignores that file. Comments
+    are cut first (from any #: a # inside a string only hides more, never declares)."""
     try:
         text = _read_small(os.path.join(codex_home, "config.toml"))
     except (OSError, ValueError):
         return False
+    text = "\n".join(line.split("#", 1)[0] for line in text.splitlines())
     n = re.escape(name)
     if re.search(r"mcp_servers\s*\.\s*([\"']?)%s\1\s*[\].=]" % n, text):
         return True
@@ -492,7 +527,9 @@ def check_mcp(argv0, cage, codex_home, flags_for):
 
 
 def preflight(argv0, cage, codex_home, coupees, effort=None):
-    """Every check before a question, as the question runs. (version, MCP servers to turn off)."""
+    """Every check before a question, as the question runs. (version, MCP servers to turn off).
+    `features list` reads the user's config.toml, which the call ignores: it is read with the
+    user's CODEX_HOME (a broken config.toml fails it) and with an empty one."""
     version = check_version(argv0, cage.env, cage.work)
     check_dotenv(codex_home)
     check_managed()
@@ -501,11 +538,12 @@ def preflight(argv0, cage, codex_home, coupees, effort=None):
     def flags_for(mcp_off):
         return config_flags(coupees, mcp_off, cage.system, effort)
     check_login(argv0, cage.env, cage.work, flags_for(()))
-    code, out, _ = _probe(argv0 + flags_for(()) + ["features", "list"], cage.env, cage.work, "features list")
-    if code != 0:
-        raise HeadlessError("unsupported", "codex features list failed (exit code %s; is Codex's config.toml "
-                                           "valid?): Codex is paused" % code, "features")
-    check_features(out, coupees)
+    for env in (cage.env, cage.empty_env):
+        code, out, _ = _probe(argv0 + flags_for(()) + ["features", "list"], env, cage.work, "features list")
+        if code != 0:
+            raise HeadlessError("unsupported", "codex features list failed (exit code %s; is Codex's config.toml "
+                                               "valid?): Codex is paused" % code, "features")
+        check_features(out, coupees)
     return version, check_mcp(argv0, cage, codex_home, flags_for)
 
 

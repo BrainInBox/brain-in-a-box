@@ -9,6 +9,7 @@ Driven by files in $HOME/.codex-fake/ (HOME is one of the few variables the laun
     features       a `codex features list` capture (default: 0.162.1 on Linux, step 0)
     features-extra lines added to that list (a feature a new version brings)
     features-stuck names whose `-c features.<name>=false` it ignores
+    features-user-off  names the user's config.toml turns off: seen only with CODEX_HOME that file's
     features-rc    exit code of `codex features list`
     home           the user's CODEX_HOME: its MCP servers are listed only when CODEX_HOME is that
     mcp-system     JSON list of the MCP servers of the system's config (every CODEX_HOME sees them)
@@ -72,6 +73,8 @@ def emit(event):
 
 def features(c):
     stuck = set(setting("features-stuck").split())
+    # `features list` reads the user's config.toml (cli/src/main.rs: LoaderOverrides::default()).
+    user_off = set(setting("features-user-off").split()) if os.environ.get("CODEX_HOME") == setting("home") else set()
     with open(setting("features", CAPTURE), encoding="utf-8") as f:
         lines = f.read().splitlines()
     lines += [l for l in setting("features-extra").splitlines() if l.strip()]
@@ -82,6 +85,8 @@ def features(c):
         # The removed stage ignores -c, unified_exec stays on (step 0).
         if asked in ("true", "false") and stage != "removed" and name != "unified_exec" and name not in stuck:
             on = asked == "true"
+        elif asked is None and name in user_off:
+            on = False
         print("%-40s %-18s %s" % (name, stage, "true" if on else "false"))
     return int(setting("features-rc", "0"))
 
