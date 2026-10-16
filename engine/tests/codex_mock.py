@@ -3,8 +3,10 @@ mode, against mock_openai.py: fake tokens, no account, no secret, nothing leaves
 (docs/proposals/codex.md, §5.2); then the reflection's and the review's own questions, through the
 choice of engine (_headless.py), with Codex chosen; then a session the real Codex wrote, read as the
 reflection and Codex's Stop hook read it (_codex_rollout.py); then the kit's hooks, run by the real
-Codex from a hooks.json (--agent codex). The job codex-mock of test.yml runs it on macOS, Linux and
-Windows once the official installer has put the pinned Codex in place. It writes Codex's system
+Codex from a hooks.json (--agent codex); then, on macOS and Linux, install.sh with Codex chosen, in a
+home of its own: Codex from its pinned installer, and the real Codex running the hooks install.sh wired
+and approved. The job codex-mock of test.yml runs it on macOS, Linux and Windows once the official
+installer has put the pinned Codex in place. It writes Codex's system
 settings (/etc/codex, %ProgramData%\\OpenAI\\Codex): on a CI runner only. Every scenario is
 required: a codex missing, or one that cannot run, is a failure.
 
@@ -98,10 +100,10 @@ class Bench:
         return codex.run(PROMPT, SCHEMA, SYSTEM, codex_home=self.home, timeout=180, command=self.command,
                          work_root=self.root, **kw)
 
-    def raw_exec(self, cwd, prompt=b"Reply.", home=None, ephemeral=True, args=(), env=None):
+    def raw_exec(self, cwd, prompt=b"Reply.", home=None, ephemeral=True, args=(), env=None, binary=None):
         """codex exec as anyone would run it, without the launcher: the control of a trap, or a
         session of the user's (ephemeral=False: Codex keeps it in home/sessions)."""
-        argv = [self.codex[0], "exec", "--json", "--skip-git-repo-check"] + (["--ephemeral"] if ephemeral else []) + [
+        argv = [binary or self.codex[0], "exec", "--json", "--skip-git-repo-check"] + (["--ephemeral"] if ephemeral else []) + [
                 "-c", 'cli_auth_credentials_store="file"', "-c", "features.enable_request_compression=false",
                 "-c", "openai_base_url=" + json.dumps(self.mock.root + "/v1"),
                 "-c", "chatgpt_base_url=" + json.dumps(self.mock.root + "/backend-api/")] + list(args) + ["-"]
@@ -540,6 +542,122 @@ def codex_runs_the_kits_hooks():
           "the launcher's own call, with that hooks.json in its CODEX_HOME, runs none of them")
 
 
+HOOKS6 = ["controle-sessionstart", "correction-detector", "gbrain-update-check", "session-indexer", "session-logger",
+          "session-recap"]
+
+
+def install_sh_wires_codex():
+    """install.sh --agents codex, from a copy of the kit where Codex is open, in a home of its own with
+    stand-ins for what would schedule jobs or reach gbrain: Codex comes from its pinned installer, for
+    real. Then the real Codex, in the vault, runs the six hooks from the hooks.json install.sh wrote,
+    approved by the tables it wrote in config.toml, no trust bypassed (control: without them, none
+    runs), and reads the kit's block in the global AGENTS.md, the vault's AGENTS.md and the skills in
+    ~/.agents/skills. gbq's rules allow the kit's gbq only (control: without host_executable, a gbq the
+    session writes in its folder would run outside the sandbox)."""
+    if WINDOWS:
+        print("install.sh is macOS's and Linux's: install.ps1 wires Codex in phase 7")
+        return
+    repo = os.path.dirname(ENGINE)
+    root = os.path.join(B.root, "install-sh")
+    kit, home, stubs = (os.path.join(root, n) for n in ("kit", "home", "bin"))
+    os.makedirs(stubs)
+    for name in ("install.sh", "engine", "skills", "vault-skeleton", "onboarding"):
+        (shutil.copytree if os.path.isdir(os.path.join(repo, name)) else shutil.copy)(
+            os.path.join(repo, name), os.path.join(kit, name))
+    with open(os.path.join(kit, "test-hooks.sh"), "w", encoding="utf-8") as f:
+        f.write("#!/bin/sh\nexit 0\n")
+    gate = os.path.join(kit, "engine", "hooks", "_agents.py")
+    with open(gate, encoding="utf-8") as f:
+        text = f.read()
+    check(text.count("CODEX_OUVERT = frozenset()\n") == 1, "the gate's line, opened in the kit's copy")
+    with open(gate, "w", encoding="utf-8") as f:
+        f.write(text.replace("CODEX_OUVERT = frozenset()\n", 'CODEX_OUVERT = frozenset({"darwin", "linux", "windows"})\n'))
+    # What would schedule jobs, install Obsidian or reach gbrain: stand-ins that do nothing.
+    for t in ("launchctl", "systemctl", "loginctl", "crontab", "brew", "sudo", "apt-get"):
+        with open(os.path.join(stubs, t), "w", encoding="utf-8") as f:
+            f.write("#!/bin/sh\n" + ('[ "$1" = -l ] && { echo "no crontab for $USER" >&2; exit 1; }\n' if t == "crontab" else "")
+                    + ("exit 1\n" if t == "systemctl" else "exit 0\n"))
+    os.makedirs(os.path.join(home, ".bun", "bin"))
+    os.makedirs(os.path.join(home, "DEV", "gbrain", ".git"))
+    for t in ("bun", "gbrain"):
+        with open(os.path.join(home, ".bun", "bin", t), "w", encoding="utf-8") as f:
+            f.write("#!/bin/sh\nexit 0\n")
+    for d in (stubs, os.path.join(home, ".bun", "bin")):
+        for t in os.listdir(d):
+            os.chmod(os.path.join(d, t), 0o755)
+    # The runner's Codex (the workflow's) out of reach: install.sh has to install its own.
+    path = os.pathsep.join([stubs] + [d for d in os.environ["PATH"].split(os.pathsep)
+                                      if d and not os.path.exists(os.path.join(d, "codex"))])
+    user = os.environ.get("USER") or "runner"
+    env = {"HOME": home, "PATH": path, "USER": user, "LOGNAME": user, "TMPDIR": os.path.join(root, "tmp"),
+           "LANG": "en_US.UTF-8", "SHELL": "/bin/bash", "GIT_TERMINAL_PROMPT": "0"}
+    os.makedirs(env["TMPDIR"])
+    p = subprocess.run(["bash", os.path.join(kit, "install.sh"), "--agents", "codex"], stdin=subprocess.DEVNULL,
+                       env=env, capture_output=True, timeout=900)
+    out = p.stdout.decode("utf-8", "replace") + p.stderr.decode("utf-8", "replace")
+    print("install.sh's Codex lines:", "\n".join(l for l in out.splitlines() if "odex" in l))
+    check(p.returncode == 0 and "brain-in-a-box installed" in out, "install.sh --agents codex ran to the end (%s): %s"
+          % (p.returncode, out[-600:]))
+    codex_bin = os.path.join(home, ".local", "bin", "codex")
+    v = subprocess.run([codex_bin, "--version"], capture_output=True, text=True) if os.path.isfile(codex_bin) else None
+    check(v is not None and v.stdout.strip() == "codex-cli 0.162.1" and "Codex 0.162.1 installed" in out,
+          "Codex from its pinned installer, checked, in the home's ~/.local/bin: %s" % (v and v.stdout.strip()))
+    if v is None:
+        return
+    chome = os.path.join(home, ".codex")
+    check("the kit approved its 6 hooks for you" in out and "with /hooks in Codex" in out, "the approval is said")
+    config = os.path.join(chome, "config.toml")
+    with open(config, encoding="utf-8") as f:
+        toml = f.read()
+    check(toml.count('[hooks.state."%s:' % os.path.join(chome, "hooks.json")) == 6, "six tables in config.toml")
+    shutil.copy(os.path.join(B.home, "auth.json"), chome)
+    vault = os.path.join(home, "Documents", "Brain")
+    vus = os.path.join(home, ".brain-in-a-box", _agents.VUS)
+
+    def session():
+        if os.path.exists(vus):
+            os.remove(vus)
+        B.mock.reset()
+        r = B.raw_exec(vault, b"Reply.", home=chome, ephemeral=False, env={"HOME": home, "USERPROFILE": home},
+                       binary=codex_bin)
+        check(r.returncode == 0, "codex exec in the vault ran (%s, %s)" % (r.returncode, r.stderr.decode("utf-8", "replace")[-300:]))
+        return sorted(_agents.vus(home)), json.dumps(B.mock.reqs, ensure_ascii=False)
+
+    seen, dump = session()
+    check(seen == HOOKS6, "the real Codex ran the six hooks install.sh wired and approved, no trust bypassed: %s" % seen)
+    check("Codex does not load `CLAUDE.md` files." in dump, "Codex read the kit's block in the global AGENTS.md")
+    check("This brain's rules are in `CLAUDE.md`" in dump, "Codex read the vault's AGENTS.md (the vault is a git repository)")
+    with open(os.path.join(repo, "skills", "brain-boost", "SKILL.md"), encoding="utf-8") as f:
+        desc = f.read().split("description:", 1)[1].split("\n", 1)[0].strip()[:60]
+    check("brain-boost" in dump and desc in dump, "Codex announced the kit's skills from ~/.agents/skills")
+    shutil.move(config, config + ".kept")
+    seen, _ = session()
+    check(seen == [], "control: without the tables install.sh wrote, Codex runs none of the hooks: %s" % seen)
+    shutil.move(config + ".kept", config)
+    rules = os.path.join(chome, "rules", "brain-in-a-box.rules")
+    gbq = os.path.join(home, ".local", "bin", "gbq")
+
+    def decision(rules_file, *cmd):
+        r = subprocess.run([codex_bin, "execpolicy", "check", "--resolve-host-executables", "--rules", rules_file, "--"]
+                           + list(cmd), capture_output=True, text=True, env=dict(os.environ, HOME=home))
+        try:
+            return json.loads(r.stdout).get("decision")
+        except ValueError:
+            return "error: %s %s" % (r.stdout[-200:], r.stderr[-200:])
+
+    allowed = [c for c in (["gbq", "query", "x"], ["gbq", "search", "x"], [gbq, "query", "x"], ["~/.local/bin/gbq", "query", "x"])
+               if decision(rules, *c) == "allow"]
+    check(len(allowed) == 4, "gbq query and gbq search allowed, at the kit's gbq: %s" % allowed)
+    asked = {" ".join(c): decision(rules, *c) for c in (["./gbq", "query", "x"], ["/tmp/gbq", "query", "x"],
+                                                      ["gbq", "sync"], ["gbq", "skillify", "https://x"])}
+    check(all(v is None for v in asked.values()), "another gbq, or another gbq command, matches no rule: %s" % asked)
+    bare = os.path.join(root, "no-host.rules")
+    with open(rules, encoding="utf-8") as f, open(bare, "w", encoding="utf-8") as g:
+        g.write("".join(l for l in f if not l.startswith("host_executable(")))
+    check(decision(bare, "./gbq", "query", "x") == "allow",
+          "control: without host_executable, a ./gbq the session wrote would run without asking")
+
+
 def main():
     global B
     if os.environ.get("GITHUB_ACTIONS") != "true":
@@ -553,7 +671,7 @@ def main():
                    the_user_s_mcp_server_never_starts, a_system_config_is_neutralised,
                    a_system_otel_exporter_gets_nothing, requirements_pause_codex,
                    an_api_key_login_is_refused, the_reflection_and_the_review_ask_codex_through_the_choice,
-                   a_real_codex_session_is_read, codex_runs_the_kits_hooks):
+                   a_real_codex_session_is_read, codex_runs_the_kits_hooks, install_sh_wires_codex):
             scenario(fn)
     finally:
         B.mock.close()

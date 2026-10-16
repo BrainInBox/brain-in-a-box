@@ -273,7 +273,7 @@ jobs:
           echo "$files"
           if grep -qE '^(app/|install\.ps1$|\.github/workflows/test\.yml$|\.github/ci/)' <<< "$files"; then app=true; else app=false; fi
           echo "app=$app" | tee -a "$GITHUB_OUTPUT"
-          if grep -qE '^(engine/hooks/(_headless(_codex|_claude)?|_agents|_codex_rollout|_controle_judge|daily-reflection|session-recap|session-logger|correction-detector|controle-sessionstart)\.py|engine/codex-features\.json|engine/tests/(codex_mock|mock_openai|codex_captures)\.py|\.github/workflows/test\.yml)$' <<< "$files"; then codex=true; else codex=false; fi
+          if grep -qE '^(engine/hooks/(_headless(_codex|_claude)?|_agents|_codex_rollout|_controle_judge|daily-reflection|session-recap|session-logger|correction-detector|controle-sessionstart)\.py|engine/codex-features\.json|engine/tests/(codex_mock|mock_openai|codex_captures)\.py|\.github/workflows/test\.yml|install\.sh|engine/codex/[^/]+|engine/CLAUDE\.global\.template\.md|engine/install_skills\.py|skills/[^/]+/SKILL\.md)$' <<< "$files"; then codex=true; else codex=false; fi
           echo "codex=$codex" | tee -a "$GITHUB_OUTPUT"
 
   # The launcher without tools for Codex (engine/hooks/_headless_codex.py) with the real Codex CLI,
@@ -282,7 +282,9 @@ jobs:
   # announced, URLs, the caller's keys, a system config and requirements.toml, the user's MCP server;
   # then the reflection's and the review's questions through the choice of engine (_headless.py); then
   # a session the real Codex keeps, read as the reflection and Codex's Stop hook read it (_codex_rollout.py);
-  # then the kit's hooks run by the real Codex from a hooks.json (--agent codex): their answers taken.
+  # then the kit's hooks run by the real Codex from a hooks.json (--agent codex): their answers taken;
+  # then, on macOS and Linux, install.sh with Codex chosen in a home of its own: Codex from its pinned
+  # installer, and the real Codex running the hooks install.sh wired and approved (no trust bypassed).
   codex-mock:
     name: codex-mock (${{ matrix.os }})
     needs: changes
