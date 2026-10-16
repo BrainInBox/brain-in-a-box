@@ -153,6 +153,38 @@ mkdir -p "$LD/recap-x"
 echo "{\"session_id\":\"x/../../../escaped\",\"cwd\":\"/Users/builder/proj\",\"transcript_path\":\"$TX\"}" | HOME="$H" python3 "$HB/session-recap.py" 2>/dev/null
 [ ! -e "$H/escaped.lock" ] && ! grep -q 'sid:`x/' "$J" && grep -q "session_id is not a plain id" "$H/.claude/logs/session-recap-errors.log" \
   && ok "a session id that is not a plain id is refused (no path out of the lock folder, nothing in the journal)" || no "odd session id used"
+# Codex's Stop hook (--agent codex), on a session made from step 0's real capture with 3 tool calls:
+# silent while agents.json does not list Codex, and while Codex is closed (a file that lists it is not
+# trusted). Control: in a copy of the hooks where Codex is open, the same call writes its block.
+CSID="01a14053-0452-7e81-b849-c24c767660d7"; CXR="$H/codex-rollout.jsonl"; CJ="$J.before-codex"
+python3 - "$REPO/engine/tests" "$DAY" "$CSID" "$CXR" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+import codex_captures as c
+open(sys.argv[4], "w", encoding="utf-8", newline="\n").write(
+    c.moved(c.LOCK, sys.argv[2], sid=sys.argv[3], tools=["ssh deploy@example.org"]))
+PY
+cp "$J" "$CJ"
+codex_stop() { echo "{\"session_id\":\"$CSID\",\"cwd\":\"/Users/builder/proj\",\"transcript_path\":\"$CXR\"}" \
+  | HOME="$1" python3 "$2/session-recap.py" --agent codex 2>/dev/null; }
+codex_stop "$H" "$HB"
+mkdir -p "$H/.brain-in-a-box"
+printf '{"version":1,"agents":["claude","codex"],"prefere":"claude","codex_home":"%s"}\n' "$H/.codex" > "$H/.brain-in-a-box/agents.json"
+chmod 600 "$H/.brain-in-a-box/agents.json"
+codex_stop "$H" "$HB"
+cmp -s "$J" "$CJ" && [ ! -e "$LD/recap-$CSID.lock" ] \
+  && ok "Codex's Stop hook: silent without Codex in agents.json, and while Codex is closed (no lock, journal unchanged)" \
+  || no "Codex's Stop hook wrote while Codex is not chosen or closed"
+CXH="$H/codex-open"; mkdir -p "$CXH/hooks" "$CXH/Documents/Brain/Journal" "$CXH/.brain-in-a-box"
+cp "$HB/session-recap.py" "$HB/_codex_rollout.py" "$HB/_vault_write.py" "$HB/_redact.py" "$HB/_agents.py" "$CXH/hooks/"
+sed -i.bak 's/^CODEX_OUVERT = frozenset()$/CODEX_OUVERT = frozenset({"darwin", "linux", "windows"})/' "$CXH/hooks/_agents.py"
+cp "$H/.brain-in-a-box/agents.json" "$CXH/.brain-in-a-box/"
+codex_stop "$CXH" "$CXH/hooks"
+grep -q "codex gpt-6.1-sol · sid:\`$CSID\`\$" "$CXH/Documents/Brain/Journal/$DAY.md" 2>/dev/null \
+  && grep -q "infra/cli: curl×2, ssh×1" "$CXH/Documents/Brain/Journal/$DAY.md" \
+  && ok "control: Codex open and chosen, its Stop hook writes the session's block under its whole id" \
+  || no "control: Codex's Stop hook wrote nothing even with Codex open and chosen"
+rm -rf "$H/.brain-in-a-box" "$CXH" "$CJ"
 
 echo "════ 5) daily-reflection (claude faked: no tool, JSON answer, the program writes) ════"
 # The fake claude (engine/tests/fake_claude.py) replays the real stream-json
