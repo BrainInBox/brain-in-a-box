@@ -367,8 +367,13 @@ function Install-Codex {
         $saved = @{}
         foreach ($n in $names) { $saved[$n] = [Environment]::GetEnvironmentVariable($n, "Process"); Remove-Item "Env:$n" -ErrorAction SilentlyContinue }
         $env:CODEX_RELEASE = $CODEX_VERSION; $env:CODEX_NON_INTERACTIVE = "1"; $env:CODEX_HOME = $CodexDir
+        # Le tar de Windows d'abord : l'installeur lance tar, et un tar GNU devant lui sur le PATH (les
+        # outils Unix de Git) lit "C:\..." comme un hote distant ("Cannot connect to C: resolve failed").
+        $path = $env:Path
+        if ([Environment]::SystemDirectory) { $env:Path = [Environment]::SystemDirectory + ";" + $env:Path }
         try { $rc = Invoke-Logged (Get-PowerShellExe) @("-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", $f) }
         finally {
+            $env:Path = $path
             foreach ($n in $names) { if ($null -eq $saved[$n]) { Remove-Item "Env:$n" -ErrorAction SilentlyContinue } else { Set-Item "Env:$n" $saved[$n] } }
         }
         $cb = Find-Codex

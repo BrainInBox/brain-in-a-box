@@ -158,14 +158,19 @@ try {
            -not (Find-Codex) -and "$Downloads" -ceq $CODEX_INSTALLER_URL) "codex installer: one that is not the pinned one is downloaded from the release, never run"
     New-Home; $Serve = $Installer; $CODEX_INSTALLER_SHA256 = $InstallerSha
     $env:VOYAGE_API_KEY = "pa-canari-voyage"; $env:CODEX_INSTALL_DIR = (Join-Path $T "trap"); $env:CODEX_HOME = (Join-Path $T "other-home")
+    $pathBefore = "$env:Path|$env:PATH"
     $out = Said { Install-Codex }
     $ie = if (Test-Path (Join-Path $T "installer-env")) { @(Get-Content (Join-Path $T "installer-env")) } else { @() }
     Check ($ie -ccontains "CODEX_RELEASE=$CODEX_VERSION" -and $ie -ccontains "CODEX_NON_INTERACTIVE=1" -and $ie -ccontains "CODEX_HOME=$CodexDir" -and
            -not ($ie -match '^VOYAGE_API_KEY=') -and -not ($ie -match '^CODEX_INSTALL_DIR=') -and $out -match "\[OK\] Codex $([regex]::Escape($CODEX_VERSION)) installe" -and
            $out -match "son installeur a mis .* sur ton PATH \(nouveaux terminaux\)") `
           "codex installer: the pinned one runs: its release, no question, the chosen CODEX_HOME, no Voyage key nor install folder of the environment; its PATH line is said"
-    Check ($env:VOYAGE_API_KEY -eq "pa-canari-voyage" -and $env:CODEX_INSTALL_DIR -eq (Join-Path $T "trap") -and $env:CODEX_HOME -eq (Join-Path $T "other-home")) `
-          "codex installer: the session's own variables are back as they were"
+    $sys = [Environment]::SystemDirectory
+    if ($Win) {
+        Check (@($ie | Where-Object { $_ -like "Path=$sys;*" }).Count -eq 1) "codex installer: Windows' own tar first on its PATH (a GNU tar ahead of it breaks the installer)"
+    }
+    Check ($env:VOYAGE_API_KEY -eq "pa-canari-voyage" -and $env:CODEX_INSTALL_DIR -eq (Join-Path $T "trap") -and $env:CODEX_HOME -eq (Join-Path $T "other-home") -and
+           "$env:Path|$env:PATH" -ceq $pathBefore) "codex installer: the session's own variables are back as they were, PATH too"
     $Downloads = @(); $out = Said { Install-Codex }
     Check ($out -match "\[OK\] Codex deja installe \($([regex]::Escape($CODEX_VERSION))\)" -and $Downloads.Count -eq 0) "codex installer: already there, nothing downloaded"
     $env:FAKE_CODEX_VERSION = "0.150.0"; $out = Said { Install-Codex }
