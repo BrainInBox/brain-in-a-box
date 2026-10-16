@@ -270,7 +270,11 @@ def codex_sessions(day, codex_home):
     paths, packed = rollout.recent(codex_home, day_start)
     out = []
     for path in paths:
-        s = rollout.read(path, day)
+        try:
+            s = rollout.read(path, day)
+        except Exception as e:   # Codex's format, not ours: a file costs only itself, never the day
+            log_error(f"{day}: Codex session {os.path.basename(path)} not read ({type(e).__name__})")
+            continue
         if s is None:
             continue   # a session the kit asked comes without items
         lines, n = [], 0

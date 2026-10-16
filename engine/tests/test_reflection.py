@@ -32,6 +32,7 @@ sys.path.insert(0, str(HOOKS))
 sys.path.insert(0, str(HERE))
 
 import _agents  # noqa: E402
+import _codex_rollout as rollout  # noqa: E402
 import _headless_claude as hc  # noqa: E402
 import _headless_codex as hx  # noqa: E402
 import codex_captures as cap  # noqa: E402
@@ -1205,6 +1206,40 @@ class CodexSessions(EngineRun):
                 out = p.stdout.decode("utf-8", "replace")
                 self.assertIn("LOADED %s" % loaded, out, p.stderr.decode("utf-8", "replace")[-800:])
                 self.assertEqual(f"  codex {self.A} · " in out, loaded)
+
+    def test_a_time_out_of_range_in_a_session_does_not_stop_the_reflection(self):
+        # A year 0 or 10000 once in UTC, whatever the local time zone: that line has no time, the day is written.
+        self.choose(["claude", "codex"], "codex")
+        p = self.session(self.A)
+        with open(str(p), "ab") as f:
+            for ts in ("9999-12-31T23:59:59-14:00", "0001-01-01T00:00:00+14:00"):
+                f.write((json.dumps({"timestamp": ts, "type": "event_msg", "payload": {"type": "x"}}) + "\n").encode())
+        st, _ = self.reflect_with()
+        self.assertIsNone(st["last_error"])
+        sent = self.sent_to_codex()
+        self.assertIn(f"[session codex {self.A} · ", sent)
+        self.assertIn("ship it", sent, "and Claude's day with it")
+
+    def test_a_session_that_cannot_be_read_costs_only_itself_and_is_logged(self):
+        self.choose(["claude", "codex"], "codex")
+        bad, _ = self.session(self.A), self.session(self.B)
+        real = rollout.read
+
+        def read(path, day=None):
+            if path == str(bad):
+                raise RuntimeError("SESSION-TEXT what failed")
+            return real(path, day)
+
+        with mock.patch.object(rollout, "read", side_effect=read):
+            st, _ = self.reflect_with()
+        self.assertIsNone(st["last_error"])
+        sent = self.sent_to_codex()
+        self.assertIn(f"[session codex {self.B} · ", sent)
+        self.assertNotIn(self.A, sent)
+        self.assertIn("ship it", sent)
+        log = (self.root / "logs" / "daily-reflection-errors.log").read_text(encoding="utf-8")
+        self.assertIn(f"{DAY}: Codex session {bad.name} not read (RuntimeError)", log)
+        self.assertNotIn("SESSION-TEXT", log, "what a session holds never goes to the log")
 
     def test_compressed_sessions_are_said_and_not_read(self):
         self.choose(["claude", "codex"], "codex")

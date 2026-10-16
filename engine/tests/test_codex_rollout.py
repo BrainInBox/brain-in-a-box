@@ -171,6 +171,24 @@ class Lines(unittest.TestCase):
                          [("user", None), ("assistant", None), ("tool", "exec_command")])
         self.assertEqual(s.items[-1].text, call["payload"]["arguments"][:cr.SUMMARY])
 
+    def test_a_time_out_of_range_is_a_line_without_time_not_a_crash(self):
+        # A year 0 or 10000 once in UTC, whatever the local time zone: a time astimezone() cannot give.
+        lines = cap.moved(cap.VAULT, DAY).splitlines()
+        typed = json.loads(next(l for l in lines if '"Bonjour"' in l))
+        odd = []
+        for ts in ("9999-12-31T23:59:59-14:00", "0001-01-01T00:00:00+14:00"):
+            self.assertIsNone(cr.local(ts))
+            m = json.loads(json.dumps(typed))
+            m["timestamp"] = ts
+            m["payload"]["content"] = [dict(m["payload"]["content"][0], text="ODD-TIME " + ts)]
+            odd.append(json.dumps(m))
+        path = self.write("\n".join(lines[:1] + odd + lines[1:]) + "\n")
+        self.assertEqual([i.text for i in cr.read(path, DAY).items], ["Bonjour", "SPIKE-REPLY"])
+        s = cr.read(path)
+        self.assertEqual([i.text for i in s.items if i.kind == "user"],
+                         ["ODD-TIME 9999-12-31T23:59:59-14:00", "ODD-TIME 0001-01-01T00:00:00+14:00", "Bonjour"])
+        self.assertTrue(s.first_ts.startswith(DAY) and s.last_ts.startswith(DAY), (s.first_ts, s.last_ts))
+
     def test_the_kits_own_prompt_skips_the_whole_session_a_mention_does_not(self):
         own = cap.moved(cap.VAULT, DAY, said=[("user", cr.SENTINEL + "\nActivity of 2026-10-14")])
         s = cr.read(self.write(own))

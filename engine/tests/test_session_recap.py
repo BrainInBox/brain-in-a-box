@@ -259,6 +259,18 @@ class Codex(unittest.TestCase):
         self.assertIn("  - infra/cli: curl×2, ssh×1", text)
         self.assertTrue(text.startswith(f"# {self.day} — Daily\n\n## 📊 Claude Sessions\n- **"), text)
 
+    def test_a_time_out_of_range_in_the_rollout_still_gives_the_block(self):
+        # A year 0 or 10000 once in UTC, whatever the local time zone (_codex_rollout.local).
+        self.choose(["claude", "codex"])
+        p = self.rollout(self.A)
+        with open(str(p), "ab") as f:
+            for ts in ("9999-12-31T23:59:59-14:00", "0001-01-01T00:00:00+14:00"):
+                f.write((json.dumps({"timestamp": ts, "type": "event_msg", "payload": {"type": "x"}}) + "\n").encode())
+        self.stop(self.A, p)
+        heads, text = self.blocks()
+        self.assertEqual(len(heads), 1, text)
+        self.assertRegex(heads[0], r"^- \*\*\d\d:\d\d–\d\d:\d\d\*\* \(\d+s\) .* · sid:`%s`$" % self.A)
+
     def test_two_sessions_of_the_same_minute_keep_a_block_each(self):
         self.choose(["codex"])
         a = self.rollout(self.A)

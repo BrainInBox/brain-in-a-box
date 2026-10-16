@@ -60,7 +60,7 @@ def local(ts):
         return None
     try:
         return datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone()
-    except ValueError:
+    except (ValueError, OverflowError, OSError):   # a year 0 or 10000 once local; a time localtime() refuses
         return None
 
 
