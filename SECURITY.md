@@ -49,9 +49,18 @@ When you choose Codex (`--agents codex`, `-Agents codex` on Windows), the instal
 `install.ps1`) **approves the kit's six Codex hooks for you**: it adds their trust entries to
 `~/.codex/config.toml` (only new `[hooks.state."…"]` tables, after a backup, checked by Codex itself),
 and says so on screen. Codex then runs them without asking. The approval covers each hook's command
-line, not the script's content. See them, or turn them off, with `/hooks` in Codex. It also lets Codex
-run `gbq query` and `gbq search` without asking, outside its sandbox, and only for `~/.local/bin/gbq`
-(`~\.local\bin\gbq.cmd` on Windows; `~/.codex/rules/brain-in-a-box.rules`).
+line, not the script's content. See them, or turn them off, with `/hooks` in Codex: a hook you turned
+off stays off when the installer runs again, even after a hook of yours moved it. On Windows, run again
+after Python moved (another version installed), it points the kit's hooks at the new Python and
+approves them again; an entry of the kit's you changed is kept as it is.
+
+On macOS and Linux it also lets Codex run `gbq query` and `gbq search` without asking, outside its
+sandbox, and only for `~/.local/bin/gbq` (`~/.codex/rules/brain-in-a-box.rules`). gbq starts these two
+reads from `/`, so nothing a session writes in its folder (a `bunfig.toml` whose preload Bun would run,
+a `.env`, a `tsconfig.json`) reaches gbrain. Don't give Codex your home folder as its workspace: its
+sandbox would then let a session rewrite `~/.local/bin/gbq` itself, which the rule runs. On Windows
+there is no such rule, and Codex asks before every gbq: gbq is `gbq.cmd` there, and `cmd.exe` reads its
+arguments again (an `&` in them would start a second command).
 
 On Windows, Codex reads system settings from `%ProgramData%\OpenAI\Codex`, a folder any account can
 create when it is missing. The evening summary and the night review do not ask Codex while that folder,
