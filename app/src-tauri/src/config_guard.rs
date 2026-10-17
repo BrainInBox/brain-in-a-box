@@ -1,8 +1,9 @@
 //! The configuration guard: around every run of the brain step and every repair,
-//! what the user already had in ~/.claude, in Codex's folder (~/.codex, and the CODEX_HOME
-//! agents.json records) and ~/.agents/skills, their scheduled jobs (LaunchAgents on a Mac,
+//! what the user already had in ~/.claude, their scheduled jobs (LaunchAgents on a Mac,
 //! systemd's user units on Linux) and their shell files comes out exactly as it went in.
-//! Codex's are guarded whoever chose Codex or not: they are the user's first.
+//! When Codex is one of the agents, its folders too (~/.codex, the CODEX_HOME agents.json records)
+//! and ~/.agents/skills. With Claude alone the installers do not write there, and the guard leaves
+//! them to the user's own Codex, as before the choice existed.
 //!
 //! `take` copies every protected file into a private folder before the step, `check`
 //! compares after it, `restore` puts back, byte for byte, whatever the step should
@@ -192,13 +193,17 @@ fn shown(rel: &Path) -> String {
     }
 }
 
-/// Codex's folders: ~/.codex, and the CODEX_HOME of the agents of now when they list Codex (agents.json's,
-/// or the one of a choice made in the window that the installer is about to record). From home when they
-/// are in it, once each.
+/// Codex's folders when the agents of now list Codex (agents.json's, or a choice made in the window
+/// that the installer is about to record): ~/.codex and their CODEX_HOME. From home when they are in
+/// it, once each. None with Claude alone.
 fn codex_homes(home: &Path) -> Vec<PathBuf> {
+    let agents = agents::current(home);
+    if !agents.lists(agents::Engine::Codex) {
+        return Vec::new();
+    }
     let mut homes: Vec<PathBuf> = Vec::new();
     let mut seen = HashSet::new();
-    for h in std::iter::once(home.join(CODEX_DEFAULT)).chain(agents::current(home).codex_home) {
+    for h in std::iter::once(home.join(CODEX_DEFAULT)).chain(agents.codex_home) {
         if seen.insert(fs::canonicalize(&h).unwrap_or_else(|_| h.clone())) {
             homes.push(h.strip_prefix(home).map_or_else(|_| h.clone(), Path::to_path_buf));
         }
@@ -243,7 +248,9 @@ fn protected(home: &Path, codex_homes: &[PathBuf]) -> Vec<(PathBuf, Rule)> {
     let mut hooks = Vec::new();
     walk(home, Path::new(HOOKS), 0, &mut hooks);
     out.extend(hooks.into_iter().map(|p| (p, Rule::Same)));
-    for skills in [SKILLS, AGENT_SKILLS] {
+    // Codex's skills folder goes with Codex's folders: guarded only when Codex is one of the agents.
+    let skill_dirs: &[&str] = if codex_homes.is_empty() { &[SKILLS] } else { &[SKILLS, AGENT_SKILLS] };
+    for skills in skill_dirs {
         for skill in names_in(&home.join(skills)) {
             out.push((Path::new(skills).join(skill).join("SKILL.md"), Rule::Same));
         }
@@ -1461,8 +1468,9 @@ mod tests {
 
             let user = sys::output_text(Path::new("/usr/bin/id"), &["-un"], Duration::from_secs(5)).unwrap();
             personal(&h);
-            // Claude alone, next to a Codex of the user's own: nothing of it is touched.
-            personal_codex(&h);
+            // Claude alone, next to a Codex of the user's own: nothing of it is touched (not guarded
+            // then: what install.sh itself does is compared below).
+            personal_codex_files(&h);
             #[cfg(target_os = "macos")]
             h.write(&format!("Library/LaunchAgents/com.{user}.gbrain-nightly.plist"), "<plist>my own nightly</plist>\n");
             #[cfg(target_os = "linux")]
@@ -1519,9 +1527,22 @@ mod tests {
 
     // ── Codex's files ───────────────────────────────────────────────────────
 
+    /// Codex chosen, its folder ~/.codex (agents.json, the gate open in this home's copy of the kit).
+    fn codex_chosen(h: &Home) {
+        crate::agents::tests::plant_agents_py(&crate::agents::tests::installed(&h.home), true);
+        let chosen = serde_json::json!({ "version": 1, "agents": ["codex"], "prefere": "codex", "codex_home": h.home.join(".codex") });
+        crate::agents::tests::choose(&h.home, &chosen);
+    }
+
+    /// The user's own Codex, and Codex chosen.
+    fn personal_codex(h: &Home) {
+        personal_codex_files(h);
+        codex_chosen(h);
+    }
+
     /// The user's own Codex: a hook of theirs in each of two events, their settings and their own
     /// approval of their Stop hook in config.toml, their instructions, rules and a skill.
-    fn personal_codex(h: &Home) {
+    fn personal_codex_files(h: &Home) {
         let hooks = serde_json::json!({
             "hooks": {
                 "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "/opt/mine/prompt-hook" }] }],
@@ -1766,6 +1787,7 @@ mod tests {
     #[test]
     fn codex_files_a_step_creates_hold_the_kits_only() {
         let h = Home::new();
+        codex_chosen(&h);
         wire(&h, "merge");
         let kit_prompt = codex_key(&h, "user_prompt_submit", 0, 0);
         for (label, bytes, kept) in [
@@ -1787,6 +1809,30 @@ mod tests {
         assert_eq!(found.iter().map(|v| (v.path.as_str(), v.what)).collect::<Vec<_>>(), [("~/.codex/hooks.json", "créé avec d'autres réglages que des hooks")]);
         settle(snap, &h.home);
         assert!(!h.home.join(".codex/hooks.json").exists());
+    }
+
+    /// Claude alone: Codex's folders are not the step's (install.sh does not touch them then, and
+    /// master never looked at them). The user's own Codex writing there meanwhile (a folder trusted,
+    /// /hooks, a skill of theirs) is neither reported nor put back, as on master.
+    #[test]
+    fn with_claude_alone_codexs_folders_are_left_to_the_user() {
+        for claude in [None, Some(serde_json::json!({ "version": 1, "agents": ["claude"], "prefere": "claude" }))] {
+            let h = Home::new();
+            personal_codex_files(&h);
+            if let Some(chosen) = &claude {
+                crate::agents::tests::plant_agents_py(&crate::agents::tests::installed(&h.home), false);
+                crate::agents::tests::choose(&h.home, chosen);
+            }
+            assert_eq!(codex_homes(&h.home), Vec::<PathBuf>::new(), "{claude:?}");
+            let snap = h.take();
+            let config = String::from_utf8(h.read(".codex/config.toml")).unwrap().replace("gpt-5", "gpt-4");
+            h.write(".codex/config.toml", &config);
+            h.write(".agents/skills/mine/SKILL.md", "# changed by the user's Codex\n");
+            assert!(check(&snap, &h.home).is_empty(), "{claude:?}");
+            assert!(settle(snap, &h.home).clean(), "{claude:?}");
+            assert_eq!(String::from_utf8(h.read(".codex/config.toml")).unwrap(), config);
+            assert_eq!(h.read(".agents/skills/mine/SKILL.md"), b"# changed by the user's Codex\n");
+        }
     }
 
     /// The CODEX_HOME agents.json records is guarded too, wherever it is.
