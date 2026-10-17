@@ -694,7 +694,7 @@ class CliCodex(Home):
         code = "import sys; sys.path.insert(0, %r); import _agents as ag; %ssys.exit(ag.main(['hooks-muets']))" % (str(HOOKS), gate)
         e = dict(os.environ, HOME=self.home, USERPROFILE=self.home)
         p = subprocess.run([sys.executable, "-I", "-c", code], env=e, capture_output=True, timeout=20)
-        return p.returncode, p.stdout
+        return p.returncode, p.stdout.rstrip(b"\r\n") + b"\n"   # print() ends the line with CRLF on Windows
 
     def test_hooks_muets_for_the_app_only_of_the_codex_agents_json_records(self):
         codex = os.path.join(self.home, "Données é")
@@ -712,7 +712,8 @@ class CliCodex(Home):
         self.assertEqual(self.muets_cli(ouvert=True), (0, b"oui\n"))
         self.put({"version": 1, "agents": ["claude", "codex"], "prefere": "claude", "codex_home": os.path.join(self.home, "other")})
         self.assertEqual(self.muets_cli(ouvert=True), (0, b"non\n"), "another Codex home: its sessions only")
-        self.assertEqual(self.cli("hooks-muets"), (0, b"non\n"), "as shipped")
+        rc, out = self.cli("hooks-muets")
+        self.assertEqual((rc, out.strip()), (0, b"non"), "as shipped")
 
 
 if __name__ == "__main__":

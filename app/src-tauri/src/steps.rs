@@ -1898,7 +1898,8 @@ mod tests {
     #[ignore]
     fn codex_real_install_answers() {
         let dir = tempfile::tempdir().unwrap();
-        let home = fs::canonicalize(dir.path()).unwrap();
+        // As agents.json records it: a plain path (Windows' \\?\ form is no folder to Join-Path).
+        let home = dir.path().to_path_buf();
         let codex_home = home.join(".codex");
         let local = home.join("AppData").join("Local");
         fs::create_dir_all(&local).unwrap();
