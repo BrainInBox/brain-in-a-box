@@ -103,7 +103,12 @@ def neuf_codex(installe):
     e["login-codex"] = {"titre": "Dernière étape" + NB + ": ton compte ChatGPT",
                         "texte": "Connecte Codex à ton compte ChatGPT pour qu’il puisse travailler avec ton cerveau.",
                         "boutons": {"Plus tard": "fini", "Connecter Codex à mon compte ChatGPT": None}}
-    e["fini"] = dict(e["fini"], texte="Codex retient maintenant ce que tu lui apprends.")
+    # The ChatGPT login put off: Codex's login comes first, the onboarding after it (§4.3).
+    e["fini"] = dict(e["fini"], texte="Codex retient maintenant ce que tu lui apprends.",
+                     boutons={"Activer la recherche par le sens": None, "Ouvrir mon cerveau dans Obsidian": None,
+                              "Connecter Codex à mon compte ChatGPT": None},
+                     textes=["Pense à connecter Codex à ton compte ChatGPT. S’il te le demande au premier lancement, "
+                             "choisis « Sign in with ChatGPT », jamais une clé API : elle serait facturée."])
     return e
 
 
@@ -434,11 +439,35 @@ class Walk(Base):
                                         "boutons": {"Ouvrir mon cerveau dans Obsidian": None, "Personnaliser mon cerveau (15 min)": None}}},
                               "l'écran final ne nomme pas Codex"),
                              ({"choix": {"titre": "Avec quelle IA veux-tu travailler" + NB + "?", "boutons": {"Codex": "resume"}}},
-                              "écran « choix-resume » : Codex est choisi seul")):
+                              "écran « choix-resume » : Codex est choisi seul"),
+                             ({"fini": {"titre": "Ton second cerveau est prêt" + NB + "!", "texte": "Codex retient maintenant ce que tu lui apprends.",
+                                        "boutons": {"Ouvrir mon cerveau dans Obsidian": None, "Personnaliser mon cerveau (15 min)": None,
+                                                    "Connecter Codex à mon compte ChatGPT": None},
+                                        "textes": ["choisis « Sign in with ChatGPT »"]}},
+                              "l'écran final propose de personnaliser le cerveau avec un Codex qui n'est pas connecté à ChatGPT"),
+                             ({"fini": {"titre": "Ton second cerveau est prêt" + NB + "!", "texte": "Codex retient maintenant ce que tu lui apprends.",
+                                        "boutons": {"Ouvrir mon cerveau dans Obsidian": None, "Connecter Codex à mon compte ChatGPT": None},
+                                        "textes": ["Pense à connecter Codex : il te le demandera au premier lancement."]}},
+                              "l'écran final ne dit pas de choisir « Sign in with ChatGPT »")):
             h = Horloge()
             p = FauxPilote(h, codex=True, change=change)
             with self.subTest(said=said), self.assertRaises(terrain.Echec) as cm:
                 ta.Parcours(Noms(), p, self.shots, horloge=h, dormir=h.dormir, codex=True).premier_lancement({})
+            self.assertIn(said, str(cm.exception))
+
+    def test_claude_alone_says_claude_where_it_always_did(self):
+        # The words of before Codex: Claude named in the welcome and at the end (all of them: app/dev/screens.mjs).
+        for change, said in (({"bienvenue": {"titre": "Salut, moi c’est Bibo" + NB + "!",
+                                             "texte": "Je vais installer ton second cerveau pour ton IA. 10 à 20 minutes, tu n’as aucune commande à taper.",
+                                             "boutons": {"Vérifier mon Mac": "diag-en-cours"}}},
+                              "la bienvenue ne parle pas de Claude"),
+                             ({"fini": {"titre": "Ton second cerveau est prêt" + NB + "!", "texte": "Ton IA retient maintenant ce que tu lui apprends.",
+                                        "boutons": {"Ouvrir mon cerveau dans Obsidian": None, "Personnaliser mon cerveau (15 min)": None}}},
+                              "l'écran final ne nomme pas Claude")):
+            h = Horloge()
+            p = FauxPilote(h, change=change)
+            with self.subTest(said=said), self.assertRaises(terrain.Echec) as cm:
+                ta.Parcours(Noms(), p, self.shots, horloge=h, dormir=h.dormir).premier_lancement({})
             self.assertIn(said, str(cm.exception))
 
     def test_quick_reads_stand_for_full_ones_while_bibo_says_the_same(self):

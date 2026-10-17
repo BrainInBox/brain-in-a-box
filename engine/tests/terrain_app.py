@@ -99,7 +99,8 @@ ECRANS = (
     ("connexion", "Dernière étape : ton compte Claude"),
     ("connexion-chatgpt", "Dernière étape : ton compte ChatGPT"),
     ("codex-cle-api", "Codex est connecté avec une clé API"),
-    ("codex-impose", "Codex suit des réglages imposés"),
+    ("codex-entreprise", "Codex est connecté avec un compte ChatGPT d'entreprise"),
+    ("codex-systeme", "Codex suit des réglages de ce "),
     ("installe", "C'est installé"),
     ("fini", "Ton second cerveau est prêt"),
     ("echec", "Oups, ça a coincé"),
@@ -123,8 +124,8 @@ BOUTONS_ECHEC = {"Réessayer", "Copier le rapport", "Revérifier"}
 # The screens each path must never see: Codex's on the path of Claude alone (the app users get keeps it
 # closed), Claude's where Codex is chosen alone; a Codex logged in otherwise than with ChatGPT on neither.
 HORS_PARCOURS = {
-    False: {"choix", "choix-resume", "verif-compte-codex", "connexion-chatgpt", "codex-cle-api", "codex-impose"},
-    True: {"choix-resume", "verif-compte", "connexion-installation", "connexion", "codex-cle-api", "codex-impose"},
+    False: {"choix", "choix-resume", "verif-compte-codex", "connexion-chatgpt", "codex-cle-api", "codex-entreprise", "codex-systeme"},
+    True: {"choix-resume", "verif-compte", "connexion-installation", "connexion", "codex-cle-api", "codex-entreprise", "codex-systeme"},
 }
 # _agents.py's gate open on every system, as the other benches open it (codex_captures.OPEN_GATE).
 PORTE_OUVERTE = 'CODEX_OUVERT = frozenset({"darwin", "linux", "windows"})'
@@ -2600,11 +2601,22 @@ class Parcours:
         vus = self.avancer("fini", DELAI_PREMIER)
         for must in ("bienvenue", "choix", "diagnostic", "etape-codex", "connexion-chatgpt") if self.codex else ("bienvenue", "diagnostic"):
             self.t.check(must in vus, "le parcours n'est pas passé par l'écran « %s »" % must)
+        fini = vus["fini"]
         if self.codex:
             self.t.check("etape-claude" not in vus, "l'app a installé Claude Code alors que seul Codex est choisi")
-            self.t.check(vus["fini"].texte.startswith("Codex retient"), "l'écran final ne nomme pas Codex : « %s »" % vus["fini"].texte)
-        for b in ("Personnaliser mon cerveau (15 min)", "Ouvrir mon cerveau dans Obsidian"):
-            self.t.check(vus["fini"].bouton(b) is not None, "l'écran final n'a pas le bouton « %s »" % b)
+            self.t.check(fini.texte.startswith("Codex retient"), "l'écran final ne nomme pas Codex : « %s »" % fini.texte)
+            # The robot put the ChatGPT login off: Codex is used on that login only (§4.3), so it comes first.
+            self.t.check(fini.bouton("Personnaliser mon cerveau (15 min)") is None,
+                         "l'écran final propose de personnaliser le cerveau avec un Codex qui n'est pas connecté à ChatGPT")
+            self.t.check(any("Sign in with ChatGPT" in x for x in fini.textes), "l'écran final ne dit pas de choisir « Sign in with ChatGPT »")
+            boutons = ("Connecter Codex à mon compte ChatGPT", "Ouvrir mon cerveau dans Obsidian")
+        else:
+            # Claude alone: the words of before Codex (all of them: app/dev/screens.mjs, in the tests).
+            self.t.check("pour Claude" in vus["bienvenue"].texte, "la bienvenue ne parle pas de Claude : « %s »" % vus["bienvenue"].texte)
+            self.t.check(fini.texte.startswith("Claude retient"), "l'écran final ne nomme pas Claude : « %s »" % fini.texte)
+            boutons = ("Personnaliser mon cerveau (15 min)", "Ouvrir mon cerveau dans Obsidian")
+        for b in boutons:
+            self.t.check(fini.bouton(b) is not None, "l'écran final n'a pas le bouton « %s »" % b)
         self.t.details["diagnostic"] = {"bibo": vus["diagnostic"].texte, "textes": vus["diagnostic"].textes[:60]}
         for label, detail in deja_presents(vus["diagnostic"].textes, self.p.neufs):
             self.t.notes.append("déjà sur la VM avant l'app : %s (%s), son installation par l'app n'est pas testée"
