@@ -1838,12 +1838,12 @@ function showLogin(engine = 'claude', rest = [], said = '') {
         h('li', {}, 'Reviens ici : je vois tout seul quand c’est bon.')),
       h('p', { class: 'note' }, 'Tu te connectes directement chez Anthropic : je ne vois jamais ton mot de passe. Il faut un abonnement Claude Pro ou Max.'),
       waiting);
-    switchAi('Pas d’abonnement Claude Pro ou Max ?');
+    switchAi('Pas d’abonnement Claude Pro ou Max ? Change d’IA.');
   } else if (said === 'system') {
     // No login fixes settings of this system another account may change (codex.rs, Windows).
     say('worried', `Codex suit des réglages de ce ${OS.machine} qu’un autre compte peut modifier.`,
       'Le dossier ProgramData\\OpenAI\\Codex n’est pas protégé : je ne me sers pas de Codex tant que c’est le cas. La personne qui gère ce PC peut le protéger.');
-    switchAi('Pas d’autre ordinateur sous la main ?');
+    switchAi('Pour avancer sans Codex, change d’IA.');
   } else {
     // Bibo never logs anyone out (§4.3): an API key or a workspace account stays, and is not used.
     // Codex's login rewrites auth.json with the ChatGPT account: the key goes without a logout.
@@ -1861,7 +1861,7 @@ function showLogin(engine = 'claude', rest = [], said = '') {
         h('li', {}, 'Reviens ici : je vois tout seul quand c’est bon.')),
       h('p', { class: 'note' }, `Tu te connectes directement chez OpenAI : je ne vois jamais ton mot de passe. Il faut ${CHATGPT_PLAN}. Jamais de clé API : elle serait facturée.`),
       waiting);
-    switchAi('Pas d’abonnement ChatGPT personnel ?');
+    switchAi('Pas d’abonnement ChatGPT personnel ? Change d’IA.');
   }
   ui.actions.append(
     button('Plus tard', () => {
@@ -1874,9 +1874,9 @@ function showLogin(engine = 'claude', rest = [], said = '') {
 }
 
 // On an account's screen, where the kit lets Codex be chosen: another AI, for whoever has no such account.
-function switchAi(question) {
+function switchAi(sentence) {
   const change = changeButton(true);
-  if (change) ui.screen.append(h('div', { class: 'upgrade' }, h('p', { class: 'note' }, `${question} Change d’IA.`), change));
+  if (change) ui.screen.append(h('div', { class: 'upgrade' }, h('p', { class: 'note' }, sentence), change));
 }
 
 // One polling loop at a time, until the login, stopPolling() or the next screen. With `onOther`,
