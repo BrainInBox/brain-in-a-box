@@ -8,9 +8,10 @@ preferred for the tasks without tools (the reflection, the night check's review)
 
 Absent: Claude alone, exactly as before the file existed. Only the installers write it,
 through `_agents.py choisir`, and only when someone chose: an install run without a
-choice leaves no file behind. Everything else reads it with lire(). A file it cannot
-trust gives no agent at all, and says why: whoever chose Codex alone excluded Claude, so
-nothing falls back to it; the tasks without tools wait for the install to be run again.
+choice leaves no file behind. Everything else reads it with lire(), the app (Bibo) through
+`_agents.py lire`. A file it cannot trust gives no agent at all, and says why: whoever chose
+Codex alone excluded Claude, so nothing falls back to it; the tasks without tools wait for
+the install to be run again.
 
 Codex is closed on a system until its whole path is green there (docs/proposals/codex.md,
 §1.1): every merged phase reaches users at once through master.zip, so asking for it is
@@ -405,18 +406,25 @@ def main(argv):
     _agents.py ouvert: exit code 0 when Codex can be chosen on this system, 1 otherwise.
     _agents.py codex-home: the CODEX_HOME agents.json records, when it lists Codex and is trusted
     (exit code 1 and nothing printed otherwise).
-    _agents.py pose-hooks: notes that the installer has just wired Codex's hooks (pose_hooks())."""
+    _agents.py pose-hooks: notes that the installer has just wired Codex's hooks (pose_hooks()).
+    _agents.py lire: what lire() says, for the app (Bibo reads the choice here, never on its own): one
+    ASCII JSON line, {"etat": ..., "agents": [...], "prefere": ..., "codex_home": ...}, exit code 0."""
     ap = argparse.ArgumentParser(prog="_agents.py")
     sub = ap.add_subparsers(dest="cmd", required=True)
     c = sub.add_parser("choisir")
     c.add_argument("--agents", default="")
     c.add_argument("--prefere", default="")
     c.add_argument("--pose-par", required=True, choices=POSE_PAR)
-    for name in ("ouvert", "codex-home", "pose-hooks"):
+    for name in ("ouvert", "codex-home", "pose-hooks", "lire"):
         sub.add_parser(name)
     a = ap.parse_args(argv)
     if a.cmd == "ouvert":
         return 0 if ouvert("codex") else 1
+    if a.cmd == "lire":
+        choix, etat = lire()
+        print(json.dumps({"etat": etat, "agents": list(choix.agents), "prefere": choix.prefere,
+                          "codex_home": choix.codex_home}))
+        return 0
     if a.cmd == "codex-home":
         choix, etat = lire()
         if etat != "ok" or "codex" not in choix.agents:
