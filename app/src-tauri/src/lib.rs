@@ -1,3 +1,4 @@
+mod agents;
 mod codex;
 mod config_guard;
 mod detect;
@@ -66,7 +67,7 @@ async fn claude_logged_in() -> bool {
 async fn repair_status(step: String) -> repair::RepairStatus {
     tauri::async_runtime::spawn_blocking(move || repair::availability(&step))
         .await
-        .unwrap_or(repair::RepairStatus { state: repair::RepairState::Disabled, terminal_fallback: false })
+        .unwrap_or(repair::RepairStatus { state: repair::RepairState::Disabled, terminal_fallback: false, engine: None })
 }
 
 /// Exactly what Claude would read, for « Voir exactement ce que j'envoie ».

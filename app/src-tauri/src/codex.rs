@@ -13,8 +13,8 @@
 //! base64url is unreadable (Python drops it), a profile that is not a regular file is unreadable
 //! (Python would wait on a pipe).
 //!
-//! Nothing asks Codex a question for the user yet: the repair does from phase 9 on, the screens
-//! from 10b, once agents.json lists Codex on a system where _agents.py lets it be chosen.
+//! The repair asks it (repair.rs) once agents.json lists Codex on a system where _agents.py lets it
+//! be chosen; the screens look at it from phase 10b on.
 
 use std::collections::{HashSet, VecDeque};
 use std::fs;
@@ -297,7 +297,6 @@ pub struct Setup {
 impl Setup {
     /// The user's: their home and the app's environment, the app's work folder, the list the
     /// install put next to the kit's launcher, this system's layers.
-    #[cfg_attr(not(test), allow(dead_code))] // phase 9 on
     pub fn for_user(codex_home: &Path) -> io::Result<Setup> {
         let home = sys::home();
         Ok(Setup {
@@ -352,6 +351,11 @@ fn which(name: &str, dirs: Vec<PathBuf>) -> Option<PathBuf> {
         .filter(|d| !d.as_os_str().is_empty() && seen.insert(d.clone()))
         .map(|d| d.join(name))
         .find(|p| fs::metadata(p).is_ok_and(|m| !m.is_dir()) && (cfg!(windows) || sys::is_executable(p)))
+}
+
+/// Codex is there to be asked (the stand-in of a test counts): an .exe on Windows.
+pub fn present(setup: &Setup) -> bool {
+    resolve(setup).is_ok()
 }
 
 /// The program and the arguments that come before ours (tests run a stand-in through python).
@@ -1540,7 +1544,6 @@ pub struct Question<'a> {
 
 /// Codex's answer, already parsed, and what it says of the run. No cost: Codex gives none.
 #[derive(Debug, Serialize)]
-#[cfg_attr(not(test), allow(dead_code))]
 pub struct Answer {
     pub output: Map<String, Value>,
     pub version: String,
@@ -1553,10 +1556,23 @@ fn write(path: &Path, text: &str) -> Result<(), CodexError> {
     fs::write(path, text).map_err(|e| fail(Kind::Start, format!("cannot write {}: {e}", file_name(path))))
 }
 
+/// What `ask_heard` tells its caller as the question goes.
+pub enum Heard<'a> {
+    /// Every check passed: Codex is asked now.
+    Asked,
+    /// A line of Codex's stream, before it is read.
+    Line(&'a str),
+}
+
 /// One isolated question to Codex. Blocks until it answers, `limit`, or `cancel` (the caller's
 /// « Arrêter », which this also sets to stop a run that misbehaves).
-#[cfg_attr(not(test), allow(dead_code))] // the repair asks Codex from phase 9 on
+#[cfg(test)]
 pub fn ask(setup: &Setup, q: &Question, limit: Duration, cancel: &AtomicBool) -> Result<Answer, CodexError> {
+    ask_heard(setup, q, limit, cancel, &mut |_| {})
+}
+
+/// `ask`, telling `heard` when the question leaves and what Codex streams back.
+pub fn ask_heard(setup: &Setup, q: &Question, limit: Duration, cancel: &AtomicBool, heard: &mut dyn FnMut(Heard)) -> Result<Answer, CodexError> {
     strict_schema(q.schema, "$")?;
     if strip(q.system).is_empty() {
         return Err(value("Codex refuses empty instructions"));
@@ -1582,14 +1598,17 @@ pub fn ask(setup: &Setup, q: &Question, limit: Duration, cancel: &AtomicBool) ->
     }
     let mut watch = Watch::default();
     let args = exec_argv(&cage, &coupees, &mcp_off, q.model, q.effort);
-    let ran = run(&p, &args, &cage.env, q.prompt, limit, &mut |line| watch.line(line))?;
+    heard(Heard::Asked);
+    let ran = run(&p, &args, &cage.env, q.prompt, limit, &mut |line| {
+        heard(Heard::Line(line));
+        watch.line(line)
+    })?;
     // Stopped while the stream was as required: by the caller.
     let by_caller = ran.stopped && watch.ok();
     watch.conclude(&ran, by_caller, &cage.answer, version)
 }
 
 /// Whether this codex may be asked, without asking it anything: its version, or why not. The probes run as a question would.
-#[cfg_attr(not(test), allow(dead_code))] // the screens look from phase 10 on
 pub fn check(setup: &Setup) -> Result<String, CodexError> {
     let codex = resolve(setup)?;
     let codex_home = codex_home(setup)?;

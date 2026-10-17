@@ -13,6 +13,13 @@
 //! (install.ps1). Claude gets the same closed lists and the same guards; the words
 //! for the machine, its settings and its terminal are Windows' own. On Linux, the Mac's
 //! steps but Apple's tools; the system's packages come before Claude, which cannot help there.
+//!
+//! Codex may be asked instead (codex.rs, the kit's launcher without tools in Rust), when
+//! agents.json lists it (agents.rs): the same dossier on stdin, the same closed lists and
+//! schema, the same checks of its answer. The preferred engine first, then the other one only
+//! when it is listed, after the errors _headless.py falls back on (no tool, no answer outside
+//! the lists, no fallback after a run that did not behave). Without agents.json, Claude alone,
+//! exactly as before. Claude in Terminal (plan B) stays Claude's, and only when Claude is listed.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 #[cfg(windows)]
@@ -30,15 +37,20 @@ use serde::Serialize;
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 
+use crate::agents::{self, Agents, Engine};
 use crate::detect::{self, fmt_version, parse_version, Found, Version};
 use crate::model::{Diagnosis, Status, StepResult};
 use crate::redact::{self, display_text, redact};
-use crate::{config_guard, diagnose, perms, remedies, steps, sys};
+use crate::{codex, config_guard, diagnose, perms, remedies, steps, sys};
 
 /// The first version checked with every flag the analysis relies on.
 pub const MIN_CLAUDE: Version = (2, 1, 296);
 /// Measured by the app, on top of Claude's own turn and budget limits.
 const ANALYZE_LIMIT: Duration = Duration::from_secs(180);
+/// Codex has no budget limit of its own: a shorter time (docs/proposals/codex.md, §2.3).
+const CODEX_LIMIT: Duration = Duration::from_secs(150);
+/// Where Codex's service is, for « Pas d'internet ».
+const CODEX_HOST: &str = "https://chatgpt.com";
 const MAX_PER_STEP: usize = 2;
 const MAX_PER_SESSION: usize = 4;
 /// Times Claude is started per session, the ones its service refused included: a
@@ -130,7 +142,7 @@ struct Entry {
     steps: &'static [&'static str],
     /// The sentence Claude reads in <catalogue>.
     claude: &'static str,
-    /// What the window says. "{étape}" becomes the step's name.
+    /// What the window says. "{étape}" becomes the step's name, "{ia}" the engine that answered.
     user: &'static str,
     /// For a human action: the System Settings pane the window can open.
     pane: Option<&'static str>,
@@ -146,7 +158,11 @@ impl Entry {
     }
 
     fn user_text(&self, step: &str) -> String {
-        local(self.user).replace("{étape}", step_name(step))
+        self.user_text_by(step, Engine::Claude)
+    }
+
+    fn user_text_by(&self, step: &str, engine: Engine) -> String {
+        local(self.user).replace("{étape}", step_name(step)).replace("{ia}", engine.name())
     }
 }
 
@@ -243,7 +259,7 @@ const ACTIONS: &[Entry] = &[
     Entry::new("attendre_mises_a_jour", LINUX_OBSIDIAN, "attendre la fin des mises à jour du système.",
         "Attends que les mises à jour du système soient finies, puis relance."),
     Entry::new("envoyer_rapport", ALL, "envoyer le rapport à l'équipe.",
-        "Copie le rapport et envoie-le à l'équipe : il contient déjà l'analyse de Claude."),
+        "Copie le rapport et envoie-le à l'équipe : il contient déjà l'analyse de {ia}."),
 ];
 
 const CONFIDENCE: &[&str] = &["haute", "moyenne", "basse"];
@@ -316,6 +332,8 @@ pub enum RepairState {
     Exhausted,
     /// This build of the app does not repair.
     Disabled,
+    /// agents.json says nothing the kit can trust: no AI is asked (agents.rs).
+    Agents,
 }
 
 #[derive(Serialize, Clone, Copy, Debug)]
@@ -323,12 +341,15 @@ pub struct RepairStatus {
     pub state: RepairState,
     /// Claude can still help interactively, in Terminal.
     pub terminal_fallback: bool,
+    /// Who would be asked (who is not ready, when none is), named only when Codex is one of the agents.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub engine: Option<Engine>,
 }
 
 impl RepairStatus {
     fn of(state: RepairState) -> Self {
-        let terminal_fallback = !matches!(state, RepairState::Absent | RepairState::Offline);
-        RepairStatus { state, terminal_fallback }
+        let terminal_fallback = !matches!(state, RepairState::Absent | RepairState::Offline | RepairState::Agents);
+        RepairStatus { state, terminal_fallback, engine: None }
     }
 }
 
@@ -339,6 +360,9 @@ pub enum Stage {
     Collecting,
     /// Claude is reading the dossier.
     Asking,
+    /// The same, named, when Codex is one of the agents: the window says who reads.
+    AskingClaude,
+    AskingCodex,
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
@@ -413,6 +437,9 @@ pub struct RepairPlan {
     pub remedies: Vec<PlanLine>,
     /// What the user has to do.
     pub actions: Vec<PlanLine>,
+    /// Who answered, named only when Codex is one of the agents.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub engine: Option<Engine>,
 }
 
 // ── Session state ───────────────────────────────────────────────────────────
@@ -446,6 +473,10 @@ struct Round {
     applied: bool,
     outcome: Option<String>,
     message: Option<String>,
+    /// Who answered (or failed first), named only when Codex is one of the agents.
+    engine: Option<Engine>,
+    /// What the engines that could not answer said, for the report.
+    failures: Vec<String>,
 }
 
 impl Round {
@@ -478,6 +509,21 @@ fn list_or_none(ids: &[&str]) -> String {
     }
 }
 
+/// « Claude », « Codex » or « Codex et Claude »: who answered the rounds of the report, in the
+/// order they did. Claude when none is named (Claude alone, as before the choice).
+fn engines_said(rounds: &HashMap<String, Vec<Round>>) -> String {
+    let mut seen: Vec<Engine> = Vec::new();
+    for e in REPAIRABLE.iter().filter_map(|s| rounds.get(*s)).flatten().filter_map(|r| r.engine) {
+        if !seen.contains(&e) {
+            seen.push(e);
+        }
+    }
+    match seen.as_slice() {
+        [] => Engine::Claude.name().to_string(),
+        names => names.iter().map(|e| e.name()).collect::<Vec<_>>().join(" et "),
+    }
+}
+
 struct CachedFacts {
     step: String,
     at: Instant,
@@ -491,6 +537,8 @@ struct Session {
     facts: Mutex<Option<CachedFacts>>,
     /// Claude once started outside the expected setup: no analysis for the rest of the session.
     unsupported: AtomicBool,
+    /// The same for Codex.
+    codex_unsupported: AtomicBool,
     /// Steps whose repair was undone (guard, regression): Claude is not asked again.
     closed: Mutex<HashSet<String>>,
     /// See MAX_LAUNCHES.
@@ -518,7 +566,13 @@ struct Ctx<'a> {
     /// Where Claude runs, outside the home folder: Claude Code writes its working
     /// directory into the prompt it sends, and /Users/<name> has no business there.
     work: PathBuf,
-    claude: PathBuf,
+    claude: Option<PathBuf>,
+    /// Where and how Codex is asked (codex.rs), when agents.json lists it.
+    codex: Option<codex::Setup>,
+    /// The engines agents.json lists, in the order they are asked, as availability found them.
+    lineup: Vec<(Engine, RepairState)>,
+    /// Codex is one of the agents: the journal, the report and the window name the engine.
+    named: bool,
     path: String,
     user: String,
     limit: Duration,
@@ -677,8 +731,14 @@ impl Session {
                 if let (Some(c), Some(conf)) = (r.cause_id, r.confiance) {
                     out.push(format!("  Diagnostic : {c}, confiance {conf} ; à faire : {}", list_or_none(&r.actions)));
                 }
+                if let Some(e) = r.engine {
+                    out.push(format!("  Moteur : {}", e.id()));
+                }
+                if !r.failures.is_empty() {
+                    out.push(format!("  N'ont pas pu répondre : {}", r.failures.join(" ; ")));
+                }
                 if let Some(said) = &r.said {
-                    out.push(format!("  Claude dit : « {said} »"));
+                    out.push(format!("  {} dit : « {said} »", r.engine.unwrap_or(Engine::Claude).name()));
                 }
                 if r.suspect {
                     out.push("  Journal jugé suspect : aucun remède proposé.".into());
@@ -688,7 +748,7 @@ impl Session {
         if out.is_empty() {
             return String::new();
         }
-        out.insert(0, "Réparation avec Claude :".into());
+        out.insert(0, format!("Réparation avec {} :", engines_said(&rounds)));
         redact(&out.join("\n"), known)
     }
 }
@@ -712,22 +772,83 @@ struct Used {
     unsupported: bool,
 }
 
-pub fn availability(step: &str) -> RepairStatus {
-    let Some(claude) = detect::claude_bin().filter(|_| REPAIRABLE.contains(&step)) else {
-        return RepairStatus::of(RepairState::Absent);
-    };
-    if !cfg!(feature = "repair-in-app") {
-        return RepairStatus { state: RepairState::Disabled, terminal_fallback: true };
+impl Used {
+    /// Two analyses for this step, four since the app started, or the starts spent.
+    fn exhausted(&self) -> bool {
+        self.step >= MAX_PER_STEP || self.session >= MAX_PER_SESSION || self.launched >= MAX_LAUNCHES
     }
+}
+
+/// What the window can offer under a failed step: the first engine agents.json lists that may be
+/// asked, else why the preferred one may not.
+pub fn availability(step: &str) -> RepairStatus {
+    lineup(&agents::read(&sys::home()), step, true).status()
+}
+
+/// Each engine agents.json lists, in the order they are asked, and what was found of it.
+struct Lineup {
+    states: Vec<(Engine, RepairState)>,
+    named: bool,
+    claude: Option<PathBuf>,
+    codex: Option<codex::Setup>,
+}
+
+impl Lineup {
+    fn status(&self) -> RepairStatus {
+        let Some(&first) = self.states.first() else { return RepairStatus::of(RepairState::Agents) };
+        let (engine, state) = self.states.iter().copied().find(|(_, s)| *s == RepairState::Ready).unwrap_or(first);
+        // Claude in Terminal is Claude's own: only when Claude is one of the agents.
+        let claude = self.states.iter().find(|(e, _)| *e == Engine::Claude);
+        RepairStatus { state, terminal_fallback: claude.is_some_and(|(_, s)| RepairStatus::of(*s).terminal_fallback), engine: self.named.then_some(engine) }
+    }
+}
+
+/// `deep`: Codex's checks before a question run now (the window's look). Otherwise the question runs
+/// them itself (codex::ask_heard), and only what the app decides on is looked at here.
+fn lineup(agents: &Agents, step: &str, deep: bool) -> Lineup {
+    let repairable = REPAIRABLE.contains(&step);
+    let mut l = Lineup { states: Vec::new(), named: agents.named(), claude: None, codex: None };
+    for &engine in &agents.order {
+        let state = match engine {
+            Engine::Claude => {
+                l.claude = detect::claude_bin().filter(|_| repairable);
+                l.claude.as_deref().map_or(RepairState::Absent, |c| claude_state(c, step))
+            }
+            Engine::Codex => {
+                l.codex = agents.codex_home.as_deref().and_then(|h| codex::Setup::for_user(h).ok()).filter(|s| repairable && codex::present(s));
+                l.codex.as_ref().map_or(RepairState::Absent, |s| codex_state(s, step, deep))
+            }
+        };
+        l.states.push((engine, state));
+    }
+    l
+}
+
+fn used(step: &str, unsupported: &AtomicBool) -> Used {
     let (mine, all) = SESSION.used(step);
     let mine = if SESSION.is_closed(step) { MAX_PER_STEP } else { mine };
-    let used = Used {
-        step: mine,
-        session: all,
-        launched: SESSION.launches.load(Ordering::SeqCst),
-        unsupported: SESSION.unsupported.load(Ordering::SeqCst),
-    };
-    RepairStatus::of(decide(&probe(&claude), used))
+    Used { step: mine, session: all, launched: SESSION.launches.load(Ordering::SeqCst), unsupported: unsupported.load(Ordering::SeqCst) }
+}
+
+fn claude_state(claude: &Path, step: &str) -> RepairState {
+    if !cfg!(feature = "repair-in-app") {
+        return RepairState::Disabled;
+    }
+    let used = used(step, &SESSION.unsupported);
+    decide(&probe(claude), used)
+}
+
+fn codex_state(setup: &codex::Setup, step: &str, deep: bool) -> RepairState {
+    if !cfg!(feature = "repair-in-app") {
+        return RepairState::Disabled;
+    }
+    let used = used(step, &SESSION.codex_unsupported);
+    let (check, online) = thread::scope(|s| {
+        let online = s.spawn(|| diagnose::answers(CODEX_HOST));
+        let check = if deep { codex::check(setup).map(|_| ()) } else { Ok(()) };
+        (check, online.join().unwrap_or(false))
+    });
+    decide_codex(&check, online, used)
 }
 
 fn probe(claude: &Path) -> Facts {
@@ -767,7 +888,7 @@ fn decide(f: &Facts, used: Used) -> RepairState {
         RepairState::Absent
     } else if f.claude.version().is_none_or(|v| v < MIN_CLAUDE) || !f.capable || used.unsupported {
         RepairState::Unsupported
-    } else if used.step >= MAX_PER_STEP || used.session >= MAX_PER_SESSION || used.launched >= MAX_LAUNCHES {
+    } else if used.exhausted() {
         RepairState::Exhausted
     } else if !f.online {
         RepairState::Offline
@@ -778,6 +899,23 @@ fn decide(f: &Facts, used: Used) -> RepairState {
             Some("claude.ai") => RepairState::Ready,
             Some(_) => RepairState::Unsupported,
         }
+    }
+}
+
+/// The same for Codex, from its checks before a question (codex::check): not there, paused, or
+/// logged in another way than with a ChatGPT account of a personal plan.
+fn decide_codex(check: &Result<(), codex::CodexError>, online: bool, used: Used) -> RepairState {
+    use codex::{Kind, Reason};
+    match check.as_ref().err().map(|e| (e.kind, e.reason)) {
+        Some((Kind::Start, _)) => RepairState::Absent,
+        // An API key would be billed: only a subscription is used.
+        Some((Kind::Auth, Some(Reason::Billed))) => RepairState::Unsupported,
+        Some((kind, _)) if kind != Kind::Auth => RepairState::Unsupported,
+        _ if used.unsupported => RepairState::Unsupported,
+        _ if used.exhausted() => RepairState::Exhausted,
+        _ if !online => RepairState::Offline,
+        Some(_) => RepairState::NotLoggedIn,
+        None => RepairState::Ready,
     }
 }
 
@@ -794,12 +932,12 @@ pub fn analyze(step: &str, on_progress: &mut dyn FnMut(Stage)) -> Result<RepairP
     let _one_at_a_time = steps::exclusive().map_err(|_| RepairError::Busy)?;
     // Only once the analysis is ours: a second click must not undo the first one's « Arrêter ».
     CANCEL.store(false, Ordering::SeqCst);
-    let status = availability(step);
+    let home = sys::home();
+    let lineup = lineup(&agents::read(&home), step, false);
+    let status = lineup.status();
     if status.state != RepairState::Ready {
         return Err(RepairError::Unavailable { state: status.state });
     }
-    let claude = detect::claude_bin().ok_or(RepairError::Unavailable { state: RepairState::Absent })?;
-    let home = sys::home();
     let ctx = Ctx {
         store: home.join(STORE),
         // The user's own temporary folder (/var/folders/…), named by no one. On Windows a
@@ -807,7 +945,10 @@ pub fn analyze(step: &str, on_progress: &mut dyn FnMut(Stage)) -> Result<RepairP
         work: sys::work_root().map_err(internal)?,
         user: login_name(&home),
         home,
-        claude,
+        claude: lineup.claude,
+        codex: lineup.codex,
+        lineup: lineup.states,
+        named: lineup.named,
         path: sys::tool_path().to_string_lossy().into_owned(),
         limit: ANALYZE_LIMIT,
         cancel: &CANCEL,
@@ -830,7 +971,8 @@ pub fn report() -> String {
 #[derive(Default)]
 struct Run {
     id: String,
-    launched: bool,
+    /// An engine was asked, and what it said may have cost: the analysis counts.
+    counted: bool,
     dossier_sha256: Option<String>,
     claude_version: Option<String>,
     /// Why the start-up check failed.
@@ -838,6 +980,12 @@ struct Run {
     num_turns: Option<u64>,
     cost_usd: Option<f64>,
     secs: f64,
+    /// Named runs only (Codex is one of the agents): who answered, or failed first.
+    engine: Option<Engine>,
+    codex_version: Option<String>,
+    tokens: Option<Map<String, Value>>,
+    /// Each engine that could not answer, and why ("codex: quota: …").
+    failures: Vec<String>,
 }
 
 struct Verdict {
@@ -848,6 +996,82 @@ struct Verdict {
     said: String,
     explication: Option<String>,
     suspect: bool,
+    /// Who answered, named only when Codex is one of the agents.
+    engine: Option<Engine>,
+}
+
+/// An engine that could not answer: its kind of error as _headless.py names it (its fallback rule),
+/// what the window gets, and what the journal does.
+struct Failed {
+    engine: Engine,
+    kind: &'static str,
+    error: RepairError,
+    detail: String,
+    /// It was asked, not only found unready before.
+    asked: bool,
+}
+
+impl Failed {
+    /// For the journal and the report: "codex: quota: You've hit your usage limit".
+    fn said(&self) -> String {
+        if self.detail.is_empty() {
+            format!("{}: {}", self.engine.id(), self.kind)
+        } else {
+            format!("{}: {}: {}", self.engine.id(), self.kind, self.detail)
+        }
+    }
+}
+
+/// The errors after which _headless.py asks the other engine listed: the first one cannot answer
+/// now. After a timeout, only Claude (Codex has no budget limit); never after a run that did not
+/// behave (init), an answer off the schema (invalid), or « Arrêter ».
+fn falls_back(kind: &str, next: Engine) -> bool {
+    ["start", "unsupported", "auth", "quota", "api"].contains(&kind) || (kind == "timeout" && next == Engine::Claude)
+}
+
+/// Why an engine availability found unready cannot be asked, as _headless.py would say it.
+fn unready_kind(state: RepairState) -> &'static str {
+    match state {
+        RepairState::Absent => "start",
+        RepairState::NotLoggedIn => "auth",
+        RepairState::Offline => "api",
+        _ => "unsupported",
+    }
+}
+
+fn claude_kind(e: &RepairError) -> &'static str {
+    match e {
+        RepairError::Quota => "quota",
+        RepairError::Auth | RepairError::Unavailable { state: RepairState::NotLoggedIn } => "auth",
+        RepairError::Api => "api",
+        RepairError::Timeout => "timeout",
+        RepairError::InitInvalid => "init",
+        RepairError::InvalidVerdict => "invalid",
+        RepairError::Cancelled => "cancelled",
+        RepairError::Unavailable { state } => unready_kind(*state),
+        _ => "internal",
+    }
+}
+
+/// Codex's refusal for the window, and its kind for the fallback. Its checks before the question
+/// say it as availability does: not there, paused (or billed), not logged in.
+fn codex_failed(e: &codex::CodexError) -> (&'static str, RepairError) {
+    use codex::{Kind, Reason};
+    let unavailable = |state| RepairError::Unavailable { state };
+    match (e.kind, e.reason) {
+        (Kind::Start, _) => ("start", unavailable(RepairState::Absent)),
+        (Kind::Unsupported, _) => ("unsupported", unavailable(RepairState::Unsupported)),
+        (Kind::Auth, Some(Reason::Billed)) => ("auth", unavailable(RepairState::Unsupported)),
+        (Kind::Auth, Some(_)) => ("auth", unavailable(RepairState::NotLoggedIn)),
+        (Kind::Auth, None) => ("auth", RepairError::Auth),
+        (Kind::Quota, _) => ("quota", RepairError::Quota),
+        (Kind::Api, _) => ("api", RepairError::Api),
+        (Kind::Timeout, _) => ("timeout", RepairError::Timeout),
+        (Kind::Init, _) => ("init", RepairError::InitInvalid),
+        (Kind::Invalid, _) => ("invalid", RepairError::InvalidVerdict),
+        (Kind::Cancelled, _) => ("cancelled", RepairError::Cancelled),
+        (Kind::Value, _) => ("value", internal(&e.detail)),
+    }
 }
 
 impl Session {
@@ -865,11 +1089,13 @@ impl Session {
                 actions: v.actions.iter().map(|e| e.id).collect(),
                 said: Some(v.said.clone()),
                 suspect: v.suspect,
+                engine: run.engine,
+                failures: run.failures.clone(),
                 ..Round::default()
             }),
             // A refusal that cost nothing gives the analysis back; MAX_LAUNCHES still counts it.
-            Err(e) if !run.launched || (e.free() && !run.cost_usd.is_some_and(|c| c > 0.0)) => None,
-            Err(e) => Some(Round { id: run.id.clone(), error: Some(e.clone()), ..Round::default() }),
+            Err(_) if !run.counted => None,
+            Err(e) => Some(Round { id: run.id.clone(), error: Some(e.clone()), engine: run.engine, failures: run.failures.clone(), ..Round::default() }),
         };
         self.settle(step, n, round);
         if !run.id.is_empty() {
@@ -897,37 +1123,108 @@ impl Session {
         }
 
         let (id, dir) = new_session(&ctx.store, step).map_err(internal)?;
-        let work = WorkDir::new(&ctx.work, &id).map_err(internal)?;
+        // Claude's folder, when Claude may be asked: Codex makes its own (codex.rs, Cage).
+        let work = match ctx.lineup.contains(&(Engine::Claude, RepairState::Ready)) {
+            true => Some(WorkDir::new(&ctx.work, &id).map_err(internal)?),
+            false => None,
+        };
         run.id = id;
         write_private(&dir.join("dossier.txt"), &dossier.text).map_err(internal)?;
         run.dossier_sha256 = sha256_hex(&dossier.text);
-        let mut stream = private_file(&dir.join("stream.jsonl")).ok();
 
+        let mut failed: Vec<Failed> = Vec::new();
+        for &(engine, state) in &ctx.lineup {
+            if let Some(first) = failed.first() {
+                if !falls_back(first.kind, engine) {
+                    break;
+                }
+            }
+            if state != RepairState::Ready {
+                let detail = serde_json::to_value(state).ok().and_then(|v| v.as_str().map(String::from)).unwrap_or_default();
+                failed.push(Failed { engine, kind: unready_kind(state), error: RepairError::Unavailable { state }, detail, asked: false });
+                continue;
+            }
+            // « Arrêter » between two engines stops the second one before it starts.
+            if failed.iter().any(|f| f.asked) && ctx.cancel.load(Ordering::SeqCst) {
+                break;
+            }
+            let answer = match (engine, ctx.claude.as_deref(), work.as_ref(), ctx.codex.as_ref()) {
+                (Engine::Claude, Some(claude), Some(work), _) => self.ask_claude(ctx, claude, work, step, n, &dossier.text, &dir, &known, run, on_progress),
+                (Engine::Codex, _, _, Some(setup)) => self.ask_codex(ctx, setup, step, n, &dossier.text, &dir, &known, run, on_progress),
+                _ => Err(Failed { engine, kind: "start", error: RepairError::Unavailable { state: RepairState::Absent }, detail: String::new(), asked: false }),
+            };
+            match answer {
+                Ok(out) => {
+                    run.engine = ctx.named.then_some(engine);
+                    run.failures = failed.iter().map(Failed::said).collect();
+                    // Answered: what it answered counts, whatever the checks below make of it.
+                    run.counted = true;
+                    let mut verdict = validate(step, &out, &self.applied(step), dossier.log_suspect)?;
+                    verdict.engine = run.engine;
+                    let kept = json!({
+                        "cause_id": verdict.cause.id,
+                        "confiance": verdict.confiance,
+                        "remedes": verdict.remedies.iter().map(|e| e.id).collect::<Vec<_>>(),
+                        "actions_humaines": verdict.actions.iter().map(|e| e.id).collect::<Vec<_>>(),
+                        "explication": verdict.said,
+                        "affichee": verdict.explication,
+                        "suspect": verdict.suspect,
+                    });
+                    let _ = write_private(&dir.join("verdict.json"), &redact::redact_lines(&kept.to_string(), &known, STREAM_LINE));
+                    return Ok(verdict);
+                }
+                Err(f) => failed.push(f),
+            }
+        }
+        // None could answer: the first one asked says why, as _headless.py says the preferred's.
+        let first = failed.iter().position(|f| f.asked).unwrap_or(0);
+        run.engine = failed.get(first).map(|f| f.engine).filter(|_| ctx.named);
+        run.failures = failed.iter().enumerate().filter(|(i, _)| *i != first).map(|(_, f)| f.said()).collect();
+        Err(failed.into_iter().nth(first).map_or(RepairError::Cancelled, |f| f.error))
+    }
+
+    /// Claude Code, with the reviewed command (argv) and the dossier on stdin: its answer, or why none.
+    #[allow(clippy::too_many_arguments)]
+    fn ask_claude(
+        &self,
+        ctx: &Ctx,
+        claude: &Path,
+        work: &WorkDir,
+        step: &str,
+        n: usize,
+        dossier: &str,
+        dir: &Path,
+        known: &[&str],
+        run: &mut Run,
+        on_progress: &mut dyn FnMut(Stage),
+    ) -> Result<Value, Failed> {
+        let mut stream = private_file(&dir.join("stream.jsonl")).ok();
         let args = argv(step, n);
         let args: Vec<&str> = args.iter().map(String::as_str).collect();
         let env = child_env(&ctx.home, &ctx.user, &ctx.path, &work.tmp());
         let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (*k, v.as_str())).collect();
-        let iso = sys::Isolated { env: &env, cwd: &work.0, stdin: &dossier.text, limit: ctx.limit, cancel: ctx.cancel };
+        let iso = sys::Isolated { env: &env, cwd: &work.0, stdin: dossier, limit: ctx.limit, cancel: ctx.cancel };
 
-        on_progress(Stage::Asking);
-        run.launched = true;
+        on_progress(if ctx.named { Stage::AskingClaude } else { Stage::Asking });
         self.launches.fetch_add(1, Ordering::SeqCst);
         let started = Instant::now();
         let mut watch = Watch::default();
-        let code = sys::run_isolated(&ctx.claude, &args, &iso, &mut |line| {
+        let code = sys::run_isolated(claude, &args, &iso, &mut |line| {
             if let Some(f) = stream.as_mut() {
-                let _ = writeln!(f, "{}", redact::redact_lines(&line, &known, STREAM_LINE));
+                let _ = writeln!(f, "{}", redact::redact_lines(&line, known, STREAM_LINE));
             }
             if !watch.line(&line) {
                 ctx.cancel.store(true, Ordering::SeqCst);
             }
         });
-        run.secs = started.elapsed().as_secs_f64();
+        run.secs += started.elapsed().as_secs_f64();
         run.claude_version = watch.version();
-        run.init_error = watch.init.as_ref().and_then(|i| i.as_ref().err()).map(|e| redact(e, &known));
+        run.init_error = watch.init.as_ref().and_then(|i| i.as_ref().err()).map(|e| redact(e, known));
+        let mut cost = None;
         if let Some(r) = &watch.result {
             run.num_turns = r.get("num_turns").and_then(Value::as_u64);
-            run.cost_usd = r.get("total_cost_usd").and_then(Value::as_f64);
+            cost = r.get("total_cost_usd").and_then(Value::as_f64);
+            run.cost_usd = cost;
         }
 
         let timed_out = code == -1 && started.elapsed() >= ctx.limit;
@@ -935,18 +1232,63 @@ impl Session {
         if answer == Err(RepairError::InitInvalid) {
             self.unsupported.store(true, Ordering::SeqCst);
         }
-        let verdict = validate(step, &answer?, &self.applied(step), dossier.log_suspect)?;
-        let kept = json!({
-            "cause_id": verdict.cause.id,
-            "confiance": verdict.confiance,
-            "remedes": verdict.remedies.iter().map(|e| e.id).collect::<Vec<_>>(),
-            "actions_humaines": verdict.actions.iter().map(|e| e.id).collect::<Vec<_>>(),
-            "explication": verdict.said,
-            "affichee": verdict.explication,
-            "suspect": verdict.suspect,
+        answer.map_err(|error| {
+            // A refusal of Claude's service that cost nothing gives the analysis back.
+            run.counted |= !error.free() || cost.is_some_and(|c| c > 0.0);
+            Failed { engine: Engine::Claude, kind: claude_kind(&error), detail: run.init_error.clone().unwrap_or_default(), error, asked: true }
+        })
+    }
+
+    /// Codex (codex.rs): its checks, then the same dossier, schema and instructions as Claude's.
+    #[allow(clippy::too_many_arguments)]
+    fn ask_codex(
+        &self,
+        ctx: &Ctx,
+        setup: &codex::Setup,
+        step: &str,
+        n: usize,
+        dossier: &str,
+        dir: &Path,
+        known: &[&str],
+        run: &mut Run,
+        on_progress: &mut dyn FnMut(Stage),
+    ) -> Result<Value, Failed> {
+        let schema = schema(step);
+        let q = codex::Question { prompt: dossier, schema: &schema, system: SYSTEM_PROMPT, model: None, effort: Some(effort(n)) };
+        on_progress(Stage::AskingCodex);
+        let mut stream: Option<fs::File> = None;
+        let mut asked = false;
+        let started = Instant::now();
+        let answer = codex::ask_heard(setup, &q, ctx.limit.min(CODEX_LIMIT), ctx.cancel, &mut |heard| match heard {
+            codex::Heard::Asked => {
+                asked = true;
+                self.launches.fetch_add(1, Ordering::SeqCst);
+                stream = private_file(&dir.join("codex-stream.jsonl")).ok();
+            }
+            codex::Heard::Line(line) => {
+                if let Some(f) = stream.as_mut() {
+                    let _ = writeln!(f, "{}", redact::redact_lines(line, known, STREAM_LINE));
+                }
+            }
         });
-        let _ = write_private(&dir.join("verdict.json"), &redact::redact_lines(&kept.to_string(), &known, STREAM_LINE));
-        Ok(verdict)
+        run.secs += started.elapsed().as_secs_f64();
+        match answer {
+            Ok(a) => {
+                run.codex_version = Some(a.version);
+                run.num_turns = Some(u64::from(a.num_turns));
+                run.tokens = Some(a.tokens);
+                Ok(Value::Object(a.output))
+            }
+            Err(e) => {
+                let (kind, error) = codex_failed(&e);
+                if error == RepairError::InitInvalid {
+                    self.codex_unsupported.store(true, Ordering::SeqCst);
+                }
+                // Codex gives no cost: a refusal of its service is taken as free, as Claude's that cost nothing.
+                run.counted |= asked && !error.free();
+                Err(Failed { engine: Engine::Codex, kind, error, detail: redact(&e.detail, known), asked })
+            }
+        }
     }
 }
 
@@ -974,8 +1316,9 @@ impl Drop for WorkDir {
 }
 
 fn plan(step: &str, n: usize, id: &str, v: &Verdict) -> RepairPlan {
+    let by = v.engine.unwrap_or(Engine::Claude);
     // A pane this system has no page for gets no button.
-    let line = |e: &&'static Entry| PlanLine { id: e.id, text: e.user_text(step), pane: e.pane.filter(|p| settings_url(p).is_some()) };
+    let line = |e: &&'static Entry| PlanLine { id: e.id, text: e.user_text_by(step, by), pane: e.pane.filter(|p| settings_url(p).is_some()) };
     RepairPlan {
         plan_id: id.to_string(),
         step: step.to_string(),
@@ -988,6 +1331,7 @@ fn plan(step: &str, n: usize, id: &str, v: &Verdict) -> RepairPlan {
         suspect: v.suspect,
         remedies: v.remedies.iter().map(line).collect(),
         actions: v.actions.iter().map(line).collect(),
+        engine: v.engine,
     }
 }
 
@@ -1418,6 +1762,7 @@ const TERMINAL_ENV: &[&str] = &[
 pub fn open_terminal(step: &str) -> Result<(), String> {
     let claude = detect::claude_bin().ok_or("Claude Code n'est pas installé.")?;
     let home = sys::home();
+    claude_chosen(&agents::read(&home))?;
     let dir = SESSION.prepare_terminal(&home, &home.join(STORE), step, collect_facts)?;
     steps::open_in_terminal("reparer-avec-claude", &terminal_script(&claude, &sys::tool_path().to_string_lossy(), &dir, step))
 }
@@ -1429,6 +1774,7 @@ pub fn open_terminal(step: &str) -> Result<(), String> {
 pub fn open_terminal(step: &str) -> Result<(), String> {
     let claude = detect::claude_bin().ok_or("Claude Code n'est pas installé.")?;
     let home = sys::home();
+    claude_chosen(&agents::read(&home))?;
     let dir = SESSION.prepare_terminal(&home, &home.join(STORE), step, collect_facts)?;
     let settings = dir.join(NO_HOOKS_FILE);
     let fail = |e: io::Error| format!("Je n'ai pas pu préparer le dossier pour Claude ({e}).");
@@ -1439,6 +1785,16 @@ pub fn open_terminal(step: &str) -> Result<(), String> {
         TERMINAL_ENV.iter().filter_map(|k| std::env::var_os(k).map(|v| (k.to_string(), v))).collect();
     env.push(("PATH".into(), sys::tool_path()));
     sys::open_console(&file, Some(&env))
+}
+
+/// Claude in Terminal reads the dossier too: only for whom Claude is one of the agents. Whoever chose
+/// Codex alone excluded Claude, and a file the kit cannot trust names no one.
+fn claude_chosen(agents: &Agents) -> Result<(), String> {
+    if agents.lists(Engine::Claude) {
+        Ok(())
+    } else {
+        Err("Tu n'as pas choisi de travailler avec Claude : je ne lui envoie rien.".into())
+    }
 }
 
 impl Session {
@@ -1940,10 +2296,19 @@ fn proxy_on(scutil: &str) -> bool {
 
 // ── Running Claude ──────────────────────────────────────────────────────────
 
+/// The second round thinks harder.
+fn effort(round: usize) -> &'static str {
+    if round > 1 {
+        "high"
+    } else {
+        "medium"
+    }
+}
+
 /// No shell: each element is one argument. The dossier goes through stdin, after
 /// every option (a variadic option would swallow a prompt placed last).
 fn argv(step: &str, round: usize) -> Vec<String> {
-    let effort = if round > 1 { "high" } else { "medium" };
+    let effort = effort(round);
     let mut a: Vec<String> = [
         "-p", "--restricted", "--safe-mode", "--tools", "",
         "--disallowedTools", "Bash", "Edit", "Write", "NotebookEdit", "WebFetch", "WebSearch", "Agent", "Task", "Skill",
@@ -2202,7 +2567,7 @@ fn validate(step: &str, out: &Value, applied: &[Vec<&'static str>], log_suspect:
         remedies.clear();
     }
     let said = redact(said, &[]);
-    Ok(Verdict { cause, confiance, remedies, actions, explication: display_text(&said), said, suspect })
+    Ok(Verdict { cause, confiance, remedies, actions, explication: display_text(&said), said, suspect, engine: None })
 }
 
 /// At most two distinct ids, all from the step's list.
@@ -2308,6 +2673,13 @@ fn journal_entry(step: &str, n: usize, run: &Run, res: &Result<Verdict, RepairEr
         "num_turns": run.num_turns,
         "total_cost_usd": run.cost_usd,
     });
+    // Named only when Codex is one of the agents: with Claude alone, the entry is the one it always was.
+    if let Some(engine) = run.engine {
+        e["moteur"] = json!(engine.id());
+        e["codex_version"] = json!(run.codex_version);
+        e["tokens"] = json!(run.tokens);
+        e["echecs"] = json!(run.failures);
+    }
     match res {
         Ok(v) => {
             e["cause_id"] = json!(v.cause.id);
@@ -2721,8 +3093,10 @@ mod tests {
         // Linux has no settings page to open: the sentence alone.
         assert_eq!(p.actions[0].pane, if cfg!(target_os = "linux") { None } else { Some("storage") });
         assert_eq!(p.actions[1].pane, None);
+        assert_eq!(p.actions[1].text, "Copie le rapport et envoie-le à l'équipe : il contient déjà l'analyse de Claude.");
         let json = serde_json::to_value(&p).unwrap();
         assert_eq!(json["plan_id"], "20261013-184455-brain");
+        assert!(json.get("engine").is_none(), "Claude alone: the plan the window always got");
         assert_eq!(json["actions"][0]["text"], format!("Libère au moins 5 Go sur ton {}.", sys::MACHINE));
         #[cfg(target_os = "macos")]
         {
@@ -2735,7 +3109,10 @@ mod tests {
         for step in REPAIRABLE {
             assert!(!catalogue(step).contains('{'), "{step}");
             for e in [CAUSES, REMEDIES, ACTIONS].iter().flat_map(|l| l.iter()) {
-                assert!(!e.user_text(step).contains("{machine}") && !e.user_text(step).contains("{terminal}"), "{}", e.id);
+                for by in [Engine::Claude, Engine::Codex] {
+                    let text = e.user_text_by(step, by);
+                    assert!(!text.contains("{machine}") && !text.contains("{terminal}") && !text.contains("{ia}"), "{}", e.id);
+                }
             }
         }
         assert!(SYSTEM_PROMPT.contains(&format!("sur le {} d'une personne", sys::MACHINE)));
@@ -3032,7 +3409,10 @@ mod tests {
         fn ctx<'a>(&self, cancel: &'a AtomicBool, limit: Duration) -> Ctx<'a> {
             let path = format!("{}:{}", self.bin.display(), sys::tool_path().to_string_lossy());
             Ctx {
-                claude: path.split(':').map(|d| Path::new(d).join("claude")).find(|p| sys::is_executable(p)).unwrap(),
+                claude: path.split(':').map(|d| Path::new(d).join("claude")).find(|p| sys::is_executable(p)),
+                codex: None,
+                lineup: vec![(Engine::Claude, RepairState::Ready)],
+                named: false,
                 store: self.home.join(".brain-in-a-box/reparations"),
                 work: self.work.clone(),
                 home: self.home.clone(),
@@ -3066,7 +3446,6 @@ mod tests {
     }
 
     /// A session where the brain step just failed, its log holding the canary.
-    #[cfg(unix)]
     fn failed_brain() -> Session {
         let s = Session::default();
         s.trace_start("brain");
@@ -3157,6 +3536,18 @@ mod tests {
         assert_eq!(entry["claude_code_version"], "2.1.296");
         assert_eq!(entry["dossier_sha256"].as_str().map(str::len), Some(64));
         assert_eq!(s.used("brain"), (1, 1));
+        // Claude alone names no engine: the journal, the plan and the report as before the choice.
+        let mut keys: Vec<&str> = entry.as_object().unwrap().keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            [
+                "actions_humaines", "app", "cause_id", "claude_code_version", "confiance", "dossier_sha256", "duree_s", "essai", "etape",
+                "init_refuse", "num_turns", "remedes_proposes", "session", "suspect", "total_cost_usd", "ts"
+            ]
+        );
+        assert_eq!(plan.engine, None);
+        assert!(!s.report(&[]).contains("Moteur"));
 
         // Claude ran outside the home folder (its prompt carries its working folder),
         // and that folder is gone.
@@ -3908,7 +4299,10 @@ mod tests {
             work: dir.clone(),
             user: login_name(&home),
             home,
-            claude,
+            claude: Some(claude),
+            codex: None,
+            lineup: vec![(Engine::Claude, RepairState::Ready)],
+            named: false,
             path: sys::tool_path().to_string_lossy().into_owned(),
             limit: ANALYZE_LIMIT,
             cancel: &cancel,
@@ -3951,5 +4345,454 @@ mod tests {
         for secret in ["ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "GITHUB_TOKEN", "VOYAGE_API_KEY", "CLAUDE_CODE_USE_BEDROCK"] {
             assert!(!TERMINAL_ENV.iter().any(|k| k.eq_ignore_ascii_case(secret)), "{secret}");
         }
+    }
+
+    // ── Codex, when agents.json lists it ────────────────────────────────────
+
+    fn repo() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..")
+    }
+
+    fn base64url(bytes: &[u8]) -> String {
+        const A: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+        let mut out = String::new();
+        for chunk in bytes.chunks(3) {
+            let n = chunk.iter().enumerate().fold(0u32, |n, (i, b)| n | (u32::from(*b) << (16 - 8 * i)));
+            for i in 0..=chunk.len() {
+                out.push(A[((n >> (18 - 6 * i)) & 63) as usize] as char);
+            }
+        }
+        out
+    }
+
+    const PAUSED: &str = "brand_new_tool                           stable             true";
+
+    /// Codex as engine/tests/fake_codex.py plays it, in `home`: logged in with a ChatGPT account of a
+    /// personal plan (fake tokens), the kit's list of features, no administrator's layer. `fake`: its
+    /// settings ($HOME/.codex-fake), the answer first.
+    fn plant_codex(home: &Path, answer: &Value, fake: &[(&str, &str)]) {
+        let codex_home = home.join(".codex");
+        let settings = home.join(".codex-fake");
+        fs::create_dir_all(&codex_home).unwrap();
+        fs::create_dir_all(&settings).unwrap();
+        let claims = json!({ "email": "mock@example.com", "https://api.openai.com/auth": { "chatgpt_plan_type": "plus" } });
+        let id_token = format!("{}.{}.c2lnbmF0dXJl", base64url(br#"{"alg":"none","typ":"JWT"}"#), base64url(claims.to_string().as_bytes()));
+        let auth = json!({ "auth_mode": "chatgpt", "tokens": { "id_token": id_token, "access_token": "fake-access", "refresh_token": "fake-refresh" } });
+        fs::write(codex_home.join("auth.json"), auth.to_string()).unwrap();
+        fs::write(settings.join("answer.json"), answer.to_string()).unwrap();
+        fs::write(settings.join("home"), codex_home.to_string_lossy().as_bytes()).unwrap();
+        for (name, value) in fake {
+            fs::write(settings.join(name), value).unwrap();
+        }
+    }
+
+    /// How the app asks that Codex: its world's home and variables, the fake through Python.
+    fn codex_setup(home: &Path, work_root: &Path) -> codex::Setup {
+        let key = |k: &str| if cfg!(windows) { k.to_uppercase() } else { k.to_string() };
+        let mut env: HashMap<String, String> = HashMap::new();
+        env.insert(key("HOME"), home.to_string_lossy().into_owned());
+        if cfg!(windows) {
+            for k in ["SystemRoot", "SystemDrive", "windir", "PATHEXT", "COMSPEC", "USERNAME", "ProgramFiles", "ProgramW6432", "ProgramData"] {
+                if let Ok(v) = std::env::var(k) {
+                    env.insert(key(k), v);
+                }
+            }
+            for (k, v) in [("USERPROFILE", home.to_path_buf()), ("APPDATA", home.join("AppData/Roaming")), ("LOCALAPPDATA", home.join("AppData/Local"))] {
+                env.insert(key(k), v.to_string_lossy().into_owned());
+            }
+        } else {
+            env.insert("USER".into(), "jo".into());
+        }
+        let python = agents::tests::python().to_string_lossy().into_owned();
+        let fake = repo().join("engine").join("tests").join("fake_codex.py").to_string_lossy().into_owned();
+        codex::Setup {
+            home: home.to_path_buf(),
+            codex_home: home.join(".codex"),
+            work_root: work_root.to_path_buf(),
+            features: repo().join("engine").join("codex-features.json"),
+            layers: codex::Layers { managed: Some(Vec::new()), mdm: Some(Vec::new()), program_data: Some(home.join("programdata")) },
+            vars: Box::new(move |k| env.get(&key(k)).cloned()),
+            command: Some(vec![python, "-I".into(), fake]),
+        }
+    }
+
+    fn fake_read(home: &Path, name: &str) -> String {
+        fs::read_to_string(home.join(".codex-fake").join(name)).unwrap_or_default()
+    }
+
+    /// The runs of `codex exec`, the question itself (the probes before it are not).
+    fn codex_asked(home: &Path) -> usize {
+        fake_read(home, "calls.jsonl").lines().filter(|l| l.contains(r#""argv": ["exec", "--json""#)).count()
+    }
+
+    fn verdict(cause: &str) -> Value {
+        json!({ "cause_id": cause, "confiance": "moyenne", "remedes": ["relancer"], "actions_humaines": ["verifier_reseau", "envoyer_rapport"],
+                "explication": "Vérifie ton Wi-Fi, puis on réessaie.", "suspect": false })
+    }
+
+    /// A Codex alone, in a world of its own: no Claude anywhere.
+    struct CodexOnly {
+        _tmp: tempfile::TempDir,
+        home: PathBuf,
+        work: PathBuf,
+        apps: PathBuf,
+    }
+
+    fn codex_only(answer: &Value, fake: &[(&str, &str)]) -> CodexOnly {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(tmp.path()).unwrap();
+        let (home, work, apps) = (root.join("home"), root.join("work"), root.join("apps"));
+        for d in [&home, &work, &apps] {
+            fs::create_dir_all(d).unwrap();
+        }
+        plant_codex(&home, answer, fake);
+        CodexOnly { _tmp: tmp, home, work, apps }
+    }
+
+    impl CodexOnly {
+        fn ctx<'a>(&self, cancel: &'a AtomicBool) -> Ctx<'a> {
+            Ctx {
+                store: self.home.join(STORE),
+                work: self.apps.clone(),
+                home: self.home.clone(),
+                claude: None,
+                codex: Some(codex_setup(&self.home, &self.work)),
+                lineup: vec![(Engine::Codex, RepairState::Ready)],
+                named: true,
+                path: String::new(),
+                user: "jo".into(),
+                limit: Duration::from_secs(30),
+                cancel,
+                facts: |_, _| json!({ "go_libres": 120 }),
+            }
+        }
+    }
+
+    /// Codex reads exactly what Claude would (the dossier on stdin, the same instructions, the same
+    /// schema of the same closed lists) without a tool, and its answer goes through the same checks.
+    #[test]
+    fn codex_reads_the_same_dossier_and_answers_from_the_same_lists() {
+        let w = codex_only(&verdict("reseau"), &[]);
+        let cancel = AtomicBool::new(false);
+        let s = failed_brain();
+        let ctx = w.ctx(&cancel);
+        let shown = s.preview(&w.home, "brain", ctx.facts);
+        let mut stages = Vec::new();
+        let plan = s.analyze(&ctx, "brain", &mut |st| stages.push(st)).unwrap_or_else(|e| panic!("{e:?}"));
+        assert_eq!(stages, [Stage::Collecting, Stage::AskingCodex]);
+        assert_eq!((plan.cause_id, plan.engine, plan.round), ("reseau", Some(Engine::Codex), 1));
+        let report = plan.actions.iter().find(|a| a.id == "envoyer_rapport").unwrap();
+        assert!(report.text.ends_with("il contient déjà l'analyse de Codex."), "{}", report.text);
+        let window = serde_json::to_value(&plan).unwrap();
+        assert_eq!(window["engine"], "codex");
+
+        // What Codex was given: Claude's dossier, instructions and schema, read-only, stdin only.
+        assert_eq!(fake_read(&w.home, "stdin.txt"), shown);
+        let dir = w.home.join(STORE).join(&plan.plan_id);
+        assert_eq!(fs::read_to_string(dir.join("dossier.txt")).unwrap(), shown);
+        assert_eq!(fake_read(&w.home, "system.md"), SYSTEM_PROMPT);
+        assert_eq!(serde_json::from_str::<Value>(&fake_read(&w.home, "schema.json")).unwrap(), schema("brain"));
+        let argv: Vec<String> = serde_json::from_str(&fake_read(&w.home, "argv.json")).unwrap();
+        for (i, flag) in [(1, "--json"), (2, "--ephemeral")] {
+            assert_eq!(argv[i], flag);
+        }
+        assert!(argv.windows(2).any(|p| p == ["-s", "read-only"]), "{argv:?}");
+        assert!(argv.iter().any(|a| a == r#"model_reasoning_effort="medium""#), "{argv:?}");
+        assert_eq!(argv.last().map(String::as_str), Some("-"), "the dossier goes through stdin only");
+        assert!(!argv.iter().any(|a| a.contains("<journal>")));
+        assert_eq!(codex_asked(&w.home), 1);
+
+        // The journal names who answered; nothing of the canary anywhere.
+        let journal = fs::read_to_string(w.home.join(STORE).join("journal.jsonl")).unwrap();
+        let entry: Value = serde_json::from_str(journal.trim()).unwrap();
+        assert_eq!((entry["moteur"].as_str(), entry["codex_version"].as_str()), (Some("codex"), Some("0.162.1")));
+        assert_eq!(entry["tokens"]["output_tokens"], 34);
+        assert_eq!((entry["claude_code_version"].clone(), entry["echecs"].clone()), (Value::Null, json!([])));
+        let report = s.report(&[]);
+        assert!(report.starts_with("Réparation avec Codex :\n- brain, essai 1 : cause reseau"), "{report}");
+        assert!(report.contains("\n  Moteur : codex\n") && report.contains("\n  Codex dit : « Vérifie ton Wi-Fi"), "{report}");
+        let mut seen = vec![("stdin".to_string(), fake_read(&w.home, "stdin.txt")), ("report".into(), report), ("journal".into(), journal)];
+        for f in ["codex-stream.jsonl", "verdict.json"] {
+            seen.push((f.into(), fs::read_to_string(dir.join(f)).unwrap()));
+        }
+        for (name, text) in &seen {
+            assert!(!text.contains("CANARI"), "the canary leaked into {name}");
+        }
+        assert!(seen[3].1.contains("thread.started"), "Codex's stream is kept, masked");
+        assert_eq!(s.used("brain"), (1, 1));
+        assert_eq!(fs::read_dir(&w.work).unwrap().count(), 0, "Codex's folder is removed");
+        assert_eq!(fs::read_dir(&w.apps).unwrap().count(), 0, "no folder of Claude's");
+
+        // The second round thinks harder, as Claude's does.
+        s.analyze(&ctx, "brain", &mut |_| {}).unwrap_or_else(|e| panic!("{e:?}"));
+        let argv: Vec<String> = serde_json::from_str(&fake_read(&w.home, "argv.json")).unwrap();
+        assert!(argv.iter().any(|a| a == r#"model_reasoning_effort="high""#), "{argv:?}");
+    }
+
+    /// Codex's answer is checked as Claude's: an id outside the step's lists, a tool used.
+    #[test]
+    fn codex_answers_outside_the_lists_or_with_a_tool_are_refused() {
+        for (answer, fake, expected) in [
+            (verdict("virus_detecte"), "ok", RepairError::InvalidVerdict),
+            (verdict("dossier_bun_abime"), "ok", RepairError::InvalidVerdict),
+            (verdict("reseau"), "command", RepairError::InitInvalid),
+            (verdict("reseau"), "not-json", RepairError::InvalidVerdict),
+        ] {
+            let w = codex_only(&answer, &[("scenario", fake)]);
+            let cancel = AtomicBool::new(false);
+            let s = failed_brain();
+            let res = s.analyze(&w.ctx(&cancel), "brain", &mut |_| {});
+            assert_eq!(res.map(|_| ()), Err(expected.clone()), "{answer} {fake}");
+            assert_eq!(s.used("brain").0, 1, "{fake}: Codex was asked, the analysis counts");
+            assert_eq!(s.codex_unsupported.load(Ordering::SeqCst), expected == RepairError::InitInvalid, "{fake}");
+            assert!(!s.unsupported.load(Ordering::SeqCst), "Claude is not the one that misbehaved");
+        }
+    }
+
+    /// Its checks before the question say what availability says; its service's refusals cost nothing.
+    #[test]
+    fn codex_refusals_give_the_analysis_back() {
+        let state = |s| RepairError::Unavailable { state: s };
+        for (fake, expected, asked) in [
+            (&[("scenario", "usage-limit")][..], RepairError::Quota, 1),
+            (&[("scenario", "401")][..], RepairError::Auth, 1),
+            (&[("scenario", "api-error")][..], RepairError::Api, 1),
+            (&[("features-extra", PAUSED)][..], state(RepairState::Unsupported), 0),
+            (&[("login", "Logged in using an API key - sk-proj-***ABCD")][..], state(RepairState::Unsupported), 0),
+            (&[("login", "Not logged in")][..], state(RepairState::NotLoggedIn), 0),
+            (&[("version", "codex-cli 0.161.9")][..], state(RepairState::Unsupported), 0),
+        ] {
+            let w = codex_only(&verdict("reseau"), fake);
+            let cancel = AtomicBool::new(false);
+            let s = failed_brain();
+            let res = s.analyze(&w.ctx(&cancel), "brain", &mut |_| {});
+            assert_eq!(res.map(|_| ()), Err(expected.clone()), "{fake:?}");
+            assert_eq!(codex_asked(&w.home), asked, "{fake:?}");
+            assert_eq!(s.launches.load(Ordering::SeqCst), asked, "{fake:?}: only a question is a start");
+            assert_eq!(s.used("brain"), (0, 0), "{fake:?}: nothing was analyzed");
+        }
+    }
+
+    #[test]
+    fn availability_reads_codex_as_its_checks_do() {
+        use codex::{CodexError, Kind, Reason};
+        let refused = |kind, reason| Err(CodexError { kind, reason, detail: String::new() });
+        let ok: Result<(), CodexError> = Ok(());
+        assert_eq!(decide_codex(&ok, true, FRESH), RepairState::Ready);
+        assert_eq!(decide_codex(&ok, false, FRESH), RepairState::Offline);
+        assert_eq!(decide_codex(&refused(Kind::Start, None), true, FRESH), RepairState::Absent);
+        for reason in [Reason::Version, Reason::Flags, Reason::Features, Reason::Dotenv, Reason::Managed, Reason::Mcp] {
+            assert_eq!(decide_codex(&refused(Kind::Unsupported, Some(reason)), true, FRESH), RepairState::Unsupported, "{reason:?}");
+        }
+        assert_eq!(decide_codex(&refused(Kind::Auth, Some(Reason::Billed)), true, FRESH), RepairState::Unsupported, "billed");
+        assert_eq!(decide_codex(&refused(Kind::Auth, Some(Reason::LoggedOut)), true, FRESH), RepairState::NotLoggedIn);
+        assert_eq!(decide_codex(&refused(Kind::Auth, Some(Reason::LoggedOut)), false, FRESH), RepairState::Offline);
+        assert_eq!(decide_codex(&ok, true, Used { unsupported: true, ..FRESH }), RepairState::Unsupported);
+        assert_eq!(decide_codex(&ok, true, Used { step: 2, ..FRESH }), RepairState::Exhausted);
+        assert_eq!(decide_codex(&ok, true, Used { launched: MAX_LAUNCHES, ..FRESH }), RepairState::Exhausted);
+    }
+
+    /// The window is offered the first engine that may be asked; Claude in Terminal only when Claude
+    /// is one of the agents; with Claude alone, exactly what it was offered before.
+    #[test]
+    fn the_window_is_offered_the_first_engine_ready() {
+        use RepairState::*;
+        let status = |states: &[(Engine, RepairState)], named: bool| {
+            let l = Lineup { states: states.to_vec(), named, claude: None, codex: None };
+            serde_json::to_value(l.status()).unwrap()
+        };
+        for s in [Ready, Absent, Unsupported, Offline, NotLoggedIn, Exhausted, Disabled] {
+            assert_eq!(status(&[(Engine::Claude, s)], false), serde_json::to_value(RepairStatus::of(s)).unwrap(), "{s:?}");
+            assert!(status(&[(Engine::Claude, s)], false).get("engine").is_none());
+        }
+        assert_eq!(
+            status(&[(Engine::Codex, NotLoggedIn), (Engine::Claude, Ready)], true),
+            json!({ "state": "ready", "terminal_fallback": true, "engine": "claude" })
+        );
+        assert_eq!(
+            status(&[(Engine::Claude, Offline), (Engine::Codex, Ready)], true),
+            json!({ "state": "ready", "terminal_fallback": false, "engine": "codex" })
+        );
+        assert_eq!(
+            status(&[(Engine::Codex, Unsupported), (Engine::Claude, Exhausted)], true),
+            json!({ "state": "unsupported", "terminal_fallback": true, "engine": "codex" })
+        );
+        assert_eq!(status(&[(Engine::Codex, Unsupported)], true), json!({ "state": "unsupported", "terminal_fallback": false, "engine": "codex" }));
+        assert_eq!(status(&[], false), json!({ "state": "agents", "terminal_fallback": false }));
+        assert_eq!(serde_json::to_value(Stage::AskingCodex).unwrap(), json!("asking_codex"));
+        assert_eq!(serde_json::to_value(Stage::Asking).unwrap(), json!("asking"));
+    }
+
+    #[test]
+    fn claude_in_terminal_only_for_whom_chose_claude() {
+        let agents = |order: Vec<Engine>| Agents { codex_home: None, etat: "ok".into(), order };
+        assert!(claude_chosen(&agents(vec![Engine::Claude])).is_ok());
+        assert!(claude_chosen(&agents(vec![Engine::Codex, Engine::Claude])).is_ok());
+        assert!(claude_chosen(&agents(vec![Engine::Codex])).unwrap_err().contains("pas choisi"));
+        assert!(claude_chosen(&agents(vec![])).is_err(), "a file the kit cannot trust names no one");
+    }
+
+    /// The kit's fallback rule (_headless.py): after what shows the first engine cannot answer now;
+    /// after a timeout, only towards Claude; never after a run that did not behave or an answer off.
+    #[test]
+    fn the_fallback_is_the_kits() {
+        for kind in ["start", "unsupported", "auth", "quota", "api"] {
+            assert!(falls_back(kind, Engine::Claude) && falls_back(kind, Engine::Codex), "{kind}");
+        }
+        assert!(falls_back("timeout", Engine::Claude) && !falls_back("timeout", Engine::Codex));
+        for kind in ["init", "invalid", "cancelled", "value", "internal"] {
+            assert!(!falls_back(kind, Engine::Claude) && !falls_back(kind, Engine::Codex), "{kind}");
+        }
+        let src = fs::read_to_string(repo().join("engine").join("hooks").join("_headless.py")).unwrap();
+        assert!(src.contains(r#"SECOURS = ("start", "unsupported", "auth", "quota", "api")"#), "the kit's rule moved");
+        assert!(src.contains(r#"e.kind == "timeout" and moteur == "claude""#), "the kit's rule moved");
+    }
+
+    // ── Both listed: a fake claude and the fake Codex in the same home ──────
+
+    #[cfg(unix)]
+    fn both(stream: &str, then: &str, answer: &Value, fake: &[(&str, &str)]) -> (Fake, PathBuf) {
+        let f = fake_claude(stream, then);
+        plant_codex(&f.home, answer, fake);
+        let codex_work = f.work.parent().unwrap().join("codex-work");
+        fs::create_dir_all(&codex_work).unwrap();
+        (f, codex_work)
+    }
+
+    #[cfg(unix)]
+    fn both_ctx<'a>(f: &Fake, codex_work: &Path, cancel: &'a AtomicBool, lineup: &[(Engine, RepairState)], limit: Duration) -> Ctx<'a> {
+        Ctx { codex: Some(codex_setup(&f.home, codex_work)), lineup: lineup.to_vec(), named: true, ..f.ctx(cancel, limit) }
+    }
+
+    #[cfg(unix)]
+    fn journal_of(f: &Fake) -> Vec<Value> {
+        let text = fs::read_to_string(f.home.join(STORE).join("journal.jsonl")).unwrap_or_default();
+        text.lines().map(|l| serde_json::from_str(l).unwrap()).collect()
+    }
+
+    /// Codex alone excluded Claude: whatever Codex says, Claude is never asked, even when it is there.
+    #[cfg(unix)]
+    #[test]
+    fn codex_alone_never_falls_back_to_claude() {
+        let (f, cw) = both(&fixture("plan-ok.jsonl"), "", &verdict("reseau"), &[("features-extra", PAUSED)]);
+        let cancel = AtomicBool::new(false);
+        let s = failed_brain();
+        let res = s.analyze(&both_ctx(&f, &cw, &cancel, &[(Engine::Codex, RepairState::Ready)], Duration::from_secs(20)), "brain", &mut |_| {});
+        assert_eq!(res.map(|_| ()), Err(RepairError::Unavailable { state: RepairState::Unsupported }));
+        assert!(f.read("argv").is_empty(), "Claude never ran");
+        assert_eq!(fs::read_dir(&f.work).unwrap().count(), 0, "no folder made for Claude");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_other_engine_listed_answers_when_the_first_cannot_now() {
+        use RepairState::Ready;
+        let (codex, claude) = (Engine::Codex, Engine::Claude);
+        // Codex preferred and paused: Claude answers, the journal says why Codex did not.
+        let (f, cw) = both(&fixture("plan-ok.jsonl"), "", &verdict("reseau"), &[("features-extra", PAUSED)]);
+        let cancel = AtomicBool::new(false);
+        let s = failed_brain();
+        let mut stages = Vec::new();
+        let plan = s
+            .analyze(&both_ctx(&f, &cw, &cancel, &[(codex, Ready), (claude, Ready)], Duration::from_secs(20)), "brain", &mut |st| stages.push(st))
+            .unwrap_or_else(|e| panic!("{e:?}"));
+        assert_eq!((plan.engine, plan.cause_id), (Some(claude), "reseau"));
+        assert_eq!(stages, [Stage::Collecting, Stage::AskingCodex, Stage::AskingClaude]);
+        assert_eq!((codex_asked(&f.home), f.read("argv").is_empty()), (0, false));
+        let entry = &journal_of(&f)[0];
+        assert_eq!(entry["moteur"], "claude");
+        assert!(entry["echecs"][0].as_str().is_some_and(|e| e.starts_with("codex: unsupported: ")), "{entry}");
+        assert_eq!(s.used("brain"), (1, 1));
+        let report = s.report(&[]);
+        assert!(report.starts_with("Réparation avec Claude :") && report.contains("N'ont pas pu répondre : codex: unsupported"), "{report}");
+
+        // Claude preferred and at its limit: Codex answers.
+        let (f, cw) = both(&fixture("quota.jsonl"), "", &verdict("proxy_vpn"), &[]);
+        let s = failed_brain();
+        let plan = s
+            .analyze(&both_ctx(&f, &cw, &cancel, &[(claude, Ready), (codex, Ready)], Duration::from_secs(20)), "brain", &mut |_| {})
+            .unwrap_or_else(|e| panic!("{e:?}"));
+        assert_eq!((plan.engine, plan.cause_id, codex_asked(&f.home)), (Some(codex), "proxy_vpn", 1));
+        assert_eq!(journal_of(&f)[0]["echecs"], json!(["claude: quota"]));
+        assert_eq!(s.launches.load(Ordering::SeqCst), 2);
+
+        // Codex not logged in, as availability found it: never run, Claude answers.
+        let (f, cw) = both(&fixture("plan-ok.jsonl"), "", &verdict("reseau"), &[]);
+        let s = failed_brain();
+        let plan = s
+            .analyze(&both_ctx(&f, &cw, &cancel, &[(codex, RepairState::NotLoggedIn), (claude, Ready)], Duration::from_secs(20)), "brain", &mut |_| {})
+            .unwrap_or_else(|e| panic!("{e:?}"));
+        assert_eq!(plan.engine, Some(claude));
+        assert!(fake_read(&f.home, "calls.jsonl").is_empty(), "Codex never ran");
+        assert_eq!(journal_of(&f)[0]["echecs"], json!(["codex: auth: not_logged_in"]));
+    }
+
+    /// A run that did not behave, or an answer outside the lists, is shown: never covered by the other engine.
+    #[cfg(unix)]
+    #[test]
+    fn no_fallback_after_a_run_that_did_not_behave_or_an_answer_off() {
+        use RepairState::Ready;
+        let (codex, claude) = (Engine::Codex, Engine::Claude);
+        let cancel = AtomicBool::new(false);
+        for (fake, expected) in [("command", RepairError::InitInvalid), ("not-json", RepairError::InvalidVerdict)] {
+            let (f, cw) = both(&fixture("plan-ok.jsonl"), "", &verdict("reseau"), &[("scenario", fake)]);
+            let s = failed_brain();
+            let res = s.analyze(&both_ctx(&f, &cw, &cancel, &[(codex, Ready), (claude, Ready)], Duration::from_secs(20)), "brain", &mut |_| {});
+            assert_eq!(res.map(|_| ()), Err(expected), "{fake}");
+            assert!(f.read("argv").is_empty(), "{fake}: Claude never ran");
+            cancel.store(false, Ordering::SeqCst);
+        }
+        let (f, cw) = both(&fixture("plan-ok.jsonl"), "", &verdict("virus_detecte"), &[]);
+        let s = failed_brain();
+        let res = s.analyze(&both_ctx(&f, &cw, &cancel, &[(codex, Ready), (claude, Ready)], Duration::from_secs(20)), "brain", &mut |_| {});
+        assert_eq!(res.map(|_| ()), Err(RepairError::InvalidVerdict));
+        assert!(f.read("argv").is_empty(), "an answer outside the lists: Claude never ran");
+        let (f, cw) = both(&fixture("init-bash.jsonl"), "", &verdict("reseau"), &[]);
+        let s = failed_brain();
+        let res = s.analyze(&both_ctx(&f, &cw, &cancel, &[(claude, Ready), (codex, Ready)], Duration::from_secs(20)), "brain", &mut |_| {});
+        assert_eq!(res.map(|_| ()), Err(RepairError::InitInvalid));
+        assert_eq!(codex_asked(&f.home), 0, "Codex never asked");
+    }
+
+    /// Codex has no budget limit: after Claude's timeout, Codex is not asked; after Codex's, Claude is.
+    #[cfg(unix)]
+    #[test]
+    fn after_a_timeout_only_claude_is_asked() {
+        use RepairState::Ready;
+        let (codex, claude) = (Engine::Codex, Engine::Claude);
+        let cancel = AtomicBool::new(false);
+        let first = fixture("plan-ok.jsonl").lines().next().unwrap().to_string();
+        let (f, cw) = both(&format!("{first}\n"), "exec /bin/sleep 30", &verdict("reseau"), &[]);
+        let s = failed_brain();
+        let res = s.analyze(&both_ctx(&f, &cw, &cancel, &[(claude, Ready), (codex, Ready)], Duration::from_secs(3)), "brain", &mut |_| {});
+        assert_eq!(res.map(|_| ()), Err(RepairError::Timeout));
+        assert_eq!(codex_asked(&f.home), 0);
+
+        let (f, cw) = both(&fixture("plan-ok.jsonl"), "", &verdict("reseau"), &[("scenario", "hang")]);
+        let s = failed_brain();
+        let t = Instant::now();
+        let plan = s
+            .analyze(&both_ctx(&f, &cw, &cancel, &[(codex, Ready), (claude, Ready)], Duration::from_secs(3)), "brain", &mut |_| {})
+            .unwrap_or_else(|e| panic!("{e:?}"));
+        assert_eq!(plan.engine, Some(claude));
+        assert!(t.elapsed() < Duration::from_secs(20), "{:?}", t.elapsed());
+        assert_eq!(journal_of(&f)[0]["echecs"][0].as_str().map(|e| e.starts_with("codex: timeout")), Some(true));
+    }
+
+    /// Neither could answer: the first one asked says why (the kit's preferred's error), the other in the journal.
+    #[cfg(unix)]
+    #[test]
+    fn when_none_answers_the_first_asked_says_why() {
+        use RepairState::Ready;
+        let (f, cw) = both(&fixture("quota.jsonl"), "", &verdict("reseau"), &[("scenario", "401")]);
+        let cancel = AtomicBool::new(false);
+        let s = failed_brain();
+        let res = s.analyze(&both_ctx(&f, &cw, &cancel, &[(Engine::Codex, Ready), (Engine::Claude, Ready)], Duration::from_secs(20)), "brain", &mut |_| {});
+        assert_eq!(res.map(|_| ()), Err(RepairError::Auth));
+        let entry = &journal_of(&f)[0];
+        assert_eq!((entry["moteur"].as_str(), entry["echecs"].clone()), (Some("codex"), json!(["claude: quota"])));
+        assert_eq!(entry["erreur"], json!({ "kind": "auth" }));
+        assert_eq!(s.used("brain"), (0, 0), "two refusals that cost nothing: the analysis is given back");
+        assert_eq!(s.launches.load(Ordering::SeqCst), 2);
     }
 }

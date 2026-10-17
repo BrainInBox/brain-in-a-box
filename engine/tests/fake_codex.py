@@ -19,8 +19,8 @@ Driven by files in $HOME/.codex-fake/ (HOME is one of the few variables the laun
                    CODEX_HOME, the last probe (Windows: system settings that appear before the question)
     scenario       what `codex exec` does (default ok), see main()
     answer.json    the answer it gives
-Each run appends to calls.jsonl; `exec` also records argv.json, env.json, cwd.json, stdin.txt and
-schema.json (the --output-schema file it was given).
+Each run appends to calls.jsonl; `exec` also records argv.json, env.json, cwd.json, stdin.txt,
+schema.json (the --output-schema file it was given) and system.md (its model_instructions_file).
 As the real one, `exec` refuses `-c mcp_servers.<name>...` for a server its layers do not
 define: with --ignore-user-config, the user's servers are not among them (config/src/mcp_types.rs,
 "invalid transport"); and every command that loads the configuration refuses an empty
@@ -130,6 +130,9 @@ def exec_(args, c):
     if "--output-schema" in args:
         with open(args[args.index("--output-schema") + 1], encoding="utf-8") as f:
             record("schema.json", f.read())
+    if c.get("model_instructions_file"):
+        with open(json.loads(c["model_instructions_file"]), encoding="utf-8") as f:
+            record("system.md", f.read())
     for key in c:
         if key.startswith("mcp_servers.") and key.split(".")[1] not in listing("mcp-system"):
             sys.stderr.write("Error loading config.toml: invalid transport in `%s`\n" % key.rsplit(".", 1)[0])
