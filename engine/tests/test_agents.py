@@ -689,6 +689,31 @@ class CliCodex(Home):
         # As the installers call it, with the gate as shipped.
         self.assertEqual(self.cli("lire")[0], 0)
 
+    def muets_cli(self, ouvert=False):
+        gate = "ag.CODEX_OUVERT = frozenset([ag.systeme()]); " if ouvert else ""
+        code = "import sys; sys.path.insert(0, %r); import _agents as ag; %ssys.exit(ag.main(['hooks-muets']))" % (str(HOOKS), gate)
+        e = dict(os.environ, HOME=self.home, USERPROFILE=self.home)
+        p = subprocess.run([sys.executable, "-I", "-c", code], env=e, capture_output=True, timeout=20)
+        return p.returncode, p.stdout
+
+    def test_hooks_muets_for_the_app_only_of_the_codex_agents_json_records(self):
+        codex = os.path.join(self.home, "Données é")
+        state = Path(self.home) / ".brain-in-a-box"
+        state.mkdir()
+        (state / ag.POSES).write_text(json.dumps({"version": 1, "date": time.strftime(ag.UTC, time.gmtime(time.time() - 3600))}))
+        day = Path(codex) / "sessions" / "2026" / "10" / "17"
+        day.mkdir(parents=True)
+        (day / "rollout-2026-10-17T10-00-00-0199f0a0-0000-7000-8000-000000000001.jsonl").write_text("{}\n")
+        self.assertEqual(self.muets_cli(ouvert=True), (0, b"non\n"), "no agents.json: Claude alone")
+        self.put({"version": 1, "agents": ["claude"], "prefere": "claude"})
+        self.assertEqual(self.muets_cli(ouvert=True), (0, b"non\n"), "Claude alone")
+        self.put({"version": 1, "agents": ["claude", "codex"], "prefere": "claude", "codex_home": codex})
+        self.assertEqual(self.muets_cli(), (0, b"non\n"), "Codex closed here: the file is not trusted")
+        self.assertEqual(self.muets_cli(ouvert=True), (0, b"oui\n"))
+        self.put({"version": 1, "agents": ["claude", "codex"], "prefere": "claude", "codex_home": os.path.join(self.home, "other")})
+        self.assertEqual(self.muets_cli(ouvert=True), (0, b"non\n"), "another Codex home: its sessions only")
+        self.assertEqual(self.cli("hooks-muets"), (0, b"non\n"), "as shipped")
+
 
 if __name__ == "__main__":
     unittest.main()

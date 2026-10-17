@@ -408,14 +408,16 @@ def main(argv):
     (exit code 1 and nothing printed otherwise).
     _agents.py pose-hooks: notes that the installer has just wired Codex's hooks (pose_hooks()).
     _agents.py lire: what lire() says, for the app (Bibo reads the choice here, never on its own): one
-    ASCII JSON line, {"etat": ..., "agents": [...], "prefere": ..., "codex_home": ...}, exit code 0."""
+    ASCII JSON line, {"etat": ..., "agents": [...], "prefere": ..., "codex_home": ...}, exit code 0.
+    _agents.py hooks-muets: what hooks_muets() says of the Codex agents.json records, for the app's
+    diagnosis: "oui" or "non" ("non" without a trusted file that lists Codex), exit code 0."""
     ap = argparse.ArgumentParser(prog="_agents.py")
     sub = ap.add_subparsers(dest="cmd", required=True)
     c = sub.add_parser("choisir")
     c.add_argument("--agents", default="")
     c.add_argument("--prefere", default="")
     c.add_argument("--pose-par", required=True, choices=POSE_PAR)
-    for name in ("ouvert", "codex-home", "pose-hooks", "lire"):
+    for name in ("ouvert", "codex-home", "pose-hooks", "lire", "hooks-muets"):
         sub.add_parser(name)
     a = ap.parse_args(argv)
     if a.cmd == "ouvert":
@@ -424,6 +426,10 @@ def main(argv):
         choix, etat = lire()
         print(json.dumps({"etat": etat, "agents": list(choix.agents), "prefere": choix.prefere,
                           "codex_home": choix.codex_home}))
+        return 0
+    if a.cmd == "hooks-muets":
+        choix = lire()[0]   # codex_home: only from a trusted file that lists Codex
+        print("oui" if choix.codex_home is not None and hooks_muets(choix.codex_home) else "non")
         return 0
     if a.cmd == "codex-home":
         choix, etat = lire()
