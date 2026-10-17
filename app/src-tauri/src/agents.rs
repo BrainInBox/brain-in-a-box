@@ -4,8 +4,10 @@
 //! reader: the app runs `_agents.py lire` and takes what it says, so Codex's gate (closed on a system
 //! until its path is green there) and the file's checks live in one place. Without the file, Claude
 //! alone, exactly as before the choice existed, and nothing is run to know it. A file the kit cannot
-//! trust, or one the app could not have read (no Python, no _agents.py), gives no agent at all:
-//! whoever chose Codex alone excluded Claude, and nothing falls back to it.
+//! trust gives no agent at all: whoever chose Codex alone excluded Claude, and nothing falls back to
+//! it. No kit on disk: the app's own copy of _agents.py reads it. No Python to run it: Claude alone
+//! where the kit's gate keeps Codex closed (the kit trusts no file that lists Codex there, and the
+//! installer reads the file itself once Python is in), no agent where Codex can be chosen.
 //!
 //! The window asks who the brain works with only where that same _agents.py lets Codex be chosen
 //! (`codex_open`). What the user picks there holds for the session (`choose`, `current`) until the
@@ -22,7 +24,7 @@ use regex::Regex;
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::{codex, detect, sys};
+use crate::{codex, detect, steps, sys};
 
 const FILE: &str = ".brain-in-a-box/agents.json";
 const READ_TIMEOUT: Duration = Duration::from_secs(20);
@@ -110,7 +112,10 @@ fn read_with(home: &Path, python: impl FnOnce() -> Option<PathBuf>) -> Agents {
     if fs::symlink_metadata(home.join(FILE)).is_err_and(|e| e.kind() == io::ErrorKind::NotFound) {
         return Agents::claude_alone();
     }
-    kit(home, python, "lire").and_then(|out| parse(&out)).unwrap_or_else(|| Agents::none("illisible"))
+    let Some(python) = python() else {
+        return if codex_open(home) { Agents::none("illisible") } else { Agents::claude_alone() };
+    };
+    kit(home, &python, "lire").and_then(|out| parse(&out)).unwrap_or_else(|| Agents::none("illisible"))
 }
 
 /// Who the brain works with now: the choice made in the window while agents.json does not record it
@@ -301,17 +306,27 @@ fn hooks_muets_with(home: &Path, agents: &Agents, python: impl FnOnce() -> Optio
     if !agents.lists(Engine::Codex) {
         return false;
     }
-    kit(home, python, "hooks-muets").is_some_and(|out| out.trim() == "oui")
+    python().and_then(|p| kit(home, &p, "hooks-muets")).is_some_and(|out| out.trim() == "oui")
 }
 
-/// What `_agents.py <command>` prints, run with the kit's Python as the night's tasks run it.
-fn kit(home: &Path, python: impl FnOnce() -> Option<PathBuf>, command: &str) -> Option<String> {
-    let script = scripts(home).into_iter().find(|s| s.is_file())?;
-    let python = python()?;
+/// What `_agents.py <command>` prints, run with the kit's Python as the night's tasks run it. No kit
+/// on disk: the app's own copy, the one `codex_open` reads then, from a private folder of its own.
+fn kit(home: &Path, python: &Path, command: &str) -> Option<String> {
+    let mut built_in = None;
+    let script = match scripts(home).into_iter().find(|s| s.is_file()) {
+        Some(script) => script,
+        None => {
+            let dir = built_in.insert(steps::TempDir::new_in(&sys::work_root().ok()?).ok()?);
+            let script = dir.path().join("_agents.py");
+            fs::write(&script, BUILT_IN).ok()?;
+            script
+        }
+    };
     let home_var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
     let home_text = home.to_string_lossy();
     let script_text = script.to_string_lossy();
-    let out = sys::run_with(&python, &["-I", "-B", &script_text, command], &[(home_var, &home_text)], None, READ_TIMEOUT);
+    let out = sys::run_with(python, &["-I", "-B", &script_text, command], &[(home_var, &home_text)], None, READ_TIMEOUT);
+    drop(built_in);
     out.ok().then_some(out.stdout)
 }
 
@@ -456,12 +471,40 @@ pub(crate) mod tests {
         assert_eq!(read_here(home), Agents::none("invalide"));
     }
 
+    /// No kit on disk (Claude Code reinstalled over ~/.claude, an install made from a terminal, so no
+    /// sources): the app's own copy of _agents.py reads the file, as master's Bibo would have gone on.
+    #[test]
+    fn without_a_kit_on_disk_the_apps_own_copy_reads_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+        choose(home, &serde_json::json!({ "version": 1, "agents": ["claude"], "prefere": "claude", "codex_home": null, "pose_par": "install.sh" }));
+        assert_eq!(read_here(home), Agents { order: vec![Engine::Claude], codex_home: None, etat: "ok".into() });
+        // As shipped, the app's copy keeps Codex closed: a file that lists it is not trusted.
+        choose(home, &serde_json::json!({ "version": 1, "agents": ["codex"], "prefere": "codex", "codex_home": home.join(".codex") }));
+        assert_eq!(read_here(home), Agents::none("ferme"));
+        assert!(!home.join(".claude").exists() && !home.join(".brain-in-a-box").join("src").exists(), "nothing written for it");
+    }
+
+    /// No Python to run the kit's reader: where Codex cannot be chosen, the kit trusts no file that
+    /// lists it, so Claude alone, as on master (the installer reads the file itself once Python is
+    /// there). Where it can, no agent: the window asks the choice again anyway.
+    #[test]
+    fn without_python_the_gate_decides() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+        choose(home, &serde_json::json!({ "version": 1, "agents": ["claude"], "prefere": "claude" }));
+        assert_eq!(read_with(home, || None), Agents::claude_alone(), "nothing on disk, the app's gate closed");
+        plant_agents_py(&installed(home), false);
+        assert_eq!(read_with(home, || None), Agents::claude_alone());
+        plant_agents_py(&installed(home), true);
+        assert_eq!(read_with(home, || None), Agents::none("illisible"));
+    }
+
     #[test]
     fn the_sources_copy_reads_it_before_the_hooks_are_there() {
         let tmp = tempfile::tempdir().unwrap();
         let home = tmp.path();
         choose(home, &serde_json::json!({ "version": 1, "agents": ["claude"], "prefere": "claude" }));
-        assert_eq!(read_here(home), Agents::none("illisible"), "no _agents.py at all: not read, not trusted");
         plant_agents_py(&home.join(".brain-in-a-box").join("src").join("engine").join("hooks"), false);
         assert_eq!(read_here(home).order, [Engine::Claude]);
         // The installed one comes first: the one the night's tasks read.
@@ -518,7 +561,7 @@ pub(crate) mod tests {
         choose(home, &both);
         let agents = read_here(home);
         assert!(hooks_muets_with(home, &agents, || Some(python())));
-        assert!(!hooks_muets_with(&home.join("elsewhere"), &agents, || Some(python())), "no kit to ask: nothing said");
+        assert!(!hooks_muets_with(&home.join("elsewhere"), &agents, || Some(python())), "another home, no agents.json there: nothing said");
         assert!(!hooks_muets_with(home, &agents, || None));
         // A hook ran since: the hooks run.
         fs::write(state.join("codex-hooks-vus.json"), r#"{"version": 1, "hooks": {"session-logger": "2999-01-01T00:00:00Z"}}"#).unwrap();

@@ -1620,10 +1620,10 @@ fn run_installer(url: &str, name: &str, args: &[&str], log: &mut dyn FnMut(Strin
 }
 
 /// A private folder (0700) removed with all its content when dropped.
-struct TempDir(PathBuf);
+pub(crate) struct TempDir(PathBuf);
 
 impl TempDir {
-    fn new_in(parent: &Path) -> Result<Self, String> {
+    pub(crate) fn new_in(parent: &Path) -> Result<Self, String> {
         let fail = |e: io::Error| {
             format!("Je n'ai pas pu créer un dossier de travail ({e}). Vérifie qu'il reste de la place sur le disque.")
         };
@@ -1638,7 +1638,7 @@ impl TempDir {
         Err(fail(io::ErrorKind::AlreadyExists.into()))
     }
 
-    fn path(&self) -> &Path {
+    pub(crate) fn path(&self) -> &Path {
         &self.0
     }
 }
