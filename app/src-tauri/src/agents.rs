@@ -6,19 +6,43 @@
 //! alone, exactly as before the choice existed, and nothing is run to know it. A file the kit cannot
 //! trust, or one the app could not have read (no Python, no _agents.py), gives no agent at all:
 //! whoever chose Codex alone excluded Claude, and nothing falls back to it.
+//!
+//! The window asks who the brain works with only where that same _agents.py lets Codex be chosen
+//! (`codex_open`). What the user picks there holds for the session (`choose`, `current`) until the
+//! installer, which alone writes agents.json, records it: the brain step hands it over (BIAB_AGENTS).
 
+use std::ffi::OsString;
 use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
+use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
+use regex::Regex;
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::sys;
+use crate::{codex, detect, sys};
 
 const FILE: &str = ".brain-in-a-box/agents.json";
 const READ_TIMEOUT: Duration = Duration::from_secs(20);
+/// The kit's _agents.py as the app was built with it: its gate, before any kit is on disk.
+const BUILT_IN: &str = include_str!("../../../engine/hooks/_agents.py");
+/// This system, as _agents.systeme() names it.
+const SYSTEM: &str = if cfg!(windows) {
+    "windows"
+} else if cfg!(target_os = "linux") {
+    "linux"
+} else {
+    "darwin"
+};
+/// What `current` says of a choice made in the window that agents.json does not record yet.
+pub const PENDING: &str = "choix";
+
+/// The choice made in the window, for the home it was made for, until the app quits.
+static CHOSEN: Mutex<Option<(PathBuf, Agents)>> = Mutex::new(None);
+static GATE: LazyLock<Option<Regex>> = LazyLock::new(|| Regex::new(r"(?m)^CODEX_OUVERT = frozenset\((.*)\)\r?$").ok());
+static SYSTEM_NAME: LazyLock<Option<Regex>> = LazyLock::new(|| Regex::new(r#"\A(?:"([a-z0-9_]+)"|'([a-z0-9_]+)')\z"#).ok());
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -87,6 +111,183 @@ fn read_with(home: &Path, python: impl FnOnce() -> Option<PathBuf>) -> Agents {
         return Agents::claude_alone();
     }
     kit(home, python, "lire").and_then(|out| parse(&out)).unwrap_or_else(|| Agents::none("illisible"))
+}
+
+/// Who the brain works with now: the choice made in the window while agents.json does not record it
+/// yet (etat PENDING), else agents.json, as `read` says.
+pub fn current(home: &Path) -> Agents {
+    current_with(home, read(home))
+}
+
+fn current_with(home: &Path, file: Agents) -> Agents {
+    match chosen(home) {
+        Some(c) if c.order != file.order || c.codex_home != file.codex_home => c,
+        _ => file,
+    }
+}
+
+fn chosen(home: &Path) -> Option<Agents> {
+    let held = CHOSEN.lock().unwrap_or_else(|p| p.into_inner());
+    held.as_ref().filter(|(h, _)| h == home).map(|(_, a)| a.clone())
+}
+
+/// A choice made in the window that agents.json does not record yet: the brain step hands it over.
+pub fn pending(agents: &Agents) -> bool {
+    agents.etat == PENDING
+}
+
+/// What the brain step adds to the installer's environment for it (install.sh and install.ps1 read
+/// BIAB_AGENTS and BIAB_PREFERE): nothing unless a choice is pending, so that without one the
+/// installer runs as before the window could choose.
+pub fn installer_env(agents: &Agents) -> Vec<(&'static str, String)> {
+    let Some(prefere) = agents.order.first().filter(|_| pending(agents)) else {
+        return Vec::new();
+    };
+    let names: Vec<&str> = [Engine::Claude, Engine::Codex].into_iter().filter(|e| agents.lists(*e)).map(Engine::id).collect();
+    vec![("BIAB_AGENTS", names.join(",")), ("BIAB_PREFERE", prefere.id().to_string())]
+}
+
+/// The user's pick in the window, preferred first: held for this home until agents.json records it.
+/// Codex only where the kit's gate lets it be chosen; its folder the one agents.json records, else
+/// the one the installer will record (`codex_home_for`).
+pub fn choose(home: &Path, names: &[String]) -> Result<Agents, String> {
+    let file = read(home);
+    let chosen = pick(home, names, codex_open(home), &file, std::env::var_os("CODEX_HOME"))?;
+    *CHOSEN.lock().unwrap_or_else(|p| p.into_inner()) = Some((home.to_path_buf(), chosen.clone()));
+    Ok(current_with(home, file))
+}
+
+fn pick(home: &Path, names: &[String], open: bool, file: &Agents, env: Option<OsString>) -> Result<Agents, String> {
+    let mut order = Vec::new();
+    for name in names {
+        let engine = match name.as_str() {
+            "claude" => Engine::Claude,
+            "codex" => Engine::Codex,
+            _ => return Err("Je ne connais pas cette IA.".into()),
+        };
+        if order.contains(&engine) {
+            return Err("Je ne connais pas ce choix.".into());
+        }
+        order.push(engine);
+    }
+    if order.is_empty() {
+        return Err("Choisis au moins une IA.".into());
+    }
+    if !order.contains(&Engine::Codex) {
+        return Ok(Agents { order, codex_home: None, etat: PENDING.into() });
+    }
+    if !open {
+        return Err("Codex n'est pas encore disponible ici.".into());
+    }
+    let codex_home = match file.codex_home.clone().filter(|_| file.lists(Engine::Codex)) {
+        Some(h) => h,
+        None => codex_home_for(home, env)?,
+    };
+    Ok(Agents { order, codex_home: Some(codex_home), etat: PENDING.into() })
+}
+
+/// _agents.codex_home(): $CODEX_HOME as Codex reads it, else ~/.codex. The app hands its own
+/// environment to the installer, which reads the same variable.
+fn codex_home_for(home: &Path, env: Option<OsString>) -> Result<PathBuf, String> {
+    let raw = env.map(|v| v.to_string_lossy().trim().to_string()).unwrap_or_default();
+    if raw.is_empty() {
+        return Ok(home.join(".codex"));
+    }
+    let path = PathBuf::from(raw);
+    if !path.is_absolute() {
+        return Err("CODEX_HOME n'est pas un chemin complet : je ne sais pas où mettre Codex.".into());
+    }
+    Ok(normpath(&path))
+}
+
+/// os.path.normpath: "." and empty parts gone, ".." taken back, the way Python does it on paper.
+fn normpath(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for part in path.components() {
+        match part {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !out.pop() {
+                    out.push(part);
+                }
+            }
+            _ => out.push(part),
+        }
+    }
+    out
+}
+
+/// Whether Codex can be chosen on this system: the gate of the kit's _agents.py, the copy that reads
+/// agents.json (installed, else the sources'), else, before any kit is on disk, the app's own copy of
+/// that file. Read without Python, which a fresh Mac or PC does not have yet: only the gate's line as
+/// the kit writes it, `CODEX_OUVERT = frozenset({"darwin", ...})`; anything else is closed.
+pub fn codex_open(home: &Path) -> bool {
+    let text = match scripts(home).into_iter().find(|s| s.is_file()) {
+        Some(script) => fs::read_to_string(script).ok(),
+        None => Some(BUILT_IN.to_string()),
+    };
+    text.as_deref().and_then(gate).is_some_and(|systems| systems.iter().any(|s| s == SYSTEM))
+}
+
+/// The systems the gate's line opens; None when there is not exactly one such line, or it says
+/// something else than a set of quoted names.
+fn gate(text: &str) -> Option<Vec<String>> {
+    let re = GATE.as_ref()?;
+    let mut lines = re.captures_iter(text);
+    let inner = lines.next()?.get(1)?.as_str().trim().to_string();
+    if lines.next().is_some() {
+        return None;
+    }
+    if inner.is_empty() {
+        return Some(Vec::new());
+    }
+    let names = inner.strip_prefix('{')?.strip_suffix('}')?;
+    let name = SYSTEM_NAME.as_ref()?;
+    let parts: Vec<&str> = names.split(',').map(str::trim).collect();
+    let (last, rest) = parts.split_last()?;
+    // A trailing comma is Python's, an empty name anywhere else is not.
+    let parts: Vec<&str> = if last.is_empty() { rest.to_vec() } else { parts };
+    parts
+        .iter()
+        .map(|p| name.captures(p).and_then(|c| c.get(1).or(c.get(2))).map(|m| m.as_str().to_string()))
+        .collect::<Option<Vec<_>>>()
+        .filter(|v| !v.is_empty())
+}
+
+/// What the window offers before the diagnosis.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct Offer {
+    /// Codex can be chosen here: the window asks who the brain works with. Otherwise it asks
+    /// nothing and everything goes as before Codex.
+    pub open: bool,
+    /// What it preselects, the preferred one first; empty when it asks nothing.
+    pub agents: Vec<Engine>,
+}
+
+pub fn offer(home: &Path) -> Offer {
+    if !codex_open(home) {
+        return Offer { open: false, agents: Vec::new() };
+    }
+    let now = current(home);
+    // An install of before the choice: Claude alone, whatever else is on the machine.
+    let kit = home.join(".brain-in-a-box").join("installed.json").is_file() || detect::claude_hooks(home);
+    let claude = detect::claude_bin().is_some();
+    let codex_there =
+        codex_home_for(home, std::env::var_os("CODEX_HOME")).ok().and_then(|h| codex::Setup::for_user(&h).ok()).is_some_and(|s| codex::find(&s).is_some());
+    Offer { open: true, agents: preselect(&now, kit, claude, codex_there) }
+}
+
+/// The choice already made (agents.json, or the window's earlier in the session); without one,
+/// Claude alone on an install of before the choice; on a fresh machine, what is installed.
+fn preselect(now: &Agents, kit: bool, claude: bool, codex: bool) -> Vec<Engine> {
+    if !now.order.is_empty() && now.etat != "absent" {
+        return now.order.clone();
+    }
+    match (kit, claude, codex) {
+        (false, true, true) => vec![Engine::Claude, Engine::Codex],
+        (false, false, true) => vec![Engine::Codex],
+        _ => vec![Engine::Claude],
+    }
 }
 
 /// Whether Codex keeps sessions without running the kit's hooks since the install wired them (not
@@ -352,5 +553,170 @@ pub(crate) mod tests {
         ] {
             assert_eq!(ok(bad), None, "{bad}");
         }
+    }
+
+    /// The kit's _agents.py with its gate's line replaced by `line`, in `dir`.
+    fn plant_gate(dir: &Path, line: &str) {
+        let text = fs::read_to_string(repo().join("engine").join("hooks").join("_agents.py")).unwrap();
+        let re = regex::Regex::new(r"(?m)^CODEX_OUVERT = frozenset\(.*\)$").unwrap();
+        assert_eq!(re.find_iter(&text).count(), 1, "the gate's line moved");
+        fs::create_dir_all(dir).unwrap();
+        fs::write(dir.join("_agents.py"), re.replace(&text, regex::NoExpand(line)).into_owned()).unwrap();
+    }
+
+    /// `_agents.py ouvert`, the kit's own answer: exit code 0 when Codex can be chosen here.
+    fn kit_says_open(script: &Path) -> bool {
+        let out = Command::new(python()).args(["-I", "-B"]).arg(script).arg("ouvert").output().unwrap();
+        match out.status.code() {
+            Some(0) => true,
+            Some(1) => false,
+            other => panic!("_agents.py ouvert: {other:?} {}", String::from_utf8_lossy(&out.stderr)),
+        }
+    }
+
+    #[test]
+    fn the_gate_is_the_kits_own_line() {
+        let all = r#"CODEX_OUVERT = frozenset({"darwin", "linux", "windows"})"#;
+        for line in [
+            "CODEX_OUVERT = frozenset()",
+            all,
+            r#"CODEX_OUVERT = frozenset({"darwin"})"#,
+            r#"CODEX_OUVERT = frozenset({"linux"})"#,
+            r#"CODEX_OUVERT = frozenset({"windows"})"#,
+            r#"CODEX_OUVERT = frozenset({'darwin', 'linux',})"#,
+            r#"CODEX_OUVERT = frozenset({"linux", "windows"})"#,
+        ] {
+            let tmp = tempfile::tempdir().unwrap();
+            plant_gate(&installed(tmp.path()), line);
+            assert_eq!(codex_open(tmp.path()), kit_says_open(&installed(tmp.path()).join("_agents.py")), "{line}");
+        }
+        // As shipped: closed here, and the app's own copy is that very file.
+        let shipped = repo().join("engine").join("hooks").join("_agents.py");
+        assert_eq!(BUILT_IN, fs::read_to_string(&shipped).unwrap());
+        assert!(gate(BUILT_IN).is_some(), "the shipped gate must be a line the app reads");
+        let fresh = tempfile::tempdir().unwrap();
+        assert_eq!(codex_open(fresh.path()), kit_says_open(&shipped), "no kit on disk: the app's copy");
+        assert!(!codex_open(fresh.path()), "Codex is closed on every system as shipped");
+        // The copy that reads agents.json decides: the installed one, else the sources'.
+        let tmp = tempfile::tempdir().unwrap();
+        let sources = tmp.path().join(".brain-in-a-box").join("src").join("engine").join("hooks");
+        plant_gate(&sources, all);
+        assert!(codex_open(tmp.path()));
+        plant_gate(&installed(tmp.path()), "CODEX_OUVERT = frozenset()");
+        assert!(!codex_open(tmp.path()));
+        // Anything the app cannot read for sure is closed, even where Python would open it.
+        for odd in [
+            r#"CODEX_OUVERT = frozenset(["darwin", "linux", "windows"])"#,
+            r#"CODEX_OUVERT = frozenset({"darwin", "linux", "windows"})  # open"#,
+            r#"CODEX_OUVERT = frozenset({"dar" "win", "linux", "windows"})"#,
+            r#"CODEX_OUVERT = frozenset({"darwin",, "linux", "windows"})"#,
+        ] {
+            plant_gate(&installed(tmp.path()), odd);
+            assert!(!codex_open(tmp.path()), "{odd}");
+        }
+        assert_eq!(gate(&format!("{all}\n{all}\n")), None, "two gates: none");
+        assert_eq!(gate("x = 1\n"), None, "no gate: none");
+        // A kit file there that cannot be read: closed, neither the sources' nor the app's copy.
+        plant_gate(&sources, all);
+        let mut bytes = fs::read(sources.join("_agents.py")).unwrap();
+        bytes.extend_from_slice(b"\n# \xff\n");
+        fs::write(installed(tmp.path()).join("_agents.py"), bytes).unwrap();
+        assert!(!codex_open(tmp.path()));
+    }
+
+    /// _agents.codex_home(env, home), as the installer records it.
+    fn kit_codex_home(home: &Path, env: Option<&str>) -> Option<PathBuf> {
+        let code = "import json, sys; sys.path.insert(0, sys.argv[1]); import _agents\n\
+                    env = {} if sys.argv[3] == '-' else {'CODEX_HOME': sys.argv[3]}\n\
+                    try:\n    print(_agents.codex_home(env, sys.argv[2]))\nexcept _agents.Refus:\n    print('-')";
+        let out =
+            Command::new(python()).args(["-I", "-B", "-c", code]).arg(repo().join("engine").join("hooks")).arg(home).arg(env.unwrap_or("-")).output().unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        let said = String::from_utf8(out.stdout).unwrap().trim_end_matches(['\r', '\n']).to_string();
+        (said != "-").then(|| PathBuf::from(said))
+    }
+
+    #[test]
+    fn codexs_folder_is_the_one_the_installer_records() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+        let root = if cfg!(windows) { r"C:\" } else { "/" };
+        let cases: Vec<Option<String>> = vec![
+            None,
+            Some(String::new()),
+            Some("   ".into()),
+            Some(format!("{root}x{0}.codex", std::path::MAIN_SEPARATOR)),
+            Some(format!("  {root}x{0}.{0}a{0}{0}b{0}..{0}c{0}  ", std::path::MAIN_SEPARATOR)),
+            Some(format!("{root}Données é{0}codex", std::path::MAIN_SEPARATOR)),
+            Some("relative/codex".into()),
+        ];
+        for env in cases {
+            let ours = codex_home_for(home, env.clone().map(OsString::from)).ok();
+            assert_eq!(ours, kit_codex_home(home, env.as_deref()), "{env:?}");
+        }
+    }
+
+    #[test]
+    fn a_choice_holds_until_agents_json_records_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+        let codex = home.join(".codex");
+        let names = |n: &[&str]| n.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        // As shipped, Codex is closed: refused, and nothing is held.
+        plant_agents_py(&installed(home), false);
+        assert!(super::choose(home, &names(&["codex"])).is_err());
+        assert_eq!(current_with(home, Agents::claude_alone()), Agents::claude_alone());
+        // Claude alone without agents.json is what the absent file says already: nothing to record.
+        assert_eq!(super::choose(home, &names(&["claude"])).unwrap(), Agents::claude_alone());
+        assert!(installer_env(&current_with(home, Agents::claude_alone())).is_empty());
+
+        plant_agents_py(&installed(home), true);
+        let picked = super::choose(home, &names(&["codex", "claude"])).unwrap();
+        assert_eq!(picked, Agents { order: vec![Engine::Codex, Engine::Claude], codex_home: Some(codex.clone()), etat: PENDING.into() });
+        assert!(pending(&current(home)));
+        assert_eq!(installer_env(&current(home)), [("BIAB_AGENTS", "claude,codex".to_string()), ("BIAB_PREFERE", "codex".to_string())]);
+        // Another home is not concerned: its own agents.json speaks.
+        assert_eq!(current_with(&home.join("x"), Agents::claude_alone()), Agents::claude_alone());
+        // Once the installer wrote it, agents.json speaks again, and nothing more is handed over.
+        choose(home, &serde_json::json!({ "version": 1, "agents": ["claude", "codex"], "prefere": "codex", "codex_home": codex }));
+        let recorded = current(home);
+        assert_eq!((recorded.etat.as_str(), recorded.order.as_slice()), ("ok", [Engine::Codex, Engine::Claude].as_slice()));
+        assert!(installer_env(&recorded).is_empty());
+        // The folder agents.json records stays Codex's.
+        let elsewhere = home.join("ailleurs");
+        choose(home, &serde_json::json!({ "version": 1, "agents": ["codex"], "prefere": "codex", "codex_home": elsewhere }));
+        assert_eq!(super::choose(home, &names(&["claude", "codex"])).unwrap().codex_home, Some(elsewhere));
+        // Back to Claude alone: handed over too, the file lists Codex.
+        let back = super::choose(home, &names(&["claude"])).unwrap();
+        assert_eq!((back.order.as_slice(), back.codex_home.as_ref(), back.etat.as_str()), ([Engine::Claude].as_slice(), None, PENDING));
+        assert_eq!(installer_env(&back), [("BIAB_AGENTS", "claude".to_string()), ("BIAB_PREFERE", "claude".to_string())]);
+        // Untrusted agents.json: the window's choice is what the installer gets.
+        choose(home, &serde_json::json!({ "version": 2 }));
+        assert_eq!(super::choose(home, &names(&["codex"])).unwrap().order, [Engine::Codex]);
+        for bad in [&[][..], &["gemini"][..], &["codex", "codex"][..]] {
+            assert!(super::choose(home, &names(bad)).is_err(), "{bad:?}");
+        }
+        *CHOSEN.lock().unwrap() = None;
+    }
+
+    #[test]
+    fn what_the_window_preselects() {
+        let both = Agents { order: vec![Engine::Codex, Engine::Claude], codex_home: Some("/c".into()), etat: "ok".into() };
+        assert_eq!(preselect(&both, true, false, false), both.order, "agents.json's choice, whatever is installed");
+        let picked = Agents { etat: PENDING.into(), ..both.clone() };
+        assert_eq!(preselect(&picked, false, false, false), both.order, "the window's earlier choice");
+        let absent = Agents::claude_alone();
+        assert_eq!(preselect(&absent, true, true, true), [Engine::Claude], "an install of before the choice: Claude alone");
+        assert_eq!(preselect(&absent, false, true, true), [Engine::Claude, Engine::Codex]);
+        assert_eq!(preselect(&absent, false, false, true), [Engine::Codex]);
+        assert_eq!(preselect(&absent, false, true, false), [Engine::Claude]);
+        assert_eq!(preselect(&absent, false, false, false), [Engine::Claude]);
+        assert_eq!(preselect(&Agents::none("droits"), false, false, true), [Engine::Codex]);
+        // Closed: nothing is offered, and nothing is looked for.
+        let tmp = tempfile::tempdir().unwrap();
+        plant_agents_py(&installed(tmp.path()), false);
+        assert_eq!(offer(tmp.path()), Offer { open: false, agents: Vec::new() });
+        plant_agents_py(&installed(tmp.path()), true);
+        assert!(offer(tmp.path()).open);
     }
 }

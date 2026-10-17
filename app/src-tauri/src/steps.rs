@@ -29,7 +29,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
 
-use crate::agents::{self, Agents};
+use crate::agents::{self, Agents, Engine};
 use crate::detect::{self, fmt_version, Found};
 use crate::model::StepResult;
 #[cfg(target_os = "macos")]
@@ -402,7 +402,7 @@ const CODEX_INSTALLER_UNSET: &[&str] = &[
 /// CODEX_HOME agents.json records. One already there is kept, as install.sh keeps it: an older one
 /// is the user's to update.
 fn codex(log: &mut dyn FnMut(String)) -> Step {
-    let Some(codex_home) = agents::read(&sys::home()).codex_home else {
+    let Some(codex_home) = agents::current(&sys::home()).codex_home else {
         return Err("Tu n'as pas choisi de travailler avec Codex : je ne l'installe pas.".into());
     };
     let setup = codex::Setup::for_user(&codex_home).map_err(|e| format!("Je n'ai pas pu créer mon dossier de travail ({e})."))?;
@@ -724,7 +724,7 @@ fn brain(voyage_key: Option<&str>, log: &mut dyn FnMut(String)) -> Step {
     if !detect::bun_ok(&detect::bun(&home)) {
         return Err("Il faut d'abord installer Bun.".into());
     }
-    let agents = agents::read(&home);
+    let agents = agents::current(&home);
     choice_trusted(&agents)?;
     // Already there: run again only to add a Voyage key the brain does not have yet.
     if detect::brain(&home, &agents).complete() && !(key.is_some() && detect::embedding_model(&home).is_none()) {
@@ -737,8 +737,11 @@ fn brain(voyage_key: Option<&str>, log: &mut dyn FnMut(String)) -> Step {
 
     log("Je mets en place ton cerveau (quelques minutes)…".into());
     // Without a key from the user, the variable is removed: a key inherited from the
-    // app's own environment never sneaks in.
-    let env = [("VOYAGE_API_KEY", key)];
+    // app's own environment never sneaks in. A choice made in the window goes the same way, for
+    // install.sh to record it; without one, nothing is added.
+    let choice = agents::installer_env(&agents);
+    let mut env = vec![("VOYAGE_API_KEY", key)];
+    env.extend(choice.iter().map(|(k, v)| (*k, Some(v.as_str()))));
     let script = src.join("install.sh");
     let mut last = String::new();
     let code = sys::run_streaming(Path::new("/bin/bash"), &[&script.to_string_lossy()], &env, Some(&src), BRAIN_LIMIT, &mut |line| {
@@ -757,7 +760,7 @@ fn brain(voyage_key: Option<&str>, log: &mut dyn FnMut(String)) -> Step {
              Relance l'étape ; si ça recommence, envoie le journal à l'équipe."
         ));
     }
-    let missing = missing_parts(detect::brain(&home, &agents::read(&home)), &home);
+    let missing = missing_parts(detect::brain(&home, &agents::current(&home)), &home);
     if !missing.is_empty() {
         return Err(format!("L'installation s'est terminée, mais il manque {}. Relance l'étape.", missing.join(", ")));
     }
@@ -805,7 +808,7 @@ fn brain(voyage_key: Option<&str>, log: &mut dyn FnMut(String)) -> Step {
             .into());
     }
     let home = sys::home();
-    let agents = agents::read(&home);
+    let agents = agents::current(&home);
     choice_trusted(&agents)?;
     // Already there: run again only to add a Voyage key the brain does not have yet.
     if detect::brain(&home, &agents).complete()
@@ -825,7 +828,9 @@ fn brain(voyage_key: Option<&str>, log: &mut dyn FnMut(String)) -> Step {
     // user, a repair, or install.ps1 itself), goes the same way: this app may have started
     // before it was saved. Otherwise install.ps1 chooses.
     let dir = detect::chosen_brain_dir().map(|d| d.to_string_lossy().into_owned());
-    let env = [("VOYAGE_API_KEY", key), ("BRAIN_DIR", dir.as_deref())];
+    let choice = agents::installer_env(&agents);
+    let mut env = vec![("VOYAGE_API_KEY", key), ("BRAIN_DIR", dir.as_deref())];
+    env.extend(choice.iter().map(|(k, v)| (*k, Some(v.as_str()))));
     let mut last = String::new();
     let mut sections = Sections::default();
     let code = run_ps1(&src.join(INSTALLER), &env, &src, BRAIN_LIMIT, &mut |line| {
@@ -847,7 +852,7 @@ fn brain(voyage_key: Option<&str>, log: &mut dyn FnMut(String)) -> Step {
              Relance l'étape ; si ça recommence, envoie le journal à l'équipe."
         ));
     }
-    let mut missing = missing_parts(detect::brain(&home, &agents::read(&home)), &home);
+    let mut missing = missing_parts(detect::brain(&home, &agents::current(&home)), &home);
     missing.extend(missing_tools(&home).into_iter().map(String::from));
     if !missing.is_empty() {
         return Err(format!(
@@ -902,8 +907,8 @@ const SECTIONS: &[(&str, &str)] = &[
     ("Verification", "Je vérifie que tout répond"),
 ];
 
-/// install.ps1's sections that run only when an agent is chosen: Codex's, which the app does not choose
-/// yet (phase 10b). Said without a count, so that a brain of Claude alone still counts 13, as before Codex.
+/// install.ps1's sections that run only when an agent is chosen: Codex's. Said without a count, so that a
+/// brain of Claude alone still counts 13, as before Codex.
 #[cfg(windows)]
 const CHOSEN_SECTIONS: &[(&str, &str)] = &[("Codex", "Je branche Codex")];
 
@@ -1059,8 +1064,51 @@ pub fn open_claude_login() -> Result<(), String> {
     open_in_terminal("claude-login", &login_script(&sys::tool_path(), &claude))
 }
 
+/// Codex's login, with the user's ChatGPT account (§4.3): its own command, `codex login`, in Terminal
+/// (PowerShell on Windows), for the CODEX_HOME of the agents chosen. Never an API key: none reaches it,
+/// and its login goes to auth.json, the file the kit reads. The app never logs anyone out.
+pub fn open_codex_login() -> Result<(), String> {
+    let home = sys::home();
+    let (codex, codex_home) = chosen_codex(&home)?;
+    open_in_terminal("codex-login", &codex_login_script(&sys::tool_path(), &codex, codex_home_var(&home, &codex_home)))
+}
+
+/// How Codex is logged in, for the window: `codex::login`, never what Codex printed.
+pub fn codex_login() -> codex::Login {
+    let agents = agents::current(&sys::home());
+    let listed = agents.lists(Engine::Codex);
+    match agents.codex_home.filter(|_| listed).map(|h| codex::Setup::for_user(&h)) {
+        Some(Ok(setup)) => codex::login(&setup),
+        _ => codex::Login::Unknown,
+    }
+}
+
+/// Codex and its folder, once Codex is one of the agents and installed.
+fn chosen_codex(home: &Path) -> Result<(PathBuf, PathBuf), String> {
+    let agents = agents::current(home);
+    let listed = agents.lists(Engine::Codex);
+    let Some(codex_home) = agents.codex_home.filter(|_| listed) else {
+        return Err("Tu n'as pas choisi de travailler avec Codex.".into());
+    };
+    let setup = codex::Setup::for_user(&codex_home).map_err(|e| format!("Je n'ai pas pu créer mon dossier de travail ({e})."))?;
+    let codex = codex::find(&setup).ok_or("Codex n'est pas encore installé.")?;
+    Ok((codex, codex_home))
+}
+
+/// CODEX_HOME for a window the app opens: only when it is not Codex's own default, ~/.codex. Codex
+/// refuses a CODEX_HOME that does not exist, and without the variable it finds that one by itself.
+fn codex_home_var<'a>(home: &Path, codex_home: &'a Path) -> Option<&'a Path> {
+    (codex_home != home.join(".codex")).then_some(codex_home)
+}
+
+/// The preferred agent, in the brain, with the guide: Claude Code as before Codex, or Codex.
 pub fn start_onboarding() -> Result<(), String> {
     let home = sys::home();
+    match agents::current(&home).order.first() {
+        Some(Engine::Claude) => {}
+        Some(Engine::Codex) => return start_codex_onboarding(&home),
+        None => return Err("Je ne sais plus avec quelle IA tu travailles : ton choix est illisible.".into()),
+    }
     let Some(claude) = detect::claude_bin() else {
         return Err("Claude Code n'est pas encore installé.".into());
     };
@@ -1069,6 +1117,16 @@ pub fn start_onboarding() -> Result<(), String> {
     };
     let guide = onboarding_guide(&home)?;
     open_in_terminal("onboarding", &onboarding_script(&sys::tool_path(), &vault, &guide, &claude))
+}
+
+fn start_codex_onboarding(home: &Path) -> Result<(), String> {
+    let (codex, codex_home) = chosen_codex(home)?;
+    let Some(vault) = detect::vault(home) else {
+        return Err("Ton cerveau n'est pas encore installé.".into());
+    };
+    let guide = onboarding_guide(home)?;
+    let script = codex_onboarding_script(&sys::tool_path(), &vault, &guide, &codex, codex_home_var(home, &codex_home));
+    open_in_terminal("onboarding", &script)
 }
 
 /// The guide from the sources the brain step unpacked; when the brain was installed
@@ -1110,6 +1168,42 @@ fn onboarding_script(path: &std::ffi::OsStr, vault: &Path, guide: &Path, claude:
     )
 }
 
+/// The keys that would have Codex bill an API: never in a window the app opens for it.
+const CODEX_KEYS: &[&str] = &["OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN", "OPENAI_BASE_URL"];
+/// Where `codex login` keeps the login: auth.json, the file the kit reads (codex.rs passes the same).
+const CODEX_LOGIN_STORE: &str = r#"cli_auth_credentials_store="file""#;
+
+#[cfg(not(windows))]
+fn codex_env_lines(path: &std::ffi::OsStr, codex_home: Option<&Path>) -> String {
+    let mut s = format!("#!/bin/bash\nexport PATH={}\n", sh_quote(&path.to_string_lossy()));
+    if let Some(h) = codex_home {
+        s.push_str(&format!("export CODEX_HOME={}\n", sh_quote(&h.to_string_lossy())));
+    }
+    s.push_str(&format!("unset {}\n", CODEX_KEYS.join(" ")));
+    s
+}
+
+#[cfg(not(windows))]
+fn codex_login_script(path: &std::ffi::OsStr, codex: &Path, codex_home: Option<&Path>) -> String {
+    format!(
+        "{}{} -c {} login\necho\necho 'Tu peux fermer cette fenêtre.'\n",
+        codex_env_lines(path, codex_home),
+        sh_quote(&codex.to_string_lossy()),
+        sh_quote(CODEX_LOGIN_STORE)
+    )
+}
+
+#[cfg(not(windows))]
+fn codex_onboarding_script(path: &std::ffi::OsStr, vault: &Path, guide: &Path, codex: &Path, codex_home: Option<&Path>) -> String {
+    format!(
+        "{}cd {} || exit 1\n{} {}\necho\necho 'Tu peux fermer cette fenêtre.'\n",
+        codex_env_lines(path, codex_home),
+        sh_quote(&vault.to_string_lossy()),
+        sh_quote(&codex.to_string_lossy()),
+        sh_quote(&onboarding_prompt(guide))
+    )
+}
+
 /// Single quotes keep everything literal in a POSIX shell, except the quote itself,
 /// written '\''.
 #[cfg(not(windows))]
@@ -1134,6 +1228,39 @@ fn onboarding_script(path: &std::ffi::OsStr, vault: &Path, guide: &Path, claude:
         ps_quote(&path.to_string_lossy()),
         ps_quote(&vault.to_string_lossy()),
         ps_quote(&claude.to_string_lossy()),
+        ps_quote(&onboarding_prompt(guide))
+    )
+}
+
+#[cfg(windows)]
+fn codex_env_lines(path: &std::ffi::OsStr, codex_home: Option<&Path>) -> String {
+    let mut s = format!("$ErrorActionPreference = 'Stop'\r\n$env:Path = {}\r\n", ps_quote(&path.to_string_lossy()));
+    if let Some(h) = codex_home {
+        s.push_str(&format!("$env:CODEX_HOME = {}\r\n", ps_quote(&h.to_string_lossy())));
+    }
+    for k in CODEX_KEYS {
+        s.push_str(&format!("Remove-Item -LiteralPath Env:{k} -ErrorAction SilentlyContinue\r\n"));
+    }
+    s
+}
+
+#[cfg(windows)]
+fn codex_login_script(path: &std::ffi::OsStr, codex: &Path, codex_home: Option<&Path>) -> String {
+    format!(
+        "{}& {} -c {} login\r\nWrite-Host ''\r\nWrite-Host 'Tu peux fermer cette fenêtre.'\r\n",
+        codex_env_lines(path, codex_home),
+        ps_quote(&codex.to_string_lossy()),
+        ps_quote(CODEX_LOGIN_STORE)
+    )
+}
+
+#[cfg(windows)]
+fn codex_onboarding_script(path: &std::ffi::OsStr, vault: &Path, guide: &Path, codex: &Path, codex_home: Option<&Path>) -> String {
+    format!(
+        "{}Set-Location -LiteralPath {}\r\n& {} {}\r\nWrite-Host ''\r\nWrite-Host 'Tu peux fermer cette fenêtre.'\r\n",
+        codex_env_lines(path, codex_home),
+        ps_quote(&vault.to_string_lossy()),
+        ps_quote(&codex.to_string_lossy()),
         ps_quote(&onboarding_prompt(guide))
     )
 }
@@ -1715,6 +1842,55 @@ mod tests {
         assert_eq!(seen.lines().skip(1).collect::<Vec<_>>(), ["auth", "login"]);
     }
 
+    /// Codex's login and onboarding windows: its own commands, in the brain for the onboarding, its
+    /// folder only when not its default, and no key from the user's shell ever reaches it.
+    #[cfg(not(windows))]
+    #[test]
+    fn codex_windows_run_its_own_commands_without_a_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(dir.path()).unwrap();
+        let home = root.join("Jo's home $x");
+        let vault = home.join("Documents/Brain");
+        fs::create_dir_all(&vault).unwrap();
+        let bin = root.join("b'in dir");
+        fs::create_dir_all(&bin).unwrap();
+        let out = root.join("out");
+        let said = sh_quote(&out.to_string_lossy());
+        write_exec(
+            &bin.join("codex"),
+            &format!(
+                "#!/bin/sh\n{{ pwd -P; printf '%s\\n' \"$@\"; echo \"home=${{CODEX_HOME-unset}}\"; /usr/bin/env | /usr/bin/grep -E '^(OPENAI|CODEX_A)' || true; }} > {said}\n"
+            ),
+        );
+        let codex = bin.join("codex");
+        let path = bin.clone().into_os_string();
+        let keys = [("OPENAI_API_KEY", "sk-x"), ("CODEX_API_KEY", "sk-y"), ("CODEX_ACCESS_TOKEN", "t"), ("OPENAI_BASE_URL", "http://x")];
+        let run = |name: &str, text: String| {
+            let script = root.join(name);
+            fs::write(&script, text).unwrap();
+            let o = sys::run_with(Path::new("/bin/bash"), &[&script.to_string_lossy()], &keys, None, Duration::from_secs(10));
+            assert!(o.ok(), "{}", o.stderr);
+            assert!(o.stdout.contains("Tu peux fermer cette fenêtre."));
+            fs::read_to_string(&out).unwrap()
+        };
+
+        // The fake codex sees the window's PATH only (the folder it is in): env and grep by their paths.
+        let seen = run("codex-login.command", codex_login_script(&path, &codex, None));
+        let lines: Vec<&str> = seen.lines().skip(1).collect();
+        assert_eq!(lines, ["-c", r#"cli_auth_credentials_store="file""#, "login", "home=unset"]);
+
+        let other = home.join("Données é").join("codex'");
+        let seen = run("codex-login.command", codex_login_script(&path, &codex, Some(&other)));
+        assert_eq!(seen.lines().last(), Some(format!("home={}", other.display()).as_str()));
+
+        let guide = onboarding_guide(&home).unwrap();
+        let seen = run("onboarding.command", codex_onboarding_script(&path, &vault, &guide, &codex, None));
+        assert_eq!(seen, format!("{}\nRead {} and run it to personalize me.\nhome=unset\n", vault.display(), guide.display()));
+
+        assert_eq!(codex_home_var(&home, &home.join(".codex")), None);
+        assert_eq!(codex_home_var(&home, &other), Some(other.as_path()));
+    }
+
     #[test]
     fn atomic_write_sets_the_mode() {
         let dir = tempfile::tempdir().unwrap();
@@ -2241,5 +2417,27 @@ mod tests {
         assert!(onboarding.contains(r"Set-Location -LiteralPath 'C:\Users\Jo O''Brien\Documents\Brain'"), "{onboarding}");
         assert!(onboarding.contains(r"run it to personalize me.'"), "{onboarding}");
         assert!(same_folder(r"C:\Users\jo\Documents\Brain\", "c:/users/JO/Documents/Brain"));
+
+        let codex = Path::new(r"C:\Users\Jo O'Brien\AppData\Local\Programs\OpenAI\Codex\bin\codex.exe");
+        let home = Path::new(r"C:\Users\Jo O'Brien\Codex ‘x’");
+        for script in [codex_login_script(&path, codex, Some(home)), codex_onboarding_script(&path, vault, guide, codex, None)] {
+            assert!(script.contains(r"$env:Path = 'C:\Users\Jo O''Brien\.local\bin;C:\Windows'"), "{script}");
+            for k in CODEX_KEYS {
+                assert!(script.contains(&format!("Remove-Item -LiteralPath Env:{k} -ErrorAction SilentlyContinue")), "{script}");
+            }
+        }
+        let login = codex_login_script(&path, codex, Some(home));
+        assert!(login.contains(r"$env:CODEX_HOME = 'C:\Users\Jo O''Brien\Codex ‘‘x’’'"), "{login}");
+        assert!(
+            login.contains(r#"& 'C:\Users\Jo O''Brien\AppData\Local\Programs\OpenAI\Codex\bin\codex.exe' -c 'cli_auth_credentials_store="file"' login"#),
+            "{login}"
+        );
+        let onboarding = codex_onboarding_script(&path, vault, guide, codex, None);
+        assert!(!onboarding.contains("CODEX_HOME"), "{onboarding}");
+        assert!(onboarding.contains(r"Set-Location -LiteralPath 'C:\Users\Jo O''Brien\Documents\Brain'"), "{onboarding}");
+        assert!(
+            onboarding.contains(r"codex.exe' 'Read C:\Users\Jo O''Brien\.brain-in-a-box\src\onboarding\ONBOARDING.md and run it to personalize me.'"),
+            "{onboarding}"
+        );
     }
 }

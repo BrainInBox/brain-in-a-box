@@ -782,7 +782,7 @@ impl Used {
 /// What the window can offer under a failed step: the first engine agents.json lists that may be
 /// asked, else why the preferred one may not.
 pub fn availability(step: &str) -> RepairStatus {
-    lineup(&agents::read(&sys::home()), step, true).status()
+    lineup(&agents::current(&sys::home()), step, true).status()
 }
 
 /// Each engine agents.json lists, in the order they are asked, and what was found of it.
@@ -933,7 +933,7 @@ pub fn analyze(step: &str, on_progress: &mut dyn FnMut(Stage)) -> Result<RepairP
     // Only once the analysis is ours: a second click must not undo the first one's « Arrêter ».
     CANCEL.store(false, Ordering::SeqCst);
     let home = sys::home();
-    let lineup = lineup(&agents::read(&home), step, false);
+    let lineup = lineup(&agents::current(&home), step, false);
     let status = lineup.status();
     if status.state != RepairState::Ready {
         return Err(RepairError::Unavailable { state: status.state });
@@ -1762,7 +1762,7 @@ const TERMINAL_ENV: &[&str] = &[
 pub fn open_terminal(step: &str) -> Result<(), String> {
     let claude = detect::claude_bin().ok_or("Claude Code n'est pas installé.")?;
     let home = sys::home();
-    claude_chosen(&agents::read(&home))?;
+    claude_chosen(&agents::current(&home))?;
     let dir = SESSION.prepare_terminal(&home, &home.join(STORE), step, collect_facts)?;
     steps::open_in_terminal("reparer-avec-claude", &terminal_script(&claude, &sys::tool_path().to_string_lossy(), &dir, step))
 }
@@ -1774,7 +1774,7 @@ pub fn open_terminal(step: &str) -> Result<(), String> {
 pub fn open_terminal(step: &str) -> Result<(), String> {
     let claude = detect::claude_bin().ok_or("Claude Code n'est pas installé.")?;
     let home = sys::home();
-    claude_chosen(&agents::read(&home))?;
+    claude_chosen(&agents::current(&home))?;
     let dir = SESSION.prepare_terminal(&home, &home.join(STORE), step, collect_facts)?;
     let settings = dir.join(NO_HOOKS_FILE);
     let fail = |e: io::Error| format!("Je n'ai pas pu préparer le dossier pour Claude ({e}).");

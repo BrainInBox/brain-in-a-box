@@ -192,12 +192,13 @@ fn shown(rel: &Path) -> String {
     }
 }
 
-/// Codex's folders: ~/.codex, and the CODEX_HOME agents.json records when it lists Codex. From home
-/// when they are in it, once each.
+/// Codex's folders: ~/.codex, and the CODEX_HOME of the agents of now when they list Codex (agents.json's,
+/// or the one of a choice made in the window that the installer is about to record). From home when they
+/// are in it, once each.
 fn codex_homes(home: &Path) -> Vec<PathBuf> {
     let mut homes: Vec<PathBuf> = Vec::new();
     let mut seen = HashSet::new();
-    for h in std::iter::once(home.join(CODEX_DEFAULT)).chain(agents::read(home).codex_home) {
+    for h in std::iter::once(home.join(CODEX_DEFAULT)).chain(agents::current(home).codex_home) {
         if seen.insert(fs::canonicalize(&h).unwrap_or_else(|_| h.clone())) {
             homes.push(h.strip_prefix(home).map_or_else(|_| h.clone(), Path::to_path_buf));
         }

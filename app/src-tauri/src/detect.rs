@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use serde_json::Value;
 
-use crate::agents::{Agents, Engine};
+use crate::agents::{self, Agents, Engine};
 use crate::{codex, sys};
 
 pub type Version = (u32, u32, u32);
@@ -462,7 +462,8 @@ pub struct Brain {
     /// Codex's, when Codex is one of them.
     pub codex: Option<CodexPart>,
     /// agents.json can be trusted, or is absent: otherwise no agent is wired (agents.rs), and the brain
-    /// is not whole until the choice is made again.
+    /// is not whole until the choice is made again. Not either while a choice made in the window waits
+    /// for the installer to record it (agents::pending).
     pub chosen: bool,
 }
 
@@ -506,7 +507,7 @@ pub fn brain(home: &Path, agents: &Agents) -> Brain {
             instructions: codex_instructions(codex_home).contains(KIT_MARK),
             skills: home.join(".agents/skills/brain-boost/SKILL.md").is_file(),
         }),
-        chosen: !agents.order.is_empty(),
+        chosen: !agents.order.is_empty() && !agents::pending(agents),
     }
 }
 

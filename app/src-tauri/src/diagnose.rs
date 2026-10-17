@@ -70,6 +70,8 @@ const CODEX: Item = Item("codex", "Codex", Some("codex"));
 const CODEX_AUTH: Item = Item("codex_auth", "Connexion à Codex", None);
 /// agents.json lists who the brain works with: one the kit cannot trust blocks.
 const AGENTS: Item = Item("agents", "Ton choix d'IA", None);
+/// The choice made in the window, which the brain step hands to the installer to record.
+const AGENTS_TO_RECORD: Item = Item("agents", "Ton choix d'IA", Some("brain"));
 const OBSIDIAN: Item = Item("obsidian", "Obsidian (pour lire tes notes)", Some(OWN_STEP_OR_BRAIN[1]));
 const BRAIN_VAULT: Item = Item("brain_vault", "Ton dossier Brain", Some("brain"));
 const BRAIN_HOOKS: Item = Item("brain_hooks", "Les automatismes de Claude", Some("brain"));
@@ -197,7 +199,7 @@ pub fn failed(why: &str) -> Diagnosis {
 
 #[cfg(target_os = "macos")]
 fn probe(home: &Path) -> Facts {
-    let agents = agents::read(home);
+    let agents = agents::current(home);
     let (claude, codex) = (agents.lists(Engine::Claude), agents.lists(Engine::Codex));
     thread::scope(|s| {
         // The slow probes (network, `claude auth status`, Codex's login) run alongside the rest.
@@ -244,7 +246,7 @@ fn probe_codex(home: &Path, agents: &Agents) -> Option<CodexFacts> {
 
 #[cfg(windows)]
 fn probe(home: &Path) -> Facts {
-    let agents = agents::read(home);
+    let agents = agents::current(home);
     let (claude, codex) = (agents.lists(Engine::Claude), agents.lists(Engine::Codex));
     thread::scope(|s| {
         let github = s.spawn(|| answers("https://github.com"));
@@ -290,7 +292,7 @@ fn probe(home: &Path) -> Facts {
 
 #[cfg(target_os = "linux")]
 fn probe(home: &Path) -> Facts {
-    let agents = agents::read(home);
+    let agents = agents::current(home);
     let (claude, codex) = (agents.lists(Engine::Claude), agents.lists(Engine::Codex));
     thread::scope(|s| {
         let github = s.spawn(|| answers("https://github.com"));
@@ -458,6 +460,8 @@ fn decide(home: &Path, f: &Facts) -> Diagnosis {
     }
     if f.agents.order.is_empty() {
         checks.push(check_agents(&f.agents.etat));
+    } else if agents::pending(&f.agents) {
+        checks.push(AGENTS_TO_RECORD.is(Status::Missing, "Je le note en installant ton cerveau."));
     }
     checks.extend([
         #[cfg(not(target_os = "linux"))]
@@ -1143,6 +1147,27 @@ mod tests {
         let ids: Vec<&str> = d.checks.iter().map(|c| c.id.as_str()).collect();
         assert!(!ids.iter().any(|id| ["claude", "claude_auth", "brain_hooks", "codex"].contains(id)), "{ids:?}");
         assert_eq!(by_id(&d, "network").detail, "github.com répond.");
+    }
+
+    /// A choice made in the window that agents.json does not record yet: a brain otherwise complete is
+    /// installed again, for the installer to record it; once recorded, nothing to do.
+    #[test]
+    fn a_choice_made_in_the_window_is_recorded_by_the_brain_step() {
+        let tmp = tempfile::tempdir().unwrap();
+        fake_brain(tmp.path());
+        let picked = Agents { order: vec![Engine::Claude], codex_home: None, etat: agents::PENDING.into() };
+        let d = decide(tmp.path(), &Facts { agents: picked.clone(), ..healthy_facts() });
+        let a = by_id(&d, "agents");
+        assert_eq!((a.status, a.fix.as_deref(), a.label.as_str()), (Status::Missing, Some("brain"), "Ton choix d'IA"));
+        assert!(d.can_install);
+        assert_eq!(d.todo, ["brain"]);
+        // The brain step does not stop at « déjà installé » until the installer recorded it.
+        assert!(!detect::brain(tmp.path(), &picked).complete());
+        let recorded = Agents { etat: "ok".into(), ..picked };
+        assert!(detect::brain(tmp.path(), &recorded).complete());
+        let d = decide(tmp.path(), &Facts { agents: recorded, ..healthy_facts() });
+        assert!(d.checks.iter().all(|c| c.id != "agents"), "{:?}", d.checks);
+        assert!(d.todo.is_empty(), "{:?}", d.todo);
     }
 
     #[test]
