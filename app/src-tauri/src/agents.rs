@@ -57,11 +57,11 @@ pub struct Agents {
 }
 
 impl Agents {
-    fn claude_alone() -> Agents {
+    pub(crate) fn claude_alone() -> Agents {
         Agents { order: vec![Engine::Claude], codex_home: None, etat: "absent".into() }
     }
 
-    fn none(etat: &str) -> Agents {
+    pub(crate) fn none(etat: &str) -> Agents {
         Agents { order: Vec::new(), codex_home: None, etat: etat.into() }
     }
 
@@ -86,16 +86,32 @@ fn read_with(home: &Path, python: impl FnOnce() -> Option<PathBuf>) -> Agents {
     if fs::symlink_metadata(home.join(FILE)).is_err_and(|e| e.kind() == io::ErrorKind::NotFound) {
         return Agents::claude_alone();
     }
-    let Some(script) = scripts(home).into_iter().find(|s| s.is_file()) else { return Agents::none("illisible") };
-    let Some(python) = python() else { return Agents::none("illisible") };
+    kit(home, python, "lire").and_then(|out| parse(&out)).unwrap_or_else(|| Agents::none("illisible"))
+}
+
+/// Whether Codex keeps sessions without running the kit's hooks since the install wired them (not
+/// approved, turned off in /hooks, or no longer trusted after an update): _agents.hooks_muets(), the
+/// night check's orange line. Only when Codex is one of the agents; nothing is run otherwise.
+pub fn hooks_muets(home: &Path, agents: &Agents) -> bool {
+    hooks_muets_with(home, agents, kit_python)
+}
+
+fn hooks_muets_with(home: &Path, agents: &Agents, python: impl FnOnce() -> Option<PathBuf>) -> bool {
+    if !agents.lists(Engine::Codex) {
+        return false;
+    }
+    kit(home, python, "hooks-muets").is_some_and(|out| out.trim() == "oui")
+}
+
+/// What `_agents.py <command>` prints, run with the kit's Python as the night's tasks run it.
+fn kit(home: &Path, python: impl FnOnce() -> Option<PathBuf>, command: &str) -> Option<String> {
+    let script = scripts(home).into_iter().find(|s| s.is_file())?;
+    let python = python()?;
     let home_var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
     let home_text = home.to_string_lossy();
     let script_text = script.to_string_lossy();
-    let out = sys::run_with(&python, &["-I", "-B", &script_text, "lire"], &[(home_var, &home_text)], None, READ_TIMEOUT);
-    if !out.ok() {
-        return Agents::none("illisible");
-    }
-    parse(&out.stdout).unwrap_or_else(|| Agents::none("illisible"))
+    let out = sys::run_with(&python, &["-I", "-B", &script_text, command], &[(home_var, &home_text)], None, READ_TIMEOUT);
+    out.ok().then_some(out.stdout)
 }
 
 /// The installed copy, next to the hooks (the one the night's tasks read), else the one of the
@@ -280,6 +296,35 @@ pub(crate) mod tests {
         fs::create_dir_all(home.join(".brain-in-a-box")).unwrap();
         std::os::unix::fs::symlink(home.join("nowhere.json"), home.join(FILE)).unwrap();
         assert_eq!(read_here(home), Agents::none("illisible"));
+    }
+
+    /// The kit says whether Codex runs its hooks; nothing is run when Codex is not one of the agents.
+    #[test]
+    fn whether_codex_runs_the_hooks_is_the_kits_to_say() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+        let codex = home.join("Données é").join(".codex");
+        plant_agents_py(&installed(home), true);
+        let state = home.join(".brain-in-a-box");
+        fs::create_dir_all(&state).unwrap();
+        // Wired long ago, a session since, and no hook run since.
+        fs::write(state.join("codex-hooks-poses.json"), r#"{"version": 1, "date": "2000-01-01T00:00:00Z"}"#).unwrap();
+        let day = codex.join("sessions").join("2026").join("10").join("17");
+        fs::create_dir_all(&day).unwrap();
+        fs::write(day.join("rollout-2026-10-17T10-00-00-0199f0a0-0000-7000-8000-000000000001.jsonl"), "{}\n").unwrap();
+
+        let both = serde_json::json!({ "version": 1, "agents": ["claude", "codex"], "prefere": "claude", "codex_home": codex });
+        choose(home, &both);
+        let agents = read_here(home);
+        assert!(hooks_muets_with(home, &agents, || Some(python())));
+        assert!(!hooks_muets_with(&home.join("elsewhere"), &agents, || Some(python())), "no kit to ask: nothing said");
+        assert!(!hooks_muets_with(home, &agents, || None));
+        // A hook ran since: the hooks run.
+        fs::write(state.join("codex-hooks-vus.json"), r#"{"version": 1, "hooks": {"session-logger": "2999-01-01T00:00:00Z"}}"#).unwrap();
+        assert!(!hooks_muets_with(home, &agents, || Some(python())));
+        for alone in [Agents::claude_alone(), Agents::none("ferme")] {
+            assert!(!hooks_muets_with(home, &alone, || panic!("Python was asked")));
+        }
     }
 
     #[test]

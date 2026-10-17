@@ -14,6 +14,9 @@
 //! python3, curl). Those and Obsidian's official package need root: the system asks the
 //! user for their password (pkexec, its own window), for a command fixed here, and only for
 //! these two steps. Everything else lands in the home folder, as on a Mac.
+//!
+//! The agents agents.json lists (agents.rs) each have their step where Claude Code's stands, the
+//! preferred one first: Claude Code's, Codex's, or both. Without the file, Claude's alone, as before.
 
 use std::fs;
 use std::io::{self, Write};
@@ -26,13 +29,12 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
 
-use crate::config_guard;
-#[cfg(not(windows))]
-use crate::detect::fmt_version;
-use crate::detect::{self, Found};
+use crate::agents::{self, Agents};
+use crate::detect::{self, fmt_version, Found};
 use crate::model::StepResult;
 #[cfg(target_os = "macos")]
 use crate::sys::minutes;
+use crate::{codex, config_guard};
 use crate::{perms, sys, voyage};
 #[cfg(target_os = "linux")]
 use crate::root::{self, OBSIDIAN_DEB_SHA256};
@@ -40,14 +42,21 @@ use crate::root::{self, OBSIDIAN_DEB_SHA256};
 /// Claude Code first: its installer needs none of Apple's tools, and once the user is
 /// logged in, Claude can help repair the steps that follow.
 #[cfg(target_os = "macos")]
-pub const ORDER: &[&str] = &["claude", "clt", "bun", "obsidian", "brain"];
+const ORDER: &[&str] = &["claude", "clt", "bun", "obsidian", "brain"];
 /// The system's tools first: everything after downloads with curl (a fresh Ubuntu desktop
 /// has none), Bun's installer unzips, install.sh needs git and python3.
 #[cfg(target_os = "linux")]
-pub const ORDER: &[&str] = &["paquets", "claude", "bun", "obsidian", "brain"];
+const ORDER: &[&str] = &["paquets", "claude", "bun", "obsidian", "brain"];
 /// install.ps1 installs all the rest, Python and Git included.
 #[cfg(windows)]
-pub const ORDER: &[&str] = &["claude", "brain"];
+const ORDER: &[&str] = &["claude", "brain"];
+
+/// The steps in the order they run: the agents' own where Claude Code's stands in ORDER (their step
+/// ids are their names), the preferred one first. Claude alone: ORDER, as before Codex; a choice the
+/// kit cannot trust: no agent's step.
+pub fn order(agents: &Agents) -> Vec<&'static str> {
+    ORDER.iter().flat_map(|&s| if s == "claude" { agents.order.iter().map(|e| e.id()).collect() } else { vec![s] }).collect()
+}
 
 /// engine/gbrain-pin.json's, which install.sh follows (a test holds them equal).
 #[cfg(not(windows))]
@@ -135,6 +144,7 @@ pub(crate) fn run_held(_g: &MutexGuard<'static, ()>, id: &str, voyage_key: Optio
         #[cfg(not(windows))]
         "bun" => bun(log),
         "claude" => claude(log),
+        "codex" => codex(log),
         #[cfg(target_os = "macos")]
         "obsidian" => obsidian(log),
         #[cfg(target_os = "linux")]
@@ -288,7 +298,6 @@ fn apple_installer_open() -> bool {
 // ── The system's tools (Linux: git, python3, curl…) ─────────────────────────
 
 /// "git, curl et unzip".
-#[cfg(target_os = "linux")]
 pub(crate) fn list_fr(items: &[String]) -> String {
     match items {
         [] => String::new(),
@@ -361,6 +370,104 @@ fn claude(log: &mut dyn FnMut(String)) -> Step {
         Ok(format!("{} est installé.", found.label("Claude Code")))
     } else {
         Err("Claude Code ne répond pas après l'installation. Relance l'étape.".into())
+    }
+}
+
+// ── Codex ───────────────────────────────────────────────────────────────────
+
+/// The version the kit tests, and OpenAI's official installer for it: install.sh's and install.ps1's
+/// (a test holds them equal). Its script is checked against the SHA-256 they pin before it runs; it
+/// checks the program's own digest.
+const CODEX_VERSION: &str = "0.162.1";
+#[cfg(not(windows))]
+const CODEX_INSTALLER: (&str, &str) =
+    ("https://github.com/openai/codex/releases/download/rust-v0.162.1/install.sh", "150e3cf675682efeaac115aa3747add3f27887896d04ce6d0b56478d8b428bf6");
+#[cfg(windows)]
+const CODEX_INSTALLER: (&str, &str) =
+    ("https://github.com/openai/codex/releases/download/rust-v0.162.1/install.ps1", "f02eb53365d2bbb91f46c4d46ab8e357d087a8cc100794b3eb0c5b4368d6dc42");
+/// What would steer the installer elsewhere (its folder, what it updates), and the Voyage key: none of
+/// it reaches the installer (install.ps1's list, install.sh's within it).
+const CODEX_INSTALLER_UNSET: &[&str] = &[
+    "VOYAGE_API_KEY",
+    "CODEX_INSTALL_DIR",
+    "CODEX_INSTALL_DAEMON_ONLY",
+    "CODEX_INSTALL_DEFER_SELECTION",
+    "CODEX_INSTALL_IF_LATEST",
+    "CODEX_INSTALL_IF_CURRENT",
+    "CODEX_UPDATE_FROM_RELEASE",
+    "CODEX_INSTALLER_USE_RELEASES_OPENAI_COM",
+];
+
+/// Codex, as install.sh installs it when it is chosen: for this user, no admin rights, in the
+/// CODEX_HOME agents.json records. One already there is kept, as install.sh keeps it: an older one
+/// is the user's to update.
+fn codex(log: &mut dyn FnMut(String)) -> Step {
+    let Some(codex_home) = agents::read(&sys::home()).codex_home else {
+        return Err("Tu n'as pas choisi de travailler avec Codex : je ne l'installe pas.".into());
+    };
+    let setup = codex::Setup::for_user(&codex_home).map_err(|e| format!("Je n'ai pas pu créer mon dossier de travail ({e})."))?;
+    if let Some(done) = codex_there(&detect::codex(&setup), "est déjà installé") {
+        return done;
+    }
+    let root = sys::work_root().map_err(|e| format!("Je n'ai pas pu créer mon dossier de travail ({e})."))?;
+    let tmp = TempDir::new_in(&root)?;
+    let (url, sha256) = CODEX_INSTALLER;
+    let script = tmp.path().join(if cfg!(windows) { "install.ps1" } else { "install.sh" });
+    download(url, &script, "l'installeur de Codex", None, Duration::from_secs(5 * 60), log)?;
+    let env = codex_installer_env(&codex_home);
+    let env: Vec<(&str, Option<&str>)> = env.iter().map(|(k, v)| (*k, v.as_deref())).collect();
+    run_codex_installer(&script, sha256, &env, tmp.path(), log)?;
+    codex_there(&detect::codex(&setup), "est installé").unwrap_or_else(|| Err("Codex ne répond pas après l'installation. Relance l'étape.".into()))
+}
+
+/// The step's answer once Codex answers: done, or too old for the kit. None while it is missing.
+fn codex_there(found: &Found, said: &str) -> Option<Step> {
+    match found.version() {
+        _ if detect::codex_ok(found) => Some(Ok(format!("{} {said}.", found.label("Codex")))),
+        Some(v) => {
+            Some(Err(format!("Codex {} est trop ancien pour le kit (il faut {CODEX_VERSION} ou plus) : mets-le à jour, puis relance l'étape.", fmt_version(v))))
+        }
+        None if found.answers() => Some(Err("Je n'arrive pas à lire la version de Codex : mets-le à jour, puis relance l'étape.".into())),
+        None => None,
+    }
+}
+
+/// The installer's environment: the version the kit tests, no question, the CODEX_HOME chosen, nothing
+/// of CODEX_INSTALLER_UNSET. Windows: its own tar first on the PATH, as install.ps1 runs it (a GNU tar
+/// in front, Git's Unix tools, reads "C:\…" as a remote host).
+fn codex_installer_env(codex_home: &Path) -> Vec<(&'static str, Option<String>)> {
+    let mut env: Vec<(&'static str, Option<String>)> = CODEX_INSTALLER_UNSET.iter().map(|k| (*k, None)).collect();
+    env.extend([
+        ("CODEX_RELEASE", Some(CODEX_VERSION.to_string())),
+        ("CODEX_NON_INTERACTIVE", Some("1".to_string())),
+        ("CODEX_HOME", Some(codex_home.to_string_lossy().into_owned())),
+    ]);
+    #[cfg(windows)]
+    {
+        let mut path = std::ffi::OsString::from(sys::system_root().join("System32"));
+        if let Some(rest) = std::env::var_os("PATH").filter(|p| !p.is_empty()) {
+            path.push(";");
+            path.push(rest);
+        }
+        env.push(("PATH", Some(path.to_string_lossy().into_owned())));
+    }
+    env
+}
+
+/// Runs the downloaded installer once it is the one pinned, with `sh` (PowerShell on Windows).
+fn run_codex_installer(script: &Path, sha256: &str, env: &[(&str, Option<&str>)], cwd: &Path, log: &mut dyn FnMut(String)) -> Result<(), String> {
+    log("Je vérifie l'installeur de Codex…".into());
+    if config_guard::sha256_file(script).as_deref() != Some(sha256) {
+        return Err("L'installeur de Codex téléchargé n'est pas celui attendu : je ne l'ai pas lancé. Réessaie plus tard.".into());
+    }
+    log("J'installe Codex…".into());
+    #[cfg(not(windows))]
+    let code = sys::run_streaming(Path::new("/bin/sh"), &[&script.to_string_lossy()], env, Some(cwd), INSTALLER_LIMIT, log);
+    #[cfg(windows)]
+    let code = run_ps1(script, env, cwd, INSTALLER_LIMIT, log);
+    match code {
+        0 => Ok(()),
+        code => Err(format!("L'installeur de Codex s'est arrêté (code {code}). Vérifie ta connexion internet, puis réessaie.")),
     }
 }
 
@@ -543,18 +650,48 @@ impl Drop for Mount {
 
 // ── The brain (brain-in-a-box's own install.sh) ─────────────────────────────
 
-/// The French names of the parts install.sh did not leave behind.
+/// The French names of the parts install.sh did not leave behind, Claude's and Codex's for the agents
+/// agents.json lists. Claude alone: the names and their order of before Codex.
 fn missing_parts(brain: detect::Brain, home: &Path) -> Vec<String> {
+    let claude = |part: fn(detect::ClaudePart) -> bool| brain.claude.is_none_or(part);
+    let codex = |part: fn(detect::CodexPart) -> bool| brain.codex.is_none_or(part);
     [
         (format!("le dossier {}", detect::brain_dir_shown(home)), brain.vault),
-        ("les automatismes de Claude".into(), brain.hooks),
+        ("les automatismes de Claude".into(), claude(|c| c.hooks)),
         ("la mémoire de recherche".into(), brain.memory),
-        ("les compétences de Claude".into(), brain.skills),
+        ("les compétences de Claude".into(), claude(|c| c.skills)),
+        ("les automatismes de Codex".into(), codex(|c| c.hooks)),
+        ("les consignes de Codex".into(), codex(|c| c.instructions)),
+        ("les compétences de Codex".into(), codex(|c| c.skills)),
+        ("ton choix d'IA".into(), brain.chosen),
     ]
     .into_iter()
     .filter(|(_, there)| !there)
     .map(|(name, _)| name)
     .collect()
+}
+
+/// install.sh and install.ps1 stop, before anything, on a choice the kit cannot trust (agents.rs): it
+/// is said before the sources are even downloaded.
+fn choice_trusted(agents: &Agents) -> Result<(), String> {
+    if !agents.order.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "Je ne sais plus avec quelle IA tu travailles : ton choix ({}) {}. Je n'installe rien. Copie le rapport et envoie-le à l'équipe.",
+        "~/.brain-in-a-box/agents.json",
+        agents_said(&agents.etat)
+    ))
+}
+
+/// Why the kit does not trust the choice (_agents.lire()), in words.
+pub(crate) fn agents_said(etat: &str) -> &'static str {
+    match etat {
+        "ferme" => "demande Codex, qui n'est pas encore disponible ici",
+        "droits" => "peut être modifié par un autre compte",
+        "invalide" => "n'est pas un choix que je connais",
+        _ => "est illisible",
+    }
 }
 
 enum Archive {
@@ -587,8 +724,10 @@ fn brain(voyage_key: Option<&str>, log: &mut dyn FnMut(String)) -> Step {
     if !detect::bun_ok(&detect::bun(&home)) {
         return Err("Il faut d'abord installer Bun.".into());
     }
+    let agents = agents::read(&home);
+    choice_trusted(&agents)?;
     // Already there: run again only to add a Voyage key the brain does not have yet.
-    if detect::brain(&home).complete() && !(key.is_some() && detect::embedding_model(&home).is_none()) {
+    if detect::brain(&home, &agents).complete() && !(key.is_some() && detect::embedding_model(&home).is_none()) {
         return Ok("Ton cerveau est déjà installé.".into());
     }
 
@@ -618,7 +757,7 @@ fn brain(voyage_key: Option<&str>, log: &mut dyn FnMut(String)) -> Step {
              Relance l'étape ; si ça recommence, envoie le journal à l'équipe."
         ));
     }
-    let missing = missing_parts(detect::brain(&home), &home);
+    let missing = missing_parts(detect::brain(&home, &agents::read(&home)), &home);
     if !missing.is_empty() {
         return Err(format!("L'installation s'est terminée, mais il manque {}. Relance l'étape.", missing.join(", ")));
     }
@@ -666,8 +805,10 @@ fn brain(voyage_key: Option<&str>, log: &mut dyn FnMut(String)) -> Step {
             .into());
     }
     let home = sys::home();
+    let agents = agents::read(&home);
+    choice_trusted(&agents)?;
     // Already there: run again only to add a Voyage key the brain does not have yet.
-    if detect::brain(&home).complete()
+    if detect::brain(&home, &agents).complete()
         && missing_tools(&home).is_empty()
         && !(key.is_some() && detect::embedding_model(&home).is_none())
     {
@@ -706,7 +847,7 @@ fn brain(voyage_key: Option<&str>, log: &mut dyn FnMut(String)) -> Step {
              Relance l'étape ; si ça recommence, envoie le journal à l'équipe."
         ));
     }
-    let mut missing = missing_parts(detect::brain(&home), &home);
+    let mut missing = missing_parts(detect::brain(&home, &agents::read(&home)), &home);
     missing.extend(missing_tools(&home).into_iter().map(String::from));
     if !missing.is_empty() {
         return Err(format!(
@@ -1625,11 +1766,161 @@ mod tests {
 
     #[test]
     fn missing_brain_parts_are_named() {
-        let all = detect::Brain { vault: true, hooks: true, skills: true, memory: true };
+        use detect::{Brain, ClaudePart, CodexPart};
+        let claude = ClaudePart { hooks: true, skills: true };
+        let all = Brain { vault: true, memory: true, claude: Some(claude), codex: None, chosen: true };
         let home = Path::new("/Users/jo");
         assert!(missing_parts(all, home).is_empty());
-        assert_eq!(missing_parts(detect::Brain { hooks: false, ..all }, home), ["les automatismes de Claude"]);
-        assert_eq!(missing_parts(detect::Brain { vault: false, hooks: false, skills: false, memory: false }, home).len(), 4);
+        assert_eq!(missing_parts(Brain { claude: Some(ClaudePart { hooks: false, ..claude }), ..all }, home), ["les automatismes de Claude"]);
+        let nothing = Brain { vault: false, memory: false, claude: Some(ClaudePart { hooks: false, skills: false }), ..all };
+        assert_eq!(
+            missing_parts(nothing, home),
+            [
+                format!("le dossier {}", detect::brain_dir_shown(home)).as_str(),
+                "les automatismes de Claude",
+                "la mémoire de recherche",
+                "les compétences de Claude"
+            ],
+            "Claude alone: the parts and their order as before Codex"
+        );
+        let codex = CodexPart { hooks: true, instructions: false, skills: false };
+        assert_eq!(missing_parts(Brain { claude: None, codex: Some(codex), ..all }, home), ["les consignes de Codex", "les compétences de Codex"]);
+        assert_eq!(missing_parts(Brain { claude: None, chosen: false, ..all }, home), ["ton choix d'IA"]);
+    }
+
+    /// The agents' steps stand where Claude Code's does, the preferred one first; Claude alone runs the
+    /// steps of before Codex.
+    #[test]
+    fn each_agent_listed_has_its_step() {
+        use crate::agents::Engine;
+        let with = |order: Vec<Engine>| Agents { codex_home: order.contains(&Engine::Codex).then(|| PathBuf::from("/c")), order, etat: "ok".into() };
+        assert_eq!(order(&Agents::claude_alone()), ORDER);
+        let expected =
+            |agents: &[&'static str]| -> Vec<&'static str> { ORDER.iter().flat_map(|&s| if s == "claude" { agents.to_vec() } else { vec![s] }).collect() };
+        assert_eq!(order(&with(vec![Engine::Codex])), expected(&["codex"]));
+        assert_eq!(order(&with(vec![Engine::Codex, Engine::Claude])), expected(&["codex", "claude"]));
+        assert_eq!(order(&with(vec![Engine::Claude, Engine::Codex])), expected(&["claude", "codex"]));
+        assert_eq!(order(&Agents::none("ferme")), expected(&[]));
+        #[cfg(target_os = "macos")]
+        assert_eq!(order(&with(vec![Engine::Codex, Engine::Claude])), ["codex", "claude", "clt", "bun", "obsidian", "brain"]);
+        #[cfg(target_os = "linux")]
+        assert_eq!(order(&with(vec![Engine::Codex])), ["paquets", "codex", "bun", "obsidian", "brain"]);
+        #[cfg(windows)]
+        assert_eq!(order(&with(vec![Engine::Claude, Engine::Codex])), ["claude", "codex", "brain"]);
+    }
+
+    /// The brain step stops on a choice the kit cannot trust, before it downloads anything; it says why.
+    #[test]
+    fn an_untrusted_choice_stops_the_brain_step_first() {
+        assert_eq!(choice_trusted(&Agents::claude_alone()), Ok(()));
+        for (etat, why) in [("ferme", "demande Codex"), ("illisible", "est illisible"), ("droits", "autre compte"), ("invalide", "pas un choix")] {
+            let err = choice_trusted(&Agents::none(etat)).unwrap_err();
+            assert!(err.contains(why) && err.contains("agents.json") && err.contains("Je n'installe rien"), "{err}");
+        }
+    }
+
+    /// Bibo installs the Codex install.sh and install.ps1 install, through the same official installer,
+    /// checked against the same SHA-256.
+    #[test]
+    fn codex_is_the_one_the_installers_pin() {
+        let pin = |script: &str, prefix: &str| -> (String, String) {
+            let value = |key: &str| {
+                script
+                    .lines()
+                    .find_map(|l| l.trim().strip_prefix(&format!("{prefix}{key}")).map(|r| r.trim_start_matches([' ', '=']).trim_matches('"').to_string()))
+                    .unwrap_or_else(|| panic!("{key}"))
+            };
+            let version = value("CODEX_VERSION");
+            let url = value("CODEX_INSTALLER_URL").replace("$CODEX_VERSION", &version);
+            (version, format!("{url} {}", value("CODEX_INSTALLER_SHA256")))
+        };
+        let sh = pin(include_str!("../../../install.sh"), "");
+        let ps1 = pin(include_str!("../../../install.ps1"), "$");
+        assert_eq!(sh.0, CODEX_VERSION);
+        assert_eq!(ps1.0, CODEX_VERSION);
+        let (url, sha) = CODEX_INSTALLER;
+        assert_eq!(if cfg!(windows) { &ps1.1 } else { &sh.1 }, &format!("{url} {sha}"));
+        assert_eq!(codex::MIN_CODEX, (0, 162, 1), "the version the launcher's contract was checked with");
+    }
+
+    /// The installer gets the version, no question, the CODEX_HOME chosen; none of its own settings
+    /// from the app's environment, nor the Voyage key. One that is not the pinned one never runs.
+    #[cfg(not(windows))]
+    #[test]
+    fn codex_installer_runs_only_as_pinned() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("env.txt");
+        let script = dir.path().join("install.sh");
+        let names = ["CODEX_RELEASE", "CODEX_NON_INTERACTIVE", "CODEX_HOME", "VOYAGE_API_KEY", "CODEX_INSTALL_DIR", "CODEX_UPDATE_FROM_RELEASE"];
+        let to = sh_quote(&out.to_string_lossy());
+        let body = names.map(|n| format!("printf '%s=%s\\n' {n} \"${{{n}-unset}}\" >> {to}\n")).concat();
+        fs::write(&script, body).unwrap();
+        let codex_home = dir.path().join("Données é").join(".codex");
+        let env = codex_installer_env(&codex_home);
+        let mut env: Vec<(&str, Option<&str>)> = env.iter().map(|(k, v)| (*k, v.as_deref())).collect();
+        // What the app's own environment could hold: set here for the child, then removed by the list.
+        let unset: Vec<&str> = env.iter().filter(|(_, v)| v.is_none()).map(|(k, _)| *k).collect();
+        assert!(unset.contains(&"VOYAGE_API_KEY") && unset.contains(&"CODEX_INSTALL_DIR"), "{unset:?}");
+        let mut lines = Vec::new();
+        let sha = config_guard::sha256_file(&script).unwrap();
+        assert_eq!(
+            run_codex_installer(&script, &"0".repeat(64), &env, dir.path(), &mut |l| lines.push(l)).map_err(|e| e.contains("pas celui attendu")),
+            Err(true)
+        );
+        assert!(!out.exists(), "a script that is not the pinned one never ran");
+        env.insert(0, ("VOYAGE_API_KEY", Some("pa-not-for-codex")));
+        env.insert(0, ("CODEX_INSTALL_DIR", Some("/elsewhere")));
+        run_codex_installer(&script, &sha, &env, dir.path(), &mut |l| lines.push(l)).unwrap();
+        let seen = fs::read_to_string(&out).unwrap();
+        let want = format!(
+            "CODEX_RELEASE=0.162.1\nCODEX_NON_INTERACTIVE=1\nCODEX_HOME={}\nVOYAGE_API_KEY=unset\nCODEX_INSTALL_DIR=unset\nCODEX_UPDATE_FROM_RELEASE=unset\n",
+            codex_home.display()
+        );
+        assert_eq!(seen, want);
+        fs::write(&script, "exit 3\n").unwrap();
+        let sha = config_guard::sha256_file(&script).unwrap();
+        assert!(run_codex_installer(&script, &sha, &env, dir.path(), &mut |_| {}).unwrap_err().contains("code 3"));
+    }
+
+    #[test]
+    fn codex_already_there_is_kept_and_an_old_one_said() {
+        assert_eq!(codex_there(&Found::Version("codex-cli 0.162.1".into()), "est déjà installé"), Some(Ok("Codex 0.162.1 est déjà installé.".into())));
+        let old = codex_there(&Found::Version("codex-cli 0.150.0".into()), "est installé").unwrap().unwrap_err();
+        assert!(old.contains("0.150.0") && old.contains("0.162.1") && old.contains("mets-le à jour"), "{old}");
+        assert!(codex_there(&Found::Version("?".into()), "x").unwrap().is_err());
+        assert_eq!(codex_there(&Found::NoVersion, "x"), None);
+        assert_eq!(codex_there(&Found::Absent, "x"), None);
+    }
+
+    /// The official installer of the pinned Codex, for real, through the step's own code, into a
+    /// throwaway home: `cargo test -- --ignored codex_real` (test.yml runs it on each system).
+    #[test]
+    #[ignore]
+    fn codex_real_install_answers() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = fs::canonicalize(dir.path()).unwrap();
+        let codex_home = home.join(".codex");
+        let local = home.join("AppData").join("Local");
+        fs::create_dir_all(&local).unwrap();
+        let script = home.join(if cfg!(windows) { "install.ps1" } else { "install.sh" });
+        download(CODEX_INSTALLER.0, &script, "l'installeur de Codex", None, Duration::from_secs(5 * 60), &mut |l| println!("{l}")).unwrap();
+        let mut env = codex_installer_env(&codex_home);
+        let home_text = home.to_string_lossy().into_owned();
+        env.extend([("HOME", Some(home_text.clone())), ("USERPROFILE", Some(home_text)), ("LOCALAPPDATA", Some(local.to_string_lossy().into_owned()))]);
+        let env: Vec<(&str, Option<&str>)> = env.iter().map(|(k, v)| (*k, v.as_deref())).collect();
+        run_codex_installer(&script, CODEX_INSTALLER.1, &env, &home, &mut |l| println!("{l}")).unwrap();
+        let local_text = local.to_string_lossy().into_owned();
+        let setup = codex::Setup {
+            home: home.clone(),
+            codex_home,
+            work_root: home.clone(),
+            features: home.join("none.json"),
+            layers: codex::Layers::default(),
+            vars: Box::new(move |k| (k == "LOCALAPPDATA").then(|| local_text.clone())),
+            command: None,
+        };
+        let found = detect::codex(&setup);
+        assert_eq!(codex_there(&found, "est installé"), Some(Ok(format!("Codex {CODEX_VERSION} est installé."))), "{found:?}");
     }
 
     #[cfg(unix)]

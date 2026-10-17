@@ -2241,7 +2241,7 @@ fn settings_json(home: &Path) -> Value {
         Err(e) if e.kind() == io::ErrorKind::NotFound => json!({ "existe": false }),
         Err(_) => json!({ "existe": true, "lisible": false }),
         Ok(text) => match serde_json::from_str::<Value>(&text) {
-            Ok(_) => json!({ "existe": true, "valide": true, "nos_hooks": detect::brain(home).hooks }),
+            Ok(_) => json!({ "existe": true, "valide": true, "nos_hooks": detect::claude_hooks(home) }),
             Err(e) => json!({ "existe": true, "valide": false, "ligne": e.line() }),
         },
     }

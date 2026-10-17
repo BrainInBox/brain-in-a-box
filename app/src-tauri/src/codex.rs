@@ -1637,7 +1637,6 @@ pub enum Login {
 
 /// auth.json (its mode and plan, whether something refreshes it), then `codex login status` read
 /// as a question would read it, every -c included. Windows: the system settings' folder first.
-#[cfg_attr(not(test), allow(dead_code))] // the screens ask from phase 10b on
 pub fn login(setup: &Setup) -> Login {
     match login_check(setup) {
         Ok(()) => Login::Chatgpt,

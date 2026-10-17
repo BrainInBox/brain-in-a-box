@@ -382,6 +382,10 @@ jobs:
             libssl-dev libxdo-dev
       - name: Rust tests
         run: cargo test --locked
+      # The app's Codex step for real (steps.rs): OpenAI's official installer of the pinned Codex, checked
+      # against the SHA-256 install.sh and install.ps1 pin, run as the step runs it, into a throwaway home.
+      - name: The Codex step installs the pinned Codex
+        run: cargo test --locked -- --ignored codex_real
       - name: Clippy, warnings are errors
         run: cargo clippy --locked --all-targets -- -D warnings
       - name: The window's script parses
