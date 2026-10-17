@@ -21,8 +21,9 @@ const MANIFEST: &str = "manifest.json";
 const CROSS_DEVICE: i32 = if cfg!(windows) { 17 } else { 18 };
 
 /// The only folders a remedy may set aside: (remedy, step, path from home). None is
-/// the user's data (Documents/Brain, ~/.gbrain, ~/.claude, the shell files, the
-/// LaunchAgents, Obsidian's vault list).
+/// the user's data (Documents/Brain, ~/.gbrain, ~/.claude, ~/.codex and ~/.agents, where Codex
+/// keeps its login, sessions and the skills, the shell files, the LaunchAgents, Obsidian's
+/// vault list).
 const TARGETS: &[(&str, &str, &str)] = &[
     ("mettre_de_cote_bun", "bun", ".bun"),
     ("mettre_de_cote_obsidian", "obsidian", "Applications/Obsidian.app"),
@@ -576,7 +577,7 @@ pub(crate) mod tests {
 
     #[test]
     fn the_catalogue_never_targets_the_users_data() {
-        const NEVER: &[&str] = &["Documents", ".gbrain", ".claude", ".claude.json", "Library", ".zshrc", ".bashrc", ".profile"];
+        const NEVER: &[&str] = &["Documents", ".gbrain", ".claude", ".claude.json", ".codex", ".agents", "Library", ".zshrc", ".bashrc", ".profile"];
         for (id, _, rel) in TARGETS {
             assert!(known(id));
             assert!(!NEVER.iter().any(|n| Path::new(rel).starts_with(n)), "{rel}");
