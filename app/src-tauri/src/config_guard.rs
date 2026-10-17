@@ -1590,7 +1590,7 @@ mod tests {
         assert!(report.clean(), "{report:?}");
         for (rel, bytes) in before {
             let now = h.read(&rel);
-            match rel.as_str() {
+            match rel.replace('\\', "/").as_str() {
                 ".codex/config.toml" | ".codex/AGENTS.md" => assert!(now.starts_with(&bytes), "{rel}"),
                 ".codex/hooks.json" => assert_eq!(settings_change(&bytes, &now, &h.home), None),
                 _ => assert_eq!(now, bytes, "{rel}"),
@@ -1716,7 +1716,7 @@ mod tests {
             assert!(report.failed.is_empty(), "{label}: {report:?}");
             // A hook added to hooks.json may stay (Codex asks before it runs one nobody approved).
             for ((rel, was), (_, now)) in before.iter().zip(&snapshot_of(&h)) {
-                match rel.as_str() {
+                match rel.replace('\\', "/").as_str() {
                     ".codex/hooks.json" => assert_eq!(settings_change(was, now, &h.home), None, "{label}"),
                     _ => assert!(was == now, "{label}: {rel}"),
                 }
