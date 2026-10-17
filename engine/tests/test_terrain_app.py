@@ -121,6 +121,7 @@ class FauxPilote(ta.Pilote):
         self.sources = True     # the app unpacks the sources it was handed
         self.ecrans = (neuf_codex if codex else neuf)(lambda: self.fait)
         self.portes = []        # the gate of the kit's sources on disk, each time the app opens
+        self.marqueurs = []     # whether the robot's marker was there, each time the app opens
         for k, v in (change or {}).items():
             self.ecrans[k] = v
         self.etat = None
@@ -165,6 +166,7 @@ class FauxPilote(ta.Pilote):
         gate = Path(self.home or "/nowhere") / ".brain-in-a-box" / "src" / "engine" / "hooks" / "_agents.py"
         line = re.search(r"^CODEX_OUVERT = .*$", gate.read_text(encoding="utf-8"), re.M) if gate.is_file() else None
         self.portes.append(line.group(0) if line else None)
+        self.marqueurs.append((gate.parents[2] / ta.MARQUEUR).is_file())
         self.aller("bienvenue")
 
     def vivante(self):
@@ -400,6 +402,12 @@ class Walk(Base):
         vus = pa.relance({})
         self.assertIn("deja-installe", vus)
         self.assertEqual(p.clics, ["Choisir mon IA", "Codex", "Continuer", "Plus tard"])
+        # Opened again, the app asks again who the brain works with (« rouvre l'app et refais ce choix »).
+        p.fermer()
+        p.ecrans["bienvenue"] = dict(p.ecrans["bienvenue"], boutons={"Choisir mon IA": "diag-en-cours"})
+        with self.assertRaises(terrain.Echec) as cm:
+            pa.relance({})
+        self.assertIn("au deuxième lancement, l'app n'a pas redemandé quelle IA", str(cm.exception))
 
     def test_each_path_fails_on_the_other_ones_screens(self):
         # The app users get keeps Codex closed: a choice asked on the path of Claude alone is a failure.
@@ -420,6 +428,8 @@ class Walk(Base):
                               "le parcours n'est pas passé par l'écran « etape-codex »"),
                              ({"verif-codex": {"titre": "Je vérifie ton compte Claude…", "apres": (2, "login-codex")}},
                               "écran « verif-compte » : Codex est choisi seul"),
+                             ({"verif-codex": {"titre": "Je vérifie la connexion de Codex…", "apres": (2, "login")}},
+                              "écran « connexion » : Codex est choisi seul"),
                              ({"fini": {"titre": "Ton second cerveau est prêt" + NB + "!", "texte": "Claude retient maintenant ce que tu lui apprends.",
                                         "boutons": {"Ouvrir mon cerveau dans Obsidian": None, "Personnaliser mon cerveau (15 min)": None}}},
                               "l'écran final ne nomme pas Codex"),
@@ -1761,6 +1771,8 @@ class Scenario(Base):
                 # disk before its first start, without the marker it must bring itself.
                 self.assertEqual([zipped_gate(env) for env in p.envs], [ta.PORTE_OUVERTE] * 2)
                 self.assertEqual(p.portes, [ta.PORTE_OUVERTE] * 2)
+                # The marker comes with the app's own install only: absent before its first start.
+                self.assertEqual(p.marqueurs, [False, True])
                 self.assertIn("Codex ouvert dans cette copie", row["details"]["sources_du_cerveau"])
                 with zipfile.ZipFile(p.envs[0]["BIAB_ARCHIVE"]) as z, \
                         zipfile.ZipFile(ta.archive_testee(terrain, terrain.Etapes(), types.SimpleNamespace(home=home), sha)) as plain:

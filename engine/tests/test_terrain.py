@@ -767,6 +767,8 @@ class CodexAlone(unittest.TestCase):
         cases = [
             ("agents", lambda h: self.write(h / ".brain-in-a-box" / "agents.json", json.dumps(dict(self.agents, agents=["claude", "codex"]))),
              "agents.json ne dit pas Codex seul"),
+            ("agents", lambda h: self.write(h / ".brain-in-a-box" / "agents.json", json.dumps(dict(self.agents, pose_par="install.ps1"))),
+             "agents.json posé par install.ps1"),
             ("codex", lambda h: self.write(h / ".local" / "bin" / "codex", "#!/bin/sh\necho 'codex-cli 0.161.0'\n"), "codex --version"),
             ("hooks-codex", lambda h: self.write(h / ".codex" / "hooks.json", json.dumps({"hooks": {}})), "n'est pas branché"),
             ("hooks-codex", lambda h: self.write(h / ".codex" / "config.toml", ""), "le kit n'a approuvé que 0 hooks"),
@@ -784,6 +786,30 @@ class CodexAlone(unittest.TestCase):
                 with self.assertRaises(terrain.Echec) as cm:
                     self.check()
                 self.assertIn(said, str(cm.exception))
+
+
+    def test_the_kit_installed_is_the_robots_copy_with_codex_open(self):
+        # check_install's files: the tested commit's, but _agents.py as the robot's copy has it (gate
+        # open), and codex-features.json, which only a Codex install places.
+        def installed():
+            hooks = self.home / ".claude" / "hooks" / "brain"
+            for name, src in terrain.kit_files():
+                if not (hooks / name).exists():
+                    shutil.copy(src, hooks / name)
+            shutil.copy(terrain.REPO / "engine" / "codex-features.json", hooks)
+            return hooks, types.SimpleNamespace(home=self.home, parcours="app-codex")
+        with mock.patch.object(terrain, "check_codex", lambda t, o: None), \
+                mock.patch.object(terrain, "check_rest", lambda *a: None):
+            terrain.check_install(terrain.Etapes(), installed()[1])
+            for damage, said in ((lambda h: shutil.copy(terrain.REPO / "engine" / "hooks" / "_agents.py", h), "_agents.py installé"),
+                                 (lambda h: (h / "codex-features.json").unlink(), "codex-features.json n'est pas installé")):
+                with self.subTest(said=said):
+                    self.setUp()
+                    hooks, opts = installed()
+                    damage(hooks)
+                    with self.assertRaises(terrain.Echec) as cm:
+                        terrain.check_install(terrain.Etapes(), opts)
+                    self.assertIn(said, str(cm.exception))
 
 
 class MergeGuard(unittest.TestCase):
