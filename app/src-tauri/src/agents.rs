@@ -624,13 +624,19 @@ pub(crate) mod tests {
         assert!(!codex_open(tmp.path()));
     }
 
-    /// _agents.codex_home(env, home), as the installer records it.
+    /// _agents.codex_home(env, home), as the installer records it. Printed in UTF-8 (-X utf8): Windows'
+    /// Python would print an accented path in the console's code page.
     fn kit_codex_home(home: &Path, env: Option<&str>) -> Option<PathBuf> {
         let code = "import json, sys; sys.path.insert(0, sys.argv[1]); import _agents\n\
                     env = {} if sys.argv[3] == '-' else {'CODEX_HOME': sys.argv[3]}\n\
                     try:\n    print(_agents.codex_home(env, sys.argv[2]))\nexcept _agents.Refus:\n    print('-')";
-        let out =
-            Command::new(python()).args(["-I", "-B", "-c", code]).arg(repo().join("engine").join("hooks")).arg(home).arg(env.unwrap_or("-")).output().unwrap();
+        let out = Command::new(python())
+            .args(["-I", "-B", "-X", "utf8", "-c", code])
+            .arg(repo().join("engine").join("hooks"))
+            .arg(home)
+            .arg(env.unwrap_or("-"))
+            .output()
+            .unwrap();
         assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
         let said = String::from_utf8(out.stdout).unwrap().trim_end_matches(['\r', '\n']).to_string();
         (said != "-").then(|| PathBuf::from(said))
