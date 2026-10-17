@@ -644,6 +644,41 @@ class WindowsWithoutGit(unittest.TestCase):
         # Only its last line goes in the reason.
         refused("", "Welcome\n\nNot logged in · Please run /login\n", "il dit : « Not logged in · Please run /login » ;")
 
+    def test_codex_alone_asks_no_claude_code_for_git_bash(self):
+        # Codex chosen alone: no Claude Code to ask which bash it takes (Codex runs its commands through
+        # PowerShell, gbq.cmd is check_rest's); the rest of Git's checks are the same.
+        home = Path(self.tmp) / "home"
+        (home / ".brain-in-a-box").mkdir(parents=True)
+        args = "install -e --id Git.Git --source winget --silent --accept-package-agreements --accept-source-agreements"
+        (home / ".brain-in-a-box" / "install.log").write_text("> winget %s --scope user\nwinget : code 0\n" % args, encoding="utf-8")
+        git_dir = Path(tempfile.mkdtemp(dir=self.tmp)) / "cmd"
+        git_dir.mkdir()
+        exe = str(git_dir / "git.exe")
+        (git_dir.parent / "bin").mkdir()
+        (git_dir.parent / "bin" / "bash.exe").write_bytes(b"MZ")
+        asked = []
+
+        def claude(t, opts, env):
+            asked.append(opts.parcours)
+            raise terrain.Echec("Claude Code n'est pas installé (~/.local/bin/claude.exe)")
+
+        def run(argv, **kw):
+            return (0, "abc123\n") if "rev-list" in argv else (0, "brain init\n")
+        for parcours in ("app-codex", "app"):
+            t = terrain.Etapes()
+            opts = types.SimpleNamespace(home=home, parcours=parcours)
+            with mock.patch.dict(os.environ, {terrain.terrain_app.SANS_GIT: self.proof()}), \
+                    mock.patch.object(terrain, "git_de_session", lambda t: (exe, "git version 2.55.0.windows.5", {})), \
+                    mock.patch.object(terrain, "run", run), mock.patch.object(terrain, "claude_et_git_bash", claude):
+                if parcours == "app":
+                    with self.assertRaises(terrain.Echec):
+                        terrain.check_git(t, opts)
+                else:
+                    terrain.check_git(t, opts)
+                    self.assertEqual(t.details["git"]["premier_commit"], "brain init")
+                    self.assertTrue(t.details["git"]["resume"].endswith("coffre versionné (« brain init »)"), t.details["git"]["resume"])
+        self.assertEqual(asked, ["app"])
+
     def test_install_ps1_notes_each_winget_attempt_in_its_journal(self):
         with open(os.path.join(HERE, "..", "..", "install.ps1"), encoding="utf-8") as f:
             ps1 = f.read()

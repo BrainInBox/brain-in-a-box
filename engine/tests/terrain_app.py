@@ -440,6 +440,10 @@ class Pilote:
         """[(name, [places])]: what the app's steps install apart from the brain, found at one place."""
         raise NotImplementedError
 
+    def codex_installe(self, home):
+        """[places]: where the app's step puts Codex on this system."""
+        return codex_installe(home, windows=False)
+
     def ecarter_la_nuit(self):
         """Keeps the nightly the install registered out of the checks' way; returns what it did, or None."""
         return None
@@ -1331,6 +1335,9 @@ class PiloteWindows(Pilote):
                 ("Obsidian", [local / "Programs" / "Obsidian" / "Obsidian.exe", local / "Obsidian" / "Obsidian.exe",
                               pf / "Obsidian" / "Obsidian.exe"]),
                 ("Python de winget", python or [local / "Programs" / "Python" / "Python3xx" / "python.exe"])]
+
+    def codex_installe(self, home):
+        return codex_installe(home, windows=True)
 
     def poste_neuf(self):
         """No Git, when terrain.yml asks for it (SANS_GIT): sans-git.ps1 uninstalls the runner's and
@@ -2804,9 +2811,9 @@ def planter_sources(zip_path, home):
     return src
 
 
-def codex_installe(home):
+def codex_installe(home, windows):
     """Where the app's step puts Codex: OpenAI's installer's place (codex.rs, find)."""
-    if os.name == "nt":
+    if windows:
         local = Path(os.environ.get("LOCALAPPDATA") or Path(home) / "AppData" / "Local")
         return [local / "Programs" / "OpenAI" / "Codex" / "bin" / "codex.exe"]
     return [Path(home) / ".local" / "bin" / "codex"]
@@ -2844,7 +2851,7 @@ def outils(t, home, pilote, codex=False):
         t.check(len(claude) == 1, "le pilote ne dit pas où serait Claude Code")
         shown = str(claude[0][1][0]).replace(str(home), "~")
         t.check(not any(Path(p).exists() for p in claude[0][1]), "Claude Code est installé alors que seul Codex est choisi (%s)" % shown)
-        tools = [("Codex", codex_installe(home)) if x[0] == "Claude Code" else x for x in tools]
+        tools = [("Codex", pilote.codex_installe(home)) if x[0] == "Claude Code" else x for x in tools]
     for name, places in tools:
         shown = str(places[0]).replace(str(home), "~")
         t.check(any(Path(p).exists() for p in places), "%s n'est pas installé (%s)" % (name, shown))

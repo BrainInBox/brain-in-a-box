@@ -1795,6 +1795,22 @@ class Scenario(Base):
         self.assertEqual((row["statut"], row["etape"]), ("echec", "app-outils"))
         self.assertIn("Codex n'est pas installé", row["raison"])
 
+    def test_codex_is_looked_for_where_the_pilots_system_puts_it(self):
+        # The system of the window driven, not the one the harness runs on: OpenAI's installer puts
+        # Codex in ~/.local/bin on a Mac or Linux, under LOCALAPPDATA on Windows.
+        home = Path(self.tmp) / "home"
+        local = Path(self.tmp) / "Local"
+        self.assertEqual(FauxPilote(self.h, home=home).codex_installe(home), [home / ".local" / "bin" / "codex"])
+        with mock.patch.dict(os.environ, {"LOCALAPPDATA": str(local)}):
+            self.assertEqual(FauxWindows(self.h, self.tmp).codex_installe(home),
+                             [local / "Programs" / "OpenAI" / "Codex" / "bin" / "codex.exe"])
+        p = FauxPilote(self.h, home=home, codex=True)
+        elsewhere = Path(self.tmp) / "ailleurs" / "codex"
+        p.codex_installe = lambda h: [elsewhere]
+        row, _, _, _, _, _ = self.run_it(pilote=p, parcours="app-codex")
+        self.assertEqual((row["statut"], row["etape"]), ("echec", "app-outils"))
+        self.assertIn("Codex n'est pas installé (%s)" % elsewhere, row["raison"])
+
     def test_the_gate_is_opened_in_the_line_it_is(self):
         with open(os.path.join(REPO, "engine", "hooks", "_agents.py"), encoding="utf-8") as f:
             text = f.read()

@@ -905,8 +905,10 @@ def claude_et_git_bash(t, opts, env):
 def check_git(t, opts):
     """Windows started without Git: the installer brought it through winget, a new process finds it, the
     vault has its history, Claude Code finds Git Bash and the kit's gbq runs there. Then the harness's
-    own git calls (coffre, gbrain) go to that Git, as a new terminal's would."""
+    own git calls (coffre, gbrain) go to that Git, as a new terminal's would. Codex chosen alone (app-codex):
+    no Claude Code, and Codex runs its commands through PowerShell, not Git Bash: gbq.cmd is check_rest's."""
     git = t.details["git"] = {}
+    claude = opts.parcours != "app-codex"
     t("git-absent-au-depart")
     p = preuve_sans_git(t, os.environ.get(terrain_app.SANS_GIT))
     git["avant"] = {"desinstalle": ["%s %s (code %s, %s s)" % (d.get("dossier"), d.get("version"), d.get("code"),
@@ -939,6 +941,21 @@ def check_git(t, opts):
     t.check(rc == 0 and sujet.strip() == "brain init", "le premier commit du coffre n'est pas celui de l'installeur (« %s »)"
             % sujet.strip()[:80])
 
+    if claude:
+        check_git_bash(t, opts, git, exe, env)
+
+    os.environ["PATH"] = dossier + os.pathsep + os.environ.get("PATH", "")
+    # Where it went, not only what was asked: the VM's user is an administrator, Git's installer then
+    # installs for all users whatever the scope winget asked for.
+    reussi = next(m.group("args") for m in essais if m.group("code") == "0")
+    git["resume"] = "Git absent au départ, installé par winget (portée demandée : %s) dans %s, %s dans un nouveau " \
+                    "processus, coffre versionné (« brain init »)%s" % (
+                        "utilisateur" if "--scope user" in reussi else "celle du paquet",
+                        os.path.dirname(dossier), version, ", Git Bash trouvé par Claude Code, gbq y répond" if claude else "")
+
+
+def check_git_bash(t, opts, git, exe, env):
+    """Claude Code finds the Git Bash of the Git the installer brought, and the kit's gbq runs there."""
     t("git-bash")
     attendu = next((b for b in BASH_CLAUDE if os.path.isfile(b)), None) or \
         os.path.normpath(os.path.join(exe, "..", "..", "bin", "bash.exe"))
@@ -952,15 +969,6 @@ def check_git(t, opts):
     rc, out = run([bash, "-c", '"$HOME/.local/bin/gbq" query "captured corrections"'], env=env, timeout=300)
     t.check(rc == 0 and "lessons" in out.lower(), "gbq dans Git Bash (l'outil Bash de Claude Code) ne trouve pas "
             "Profile/lessons.md (code %d : %s)" % (rc, out.strip()[-200:]))
-
-    os.environ["PATH"] = dossier + os.pathsep + os.environ.get("PATH", "")
-    # Where it went, not only what was asked: the VM's user is an administrator, Git's installer then
-    # installs for all users whatever the scope winget asked for.
-    reussi = next(m.group("args") for m in essais if m.group("code") == "0")
-    git["resume"] = "Git absent au départ, installé par winget (portée demandée : %s) dans %s, %s dans un nouveau " \
-                    "processus, coffre versionné (« brain init »), Git Bash trouvé par Claude Code, gbq y répond" % (
-                        "utilisateur" if "--scope user" in reussi else "celle du paquet",
-                        os.path.dirname(dossier), version)
 
 
 def check_install(t, opts, kept=(), fresh=True, query=True):
@@ -1035,7 +1043,7 @@ def check_codex(t, opts):
     t.check(a.get("pose_par") == ("install.ps1" if WINDOWS else "install.sh"), "agents.json posé par %s" % a.get("pose_par"))
 
     t("codex")
-    exe = terrain_app.codex_installe(home)[0]
+    exe = terrain_app.codex_installe(home, WINDOWS)[0]
     rc, out = run([exe, "--version"], timeout=120)
     m = re.search(r"(\d+)\.(\d+)\.(\d+)", out)
     t.check(rc == 0 and m and tuple(int(x) for x in m.groups()) >= (0, 162, 1), "codex --version : %s" % out.strip()[-200:])
