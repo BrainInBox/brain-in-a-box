@@ -783,6 +783,30 @@ class Binary(unittest.TestCase):
                 codex._codex(None)
             self.assertEqual(cm.exception.kind, "start")
 
+    def test_neither_the_current_folder_nor_a_relative_one_is_searched(self):
+        # shutil.which puts the current folder first on Windows, even with path=: a codex.exe of the
+        # folder a session runs `controle` from would have run. A relative entry is that folder's too.
+        tmp = tempfile.mkdtemp(prefix="codex-find-")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        name = "codex.exe" if WINDOWS else "codex"
+        here = os.path.join(tmp, "here")
+        os.makedirs(os.path.join(here, "bin"))
+        for p in (os.path.join(here, name), os.path.join(here, "bin", name)):
+            with open(p, "w") as f:
+                f.write("#!/bin/sh\n")
+            os.chmod(p, 0o755)
+        empty = os.path.join(tmp, "empty")
+        os.makedirs(empty)
+        self.addCleanup(os.chdir, os.getcwd())
+        os.chdir(here)
+        env = {"HOME": tmp, "USERPROFILE": tmp, "LOCALAPPDATA": os.path.join(tmp, "local")}
+        with mock.patch.object(codex, "EXTRA_DIRS", ()):
+            for path in (empty, os.pathsep.join([".", "bin", empty])):
+                with self.subTest(path=path), mock.patch.dict(os.environ, dict(env, PATH=path)):
+                    self.assertIsNone(codex.find_codex())
+            with mock.patch.dict(os.environ, dict(env, PATH=os.pathsep.join(["bin", os.path.join(here, "bin")]))):
+                self.assertEqual(codex.find_codex(), [os.path.join(here, "bin", name)])
+
 
 # --------------------------------------------------------------------------- Windows: %ProgramData%\OpenAI\Codex
 

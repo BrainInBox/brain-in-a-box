@@ -347,8 +347,8 @@ pub fn find(setup: &Setup) -> Option<PathBuf> {
 fn which(name: &str, dirs: Vec<PathBuf>) -> Option<PathBuf> {
     let mut seen = HashSet::new();
     dirs.into_iter()
-        // An empty entry would mean the current folder.
-        .filter(|d| !d.as_os_str().is_empty() && seen.insert(d.clone()))
+        // An empty or relative entry would be a folder of wherever the app runs from.
+        .filter(|d| d.is_absolute() && seen.insert(d.clone()))
         .map(|d| d.join(name))
         .find(|p| fs::metadata(p).is_ok_and(|m| !m.is_dir()) && (cfg!(windows) || sys::is_executable(p)))
 }
@@ -2063,6 +2063,25 @@ mod tests {
             fs::write(&path_one, "not a program").unwrap();
             assert_eq!(find(&setup(path)), None, "not executable");
         }
+    }
+
+    /// Only absolute folders of the PATH: a relative entry (".", "bin") names a folder of wherever
+    /// the app runs from, which is no place to take Codex from.
+    #[cfg(unix)]
+    #[test]
+    fn a_relative_folder_of_the_path_is_never_searched() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = fs::canonicalize(root.path()).unwrap().join("bin");
+        fs::create_dir_all(&dir).unwrap();
+        let codex = dir.join("codex");
+        fs::write(&codex, "#!/bin/sh\n").unwrap();
+        perms::set_mode(&codex, 0o755).unwrap();
+        // The same folder, from where the tests run.
+        let up = std::env::current_dir().unwrap().components().count() - 1;
+        let relative: PathBuf = std::iter::repeat_n(Path::new(".."), up).collect::<PathBuf>().join(dir.strip_prefix("/").unwrap());
+        assert!(relative.join("codex").is_file() && relative.is_relative(), "{}", relative.display());
+        assert_eq!(which("codex", vec![relative.clone()]), None);
+        assert_eq!(which("codex", vec![relative, dir.clone()]), Some(codex));
     }
 
     #[test]
