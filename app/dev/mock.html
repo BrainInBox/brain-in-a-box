@@ -44,6 +44,10 @@
   // &pause=analyze|apply leaves Claude's analysis or the repair running,
   // &error=timeout|init_invalid|invalid_verdict|api|busy ends the first analysis on that error (init_invalid
   // then rules the in-app repair out, as repair.rs does),
+  // &agents=codex|codex,claude|claude,codex: agents.json lists Codex, the first one is preferred (Codex open in this copy,
+  // as the tests open it): repair.rs names who is asked and who answered, the screens say Codex where they said Claude,
+  // Claude in Terminal only when Claude is listed; &secours=1 has the preferred one hit its limit, the other one answers;
+  // &repair=agents is a choice the kit cannot read (no AI asked),
   // &at=<css> stops the driving on &go's screen only once that element is there, &nth=<n> only on its n-th arrival there,
   // &click=<act>[,<act>…] clicks those buttons in that order, once each, and &go's screen counts only after the last.
   // Bibo: &sleep=3 makes it doze off after 3 s without activity instead of 45.
@@ -287,6 +291,11 @@
       'repair-terminal': { todo: ['obsidian', 'brain'], fail: 'obsidian', status: 'unsupported', rounds: [] },
     };
     const REPAIR = REPAIRS[scenario] || null;
+    // Who repairs (repair.rs, agents.json): named only when Codex is listed, the first one preferred.
+    const AGENTS = (P.get('agents') || '').split(',').filter((a, i, all) => ['claude', 'codex'].includes(a) && all.indexOf(a) === i);
+    const NAMED = AGENTS.includes('codex');
+    const SECOURS = NAMED && AGENTS.length > 1 && P.get('secours') === '1';
+    const ANSWERS = SECOURS ? AGENTS[1] : AGENTS[0];
     const failing = P.get('fail') || (REPAIR && REPAIR.fail) || (scenario === 'echec' || scenario === 'repair-not-logged' ? 'obsidian' : '');
     const failureOf = (id) => (REPAIR && REPAIR.failure && id === REPAIR.fail ? REPAIR.failure : FAILS[id]);
 
@@ -336,7 +345,10 @@
       async open_claude_login() { await wait(100); loginOpened = true; },
       async repair_status({ step }) {
         await wait(T(300));
-        const of = (state) => ({ state, terminal_fallback: !['absent', 'offline'].includes(state) });
+        const of = (state) => {
+          const s = { state, terminal_fallback: !['absent', 'offline', 'agents'].includes(state) && (!NAMED || AGENTS.includes('claude')) };
+          return NAMED && state !== 'agents' ? { ...s, engine: AGENTS[0] } : s;
+        };
         if (step === 'claude') return of('absent');
         const forced = P.get('repair') || (REPAIR && REPAIR.status);
         if (forced) return of(forced);
@@ -359,8 +371,12 @@
       async repair_analyze({ step }) {
         emit('repair-progress', 'collecting');
         await stoppable(T(800));
-        emit('repair-progress', 'asking');
+        emit('repair-progress', NAMED ? `asking_${AGENTS[0]}` : 'asking');
         await stoppable(P.get('pause') === 'analyze' ? Infinity : T(1500));
+        if (SECOURS && !error) {
+          emit('repair-progress', `asking_${AGENTS[1]}`);
+          await stoppable(T(1500));
+        }
         if (error) {
           const kind = error;
           error = null;
@@ -375,7 +391,7 @@
         counted += 1;
         const id = `20261013-15300${turn}-${step}`;
         plans[id] = r;
-        return { plan_id: id, step, round: counted, last_round: counted >= 2, ...r.plan };
+        return { plan_id: id, step, round: counted, last_round: counted >= 2, ...r.plan, ...(NAMED ? { engine: ANSWERS } : {}) };
       },
       async repair_cancel() { if (cancelAnalysis) cancelAnalysis(); },
       async repair_apply({ planId }) {
@@ -392,7 +408,8 @@
       async repair_undo() { await wait(T(300)); return "J'ai tout remis comme avant (~/.bun)."; },
       async repair_report() {
         if (!turn) return '';
-        return `Réparation avec Claude :\n- ${REPAIR.fail}, ${turn} analyse(s) ; voir le dossier dans ~/.brain-in-a-box/reparations`;
+        const who = NAMED ? (ANSWERS === 'codex' ? 'Codex' : 'Claude') : 'Claude';
+        return `Réparation avec ${who} :\n- ${REPAIR.fail}, ${turn} analyse(s) ; voir le dossier dans ~/.brain-in-a-box/reparations`;
       },
       async open_settings({ pane }) { console.log('open_settings', pane); await wait(100); },
       async open_repair_terminal({ step }) { console.log('open_repair_terminal', step); await wait(T(300)); },
@@ -471,7 +488,10 @@
         for (const [label, qs] of [['tout manque', '?s=manque'], ['échec', '?s=echec'], ['tout installé', '?s=installe'], ['sans Voyage', '?s=motscles'], ['bloqué', '?s=bloque'], ['connexion tôt', '?s=login-early'], ['réparer sans compte', '?s=repair-not-logged'],
           ['réparé', '?s=repair-ok'], ['à toi de jouer', '?s=repair-user-action'], ['pas sûr', '?s=repair-low'], ['2 essais', '?s=repair-round2'],
           ['raté', '?s=repair-fail'], ['régression', '?s=repair-regression'], ['forfait', '?s=repair-quota'], ['reconnexion', '?s=repair-auth'],
-          ['suspect', '?s=repair-suspect'], ['hors ligne', '?s=repair-offline'], ['Terminal', '?s=repair-terminal']]) {
+          ['suspect', '?s=repair-suspect'], ['hors ligne', '?s=repair-offline'], ['Terminal', '?s=repair-terminal'],
+          ['Codex répare', '?s=repair-ok&agents=codex'], ['Codex puis Claude', '?s=repair-ok&agents=codex,claude&secours=1'],
+          ['Codex raté', '?s=repair-fail&agents=codex'], ['Codex sans compte', '?s=echec&agents=codex&repair=not_logged_in'],
+          ['choix illisible', '?s=echec&repair=agents']]) {
           const a = document.createElement('a');
           a.href = qs;
           a.textContent = label;

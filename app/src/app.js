@@ -206,12 +206,16 @@ const state = {
     aside: {},
     // repair_report, fetched ahead: the copy must happen within the click.
     report: '',
+    // Who repair_status says would be asked: Claude unless agents.json lists Codex.
+    engine: 'claude',
+    // Claude in Terminal may be offered (Claude is one of the agents).
+    terminal: true,
   },
 };
 
 // DOM handles and per-screen timers. screen() resets them.
 const ui = {};
-const view = { gen: 0, timers: [], rows: {}, log: null, bar: null, polling: null, failure: null, progress: null, onLine: null };
+const view = { gen: 0, timers: [], rows: {}, log: null, bar: null, polling: null, failure: null, progress: null, onLine: null, asking: null, asked: null };
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -372,6 +376,8 @@ function screen(name, { big = false } = {}) {
   view.failure = null;
   view.progress = null;
   view.onLine = null;
+  view.asking = null;
+  view.asked = null;
   document.body.dataset.screen = name;
   document.body.classList.toggle('big', big);
   ui.screen.replaceChildren();
@@ -954,24 +960,46 @@ async function askLoginInline(gen) {
   });
 }
 
-// ── 4b. Repair with Claude ────────────────────────────────────────────────
+// ── 4b. Repair with Claude (or Codex) ─────────────────────────────────────
 // E2 is the failure under the install screen. One click asks Claude (E3), the app
 // shows what it understood (E4), a second click repairs (E5) and the app says how
 // it went (E6). Errors on Claude's side are E7. The plan stays in Rust: the window
-// only sends its id back.
+// only sends its id back. When agents.json lists Codex, Rust names who is asked and
+// who answered (`engine`), and the same screens say Codex where they said Claude.
 
-// E2: what Claude can do about the failure, from repair_status. The states missing
-// here get the plain screen.
-const REPAIR_NOTES = {
-  ready: 'Claude peut regarder ce qui s’est passé et me dire comment réparer. Il lit le journal de cette étape, jamais tes clés ni tes fichiers personnels. Ça utilise un peu de ton abonnement Claude.',
-  not_logged_in: 'Connecte ton compte Claude : il pourra m’aider à réparer.',
-  offline: 'Pas d’internet : ni moi ni Claude ne pouvons avancer. Vérifie le Wi-Fi ou le VPN, puis réessaie.',
-  // Two analyses for this step, four since the app opened, or a repair undone here.
-  exhausted: 'Claude a déjà fait tous les essais de réparation prévus.',
-  // Too old, logged in without a Pro or Max subscription, or it did not start as required.
-  unsupported: 'Ton Claude Code ne peut pas réparer depuis l’app (version trop ancienne ou compte non pris en charge).',
-  disabled: 'Cette version de l’app ne répare pas toute seule.',
+// The words for each AI that may repair. Claude's are the ones the window always had.
+const AIS = {
+  claude: {
+    name: 'Claude', product: 'Claude Code', plan: 'ton abonnement Claude', forfait: 'Ton forfait Claude',
+    account: 'Connecte ton compte Claude', why: 'version trop ancienne ou compte non pris en charge',
+  },
+  codex: {
+    name: 'Codex', product: 'Codex', plan: 'ton abonnement ChatGPT', forfait: 'Ton forfait ChatGPT',
+    account: 'Connecte Codex à ton compte ChatGPT', why: 'version trop ancienne, réglages ou compte non pris en charge',
+  },
 };
+
+function ai(engine) {
+  return AIS[Object.hasOwn(AIS, engine || '') ? engine : 'claude'];
+}
+
+// E2: what the AI can do about the failure, from repair_status. The states missing
+// here get the plain screen.
+function repairNote(what, a) {
+  const notes = {
+    ready: `${a.name} peut regarder ce qui s’est passé et me dire comment réparer. Il lit le journal de cette étape, jamais tes clés ni tes fichiers personnels. Ça utilise un peu de ${a.plan}.`,
+    not_logged_in: `${a.account} : il pourra m’aider à réparer.`,
+    offline: `Pas d’internet : ni moi ni ${a.name} ne pouvons avancer. Vérifie le Wi-Fi ou le VPN, puis réessaie.`,
+    // Two analyses for this step, four since the app opened, or a repair undone here.
+    exhausted: `${a.name} a déjà fait tous les essais de réparation prévus.`,
+    // Too old, logged in without a Pro or Max subscription, paused, or it did not start as required.
+    unsupported: `Ton ${a.product} ne peut pas réparer depuis l’app (${a.why}).`,
+    disabled: 'Cette version de l’app ne répare pas toute seule.',
+    // agents.json says nothing the kit can trust: no AI is asked.
+    agents: 'Je ne sais plus avec quelle IA tu travailles : ton choix est illisible. Je ne demande rien, ni à Claude ni à Codex. Copie le rapport et envoie-le à l’équipe.',
+  };
+  return Object.hasOwn(notes, what || '') ? notes[what] : null;
+}
 // Where Claude in Terminal (plan B) is offered on the failure screen.
 const TERMINAL_STATES = ['exhausted', 'unsupported', 'disabled'];
 const TERMINAL_NOTE = `Claude peut t’aider ${OS.inTerminal} : je t’explique comment avant de l’ouvrir.`;
@@ -979,18 +1007,23 @@ const TERMINAL_NOTE = `Claude peut t’aider ${OS.inTerminal} : je t’explique 
 const REPAIR_STAGES = {
   collecting: `Je rassemble ce qu’il lui faut sur ton ${OS.machine}…`,
   asking: 'Claude lit le dossier…',
+  asking_claude: 'Claude lit le dossier…',
+  asking_codex: 'Codex lit le dossier…',
 };
 
 // E7. Nothing was changed in any of these.
-const REPAIR_ERRORS = {
-  quota: ['Ton forfait Claude est à sa limite pour le moment.', 'Il se recharge tout seul en quelques heures. Rien n’a été modifié.'],
-  auth: ['Claude doit te reconnecter.', 'Connecte ton compte Claude, puis redemande-lui. Rien n’a été modifié.'],
-  timeout: ['Claude a mis trop de temps : je l’ai arrêté.', 'Rien n’a été modifié.'],
-  init_invalid: ['Claude ne s’est pas lancé comme prévu.', 'Par prudence, je n’ai rien changé.'],
-  invalid_verdict: ['Claude n’a pas répondu comme prévu.', 'Par prudence, je n’ai rien changé.'],
-  api: ['Le service de Claude a eu un souci.', 'Rien n’a été modifié. Réessaie dans un moment.'],
-  busy: ['Une autre étape est déjà en cours.', 'Attends qu’elle finisse, puis réessaie.'],
-};
+function repairError(kind, a) {
+  const errors = {
+    quota: [`${a.forfait} est à sa limite pour le moment.`, 'Il se recharge tout seul en quelques heures. Rien n’a été modifié.'],
+    auth: [`${a.name} doit te reconnecter.`, `${a.account}, puis redemande-lui. Rien n’a été modifié.`],
+    timeout: [`${a.name} a mis trop de temps : je l’ai arrêté.`, 'Rien n’a été modifié.'],
+    init_invalid: [`${a.name} ne s’est pas lancé comme prévu.`, 'Par prudence, je n’ai rien changé.'],
+    invalid_verdict: [`${a.name} n’a pas répondu comme prévu.`, 'Par prudence, je n’ai rien changé.'],
+    api: [`Le service de ${a.name} a eu un souci.`, 'Rien n’a été modifié. Réessaie dans un moment.'],
+    busy: ['Une autre étape est déjà en cours.', 'Attends qu’elle finisse, puis réessaie.'],
+  };
+  return Object.hasOwn(errors, kind || '') ? errors[kind] : null;
+}
 
 function copyButton() {
   const copy = button('Copier le rapport', () => copyReport(copy), { kind: 'secondary', act: 'copy' });
@@ -1045,19 +1078,27 @@ async function showFailure(index, intro = null) {
   }
   if (view.failure !== ask) return;
   const what = status && status.state;
-  if (!Object.hasOwn(REPAIR_NOTES, what)) return;
+  // Named only when agents.json lists Codex: without a name, Claude as always.
+  if (status && typeof status === 'object') {
+    state.repair.engine = ai(status.engine) === AIS.codex ? 'codex' : 'claude';
+    state.repair.terminal = status.engine || what === 'agents' ? Boolean(status.terminal_fallback) : true;
+  }
+  const a = ai(state.repair.engine);
+  const note = repairNote(what, a);
+  if (!note) return;
   const terminal = TERMINAL_STATES.includes(what) && status.terminal_fallback;
   const offer = h('div', { class: 'repair-offer card repair-note' },
-    h('p', {}, REPAIR_NOTES[what]),
+    h('p', {}, note),
     terminal ? h('p', {}, TERMINAL_NOTE) : null,
-    what === 'ready' ? sentPanel(step) : null);
+    what === 'ready' ? sentPanel(step, a) : null);
   addNote(offer);
   // The user may have moved on to another button meanwhile: only the one that steps aside hands its focus over.
   const refocus = document.activeElement === retry || document.activeElement === document.body;
   if (what === 'ready') {
     demote(retry);
-    ui.actions.append(button('Demander à Claude de réparer', () => runRepair(index), { act: 'next' }));
-  } else if (what === 'not_logged_in') {
+    ui.actions.append(button(`Demander à ${a.name} de réparer`, () => runRepair(index), { act: 'next' }));
+  } else if (what === 'not_logged_in' && a === AIS.claude) {
+    // Codex's ChatGPT login has its own screen (phase 10b): its note says what to do meanwhile.
     demote(retry);
     const connect = button('Connecter mon compte Claude', () => connectForRepair(index, connect), { act: 'next' });
     ui.actions.append(connect);
@@ -1068,8 +1109,8 @@ async function showFailure(index, intro = null) {
 }
 
 // « Voir exactement ce que j'envoie »: the dossier itself, built when opened.
-function sentPanel(step) {
-  const pre = h('pre', { class: 'log-lines', tabindex: '0', 'aria-label': 'Ce que j’envoie à Claude' }, 'Je prépare le dossier…');
+function sentPanel(step, a) {
+  const pre = h('pre', { class: 'log-lines', tabindex: '0', 'aria-label': `Ce que j’envoie à ${a.name}` }, 'Je prépare le dossier…');
   const det = h('details', { class: 'log sent' }, h('summary', {}, 'Voir exactement ce que j’envoie'), pre);
   let asked = false;
   det.addEventListener('toggle', async () => {
@@ -1132,7 +1173,8 @@ async function runRepair(index) {
   const { id } = state.failed;
   const step = stepRun(id);
   const gen = screen('analyze');
-  say('thinking', 'Claude regarde ce qui s’est passé…', 'En général moins d’une minute. Il ne modifie rien.');
+  view.asking = state.repair.engine;
+  say('thinking', `${ai(view.asking).name} regarde ce qui s’est passé…`, 'En général moins d’une minute. Il ne modifie rien.');
   const started = Date.now();
   const time = h('span', { class: 'chrono-time' }, '0:00');
   view.progress = h('span', { class: 'chrono-stage' }, REPAIR_STAGES.collecting);
@@ -1150,7 +1192,7 @@ async function runRepair(index) {
 
   const stop = button('Arrêter', async () => {
     stop.disabled = true;
-    say('thinking', 'J’arrête Claude…');
+    say('thinking', `J’arrête ${ai(view.asking).name}…`);
     try {
       await invoke('repair_cancel');
     } catch {
@@ -1174,7 +1216,16 @@ async function runRepair(index) {
 
 function onRepairProgress(event) {
   const stage = event && event.payload;
-  if (view.progress && Object.hasOwn(REPAIR_STAGES, stage)) view.progress.textContent = nbsp(REPAIR_STAGES[stage]);
+  if (!view.progress || !Object.hasOwn(REPAIR_STAGES, stage)) return;
+  view.progress.textContent = nbsp(REPAIR_STAGES[stage]);
+  // Named when agents.json lists Codex: who reads now. The first one asked answers for an error.
+  const engine = { asking_claude: 'claude', asking_codex: 'codex' }[stage];
+  if (!engine) return;
+  if (!view.asked) view.asked = engine;
+  if (engine !== view.asking) {
+    view.asking = engine;
+    say('thinking', `${ai(engine).name} regarde ce qui s’est passé…`, 'En général moins d’une minute. Il ne modifie rien.');
+  }
 }
 
 // E7. Most errors go back to E2 with their own words: it offers what is still possible
@@ -1182,6 +1233,7 @@ function onRepairProgress(event) {
 // Asking again right away would only hit the limit again, or the same expired login.
 function showRepairError(index, err) {
   const kind = err && typeof err === 'object' ? String(err.kind || '') : '';
+  const a = ai(view.asked || state.repair.engine);
   if (kind === 'cancelled') {
     backToFailure(index, ['idle', 'Arrêté.', 'Rien n’a été modifié.']);
     return;
@@ -1191,9 +1243,7 @@ function showRepairError(index, err) {
     backToFailure(index);
     return;
   }
-  const [title, text] = Object.hasOwn(REPAIR_ERRORS, kind)
-    ? REPAIR_ERRORS[kind]
-    : ['Je n’ai pas pu demander à Claude.', `${errText(err)} Rien n’a été modifié.`];
+  const [title, text] = repairError(kind, a) || [`Je n’ai pas pu demander à ${a.name}.`, `${errText(err)} Rien n’a été modifié.`];
   if (kind !== 'quota' && kind !== 'auth') {
     backToFailure(index, ['worried', title, text]);
     return;
@@ -1202,7 +1252,7 @@ function showRepairError(index, err) {
   say('worried', title, text);
   const retry = button('Réessayer', () => runInstall(index), { act: 'next' });
   ui.actions.append(copyButton(), retry);
-  if (kind === 'auth') {
+  if (kind === 'auth' && a === AIS.claude) {
     demote(retry);
     const connect = button('Connecter mon compte Claude', () => connectForRepair(index, connect), { act: 'next' });
     ui.actions.append(connect);
@@ -1210,8 +1260,8 @@ function showRepairError(index, err) {
   focusMain();
 }
 
-function said(text) {
-  return h('blockquote', { class: 'said' }, h('p', { class: 'said-who' }, 'Claude dit :'), h('p', {}, `« ${text} »`));
+function said(text, a) {
+  return h('blockquote', { class: 'said' }, h('p', { class: 'said-who' }, `${a.name} dit :`), h('p', {}, `« ${text} »`));
 }
 
 function settingsButton(pane) {
@@ -1239,21 +1289,23 @@ function showProposal(index, plan) {
   const actions = Array.isArray(plan.actions) ? plan.actions : [];
   const cause = String(plan.cause || '');
   const explained = typeof plan.explication === 'string' && plan.explication ? plan.explication : '';
+  // Who answered: named when agents.json lists Codex, Claude otherwise.
+  const a = ai(plan.engine);
 
-  // E4b. A suspect log: nothing Claude says is shown, nothing is offered.
+  // E4b. A suspect log: nothing the AI says is shown, nothing is offered.
   if (plan.suspect || (!remedies.length && !actions.length)) {
-    say('worried', 'Claude n’a pas trouvé de réparation sûre.',
+    say('worried', `${a.name} n’a pas trouvé de réparation sûre.`,
       plan.suspect ? 'Le journal contient des choses inhabituelles : je préfère ne rien réparer tout seul.' : cause);
-    if (explained && !plan.suspect) ui.screen.append(said(explained));
-    ui.screen.append(h('p', { class: 'note' }, 'Rien n’a été modifié. Copie le rapport et envoie-le à l’équipe : il contient déjà l’analyse de Claude.'));
+    if (explained && !plan.suspect) ui.screen.append(said(explained, a));
+    ui.screen.append(h('p', { class: 'note' }, `Rien n’a été modifié. Copie le rapport et envoie-le à l’équipe : il contient déjà l’analyse de ${a.name}.`));
     ui.actions.append(copyButton(), button('Réessayer', () => runInstall(index), { act: 'next' }));
     focusMain();
     return;
   }
 
-  if (plan.confiance === 'basse') say('idle', 'Claude n’est pas sûr de lui.', `Il pense que : ${lowerFirst(cause)}`);
-  else say('idle', 'Claude a trouvé ce qui coince.', cause);
-  if (explained) ui.screen.append(said(explained));
+  if (plan.confiance === 'basse') say('idle', `${a.name} n’est pas sûr de lui.`, `Il pense que : ${lowerFirst(cause)}`);
+  else say('idle', `${a.name} a trouvé ce qui coince.`, cause);
+  if (explained) ui.screen.append(said(explained, a));
   // The user's part comes first: « Réparer » relaunches the step straight away.
   if (actions.length) {
     ui.screen.append(planCard(remedies.length ? 'Avant de cliquer sur « Réparer » :' : 'Ce que toi tu dois faire :',
@@ -1356,17 +1408,18 @@ function showOutcome(index, plan, o, key) {
     undoCard(run);
     ui.actions.append(copyButton(), retry);
   } else if (o.retry) {
-    // E6b: one more round.
+    // E6b: one more round, asked as the last one was offered.
+    const next = ai(state.repair.engine);
     const failed = kind === 'remedy_failed';
     say('worried', failed ? 'Je n’ai pas pu réparer.' : 'Ça n’a toujours pas marché.',
-      `${failed ? `${String(o.message || '')} ` : ''}Claude peut essayer une autre piste. C’est son dernier essai sur cette étape.`);
+      `${failed ? `${String(o.message || '')} ` : ''}${next.name} peut essayer une autre piste. C’est son dernier essai sur cette étape.`);
     undoCard(run);
-    ui.actions.append(copyButton(), button('Redemander à Claude (dernier essai)', () => runRepair(index), { act: 'next' }));
+    ui.actions.append(copyButton(), button(`Redemander à ${next.name} (dernier essai)`, () => runRepair(index), { act: 'next' }));
   } else {
-    // E6c
-    say('worried', 'Je n’ai pas réussi à réparer tout seul.', 'Rien n’est cassé. Copie le rapport et envoie-le à l’équipe : il contient déjà l’analyse de Claude.');
+    // E6c. Claude in Terminal only for whom chose Claude.
+    say('worried', 'Je n’ai pas réussi à réparer tout seul.', `Rien n’est cassé. Copie le rapport et envoie-le à l’équipe : il contient déjà l’analyse de ${ai(plan.engine).name}.`);
     undoCard(run);
-    ui.actions.append(copyButton(), terminalButton(index), retry);
+    ui.actions.append(copyButton(), ...(state.repair.terminal ? [terminalButton(index)] : []), retry);
   }
   focusMain();
 }
