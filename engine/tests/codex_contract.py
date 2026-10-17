@@ -327,7 +327,7 @@ SCENARIOS = [
     dict(name="the login: a system settings folder its users may change",
          files={"programdata/OpenAI/Codex/config.toml": "x = 1\n"},
          icacls=[("programdata/OpenAI", "/grant", "*S-1-5-32-545:(OI)(CI)M")], os=("windows",),
-         **login("managed", no("unsupported", "managed"))),
+         **login("system", no("unsupported", "managed"))),
 ]
 
 

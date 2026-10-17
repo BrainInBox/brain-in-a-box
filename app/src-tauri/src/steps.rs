@@ -1121,12 +1121,33 @@ pub fn start_onboarding() -> Result<(), String> {
 
 fn start_codex_onboarding(home: &Path) -> Result<(), String> {
     let (codex, codex_home) = chosen_codex(home)?;
+    let setup = codex::Setup::for_user(&codex_home).map_err(|e| format!("Je n'ai pas pu créer mon dossier de travail ({e})."))?;
+    open_in_terminal("onboarding", &codex_onboarding(home, &setup, &codex)?)
+}
+
+/// The onboarding's window for Codex, only on the login the kit uses (§4.3): an API key in auth.json
+/// would bill the whole session, whatever the window takes out of the environment, and a Codex that
+/// is not logged in offers a key on its first screen.
+fn codex_onboarding(home: &Path, setup: &codex::Setup, codex: &Path) -> Result<String, String> {
+    if let Some(why) = onboarding_refused(codex::login(setup)) {
+        return Err(why.into());
+    }
     let Some(vault) = detect::vault(home) else {
         return Err("Ton cerveau n'est pas encore installé.".into());
     };
     let guide = onboarding_guide(home)?;
-    let script = codex_onboarding_script(&sys::tool_path(), &vault, &guide, &codex, codex_home_var(home, &codex_home));
-    open_in_terminal("onboarding", &script)
+    Ok(codex_onboarding_script(&sys::tool_path(), &vault, &guide, codex, codex_home_var(home, &setup.codex_home)))
+}
+
+fn onboarding_refused(login: codex::Login) -> Option<&'static str> {
+    use codex::Login;
+    match login {
+        Login::Chatgpt => None,
+        Login::Billed => Some("Codex est connecté avec une clé API, qui serait facturée : connecte-le d'abord à ton compte ChatGPT."),
+        Login::Managed => Some("Codex est connecté avec un compte ChatGPT d'entreprise : connecte-le d'abord avec ton abonnement ChatGPT personnel."),
+        Login::System => Some("Codex lit des réglages de cet ordinateur qu'un autre compte peut modifier : je ne l'ouvre pas pour ça."),
+        Login::LoggedOut | Login::Unknown => Some("Connecte d'abord Codex à ton compte ChatGPT."),
+    }
 }
 
 /// The guide from the sources the brain step unpacked; when the brain was installed
@@ -1173,11 +1194,14 @@ const CODEX_KEYS: &[&str] = &["OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_T
 /// Where `codex login` keeps the login: auth.json, the file the kit reads (codex.rs passes the same).
 const CODEX_LOGIN_STORE: &str = r#"cli_auth_credentials_store="file""#;
 
+/// Terminal runs the user's shell profile first, which may export a CODEX_HOME of its own: the
+/// folder agents.json records is the one set, and without one (~/.codex) none is left.
 #[cfg(not(windows))]
 fn codex_env_lines(path: &std::ffi::OsStr, codex_home: Option<&Path>) -> String {
     let mut s = format!("#!/bin/bash\nexport PATH={}\n", sh_quote(&path.to_string_lossy()));
-    if let Some(h) = codex_home {
-        s.push_str(&format!("export CODEX_HOME={}\n", sh_quote(&h.to_string_lossy())));
+    match codex_home {
+        Some(h) => s.push_str(&format!("export CODEX_HOME={}\n", sh_quote(&h.to_string_lossy()))),
+        None => s.push_str("unset CODEX_HOME\n"),
     }
     s.push_str(&format!("unset {}\n", CODEX_KEYS.join(" ")));
     s
@@ -1196,10 +1220,11 @@ fn codex_login_script(path: &std::ffi::OsStr, codex: &Path, codex_home: Option<&
 #[cfg(not(windows))]
 fn codex_onboarding_script(path: &std::ffi::OsStr, vault: &Path, guide: &Path, codex: &Path, codex_home: Option<&Path>) -> String {
     format!(
-        "{}cd {} || exit 1\n{} {}\necho\necho 'Tu peux fermer cette fenêtre.'\n",
+        "{}cd {} || exit 1\n{} -c {} {}\necho\necho 'Tu peux fermer cette fenêtre.'\n",
         codex_env_lines(path, codex_home),
         sh_quote(&vault.to_string_lossy()),
         sh_quote(&codex.to_string_lossy()),
+        sh_quote(CODEX_LOGIN_STORE),
         sh_quote(&onboarding_prompt(guide))
     )
 }
@@ -1232,11 +1257,13 @@ fn onboarding_script(path: &std::ffi::OsStr, vault: &Path, guide: &Path, claude:
     )
 }
 
+/// PowerShell runs the user's profile first, which may set a CODEX_HOME of its own: see above.
 #[cfg(windows)]
 fn codex_env_lines(path: &std::ffi::OsStr, codex_home: Option<&Path>) -> String {
     let mut s = format!("$ErrorActionPreference = 'Stop'\r\n$env:Path = {}\r\n", ps_quote(&path.to_string_lossy()));
-    if let Some(h) = codex_home {
-        s.push_str(&format!("$env:CODEX_HOME = {}\r\n", ps_quote(&h.to_string_lossy())));
+    match codex_home {
+        Some(h) => s.push_str(&format!("$env:CODEX_HOME = {}\r\n", ps_quote(&h.to_string_lossy()))),
+        None => s.push_str("Remove-Item -LiteralPath Env:CODEX_HOME -ErrorAction SilentlyContinue\r\n"),
     }
     for k in CODEX_KEYS {
         s.push_str(&format!("Remove-Item -LiteralPath Env:{k} -ErrorAction SilentlyContinue\r\n"));
@@ -1257,10 +1284,11 @@ fn codex_login_script(path: &std::ffi::OsStr, codex: &Path, codex_home: Option<&
 #[cfg(windows)]
 fn codex_onboarding_script(path: &std::ffi::OsStr, vault: &Path, guide: &Path, codex: &Path, codex_home: Option<&Path>) -> String {
     format!(
-        "{}Set-Location -LiteralPath {}\r\n& {} {}\r\nWrite-Host ''\r\nWrite-Host 'Tu peux fermer cette fenêtre.'\r\n",
+        "{}Set-Location -LiteralPath {}\r\n& {} -c {} {}\r\nWrite-Host ''\r\nWrite-Host 'Tu peux fermer cette fenêtre.'\r\n",
         codex_env_lines(path, codex_home),
         ps_quote(&vault.to_string_lossy()),
         ps_quote(&codex.to_string_lossy()),
+        ps_quote(CODEX_LOGIN_STORE),
         ps_quote(&onboarding_prompt(guide))
     )
 }
@@ -1885,10 +1913,72 @@ mod tests {
 
         let guide = onboarding_guide(&home).unwrap();
         let seen = run("onboarding.command", codex_onboarding_script(&path, &vault, &guide, &codex, None));
-        assert_eq!(seen, format!("{}\nRead {} and run it to personalize me.\nhome=unset\n", vault.display(), guide.display()));
+        assert_eq!(
+            seen,
+            format!("{}\n-c\ncli_auth_credentials_store=\"file\"\nRead {} and run it to personalize me.\nhome=unset\n", vault.display(), guide.display())
+        );
+
+        // A CODEX_HOME the user's shell profile exports (Terminal runs it): the folder agents.json
+        // records wins, ~/.codex being Codex's own default.
+        let shell = [("CODEX_HOME", "/elsewhere")];
+        for (name, text) in [
+            ("codex-login.command", codex_login_script(&path, &codex, None)),
+            ("onboarding.command", codex_onboarding_script(&path, &vault, &guide, &codex, None)),
+        ] {
+            let script = root.join(name);
+            fs::write(&script, text).unwrap();
+            let o = sys::run_with(Path::new("/bin/bash"), &[&script.to_string_lossy()], &shell, None, Duration::from_secs(10));
+            assert!(o.ok(), "{}", o.stderr);
+            assert_eq!(fs::read_to_string(&out).unwrap().lines().last(), Some("home=unset"), "{name}");
+        }
 
         assert_eq!(codex_home_var(&home, &home.join(".codex")), None);
         assert_eq!(codex_home_var(&home, &other), Some(other.as_path()));
+    }
+
+    /// The onboarding opens Codex on the ChatGPT login the kit checked, never on an API key (it would
+    /// be billed), a workspace account or no login at all: refused before any window, saying why.
+    #[test]
+    fn codex_onboarding_needs_the_chatgpt_login() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(tmp.path()).unwrap();
+        let home = root.join("home");
+        let work = root.join("work");
+        fs::create_dir_all(&work).unwrap();
+        crate::repair::tests::plant_codex(&home, &serde_json::json!({}), &[]);
+        let setup = crate::repair::tests::codex_setup(&home, &work);
+        let codex = Path::new("codex");
+        let auth = home.join(".codex").join("auth.json");
+        let chatgpt = fs::read_to_string(&auth).unwrap();
+        for (label, file, said) in [
+            ("an API key", Some(r#"{"auth_mode": "apikey", "OPENAI_API_KEY": "sk-proj-not-a-real-key"}"#), "clé API"),
+            ("a workspace account", Some(r#"{"auth_mode": "chatgpt", "tokens": {"refresh_token": "r"}}"#), "compte ChatGPT"),
+            ("not logged in", None, "compte ChatGPT"),
+        ] {
+            match file {
+                Some(f) => fs::write(&auth, f).unwrap(),
+                None => fs::remove_file(&auth).unwrap(),
+            }
+            let err = codex_onboarding(&home, &setup, codex).expect_err(label);
+            assert!(err.contains(said), "{label}: {err}");
+        }
+        fs::write(&auth, chatgpt).unwrap();
+        // Logged in with ChatGPT: the brain is what is missing now (Windows may know another brain
+        // folder, install.ps1's), then the window's script.
+        match codex_onboarding(&home, &setup, codex) {
+            Err(e) => assert_eq!(e, "Ton cerveau n'est pas encore installé."),
+            Ok(script) => assert!(cfg!(windows) && script.contains("personalize me"), "{script}"),
+        }
+        #[cfg(not(windows))]
+        {
+            fs::create_dir_all(home.join("Documents/Brain")).unwrap();
+            let script = codex_onboarding(&home, &setup, codex).unwrap();
+            assert!(script.contains("personalize me"), "{script}");
+        }
+        assert_eq!(onboarding_refused(codex::Login::Chatgpt), None);
+        for login in [codex::Login::Billed, codex::Login::Managed, codex::Login::System, codex::Login::LoggedOut, codex::Login::Unknown] {
+            assert!(onboarding_refused(login).is_some(), "{login:?}");
+        }
     }
 
     #[test]
@@ -2433,7 +2523,9 @@ mod tests {
             "{login}"
         );
         let onboarding = codex_onboarding_script(&path, vault, guide, codex, None);
-        assert!(!onboarding.contains("CODEX_HOME"), "{onboarding}");
+        assert!(onboarding.contains("Remove-Item -LiteralPath Env:CODEX_HOME -ErrorAction SilentlyContinue"), "{onboarding}");
+        assert!(!onboarding.contains("$env:CODEX_HOME"), "{onboarding}");
+        assert!(onboarding.contains(r#"codex.exe' -c 'cli_auth_credentials_store="file"' 'Read "#), "{onboarding}");
         assert!(onboarding.contains(r"Set-Location -LiteralPath 'C:\Users\Jo O''Brien\Documents\Brain'"), "{onboarding}");
         assert!(
             onboarding.contains(r"codex.exe' 'Read C:\Users\Jo O''Brien\.brain-in-a-box\src\onboarding\ONBOARDING.md and run it to personalize me.'"),

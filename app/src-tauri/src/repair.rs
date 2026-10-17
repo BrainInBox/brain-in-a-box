@@ -334,6 +334,9 @@ pub enum RepairState {
     Disabled,
     /// agents.json says nothing the kit can trust: no AI is asked (agents.rs).
     Agents,
+    /// Codex, before the brain step put the kit's list of its features next to the hooks: it cannot
+    /// be asked yet, and nothing is wrong with it.
+    NotYet,
 }
 
 #[derive(Serialize, Clone, Copy, Debug)]
@@ -841,6 +844,10 @@ fn claude_state(claude: &Path, step: &str) -> RepairState {
 fn codex_state(setup: &codex::Setup, step: &str, deep: bool) -> RepairState {
     if !cfg!(feature = "repair-in-app") {
         return RepairState::Disabled;
+    }
+    // The brain step installs the kit's list of Codex's features: before it, every check pauses Codex.
+    if !setup.features.is_file() {
+        return RepairState::NotYet;
     }
     let used = used(step, &SESSION.codex_unsupported);
     let (check, online) = thread::scope(|s| {
@@ -2728,7 +2735,7 @@ fn iso(secs: u64) -> String {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
@@ -4370,7 +4377,7 @@ mod tests {
     /// Codex as engine/tests/fake_codex.py plays it, in `home`: logged in with a ChatGPT account of a
     /// personal plan (fake tokens), the kit's list of features, no administrator's layer. `fake`: its
     /// settings ($HOME/.codex-fake), the answer first.
-    fn plant_codex(home: &Path, answer: &Value, fake: &[(&str, &str)]) {
+    pub(crate) fn plant_codex(home: &Path, answer: &Value, fake: &[(&str, &str)]) {
         let codex_home = home.join(".codex");
         let settings = home.join(".codex-fake");
         fs::create_dir_all(&codex_home).unwrap();
@@ -4387,7 +4394,7 @@ mod tests {
     }
 
     /// How the app asks that Codex: its world's home and variables, the fake through Python.
-    fn codex_setup(home: &Path, work_root: &Path) -> codex::Setup {
+    pub(crate) fn codex_setup(home: &Path, work_root: &Path) -> codex::Setup {
         let key = |k: &str| if cfg!(windows) { k.to_uppercase() } else { k.to_string() };
         let mut env: HashMap<String, String> = HashMap::new();
         env.insert(key("HOME"), home.to_string_lossy().into_owned());
@@ -4571,6 +4578,21 @@ mod tests {
             assert_eq!(s.launches.load(Ordering::SeqCst), asked, "{fake:?}: only a question is a start");
             assert_eq!(s.used("brain"), (0, 0), "{fake:?}: nothing was analyzed");
         }
+    }
+
+    /// Before the brain step, the kit's list of Codex's features is not installed yet: « Codex cannot
+    /// help yet », not « too old or not supported », and nothing is run to find out.
+    #[test]
+    fn before_the_brain_codex_cannot_help_yet() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        plant_codex(&home, &json!({}), &[]);
+        for deep in [true, false] {
+            let setup = codex::Setup { features: home.join("absent.json"), ..codex_setup(&home, tmp.path()) };
+            assert_eq!(codex_state(&setup, "obsidian", deep), RepairState::NotYet, "deep {deep}");
+        }
+        assert_eq!(fake_read(&home, "calls.jsonl"), "", "nothing run");
+        assert_eq!(serde_json::to_value(RepairStatus::of(RepairState::NotYet)).unwrap()["state"], "not_yet");
     }
 
     #[test]

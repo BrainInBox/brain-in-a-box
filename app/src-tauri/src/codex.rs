@@ -1628,8 +1628,10 @@ pub enum Login {
     Chatgpt,
     /// An API key or another billed way: the app does not use it, and never logs it out.
     Billed,
-    /// A workspace account (Business, Edu, Enterprise), or settings of this system above the kit's.
+    /// A ChatGPT workspace account (Business, Edu, Enterprise): logging in again with a personal one fixes it.
     Managed,
+    /// Windows: Codex's system settings (%ProgramData%\OpenAI\Codex) another account could change. No login fixes that.
+    System,
     LoggedOut,
     /// Codex is missing, or did not answer.
     Unknown,
@@ -1638,6 +1640,9 @@ pub enum Login {
 /// auth.json (its mode and plan, whether something refreshes it), then `codex login status` read
 /// as a question would read it, every -c included. Windows: the system settings' folder first.
 pub fn login(setup: &Setup) -> Login {
+    if check_system_settings(&setup.layers).is_err() {
+        return Login::System;
+    }
     match login_check(setup) {
         Ok(()) => Login::Chatgpt,
         Err(CodexError { kind: Kind::Auth, reason: Some(Reason::Billed), .. }) => Login::Billed,

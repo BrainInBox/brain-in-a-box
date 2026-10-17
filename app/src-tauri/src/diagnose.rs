@@ -737,13 +737,20 @@ fn check_codex_auth(c: &CodexFacts) -> Check {
         Login::Billed => (
             Status::Warn,
             "Codex est connecté avec une clé API, qui serait facturée : je ne m'en sers pas. \
-             Connecte-le plutôt avec ton compte ChatGPT (codex logout, puis codex login)."
+             Connecte-le à ton compte ChatGPT en un clic : ta connexion remplacera la clé."
                 .into(),
         ),
         Login::Managed => (
             Status::Warn,
+            "Codex est connecté avec un compte ChatGPT d'entreprise (Business, Enterprise, Edu) : je ne m'en sers pas. \
+             Il faut un abonnement ChatGPT personnel."
+                .into(),
+        ),
+        Login::System => (
+            Status::Warn,
             format!(
-                "Codex suit des réglages imposés (un compte ChatGPT d'entreprise, ou ceux de l'administrateur de ce {}) : je ne m'en sers pas.",
+                "Codex lit des réglages de ce {} qu'un autre compte peut modifier (le dossier ProgramData\\OpenAI\\Codex) : \
+                 je ne m'en sers pas tant que ce dossier n'est pas protégé.",
                 sys::MACHINE
             ),
         ),
@@ -1122,11 +1129,16 @@ mod tests {
         use codex::Login;
         let said = |login, features| check_codex_auth(&CodexFacts { features, ..codex_facts(login) });
         assert_eq!(said(Login::Chatgpt, true).status, Status::Ok);
-        for login in [Login::LoggedOut, Login::Billed, Login::Managed, Login::Unknown] {
+        for login in [Login::LoggedOut, Login::Billed, Login::Managed, Login::System, Login::Unknown] {
             let c = said(login, true);
             assert_eq!((c.status, c.fix), (Status::Warn, None), "{login:?}");
         }
         assert!(said(Login::Billed, true).detail.contains("clé API") && said(Login::Billed, true).detail.contains("ChatGPT"));
+        // No command to type: the login button replaces the key. A workspace account is said as one,
+        // the system's settings as theirs (no login fixes those).
+        assert!(!said(Login::Billed, true).detail.contains("codex logout"));
+        assert!(said(Login::Managed, true).detail.contains("personnel") && !said(Login::Managed, true).detail.contains("administrateur"));
+        assert!(said(Login::System, true).detail.contains("ProgramData") && !said(Login::System, true).detail.contains("Connecte"));
         assert!(said(Login::Unknown, false).detail.contains("une fois ton cerveau installé"));
         assert_ne!(said(Login::Unknown, false).detail, said(Login::Unknown, true).detail);
         let absent = check_codex_auth(&CodexFacts { found: Found::Absent, ..codex_facts(Login::Unknown) });
