@@ -48,6 +48,11 @@
   // as the tests open it): repair.rs names who is asked and who answered, the screens say Codex where they said Claude,
   // Claude in Terminal only when Claude is listed; &secours=1 has the preferred one hit its limit, the other one answers;
   // &repair=agents is a choice the kit cannot read (no AI asked),
+  // &porte=1 (implied by &agents= with Codex): the kit lets Codex be chosen here: the welcome names no
+  // AI and the choice screen comes first, preselecting &agents= (else Claude); &choix=claude|codex|both picks
+  // there, &resume=claude|codex picks who writes the evening summary when both; the steps, the checks, the
+  // logins and the end follow the choice; &codex=billed|managed|unknown is how Codex is logged in at first,
+  // logged in with ChatGPT two checks after its login window opened,
   // &at=<css> stops the driving on &go's screen only once that element is there, &nth=<n> only on its n-th arrival there,
   // &click=<act>[,<act>…] clicks those buttons in that order, once each, and &go's screen counts only after the last.
   // Bibo: &sleep=3 makes it doze off after 3 s without activity instead of 45.
@@ -77,8 +82,13 @@
       claude_auth: 'Connexion à Claude', obsidian: 'Obsidian (pour lire tes notes)',
       brain_vault: 'Ton dossier Brain', brain_hooks: 'Les automatismes de Claude',
       brain_skills: 'Les compétences de Claude', brain_memory: 'La mémoire de recherche', voyage: 'Recherche par le sens',
+      codex: 'Codex', codex_auth: 'Connexion à Codex', agents: 'Ton choix d’IA', brain_codex_hooks: 'Les automatismes de Codex',
+      brain_codex_instructions: 'Tes consignes pour Codex', brain_codex_skills: 'Les compétences de Codex',
     };
-    const FIX = { clt: 'clt', paquets: 'paquets', bun: 'bun', claude: 'claude', obsidian: 'obsidian', brain_vault: 'brain', brain_hooks: 'brain', brain_skills: 'brain', brain_memory: 'brain' };
+    const FIX = {
+      clt: 'clt', paquets: 'paquets', bun: 'bun', claude: 'claude', codex: 'codex', obsidian: 'obsidian', agents: 'brain', brain_vault: 'brain', brain_hooks: 'brain', brain_skills: 'brain', brain_memory: 'brain',
+      brain_codex_hooks: 'brain', brain_codex_instructions: 'brain', brain_codex_skills: 'brain',
+    };
     // install.ps1 brings all of them with the brain.
     if (WIN) Object.assign(FIX, { python: 'brain', git: 'brain', bun: 'brain', obsidian: 'brain' });
     const C = (id, status, detail) => ({ id, label: LABELS[id], status, detail, fix: FIX[id] || null });
@@ -118,6 +128,60 @@
     const SYSTEM = WIN ? 'Windows 11 (24H2)' : LIN ? 'Ubuntu 24.04.1 LTS' : 'macOS 15.4';
     const ARCH = WIN || LIN ? 'x86_64' : 'arm64';
     const ONLINE = [C(WIN ? 'windows' : LIN ? 'linux' : 'macos', 'ok', SYSTEM), C('disk', 'ok', '182 Go libres'), C('network', 'ok', 'github.com et claude.ai répondent.')];
+    // Codex's lines (diagnose.rs), missing and there.
+    const CODEX_MISSING = {
+      codex: C('codex', 'missing', 'Pas encore installé.'),
+      codex_auth: C('codex_auth', 'warn', 'Tu te connecteras une fois Codex installé.'),
+      brain_codex_hooks: C('brain_codex_hooks', 'missing', 'Pas encore branchés.'),
+      brain_codex_instructions: C('brain_codex_instructions', 'missing', 'Pas encore ajoutées.'),
+      brain_codex_skills: C('brain_codex_skills', 'missing', 'Pas encore installées.'),
+    };
+    const CODEX_OK = {
+      codex: C('codex', 'ok', 'Codex 0.162.1'),
+      codex_auth: C('codex_auth', 'ok', 'Tu es connecté avec ton compte ChatGPT.'),
+      brain_codex_hooks: C('brain_codex_hooks', 'ok', 'Codex note tes corrections et tes séances.'),
+      brain_codex_instructions: C('brain_codex_instructions', 'ok', 'Codex les lit à chaque séance.'),
+      brain_codex_skills: C('brain_codex_skills', 'ok', 'Installées.'),
+    };
+    // agents.json (&agents=, as written by the installer), then the window's choice (choose_agents).
+    const parseAgents = (v) => (v || '').split(',').filter((a, i, all) => ['claude', 'codex'].includes(a) && all.indexOf(a) === i);
+    const FILE_AGENTS = parseAgents(P.get('agents'));
+    // A trusted agents.json that lists Codex: the gate is open in this copy.
+    const PORTE = P.get('porte') === '1' || FILE_AGENTS.includes('codex');
+    let chosen = null;
+    const agentsNow = () => chosen || (FILE_AGENTS.length ? FILE_AGENTS : ['claude']);
+    const pending = () => Boolean(chosen) && chosen.join() !== (FILE_AGENTS.length ? FILE_AGENTS : ['claude']).join();
+    // The checks of the agents of now, in diagnose.rs's order; with Claude alone and nothing to record,
+    // the list itself, untouched.
+    function forAgents(list, done) {
+      const agents = agentsNow();
+      if (agents.join() === 'claude' && !pending()) return list;
+      const out = [];
+      for (const c of list) {
+        if (c.id === 'network') {
+          const sites = ['github.com', ...agents.map((a) => (a === 'codex' ? 'chatgpt.com' : 'claude.ai'))];
+          out.push(C('network', 'ok', `${sites.length > 2 ? `${sites.slice(0, -1).join(', ')} et ${sites[sites.length - 1]}` : sites.join(' et ')} répondent.`));
+        } else if (c.id === 'claude') {
+          for (const a of agents) {
+            if (a === 'claude') out.push(c, list.find((x) => x.id === 'claude_auth'));
+            else out.push(...['codex', 'codex_auth'].map((id) => (done(id) ? CODEX_OK : CODEX_MISSING)[id]));
+          }
+          if (pending()) out.push(C('agents', 'missing', 'Je le note en installant ton cerveau.'));
+        } else if (c.id === 'claude_auth') {
+          continue;
+        } else if (c.id === 'brain_hooks' || c.id === 'brain_skills') {
+          if (agents.includes('claude')) out.push(c);
+          if (c.id === 'brain_skills' && agents.includes('codex')) {
+            out.push(...['brain_codex_hooks', 'brain_codex_instructions', 'brain_codex_skills'].map((id) => (done(id) ? CODEX_OK : CODEX_MISSING)[id]));
+          }
+        } else {
+          out.push(c);
+        }
+      }
+      return out;
+    }
+    // The steps, the agents' where Claude Code's stands (steps::order).
+    const forSteps = (steps) => steps.flatMap((s) => (s === 'claude' ? agentsNow() : [s]));
     // Claude Code installed but not connected, the steps in `todo` still to run.
     const CLAUDE_ONLY = {
       'login-early': ['clt', 'bun', 'obsidian', 'brain'],
@@ -126,6 +190,16 @@
 
 
     function diagnosis() {
+      const d = diagnosisOfClaude();
+      if (!chosen) return d;
+      // What the agents chosen change: their checks, a choice still to record, their steps.
+      const installed = scenario === 'installe' || scenario === 'motscles';
+      const checks = forAgents(d.checks, () => installed && FILE_AGENTS.includes('codex'));
+      const todo = forSteps(ALL_STEPS).filter((s) => checks.some((c) => c.status === 'missing' && c.fix === s));
+      return { ...d, checks, todo };
+    }
+
+    function diagnosisOfClaude() {
       if (scenario === 'installe' || scenario === 'motscles') {
         return {
           os: SYSTEM, arch: ARCH, ram_gb: 16, disk_free_gb: 182.4, online: true, todo: [], can_install: true,
@@ -169,6 +243,7 @@
       clt: ['Je demande les outils Apple…', 'Toujours en attente de la fenêtre Apple (0 min 30 s)', 'Outils Apple installés dans /Library/Developer/CommandLineTools'],
       bun: ['Téléchargement de https://bun.sh/install', '######################################################################## 100,0%', 'bun was installed successfully to ~/.bun/bin/bun', 'bun 1.4.2'],
       claude: ['Téléchargement de l’installeur de Claude Code', 'Setting up Claude Code...', '✔ Claude Code successfully installed!', 'Version: 2.1.296', 'Location: /Users/camille/.local/bin/claude'],
+      codex: ['Téléchargement de l’installeur de Codex', 'Je vérifie l’installeur de Codex…', 'J’installe Codex…', 'Installing Codex CLI 0.162.1', 'Codex CLI 0.162.1 installed to /Users/camille/.local/bin/codex'],
       obsidian: ['Téléchargement d’Obsidian 1.14.4 (233 Mo)', '  12 %', '  47 %', '  83 %', '  100 %', 'Copie dans /Users/camille/Applications/Obsidian.app', 'Signature vérifiée (6JSW4SJWN9)'],
       brain: WIN ? [
         'Je télécharge le moteur du cerveau…', 'Je mets en place ton cerveau, avec Python, Git, la mémoire et Obsidian (10 à 20 minutes)…',
@@ -291,11 +366,18 @@
       'repair-terminal': { todo: ['obsidian', 'brain'], fail: 'obsidian', status: 'unsupported', rounds: [] },
     };
     const REPAIR = REPAIRS[scenario] || null;
-    // Who repairs (repair.rs, agents.json): named only when Codex is listed, the first one preferred.
-    const AGENTS = (P.get('agents') || '').split(',').filter((a, i, all) => ['claude', 'codex'].includes(a) && all.indexOf(a) === i);
-    const NAMED = AGENTS.includes('codex');
-    const SECOURS = NAMED && AGENTS.length > 1 && P.get('secours') === '1';
-    const ANSWERS = SECOURS ? AGENTS[1] : AGENTS[0];
+    // Who repairs (repair.rs, agents.json or the window's choice): named only when Codex is listed, the
+    // first one preferred.
+    let AGENTS = FILE_AGENTS;
+    let NAMED = AGENTS.includes('codex');
+    let SECOURS = NAMED && AGENTS.length > 1 && P.get('secours') === '1';
+    let ANSWERS = SECOURS ? AGENTS[1] : AGENTS[0];
+    const engines = () => {
+      AGENTS = agentsNow();
+      NAMED = AGENTS.includes('codex');
+      SECOURS = NAMED && AGENTS.length > 1 && P.get('secours') === '1';
+      ANSWERS = SECOURS ? AGENTS[1] : AGENTS[0];
+    };
     const failing = P.get('fail') || (REPAIR && REPAIR.fail) || (scenario === 'echec' || scenario === 'repair-not-logged' ? 'obsidian' : '');
     const failureOf = (id) => (REPAIR && REPAIR.failure && id === REPAIR.fail ? REPAIR.failure : FAILS[id]);
 
@@ -304,6 +386,11 @@
     let loginOpened = false;
     let loginPolls = 0;
     const loggedIn = () => scenario === 'installe' || scenario === 'motscles' || Boolean(REPAIR) || (loginOpened && loginPolls >= 2);
+    // Codex: logged out (or &codex=), with ChatGPT two checks after its login window opened.
+    let codexOpened = false;
+    let codexPolls = 0;
+    const codexState = () => (codexOpened && codexPolls >= 2) || (!P.get('codex') && (scenario === 'installe' || scenario === 'motscles' || Boolean(REPAIR)))
+      ? 'chatgpt' : P.get('codex') || 'logged_out';
     // The analyses so far: `turn` rounds taken, `counted` of them count against the limit
     // (Claude's service refusing is free, as in repair.rs).
     let turn = 0;
@@ -343,6 +430,19 @@
       },
       async claude_logged_in() { await wait(150); if (loginOpened) loginPolls += 1; return loggedIn(); },
       async open_claude_login() { await wait(100); loginOpened = true; },
+      async agents_offer() {
+        await wait(50);
+        return PORTE ? { open: true, agents: FILE_AGENTS.length ? FILE_AGENTS : ['claude'] } : { open: false, agents: [] };
+      },
+      async choose_agents({ agents }) {
+        await wait(50);
+        if (!PORTE) throw 'Codex n’est pas encore disponible ici.';
+        chosen = parseAgents(agents.join(','));
+        engines();
+        console.log('choose_agents', chosen.join(','));
+      },
+      async codex_login() { await wait(150); if (codexOpened) codexPolls += 1; return codexState(); },
+      async open_codex_login() { await wait(100); codexOpened = true; },
       async repair_status({ step }) {
         await wait(T(300));
         const of = (state) => {
@@ -440,6 +540,8 @@
     const at = P.get('at');
     const clicks = (P.get('click') || '').split(',').filter(Boolean);
     const nth = Number(P.get('nth')) || 1;
+    let choix = P.get('choix') || '';
+    let resume = P.get('resume') || '';
     let seen = '';
     let arrivals = 0;
     if (jump === 'showLogin' || jump === 'showDone') addEventListener('DOMContentLoaded', () => window[jump]());
@@ -464,6 +566,16 @@
         if (s === 'voyage' && key && !typed) {
           const input = q('#voyage-key');
           if (input) { typed = true; input.value = key; input.dispatchEvent(new Event('input')); q('[data-act=verify]').click(); }
+          return;
+        }
+        if (s === 'choice' && choix && q(`[data-agent=${choix}]:not(:disabled)`) && !q('[data-act=back]')) {
+          q(`[data-agent=${choix}]`).click();
+          choix = '';
+          return;
+        }
+        if (s === 'choice' && resume && q('[data-act=back]') && q(`[data-agent=${resume}]:not(:disabled)`)) {
+          q(`[data-agent=${resume}]`).click();
+          resume = '';
           return;
         }
         if (clicks.length && q(`[data-act=${clicks[0]}]:not(:disabled)`)) {
@@ -491,7 +603,9 @@
           ['suspect', '?s=repair-suspect'], ['hors ligne', '?s=repair-offline'], ['Terminal', '?s=repair-terminal'],
           ['Codex répare', '?s=repair-ok&agents=codex'], ['Codex puis Claude', '?s=repair-ok&agents=codex,claude&secours=1'],
           ['Codex raté', '?s=repair-fail&agents=codex'], ['Codex sans compte', '?s=echec&agents=codex&repair=not_logged_in'],
-          ['choix illisible', '?s=echec&repair=agents']]) {
+          ['choix illisible', '?s=echec&repair=agents'],
+          ['porte ouverte', '?s=manque&porte=1'], ['Codex installé', '?s=installe&porte=1&agents=codex'],
+          ['Codex facturé', '?s=manque&porte=1&codex=billed'], ['les deux', '?s=installe&porte=1&agents=claude,codex']]) {
           const a = document.createElement('a');
           a.href = qs;
           a.textContent = label;

@@ -1,6 +1,6 @@
 # ONBOARDING — personalize this brain
 
-> **For the agent (Claude Code)**: this file is an interview script. Run it to turn the skeleton into the user's personal brain. Ask questions in small groups, wait for answers, then write the files. Use the user's language.
+> **For the agent (Claude Code or Codex)**: this file is an interview script. Run it to turn the skeleton into the user's personal brain. Ask questions in small groups, wait for answers, then write the files. Use the user's language.
 
 ## Goal
 Replace every `{{PLACEHOLDER}}` in:
@@ -8,7 +8,7 @@ Replace every `{{PLACEHOLDER}}` in:
 - `~/Documents/Brain/Profile/business.md` (activity/projects)
 - `~/Documents/Brain/Profile/soul.md` (language, tone)
 - `~/Documents/Brain/Profile/stack.md` (personal tools)
-- `~/.claude/CLAUDE.md` (the brain-in-a-box block: {{NAME}}; the language goes in `soul.md`)
+- your global instructions, in the brain-in-a-box block (after `<!-- brain-in-a-box -->`): `~/.claude/CLAUDE.md` for Claude Code, `~/.codex/AGENTS.md` for Codex (`AGENTS.override.md` there when it has text; `$CODEX_HOME` instead of `~/.codex` when set). It holds {{NAME}}; the language goes in `soul.md`
 
 Then **seed** the team-first folders with the user's real entities (no need to fill all at once — start with what's immediately relevant):
 - `~/Documents/Brain/Team/<firstname>.md` (themselves, and any humans they collaborate with regularly)
@@ -33,7 +33,7 @@ Each of these folders ships a `README.md` (purpose) + `_template.md` (schema). C
 ## After the interview
 
 1. **Edit** each Profile file, replacing the `{{...}}` with real answers. Remove irrelevant empty sections.
-2. **Verify**: `grep -rn "{{" ~/Documents/Brain/Profile ~/.claude/CLAUDE.md` → must be empty (no placeholders left).
+2. **Verify**: `grep -rn "{{" ~/Documents/Brain/Profile ~/.claude/CLAUDE.md` (Codex: the `AGENTS.md` above instead of `CLAUDE.md`) → must be empty (no placeholders left).
 3. **Commit + re-index**:
    ```bash
    cd ~/Documents/Brain && git add -A && git commit -q -m "onboarding: profile filled"
