@@ -14,6 +14,9 @@
 //! python3, curl). Those and Obsidian's official package need root: the system asks the
 //! user for their password (pkexec, its own window), for a command fixed here, and only for
 //! these two steps. Everything else lands in the home folder, as on a Mac.
+//!
+//! The agents agents.json lists (agents.rs) each have their step where Claude Code's stands, the
+//! preferred one first: Claude Code's, Codex's, or both. Without the file, Claude's alone, as before.
 
 use std::fs;
 use std::io::{self, Write};
@@ -26,13 +29,12 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
 
-use crate::config_guard;
-#[cfg(not(windows))]
-use crate::detect::fmt_version;
-use crate::detect::{self, Found};
+use crate::agents::{self, Agents, Engine};
+use crate::detect::{self, fmt_version, Found};
 use crate::model::StepResult;
 #[cfg(target_os = "macos")]
 use crate::sys::minutes;
+use crate::{codex, config_guard};
 use crate::{perms, sys, voyage};
 #[cfg(target_os = "linux")]
 use crate::root::{self, OBSIDIAN_DEB_SHA256};
@@ -40,14 +42,21 @@ use crate::root::{self, OBSIDIAN_DEB_SHA256};
 /// Claude Code first: its installer needs none of Apple's tools, and once the user is
 /// logged in, Claude can help repair the steps that follow.
 #[cfg(target_os = "macos")]
-pub const ORDER: &[&str] = &["claude", "clt", "bun", "obsidian", "brain"];
+const ORDER: &[&str] = &["claude", "clt", "bun", "obsidian", "brain"];
 /// The system's tools first: everything after downloads with curl (a fresh Ubuntu desktop
 /// has none), Bun's installer unzips, install.sh needs git and python3.
 #[cfg(target_os = "linux")]
-pub const ORDER: &[&str] = &["paquets", "claude", "bun", "obsidian", "brain"];
+const ORDER: &[&str] = &["paquets", "claude", "bun", "obsidian", "brain"];
 /// install.ps1 installs all the rest, Python and Git included.
 #[cfg(windows)]
-pub const ORDER: &[&str] = &["claude", "brain"];
+const ORDER: &[&str] = &["claude", "brain"];
+
+/// The steps in the order they run: the agents' own where Claude Code's stands in ORDER (their step
+/// ids are their names), the preferred one first. Claude alone: ORDER, as before Codex; a choice the
+/// kit cannot trust: no agent's step.
+pub fn order(agents: &Agents) -> Vec<&'static str> {
+    ORDER.iter().flat_map(|&s| if s == "claude" { agents.order.iter().map(|e| e.id()).collect() } else { vec![s] }).collect()
+}
 
 /// engine/gbrain-pin.json's, which install.sh follows (a test holds them equal).
 #[cfg(not(windows))]
@@ -135,6 +144,7 @@ pub(crate) fn run_held(_g: &MutexGuard<'static, ()>, id: &str, voyage_key: Optio
         #[cfg(not(windows))]
         "bun" => bun(log),
         "claude" => claude(log),
+        "codex" => codex(log),
         #[cfg(target_os = "macos")]
         "obsidian" => obsidian(log),
         #[cfg(target_os = "linux")]
@@ -288,7 +298,6 @@ fn apple_installer_open() -> bool {
 // ── The system's tools (Linux: git, python3, curl…) ─────────────────────────
 
 /// "git, curl et unzip".
-#[cfg(target_os = "linux")]
 pub(crate) fn list_fr(items: &[String]) -> String {
     match items {
         [] => String::new(),
@@ -361,6 +370,104 @@ fn claude(log: &mut dyn FnMut(String)) -> Step {
         Ok(format!("{} est installé.", found.label("Claude Code")))
     } else {
         Err("Claude Code ne répond pas après l'installation. Relance l'étape.".into())
+    }
+}
+
+// ── Codex ───────────────────────────────────────────────────────────────────
+
+/// The version the kit tests, and OpenAI's official installer for it: install.sh's and install.ps1's
+/// (a test holds them equal). Its script is checked against the SHA-256 they pin before it runs; it
+/// checks the program's own digest.
+const CODEX_VERSION: &str = "0.162.1";
+#[cfg(not(windows))]
+const CODEX_INSTALLER: (&str, &str) =
+    ("https://github.com/openai/codex/releases/download/rust-v0.162.1/install.sh", "150e3cf675682efeaac115aa3747add3f27887896d04ce6d0b56478d8b428bf6");
+#[cfg(windows)]
+const CODEX_INSTALLER: (&str, &str) =
+    ("https://github.com/openai/codex/releases/download/rust-v0.162.1/install.ps1", "f02eb53365d2bbb91f46c4d46ab8e357d087a8cc100794b3eb0c5b4368d6dc42");
+/// What would steer the installer elsewhere (its folder, what it updates), and the Voyage key: none of
+/// it reaches the installer (install.ps1's list, install.sh's within it).
+const CODEX_INSTALLER_UNSET: &[&str] = &[
+    "VOYAGE_API_KEY",
+    "CODEX_INSTALL_DIR",
+    "CODEX_INSTALL_DAEMON_ONLY",
+    "CODEX_INSTALL_DEFER_SELECTION",
+    "CODEX_INSTALL_IF_LATEST",
+    "CODEX_INSTALL_IF_CURRENT",
+    "CODEX_UPDATE_FROM_RELEASE",
+    "CODEX_INSTALLER_USE_RELEASES_OPENAI_COM",
+];
+
+/// Codex, as install.sh installs it when it is chosen: for this user, no admin rights, in the
+/// CODEX_HOME agents.json records. One already there is kept, as install.sh keeps it: an older one
+/// is the user's to update.
+fn codex(log: &mut dyn FnMut(String)) -> Step {
+    let Some(codex_home) = agents::current(&sys::home()).codex_home else {
+        return Err("Tu n'as pas choisi de travailler avec Codex : je ne l'installe pas.".into());
+    };
+    let setup = codex::Setup::for_user(&codex_home).map_err(|e| format!("Je n'ai pas pu créer mon dossier de travail ({e})."))?;
+    if let Some(done) = codex_there(&detect::codex(&setup), "est déjà installé") {
+        return done;
+    }
+    let root = sys::work_root().map_err(|e| format!("Je n'ai pas pu créer mon dossier de travail ({e})."))?;
+    let tmp = TempDir::new_in(&root)?;
+    let (url, sha256) = CODEX_INSTALLER;
+    let script = tmp.path().join(if cfg!(windows) { "install.ps1" } else { "install.sh" });
+    download(url, &script, "l'installeur de Codex", None, Duration::from_secs(5 * 60), log)?;
+    let env = codex_installer_env(&codex_home);
+    let env: Vec<(&str, Option<&str>)> = env.iter().map(|(k, v)| (*k, v.as_deref())).collect();
+    run_codex_installer(&script, sha256, &env, tmp.path(), log)?;
+    codex_there(&detect::codex(&setup), "est installé").unwrap_or_else(|| Err("Codex ne répond pas après l'installation. Relance l'étape.".into()))
+}
+
+/// The step's answer once Codex answers: done, or too old for the kit. None while it is missing.
+fn codex_there(found: &Found, said: &str) -> Option<Step> {
+    match found.version() {
+        _ if detect::codex_ok(found) => Some(Ok(format!("{} {said}.", found.label("Codex")))),
+        Some(v) => {
+            Some(Err(format!("Codex {} est trop ancien pour le kit (il faut {CODEX_VERSION} ou plus) : mets-le à jour, puis relance l'étape.", fmt_version(v))))
+        }
+        None if found.answers() => Some(Err("Je n'arrive pas à lire la version de Codex : mets-le à jour, puis relance l'étape.".into())),
+        None => None,
+    }
+}
+
+/// The installer's environment: the version the kit tests, no question, the CODEX_HOME chosen, nothing
+/// of CODEX_INSTALLER_UNSET. Windows: its own tar first on the PATH, as install.ps1 runs it (a GNU tar
+/// in front, Git's Unix tools, reads "C:\…" as a remote host).
+fn codex_installer_env(codex_home: &Path) -> Vec<(&'static str, Option<String>)> {
+    let mut env: Vec<(&'static str, Option<String>)> = CODEX_INSTALLER_UNSET.iter().map(|k| (*k, None)).collect();
+    env.extend([
+        ("CODEX_RELEASE", Some(CODEX_VERSION.to_string())),
+        ("CODEX_NON_INTERACTIVE", Some("1".to_string())),
+        ("CODEX_HOME", Some(codex_home.to_string_lossy().into_owned())),
+    ]);
+    #[cfg(windows)]
+    {
+        let mut path = std::ffi::OsString::from(sys::system_root().join("System32"));
+        if let Some(rest) = std::env::var_os("PATH").filter(|p| !p.is_empty()) {
+            path.push(";");
+            path.push(rest);
+        }
+        env.push(("PATH", Some(path.to_string_lossy().into_owned())));
+    }
+    env
+}
+
+/// Runs the downloaded installer once it is the one pinned, with `sh` (PowerShell on Windows).
+fn run_codex_installer(script: &Path, sha256: &str, env: &[(&str, Option<&str>)], cwd: &Path, log: &mut dyn FnMut(String)) -> Result<(), String> {
+    log("Je vérifie l'installeur de Codex…".into());
+    if config_guard::sha256_file(script).as_deref() != Some(sha256) {
+        return Err("L'installeur de Codex téléchargé n'est pas celui attendu : je ne l'ai pas lancé. Réessaie plus tard.".into());
+    }
+    log("J'installe Codex…".into());
+    #[cfg(not(windows))]
+    let code = sys::run_streaming(Path::new("/bin/sh"), &[&script.to_string_lossy()], env, Some(cwd), INSTALLER_LIMIT, log);
+    #[cfg(windows)]
+    let code = run_ps1(script, env, cwd, INSTALLER_LIMIT, log);
+    match code {
+        0 => Ok(()),
+        code => Err(format!("L'installeur de Codex s'est arrêté (code {code}). Vérifie ta connexion internet, puis réessaie.")),
     }
 }
 
@@ -543,18 +650,48 @@ impl Drop for Mount {
 
 // ── The brain (brain-in-a-box's own install.sh) ─────────────────────────────
 
-/// The French names of the parts install.sh did not leave behind.
+/// The French names of the parts install.sh did not leave behind, Claude's and Codex's for the agents
+/// agents.json lists. Claude alone: the names and their order of before Codex.
 fn missing_parts(brain: detect::Brain, home: &Path) -> Vec<String> {
+    let claude = |part: fn(detect::ClaudePart) -> bool| brain.claude.is_none_or(part);
+    let codex = |part: fn(detect::CodexPart) -> bool| brain.codex.is_none_or(part);
     [
         (format!("le dossier {}", detect::brain_dir_shown(home)), brain.vault),
-        ("les automatismes de Claude".into(), brain.hooks),
+        ("les automatismes de Claude".into(), claude(|c| c.hooks)),
         ("la mémoire de recherche".into(), brain.memory),
-        ("les compétences de Claude".into(), brain.skills),
+        ("les compétences de Claude".into(), claude(|c| c.skills)),
+        ("les automatismes de Codex".into(), codex(|c| c.hooks)),
+        ("les consignes de Codex".into(), codex(|c| c.instructions)),
+        ("les compétences de Codex".into(), codex(|c| c.skills)),
+        ("ton choix d'IA".into(), brain.chosen),
     ]
     .into_iter()
     .filter(|(_, there)| !there)
     .map(|(name, _)| name)
     .collect()
+}
+
+/// install.sh and install.ps1 stop, before anything, on a choice the kit cannot trust (agents.rs): it
+/// is said before the sources are even downloaded.
+fn choice_trusted(agents: &Agents) -> Result<(), String> {
+    if !agents.order.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "Je ne sais plus avec quelle IA tu travailles : ton choix ({}) {}. Je n'installe rien. Copie le rapport et envoie-le à l'équipe.",
+        "~/.brain-in-a-box/agents.json",
+        agents_said(&agents.etat)
+    ))
+}
+
+/// Why the kit does not trust the choice (_agents.lire()), in words.
+pub(crate) fn agents_said(etat: &str) -> &'static str {
+    match etat {
+        "ferme" => "demande Codex, qui n'est pas encore disponible ici",
+        "droits" => "peut être modifié par un autre compte",
+        "invalide" => "n'est pas un choix que je connais",
+        _ => "est illisible",
+    }
 }
 
 enum Archive {
@@ -587,8 +724,10 @@ fn brain(voyage_key: Option<&str>, log: &mut dyn FnMut(String)) -> Step {
     if !detect::bun_ok(&detect::bun(&home)) {
         return Err("Il faut d'abord installer Bun.".into());
     }
+    let agents = agents::current(&home);
+    choice_trusted(&agents)?;
     // Already there: run again only to add a Voyage key the brain does not have yet.
-    if detect::brain(&home).complete() && !(key.is_some() && detect::embedding_model(&home).is_none()) {
+    if detect::brain(&home, &agents).complete() && !(key.is_some() && detect::embedding_model(&home).is_none()) {
         return Ok("Ton cerveau est déjà installé.".into());
     }
 
@@ -598,8 +737,11 @@ fn brain(voyage_key: Option<&str>, log: &mut dyn FnMut(String)) -> Step {
 
     log("Je mets en place ton cerveau (quelques minutes)…".into());
     // Without a key from the user, the variable is removed: a key inherited from the
-    // app's own environment never sneaks in.
-    let env = [("VOYAGE_API_KEY", key)];
+    // app's own environment never sneaks in. A choice made in the window goes the same way, for
+    // install.sh to record it; without one, nothing is added.
+    let choice = agents::installer_env(&agents);
+    let mut env = vec![("VOYAGE_API_KEY", key)];
+    env.extend(choice.iter().map(|(k, v)| (*k, Some(v.as_str()))));
     let script = src.join("install.sh");
     let mut last = String::new();
     let code = sys::run_streaming(Path::new("/bin/bash"), &[&script.to_string_lossy()], &env, Some(&src), BRAIN_LIMIT, &mut |line| {
@@ -618,7 +760,7 @@ fn brain(voyage_key: Option<&str>, log: &mut dyn FnMut(String)) -> Step {
              Relance l'étape ; si ça recommence, envoie le journal à l'équipe."
         ));
     }
-    let missing = missing_parts(detect::brain(&home), &home);
+    let missing = missing_parts(detect::brain(&home, &agents::current(&home)), &home);
     if !missing.is_empty() {
         return Err(format!("L'installation s'est terminée, mais il manque {}. Relance l'étape.", missing.join(", ")));
     }
@@ -666,8 +808,10 @@ fn brain(voyage_key: Option<&str>, log: &mut dyn FnMut(String)) -> Step {
             .into());
     }
     let home = sys::home();
+    let agents = agents::current(&home);
+    choice_trusted(&agents)?;
     // Already there: run again only to add a Voyage key the brain does not have yet.
-    if detect::brain(&home).complete()
+    if detect::brain(&home, &agents).complete()
         && missing_tools(&home).is_empty()
         && !(key.is_some() && detect::embedding_model(&home).is_none())
     {
@@ -684,7 +828,9 @@ fn brain(voyage_key: Option<&str>, log: &mut dyn FnMut(String)) -> Step {
     // user, a repair, or install.ps1 itself), goes the same way: this app may have started
     // before it was saved. Otherwise install.ps1 chooses.
     let dir = detect::chosen_brain_dir().map(|d| d.to_string_lossy().into_owned());
-    let env = [("VOYAGE_API_KEY", key), ("BRAIN_DIR", dir.as_deref())];
+    let choice = agents::installer_env(&agents);
+    let mut env = vec![("VOYAGE_API_KEY", key), ("BRAIN_DIR", dir.as_deref())];
+    env.extend(choice.iter().map(|(k, v)| (*k, Some(v.as_str()))));
     let mut last = String::new();
     let mut sections = Sections::default();
     let code = run_ps1(&src.join(INSTALLER), &env, &src, BRAIN_LIMIT, &mut |line| {
@@ -706,7 +852,7 @@ fn brain(voyage_key: Option<&str>, log: &mut dyn FnMut(String)) -> Step {
              Relance l'étape ; si ça recommence, envoie le journal à l'équipe."
         ));
     }
-    let mut missing = missing_parts(detect::brain(&home), &home);
+    let mut missing = missing_parts(detect::brain(&home, &agents::current(&home)), &home);
     missing.extend(missing_tools(&home).into_iter().map(String::from));
     if !missing.is_empty() {
         return Err(format!(
@@ -761,8 +907,8 @@ const SECTIONS: &[(&str, &str)] = &[
     ("Verification", "Je vérifie que tout répond"),
 ];
 
-/// install.ps1's sections that run only when an agent is chosen: Codex's, which the app does not choose
-/// yet (phase 10b). Said without a count, so that a brain of Claude alone still counts 13, as before Codex.
+/// install.ps1's sections that run only when an agent is chosen: Codex's. Said without a count, so that a
+/// brain of Claude alone still counts 13, as before Codex.
 #[cfg(windows)]
 const CHOSEN_SECTIONS: &[(&str, &str)] = &[("Codex", "Je branche Codex")];
 
@@ -918,8 +1064,51 @@ pub fn open_claude_login() -> Result<(), String> {
     open_in_terminal("claude-login", &login_script(&sys::tool_path(), &claude))
 }
 
+/// Codex's login, with the user's ChatGPT account (§4.3): its own command, `codex login`, in Terminal
+/// (PowerShell on Windows), for the CODEX_HOME of the agents chosen. Never an API key: none reaches it,
+/// and its login goes to auth.json, the file the kit reads. The app never logs anyone out.
+pub fn open_codex_login() -> Result<(), String> {
+    let home = sys::home();
+    let (codex, codex_home) = chosen_codex(&home)?;
+    open_in_terminal("codex-login", &codex_login_script(&sys::tool_path(), &codex, codex_home_var(&home, &codex_home)))
+}
+
+/// How Codex is logged in, for the window: `codex::login`, never what Codex printed.
+pub fn codex_login() -> codex::Login {
+    let agents = agents::current(&sys::home());
+    let listed = agents.lists(Engine::Codex);
+    match agents.codex_home.filter(|_| listed).map(|h| codex::Setup::for_user(&h)) {
+        Some(Ok(setup)) => codex::login(&setup),
+        _ => codex::Login::Unknown,
+    }
+}
+
+/// Codex and its folder, once Codex is one of the agents and installed.
+fn chosen_codex(home: &Path) -> Result<(PathBuf, PathBuf), String> {
+    let agents = agents::current(home);
+    let listed = agents.lists(Engine::Codex);
+    let Some(codex_home) = agents.codex_home.filter(|_| listed) else {
+        return Err("Tu n'as pas choisi de travailler avec Codex.".into());
+    };
+    let setup = codex::Setup::for_user(&codex_home).map_err(|e| format!("Je n'ai pas pu créer mon dossier de travail ({e})."))?;
+    let codex = codex::find(&setup).ok_or("Codex n'est pas encore installé.")?;
+    Ok((codex, codex_home))
+}
+
+/// CODEX_HOME for a window the app opens: only when it is not Codex's own default, ~/.codex. Codex
+/// refuses a CODEX_HOME that does not exist, and without the variable it finds that one by itself.
+fn codex_home_var<'a>(home: &Path, codex_home: &'a Path) -> Option<&'a Path> {
+    (codex_home != home.join(".codex")).then_some(codex_home)
+}
+
+/// The preferred agent, in the brain, with the guide: Claude Code as before Codex, or Codex.
 pub fn start_onboarding() -> Result<(), String> {
     let home = sys::home();
+    match agents::current(&home).order.first() {
+        Some(Engine::Claude) => {}
+        Some(Engine::Codex) => return start_codex_onboarding(&home),
+        None => return Err("Je ne sais plus avec quelle IA tu travailles : ton choix est illisible.".into()),
+    }
     let Some(claude) = detect::claude_bin() else {
         return Err("Claude Code n'est pas encore installé.".into());
     };
@@ -928,6 +1117,37 @@ pub fn start_onboarding() -> Result<(), String> {
     };
     let guide = onboarding_guide(&home)?;
     open_in_terminal("onboarding", &onboarding_script(&sys::tool_path(), &vault, &guide, &claude))
+}
+
+fn start_codex_onboarding(home: &Path) -> Result<(), String> {
+    let (codex, codex_home) = chosen_codex(home)?;
+    let setup = codex::Setup::for_user(&codex_home).map_err(|e| format!("Je n'ai pas pu créer mon dossier de travail ({e})."))?;
+    open_in_terminal("onboarding", &codex_onboarding(home, &setup, &codex)?)
+}
+
+/// The onboarding's window for Codex, only on the login the kit uses (§4.3): an API key in auth.json
+/// would bill the whole session, whatever the window takes out of the environment, and a Codex that
+/// is not logged in offers a key on its first screen.
+fn codex_onboarding(home: &Path, setup: &codex::Setup, codex: &Path) -> Result<String, String> {
+    if let Some(why) = onboarding_refused(codex::login(setup)) {
+        return Err(why.into());
+    }
+    let Some(vault) = detect::vault(home) else {
+        return Err("Ton cerveau n'est pas encore installé.".into());
+    };
+    let guide = onboarding_guide(home)?;
+    Ok(codex_onboarding_script(&sys::tool_path(), &vault, &guide, codex, codex_home_var(home, &setup.codex_home)))
+}
+
+fn onboarding_refused(login: codex::Login) -> Option<&'static str> {
+    use codex::Login;
+    match login {
+        Login::Chatgpt => None,
+        Login::Billed => Some("Codex est connecté avec une clé API, qui serait facturée : connecte-le d'abord à ton compte ChatGPT."),
+        Login::Managed => Some("Codex est connecté avec un compte ChatGPT d'entreprise : connecte-le d'abord avec ton abonnement ChatGPT personnel."),
+        Login::System => Some("Codex lit des réglages de cet ordinateur qu'un autre compte peut modifier : je ne l'ouvre pas pour ça."),
+        Login::LoggedOut | Login::Unknown => Some("Connecte d'abord Codex à ton compte ChatGPT."),
+    }
 }
 
 /// The guide from the sources the brain step unpacked; when the brain was installed
@@ -969,6 +1189,46 @@ fn onboarding_script(path: &std::ffi::OsStr, vault: &Path, guide: &Path, claude:
     )
 }
 
+/// The keys that would have Codex bill an API: never in a window the app opens for it.
+const CODEX_KEYS: &[&str] = &["OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN", "OPENAI_BASE_URL"];
+/// Where `codex login` keeps the login: auth.json, the file the kit reads (codex.rs passes the same).
+const CODEX_LOGIN_STORE: &str = r#"cli_auth_credentials_store="file""#;
+
+/// Terminal runs the user's shell profile first, which may export a CODEX_HOME of its own: the
+/// folder agents.json records is the one set, and without one (~/.codex) none is left.
+#[cfg(not(windows))]
+fn codex_env_lines(path: &std::ffi::OsStr, codex_home: Option<&Path>) -> String {
+    let mut s = format!("#!/bin/bash\nexport PATH={}\n", sh_quote(&path.to_string_lossy()));
+    match codex_home {
+        Some(h) => s.push_str(&format!("export CODEX_HOME={}\n", sh_quote(&h.to_string_lossy()))),
+        None => s.push_str("unset CODEX_HOME\n"),
+    }
+    s.push_str(&format!("unset {}\n", CODEX_KEYS.join(" ")));
+    s
+}
+
+#[cfg(not(windows))]
+fn codex_login_script(path: &std::ffi::OsStr, codex: &Path, codex_home: Option<&Path>) -> String {
+    format!(
+        "{}{} -c {} login\necho\necho 'Tu peux fermer cette fenêtre.'\n",
+        codex_env_lines(path, codex_home),
+        sh_quote(&codex.to_string_lossy()),
+        sh_quote(CODEX_LOGIN_STORE)
+    )
+}
+
+#[cfg(not(windows))]
+fn codex_onboarding_script(path: &std::ffi::OsStr, vault: &Path, guide: &Path, codex: &Path, codex_home: Option<&Path>) -> String {
+    format!(
+        "{}cd {} || exit 1\n{} -c {} {}\necho\necho 'Tu peux fermer cette fenêtre.'\n",
+        codex_env_lines(path, codex_home),
+        sh_quote(&vault.to_string_lossy()),
+        sh_quote(&codex.to_string_lossy()),
+        sh_quote(CODEX_LOGIN_STORE),
+        sh_quote(&onboarding_prompt(guide))
+    )
+}
+
 /// Single quotes keep everything literal in a POSIX shell, except the quote itself,
 /// written '\''.
 #[cfg(not(windows))]
@@ -993,6 +1253,42 @@ fn onboarding_script(path: &std::ffi::OsStr, vault: &Path, guide: &Path, claude:
         ps_quote(&path.to_string_lossy()),
         ps_quote(&vault.to_string_lossy()),
         ps_quote(&claude.to_string_lossy()),
+        ps_quote(&onboarding_prompt(guide))
+    )
+}
+
+/// PowerShell runs the user's profile first, which may set a CODEX_HOME of its own: see above.
+#[cfg(windows)]
+fn codex_env_lines(path: &std::ffi::OsStr, codex_home: Option<&Path>) -> String {
+    let mut s = format!("$ErrorActionPreference = 'Stop'\r\n$env:Path = {}\r\n", ps_quote(&path.to_string_lossy()));
+    match codex_home {
+        Some(h) => s.push_str(&format!("$env:CODEX_HOME = {}\r\n", ps_quote(&h.to_string_lossy()))),
+        None => s.push_str("Remove-Item -LiteralPath Env:CODEX_HOME -ErrorAction SilentlyContinue\r\n"),
+    }
+    for k in CODEX_KEYS {
+        s.push_str(&format!("Remove-Item -LiteralPath Env:{k} -ErrorAction SilentlyContinue\r\n"));
+    }
+    s
+}
+
+#[cfg(windows)]
+fn codex_login_script(path: &std::ffi::OsStr, codex: &Path, codex_home: Option<&Path>) -> String {
+    format!(
+        "{}& {} -c {} login\r\nWrite-Host ''\r\nWrite-Host 'Tu peux fermer cette fenêtre.'\r\n",
+        codex_env_lines(path, codex_home),
+        ps_quote(&codex.to_string_lossy()),
+        ps_quote(CODEX_LOGIN_STORE)
+    )
+}
+
+#[cfg(windows)]
+fn codex_onboarding_script(path: &std::ffi::OsStr, vault: &Path, guide: &Path, codex: &Path, codex_home: Option<&Path>) -> String {
+    format!(
+        "{}Set-Location -LiteralPath {}\r\n& {} -c {} {}\r\nWrite-Host ''\r\nWrite-Host 'Tu peux fermer cette fenêtre.'\r\n",
+        codex_env_lines(path, codex_home),
+        ps_quote(&vault.to_string_lossy()),
+        ps_quote(&codex.to_string_lossy()),
+        ps_quote(CODEX_LOGIN_STORE),
         ps_quote(&onboarding_prompt(guide))
     )
 }
@@ -1352,10 +1648,10 @@ fn run_installer(url: &str, name: &str, args: &[&str], log: &mut dyn FnMut(Strin
 }
 
 /// A private folder (0700) removed with all its content when dropped.
-struct TempDir(PathBuf);
+pub(crate) struct TempDir(PathBuf);
 
 impl TempDir {
-    fn new_in(parent: &Path) -> Result<Self, String> {
+    pub(crate) fn new_in(parent: &Path) -> Result<Self, String> {
         let fail = |e: io::Error| {
             format!("Je n'ai pas pu créer un dossier de travail ({e}). Vérifie qu'il reste de la place sur le disque.")
         };
@@ -1370,7 +1666,7 @@ impl TempDir {
         Err(fail(io::ErrorKind::AlreadyExists.into()))
     }
 
-    fn path(&self) -> &Path {
+    pub(crate) fn path(&self) -> &Path {
         &self.0
     }
 }
@@ -1574,6 +1870,117 @@ mod tests {
         assert_eq!(seen.lines().skip(1).collect::<Vec<_>>(), ["auth", "login"]);
     }
 
+    /// Codex's login and onboarding windows: its own commands, in the brain for the onboarding, its
+    /// folder only when not its default, and no key from the user's shell ever reaches it.
+    #[cfg(not(windows))]
+    #[test]
+    fn codex_windows_run_its_own_commands_without_a_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(dir.path()).unwrap();
+        let home = root.join("Jo's home $x");
+        let vault = home.join("Documents/Brain");
+        fs::create_dir_all(&vault).unwrap();
+        let bin = root.join("b'in dir");
+        fs::create_dir_all(&bin).unwrap();
+        let out = root.join("out");
+        let said = sh_quote(&out.to_string_lossy());
+        write_exec(
+            &bin.join("codex"),
+            &format!(
+                "#!/bin/sh\n{{ pwd -P; printf '%s\\n' \"$@\"; echo \"home=${{CODEX_HOME-unset}}\"; /usr/bin/env | /usr/bin/grep -E '^(OPENAI|CODEX_A)' || true; }} > {said}\n"
+            ),
+        );
+        let codex = bin.join("codex");
+        let path = bin.clone().into_os_string();
+        let keys = [("OPENAI_API_KEY", "sk-x"), ("CODEX_API_KEY", "sk-y"), ("CODEX_ACCESS_TOKEN", "t"), ("OPENAI_BASE_URL", "http://x")];
+        let run = |name: &str, text: String| {
+            let script = root.join(name);
+            fs::write(&script, text).unwrap();
+            let o = sys::run_with(Path::new("/bin/bash"), &[&script.to_string_lossy()], &keys, None, Duration::from_secs(10));
+            assert!(o.ok(), "{}", o.stderr);
+            assert!(o.stdout.contains("Tu peux fermer cette fenêtre."));
+            fs::read_to_string(&out).unwrap()
+        };
+
+        // The fake codex sees the window's PATH only (the folder it is in): env and grep by their paths.
+        let seen = run("codex-login.command", codex_login_script(&path, &codex, None));
+        let lines: Vec<&str> = seen.lines().skip(1).collect();
+        assert_eq!(lines, ["-c", r#"cli_auth_credentials_store="file""#, "login", "home=unset"]);
+
+        let other = home.join("Données é").join("codex'");
+        let seen = run("codex-login.command", codex_login_script(&path, &codex, Some(&other)));
+        assert_eq!(seen.lines().last(), Some(format!("home={}", other.display()).as_str()));
+
+        let guide = onboarding_guide(&home).unwrap();
+        let seen = run("onboarding.command", codex_onboarding_script(&path, &vault, &guide, &codex, None));
+        assert_eq!(
+            seen,
+            format!("{}\n-c\ncli_auth_credentials_store=\"file\"\nRead {} and run it to personalize me.\nhome=unset\n", vault.display(), guide.display())
+        );
+
+        // A CODEX_HOME the user's shell profile exports (Terminal runs it): the folder agents.json
+        // records wins, ~/.codex being Codex's own default.
+        let shell = [("CODEX_HOME", "/elsewhere")];
+        for (name, text) in [
+            ("codex-login.command", codex_login_script(&path, &codex, None)),
+            ("onboarding.command", codex_onboarding_script(&path, &vault, &guide, &codex, None)),
+        ] {
+            let script = root.join(name);
+            fs::write(&script, text).unwrap();
+            let o = sys::run_with(Path::new("/bin/bash"), &[&script.to_string_lossy()], &shell, None, Duration::from_secs(10));
+            assert!(o.ok(), "{}", o.stderr);
+            assert_eq!(fs::read_to_string(&out).unwrap().lines().last(), Some("home=unset"), "{name}");
+        }
+
+        assert_eq!(codex_home_var(&home, &home.join(".codex")), None);
+        assert_eq!(codex_home_var(&home, &other), Some(other.as_path()));
+    }
+
+    /// The onboarding opens Codex on the ChatGPT login the kit checked, never on an API key (it would
+    /// be billed), a workspace account or no login at all: refused before any window, saying why.
+    #[test]
+    fn codex_onboarding_needs_the_chatgpt_login() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(tmp.path()).unwrap();
+        let home = root.join("home");
+        let work = root.join("work");
+        fs::create_dir_all(&work).unwrap();
+        crate::repair::tests::plant_codex(&home, &serde_json::json!({}), &[]);
+        let setup = crate::repair::tests::codex_setup(&home, &work);
+        let codex = Path::new("codex");
+        let auth = home.join(".codex").join("auth.json");
+        let chatgpt = fs::read_to_string(&auth).unwrap();
+        for (label, file, said) in [
+            ("an API key", Some(r#"{"auth_mode": "apikey", "OPENAI_API_KEY": "sk-proj-not-a-real-key"}"#), "clé API"),
+            ("a workspace account", Some(r#"{"auth_mode": "chatgpt", "tokens": {"refresh_token": "r"}}"#), "compte ChatGPT"),
+            ("not logged in", None, "compte ChatGPT"),
+        ] {
+            match file {
+                Some(f) => fs::write(&auth, f).unwrap(),
+                None => fs::remove_file(&auth).unwrap(),
+            }
+            let err = codex_onboarding(&home, &setup, codex).expect_err(label);
+            assert!(err.contains(said), "{label}: {err}");
+        }
+        fs::write(&auth, chatgpt).unwrap();
+        // Logged in with ChatGPT: the brain is what is missing now (Windows may know another brain
+        // folder, install.ps1's), then the window's script.
+        match codex_onboarding(&home, &setup, codex) {
+            Err(e) => assert_eq!(e, "Ton cerveau n'est pas encore installé."),
+            Ok(script) => assert!(cfg!(windows) && script.contains("personalize me"), "{script}"),
+        }
+        #[cfg(not(windows))]
+        {
+            fs::create_dir_all(home.join("Documents/Brain")).unwrap();
+            let script = codex_onboarding(&home, &setup, codex).unwrap();
+            assert!(script.contains("personalize me"), "{script}");
+        }
+        assert_eq!(onboarding_refused(codex::Login::Chatgpt), None);
+        for login in [codex::Login::Billed, codex::Login::Managed, codex::Login::System, codex::Login::LoggedOut, codex::Login::Unknown] {
+            assert!(onboarding_refused(login).is_some(), "{login:?}");
+        }
+    }
+
     #[test]
     fn atomic_write_sets_the_mode() {
         let dir = tempfile::tempdir().unwrap();
@@ -1625,11 +2032,162 @@ mod tests {
 
     #[test]
     fn missing_brain_parts_are_named() {
-        let all = detect::Brain { vault: true, hooks: true, skills: true, memory: true };
+        use detect::{Brain, ClaudePart, CodexPart};
+        let claude = ClaudePart { hooks: true, skills: true };
+        let all = Brain { vault: true, memory: true, claude: Some(claude), codex: None, chosen: true };
         let home = Path::new("/Users/jo");
         assert!(missing_parts(all, home).is_empty());
-        assert_eq!(missing_parts(detect::Brain { hooks: false, ..all }, home), ["les automatismes de Claude"]);
-        assert_eq!(missing_parts(detect::Brain { vault: false, hooks: false, skills: false, memory: false }, home).len(), 4);
+        assert_eq!(missing_parts(Brain { claude: Some(ClaudePart { hooks: false, ..claude }), ..all }, home), ["les automatismes de Claude"]);
+        let nothing = Brain { vault: false, memory: false, claude: Some(ClaudePart { hooks: false, skills: false }), ..all };
+        assert_eq!(
+            missing_parts(nothing, home),
+            [
+                format!("le dossier {}", detect::brain_dir_shown(home)).as_str(),
+                "les automatismes de Claude",
+                "la mémoire de recherche",
+                "les compétences de Claude"
+            ],
+            "Claude alone: the parts and their order as before Codex"
+        );
+        let codex = CodexPart { hooks: true, instructions: false, skills: false };
+        assert_eq!(missing_parts(Brain { claude: None, codex: Some(codex), ..all }, home), ["les consignes de Codex", "les compétences de Codex"]);
+        assert_eq!(missing_parts(Brain { claude: None, chosen: false, ..all }, home), ["ton choix d'IA"]);
+    }
+
+    /// The agents' steps stand where Claude Code's does, the preferred one first; Claude alone runs the
+    /// steps of before Codex.
+    #[test]
+    fn each_agent_listed_has_its_step() {
+        use crate::agents::Engine;
+        let with = |order: Vec<Engine>| Agents { codex_home: order.contains(&Engine::Codex).then(|| PathBuf::from("/c")), order, etat: "ok".into() };
+        assert_eq!(order(&Agents::claude_alone()), ORDER);
+        let expected =
+            |agents: &[&'static str]| -> Vec<&'static str> { ORDER.iter().flat_map(|&s| if s == "claude" { agents.to_vec() } else { vec![s] }).collect() };
+        assert_eq!(order(&with(vec![Engine::Codex])), expected(&["codex"]));
+        assert_eq!(order(&with(vec![Engine::Codex, Engine::Claude])), expected(&["codex", "claude"]));
+        assert_eq!(order(&with(vec![Engine::Claude, Engine::Codex])), expected(&["claude", "codex"]));
+        assert_eq!(order(&Agents::none("ferme")), expected(&[]));
+        #[cfg(target_os = "macos")]
+        assert_eq!(order(&with(vec![Engine::Codex, Engine::Claude])), ["codex", "claude", "clt", "bun", "obsidian", "brain"]);
+        #[cfg(target_os = "linux")]
+        assert_eq!(order(&with(vec![Engine::Codex])), ["paquets", "codex", "bun", "obsidian", "brain"]);
+        #[cfg(windows)]
+        assert_eq!(order(&with(vec![Engine::Claude, Engine::Codex])), ["claude", "codex", "brain"]);
+    }
+
+    /// The brain step stops on a choice the kit cannot trust, before it downloads anything; it says why.
+    #[test]
+    fn an_untrusted_choice_stops_the_brain_step_first() {
+        assert_eq!(choice_trusted(&Agents::claude_alone()), Ok(()));
+        for (etat, why) in [("ferme", "demande Codex"), ("illisible", "est illisible"), ("droits", "autre compte"), ("invalide", "pas un choix")] {
+            let err = choice_trusted(&Agents::none(etat)).unwrap_err();
+            assert!(err.contains(why) && err.contains("agents.json") && err.contains("Je n'installe rien"), "{err}");
+        }
+    }
+
+    /// Bibo installs the Codex install.sh and install.ps1 install, through the same official installer,
+    /// checked against the same SHA-256.
+    #[test]
+    fn codex_is_the_one_the_installers_pin() {
+        let pin = |script: &str, prefix: &str| -> (String, String) {
+            let value = |key: &str| {
+                script
+                    .lines()
+                    .find_map(|l| l.trim().strip_prefix(&format!("{prefix}{key}")).map(|r| r.trim_start_matches([' ', '=']).trim_matches('"').to_string()))
+                    .unwrap_or_else(|| panic!("{key}"))
+            };
+            let version = value("CODEX_VERSION");
+            let url = value("CODEX_INSTALLER_URL").replace("$CODEX_VERSION", &version);
+            (version, format!("{url} {}", value("CODEX_INSTALLER_SHA256")))
+        };
+        let sh = pin(include_str!("../../../install.sh"), "");
+        let ps1 = pin(include_str!("../../../install.ps1"), "$");
+        assert_eq!(sh.0, CODEX_VERSION);
+        assert_eq!(ps1.0, CODEX_VERSION);
+        let (url, sha) = CODEX_INSTALLER;
+        assert_eq!(if cfg!(windows) { &ps1.1 } else { &sh.1 }, &format!("{url} {sha}"));
+        assert_eq!(codex::MIN_CODEX, (0, 162, 1), "the version the launcher's contract was checked with");
+    }
+
+    /// The installer gets the version, no question, the CODEX_HOME chosen; none of its own settings
+    /// from the app's environment, nor the Voyage key. One that is not the pinned one never runs.
+    #[cfg(not(windows))]
+    #[test]
+    fn codex_installer_runs_only_as_pinned() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("env.txt");
+        let script = dir.path().join("install.sh");
+        let names = ["CODEX_RELEASE", "CODEX_NON_INTERACTIVE", "CODEX_HOME", "VOYAGE_API_KEY", "CODEX_INSTALL_DIR", "CODEX_UPDATE_FROM_RELEASE"];
+        let to = sh_quote(&out.to_string_lossy());
+        let body = names.map(|n| format!("printf '%s=%s\\n' {n} \"${{{n}-unset}}\" >> {to}\n")).concat();
+        fs::write(&script, body).unwrap();
+        let codex_home = dir.path().join("Données é").join(".codex");
+        let env = codex_installer_env(&codex_home);
+        let mut env: Vec<(&str, Option<&str>)> = env.iter().map(|(k, v)| (*k, v.as_deref())).collect();
+        // What the app's own environment could hold: set here for the child, then removed by the list.
+        let unset: Vec<&str> = env.iter().filter(|(_, v)| v.is_none()).map(|(k, _)| *k).collect();
+        assert!(unset.contains(&"VOYAGE_API_KEY") && unset.contains(&"CODEX_INSTALL_DIR"), "{unset:?}");
+        let mut lines = Vec::new();
+        let sha = config_guard::sha256_file(&script).unwrap();
+        assert_eq!(
+            run_codex_installer(&script, &"0".repeat(64), &env, dir.path(), &mut |l| lines.push(l)).map_err(|e| e.contains("pas celui attendu")),
+            Err(true)
+        );
+        assert!(!out.exists(), "a script that is not the pinned one never ran");
+        env.insert(0, ("VOYAGE_API_KEY", Some("pa-not-for-codex")));
+        env.insert(0, ("CODEX_INSTALL_DIR", Some("/elsewhere")));
+        run_codex_installer(&script, &sha, &env, dir.path(), &mut |l| lines.push(l)).unwrap();
+        let seen = fs::read_to_string(&out).unwrap();
+        let want = format!(
+            "CODEX_RELEASE=0.162.1\nCODEX_NON_INTERACTIVE=1\nCODEX_HOME={}\nVOYAGE_API_KEY=unset\nCODEX_INSTALL_DIR=unset\nCODEX_UPDATE_FROM_RELEASE=unset\n",
+            codex_home.display()
+        );
+        assert_eq!(seen, want);
+        fs::write(&script, "exit 3\n").unwrap();
+        let sha = config_guard::sha256_file(&script).unwrap();
+        assert!(run_codex_installer(&script, &sha, &env, dir.path(), &mut |_| {}).unwrap_err().contains("code 3"));
+    }
+
+    #[test]
+    fn codex_already_there_is_kept_and_an_old_one_said() {
+        assert_eq!(codex_there(&Found::Version("codex-cli 0.162.1".into()), "est déjà installé"), Some(Ok("Codex 0.162.1 est déjà installé.".into())));
+        let old = codex_there(&Found::Version("codex-cli 0.150.0".into()), "est installé").unwrap().unwrap_err();
+        assert!(old.contains("0.150.0") && old.contains("0.162.1") && old.contains("mets-le à jour"), "{old}");
+        assert!(codex_there(&Found::Version("?".into()), "x").unwrap().is_err());
+        assert_eq!(codex_there(&Found::NoVersion, "x"), None);
+        assert_eq!(codex_there(&Found::Absent, "x"), None);
+    }
+
+    /// The official installer of the pinned Codex, for real, through the step's own code, into a
+    /// throwaway home: `cargo test -- --ignored codex_real` (test.yml runs it on each system).
+    #[test]
+    #[ignore]
+    fn codex_real_install_answers() {
+        let dir = tempfile::tempdir().unwrap();
+        // As agents.json records it: a plain path (Windows' \\?\ form is no folder to Join-Path).
+        let home = dir.path().to_path_buf();
+        let codex_home = home.join(".codex");
+        let local = home.join("AppData").join("Local");
+        fs::create_dir_all(&local).unwrap();
+        let script = home.join(if cfg!(windows) { "install.ps1" } else { "install.sh" });
+        download(CODEX_INSTALLER.0, &script, "l'installeur de Codex", None, Duration::from_secs(5 * 60), &mut |l| println!("{l}")).unwrap();
+        let mut env = codex_installer_env(&codex_home);
+        let home_text = home.to_string_lossy().into_owned();
+        env.extend([("HOME", Some(home_text.clone())), ("USERPROFILE", Some(home_text)), ("LOCALAPPDATA", Some(local.to_string_lossy().into_owned()))]);
+        let env: Vec<(&str, Option<&str>)> = env.iter().map(|(k, v)| (*k, v.as_deref())).collect();
+        run_codex_installer(&script, CODEX_INSTALLER.1, &env, &home, &mut |l| println!("{l}")).unwrap();
+        let local_text = local.to_string_lossy().into_owned();
+        let setup = codex::Setup {
+            home: home.clone(),
+            codex_home,
+            work_root: home.clone(),
+            features: home.join("none.json"),
+            layers: codex::Layers::default(),
+            vars: Box::new(move |k| (k == "LOCALAPPDATA").then(|| local_text.clone())),
+            command: None,
+        };
+        let found = detect::codex(&setup);
+        assert_eq!(codex_there(&found, "est installé"), Some(Ok(format!("Codex {CODEX_VERSION} est installé."))), "{found:?}");
     }
 
     #[cfg(unix)]
@@ -1949,5 +2507,30 @@ mod tests {
         assert!(onboarding.contains(r"Set-Location -LiteralPath 'C:\Users\Jo O''Brien\Documents\Brain'"), "{onboarding}");
         assert!(onboarding.contains(r"run it to personalize me.'"), "{onboarding}");
         assert!(same_folder(r"C:\Users\jo\Documents\Brain\", "c:/users/JO/Documents/Brain"));
+
+        let codex = Path::new(r"C:\Users\Jo O'Brien\AppData\Local\Programs\OpenAI\Codex\bin\codex.exe");
+        let home = Path::new(r"C:\Users\Jo O'Brien\Codex ‘x’");
+        for script in [codex_login_script(&path, codex, Some(home)), codex_onboarding_script(&path, vault, guide, codex, None)] {
+            assert!(script.contains(r"$env:Path = 'C:\Users\Jo O''Brien\.local\bin;C:\Windows'"), "{script}");
+            for k in CODEX_KEYS {
+                assert!(script.contains(&format!("Remove-Item -LiteralPath Env:{k} -ErrorAction SilentlyContinue")), "{script}");
+            }
+        }
+        let login = codex_login_script(&path, codex, Some(home));
+        assert!(login.contains(r"$env:CODEX_HOME = 'C:\Users\Jo O''Brien\Codex ‘‘x’’'"), "{login}");
+        assert!(
+            login.contains(r#"& 'C:\Users\Jo O''Brien\AppData\Local\Programs\OpenAI\Codex\bin\codex.exe' -c 'cli_auth_credentials_store="file"' login"#),
+            "{login}"
+        );
+        let onboarding = codex_onboarding_script(&path, vault, guide, codex, None);
+        assert!(onboarding.contains("Remove-Item -LiteralPath Env:CODEX_HOME -ErrorAction SilentlyContinue"), "{onboarding}");
+        assert!(!onboarding.contains("$env:CODEX_HOME"), "{onboarding}");
+        assert!(onboarding.contains(r"Set-Location -LiteralPath 'C:\Users\Jo O''Brien\Documents\Brain'"), "{onboarding}");
+        assert!(
+            onboarding.contains(
+                r#"codex.exe' -c 'cli_auth_credentials_store="file"' 'Read C:\Users\Jo O''Brien\.brain-in-a-box\src\onboarding\ONBOARDING.md and run it to personalize me.'"#
+            ),
+            "{onboarding}"
+        );
     }
 }

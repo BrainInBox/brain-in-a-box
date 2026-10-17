@@ -432,11 +432,14 @@ class Workflow(unittest.TestCase):
             self.assertEqual(job["permissions"], {"contents": "read", "attestations": "read"})
             # The JSON joins the report's artifacts (terrain-*); the captures stay out of its download.
             names = [st["with"]["name"] for st in steps if str(st.get("uses", "")).startswith("actions/upload-artifact@")]
-            self.assertEqual(sorted(names), ["captures-%s-app" % os_name, "terrain-%s-app" % os_name])
-            self.assertEqual(job["env"]["PARCOURS"], "app")
-            self.assertEqual(terrain.JOBS[name], (os_name, ("%s-app" % os_name,)))
+            self.assertEqual(sorted(names), ["captures-%s-${{ matrix.parcours }}" % os_name, "terrain-%s-${{ matrix.parcours }}" % os_name])
+            # Two paths: Claude alone as users get it, and Codex chosen alone in the robot's copy of the kit.
+            self.assertEqual(job["strategy"], {"fail-fast": False, "matrix": {"parcours": ["app", "app-codex"]}})
+            self.assertEqual(job["env"]["PARCOURS"], "${{ matrix.parcours }}")
+            self.assertEqual(terrain.JOBS[name], (os_name, ("%s-app" % os_name, "%s-app-codex" % os_name)))
         self.assertIn("pattern: terrain-*", "pattern: " + self.jobs["rapport"]["steps"][1]["with"]["pattern"])
         self.assertIn("app", terrain.ATTENDUS["app"])
+        self.assertEqual(terrain.ATTENDUS["app-codex"], ("app",))
         # Windows: a PC without Python before the app (the description the other jobs use), and the
         # stub handed to the scenario, which puts it first on the app's PATH.
         steps = self.jobs["app-windows"]["steps"]
@@ -641,6 +644,41 @@ class WindowsWithoutGit(unittest.TestCase):
         # Only its last line goes in the reason.
         refused("", "Welcome\n\nNot logged in · Please run /login\n", "il dit : « Not logged in · Please run /login » ;")
 
+    def test_codex_alone_asks_no_claude_code_for_git_bash(self):
+        # Codex chosen alone: no Claude Code to ask which bash it takes (Codex runs its commands through
+        # PowerShell, gbq.cmd is check_rest's); the rest of Git's checks are the same.
+        home = Path(self.tmp) / "home"
+        (home / ".brain-in-a-box").mkdir(parents=True)
+        args = "install -e --id Git.Git --source winget --silent --accept-package-agreements --accept-source-agreements"
+        (home / ".brain-in-a-box" / "install.log").write_text("> winget %s --scope user\nwinget : code 0\n" % args, encoding="utf-8")
+        git_dir = Path(tempfile.mkdtemp(dir=self.tmp)) / "cmd"
+        git_dir.mkdir()
+        exe = str(git_dir / "git.exe")
+        (git_dir.parent / "bin").mkdir()
+        (git_dir.parent / "bin" / "bash.exe").write_bytes(b"MZ")
+        asked = []
+
+        def claude(t, opts, env):
+            asked.append(opts.parcours)
+            raise terrain.Echec("Claude Code n'est pas installé (~/.local/bin/claude.exe)")
+
+        def run(argv, **kw):
+            return (0, "abc123\n") if "rev-list" in argv else (0, "brain init\n")
+        for parcours in ("app-codex", "app"):
+            t = terrain.Etapes()
+            opts = types.SimpleNamespace(home=home, parcours=parcours)
+            with mock.patch.dict(os.environ, {terrain.terrain_app.SANS_GIT: self.proof()}), \
+                    mock.patch.object(terrain, "git_de_session", lambda t: (exe, "git version 2.55.0.windows.5", {})), \
+                    mock.patch.object(terrain, "run", run), mock.patch.object(terrain, "claude_et_git_bash", claude):
+                if parcours == "app":
+                    with self.assertRaises(terrain.Echec):
+                        terrain.check_git(t, opts)
+                else:
+                    terrain.check_git(t, opts)
+                    self.assertEqual(t.details["git"]["premier_commit"], "brain init")
+                    self.assertTrue(t.details["git"]["resume"].endswith("coffre versionné (« brain init »)"), t.details["git"]["resume"])
+        self.assertEqual(asked, ["app"])
+
     def test_install_ps1_notes_each_winget_attempt_in_its_journal(self):
         with open(os.path.join(HERE, "..", "..", "install.ps1"), encoding="utf-8") as f:
             ps1 = f.read()
@@ -665,10 +703,113 @@ class WindowsWithoutGit(unittest.TestCase):
             raise terrain.Echec("vu")
         home = Path(self.tmp)
         with mock.patch.object(terrain, "WINDOWS", True), mock.patch.object(terrain, "check_git", check_git):
-            for parcours, fresh in (("neuf", True), ("app", True), ("montee", False), ("montee", True)):
+            for parcours, fresh in (("neuf", True), ("app", True), ("app-codex", True), ("montee", False), ("montee", True)):
                 with self.assertRaises(terrain.Echec):
                     terrain.check_install(terrain.Etapes(), types.SimpleNamespace(home=home, parcours=parcours), fresh=fresh)
-        self.assertEqual(called, ["neuf", "app"])
+        self.assertEqual(called, ["neuf", "app", "app-codex"])
+
+
+@unittest.skipIf(sys.platform == "win32", "the Unix form of Codex's hooks; Windows' runs on its VM (app-windows, app-codex)")
+class CodexAlone(unittest.TestCase):
+    """terrain.check_codex: what the app's install with Codex chosen alone must have left, on a home made
+    as install.sh leaves it, the kit's real correction-detector run as Codex runs it."""
+
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp(prefix="terrain-codex-"))
+        self.addCleanup(shutil.rmtree, self.home, True)
+        h = self.home
+        hooks = h / ".claude" / "hooks" / "brain"
+        hooks.mkdir(parents=True)
+        for src in sorted((terrain.REPO / "engine" / "hooks").glob("*.py")):
+            text = src.read_text(encoding="utf-8")
+            if src.name == "_agents.py":
+                text = terrain.terrain_app.ouvrir_porte(text)
+            (hooks / src.name).write_text(text, encoding="utf-8")
+            os.chmod(hooks / src.name, 0o755)
+        state = h / ".brain-in-a-box"
+        state.mkdir()
+        self.agents = {"version": 1, "agents": ["codex"], "prefere": "codex", "codex_home": str(h / ".codex"),
+                       "pose_par": "install.sh", "date": "2026-10-17"}
+        self.write(state / "agents.json", json.dumps(self.agents))
+        os.chmod(state / "agents.json", 0o600)
+        self.write(h / ".local" / "bin" / "codex", "#!/bin/sh\necho 'codex-cli 0.162.1'\n")
+        os.chmod(h / ".local" / "bin" / "codex", 0o755)
+        groups = {}
+        for event, names in terrain.WIRED.items():
+            groups[event] = [{"hooks": [{"type": "command", "command": "%s --agent codex" % (hooks / n), "timeout": 30} for n in names]}]
+        self.write(h / ".codex" / "hooks.json", json.dumps({"hooks": groups}))
+        tables = "".join('[hooks.state."%s:%s:0:%d"]\ntrusted_hash = "sha256:x"\n\n' % (h / ".codex" / "hooks.json", e, i)
+                         for e, names in terrain.WIRED.items() for i in range(len(names)))
+        self.write(h / ".codex" / "config.toml", "# brain-in-a-box\n" + tables)
+        self.write(h / ".codex" / "AGENTS.md", "# mine\n\n%s\n# AGENTS.md — Global directives\n" % terrain.KIT_MARK)
+        self.write(h / "Documents" / "Brain" / "AGENTS.md", "Read CLAUDE.md first.\n")
+        for d in (terrain.REPO / "skills").iterdir():
+            if (d / "SKILL.md").is_file():
+                self.write(h / ".agents" / "skills" / d.name / "SKILL.md", "x")
+
+    def write(self, path, text):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+
+    def check(self):
+        t = terrain.Etapes()
+        with mock.patch.dict(os.environ, {"HOME": str(self.home)}):
+            terrain.check_codex(t, types.SimpleNamespace(home=self.home, parcours="app-codex"))
+        return t
+
+    def test_codex_alone_as_install_sh_leaves_it(self):
+        t = self.check()
+        self.assertEqual(t.details["codex"], "codex-cli 0.162.1")
+        vus = json.loads((self.home / ".brain-in-a-box" / "codex-hooks-vus.json").read_text(encoding="utf-8"))
+        self.assertIn("correction-detector", vus["hooks"])
+
+    def test_what_is_not_codex_alone_fails(self):
+        cases = [
+            ("agents", lambda h: self.write(h / ".brain-in-a-box" / "agents.json", json.dumps(dict(self.agents, agents=["claude", "codex"]))),
+             "agents.json ne dit pas Codex seul"),
+            ("agents", lambda h: self.write(h / ".brain-in-a-box" / "agents.json", json.dumps(dict(self.agents, pose_par="install.ps1"))),
+             "agents.json posé par install.ps1"),
+            ("codex", lambda h: self.write(h / ".local" / "bin" / "codex", "#!/bin/sh\necho 'codex-cli 0.161.0'\n"), "codex --version"),
+            ("hooks-codex", lambda h: self.write(h / ".codex" / "hooks.json", json.dumps({"hooks": {}})), "n'est pas branché"),
+            ("hooks-codex", lambda h: self.write(h / ".codex" / "config.toml", ""), "le kit n'a approuvé que 0 hooks"),
+            ("hooks-lances", lambda h: shutil.copy(terrain.REPO / "engine" / "hooks" / "_agents.py", h / ".claude" / "hooks" / "brain"),
+             "ne laisse pas son signal de vie"),
+            ("agents-md", lambda h: self.write(h / ".codex" / "AGENTS.md", "# mine\n"), "repère du kit est 0 fois"),
+            ("skills", lambda h: shutil.rmtree(h / ".agents"), "non installé pour Codex"),
+            ("sans-claude", lambda h: self.write(h / ".claude" / "settings.json", '{"hooks": "correction-detector.py"}'), "settings.json"),
+            ("sans-claude", lambda h: self.write(h / ".local" / "bin" / "claude", "x"), "Claude Code est installé"),
+        ]
+        for step, damage, said in cases:
+            with self.subTest(said=said):
+                self.setUp()
+                damage(self.home)
+                with self.assertRaises(terrain.Echec) as cm:
+                    self.check()
+                self.assertIn(said, str(cm.exception))
+
+
+    def test_the_kit_installed_is_the_robots_copy_with_codex_open(self):
+        # check_install's files: the tested commit's, but _agents.py as the robot's copy has it (gate
+        # open), and codex-features.json, which only a Codex install places.
+        def installed():
+            hooks = self.home / ".claude" / "hooks" / "brain"
+            for name, src in terrain.kit_files():
+                if not (hooks / name).exists():
+                    shutil.copy(src, hooks / name)
+            shutil.copy(terrain.REPO / "engine" / "codex-features.json", hooks)
+            return hooks, types.SimpleNamespace(home=self.home, parcours="app-codex")
+        with mock.patch.object(terrain, "check_codex", lambda t, o: None), \
+                mock.patch.object(terrain, "check_rest", lambda *a: None):
+            terrain.check_install(terrain.Etapes(), installed()[1])
+            for damage, said in ((lambda h: shutil.copy(terrain.REPO / "engine" / "hooks" / "_agents.py", h), "_agents.py installé"),
+                                 (lambda h: (h / "codex-features.json").unlink(), "codex-features.json n'est pas installé")):
+                with self.subTest(said=said):
+                    self.setUp()
+                    hooks, opts = installed()
+                    damage(hooks)
+                    with self.assertRaises(terrain.Echec) as cm:
+                        terrain.check_install(terrain.Etapes(), opts)
+                    self.assertIn(said, str(cm.exception))
 
 
 class MergeGuard(unittest.TestCase):

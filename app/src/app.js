@@ -69,6 +69,12 @@ const STEPS = {
     what: `Claude, directement sur ton ${OS.machine}.`,
     say: ['J’installe Claude Code.', 'L’outil officiel d’Anthropic.'],
   },
+  codex: {
+    name: 'Codex',
+    short: 'Codex',
+    what: `Codex, directement sur ton ${OS.machine}.`,
+    say: ['J’installe Codex.', 'L’outil officiel d’OpenAI.'],
+  },
   obsidian: {
     name: 'Obsidian',
     short: 'Obsidian',
@@ -188,6 +194,12 @@ const BIBO_SVG = `
 </svg>`;
 
 const state = {
+  // agents_offer: whether the window asks who the brain works with (only where the kit lets Codex be
+  // chosen), and what it preselects, the preferred one first.
+  offer: { open: false, agents: [] },
+  // The agents picked on the choice screen, the preferred one first. null: nothing was asked, Claude
+  // alone, every screen as before Codex.
+  agents: null,
   diag: null,
   // The Voyage key lives only here, in memory, and only once Voyage accepted it.
   key: '',
@@ -201,17 +213,25 @@ const state = {
   // The install screen asked once for the Claude login (E1): it does not ask again.
   loginAsked: false,
   loginSkipped: false,
+  // « Plus tard » at Codex's ChatGPT login.
+  codexLoginSkipped: false,
+  // How Codex was last seen logged in (codex_login): only "chatgpt" is a login the kit uses.
+  codexLogin: '',
   repair: {
     // Plans that set something aside, per step id: « Remettre comme avant » puts it back.
     aside: {},
     // repair_report, fetched ahead: the copy must happen within the click.
     report: '',
+    // Who repair_status says would be asked: Claude unless agents.json lists Codex.
+    engine: 'claude',
+    // Claude in Terminal may be offered (Claude is one of the agents).
+    terminal: true,
   },
 };
 
 // DOM handles and per-screen timers. screen() resets them.
 const ui = {};
-const view = { gen: 0, timers: [], rows: {}, log: null, bar: null, polling: null, failure: null, progress: null, onLine: null };
+const view = { gen: 0, timers: [], rows: {}, log: null, bar: null, polling: null, failure: null, progress: null, onLine: null, asking: null, asked: null };
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -304,7 +324,7 @@ function clock(ms) {
 
 // The app's sentences start with a capital; after « Il pense que : » they read on.
 function lowerFirst(text) {
-  return /^(Voyage|Bun|Obsidian|Claude|Apple|Mac|PC|Windows|PowerShell|Linux)\b/.test(text) ? text : text.charAt(0).toLowerCase() + text.slice(1);
+  return /^(Voyage|Bun|Obsidian|Claude|Codex|ChatGPT|OpenAI|Apple|Mac|PC|Windows|PowerShell|Linux)\b/.test(text) ? text : text.charAt(0).toLowerCase() + text.slice(1);
 }
 
 // No space inside: the patterns that keep a label (« token: … ») mask a mask into itself.
@@ -372,6 +392,8 @@ function screen(name, { big = false } = {}) {
   view.failure = null;
   view.progress = null;
   view.onLine = null;
+  view.asking = null;
+  view.asked = null;
   document.body.dataset.screen = name;
   document.body.classList.toggle('big', big);
   ui.screen.replaceChildren();
@@ -392,7 +414,7 @@ function focusMain() {
 
 // dev/mock.html shortens it to try it out (&sleep=3).
 const SLEEP_MS = Number(window.BIBO_SLEEP_MS) || 45000;
-const CALM_SCREENS = ['welcome', 'diag', 'done'];
+const CALM_SCREENS = ['welcome', 'choice', 'diag', 'done'];
 const HOP_GAP_MS = 1500;
 
 const life = {
@@ -533,6 +555,18 @@ function onPoke() {
 
 function showWelcome() {
   screen('welcome', { big: true });
+  if (state.offer.open) {
+    // Codex can be chosen here: the AI is not named yet.
+    say('idle', 'Salut, moi c’est Bibo !', 'Je vais installer ton second cerveau pour ton IA, Claude ou Codex. 10 à 20 minutes, tu n’as aucune commande à taper.');
+    ui.screen.append(
+      h('ol', { class: 'plan' },
+        h('li', {}, 'Tu choisis ton IA : Claude, Codex ou les deux.'),
+        h('li', {}, `Je regarde ce qui manque sur ton ${OS.machine}, je l’installe, puis tu connectes ton compte (2 min).`),
+        h('li', {}, 'J’installe le reste tout seul. Si ça coince, ton IA m’aide à réparer.')),
+      h('p', { class: 'note' }, `Il te faut un abonnement Claude Pro ou Max, ou ${CHATGPT_PLAN}.`));
+    ui.actions.append(button('Choisir mon IA', showChoice, { act: 'next' }));
+    return;
+  }
   say('idle', 'Salut, moi c’est Bibo !', 'Je vais installer ton second cerveau pour Claude. 10 à 20 minutes, tu n’as aucune commande à taper.');
   ui.screen.append(
     h('ol', { class: 'plan' },
@@ -542,6 +576,87 @@ function showWelcome() {
     h('p', { class: 'note' }, 'Il te faut un abonnement Claude Pro ou Max.'));
   // No autofocus here: a focus ring on the very first screen looks like a glitch.
   ui.actions.append(button(`Vérifier mon ${OS.machine}`, runDiagnosis, { act: 'next' }));
+}
+
+// ── 1b. Which AI (only where the kit lets Codex be chosen) ────────────────
+// Asked before the diagnosis: what it checks and the steps it plans depend on it. The choice holds
+// in Rust for the session (choose_agents); the brain step has the installer record it in agents.json.
+// « Changer d'IA », on the diagnosis and the accounts' screens, comes back here.
+
+// The account Codex needs, said the same way everywhere: the kit takes a personal plan only (codex.rs).
+const CHATGPT_PLAN = 'un abonnement ChatGPT personnel (pas un compte d’entreprise)';
+
+const CHOICES = { claude: ['claude'], codex: ['codex'], both: null };
+
+// 'claude', 'codex' or 'both': the offer's preselection, or the choice made earlier in the session.
+function preselected() {
+  const agents = state.agents || state.offer.agents;
+  if (!Array.isArray(agents) || agents.length === 0) return 'claude';
+  return agents.length > 1 ? 'both' : agents[0] === 'codex' ? 'codex' : 'claude';
+}
+
+// The preselected answer is the main button; one click chooses and goes on.
+function choiceButton(id, label, onClick, pre) {
+  const btn = button(label, onClick, { kind: id === pre ? 'primary' : 'secondary', act: id === pre ? 'next' : 'choose' });
+  btn.dataset.agent = id;
+  return btn;
+}
+
+function showChoice() {
+  screen('choice');
+  say('idle', 'Avec quelle IA veux-tu travailler ?', 'Ton cerveau marche avec Claude, avec Codex, ou avec les deux.');
+  ui.screen.append(
+    h('ul', { class: 'choices card' },
+      h('li', {}, h('p', { class: 'choice-name' }, 'Claude'), h('p', { class: 'note' }, 'Avec ton abonnement Claude (Pro ou Max). Claude Code, l’outil d’Anthropic.')),
+      h('li', {}, h('p', { class: 'choice-name' }, 'Codex'), h('p', { class: 'note' }, `Avec ${CHATGPT_PLAN}. Codex, l’outil d’OpenAI : ton résumé de chaque soir est écrit chez OpenAI.`)),
+      h('li', {}, h('p', { class: 'choice-name' }, 'Les deux'), h('p', { class: 'note' }, 'L’un écrit le résumé de chaque soir, l’autre prend le relais s’il ne répond pas. Il te faut les deux comptes.'))),
+    h('p', { class: 'note' }, 'Tu pourras changer d’avis : rouvre l’app et refais ce choix.'));
+  const pre = preselected();
+  ui.actions.append(
+    choiceButton('claude', 'Claude', () => chooseAgents(CHOICES.claude), pre),
+    choiceButton('codex', 'Codex', () => chooseAgents(CHOICES.codex), pre),
+    choiceButton('both', 'Les deux', showPreferred, pre));
+  focusMain();
+}
+
+// Both: which one writes the evening's summary, said both ways (§4.1): each reads the other's sessions.
+function showPreferred() {
+  screen('choice');
+  say('idle', 'Lequel écrit le résumé de chaque soir ?', 'L’autre prend le relais s’il ne répond pas.');
+  const why = (x, y) => `Le résumé du soir est écrit par ${x} : il lit aussi tes sessions avec ${y}. Si ${x} ne répond pas, ${y} prend le relais et lit tout.`;
+  ui.screen.append(
+    h('ul', { class: 'choices card' },
+      h('li', {}, h('p', { class: 'choice-name' }, 'Claude'), h('p', { class: 'note' }, why('Claude', 'Codex'))),
+      h('li', {}, h('p', { class: 'choice-name' }, 'Codex'), h('p', { class: 'note' }, why('Codex', 'Claude')))));
+  const agents = state.agents || state.offer.agents;
+  const pre = Array.isArray(agents) && agents.length > 1 && agents[0] === 'codex' ? 'codex' : 'claude';
+  ui.actions.append(
+    button('Retour', showChoice, { kind: 'ghost', act: 'back' }),
+    choiceButton('claude', 'Claude', () => chooseAgents(['claude', 'codex']), pre),
+    choiceButton('codex', 'Codex', () => chooseAgents(['codex', 'claude']), pre));
+  focusMain();
+}
+
+async function chooseAgents(agents) {
+  for (const b of ui.actions.querySelectorAll('button')) b.disabled = true;
+  try {
+    await invoke('choose_agents', { agents });
+  } catch (e) {
+    say('worried', 'Je n’ai pas pu noter ton choix.', errText(e));
+    for (const b of ui.actions.querySelectorAll('button')) b.disabled = false;
+    return;
+  }
+  state.agents = agents;
+  runDiagnosis();
+}
+
+// The agents of this install, the preferred one first: Claude alone when nothing was asked.
+function chosenAgents() {
+  return state.agents || ['claude'];
+}
+
+function chose(engine) {
+  return chosenAgents().includes(engine);
 }
 
 // ── 2. Diagnosis ───────────────────────────────────────────────────────────
@@ -589,12 +704,19 @@ function checkList(checks) {
   }));
 }
 
+// Back to the choice of the AI, where the kit lets Codex be chosen; nothing otherwise.
+function changeButton(small = false) {
+  return state.offer.open ? button('Changer d’IA', showChoice, { kind: small ? 'secondary' : 'ghost', small, act: 'change' }) : null;
+}
+
 function showDiagnosis() {
   const d = state.diag;
   screen('diag');
   const line = sysLine(d);
   if (line) ui.screen.append(h('p', { class: 'sys' }, line));
   ui.screen.append(checkList(d.checks));
+  const change = changeButton();
+  if (change) ui.actions.append(change);
 
   if (!d.can_install) {
     say('worried', 'Je ne peux pas installer pour l’instant.', 'Règle d’abord ce qui est en rouge, puis clique sur Revérifier.');
@@ -835,7 +957,7 @@ async function runInstall(from, result = '') {
   const gen = renderInstall();
   const { plan } = state;
   for (let i = from; i < plan.length; i++) {
-    if (!state.loginAsked && !state.loginSkipped && claudeInstalled()) {
+    if (!state.loginAsked && !state.loginSkipped && chose('claude') && claudeInstalled()) {
       await askLoginInline(gen);
       if (gen !== view.gen) return;
     }
@@ -954,24 +1076,48 @@ async function askLoginInline(gen) {
   });
 }
 
-// ── 4b. Repair with Claude ────────────────────────────────────────────────
+// ── 4b. Repair with Claude (or Codex) ─────────────────────────────────────
 // E2 is the failure under the install screen. One click asks Claude (E3), the app
 // shows what it understood (E4), a second click repairs (E5) and the app says how
 // it went (E6). Errors on Claude's side are E7. The plan stays in Rust: the window
-// only sends its id back.
+// only sends its id back. When agents.json lists Codex, Rust names who is asked and
+// who answered (`engine`), and the same screens say Codex where they said Claude.
 
-// E2: what Claude can do about the failure, from repair_status. The states missing
-// here get the plain screen.
-const REPAIR_NOTES = {
-  ready: 'Claude peut regarder ce qui s’est passé et me dire comment réparer. Il lit le journal de cette étape, jamais tes clés ni tes fichiers personnels. Ça utilise un peu de ton abonnement Claude.',
-  not_logged_in: 'Connecte ton compte Claude : il pourra m’aider à réparer.',
-  offline: 'Pas d’internet : ni moi ni Claude ne pouvons avancer. Vérifie le Wi-Fi ou le VPN, puis réessaie.',
-  // Two analyses for this step, four since the app opened, or a repair undone here.
-  exhausted: 'Claude a déjà fait tous les essais de réparation prévus.',
-  // Too old, logged in without a Pro or Max subscription, or it did not start as required.
-  unsupported: 'Ton Claude Code ne peut pas réparer depuis l’app (version trop ancienne ou compte non pris en charge).',
-  disabled: 'Cette version de l’app ne répare pas toute seule.',
+// The words for each AI that may repair. Claude's are the ones the window always had.
+const AIS = {
+  claude: {
+    name: 'Claude', product: 'Claude Code', plan: 'ton abonnement Claude', forfait: 'Ton forfait Claude',
+    account: 'Connecte ton compte Claude', why: 'version trop ancienne ou compte non pris en charge',
+  },
+  codex: {
+    name: 'Codex', product: 'Codex', plan: 'ton abonnement ChatGPT personnel', forfait: 'Ton forfait ChatGPT',
+    account: 'Connecte Codex à ton compte ChatGPT', why: 'version trop ancienne, réglages ou compte non pris en charge',
+  },
 };
+
+function ai(engine) {
+  return AIS[Object.hasOwn(AIS, engine || '') ? engine : 'claude'];
+}
+
+// E2: what the AI can do about the failure, from repair_status. The states missing
+// here get the plain screen.
+function repairNote(what, a) {
+  const notes = {
+    ready: `${a.name} peut regarder ce qui s’est passé et me dire comment réparer. Il lit le journal de cette étape, jamais tes clés ni tes fichiers personnels. Ça utilise un peu de ${a.plan}.`,
+    not_logged_in: `${a.account} : il pourra m’aider à réparer.`,
+    offline: `Pas d’internet : ni moi ni ${a.name} ne pouvons avancer. Vérifie le Wi-Fi ou le VPN, puis réessaie.`,
+    // Two analyses for this step, four since the app opened, or a repair undone here.
+    exhausted: `${a.name} a déjà fait tous les essais de réparation prévus.`,
+    // Too old, logged in without a Pro or Max subscription, paused, or it did not start as required.
+    unsupported: `Ton ${a.product} ne peut pas réparer depuis l’app (${a.why}).`,
+    disabled: 'Cette version de l’app ne répare pas toute seule.',
+    // agents.json says nothing the kit can trust: no AI is asked.
+    agents: 'Je ne sais plus avec quelle IA tu travailles : ton choix est illisible. Je ne demande rien, ni à Claude ni à Codex. Copie le rapport et envoie-le à l’équipe.',
+    // Codex, before the brain step installed the kit's list of its features.
+    not_yet: `${a.name} pourra m’aider une fois ton cerveau installé. Réessaie, ou copie le rapport.`,
+  };
+  return Object.hasOwn(notes, what || '') ? notes[what] : null;
+}
 // Where Claude in Terminal (plan B) is offered on the failure screen.
 const TERMINAL_STATES = ['exhausted', 'unsupported', 'disabled'];
 const TERMINAL_NOTE = `Claude peut t’aider ${OS.inTerminal} : je t’explique comment avant de l’ouvrir.`;
@@ -979,18 +1125,23 @@ const TERMINAL_NOTE = `Claude peut t’aider ${OS.inTerminal} : je t’explique 
 const REPAIR_STAGES = {
   collecting: `Je rassemble ce qu’il lui faut sur ton ${OS.machine}…`,
   asking: 'Claude lit le dossier…',
+  asking_claude: 'Claude lit le dossier…',
+  asking_codex: 'Codex lit le dossier…',
 };
 
 // E7. Nothing was changed in any of these.
-const REPAIR_ERRORS = {
-  quota: ['Ton forfait Claude est à sa limite pour le moment.', 'Il se recharge tout seul en quelques heures. Rien n’a été modifié.'],
-  auth: ['Claude doit te reconnecter.', 'Connecte ton compte Claude, puis redemande-lui. Rien n’a été modifié.'],
-  timeout: ['Claude a mis trop de temps : je l’ai arrêté.', 'Rien n’a été modifié.'],
-  init_invalid: ['Claude ne s’est pas lancé comme prévu.', 'Par prudence, je n’ai rien changé.'],
-  invalid_verdict: ['Claude n’a pas répondu comme prévu.', 'Par prudence, je n’ai rien changé.'],
-  api: ['Le service de Claude a eu un souci.', 'Rien n’a été modifié. Réessaie dans un moment.'],
-  busy: ['Une autre étape est déjà en cours.', 'Attends qu’elle finisse, puis réessaie.'],
-};
+function repairError(kind, a) {
+  const errors = {
+    quota: [`${a.forfait} est à sa limite pour le moment.`, 'Il se recharge tout seul en quelques heures. Rien n’a été modifié.'],
+    auth: [`${a.name} doit te reconnecter.`, `${a.account}, puis redemande-lui. Rien n’a été modifié.`],
+    timeout: [`${a.name} a mis trop de temps : je l’ai arrêté.`, 'Rien n’a été modifié.'],
+    init_invalid: [`${a.name} ne s’est pas lancé comme prévu.`, 'Par prudence, je n’ai rien changé.'],
+    invalid_verdict: [`${a.name} n’a pas répondu comme prévu.`, 'Par prudence, je n’ai rien changé.'],
+    api: [`Le service de ${a.name} a eu un souci.`, 'Rien n’a été modifié. Réessaie dans un moment.'],
+    busy: ['Une autre étape est déjà en cours.', 'Attends qu’elle finisse, puis réessaie.'],
+  };
+  return Object.hasOwn(errors, kind || '') ? errors[kind] : null;
+}
 
 function copyButton() {
   const copy = button('Copier le rapport', () => copyReport(copy), { kind: 'secondary', act: 'copy' });
@@ -1045,21 +1196,28 @@ async function showFailure(index, intro = null) {
   }
   if (view.failure !== ask) return;
   const what = status && status.state;
-  if (!Object.hasOwn(REPAIR_NOTES, what)) return;
+  // Named only when agents.json lists Codex: without a name, Claude as always.
+  if (status && typeof status === 'object') {
+    state.repair.engine = ai(status.engine) === AIS.codex ? 'codex' : 'claude';
+    state.repair.terminal = status.engine || what === 'agents' ? Boolean(status.terminal_fallback) : true;
+  }
+  const a = ai(state.repair.engine);
+  const note = repairNote(what, a);
+  if (!note) return;
   const terminal = TERMINAL_STATES.includes(what) && status.terminal_fallback;
   const offer = h('div', { class: 'repair-offer card repair-note' },
-    h('p', {}, REPAIR_NOTES[what]),
+    h('p', {}, note),
     terminal ? h('p', {}, TERMINAL_NOTE) : null,
-    what === 'ready' ? sentPanel(step) : null);
+    what === 'ready' ? sentPanel(step, a) : null);
   addNote(offer);
   // The user may have moved on to another button meanwhile: only the one that steps aside hands its focus over.
   const refocus = document.activeElement === retry || document.activeElement === document.body;
   if (what === 'ready') {
     demote(retry);
-    ui.actions.append(button('Demander à Claude de réparer', () => runRepair(index), { act: 'next' }));
+    ui.actions.append(button(`Demander à ${a.name} de réparer`, () => runRepair(index), { act: 'next' }));
   } else if (what === 'not_logged_in') {
     demote(retry);
-    const connect = button('Connecter mon compte Claude', () => connectForRepair(index, connect), { act: 'next' });
+    const connect = connectButton(a, () => connectForRepair(index, connect, a));
     ui.actions.append(connect);
   } else if (terminal) {
     retry.before(terminalButton(index));
@@ -1068,8 +1226,8 @@ async function showFailure(index, intro = null) {
 }
 
 // « Voir exactement ce que j'envoie »: the dossier itself, built when opened.
-function sentPanel(step) {
-  const pre = h('pre', { class: 'log-lines', tabindex: '0', 'aria-label': 'Ce que j’envoie à Claude' }, 'Je prépare le dossier…');
+function sentPanel(step, a) {
+  const pre = h('pre', { class: 'log-lines', tabindex: '0', 'aria-label': `Ce que j’envoie à ${a.name}` }, 'Je prépare le dossier…');
   const det = h('details', { class: 'log sent' }, h('summary', {}, 'Voir exactement ce que j’envoie'), pre);
   let asked = false;
   det.addEventListener('toggle', async () => {
@@ -1087,12 +1245,18 @@ function sentPanel(step) {
   return det;
 }
 
-// Once connected, the failure screen comes back with what Claude can do now.
-async function connectForRepair(index, btn) {
+// Claude's account, or Codex's ChatGPT one (§4.3).
+function connectButton(a, onClick) {
+  return button(a === AIS.codex ? 'Connecter Codex à mon compte ChatGPT' : 'Connecter mon compte Claude', onClick, { act: 'next' });
+}
+
+// Once connected, the failure screen comes back with what Claude (or Codex) can do now.
+async function connectForRepair(index, btn, a = AIS.claude) {
   const gen = view.gen;
+  const engine = a === AIS.codex ? 'codex' : 'claude';
   btn.disabled = true;
   try {
-    await invoke('open_claude_login');
+    await invoke(LOGINS[engine].open);
   } catch (e) {
     if (gen !== view.gen) return;
     say('worried', 'La fenêtre ne s’est pas ouverte.', errText(e));
@@ -1105,11 +1269,16 @@ async function connectForRepair(index, btn) {
   btn.className = 'btn btn-secondary';
   btn.disabled = false;
   poll(() => {
-    say('happy', 'C’est connecté !', 'Claude est prêt à m’aider.');
+    say('happy', 'C’est connecté !', `${a.name} est prêt à m’aider.`);
     btn.remove();
     clearRepairNotes();
     later(() => showFailure(index), 2000);
-  });
+  }, engine, engine === 'codex' ? () => {
+    // Logged in, but not with a personal ChatGPT plan: the failure screen says what Codex can do now.
+    btn.remove();
+    clearRepairNotes();
+    showFailure(index);
+  } : null, 'logged_out');
 }
 
 // The install screen again, the failed step in red, then E2.
@@ -1132,7 +1301,8 @@ async function runRepair(index) {
   const { id } = state.failed;
   const step = stepRun(id);
   const gen = screen('analyze');
-  say('thinking', 'Claude regarde ce qui s’est passé…', 'En général moins d’une minute. Il ne modifie rien.');
+  view.asking = state.repair.engine;
+  say('thinking', `${ai(view.asking).name} regarde ce qui s’est passé…`, 'En général moins d’une minute. Il ne modifie rien.');
   const started = Date.now();
   const time = h('span', { class: 'chrono-time' }, '0:00');
   view.progress = h('span', { class: 'chrono-stage' }, REPAIR_STAGES.collecting);
@@ -1150,7 +1320,7 @@ async function runRepair(index) {
 
   const stop = button('Arrêter', async () => {
     stop.disabled = true;
-    say('thinking', 'J’arrête Claude…');
+    say('thinking', `J’arrête ${ai(view.asking).name}…`);
     try {
       await invoke('repair_cancel');
     } catch {
@@ -1174,7 +1344,16 @@ async function runRepair(index) {
 
 function onRepairProgress(event) {
   const stage = event && event.payload;
-  if (view.progress && Object.hasOwn(REPAIR_STAGES, stage)) view.progress.textContent = nbsp(REPAIR_STAGES[stage]);
+  if (!view.progress || !Object.hasOwn(REPAIR_STAGES, stage)) return;
+  view.progress.textContent = nbsp(REPAIR_STAGES[stage]);
+  // Named when agents.json lists Codex: who reads now. The first one asked answers for an error.
+  const engine = { asking_claude: 'claude', asking_codex: 'codex' }[stage];
+  if (!engine) return;
+  if (!view.asked) view.asked = engine;
+  if (engine !== view.asking) {
+    view.asking = engine;
+    say('thinking', `${ai(engine).name} regarde ce qui s’est passé…`, 'En général moins d’une minute. Il ne modifie rien.');
+  }
 }
 
 // E7. Most errors go back to E2 with their own words: it offers what is still possible
@@ -1182,6 +1361,7 @@ function onRepairProgress(event) {
 // Asking again right away would only hit the limit again, or the same expired login.
 function showRepairError(index, err) {
   const kind = err && typeof err === 'object' ? String(err.kind || '') : '';
+  const a = ai(view.asked || state.repair.engine);
   if (kind === 'cancelled') {
     backToFailure(index, ['idle', 'Arrêté.', 'Rien n’a été modifié.']);
     return;
@@ -1191,9 +1371,7 @@ function showRepairError(index, err) {
     backToFailure(index);
     return;
   }
-  const [title, text] = Object.hasOwn(REPAIR_ERRORS, kind)
-    ? REPAIR_ERRORS[kind]
-    : ['Je n’ai pas pu demander à Claude.', `${errText(err)} Rien n’a été modifié.`];
+  const [title, text] = repairError(kind, a) || [`Je n’ai pas pu demander à ${a.name}.`, `${errText(err)} Rien n’a été modifié.`];
   if (kind !== 'quota' && kind !== 'auth') {
     backToFailure(index, ['worried', title, text]);
     return;
@@ -1204,14 +1382,14 @@ function showRepairError(index, err) {
   ui.actions.append(copyButton(), retry);
   if (kind === 'auth') {
     demote(retry);
-    const connect = button('Connecter mon compte Claude', () => connectForRepair(index, connect), { act: 'next' });
+    const connect = connectButton(a, () => connectForRepair(index, connect, a));
     ui.actions.append(connect);
   }
   focusMain();
 }
 
-function said(text) {
-  return h('blockquote', { class: 'said' }, h('p', { class: 'said-who' }, 'Claude dit :'), h('p', {}, `« ${text} »`));
+function said(text, a) {
+  return h('blockquote', { class: 'said' }, h('p', { class: 'said-who' }, `${a.name} dit :`), h('p', {}, `« ${text} »`));
 }
 
 function settingsButton(pane) {
@@ -1239,21 +1417,23 @@ function showProposal(index, plan) {
   const actions = Array.isArray(plan.actions) ? plan.actions : [];
   const cause = String(plan.cause || '');
   const explained = typeof plan.explication === 'string' && plan.explication ? plan.explication : '';
+  // Who answered: named when agents.json lists Codex, Claude otherwise.
+  const a = ai(plan.engine);
 
-  // E4b. A suspect log: nothing Claude says is shown, nothing is offered.
+  // E4b. A suspect log: nothing the AI says is shown, nothing is offered.
   if (plan.suspect || (!remedies.length && !actions.length)) {
-    say('worried', 'Claude n’a pas trouvé de réparation sûre.',
+    say('worried', `${a.name} n’a pas trouvé de réparation sûre.`,
       plan.suspect ? 'Le journal contient des choses inhabituelles : je préfère ne rien réparer tout seul.' : cause);
-    if (explained && !plan.suspect) ui.screen.append(said(explained));
-    ui.screen.append(h('p', { class: 'note' }, 'Rien n’a été modifié. Copie le rapport et envoie-le à l’équipe : il contient déjà l’analyse de Claude.'));
+    if (explained && !plan.suspect) ui.screen.append(said(explained, a));
+    ui.screen.append(h('p', { class: 'note' }, `Rien n’a été modifié. Copie le rapport et envoie-le à l’équipe : il contient déjà l’analyse de ${a.name}.`));
     ui.actions.append(copyButton(), button('Réessayer', () => runInstall(index), { act: 'next' }));
     focusMain();
     return;
   }
 
-  if (plan.confiance === 'basse') say('idle', 'Claude n’est pas sûr de lui.', `Il pense que : ${lowerFirst(cause)}`);
-  else say('idle', 'Claude a trouvé ce qui coince.', cause);
-  if (explained) ui.screen.append(said(explained));
+  if (plan.confiance === 'basse') say('idle', `${a.name} n’est pas sûr de lui.`, `Il pense que : ${lowerFirst(cause)}`);
+  else say('idle', `${a.name} a trouvé ce qui coince.`, cause);
+  if (explained) ui.screen.append(said(explained, a));
   // The user's part comes first: « Réparer » relaunches the step straight away.
   if (actions.length) {
     ui.screen.append(planCard(remedies.length ? 'Avant de cliquer sur « Réparer » :' : 'Ce que toi tu dois faire :',
@@ -1356,17 +1536,18 @@ function showOutcome(index, plan, o, key) {
     undoCard(run);
     ui.actions.append(copyButton(), retry);
   } else if (o.retry) {
-    // E6b: one more round.
+    // E6b: one more round, asked as the last one was offered.
+    const next = ai(state.repair.engine);
     const failed = kind === 'remedy_failed';
     say('worried', failed ? 'Je n’ai pas pu réparer.' : 'Ça n’a toujours pas marché.',
-      `${failed ? `${String(o.message || '')} ` : ''}Claude peut essayer une autre piste. C’est son dernier essai sur cette étape.`);
+      `${failed ? `${String(o.message || '')} ` : ''}${next.name} peut essayer une autre piste. C’est son dernier essai sur cette étape.`);
     undoCard(run);
-    ui.actions.append(copyButton(), button('Redemander à Claude (dernier essai)', () => runRepair(index), { act: 'next' }));
+    ui.actions.append(copyButton(), button(`Redemander à ${next.name} (dernier essai)`, () => runRepair(index), { act: 'next' }));
   } else {
-    // E6c
-    say('worried', 'Je n’ai pas réussi à réparer tout seul.', 'Rien n’est cassé. Copie le rapport et envoie-le à l’équipe : il contient déjà l’analyse de Claude.');
+    // E6c. Claude in Terminal only for whom chose Claude.
+    say('worried', 'Je n’ai pas réussi à réparer tout seul.', `Rien n’est cassé. Copie le rapport et envoie-le à l’équipe : il contient déjà l’analyse de ${ai(plan.engine).name}.`);
     undoCard(run);
-    ui.actions.append(copyButton(), terminalButton(index), retry);
+    ui.actions.append(copyButton(), ...(state.repair.terminal ? [terminalButton(index)] : []), retry);
   }
   focusMain();
 }
@@ -1559,36 +1740,80 @@ function legacyCopy(text) {
   return ok;
 }
 
-// ── 5. Claude account ──────────────────────────────────────────────────────
+// ── 5. Accounts ───────────────────────────────────────────────────────────
+// Each agent chosen, the preferred one first: Claude's account, then (or instead) Codex's ChatGPT one.
+// With Claude alone, the screens of before Codex.
+
+const LOGINS = {
+  claude: { check: 'claude_logged_in', open: 'open_claude_login', checking: 'Je vérifie ton compte Claude…' },
+  codex: { check: 'codex_login', open: 'open_codex_login', checking: 'Je vérifie la connexion de Codex…' },
+};
+
+// Claude: true or false. Codex: its state (codex_login), "chatgpt" when logged in with a ChatGPT
+// account, the only login the kit uses.
+async function loginState(engine) {
+  let said;
+  try {
+    said = await invoke(LOGINS[engine].check);
+  } catch {
+    said = engine === 'codex' ? 'unknown' : false;
+  }
+  if (engine === 'codex') state.codexLogin = said;
+  return said;
+}
+
+// Codex logged in, but in a way the kit does not use (§4.3): waiting for its login would never end.
+const CODEX_NOT_USED = ['billed', 'managed', 'system'];
+
+function loggedIn(engine, said) {
+  return engine === 'codex' ? said === 'chatgpt' : Boolean(said);
+}
+
+function skippedLogin(engine) {
+  return engine === 'codex' ? state.codexLoginSkipped : state.loginSkipped;
+}
 
 async function checkLogin() {
   const gen = screen('login');
-  say('thinking', 'Je vérifie ton compte Claude…');
-  ui.screen.append(h('p', { class: 'loading' }, h('span', { class: 'spinner', 'aria-hidden': 'true' }), 'Un instant'));
-  let logged = false;
-  try {
-    logged = await invoke('claude_logged_in');
-  } catch {
-    logged = false;
+  const left = [];
+  for (const engine of chosenAgents()) {
+    say('thinking', LOGINS[engine].checking);
+    if (!ui.screen.querySelector('.loading')) {
+      ui.screen.append(h('p', { class: 'loading' }, h('span', { class: 'spinner', 'aria-hidden': 'true' }), 'Un instant'));
+    }
+    const said = await loginState(engine);
+    if (gen !== view.gen) return;
+    // « Plus tard » holds for the whole session: coming back from the Voyage screen
+    // must not ask again.
+    if (loggedIn(engine, said)) {
+      if (engine === 'claude') state.loginSkipped = false;
+      else state.codexLoginSkipped = false;
+    } else if (!skippedLogin(engine)) {
+      left.push({ engine, said });
+    }
   }
-  if (gen !== view.gen) return;
-  // « Plus tard » holds for the whole session: coming back from the Voyage screen
-  // must not ask again.
-  if (logged) state.loginSkipped = false;
-  if (logged || state.loginSkipped) showDone();
-  else showLogin();
+  nextLogin(left);
 }
 
-function showLogin() {
+// The first account still to connect, then the next one, then the end.
+function nextLogin(left) {
+  if (!left.length) showDone();
+  else showLogin(left[0].engine, left.slice(1), left[0].said);
+}
+
+function showLogin(engine = 'claude', rest = [], said = '') {
   const gen = screen('login');
-  say('idle', 'Dernière étape : ton compte Claude', 'Connecte-toi pour que Claude puisse travailler avec ton cerveau.');
+  // Another account to connect after this one: not the last step yet.
+  const last = !rest.length;
   const waiting = h('p', { class: 'loading', hidden: true }, h('span', { class: 'spinner', 'aria-hidden': 'true' }), 'J’attends ta connexion…');
-  const connect = button('Connecter mon compte Claude', open, { act: 'next' });
+  const codex = engine === 'codex';
+  const connect = connectButton(codex ? AIS.codex : AIS.claude, open);
+  const next = () => nextLogin(rest);
 
   async function open() {
     connect.disabled = true;
     try {
-      await invoke('open_claude_login');
+      await invoke(LOGINS[engine].open);
     } catch (e) {
       if (gen !== view.gen) return;
       say('worried', 'La fenêtre ne s’est pas ouverte.', errText(e));
@@ -1601,36 +1826,75 @@ function showLogin() {
     connect.textContent = 'Rouvrir la fenêtre';
     connect.className = 'btn btn-secondary';
     connect.disabled = false;
-    poll(showDone);
+    poll(next, engine, codex ? (now) => showLogin(engine, rest, now) : null, said);
   }
 
-  ui.screen.append(
-    h('ol', { class: 'plan' },
-      h('li', {}, `Clique sur le bouton : une ${OS.window} s’ouvre.`),
-      h('li', {}, 'Suis ses étapes. Ton navigateur te demande de te connecter à Claude.'),
-      h('li', {}, 'Reviens ici : je vois tout seul quand c’est bon.')),
-    h('p', { class: 'note' }, 'Tu te connectes directement chez Anthropic : je ne vois jamais ton mot de passe. Il faut un abonnement Claude Pro ou Max.'),
-    waiting);
+  if (!codex) {
+    say('idle', last ? 'Dernière étape : ton compte Claude' : 'Encore une étape : ton compte Claude', 'Connecte-toi pour que Claude puisse travailler avec ton cerveau.');
+    ui.screen.append(
+      h('ol', { class: 'plan' },
+        h('li', {}, `Clique sur le bouton : une ${OS.window} s’ouvre.`),
+        h('li', {}, 'Suis ses étapes. Ton navigateur te demande de te connecter à Claude.'),
+        h('li', {}, 'Reviens ici : je vois tout seul quand c’est bon.')),
+      h('p', { class: 'note' }, 'Tu te connectes directement chez Anthropic : je ne vois jamais ton mot de passe. Il faut un abonnement Claude Pro ou Max.'),
+      waiting);
+    switchAi('Pas d’abonnement Claude Pro ou Max ? Change d’IA.');
+  } else if (said === 'system') {
+    // No login fixes settings of this system another account may change (codex.rs, Windows).
+    say('worried', `Codex suit des réglages de ce ${OS.machine} qu’un autre compte peut modifier.`,
+      'Le dossier ProgramData\\OpenAI\\Codex n’est pas protégé : je ne me sers pas de Codex tant que c’est le cas. La personne qui gère ce PC peut le protéger.');
+    switchAi('Pour avancer sans Codex, change d’IA.');
+  } else {
+    // Bibo never logs anyone out (§4.3): an API key or a workspace account stays, and is not used.
+    // Codex's login rewrites auth.json with the ChatGPT account: the key goes without a logout.
+    if (said === 'billed') {
+      say('worried', 'Codex est connecté avec une clé API.', 'Elle serait facturée : je ne m’en sers pas. Clique sur le bouton et connecte-toi avec ChatGPT : ta connexion remplacera la clé.');
+    } else if (said === 'managed') {
+      say('worried', 'Codex est connecté avec un compte ChatGPT d’entreprise.', 'Je ne m’en sers pas : il faut ton abonnement ChatGPT personnel. Reconnecte-toi en choisissant ton espace personnel.');
+    } else {
+      say('idle', last ? 'Dernière étape : ton compte ChatGPT' : 'Encore une étape : ton compte ChatGPT', 'Connecte Codex à ton compte ChatGPT pour qu’il puisse travailler avec ton cerveau.');
+    }
+    ui.screen.append(
+      h('ol', { class: 'plan' },
+        h('li', {}, `Clique sur le bouton : une ${OS.window} s’ouvre.`),
+        h('li', {}, 'Suis ses étapes. Ton navigateur te demande de te connecter à ChatGPT.'),
+        h('li', {}, 'Reviens ici : je vois tout seul quand c’est bon.')),
+      h('p', { class: 'note' }, `Tu te connectes directement chez OpenAI : je ne vois jamais ton mot de passe. Il faut ${CHATGPT_PLAN}. Jamais de clé API : elle serait facturée.`),
+      waiting);
+    switchAi('Pas d’abonnement ChatGPT personnel ? Change d’IA.');
+  }
   ui.actions.append(
-    button('Plus tard', () => { state.loginSkipped = true; showDone(); }, { kind: 'ghost', act: 'skip' }),
-    connect);
+    button('Plus tard', () => {
+      if (codex) state.codexLoginSkipped = true;
+      else state.loginSkipped = true;
+      next();
+    }, { kind: 'ghost', act: 'skip' }));
+  if (said !== 'system') ui.actions.append(connect);
   focusMain();
 }
 
-// One polling loop at a time, until the login, stopPolling() or the next screen.
-function poll(onLogged) {
+// On an account's screen, where the kit lets Codex be chosen: another AI, for whoever has no such account.
+function switchAi(sentence) {
+  const change = changeButton(true);
+  if (change) ui.screen.append(h('div', { class: 'upgrade' }, h('p', { class: 'note' }, sentence), change));
+}
+
+// One polling loop at a time, until the login, stopPolling() or the next screen. With `onOther`,
+// Codex's login turning into one the kit does not use (from `from`) ends the wait too.
+function poll(onLogged, engine = 'claude', onOther = null, from = '') {
   if (view.polling) return;
   const gen = view.gen;
   const loop = {};
   view.polling = loop;
   const tick = async () => {
-    let logged = false;
-    try {
-      logged = await invoke('claude_logged_in');
-    } catch {
-      logged = false;
-    }
+    const said = await loginState(engine);
+    const logged = loggedIn(engine, said);
     if (gen !== view.gen || view.polling !== loop) return;
+    if (!logged && onOther && said !== from && CODEX_NOT_USED.includes(said)) {
+      view.polling = null;
+      onOther(said);
+      return;
+    }
     if (!logged) {
       later(tick, LOGIN_POLL_MS);
       return;
@@ -1649,7 +1913,11 @@ function stopPolling() {
 
 function showDone() {
   const gen = screen('done', { big: true });
-  say('happy', 'Ton second cerveau est prêt !', 'Claude retient maintenant ce que tu lui apprends.');
+  const names = chosenAgents().map((e) => ai(e).name);
+  const first = names[0];
+  say('happy', 'Ton second cerveau est prêt !', names.length > 1
+    ? `${listFr(names)} retiennent maintenant ce que tu leur apprends.`
+    : `${first} retient maintenant ce que tu lui apprends.`);
   // In the screen rather than with the buttons: three of them would not fit on one
   // line. Above « Dernière chose », which leads to the main button.
   if (canAddMeaning()) {
@@ -1657,10 +1925,18 @@ function showDone() {
       h('p', { class: 'note' }, 'Ton cerveau retrouve tes notes par mots-clés. Il peut aussi les retrouver par le sens.'),
       button('Activer la recherche par le sens', () => addMeaning(showDone), { kind: 'secondary', small: true, act: 'voyage' })));
   }
-  ui.screen.append(h('p', { class: 'note' }, 'Dernière chose : présente-toi à lui. Il te pose quelques questions pour te connaître.'));
+  // The preferred one does the onboarding. Codex only on the login the kit uses (§4.3): logged in
+  // another way it would bill a key, or offer one on its first screen, so its login comes first.
+  const codexOff = chose('codex') && state.codexLogin !== 'chatgpt';
+  const loginFirst = codexOff && chosenAgents()[0] === 'codex';
+  const who = names.length > 1 ? first : 'lui';
+  ui.screen.append(h('p', { class: 'note' }, loginFirst
+    ? `Dernière chose : connecte Codex à ton compte ChatGPT, puis présente-toi à ${who}. Il te pose quelques questions pour te connaître.`
+    : `Dernière chose : présente-toi à ${who}. Il te pose quelques questions pour te connaître.`));
   if (state.loginSkipped) {
     ui.screen.append(h('p', { class: 'note' }, 'Pense à connecter ton compte Claude : il te le demandera au premier lancement.'));
   }
+  if (codexOff) ui.screen.append(h('p', { class: 'note' }, codexLoginNote(state.codexLogin)));
 
   // A double click would open two Terminal windows, or Obsidian twice: the
   // button rests a few seconds.
@@ -1676,9 +1952,46 @@ function showDone() {
   }
 
   const vault = button('Ouvrir mon cerveau dans Obsidian', () => act(vault, 'open_vault', 'J’ouvre Obsidian…', 'Ton cerveau est dans Documents › Brain.'), { kind: 'secondary', act: 'vault' });
-  const onboard = button('Personnaliser mon cerveau (15 min)', () => act(onboard, 'start_onboarding', 'C’est parti !', `Une ${OS.window} s’ouvre : réponds aux questions de Claude.`), { act: 'next' });
-  ui.actions.append(vault, onboard);
+  ui.actions.append(vault);
+  if (loginFirst) {
+    // Settings of the system no login fixes: nothing more to offer here.
+    if (state.codexLogin !== 'system') {
+      const connect = connectButton(AIS.codex, () => connectThenDone(connect));
+      ui.actions.append(connect);
+    }
+  } else {
+    const onboard = button('Personnaliser mon cerveau (15 min)', () => act(onboard, 'start_onboarding', 'C’est parti !', `Une ${OS.window} s’ouvre : réponds aux questions de ${first}.`), { act: 'next' });
+    ui.actions.append(onboard);
+  }
   focusMain();
+}
+
+// Why Codex is not used yet, under the end's message.
+function codexLoginNote(said) {
+  if (said === 'billed') return 'Codex est encore connecté avec une clé API, qui serait facturée : je ne m’en sers pas. Connecte-le à ton compte ChatGPT : ta connexion remplacera la clé.';
+  if (said === 'managed') return 'Codex est connecté avec un compte ChatGPT d’entreprise : je ne m’en sers pas. Connecte-le avec ton abonnement ChatGPT personnel.';
+  if (said === 'system') return `Codex suit des réglages de ce ${OS.machine} qu’un autre compte peut modifier : je ne m’en sers pas tant que ce n’est pas réglé.`;
+  return 'Pense à connecter Codex à ton compte ChatGPT. S’il te le demande au premier lancement, choisis « Sign in with ChatGPT », jamais une clé API : elle serait facturée.';
+}
+
+// Codex's login from the end: once it is the one the kit uses (or another one), the end again.
+async function connectThenDone(btn) {
+  const gen = view.gen;
+  btn.disabled = true;
+  try {
+    await invoke(LOGINS.codex.open);
+  } catch (e) {
+    if (gen !== view.gen) return;
+    say('worried', 'La fenêtre ne s’est pas ouverte.', errText(e));
+    btn.disabled = false;
+    return;
+  }
+  if (gen !== view.gen) return;
+  say('thinking', 'J’attends que tu te connectes…', `Suis les étapes ${OS.inTerminal}.`);
+  btn.textContent = 'Rouvrir la fenêtre';
+  btn.className = 'btn btn-secondary';
+  btn.disabled = false;
+  poll(showDone, 'codex', showDone, state.codexLogin);
 }
 
 // ── Start ──────────────────────────────────────────────────────────────────
@@ -1701,7 +2014,18 @@ function start() {
   }
   window.__TAURI__.event.listen('step-log', onLog).catch(() => {});
   window.__TAURI__.event.listen('repair-progress', onRepairProgress).catch(() => {});
-  showWelcome();
+  readOffer().then(showWelcome);
+}
+
+// Closed (as shipped), or unreadable: nothing is asked, every screen as before Codex.
+async function readOffer() {
+  try {
+    const o = await invoke('agents_offer');
+    const agents = o && Array.isArray(o.agents) ? o.agents.filter((a) => a === 'claude' || a === 'codex') : [];
+    state.offer = { open: Boolean(o && o.open === true), agents };
+  } catch {
+    state.offer = { open: false, agents: [] };
+  }
 }
 
 start();

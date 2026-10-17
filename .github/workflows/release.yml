@@ -31,12 +31,15 @@ on:
     branches: [master]
     paths:
       - "app/**"
+      # The app reads Codex's gate in its own copy of it before any kit is on disk (agents.rs).
+      - "engine/hooks/_agents.py"
       - ".github/workflows/release.yml"
       - ".github/ci/app-release-plan.py"
   push:
     branches: [master]
     paths:
       - "app/**"
+      - "engine/hooks/_agents.py"
       - ".github/workflows/release.yml"
       - ".github/ci/app-release-plan.py"
   workflow_dispatch:

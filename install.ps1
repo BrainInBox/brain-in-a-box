@@ -813,6 +813,9 @@ if ($WithCodex) {
     Say "Codex ($CodexDir)"
     New-Item -ItemType Directory -Path $CodexDir -Force | Out-Null   # la ou ira auth.json : dans ton profil
     Install-Codex
+    # Ce que Codex doit avoir coupe avant une question sans outils : le lanceur le lit a cote de lui.
+    Place-File "$HOOKS\codex-features.json" ([IO.File]::ReadAllBytes("$REPO\engine\codex-features.json"))
+    Ok "codex-features.json"
     Codex-Global
     Wire-Codex
     Codex-Rules

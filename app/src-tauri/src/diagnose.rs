@@ -7,18 +7,23 @@
 //! On Windows, install.ps1 installs Python, Git, Bun and Obsidian along with the brain:
 //! their checks point to the brain step. On Linux, the system's own tools (git, python3,
 //! curl) come first, from the system's packages, as Apple's tools do on a Mac.
+//!
+//! The AI agents are the ones agents.json lists (agents.rs): Claude Code's checks, Codex's, or both,
+//! each with its site in the network check and its part of the brain. Without the file, Claude's
+//! alone, the checks of before Codex word for word.
 
 use std::path::Path;
 use std::thread;
 use std::time::Duration;
 
+use crate::agents::{self, Agents, Engine};
 #[cfg(target_os = "macos")]
 use crate::detect::parse_version;
 #[cfg(unix)]
 use crate::detect::Version;
 use crate::detect::{self, fmt_version, Brain, Found};
 use crate::model::{Check, Diagnosis, Status};
-use crate::{steps, sys};
+use crate::{codex, steps, sys};
 
 #[cfg(target_os = "macos")]
 const MIN_MACOS: Version = (13, 0, 0);
@@ -28,6 +33,8 @@ const MIN_WINDOWS_BUILD: u32 = 17763;
 /// Windows 11 kept the 10 in its version number: the build tells them apart.
 #[cfg(windows)]
 const WINDOWS_11_BUILD: u32 = 22000;
+/// Where Codex's service is.
+const CHATGPT: &str = "https://chatgpt.com";
 const DISK_BLOCKING_GB: f64 = 3.0;
 const DISK_TIGHT_GB: f64 = 10.0;
 const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -58,10 +65,20 @@ const BUN: Item = Item("bun", "Bun (le moteur de la mémoire)", Some(OWN_STEP_OR
 const CLAUDE: Item = Item("claude", "Claude Code", Some("claude"));
 /// No fix step: the window offers a login button and the user logs in to the official CLI themselves.
 const CLAUDE_AUTH: Item = Item("claude_auth", "Connexion à Claude", None);
+const CODEX: Item = Item("codex", "Codex", Some("codex"));
+/// No fix step either: the user logs in to Codex's own CLI, with their ChatGPT account.
+const CODEX_AUTH: Item = Item("codex_auth", "Connexion à Codex", None);
+/// agents.json lists who the brain works with: one the kit cannot trust blocks.
+const AGENTS: Item = Item("agents", "Ton choix d'IA", None);
+/// The choice made in the window, which the brain step hands to the installer to record.
+const AGENTS_TO_RECORD: Item = Item("agents", "Ton choix d'IA", Some("brain"));
 const OBSIDIAN: Item = Item("obsidian", "Obsidian (pour lire tes notes)", Some(OWN_STEP_OR_BRAIN[1]));
 const BRAIN_VAULT: Item = Item("brain_vault", "Ton dossier Brain", Some("brain"));
 const BRAIN_HOOKS: Item = Item("brain_hooks", "Les automatismes de Claude", Some("brain"));
 const BRAIN_SKILLS: Item = Item("brain_skills", "Les compétences de Claude", Some("brain"));
+const BRAIN_CODEX_HOOKS: Item = Item("brain_codex_hooks", "Les automatismes de Codex", Some("brain"));
+const BRAIN_CODEX_INSTRUCTIONS: Item = Item("brain_codex_instructions", "Tes consignes pour Codex", Some("brain"));
+const BRAIN_CODEX_SKILLS: Item = Item("brain_codex_skills", "Les compétences de Codex", Some("brain"));
 const BRAIN_MEMORY: Item = Item("brain_memory", "La mémoire de recherche", Some("brain"));
 const VOYAGE: Item = Item("voyage", "Recherche par le sens", None);
 const INTERNAL: Item = Item("internal", "Erreur interne", None);
@@ -105,6 +122,22 @@ struct Facts {
     claude: Found,
     claude_logged_in: bool,
     obsidian: Found,
+    /// Who the brain works with (agents.json): Claude's facts are looked for only when Claude is one
+    /// of them, Codex's when Codex is.
+    agents: Agents,
+    chatgpt: bool,
+    codex: Option<CodexFacts>,
+}
+
+/// Codex, when agents.json lists it.
+#[derive(Debug)]
+struct CodexFacts {
+    found: Found,
+    login: codex::Login,
+    /// The kit's list of features turned off, which reading the login takes: the brain step installs it.
+    features: bool,
+    /// Codex keeps sessions without running the kit's hooks (agents::hooks_muets).
+    hooks_muets: bool,
 }
 
 /// The system and its packages, as install.sh sees them.
@@ -166,11 +199,15 @@ pub fn failed(why: &str) -> Diagnosis {
 
 #[cfg(target_os = "macos")]
 fn probe(home: &Path) -> Facts {
+    let agents = agents::current(home);
+    let (claude, codex) = (agents.lists(Engine::Claude), agents.lists(Engine::Codex));
     thread::scope(|s| {
-        // The slow probes (network, `claude auth status`) run alongside the rest.
+        // The slow probes (network, `claude auth status`, Codex's login) run alongside the rest.
         let github = s.spawn(|| answers("https://github.com"));
-        let claude_ai = s.spawn(|| answers("https://claude.ai"));
-        let logged_in = s.spawn(detect::claude_logged_in);
+        let claude_ai = s.spawn(move || claude && answers("https://claude.ai"));
+        let logged_in = s.spawn(move || claude && detect::claude_logged_in());
+        let chatgpt = s.spawn(move || codex && answers(CHATGPT));
+        let codex = s.spawn(|| probe_codex(home, &agents));
 
         let home_arg = home.to_string_lossy();
         // Fields are evaluated in this order: the threads are joined last.
@@ -181,21 +218,42 @@ fn probe(home: &Path) -> Facts {
             disk_free_kb: command_text("/bin/df", &["-k", "--", &home_arg]).and_then(|t| parse_df_available_kb(&t)),
             clt: detect::clt_dir().is_some(),
             bun: detect::bun(home),
-            claude: detect::claude(),
+            claude: if claude { detect::claude() } else { Found::Absent },
             obsidian: detect::obsidian(home),
             github: github.join().unwrap_or(false),
             claude_ai: claude_ai.join().unwrap_or(false),
             claude_logged_in: logged_in.join().unwrap_or(false),
+            chatgpt: chatgpt.join().unwrap_or(false),
+            codex: codex.join().ok().flatten(),
+            agents: agents.clone(),
         }
     })
 }
 
+/// Codex's facts, when Codex is one of the agents: where it is, its login (read only once it
+/// answers), whether it runs the kit's hooks.
+fn probe_codex(home: &Path, agents: &Agents) -> Option<CodexFacts> {
+    let codex_home = agents.codex_home.as_deref().filter(|_| agents.lists(Engine::Codex))?;
+    let setup = codex::Setup::for_user(codex_home).ok();
+    let found = setup.as_ref().map_or(Found::Absent, detect::codex);
+    let login = match &setup {
+        Some(s) if found.answers() => codex::login(s),
+        _ => codex::Login::Unknown,
+    };
+    let features = setup.as_ref().is_some_and(|s| s.features.is_file());
+    Some(CodexFacts { found, login, features, hooks_muets: agents::hooks_muets(home, agents) })
+}
+
 #[cfg(windows)]
 fn probe(home: &Path) -> Facts {
+    let agents = agents::current(home);
+    let (claude, codex) = (agents.lists(Engine::Claude), agents.lists(Engine::Codex));
     thread::scope(|s| {
         let github = s.spawn(|| answers("https://github.com"));
-        let claude_ai = s.spawn(|| answers("https://claude.ai"));
-        let logged_in = s.spawn(detect::claude_logged_in);
+        let claude_ai = s.spawn(move || claude && answers("https://claude.ai"));
+        let logged_in = s.spawn(move || claude && detect::claude_logged_in());
+        let chatgpt = s.spawn(move || codex && answers(CHATGPT));
+        let codex = s.spawn(|| probe_codex(home, &agents));
         // PowerShell takes a second or two to start: alongside the rest too.
         let system = s.spawn(|| {
             let out = sys::run(
@@ -209,7 +267,7 @@ fn probe(home: &Path) -> Facts {
         let python = detect::python();
         let git = detect::git();
         let bun = detect::bun(home);
-        let claude = detect::claude();
+        let claude = if claude { detect::claude() } else { Found::Absent };
         let obsidian = detect::obsidian(home);
         let system = system.join().unwrap_or_default();
         Facts {
@@ -225,16 +283,23 @@ fn probe(home: &Path) -> Facts {
             claude,
             claude_logged_in: logged_in.join().unwrap_or(false),
             obsidian,
+            chatgpt: chatgpt.join().unwrap_or(false),
+            codex: codex.join().ok().flatten(),
+            agents: agents.clone(),
         }
     })
 }
 
 #[cfg(target_os = "linux")]
 fn probe(home: &Path) -> Facts {
+    let agents = agents::current(home);
+    let (claude, codex) = (agents.lists(Engine::Claude), agents.lists(Engine::Codex));
     thread::scope(|s| {
         let github = s.spawn(|| answers("https://github.com"));
-        let claude_ai = s.spawn(|| answers("https://claude.ai"));
-        let logged_in = s.spawn(detect::claude_logged_in);
+        let claude_ai = s.spawn(move || claude && answers("https://claude.ai"));
+        let logged_in = s.spawn(move || claude && detect::claude_logged_in());
+        let chatgpt = s.spawn(move || codex && answers(CHATGPT));
+        let codex = s.spawn(|| probe_codex(home, &agents));
 
         let home_arg = home.to_string_lossy();
         let os = detect::os_release();
@@ -252,11 +317,14 @@ fn probe(home: &Path) -> Facts {
             // -P: one line per filesystem, however long its name.
             disk_free_kb: command_text("/bin/df", &["-P", "-k", "--", &home_arg]).and_then(|t| parse_df_available_kb(&t)),
             bun: detect::bun(home),
-            claude: detect::claude(),
+            claude: if claude { detect::claude() } else { Found::Absent },
             obsidian: detect::obsidian(home),
             github: github.join().unwrap_or(false),
             claude_ai: claude_ai.join().unwrap_or(false),
             claude_logged_in: logged_in.join().unwrap_or(false),
+            chatgpt: chatgpt.join().unwrap_or(false),
+            codex: codex.join().ok().flatten(),
+            agents: agents.clone(),
         }
     })
 }
@@ -379,19 +447,30 @@ fn decide(home: &Path, f: &Facts) -> Diagnosis {
     let tools = vec![check_paquets(&f.linux)];
     #[cfg(windows)]
     let tools = vec![check_python(f.python.as_ref()), check_git(&f.git)];
+    let hosts = hosts(f);
     let mut checks = Vec::from(system);
-    checks.extend([check_disk(disk_free_gb), check_network(f.github, f.claude_ai)]);
+    checks.extend([check_disk(disk_free_gb), check_network(&hosts)]);
     checks.extend(tools);
+    checks.push(check_bun(&f.bun));
+    for engine in &f.agents.order {
+        match engine {
+            Engine::Claude => checks.extend([check_claude(&f.claude), check_claude_auth(f.claude.answers(), f.claude_logged_in)]),
+            Engine::Codex => checks.extend(f.codex.iter().flat_map(|c| [check_codex(&c.found), check_codex_auth(c)])),
+        }
+    }
+    if f.agents.order.is_empty() {
+        checks.push(check_agents(&f.agents.etat));
+    } else if agents::pending(&f.agents) {
+        checks.push(AGENTS_TO_RECORD.is(Status::Missing, "Je le note en installant ton cerveau."));
+    }
     checks.extend([
-        check_bun(&f.bun),
-        check_claude(&f.claude),
-        check_claude_auth(f.claude.answers(), f.claude_logged_in),
         #[cfg(not(target_os = "linux"))]
         check_obsidian(&f.obsidian),
         #[cfg(target_os = "linux")]
         check_obsidian_linux(&f.obsidian, f.linux.obsidian_installable),
     ]);
-    checks.extend(check_brain(detect::brain(home), &detect::brain_dir_shown(home)));
+    let muets = f.codex.as_ref().is_some_and(|c| c.hooks_muets);
+    checks.extend(check_brain(detect::brain(home, &f.agents), &detect::brain_dir_shown(home), muets));
     checks.push(check_voyage(detect::embedding_model(home).as_deref()));
 
     let missing = |step: &str| {
@@ -399,7 +478,7 @@ fn decide(home: &Path, f: &Facts) -> Diagnosis {
             .iter()
             .any(|c| c.status == Status::Missing && c.fix.as_deref() == Some(step))
     };
-    let todo = steps::ORDER
+    let todo = steps::order(&f.agents)
         .iter()
         .filter(|s| missing(s))
         .map(|s| s.to_string())
@@ -419,7 +498,7 @@ fn decide(home: &Path, f: &Facts) -> Diagnosis {
         ram_gb: f.ram_bytes.map_or(0.0, |b| round1(b as f64 / (1u64 << 30) as f64)),
         // Rounded down like the detail text, so both read "2,9" when 3 are needed.
         disk_free_gb: disk_free_gb.map_or(0.0, floor1),
-        online: f.github && f.claude_ai,
+        online: hosts.iter().all(|(_, up)| *up),
         checks,
         todo,
         can_install,
@@ -487,16 +566,34 @@ fn check_disk(free_gb: Option<f64>) -> Check {
     }
 }
 
-fn check_network(github: bool, claude_ai: bool) -> Check {
-    match (github, claude_ai) {
-        (true, true) => NETWORK.is(Status::Ok, "github.com et claude.ai répondent."),
-        (true, false) => NETWORK.is(Status::Warn, "claude.ai ne répond pas. Une étape risque d'échouer."),
-        (false, true) => NETWORK.is(Status::Warn, "github.com ne répond pas. Une étape risque d'échouer."),
-        (false, false) => NETWORK.is(
-            Status::Error,
-            "Pas d'internet : ni github.com ni claude.ai ne répondent. Vérifie ton Wi-Fi, puis relance.",
-        ),
+/// The sites the install needs: github.com, then each agent's (claude.ai, chatgpt.com), in the order
+/// of the agents. Claude alone: github.com and claude.ai, as before Codex.
+fn hosts(f: &Facts) -> Vec<(&'static str, bool)> {
+    let mut hosts = vec![("github.com", f.github)];
+    hosts.extend(f.agents.order.iter().map(|e| match e {
+        Engine::Claude => ("claude.ai", f.claude_ai),
+        Engine::Codex => ("chatgpt.com", f.chatgpt),
+    }));
+    hosts
+}
+
+/// Blocks only when none of the sites answers.
+fn check_network(hosts: &[(&str, bool)]) -> Check {
+    let names = |up: bool| hosts.iter().filter(|(_, ok)| *ok == up).map(|(h, _)| h.to_string()).collect::<Vec<_>>();
+    let (up, down) = (names(true), names(false));
+    if down.is_empty() {
+        let verb = if up.len() == 1 { "répond" } else { "répondent" };
+        return NETWORK.is(Status::Ok, format!("{} {verb}.", steps::list_fr(&up)));
     }
+    if up.is_empty() {
+        let none = match down.as_slice() {
+            [one] => format!("{one} ne répond pas"),
+            _ => format!("{} ne répondent", down.iter().map(|h| format!("ni {h}")).collect::<Vec<_>>().join(if down.len() == 2 { " " } else { ", " })),
+        };
+        return NETWORK.is(Status::Error, format!("Pas d'internet : {none}. Vérifie ton Wi-Fi, puis relance."));
+    }
+    let verb = if down.len() == 1 { "ne répond pas" } else { "ne répondent pas" };
+    NETWORK.is(Status::Warn, format!("{} {verb}. Une étape risque d'échouer.", steps::list_fr(&down)))
 }
 
 #[cfg(target_os = "macos")]
@@ -605,6 +702,76 @@ fn check_claude_auth(claude_works: bool, logged_in: bool) -> Check {
     }
 }
 
+/// Codex as the kit's launcher takes it: an older one is the user's to update (install.sh keeps it too).
+fn check_codex(found: &Found) -> Check {
+    match found {
+        Found::Absent => CODEX.is(Status::Missing, "Pas encore installé."),
+        Found::NoVersion => CODEX.is(Status::Missing, "Codex est là mais ne répond pas. Je vais le réinstaller."),
+        _ if detect::codex_ok(found) => CODEX.is(Status::Ok, found.label("Codex")),
+        _ => Check {
+            fix: None,
+            ..CODEX.is(
+                Status::Warn,
+                match found.version() {
+                    Some(v) => format!("Codex {} est trop ancien pour le kit (il faut {} ou plus) : mets-le à jour.", fmt_version(v), min_codex()),
+                    None => "Je n'arrive pas à lire la version de Codex : mets-le à jour.".into(),
+                },
+            )
+        },
+    }
+}
+
+fn min_codex() -> String {
+    let (major, minor, patch) = codex::MIN_CODEX;
+    format!("{major}.{minor}.{patch}")
+}
+
+/// How Codex is logged in (codex::login, §4.3): only a ChatGPT account of a personal plan is used,
+/// never an API key, and the app never logs anyone out.
+fn check_codex_auth(c: &CodexFacts) -> Check {
+    use codex::Login;
+    let (status, detail) = match c.login {
+        _ if !c.found.answers() => (Status::Warn, "Tu te connecteras une fois Codex installé.".to_string()),
+        Login::Chatgpt => (Status::Ok, "Tu es connecté avec ton compte ChatGPT.".into()),
+        Login::LoggedOut => (Status::Warn, "Pas encore connecté. Tu le feras en un clic, avec ton compte ChatGPT.".into()),
+        Login::Billed => (
+            Status::Warn,
+            "Codex est connecté avec une clé API, qui serait facturée : je ne m'en sers pas. \
+             Connecte-le à ton compte ChatGPT en un clic : ta connexion remplacera la clé."
+                .into(),
+        ),
+        Login::Managed => (
+            Status::Warn,
+            "Codex est connecté avec un compte ChatGPT d'entreprise (Business, Enterprise, Edu) : je ne m'en sers pas. \
+             Il faut un abonnement ChatGPT personnel."
+                .into(),
+        ),
+        Login::System => (
+            Status::Warn,
+            format!(
+                "Codex lit des réglages de ce {} qu'un autre compte peut modifier (le dossier ProgramData\\OpenAI\\Codex) : \
+                 je ne m'en sers pas tant que ce dossier n'est pas protégé.",
+                sys::MACHINE
+            ),
+        ),
+        Login::Unknown if !c.features => (Status::Warn, "Je regarderai ta connexion une fois ton cerveau installé.".into()),
+        Login::Unknown => (Status::Warn, "Je n'ai pas pu lire ta connexion à Codex.".into()),
+    };
+    CODEX_AUTH.is(status, detail)
+}
+
+/// A choice the kit cannot trust (agents.rs): no agent is wired, nothing is installed.
+fn check_agents(etat: &str) -> Check {
+    AGENTS.is(
+        Status::Error,
+        format!(
+            "Je ne sais plus avec quelle IA tu travailles : ton choix (~/.brain-in-a-box/agents.json) {}. \
+             Je n'installe rien : écris à l'équipe, elle t'aidera.",
+            steps::agents_said(etat)
+        ),
+    )
+}
+
 fn check_obsidian(found: &Found) -> Check {
     match found {
         Found::Absent => OBSIDIAN.is(Status::Missing, "Pas encore installé."),
@@ -630,8 +797,10 @@ fn check_obsidian_linux(found: &Found, installable: bool) -> Check {
     }
 }
 
-/// `at`: the brain's folder as the window says it (detect::brain_dir_shown).
-fn check_brain(brain: Brain, at: &str) -> [Check; 4] {
+/// `at`: the brain's folder as the window says it (detect::brain_dir_shown). The parts of each agent
+/// agents.json lists, Claude's then Codex's, between the vault and the memory. `muets`: Codex keeps
+/// sessions without running the kit's hooks.
+fn check_brain(brain: Brain, at: &str, muets: bool) -> Vec<Check> {
     let piece = |item: Item, present: bool, ok: &str, missing: &str| {
         if present {
             item.is(Status::Ok, ok)
@@ -639,32 +808,29 @@ fn check_brain(brain: Brain, at: &str) -> [Check; 4] {
             item.is(Status::Missing, missing)
         }
     };
-    [
-        piece(
-            BRAIN_VAULT,
-            brain.vault,
-            &format!("Il est dans {at}."),
-            "Pas encore créé.",
-        ),
-        piece(
-            BRAIN_HOOKS,
-            brain.hooks,
-            "Claude note tes corrections et tes séances.",
-            "Pas encore branchés.",
-        ),
-        piece(
-            BRAIN_SKILLS,
-            brain.skills,
-            "Installées.",
-            "Pas encore installées.",
-        ),
-        piece(
-            BRAIN_MEMORY,
-            brain.memory,
-            "Prête.",
-            "Pas encore créée.",
-        ),
-    ]
+    let mut checks = vec![piece(BRAIN_VAULT, brain.vault, &format!("Il est dans {at}."), "Pas encore créé.")];
+    if let Some(claude) = brain.claude {
+        checks.extend([
+            piece(BRAIN_HOOKS, claude.hooks, "Claude note tes corrections et tes séances.", "Pas encore branchés."),
+            piece(BRAIN_SKILLS, claude.skills, "Installées.", "Pas encore installées."),
+        ]);
+    }
+    if let Some(codex) = brain.codex {
+        // Approving them is Codex's own (/hooks): the brain step would not change it.
+        let hooks = match piece(BRAIN_CODEX_HOOKS, codex.hooks, "Codex note tes corrections et tes séances.", "Pas encore branchés.") {
+            c if c.status == Status::Ok && muets => {
+                Check { fix: None, ..BRAIN_CODEX_HOOKS.is(Status::Warn, "Codex ne les lance pas : ouvre Codex, tape /hooks et approuve-les.") }
+            }
+            c => c,
+        };
+        checks.extend([
+            hooks,
+            piece(BRAIN_CODEX_INSTRUCTIONS, codex.instructions, "Codex les lit à chaque séance.", "Pas encore ajoutées."),
+            piece(BRAIN_CODEX_SKILLS, codex.skills, "Installées.", "Pas encore installées."),
+        ]);
+    }
+    checks.push(piece(BRAIN_MEMORY, brain.memory, "Prête.", "Pas encore créée."));
+    checks
 }
 
 /// The model name ("voyage:voyage-4") means nothing to the user: on or off is enough.
@@ -752,6 +918,9 @@ mod tests {
             claude: Found::Version("2.1.296 (Claude Code)".into()),
             claude_logged_in: true,
             obsidian: Found::Version("1.14.4".into()),
+            agents: Agents::claude_alone(),
+            chatgpt: false,
+            codex: None,
         }
     }
 
@@ -796,13 +965,40 @@ mod tests {
 
     #[test]
     fn network_blocks_only_when_both_sites_are_down() {
-        assert_eq!(check_network(true, true).status, Status::Ok);
-        assert_eq!(check_network(true, false).status, Status::Warn);
-        assert_eq!(check_network(false, true).status, Status::Warn);
-        assert_eq!(check_network(false, false).status, Status::Error);
+        let net = |github, claude_ai| {
+            let c = check_network(&[("github.com", github), ("claude.ai", claude_ai)]);
+            (c.status, c.detail)
+        };
+        // Claude alone: word for word as before Codex.
+        assert_eq!(net(true, true), (Status::Ok, "github.com et claude.ai répondent.".into()));
+        assert_eq!(net(true, false), (Status::Warn, "claude.ai ne répond pas. Une étape risque d'échouer.".into()));
+        assert_eq!(net(false, true), (Status::Warn, "github.com ne répond pas. Une étape risque d'échouer.".into()));
+        assert_eq!(net(false, false), (Status::Error, "Pas d'internet : ni github.com ni claude.ai ne répondent. Vérifie ton Wi-Fi, puis relance.".into()));
         assert!(http_answered("403"));
         assert!(!http_answered("000"));
         assert!(!http_answered(""));
+    }
+
+    /// Each agent's site; none answering blocks, one of them down warns.
+    #[test]
+    fn the_network_check_names_each_agents_site() {
+        let three = |a, b, c| check_network(&[("github.com", a), ("claude.ai", b), ("chatgpt.com", c)]);
+        assert_eq!(three(true, true, true).detail, "github.com, claude.ai et chatgpt.com répondent.");
+        let down = three(true, false, false);
+        assert_eq!((down.status, down.detail.as_str()), (Status::Warn, "claude.ai et chatgpt.com ne répondent pas. Une étape risque d'échouer."));
+        let none = three(false, false, false);
+        assert_eq!(
+            (none.status, none.detail.as_str()),
+            (Status::Error, "Pas d'internet : ni github.com, ni claude.ai, ni chatgpt.com ne répondent. Vérifie ton Wi-Fi, puis relance.")
+        );
+        assert_eq!(check_network(&[("github.com", true)]).detail, "github.com répond.");
+        let alone = check_network(&[("github.com", false)]);
+        assert_eq!((alone.status, alone.detail.as_str()), (Status::Error, "Pas d'internet : github.com ne répond pas. Vérifie ton Wi-Fi, puis relance."));
+        let f = Facts { agents: codex_agents(vec![Engine::Codex, Engine::Claude]), chatgpt: true, ..healthy_facts() };
+        assert_eq!(hosts(&f), [("github.com", true), ("chatgpt.com", true), ("claude.ai", true)]);
+        assert_eq!(hosts(&healthy_facts()), [("github.com", true), ("claude.ai", true)]);
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(!decide(tmp.path(), &Facts { chatgpt: false, ..f }).online, "Codex's site counts for the window's « en ligne »");
     }
 
     #[cfg(target_os = "macos")]
@@ -841,16 +1037,149 @@ mod tests {
 
     #[test]
     fn brain_pieces_point_to_the_brain_step() {
-        let none = Brain { vault: false, hooks: false, skills: false, memory: false };
-        for c in check_brain(none, "Documents/Brain") {
+        use detect::{ClaudePart, CodexPart};
+        let claude = ClaudePart { hooks: true, skills: true };
+        let none = Brain { vault: false, memory: false, claude: Some(ClaudePart { hooks: false, skills: false }), codex: None, chosen: true };
+        let ids = |checks: &[Check]| checks.iter().map(|c| c.id.clone()).collect::<Vec<_>>();
+        let pieces = check_brain(none, "Documents/Brain", false);
+        assert_eq!(ids(&pieces), ["brain_vault", "brain_hooks", "brain_skills", "brain_memory"], "Claude alone: as before Codex");
+        for c in pieces {
             assert_eq!((c.status, c.fix.as_deref()), (Status::Missing, Some("brain")), "{}", c.id);
         }
-        let all = Brain { vault: true, hooks: true, skills: true, memory: true };
-        for c in check_brain(all, "Documents/Brain") {
+        let all = Brain { vault: true, memory: true, claude: Some(claude), codex: None, chosen: true };
+        for c in check_brain(all, "Documents/Brain", true) {
             assert_eq!(c.status, Status::Ok, "{}", c.id);
         }
-        let [_, hooks, _, _] = check_brain(Brain { hooks: false, ..all }, "Documents/Brain");
+        let hooks = check_brain(Brain { claude: Some(ClaudePart { hooks: false, ..claude }), ..all }, "Documents/Brain", false).remove(1);
         assert_eq!((hooks.id.as_str(), hooks.status), ("brain_hooks", Status::Missing));
+
+        let codex = CodexPart { hooks: true, instructions: true, skills: true };
+        let both = check_brain(Brain { codex: Some(codex), ..all }, "Documents/Brain", false);
+        assert_eq!(
+            ids(&both),
+            ["brain_vault", "brain_hooks", "brain_skills", "brain_codex_hooks", "brain_codex_instructions", "brain_codex_skills", "brain_memory"]
+        );
+        assert!(both.iter().all(|c| c.status == Status::Ok));
+        // Wired, but Codex runs none of them: its /hooks, not a step.
+        let muets = check_brain(Brain { claude: None, codex: Some(codex), ..all }, "Documents/Brain", true).remove(1);
+        assert_eq!((muets.id.as_str(), muets.status, muets.fix), ("brain_codex_hooks", Status::Warn, None));
+        assert!(muets.detail.contains("/hooks"), "{}", muets.detail);
+        let unwired = check_brain(Brain { claude: None, codex: Some(CodexPart { hooks: false, ..codex }), ..all }, "Documents/Brain", true).remove(1);
+        assert_eq!((unwired.status, unwired.fix.as_deref()), (Status::Missing, Some("brain")), "not wired: the brain step wires them");
+    }
+
+    fn codex_agents(order: Vec<Engine>) -> Agents {
+        let codex_home = order.contains(&Engine::Codex).then(|| std::path::PathBuf::from("/nowhere/.codex"));
+        Agents { order, codex_home, etat: "ok".into() }
+    }
+
+    fn codex_facts(login: codex::Login) -> CodexFacts {
+        CodexFacts { found: Found::Version("codex-cli 0.162.1".into()), login, features: true, hooks_muets: false }
+    }
+
+    /// Codex's checks and step where Claude's stand, for the agents agents.json lists: Codex alone has
+    /// none of Claude's, and nothing of Claude is looked at.
+    #[test]
+    fn each_agent_listed_has_its_checks() {
+        let tmp = tempfile::tempdir().unwrap();
+        let codex_home = tmp.path().join(".codex");
+        let ids = |d: &Diagnosis| d.checks.iter().map(|c| c.id.clone()).collect::<Vec<_>>();
+        let with = |order: Vec<Engine>| Facts {
+            agents: Agents { codex_home: Some(codex_home.clone()), ..codex_agents(order) },
+            chatgpt: true,
+            codex: Some(codex_facts(codex::Login::LoggedOut)),
+            claude: Found::Absent,
+            claude_logged_in: false,
+            ..healthy_facts()
+        };
+        let d = decide(tmp.path(), &with(vec![Engine::Codex]));
+        let all = ids(&d);
+        for id in ["codex", "codex_auth", "brain_vault", "brain_codex_hooks", "brain_codex_instructions", "brain_codex_skills", "brain_memory"] {
+            assert!(all.contains(&id.to_string()), "{id} in {all:?}");
+        }
+        for id in ["claude", "claude_auth", "brain_hooks", "brain_skills", "agents"] {
+            assert!(!all.contains(&id.to_string()), "{id} in {all:?}");
+        }
+        assert!(by_id(&d, "network").detail.contains("chatgpt.com") && !by_id(&d, "network").detail.contains("claude.ai"));
+        assert_eq!(by_id(&d, "codex_auth").status, Status::Warn);
+        assert_eq!(d.todo, ["brain"]);
+
+        let missing =
+            Facts { codex: Some(CodexFacts { found: Found::Absent, ..codex_facts(codex::Login::Unknown) }), ..with(vec![Engine::Codex, Engine::Claude]) };
+        let d = decide(tmp.path(), &missing);
+        assert_eq!(d.todo, ["codex", "claude", "brain"], "the agents' steps where Claude's stands, the preferred one first");
+        assert_eq!(by_id(&d, "codex").fix.as_deref(), Some("codex"));
+        let pos = |id: &str| ids(&d).iter().position(|x| x == id).unwrap();
+        assert!(pos("codex") < pos("claude"), "the preferred one first");
+        assert_eq!(by_id(&d, "codex_auth").detail, "Tu te connecteras une fois Codex installé.");
+    }
+
+    #[test]
+    fn codex_is_used_only_as_the_kit_takes_it() {
+        let ok = check_codex(&Found::Version("codex-cli 0.162.1".into()));
+        assert_eq!((ok.status, ok.detail.as_str()), (Status::Ok, "Codex 0.162.1"));
+        let old = check_codex(&Found::Version("codex-cli 0.150.0".into()));
+        assert_eq!((old.status, old.fix), (Status::Warn, None), "an older one stays the user's, as install.sh keeps it");
+        assert!(old.detail.contains("0.150.0") && old.detail.contains("0.162.1"), "{}", old.detail);
+        assert_eq!(check_codex(&Found::Version("?".into())).status, Status::Warn);
+        for (found, fix) in [(Found::Absent, "codex"), (Found::NoVersion, "codex")] {
+            let c = check_codex(&found);
+            assert_eq!((c.status, c.fix.as_deref()), (Status::Missing, Some(fix)), "{found:?}");
+        }
+        use codex::Login;
+        let said = |login, features| check_codex_auth(&CodexFacts { features, ..codex_facts(login) });
+        assert_eq!(said(Login::Chatgpt, true).status, Status::Ok);
+        for login in [Login::LoggedOut, Login::Billed, Login::Managed, Login::System, Login::Unknown] {
+            let c = said(login, true);
+            assert_eq!((c.status, c.fix), (Status::Warn, None), "{login:?}");
+        }
+        assert!(said(Login::Billed, true).detail.contains("clé API") && said(Login::Billed, true).detail.contains("ChatGPT"));
+        // No command to type: the login button replaces the key. A workspace account is said as one,
+        // the system's settings as theirs (no login fixes those).
+        assert!(!said(Login::Billed, true).detail.contains("codex logout"));
+        assert!(said(Login::Managed, true).detail.contains("personnel") && !said(Login::Managed, true).detail.contains("administrateur"));
+        assert!(said(Login::System, true).detail.contains("ProgramData") && !said(Login::System, true).detail.contains("Connecte"));
+        assert!(said(Login::Unknown, false).detail.contains("une fois ton cerveau installé"));
+        assert_ne!(said(Login::Unknown, false).detail, said(Login::Unknown, true).detail);
+        let absent = check_codex_auth(&CodexFacts { found: Found::Absent, ..codex_facts(Login::Unknown) });
+        assert_eq!(absent.detail, "Tu te connecteras une fois Codex installé.");
+    }
+
+    /// A choice the kit cannot trust: no agent is looked at, and nothing installs until it is made again.
+    #[test]
+    fn an_untrusted_choice_blocks_and_says_why() {
+        let tmp = tempfile::tempdir().unwrap();
+        fake_brain(tmp.path());
+        let f = Facts { agents: Agents::none("ferme"), claude: Found::Absent, claude_logged_in: false, ..healthy_facts() };
+        let d = decide(tmp.path(), &f);
+        assert!(!d.can_install);
+        let a = by_id(&d, "agents");
+        assert_eq!(a.status, Status::Error);
+        assert!(a.detail.contains("demande Codex"), "{}", a.detail);
+        let ids: Vec<&str> = d.checks.iter().map(|c| c.id.as_str()).collect();
+        assert!(!ids.iter().any(|id| ["claude", "claude_auth", "brain_hooks", "codex"].contains(id)), "{ids:?}");
+        assert_eq!(by_id(&d, "network").detail, "github.com répond.");
+    }
+
+    /// A choice made in the window that agents.json does not record yet: a brain otherwise complete is
+    /// installed again, for the installer to record it; once recorded, nothing to do.
+    #[test]
+    fn a_choice_made_in_the_window_is_recorded_by_the_brain_step() {
+        let tmp = tempfile::tempdir().unwrap();
+        fake_brain(tmp.path());
+        let picked = Agents { order: vec![Engine::Claude], codex_home: None, etat: agents::PENDING.into() };
+        let d = decide(tmp.path(), &Facts { agents: picked.clone(), ..healthy_facts() });
+        let a = by_id(&d, "agents");
+        assert_eq!((a.status, a.fix.as_deref(), a.label.as_str()), (Status::Missing, Some("brain"), "Ton choix d'IA"));
+        assert!(d.can_install);
+        assert_eq!(d.todo, ["brain"]);
+        // The brain step does not stop at « déjà installé » until the installer recorded it.
+        assert!(!detect::brain(tmp.path(), &picked).complete());
+        let recorded = Agents { etat: "ok".into(), ..picked };
+        assert!(detect::brain(tmp.path(), &recorded).complete());
+        let d = decide(tmp.path(), &Facts { agents: recorded, ..healthy_facts() });
+        assert!(d.checks.iter().all(|c| c.id != "agents"), "{:?}", d.checks);
+        assert!(d.todo.is_empty(), "{:?}", d.todo);
     }
 
     #[test]

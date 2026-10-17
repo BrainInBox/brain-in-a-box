@@ -1,3 +1,5 @@
+mod agents;
+mod codex;
 mod config_guard;
 mod detect;
 mod diagnose;
@@ -60,12 +62,34 @@ async fn claude_logged_in() -> bool {
     tauri::async_runtime::spawn_blocking(detect::claude_logged_in).await.unwrap_or(false)
 }
 
+/// Whether the window asks who the brain works with (only where the kit's gate lets Codex be
+/// chosen), and what it preselects.
+#[tauri::command]
+async fn agents_offer() -> agents::Offer {
+    tauri::async_runtime::spawn_blocking(|| agents::offer(&sys::home())).await.unwrap_or(agents::Offer { open: false, agents: Vec::new() })
+}
+
+/// The user's pick, preferred first ("claude", "codex"): held for the session until the brain step
+/// has the installer record it.
+#[tauri::command]
+async fn choose_agents(agents: Vec<String>) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || agents::choose(&sys::home(), &agents).map(|_| ()))
+        .await
+        .unwrap_or_else(|e| Err(format!("Erreur interne : {e}")))
+}
+
+/// How Codex is logged in: "chatgpt", "billed", "managed", "logged_out" or "unknown".
+#[tauri::command]
+async fn codex_login() -> codex::Login {
+    tauri::async_runtime::spawn_blocking(steps::codex_login).await.unwrap_or(codex::Login::Unknown)
+}
+
 /// What the window can offer under a failed step.
 #[tauri::command]
 async fn repair_status(step: String) -> repair::RepairStatus {
     tauri::async_runtime::spawn_blocking(move || repair::availability(&step))
         .await
-        .unwrap_or(repair::RepairStatus { state: repair::RepairState::Disabled, terminal_fallback: false })
+        .unwrap_or(repair::RepairStatus { state: repair::RepairState::Disabled, terminal_fallback: false, engine: None })
 }
 
 /// Exactly what Claude would read, for « Voir exactement ce que j'envoie ».
@@ -126,6 +150,11 @@ async fn off_main(f: impl FnOnce() -> Result<(), String> + Send + 'static) -> Re
 #[tauri::command]
 async fn open_claude_login() -> Result<(), String> {
     off_main(steps::open_claude_login).await
+}
+
+#[tauri::command]
+async fn open_codex_login() -> Result<(), String> {
+    off_main(steps::open_codex_login).await
 }
 
 #[tauri::command]
@@ -227,6 +256,9 @@ pub fn run() {
             run_step,
             check_voyage_key,
             claude_logged_in,
+            agents_offer,
+            choose_agents,
+            codex_login,
             repair_status,
             repair_preview,
             repair_analyze,
@@ -235,6 +267,7 @@ pub fn run() {
             repair_undo,
             repair_report,
             open_claude_login,
+            open_codex_login,
             start_onboarding,
             open_vault,
             open_link,

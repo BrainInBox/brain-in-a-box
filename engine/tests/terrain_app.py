@@ -6,6 +6,13 @@ way a user does, installs it, opens it and clicks through its real window, Bienv
 screen, with a capture of every screen. Then it checks the brain works and opens the app a second
 time: it must say everything is already installed.
 
+The path "app-codex" does the same with Codex chosen alone, where the robot opened Codex in its copy of
+the kit, as the other benches open it (test-hooks.sh, codex_captures.open_gate): the tested commit's
+sources with _agents.py's gate open on every system, handed to the app (BIAB_ARCHIVE, on master too) and
+put where the app keeps the sources it installs from (~/.brain-in-a-box/src), whose _agents.py the app
+reads its gate in before any install. The app itself is the one users get, its own gate closed: on the
+path "app", Claude alone, no choice may be asked.
+
     python3 -I engine/tests/terrain.py app --vm --parcours app --source release --captures DIR
     python3 -I engine/tests/terrain.py app --vm --parcours app --source build --fichier APP.dmg --captures DIR
     python -I engine/tests/terrain.py app --vm --parcours app --source build --fichier SETUP.exe --stub DIR ...
@@ -51,6 +58,7 @@ import time
 import unicodedata
 import urllib.request
 import uuid
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -77,6 +85,8 @@ CLIC_SOURIS = "clic souris"
 # Bibo's titles (app/src/app.js), after norm(): the screen they stand for.
 ECRANS = (
     ("bienvenue", "Salut, moi c'est Bibo"),
+    ("choix", "Avec quelle IA veux-tu travailler"),
+    ("choix-resume", "Lequel écrit le résumé de chaque soir"),
     ("diagnostic-en-cours", "Je regarde ton "),
     ("diagnostic-impossible", "Je n'ai pas réussi à examiner"),
     ("bloque", "Je ne peux pas installer"),
@@ -84,8 +94,13 @@ ECRANS = (
     ("diagnostic", "J'ai fait le tour"),
     ("voyage", "Une option avant de commencer"),
     ("verif-compte", "Je vérifie ton compte Claude"),
+    ("verif-compte-codex", "Je vérifie la connexion de Codex"),
     ("connexion-installation", "Connecte ton compte Claude maintenant"),
     ("connexion", "Dernière étape : ton compte Claude"),
+    ("connexion-chatgpt", "Dernière étape : ton compte ChatGPT"),
+    ("codex-cle-api", "Codex est connecté avec une clé API"),
+    ("codex-entreprise", "Codex est connecté avec un compte ChatGPT d'entreprise"),
+    ("codex-systeme", "Codex suit des réglages de ce "),
     ("installe", "C'est installé"),
     ("fini", "Ton second cerveau est prêt"),
     ("echec", "Oups, ça a coincé"),
@@ -94,6 +109,7 @@ ECRANS = (
 # The install screen: Bibo's title while a step runs (STEPS[id].say[0]).
 ETAPES = {
     "J'installe Claude Code.": "claude",
+    "J'installe Codex.": "codex",
     "Une fenêtre Apple va s'ouvrir : clique sur Installer.": "clt",
     "Ton ordinateur va te demander ton mot de passe.": "paquets",
     "J'installe Bun.": "bun",
@@ -105,6 +121,21 @@ ETAPES = {
 ARRETS = {"diagnostic-impossible", "bloque", "echec", "hors-app"}
 # Buttons that only come with a failure (the repair screens have many titles).
 BOUTONS_ECHEC = {"Réessayer", "Copier le rapport", "Revérifier"}
+# The screens each path must never see: Codex's on the path of Claude alone (the app users get keeps it
+# closed), Claude's where Codex is chosen alone; a Codex logged in otherwise than with ChatGPT on neither.
+HORS_PARCOURS = {
+    False: {"choix", "choix-resume", "verif-compte-codex", "connexion-chatgpt", "codex-cle-api", "codex-entreprise", "codex-systeme"},
+    True: {"choix-resume", "verif-compte", "connexion-installation", "connexion", "codex-cle-api", "codex-entreprise", "codex-systeme"},
+}
+# _agents.py's gate open on every system, as the other benches open it (codex_captures.OPEN_GATE).
+PORTE_OUVERTE = 'CODEX_OUVERT = frozenset({"darwin", "linux", "windows"})'
+
+
+def ouvrir_porte(text):
+    """_agents.py's text with Codex open on every system, whatever its gate says; None when the gate's
+    line moved."""
+    opened, n = re.subn(r"^CODEX_OUVERT = frozenset\(.*\)$", lambda m: PORTE_OUVERTE, text, flags=re.M)
+    return opened if n == 1 else None
 
 
 class ErreurPilote(Exception):
@@ -409,6 +440,10 @@ class Pilote:
     def outils(self, home):
         """[(name, [places])]: what the app's steps install apart from the brain, found at one place."""
         raise NotImplementedError
+
+    def codex_installe(self, home):
+        """[places]: where the app's step puts Codex on this system."""
+        return codex_installe(home, windows=False)
 
     def ecarter_la_nuit(self):
         """Keeps the nightly the install registered out of the checks' way; returns what it did, or None."""
@@ -1301,6 +1336,9 @@ class PiloteWindows(Pilote):
                 ("Obsidian", [local / "Programs" / "Obsidian" / "Obsidian.exe", local / "Obsidian" / "Obsidian.exe",
                               pf / "Obsidian" / "Obsidian.exe"]),
                 ("Python de winget", python or [local / "Programs" / "Python" / "Python3xx" / "python.exe"])]
+
+    def codex_installe(self, home):
+        return codex_installe(home, windows=True)
 
     def poste_neuf(self):
         """No Git, when terrain.yml asks for it (SANS_GIT): sans-git.ps1 uninstalls the runner's and
@@ -2368,10 +2406,12 @@ class PiloteLinux(Pilote):
 class Parcours:
     """Plays the screens of the app's window as a user who wants it all installed, skips the Voyage
     key and the Claude login. Every new screen, or install step, gets a capture and a step name
-    (t), every 2 min of waiting another capture. A failure names the screen and quotes Bibo."""
+    (t), every 2 min of waiting another capture. A failure names the screen and quotes Bibo.
+    codex: the user chooses Codex alone, and skips its ChatGPT login."""
 
-    def __init__(self, t, pilote, dossier, horloge=time.monotonic, dormir=time.sleep, echeance=None):
+    def __init__(self, t, pilote, dossier, horloge=time.monotonic, dormir=time.sleep, echeance=None, codex=False):
         self.t, self.p, self.dossier = t, pilote, Path(dossier)
+        self.codex = codex
         self.horloge, self.dormir = horloge, dormir
         # The scenario's own end (horloge's time), before its job step's timeout kills it: a walk
         # still going then fails by itself, naming its screen, with a capture.
@@ -2483,9 +2523,14 @@ class Parcours:
                           "bloque": "l'app refuse d'installer (diagnostic en rouge)",
                           "diagnostic-impossible": "l'app n'a pas pu faire son diagnostic",
                           "hors-app": "la fenêtre ne parle pas à l'app (pas de __TAURI__)"}[cle])
+        if cle in HORS_PARCOURS[self.codex]:
+            self.echouer("écran « %s » : %s" % (cle, "Codex est choisi seul" if self.codex else
+                                                 "l'app livrée garde Codex fermé, elle ne demande pas quelle IA"))
         if cle == "bienvenue":
-            return "Vérifier mon %s" % self.p.machine
-        if cle == "connexion":
+            return "Choisir mon IA" if self.codex else "Vérifier mon %s" % self.p.machine
+        if cle == "choix":
+            return "Codex"
+        if cle in ("connexion", "connexion-chatgpt"):
             return "Plus tard"
         if relance:
             if cle == "deja-installe":
@@ -2554,10 +2599,24 @@ class Parcours:
         self.lancer(env)
         start = self.horloge()
         vus = self.avancer("fini", DELAI_PREMIER)
-        for must in ("bienvenue", "diagnostic"):
+        for must in ("bienvenue", "choix", "diagnostic", "etape-codex", "connexion-chatgpt") if self.codex else ("bienvenue", "diagnostic"):
             self.t.check(must in vus, "le parcours n'est pas passé par l'écran « %s »" % must)
-        for b in ("Personnaliser mon cerveau (15 min)", "Ouvrir mon cerveau dans Obsidian"):
-            self.t.check(vus["fini"].bouton(b) is not None, "l'écran final n'a pas le bouton « %s »" % b)
+        fini = vus["fini"]
+        if self.codex:
+            self.t.check("etape-claude" not in vus, "l'app a installé Claude Code alors que seul Codex est choisi")
+            self.t.check(fini.texte.startswith("Codex retient"), "l'écran final ne nomme pas Codex : « %s »" % fini.texte)
+            # The robot put the ChatGPT login off: Codex is used on that login only (§4.3), so it comes first.
+            self.t.check(fini.bouton("Personnaliser mon cerveau (15 min)") is None,
+                         "l'écran final propose de personnaliser le cerveau avec un Codex qui n'est pas connecté à ChatGPT")
+            self.t.check(any("Sign in with ChatGPT" in x for x in fini.textes), "l'écran final ne dit pas de choisir « Sign in with ChatGPT »")
+            boutons = ("Connecter Codex à mon compte ChatGPT", "Ouvrir mon cerveau dans Obsidian")
+        else:
+            # Claude alone: the words of before Codex (all of them: app/dev/screens.mjs, in the tests).
+            self.t.check("pour Claude" in vus["bienvenue"].texte, "la bienvenue ne parle pas de Claude : « %s »" % vus["bienvenue"].texte)
+            self.t.check(fini.texte.startswith("Claude retient"), "l'écran final ne nomme pas Claude : « %s »" % fini.texte)
+            boutons = ("Personnaliser mon cerveau (15 min)", "Ouvrir mon cerveau dans Obsidian")
+        for b in boutons:
+            self.t.check(fini.bouton(b) is not None, "l'écran final n'a pas le bouton « %s »" % b)
         self.t.details["diagnostic"] = {"bibo": vus["diagnostic"].texte, "textes": vus["diagnostic"].textes[:60]}
         for label, detail in deja_presents(vus["diagnostic"].textes, self.p.neufs):
             self.t.notes.append("déjà sur la VM avant l'app : %s (%s), son installation par l'app n'est pas testée"
@@ -2571,6 +2630,8 @@ class Parcours:
         self.lancer(env, "relance-")
         vus = self.avancer("fini", DELAI_RELANCE, relance=True)
         self.t.check("deja-installe" in vus, "au deuxième lancement, l'app n'a pas dit « Tout est déjà installé »")
+        if self.codex:
+            self.t.check("choix" in vus, "au deuxième lancement, l'app n'a pas redemandé quelle IA")
         return vus
 
     def sur_echec(self):
@@ -2617,7 +2678,7 @@ def telecharger(url, dest, timeout=600):
 
 # What makes release.yml publish a preview (its `on.push.paths`): the newest commit touching one
 # of them on the tested master must be in the preview the night downloads.
-PUBLIE = ("app", ".github/workflows/release.yml", ".github/ci/app-release-plan.py")
+PUBLIE = ("app", "engine/hooks/_agents.py", ".github/workflows/release.yml", ".github/ci/app-release-plan.py")
 RETARD_MAX_H = 24
 
 
@@ -2713,8 +2774,9 @@ def depuis_build(t, fichier, dossier, details):
     return dest
 
 
-def archive_testee(kit, t, opts, sha):
-    """The tested commit's sources, as GitHub zips a branch, with a marker the robot checks after."""
+def archive_testee(kit, t, opts, sha, codex=False):
+    """The tested commit's sources, as GitHub zips a branch, with a marker the robot checks after.
+    codex: _agents.py's gate open on every system in this copy, each entry kept as it is otherwise."""
     work = kit.workdir(opts, "app-sources")
     marker = work / MARQUEUR
     marker.write_text(sha + "\n", encoding="utf-8")
@@ -2722,7 +2784,51 @@ def archive_testee(kit, t, opts, sha):
     rc, out = kit.run(["git", "-C", kit.REPO, "archive", "--format=zip", "--prefix=brain-in-a-box-terrain/",
                        "--add-file=%s" % marker, "-o", zip_path, sha], timeout=300)
     t.check(rc == 0, "git archive des sources testées : %s" % out.strip()[-200:])
+    if codex:
+        gate = "brain-in-a-box-terrain/engine/hooks/_agents.py"
+        opened = work / "brain-in-a-box-terrain-codex.zip"
+        with zipfile.ZipFile(zip_path) as src, zipfile.ZipFile(opened, "w", zipfile.ZIP_DEFLATED) as dst:
+            t.check(gate in src.namelist(), "les sources testées n'ont pas %s" % gate)
+            for info in src.infolist():
+                data = src.read(info)
+                if info.filename == gate:
+                    text = ouvrir_porte(data.decode("utf-8"))
+                    t.check(text is not None, "la ligne de la porte a bougé dans _agents.py")
+                    data = text.encode("utf-8")
+                attr = info.external_attr
+                dst.writestr(info, data)
+                # zipfile writes 0o600 where git archive leaves no mode: the central directory says
+                # what GitHub's zip says, mode for mode.
+                dst.filelist[-1].external_attr = attr
+        zip_path = opened
     return zip_path
+
+
+def planter_sources(zip_path, home):
+    """The sources of zip_path where the app keeps the ones it installs from (~/.brain-in-a-box/src), as a
+    previous install left them, without the marker: the app reads the kit's gate there before installing,
+    and the marker found after says it installed from the archive itself."""
+    src = Path(home) / ".brain-in-a-box" / "src"
+    with zipfile.ZipFile(zip_path) as z:
+        for info in z.infolist():
+            rel = info.filename.split("/", 1)[1] if "/" in info.filename else ""
+            if not rel or rel == MARQUEUR or info.is_dir():
+                continue
+            dest = src.joinpath(*rel.split("/"))
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(z.read(info))
+            mode = (info.external_attr >> 16) & 0o777
+            if mode and os.name != "nt":
+                os.chmod(dest, mode)
+    return src
+
+
+def codex_installe(home, windows):
+    """Where the app's step puts Codex: OpenAI's installer's place (codex.rs, find)."""
+    if windows:
+        local = Path(os.environ.get("LOCALAPPDATA") or Path(home) / "AppData" / "Local")
+        return [local / "Programs" / "OpenAI" / "Codex" / "bin" / "codex.exe"]
+    return [Path(home) / ".local" / "bin" / "codex"]
 
 
 # --------------------------------------------------------------------------- the scenario
@@ -2747,10 +2853,18 @@ def pilote_du_systeme(travail, opts):
     raise ErreurPilote("pas encore de pilote de fenêtre pour %s" % sys.platform)
 
 
-def outils(t, home, pilote):
-    """What the app's steps put on the machine, apart from the brain."""
+def outils(t, home, pilote, codex=False):
+    """What the app's steps put on the machine, apart from the brain. codex: Codex in Claude Code's
+    place, and no Claude Code."""
     t("app-outils")
-    for name, places in pilote.outils(home):
+    tools = pilote.outils(home)
+    if codex:
+        claude = [x for x in tools if x[0] == "Claude Code"]
+        t.check(len(claude) == 1, "le pilote ne dit pas où serait Claude Code")
+        shown = str(claude[0][1][0]).replace(str(home), "~")
+        t.check(not any(Path(p).exists() for p in claude[0][1]), "Claude Code est installé alors que seul Codex est choisi (%s)" % shown)
+        tools = [("Codex", pilote.codex_installe(home)) if x[0] == "Claude Code" else x for x in tools]
+    for name, places in tools:
         shown = str(places[0]).replace(str(home), "~")
         t.check(any(Path(p).exists() for p in places), "%s n'est pas installé (%s)" % (name, shown))
 
@@ -2794,6 +2908,7 @@ def scenario(t, opts, kit, pilote=None, horloge=time.monotonic, dormir=time.slee
     captures = Path(opts.captures) if getattr(opts, "captures", "") else home / "terrain-captures"
     captures.mkdir(parents=True, exist_ok=True)
     source = getattr(opts, "source", "")
+    codex = getattr(opts, "parcours", "app") == "app-codex"
     delai = getattr(opts, "delai_min", 0) or 0
     details = t.details
     details["source"] = source
@@ -2802,7 +2917,8 @@ def scenario(t, opts, kit, pilote=None, horloge=time.monotonic, dormir=time.slee
         t("app-preparation")
         t.check(source in SOURCES, "source inconnue « %s » (release ou build)" % source)
         pilote = pilote or pilote_du_systeme(kit.workdir(opts, "app"), opts)
-        parcours = Parcours(t, pilote, captures, horloge, dormir, echeance=horloge() + delai * 60 if delai else None)
+        parcours = Parcours(t, pilote, captures, horloge, dormir, echeance=horloge() + delai * 60 if delai else None,
+                            codex=codex)
         downloads = home / "Downloads"
         downloads.mkdir(exist_ok=True)
         extra = {}
@@ -2811,10 +2927,16 @@ def scenario(t, opts, kit, pilote=None, horloge=time.monotonic, dormir=time.slee
             details["sources_du_cerveau"] = "zip master de GitHub (comme un utilisateur)"
         else:
             fichier = depuis_build(t, opts.fichier, downloads, details)
+        if source == "build" or codex:
             sha = kit.tested_ref()
             t.check(sha, "commit testé inconnu")
-            extra["BIAB_ARCHIVE"] = str(archive_testee(kit, t, opts, sha))
+            archive = archive_testee(kit, t, opts, sha, codex)
+            extra["BIAB_ARCHIVE"] = str(archive)
             details["sources_du_cerveau"] = "commit testé %s (BIAB_ARCHIVE)" % sha[:12]
+            if codex:
+                planter_sources(archive, home)
+                details["sources_du_cerveau"] = ("commit testé %s, Codex ouvert dans cette copie (BIAB_ARCHIVE, et "
+                                                 "~/.brain-in-a-box/src avant le premier lancement)" % sha[:12])
         details["fichier"] = fichier.name
         details["quarantaine_posee"] = pilote.marquer_telecharge(fichier)
 
@@ -2838,11 +2960,11 @@ def scenario(t, opts, kit, pilote=None, horloge=time.monotonic, dormir=time.slee
         if nuit:
             details["nuit_reelle"] = nuit
 
-        outils(t, home, pilote)
+        outils(t, home, pilote, codex)
         pilote.constats(t, details)
         t("app-sources")
         marker = home / ".brain-in-a-box" / "src" / MARQUEUR
-        if source == "build":
+        if source == "build" or codex:
             t.check(marker.is_file() and marker.read_text(encoding="utf-8").strip() == kit.tested_ref(),
                     "l'app n'a pas installé les sources du commit testé (BIAB_ARCHIVE ignoré ?)")
         else:
@@ -2862,9 +2984,10 @@ def scenario(t, opts, kit, pilote=None, horloge=time.monotonic, dormir=time.slee
         if rendue:
             details["nuit_rendue"] = rendue
         kit.run_nightly(t, opts)
-        t.resume = "app %s installée, %d écrans cliqués à la souris jusqu'au cerveau en %d min, vérifications conformes, " \
+        t.resume = "app %s installée, %s%d écrans cliqués à la souris jusqu'au cerveau en %d min, vérifications conformes, " \
                    "deuxième lancement : déjà installé, une nuit lancée par le planificateur%s" % (
-                       details.get("release") or "construite", len(parcours.ecrans), details["duree_parcours_s"] // 60,
+                       details.get("release") or "construite", "Codex choisi seul, " if codex else "", len(parcours.ecrans),
+                       details["duree_parcours_s"] // 60,
                        " ; " + details["git"]["resume"] if (details.get("git") or {}).get("resume") else "")
     except ErreurPilote as e:
         if parcours:

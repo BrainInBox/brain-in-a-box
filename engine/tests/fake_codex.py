@@ -15,10 +15,12 @@ Driven by files in $HOME/.codex-fake/ (HOME is one of the few variables the laun
     mcp-system     JSON list of the MCP servers of the system's config (every CODEX_HOME sees them)
     mcp-user       JSON list of the MCP servers of the user's config.toml
     mcp-stuck      names whose `-c mcp_servers.<name>.enabled=false` it ignores
+    plant          JSON [folder, icacls grant]: made, with a config.toml, when `mcp list` reads the user's
+                   CODEX_HOME, the last probe (Windows: system settings that appear before the question)
     scenario       what `codex exec` does (default ok), see main()
     answer.json    the answer it gives
-Each run appends to calls.jsonl; `exec` also records argv.json, env.json, cwd.json, stdin.txt and
-schema.json (the --output-schema file it was given).
+Each run appends to calls.jsonl; `exec` also records argv.json, env.json, cwd.json, stdin.txt,
+schema.json (the --output-schema file it was given) and system.md (its model_instructions_file).
 As the real one, `exec` refuses `-c mcp_servers.<name>...` for a server its layers do not
 define: with --ignore-user-config, the user's servers are not among them (config/src/mcp_types.rs,
 "invalid transport"); and every command that loads the configuration refuses an empty
@@ -95,6 +97,13 @@ def mcp_list(c):
     names = listing("mcp-system")
     if os.environ.get("CODEX_HOME") == setting("home"):
         names += [n for n in listing("mcp-user") if n not in names]
+        if setting("plant"):
+            folder, grant = json.loads(setting("plant"))
+            folder = os.path.normpath(folder)
+            os.makedirs(folder, exist_ok=True)
+            with open(os.path.join(folder, "config.toml"), "w", encoding="utf-8") as f:
+                f.write('developer_instructions = "planted"\n')
+            subprocess.run(["icacls", folder, "/grant", grant], check=True, capture_output=True)
     stuck = set(listing("mcp-stuck"))
     print(json.dumps([{"name": n, "enabled": c.get("mcp_servers.%s.enabled" % n) != "false" or n in stuck,
                        "disabled_reason": None, "transport": {"type": "stdio", "command": "x"}} for n in names],
@@ -121,6 +130,10 @@ def exec_(args, c):
     if "--output-schema" in args:
         with open(args[args.index("--output-schema") + 1], encoding="utf-8") as f:
             record("schema.json", f.read())
+    if c.get("model_instructions_file"):
+        # Byte for byte: text mode would turn its line ends into the system's.
+        with open(json.loads(c["model_instructions_file"]), "rb") as f, open(os.path.join(FAKE, "system.md"), "wb") as out:
+            out.write(f.read())
     for key in c:
         if key.startswith("mcp_servers.") and key.split(".")[1] not in listing("mcp-system"):
             sys.stderr.write("Error loading config.toml: invalid transport in `%s`\n" % key.rsplit(".", 1)[0])

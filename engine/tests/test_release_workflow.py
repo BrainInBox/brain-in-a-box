@@ -55,6 +55,19 @@ class ReleaseWorkflow(unittest.TestCase):
         self.assertNotIn("pull_request_target", triggers)
         self.assertNotIn("workflow_run", triggers)
 
+    def test_a_change_to_a_file_the_app_carries_publishes_it(self):
+        # The app is built with Codex's gate (engine/hooks/_agents.py, agents.rs): opening Codex on a
+        # system publishes the app that offers it, and the night checks the preview holds that change.
+        triggers = self.wf.get("on", self.wf.get("true"))
+        for event in ("pull_request", "push"):
+            self.assertIn("engine/hooks/_agents.py", triggers[event]["paths"], event)
+        app = WORKFLOW.parents[2] / "app" / "src-tauri" / "src" / "agents.rs"
+        self.assertIn('include_str!("../../../engine/hooks/_agents.py")', app.read_text(encoding="utf-8"))
+        terrain_app = (WORKFLOW.parents[2] / "engine" / "tests" / "terrain_app.py").read_text(encoding="utf-8")
+        published = re.search(r"^PUBLIE = \((.*)\)$", terrain_app, re.M).group(1)
+        for path in triggers["push"]["paths"]:
+            self.assertIn('"%s"' % path.replace("/**", ""), published, path)
+
     def test_every_action_is_pinned_to_a_commit(self):
         for name, job in self.jobs.items():
             for step in job["steps"]:
