@@ -724,7 +724,7 @@ fn run(p: &Call, args: &[String], env: &[(String, String)], stdin: &str, limit: 
     let iso = sys::Isolated { env: &env, cwd: &p.cage.work, stdin, limit, cancel };
     let started = Instant::now();
     let (mut err, mut total, mut stopped, mut overflow) = (VecDeque::new(), 0usize, false, false);
-    let code = sys::run_isolated_pipes(&codex.program, &argv, &iso, &mut |pipe, line| {
+    let code = sys::run_isolated_pipes(&codex.program, &argv, &iso, LINE_CAP, &mut |pipe, line| {
         if stopped || line.len() > LINE_CAP {
             return;
         }
