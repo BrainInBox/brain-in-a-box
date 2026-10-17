@@ -132,9 +132,22 @@ is read through AT-SPI (the system's Python and its bindings, `ATSPI` in `terrai
 with the mouse through xdotool, captured with ImageMagick's `import`. Once all is checked, the
 nightly the app registered is started by the scheduler (`nuit-reelle`).
 
+Each app job runs two paths (matrix `parcours`). `app` is the one above: Claude alone, the app as
+users get it, whose `_agents.py` keeps Codex closed, so a choice screen (`choix`) there is a failure.
+`app-codex` chooses Codex alone where the robot opened Codex in its own copy of the kit: the tested
+commit's sources with `_agents.py`'s gate open on every system (`terrain_app.ouvrir_porte`, as
+`test-hooks.sh` and `codex_captures.open_gate` open it), handed to the app (`BIAB_ARCHIVE`, on master
+too) and put in `~/.brain-in-a-box/src`, where the app reads the kit's gate before any install. The
+robot clicks « Choisir mon IA », « Codex », then « Plus tard » at the ChatGPT login (no account: never
+a real one in CI); the app installs Codex with OpenAI's pinned installer instead of Claude Code, and
+`check_codex` (`terrain.py`) checks `agents.json`, Codex's hooks and their approval, its instructions
+and skills, the kit's correction-detector run as Codex runs it, and that nothing of Claude Code's is
+there. Its results are `terrain-<os>-app-codex` and `captures-<os>-app-codex`. Opening Codex for real
+(the PR that changes `CODEX_OUVERT`) is the maintainer's, never a fix of this path.
+
 ```bash
-gh run download <run-id> --name terrain-macos-app --dir "$(mktemp -d)"     # the JSON (terrain-windows-app, terrain-linux-app)
-gh run download <run-id> --name captures-macos-app --dir "$(mktemp -d)"    # the captures (captures-windows-app, captures-linux-app)
+gh run download <run-id> --name terrain-macos-app --dir "$(mktemp -d)"     # the JSON (terrain-windows-app, terrain-linux-app; -app-codex)
+gh run download <run-id> --name captures-macos-app --dir "$(mktemp -d)"    # the captures (captures-windows-app, captures-linux-app; -app-codex)
 ```
 
 - `etape` says where: `app-preparation`, `app-telechargement`, `app-verification` or

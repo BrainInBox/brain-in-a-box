@@ -75,7 +75,7 @@ STATUTS = {"ok": "OK", "echec": "ÉCHEC", "saute": "SAUTÉ"}
 SCENARIOS = ("installation", "montee-avant", "montee", "nuits", "vrai-claude", "app")
 INSTALLEURS = ("installeur", "installeur-v0.2.0", "installeur-montee")
 VM_ONLY = ("installation", "montee-avant", "montee", "app")
-PARCOURS = ("neuf", "montee", "claude", "app", "local", "reinstallation")
+PARCOURS = ("neuf", "montee", "claude", "app", "app-codex", "local", "reinstallation")
 OSES = ("macos", "windows", "linux")
 # The rows each path of terrain.yml writes. One missing is a failure: a step killed by its
 # timeout before it recorded, a cancelled job, a guard that refused to run.
@@ -85,16 +85,18 @@ ATTENDUS = {"neuf": ("installeur", "installation", "nuits"),
             "montee": ("installeur-v0.2.0", "montee-avant", "installeur-montee", "montee"),
             "reinstallation": ("installeur", "montee-avant", "installeur-montee", "montee"),
             "claude": ("vrai-claude",),
-            "app": ("app",)}
+            "app": ("app",),
+            "app-codex": ("app",)}
 # The systems each path runs on, when not macOS and Windows.
-ATTENDUS_OS = {"neuf": ("macos", "windows", "linux"), "reinstallation": ("linux",), "app": ("macos", "windows", "linux")}
+ATTENDUS_OS = {"neuf": ("macos", "windows", "linux"), "reinstallation": ("linux",), "app": ("macos", "windows", "linux"),
+               "app-codex": ("macos", "windows", "linux")}
 # terrain.yml's jobs, and the result files each one writes ("tous": the commit to test, for all).
 JOBS = {"ref": ("tous", ()), "macos": ("macos", ("macos-neuf", "macos-montee")),
         "windows": ("windows", ("windows-neuf", "windows-montee")),
         "linux": ("linux", ("linux-neuf", "linux-reinstallation")),
         "claude": ("macos+windows", ("macos-claude", "windows-claude")),
-        "app-macos": ("macos", ("macos-app",)), "app-windows": ("windows", ("windows-app",)),
-        "app-linux-build": ("linux", ("linux-app",)), "app-linux": ("linux", ("linux-app",))}
+        "app-macos": ("macos", ("macos-app", "macos-app-codex")), "app-windows": ("windows", ("windows-app", "windows-app-codex")),
+        "app-linux-build": ("linux", ("linux-app", "linux-app-codex")), "app-linux": ("linux", ("linux-app", "linux-app-codex"))}
 JOB_RESULTS = ("success", "failure", "cancelled", "skipped")
 ETAPE_RE = re.compile(r"^[a-z0-9][a-z0-9.-]{0,40}$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -118,7 +120,8 @@ LINUX_TIMERS = ("gbrain-nightly", "brain-reflection", "gbrain-lint")
 LINGER_DIR = Path("/var/lib/systemd/linger")
 LINUX_ATTENDU = {"neuf": {"planificateur": "systemd", "obsidian": True, "linger": True},
                  "reinstallation": {"planificateur": "cron", "obsidian": False},
-                 "app": {"planificateur": "systemd", "obsidian": True}}
+                 "app": {"planificateur": "systemd", "obsidian": True},
+                 "app-codex": {"planificateur": "systemd", "obsidian": True}}
 CRON_LINES = ('0 4 * * * /bin/bash "$HOME/.claude/hooks/brain/gbrain-nightly.sh"',
               '0 12,23 * * * /usr/bin/env python3 "$HOME/.claude/hooks/brain/daily-reflection.py"',
               '0 8 * * 1 /bin/bash "$HOME/.claude/hooks/brain/gbrain-lint.sh"')
@@ -962,20 +965,33 @@ def check_git(t, opts):
 
 def check_install(t, opts, kept=(), fresh=True, query=True):
     """What a fresh install, or an upgrade (fresh=False), says it did. kept: hooks the user changed
-    (left to montee); query: a gbq query must answer."""
+    (left to montee); query: a gbq query must answer. The path app-codex: Codex chosen alone, in a copy
+    of the kit where it is open (terrain_app.py): Codex's part in Claude Code's place, and none of Claude's."""
     home = opts.home
     hooks = home / ".claude" / "hooks" / "brain"
-    if WINDOWS and fresh and opts.parcours in ("neuf", "app"):
+    codex = opts.parcours == "app-codex"
+    if WINDOWS and fresh and opts.parcours in ("neuf", "app", "app-codex"):
         check_git(t, opts)
     t("hooks")
     t.check(hooks.is_dir(), "aucun hook installé dans ~/.claude/hooks/brain")
-    for name, src in kit_files():
+    for name, src in kit_files() + ([("codex-features.json", REPO / "engine" / "codex-features.json")] if codex else []):
         if name in kept:
             continue
         p = hooks / name
         t.check(p.is_file(), "%s n'est pas installé" % name)
-        t.check(p.read_bytes() == src.read_bytes(), "%s installé n'est pas la version testée" % name)
+        want = src.read_bytes()
+        if codex and name == "_agents.py":
+            want = terrain_app.ouvrir_porte(want.decode("utf-8")).encode("utf-8")
+        t.check(p.read_bytes() == want, "%s installé n'est pas la version testée" % name)
 
+    if codex:
+        check_codex(t, opts)
+    else:
+        check_claude_hooks(t, home)
+    check_rest(t, opts, fresh, query, codex)
+
+
+def check_claude_hooks(t, home):
     t("settings")
     check_settings(t, home)
 
@@ -995,6 +1011,85 @@ def check_install(t, opts, kept=(), fresh=True, query=True):
                 ok = False
             t.check(ok, "%s a écrit autre chose que son JSON" % name)
 
+
+def codex_hook_command(hooks_json, event, name):
+    """What Codex runs for the kit's hook name under event: (command, commandWindows), or None."""
+    for group in ((hooks_json or {}).get("hooks") or {}).get(event) or []:
+        for h in group.get("hooks") or [] if isinstance(group, dict) else []:
+            if isinstance(h, dict) and ("/.claude/hooks/brain/" + name) in str(h.get("command", "")).replace("\\", "/"):
+                return str(h.get("command", "")), str(h.get("commandWindows", ""))
+    return None
+
+
+def check_codex(t, opts):
+    """Codex chosen alone: agents.json says so, Codex's hooks.json runs the kit's hooks (approved),
+    its instructions and skills are the kit's, and nothing of Claude Code's is there."""
+    home = opts.home
+    codex_home = home / ".codex"
+    t("agents")
+    a = read_json(home / ".brain-in-a-box" / "agents.json")
+    t.check(a is not None, "~/.brain-in-a-box/agents.json absent ou illisible")
+    t.check((a.get("agents"), a.get("prefere")) == (["codex"], "codex"),
+            "agents.json ne dit pas Codex seul : %s, préféré %s" % (a.get("agents"), a.get("prefere")))
+    t.check(a.get("codex_home") and Path(a["codex_home"]) == codex_home, "agents.json : codex_home %s" % a.get("codex_home"))
+    t.check(a.get("pose_par") == ("install.ps1" if WINDOWS else "install.sh"), "agents.json posé par %s" % a.get("pose_par"))
+
+    t("codex")
+    exe = terrain_app.codex_installe(home)[0]
+    rc, out = run([exe, "--version"], timeout=120)
+    m = re.search(r"(\d+)\.(\d+)\.(\d+)", out)
+    t.check(rc == 0 and m and tuple(int(x) for x in m.groups()) >= (0, 162, 1), "codex --version : %s" % out.strip()[-200:])
+    t.details["codex"] = out.strip()[-80:]
+
+    t("hooks-codex")
+    hj = read_json(codex_home / "hooks.json")
+    t.check(hj is not None, "~/.codex/hooks.json absent ou illisible")
+    for event, names in WIRED.items():
+        for name in names:
+            cmd = codex_hook_command(hj, event, name)
+            t.check(cmd, "%s n'est pas branché sous %s dans ~/.codex/hooks.json" % (name, event))
+            t.check(all(c.endswith("--agent codex") for c in cmd if c), "%s ne dit pas --agent codex : %s" % (name, cmd))
+            if WINDOWS:
+                t.check(cmd[1].startswith("& '") and "programs\\python" in cmd[1].lower() and "stub" not in cmd[1].lower(),
+                        "%s n'est pas lancé par le Python que winget a installé : %s" % (name, cmd[1]))
+    toml = read(codex_home / "config.toml") if (codex_home / "config.toml").is_file() else ""
+    approved = len(re.findall(r'^\[hooks\.state\."[^"\n]*hooks\.json:', toml, re.M))
+    t.check(approved >= 6, "le kit n'a approuvé que %d hooks dans ~/.codex/config.toml (6 attendus)" % approved)
+
+    t("hooks-lances")
+    env = dict(os.environ)
+    for k in ("CLAUDE_CODE_ENTRYPOINT", "BRAIN_HEADLESS"):
+        env.pop(k, None)
+    command, windows = codex_hook_command(hj, "UserPromptSubmit", "correction-detector.py")
+    argv = ["powershell", "-NoProfile", "-Command", windows] if WINDOWS else ["/bin/sh", "-c", command]
+    payload = {"session_id": "terrain", "transcript_path": "", "cwd": str(home / "Documents" / "Brain"),
+               "hook_event_name": "UserPromptSubmit", "prompt": "bonjour"}
+    rc, out = run(argv, env=env, stdin=json.dumps(payload), timeout=60)
+    t.check(rc == 0, "correction-detector lancé comme Codex le fait : code %d (%s)" % (rc, out.strip()[-200:]))
+    vus = read_json(home / ".brain-in-a-box" / "codex-hooks-vus.json") or {}
+    t.check("correction-detector" in (vus.get("hooks") or {}), "correction-detector lancé par Codex ne laisse pas son signal de vie")
+
+    t("agents-md")
+    n = read(codex_home / "AGENTS.md").count(KIT_MARK) if (codex_home / "AGENTS.md").is_file() else 0
+    t.check(n == 1, "le repère du kit est %d fois dans ~/.codex/AGENTS.md" % n)
+    t.check((home / "Documents" / "Brain" / "AGENTS.md").is_file(), "le coffre n'a pas son AGENTS.md")
+
+    t("skills")
+    for d in sorted(p for p in (REPO / "skills").iterdir() if (p / "SKILL.md").is_file()):
+        t.check((home / ".agents" / "skills" / d.name / "SKILL.md").is_file(), "skill %s non installé pour Codex" % d.name)
+
+    t("sans-claude")
+    settings = read(home / ".claude" / "settings.json") if (home / ".claude" / "settings.json").is_file() else ""
+    t.check("correction-detector" not in settings, "les hooks du kit sont branchés dans ~/.claude/settings.json")
+    claude_md = home / ".claude" / "CLAUDE.md"
+    t.check(not claude_md.is_file() or KIT_MARK not in read(claude_md), "le bloc du kit est dans ~/.claude/CLAUDE.md")
+    t.check(not (home / ".claude" / "skills" / "brain-boost").exists(), "les skills du kit sont dans ~/.claude/skills")
+    exe = "claude.exe" if WINDOWS else "claude"
+    t.check(not (home / ".local" / "bin" / exe).exists(), "Claude Code est installé (~/.local/bin/%s)" % exe)
+
+
+def check_rest(t, opts, fresh, query, codex):
+    home = opts.home
     t("lanceurs")
     bin_ = home / ".local" / "bin"
     names = ["gbq", "gbq.cmd", "controle", "controle.cmd"] if WINDOWS else ["gbq", "controle"]
@@ -1012,13 +1107,14 @@ def check_install(t, opts, kept=(), fresh=True, query=True):
     else:
         t.details["gbq_query"] = "code %d, non exigé ici" % rc
 
-    t("skills")
-    for d in sorted(p for p in (REPO / "skills").iterdir() if (p / "SKILL.md").is_file()):
-        t.check((home / ".claude" / "skills" / d.name / "SKILL.md").is_file(), "skill %s non installé" % d.name)
+    if not codex:
+        t("skills")
+        for d in sorted(p for p in (REPO / "skills").iterdir() if (p / "SKILL.md").is_file()):
+            t.check((home / ".claude" / "skills" / d.name / "SKILL.md").is_file(), "skill %s non installé" % d.name)
 
-    t("claude-md")
-    n = read(home / ".claude" / "CLAUDE.md").count(KIT_MARK) if (home / ".claude" / "CLAUDE.md").is_file() else 0
-    t.check(n == 1, "le repère du kit est %d fois dans ~/.claude/CLAUDE.md" % n)
+        t("claude-md")
+        n = read(home / ".claude" / "CLAUDE.md").count(KIT_MARK) if (home / ".claude" / "CLAUDE.md").is_file() else 0
+        t.check(n == 1, "le repère du kit est %d fois dans ~/.claude/CLAUDE.md" % n)
 
     t("coffre")
     vault = home / "Documents" / "Brain"
@@ -1034,8 +1130,9 @@ def check_install(t, opts, kept=(), fresh=True, query=True):
         if auto != "false":
             t.notes.append("le coffre monté garde core.autocrlf=%s (annuler une nuit y réécrit en CRLF)" % (auto or "?"))
 
-    t("claude-code")
-    if WINDOWS or OS_NAME == "linux":
+    if not codex:
+        t("claude-code")
+    if not codex and (WINDOWS or OS_NAME == "linux"):
         # install.ps1 and, on Linux, install.sh install Claude Code when it is missing (test.yml checks the same).
         exe = "claude.exe" if WINDOWS else "claude"
         t.check((home / ".local" / "bin" / exe).is_file(), "Claude Code n'est pas installé (~/.local/bin/%s)" % exe)
@@ -1047,7 +1144,7 @@ def check_install(t, opts, kept=(), fresh=True, query=True):
         if expected is not None:
             t.check(bool(found) == expected, "Obsidian %s après une installation %s" % (
                 "absent" if expected else "installé", "qui a répondu oui" if expected else "sans terminal"))
-    if fresh and WINDOWS:
+    if fresh and WINDOWS and not codex:
         settings = json.dumps(read_json(home / ".claude" / "settings.json", {}))
         t.check("stub" not in settings.lower(), "les hooks sont branchés sur le faux python du Microsoft Store")
         t.check("Programs\\\\Python" in settings, "les hooks ne sont pas branchés sur le Python que winget a installé")
