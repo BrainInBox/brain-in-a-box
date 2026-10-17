@@ -2525,10 +2525,11 @@ mod tests {
         let onboarding = codex_onboarding_script(&path, vault, guide, codex, None);
         assert!(onboarding.contains("Remove-Item -LiteralPath Env:CODEX_HOME -ErrorAction SilentlyContinue"), "{onboarding}");
         assert!(!onboarding.contains("$env:CODEX_HOME"), "{onboarding}");
-        assert!(onboarding.contains(r#"codex.exe' -c 'cli_auth_credentials_store="file"' 'Read "#), "{onboarding}");
         assert!(onboarding.contains(r"Set-Location -LiteralPath 'C:\Users\Jo O''Brien\Documents\Brain'"), "{onboarding}");
         assert!(
-            onboarding.contains(r"codex.exe' 'Read C:\Users\Jo O''Brien\.brain-in-a-box\src\onboarding\ONBOARDING.md and run it to personalize me.'"),
+            onboarding.contains(
+                r#"codex.exe' -c 'cli_auth_credentials_store="file"' 'Read C:\Users\Jo O''Brien\.brain-in-a-box\src\onboarding\ONBOARDING.md and run it to personalize me.'"#
+            ),
             "{onboarding}"
         );
     }
