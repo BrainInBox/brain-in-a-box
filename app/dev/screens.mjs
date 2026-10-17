@@ -1,5 +1,6 @@
 // Every screen the window shows, as text, for the mock's scenarios with Claude alone (Codex closed,
 // as the app ships): the window's words for Claude-only users stay those of screens-claude.txt.
+// Then a few checks of Codex's screens, Codex open in the mock as the tests open it.
 //
 //   node app/dev/screens.mjs           compares with screens-claude.txt, prints what differs, exit 1
 //   node app/dev/screens.mjs --write   writes screens-claude.txt (a change of these words is on purpose)
@@ -63,6 +64,79 @@ const SCENARIOS = [
   's=repair-fail&go=done&os=linux',
   's=repair-ok&go=analyze&pause=analyze&click=stop',
   's=repair-auth&go=done&os=linux',
+];
+
+// Where Codex can be chosen (&porte=1, as the tests open it): what some screens must say, or not.
+const has = (shots, start, text) => shots.some((s) => s.startsWith(`== ${start}`) && s.includes(text));
+const last = (shots, start) => shots.filter((s) => s.startsWith(`== ${start}`)).pop() || '';
+const CODEX_CHECKS = [
+  {
+    name: 'Codex on an API key, login put off: the end connects it, never opens the onboarding',
+    query: 's=manque&porte=1&choix=codex&codex=billed&click=skip,skip&go=done',
+    ok: (shots) => {
+      const done = last(shots, 'done');
+      return done.includes('[Connecter Codex à mon compte ChatGPT]') && !done.includes('[Personnaliser mon cerveau (15 min)]')
+        && done.includes('clé API') && !done.includes('il te le demandera au premier lancement');
+    },
+  },
+  {
+    name: 'Codex not logged in, login put off: the end connects it first, and says to pick ChatGPT, never a key',
+    query: 's=manque&porte=1&choix=codex&click=skip,skip&go=done',
+    ok: (shots) => {
+      const done = last(shots, 'done');
+      return done.includes('[Connecter Codex à mon compte ChatGPT]') && !done.includes('[Personnaliser mon cerveau (15 min)]')
+        && done.includes('Sign in with ChatGPT');
+    },
+  },
+  {
+    name: 'Claude preferred, Codex put off: the onboarding is Claude\'s, the note says Codex\'s state',
+    query: 's=manque&porte=1&choix=both&resume=claude&codex=billed&click=skip,skip,skip,skip&go=done',
+    ok: (shots) => {
+      const done = last(shots, 'done');
+      return done.includes('[Personnaliser mon cerveau (15 min)]') && done.includes('clé API');
+    },
+  },
+  {
+    name: 'A workspace account at the login: the wait ends and says why',
+    query: 's=manque&porte=1&choix=codex&after=managed&click=skip&go=done',
+    ok: (shots) => has(shots, 'login', 'compte ChatGPT d’entreprise') && has(shots, 'login', 'espace personnel'),
+  },
+  {
+    name: 'Windows, Codex\'s system settings open to other accounts: no login button, only later',
+    query: 's=manque&porte=1&choix=codex&codex=system&os=windows&click=skip&go=login',
+    ok: (shots) => {
+      const login = last(shots, 'login');
+      return login.includes('ProgramData') && login.includes('[Plus tard]') && !login.includes('[Connecter Codex à mon compte ChatGPT]');
+    },
+  },
+  {
+    name: 'An API key at the login: one button, no command to type',
+    query: 's=manque&porte=1&choix=codex&codex=billed&click=skip&go=login',
+    ok: (shots) => {
+      const login = last(shots, 'login');
+      return !login.includes('codex logout') && login.includes('ta connexion remplacera la clé') && login.includes('[Changer d’IA]');
+    },
+  },
+  {
+    name: 'Codex alone, a step fails before the brain: Codex can help once the brain is in, no login offered',
+    query: 's=echec&porte=1&choix=codex&click=skip&go=done',
+    ok: (shots) => has(shots, 'install', 'Codex pourra m’aider une fois ton cerveau installé')
+      && !shots.some((s) => s.includes('Oups, ça a coincé.') && s.includes('[Connecter Codex à mon compte ChatGPT]')),
+  },
+  {
+    name: 'The AI changed from the diagnosis: Codex, then Claude, and the diagnosis is Claude\'s alone',
+    query: 's=manque&porte=1&choix=codex,claude&click=change&go=diag&nth=2',
+    ok: (shots, claude) => {
+      const alone = claude.get('s=manque&go=done').find((s) => s.startsWith('== diag\nJ’ai fait le tour.'));
+      return Boolean(alone) && last(shots, 'diag') === alone.replace('\n[Revérifier]', '\n[Changer d’IA]\n[Revérifier]');
+    },
+  },
+  {
+    name: 'One account rule everywhere: a personal ChatGPT plan, and both accounts for both',
+    query: 's=manque&porte=1&go=choice',
+    ok: (shots) => has(shots, 'welcome', 'abonnement ChatGPT personnel (pas un compte d’entreprise)')
+      && has(shots, 'choice', 'abonnement ChatGPT personnel (pas un compte d’entreprise)') && has(shots, 'choice', 'Il te faut les deux comptes.'),
+  },
 ];
 
 // ── A small DOM: what app.js and the mock's driver use ─────────────────────
@@ -307,6 +381,15 @@ if (args.includes('--write')) {
 }
 const want = parse(fs.readFileSync(GOLDEN, 'utf8'));
 let differ = 0;
+// The Codex screens' checks, on this copy of the window only (another app.js is master's).
+if (!args.includes('--app')) {
+  for (const c of CODEX_CHECKS) {
+    const shots = await screens(appText, mockText, c.query);
+    if (c.ok(shots, want)) continue;
+    differ += 1;
+    console.log(`FAIL ${c.name}\n  ${c.query}\n${shots.slice(-3).join('\n\n')}\n`);
+  }
+}
 for (const [q, shots] of got) {
   const w = want.get(q) || ['(scenario missing from screens-claude.txt)'];
   const i = shots.findIndex((s, k) => s !== w[k]);
@@ -319,5 +402,5 @@ if (want.size !== got.size) {
   differ += 1;
   console.log(`screens-claude.txt has ${want.size} scenarios, this script runs ${got.size}`);
 }
-console.log(differ ? `${differ} of ${got.size} scenarios differ` : `${got.size} scenarios, the same screens`);
+console.log(differ ? `${differ} differ or fail` : `${got.size} scenarios, the same screens; ${args.includes('--app') ? 0 : CODEX_CHECKS.length} checks of Codex's screens pass`);
 process.exit(differ ? 1 : 0);

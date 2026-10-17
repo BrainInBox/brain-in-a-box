@@ -51,8 +51,11 @@
   // &porte=1 (implied by &agents= with Codex): the kit lets Codex be chosen here: the welcome names no
   // AI and the choice screen comes first, preselecting &agents= (else Claude); &choix=claude|codex|both picks
   // there, &resume=claude|codex picks who writes the evening summary when both; the steps, the checks, the
-  // logins and the end follow the choice; &codex=billed|managed|unknown is how Codex is logged in at first,
-  // logged in with ChatGPT two checks after its login window opened,
+  // logins and the end follow the choice; &choix=codex,claude picks Codex first, then Claude the next time the
+  // choice shows (« Changer d'IA »); &codex=billed|managed|system|unknown is how Codex is logged in at first,
+  // logged in with ChatGPT two checks after its login window opened (&after=managed|billed|system: logged in that
+  // way instead); before the brain step put the kit's list of Codex's features, Codex cannot repair yet (not_yet),
+  // unless agents.json already lists it,
   // &at=<css> stops the driving on &go's screen only once that element is there, &nth=<n> only on its n-th arrival there,
   // &click=<act>[,<act>…] clicks those buttons in that order, once each, and &go's screen counts only after the last.
   // Bibo: &sleep=3 makes it doze off after 3 s without activity instead of 45.
@@ -389,8 +392,13 @@
     // Codex: logged out (or &codex=), with ChatGPT two checks after its login window opened.
     let codexOpened = false;
     let codexPolls = 0;
-    const codexState = () => (codexOpened && codexPolls >= 2) || (!P.get('codex') && (scenario === 'installe' || scenario === 'motscles' || Boolean(REPAIR)))
-      ? 'chatgpt' : P.get('codex') || 'logged_out';
+    const codexState = () => {
+      if (codexOpened && codexPolls >= 2) return P.get('after') || 'chatgpt';
+      return !P.get('codex') && (scenario === 'installe' || scenario === 'motscles' || Boolean(REPAIR)) ? 'chatgpt' : P.get('codex') || 'logged_out';
+    };
+    // The kit's list of Codex's features, next to the hooks: put by the brain step (or an install before).
+    let brainDone = false;
+    const codexFeatures = () => brainDone || FILE_AGENTS.includes('codex');
     // The analyses so far: `turn` rounds taken, `counted` of them count against the limit
     // (Claude's service refusing is free, as in repair.rs).
     let turn = 0;
@@ -415,7 +423,10 @@
           failedOnce.add(id);
           return { id, ok: false, message: fail.message };
         }
-        if (id === 'brain') return { id, ok: true, message: voyageKey ? BRAIN_OK.meaning : BRAIN_OK.keywords };
+        if (id === 'brain') {
+          brainDone = true;
+          return { id, ok: true, message: voyageKey ? BRAIN_OK.meaning : BRAIN_OK.keywords };
+        }
         return { id, ok: true, message: 'Fait.' };
       },
       async check_voyage_key({ key }) {
@@ -452,6 +463,7 @@
         if (step === 'claude') return of('absent');
         const forced = P.get('repair') || (REPAIR && REPAIR.status);
         if (forced) return of(forced);
+        if (NAMED && AGENTS[0] === 'codex' && !codexFeatures() && !(AGENTS.includes('claude') && loggedIn())) return of('not_yet');
         if (unsupported) return of('unsupported');
         if (!loggedIn()) return of('not_logged_in');
         return of(REPAIR && (turn >= REPAIR.rounds.length || counted >= 2) ? 'exhausted' : 'ready');
@@ -540,7 +552,7 @@
     const at = P.get('at');
     const clicks = (P.get('click') || '').split(',').filter(Boolean);
     const nth = Number(P.get('nth')) || 1;
-    let choix = P.get('choix') || '';
+    const choix = (P.get('choix') || '').split(',').filter(Boolean);
     let resume = P.get('resume') || '';
     let seen = '';
     let arrivals = 0;
@@ -568,9 +580,8 @@
           if (input) { typed = true; input.value = key; input.dispatchEvent(new Event('input')); q('[data-act=verify]').click(); }
           return;
         }
-        if (s === 'choice' && choix && q(`[data-agent=${choix}]:not(:disabled)`) && !q('[data-act=back]')) {
-          q(`[data-agent=${choix}]`).click();
-          choix = '';
+        if (s === 'choice' && choix.length && q(`[data-agent=${choix[0]}]:not(:disabled)`) && !q('[data-act=back]')) {
+          q(`[data-agent=${choix.shift()}]`).click();
           return;
         }
         if (s === 'choice' && resume && q('[data-act=back]') && q(`[data-agent=${resume}]:not(:disabled)`)) {
@@ -605,7 +616,9 @@
           ['Codex raté', '?s=repair-fail&agents=codex'], ['Codex sans compte', '?s=echec&agents=codex&repair=not_logged_in'],
           ['choix illisible', '?s=echec&repair=agents'],
           ['porte ouverte', '?s=manque&porte=1'], ['Codex installé', '?s=installe&porte=1&agents=codex'],
-          ['Codex facturé', '?s=manque&porte=1&codex=billed'], ['les deux', '?s=installe&porte=1&agents=claude,codex']]) {
+          ['Codex facturé', '?s=manque&porte=1&codex=billed'], ['Codex d’entreprise', '?s=manque&porte=1&after=managed'],
+          ['PC aux réglages ouverts', '?s=manque&porte=1&os=windows&codex=system'], ['Codex avant le cerveau', '?s=echec&porte=1&choix=codex'],
+          ['les deux', '?s=installe&porte=1&agents=claude,codex']]) {
           const a = document.createElement('a');
           a.href = qs;
           a.textContent = label;

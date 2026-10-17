@@ -215,6 +215,8 @@ const state = {
   loginSkipped: false,
   // « Plus tard » at Codex's ChatGPT login.
   codexLoginSkipped: false,
+  // How Codex was last seen logged in (codex_login): only "chatgpt" is a login the kit uses.
+  codexLogin: '',
   repair: {
     // Plans that set something aside, per step id: « Remettre comme avant » puts it back.
     aside: {},
@@ -561,7 +563,7 @@ function showWelcome() {
         h('li', {}, 'Tu choisis ton IA : Claude, Codex ou les deux.'),
         h('li', {}, `Je regarde ce qui manque sur ton ${OS.machine}, je l’installe, puis tu connectes ton compte (2 min).`),
         h('li', {}, 'J’installe le reste tout seul. Si ça coince, ton IA m’aide à réparer.')),
-      h('p', { class: 'note' }, 'Il te faut un abonnement Claude Pro ou Max, ou un compte ChatGPT.'));
+      h('p', { class: 'note' }, `Il te faut un abonnement Claude Pro ou Max, ou ${CHATGPT_PLAN}.`));
     ui.actions.append(button('Choisir mon IA', showChoice, { act: 'next' }));
     return;
   }
@@ -579,6 +581,10 @@ function showWelcome() {
 // ── 1b. Which AI (only where the kit lets Codex be chosen) ────────────────
 // Asked before the diagnosis: what it checks and the steps it plans depend on it. The choice holds
 // in Rust for the session (choose_agents); the brain step has the installer record it in agents.json.
+// « Changer d'IA », on the diagnosis and the accounts' screens, comes back here.
+
+// The account Codex needs, said the same way everywhere: the kit takes a personal plan only (codex.rs).
+const CHATGPT_PLAN = 'un abonnement ChatGPT personnel (pas un compte d’entreprise)';
 
 const CHOICES = { claude: ['claude'], codex: ['codex'], both: null };
 
@@ -602,8 +608,8 @@ function showChoice() {
   ui.screen.append(
     h('ul', { class: 'choices card' },
       h('li', {}, h('p', { class: 'choice-name' }, 'Claude'), h('p', { class: 'note' }, 'Avec ton abonnement Claude (Pro ou Max). Claude Code, l’outil d’Anthropic.')),
-      h('li', {}, h('p', { class: 'choice-name' }, 'Codex'), h('p', { class: 'note' }, 'Avec ton abonnement ChatGPT. Codex, l’outil d’OpenAI : ton résumé de chaque soir est écrit chez OpenAI.')),
-      h('li', {}, h('p', { class: 'choice-name' }, 'Les deux'), h('p', { class: 'note' }, 'L’un écrit le résumé de chaque soir, l’autre prend le relais s’il ne répond pas.'))),
+      h('li', {}, h('p', { class: 'choice-name' }, 'Codex'), h('p', { class: 'note' }, `Avec ${CHATGPT_PLAN}. Codex, l’outil d’OpenAI : ton résumé de chaque soir est écrit chez OpenAI.`)),
+      h('li', {}, h('p', { class: 'choice-name' }, 'Les deux'), h('p', { class: 'note' }, 'L’un écrit le résumé de chaque soir, l’autre prend le relais s’il ne répond pas. Il te faut les deux comptes.'))),
     h('p', { class: 'note' }, 'Tu pourras changer d’avis : rouvre l’app et refais ce choix.'));
   const pre = preselected();
   ui.actions.append(
@@ -698,12 +704,19 @@ function checkList(checks) {
   }));
 }
 
+// Back to the choice of the AI, where the kit lets Codex be chosen; nothing otherwise.
+function changeButton(small = false) {
+  return state.offer.open ? button('Changer d’IA', showChoice, { kind: small ? 'secondary' : 'ghost', small, act: 'change' }) : null;
+}
+
 function showDiagnosis() {
   const d = state.diag;
   screen('diag');
   const line = sysLine(d);
   if (line) ui.screen.append(h('p', { class: 'sys' }, line));
   ui.screen.append(checkList(d.checks));
+  const change = changeButton();
+  if (change) ui.actions.append(change);
 
   if (!d.can_install) {
     say('worried', 'Je ne peux pas installer pour l’instant.', 'Règle d’abord ce qui est en rouge, puis clique sur Revérifier.');
@@ -1077,7 +1090,7 @@ const AIS = {
     account: 'Connecte ton compte Claude', why: 'version trop ancienne ou compte non pris en charge',
   },
   codex: {
-    name: 'Codex', product: 'Codex', plan: 'ton abonnement ChatGPT', forfait: 'Ton forfait ChatGPT',
+    name: 'Codex', product: 'Codex', plan: 'ton abonnement ChatGPT personnel', forfait: 'Ton forfait ChatGPT',
     account: 'Connecte Codex à ton compte ChatGPT', why: 'version trop ancienne, réglages ou compte non pris en charge',
   },
 };
@@ -1100,6 +1113,8 @@ function repairNote(what, a) {
     disabled: 'Cette version de l’app ne répare pas toute seule.',
     // agents.json says nothing the kit can trust: no AI is asked.
     agents: 'Je ne sais plus avec quelle IA tu travailles : ton choix est illisible. Je ne demande rien, ni à Claude ni à Codex. Copie le rapport et envoie-le à l’équipe.',
+    // Codex, before the brain step installed the kit's list of its features.
+    not_yet: `${a.name} pourra m’aider une fois ton cerveau installé. Réessaie, ou copie le rapport.`,
   };
   return Object.hasOwn(notes, what || '') ? notes[what] : null;
 }
@@ -1258,7 +1273,12 @@ async function connectForRepair(index, btn, a = AIS.claude) {
     btn.remove();
     clearRepairNotes();
     later(() => showFailure(index), 2000);
-  }, engine);
+  }, engine, engine === 'codex' ? () => {
+    // Logged in, but not with a personal ChatGPT plan: the failure screen says what Codex can do now.
+    btn.remove();
+    clearRepairNotes();
+    showFailure(index);
+  } : null, 'logged_out');
 }
 
 // The install screen again, the failed step in red, then E2.
@@ -1732,12 +1752,18 @@ const LOGINS = {
 // Claude: true or false. Codex: its state (codex_login), "chatgpt" when logged in with a ChatGPT
 // account, the only login the kit uses.
 async function loginState(engine) {
+  let said;
   try {
-    return await invoke(LOGINS[engine].check);
+    said = await invoke(LOGINS[engine].check);
   } catch {
-    return engine === 'codex' ? 'unknown' : false;
+    said = engine === 'codex' ? 'unknown' : false;
   }
+  if (engine === 'codex') state.codexLogin = said;
+  return said;
 }
+
+// Codex logged in, but in a way the kit does not use (§4.3): waiting for its login would never end.
+const CODEX_NOT_USED = ['billed', 'managed', 'system'];
 
 function loggedIn(engine, said) {
   return engine === 'codex' ? said === 'chatgpt' : Boolean(said);
@@ -1800,7 +1826,7 @@ function showLogin(engine = 'claude', rest = [], said = '') {
     connect.textContent = 'Rouvrir la fenêtre';
     connect.className = 'btn btn-secondary';
     connect.disabled = false;
-    poll(next, engine);
+    poll(next, engine, codex ? (now) => showLogin(engine, rest, now) : null, said);
   }
 
   if (!codex) {
@@ -1812,12 +1838,19 @@ function showLogin(engine = 'claude', rest = [], said = '') {
         h('li', {}, 'Reviens ici : je vois tout seul quand c’est bon.')),
       h('p', { class: 'note' }, 'Tu te connectes directement chez Anthropic : je ne vois jamais ton mot de passe. Il faut un abonnement Claude Pro ou Max.'),
       waiting);
+    switchAi('Pas d’abonnement Claude Pro ou Max ?');
+  } else if (said === 'system') {
+    // No login fixes settings of this system another account may change (codex.rs, Windows).
+    say('worried', `Codex suit des réglages de ce ${OS.machine} qu’un autre compte peut modifier.`,
+      'Le dossier ProgramData\\OpenAI\\Codex n’est pas protégé : je ne me sers pas de Codex tant que c’est le cas. La personne qui gère ce PC peut le protéger.');
+    switchAi('Pas d’autre ordinateur sous la main ?');
   } else {
     // Bibo never logs anyone out (§4.3): an API key or a workspace account stays, and is not used.
+    // Codex's login rewrites auth.json with the ChatGPT account: the key goes without a logout.
     if (said === 'billed') {
-      say('worried', 'Codex est connecté avec une clé API.', 'Elle serait facturée : je ne m’en sers pas. Connecte-le plutôt avec ton compte ChatGPT (codex logout, puis codex login).');
+      say('worried', 'Codex est connecté avec une clé API.', 'Elle serait facturée : je ne m’en sers pas. Clique sur le bouton et connecte-toi avec ChatGPT : ta connexion remplacera la clé.');
     } else if (said === 'managed') {
-      say('worried', 'Codex suit des réglages imposés.', `Un compte ChatGPT d’entreprise, ou ceux de l’administrateur de ce ${OS.machine} : je ne m’en sers pas. Connecte-le avec un compte ChatGPT personnel.`);
+      say('worried', 'Codex est connecté avec un compte ChatGPT d’entreprise.', 'Je ne m’en sers pas : il faut ton abonnement ChatGPT personnel. Reconnecte-toi en choisissant ton espace personnel.');
     } else {
       say('idle', last ? 'Dernière étape : ton compte ChatGPT' : 'Encore une étape : ton compte ChatGPT', 'Connecte Codex à ton compte ChatGPT pour qu’il puisse travailler avec ton cerveau.');
     }
@@ -1826,28 +1859,42 @@ function showLogin(engine = 'claude', rest = [], said = '') {
         h('li', {}, `Clique sur le bouton : une ${OS.window} s’ouvre.`),
         h('li', {}, 'Suis ses étapes. Ton navigateur te demande de te connecter à ChatGPT.'),
         h('li', {}, 'Reviens ici : je vois tout seul quand c’est bon.')),
-      h('p', { class: 'note' }, 'Tu te connectes directement chez OpenAI : je ne vois jamais ton mot de passe. Il faut un compte ChatGPT personnel. Jamais de clé API : elle serait facturée.'),
+      h('p', { class: 'note' }, `Tu te connectes directement chez OpenAI : je ne vois jamais ton mot de passe. Il faut ${CHATGPT_PLAN}. Jamais de clé API : elle serait facturée.`),
       waiting);
+    switchAi('Pas d’abonnement ChatGPT personnel ?');
   }
   ui.actions.append(
     button('Plus tard', () => {
       if (codex) state.codexLoginSkipped = true;
       else state.loginSkipped = true;
       next();
-    }, { kind: 'ghost', act: 'skip' }),
-    connect);
+    }, { kind: 'ghost', act: 'skip' }));
+  if (said !== 'system') ui.actions.append(connect);
   focusMain();
 }
 
-// One polling loop at a time, until the login, stopPolling() or the next screen.
-function poll(onLogged, engine = 'claude') {
+// On an account's screen, where the kit lets Codex be chosen: another AI, for whoever has no such account.
+function switchAi(question) {
+  const change = changeButton(true);
+  if (change) ui.screen.append(h('div', { class: 'upgrade' }, h('p', { class: 'note' }, `${question} Change d’IA.`), change));
+}
+
+// One polling loop at a time, until the login, stopPolling() or the next screen. With `onOther`,
+// Codex's login turning into one the kit does not use (from `from`) ends the wait too.
+function poll(onLogged, engine = 'claude', onOther = null, from = '') {
   if (view.polling) return;
   const gen = view.gen;
   const loop = {};
   view.polling = loop;
   const tick = async () => {
-    const logged = loggedIn(engine, await loginState(engine));
+    const said = await loginState(engine);
+    const logged = loggedIn(engine, said);
     if (gen !== view.gen || view.polling !== loop) return;
+    if (!logged && onOther && said !== from && CODEX_NOT_USED.includes(said)) {
+      view.polling = null;
+      onOther(said);
+      return;
+    }
     if (!logged) {
       later(tick, LOGIN_POLL_MS);
       return;
@@ -1878,14 +1925,18 @@ function showDone() {
       h('p', { class: 'note' }, 'Ton cerveau retrouve tes notes par mots-clés. Il peut aussi les retrouver par le sens.'),
       button('Activer la recherche par le sens', () => addMeaning(showDone), { kind: 'secondary', small: true, act: 'voyage' })));
   }
-  // The preferred one does the onboarding.
-  ui.screen.append(h('p', { class: 'note' }, `Dernière chose : présente-toi à ${names.length > 1 ? first : 'lui'}. Il te pose quelques questions pour te connaître.`));
+  // The preferred one does the onboarding. Codex only on the login the kit uses (§4.3): logged in
+  // another way it would bill a key, or offer one on its first screen, so its login comes first.
+  const codexOff = chose('codex') && state.codexLogin !== 'chatgpt';
+  const loginFirst = codexOff && chosenAgents()[0] === 'codex';
+  const who = names.length > 1 ? first : 'lui';
+  ui.screen.append(h('p', { class: 'note' }, loginFirst
+    ? `Dernière chose : connecte Codex à ton compte ChatGPT, puis présente-toi à ${who}. Il te pose quelques questions pour te connaître.`
+    : `Dernière chose : présente-toi à ${who}. Il te pose quelques questions pour te connaître.`));
   if (state.loginSkipped) {
     ui.screen.append(h('p', { class: 'note' }, 'Pense à connecter ton compte Claude : il te le demandera au premier lancement.'));
   }
-  if (state.codexLoginSkipped) {
-    ui.screen.append(h('p', { class: 'note' }, 'Pense à connecter Codex à ton compte ChatGPT : il te le demandera au premier lancement.'));
-  }
+  if (codexOff) ui.screen.append(h('p', { class: 'note' }, codexLoginNote(state.codexLogin)));
 
   // A double click would open two Terminal windows, or Obsidian twice: the
   // button rests a few seconds.
@@ -1901,9 +1952,46 @@ function showDone() {
   }
 
   const vault = button('Ouvrir mon cerveau dans Obsidian', () => act(vault, 'open_vault', 'J’ouvre Obsidian…', 'Ton cerveau est dans Documents › Brain.'), { kind: 'secondary', act: 'vault' });
-  const onboard = button('Personnaliser mon cerveau (15 min)', () => act(onboard, 'start_onboarding', 'C’est parti !', `Une ${OS.window} s’ouvre : réponds aux questions de ${first}.`), { act: 'next' });
-  ui.actions.append(vault, onboard);
+  ui.actions.append(vault);
+  if (loginFirst) {
+    // Settings of the system no login fixes: nothing more to offer here.
+    if (state.codexLogin !== 'system') {
+      const connect = connectButton(AIS.codex, () => connectThenDone(connect));
+      ui.actions.append(connect);
+    }
+  } else {
+    const onboard = button('Personnaliser mon cerveau (15 min)', () => act(onboard, 'start_onboarding', 'C’est parti !', `Une ${OS.window} s’ouvre : réponds aux questions de ${first}.`), { act: 'next' });
+    ui.actions.append(onboard);
+  }
   focusMain();
+}
+
+// Why Codex is not used yet, under the end's message.
+function codexLoginNote(said) {
+  if (said === 'billed') return 'Codex est encore connecté avec une clé API, qui serait facturée : je ne m’en sers pas. Connecte-le à ton compte ChatGPT : ta connexion remplacera la clé.';
+  if (said === 'managed') return 'Codex est connecté avec un compte ChatGPT d’entreprise : je ne m’en sers pas. Connecte-le avec ton abonnement ChatGPT personnel.';
+  if (said === 'system') return `Codex suit des réglages de ce ${OS.machine} qu’un autre compte peut modifier : je ne m’en sers pas tant que ce n’est pas réglé.`;
+  return 'Pense à connecter Codex à ton compte ChatGPT. S’il te le demande au premier lancement, choisis « Sign in with ChatGPT », jamais une clé API : elle serait facturée.';
+}
+
+// Codex's login from the end: once it is the one the kit uses (or another one), the end again.
+async function connectThenDone(btn) {
+  const gen = view.gen;
+  btn.disabled = true;
+  try {
+    await invoke(LOGINS.codex.open);
+  } catch (e) {
+    if (gen !== view.gen) return;
+    say('worried', 'La fenêtre ne s’est pas ouverte.', errText(e));
+    btn.disabled = false;
+    return;
+  }
+  if (gen !== view.gen) return;
+  say('thinking', 'J’attends que tu te connectes…', `Suis les étapes ${OS.inTerminal}.`);
+  btn.textContent = 'Rouvrir la fenêtre';
+  btn.className = 'btn btn-secondary';
+  btn.disabled = false;
+  poll(showDone, 'codex', showDone, state.codexLogin);
 }
 
 // ── Start ──────────────────────────────────────────────────────────────────
