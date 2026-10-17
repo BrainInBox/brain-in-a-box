@@ -390,6 +390,10 @@ jobs:
         run: cargo clippy --locked --all-targets -- -D warnings
       - name: The window's script parses
         run: node --check ../src/app.js
+      # Every screen of the mock's scenarios with Claude alone, word for word as screens-claude.txt
+      # holds them (master's, before Codex), and the checks of Codex's screens where the mock opens it.
+      - name: The window's screens with Claude alone have not changed
+        run: node ../dev/screens.mjs
 
       - name: Without its window, the app examines the PC and says so in JSON
         if: runner.os == 'Windows'
