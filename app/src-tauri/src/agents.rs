@@ -128,7 +128,7 @@ fn parse(stdout: &str) -> Option<Agents> {
     order.sort_by_key(|e| *e != prefere);
     let codex_home = match v.get("codex_home")? {
         Value::Null => None,
-        Value::String(h) => Some(PathBuf::from(h)).filter(|p| p.is_absolute()),
+        Value::String(h) if Path::new(h).is_absolute() => Some(PathBuf::from(h)),
         _ => return None,
     };
     if codex_home.is_some() != order.contains(&Engine::Codex) {
@@ -302,6 +302,7 @@ pub(crate) mod tests {
             r#"{"etat": "ok", "agents": ["codex"], "prefere": "codex", "codex_home": null}"#,
             r#"{"etat": "ok", "agents": ["claude"], "prefere": "claude", "codex_home": "/c"}"#,
             r#"{"etat": "ok", "agents": ["codex"], "prefere": "codex", "codex_home": "relative"}"#,
+            r#"{"etat": "ok", "agents": ["claude"], "prefere": "claude", "codex_home": "relative"}"#,
             r#"{"etat": "ok", "agents": ["claude"], "prefere": "claude"}"#,
         ] {
             assert_eq!(ok(bad), None, "{bad}");

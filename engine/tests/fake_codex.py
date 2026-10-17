@@ -131,8 +131,9 @@ def exec_(args, c):
         with open(args[args.index("--output-schema") + 1], encoding="utf-8") as f:
             record("schema.json", f.read())
     if c.get("model_instructions_file"):
-        with open(json.loads(c["model_instructions_file"]), encoding="utf-8") as f:
-            record("system.md", f.read())
+        # Byte for byte: text mode would turn its line ends into the system's.
+        with open(json.loads(c["model_instructions_file"]), "rb") as f, open(os.path.join(FAKE, "system.md"), "wb") as out:
+            out.write(f.read())
     for key in c:
         if key.startswith("mcp_servers.") and key.split(".")[1] not in listing("mcp-system"):
             sys.stderr.write("Error loading config.toml: invalid transport in `%s`\n" % key.rsplit(".", 1)[0])
