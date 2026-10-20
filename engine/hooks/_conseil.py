@@ -5,11 +5,13 @@ are only looked for, never opened; of `claude auth status` only authMethod is ke
 
 While Codex is closed on this system (_agents.py's CODEX_OUVERT, the one source), the advice never
 offers Codex: it may say it is coming. Brain in a Box does not install Hermes: when it is there, one
-more sentence says so.
+more sentence says so, and that the evening reflection reads its conversations only where it does
+(daily-reflection.py reads $HERMES_DB, else ~/.hermes/state.db).
 
 The rules and the sentences are the JSON block CONSEIL_JSON below, which the app reads too
 (app/src-tauri, include_str! of this file) and applies to what it probes itself: one source for both.
-Rules are tried in order; the first whose every condition ("si") matches the facts gives the advice.
+Rules are tried in order; the first whose every condition ("si") matches the facts gives the advice,
+and the first of "hermes" that matches, Hermes's sentence.
 
     conseil()                       {"conseil": "claude" | "codex" | "les_deux", "phrase": ...,
                                      "hermes": ... or None, "vu": {fact: bool}}
@@ -34,7 +36,8 @@ CONSEIL_JSON = r"""
     "claude_connecte": "Claude Code is logged in (authMethod claude.ai or oauth_token)",
     "chatgpt": "the ChatGPT or Codex desktop app, Codex, or Codex's login is on this computer",
     "chatgpt_connecte": "Codex's auth.json exists (never opened)",
-    "hermes": "Hermes Agent is on this computer"
+    "hermes": "Hermes Agent is on this computer",
+    "hermes_lu": "the evening reflection reads Hermes's conversations: $HERMES_DB, else ~/.hermes/state.db, is there"
   },
   "regles": [
     {"si": {"porte": false, "claude_connecte": true}, "conseil": "claude", "phrase": "claude_connecte"},
@@ -47,14 +50,19 @@ CONSEIL_JSON = r"""
     {"si": {"porte": true, "chatgpt": true}, "conseil": "codex", "phrase": "codex"},
     {"si": {"porte": true}, "conseil": "claude", "phrase": "rien"}
   ],
+  "hermes": [
+    {"si": {"hermes": true, "hermes_lu": true}, "phrase": "hermes_lu"},
+    {"si": {"hermes": true}, "phrase": "hermes"}
+  ],
   "phrases": {
     "claude_connecte": "Tu as déjà Claude Code, connecté à ton abonnement : ton cerveau travaillera avec lui.",
     "claude_vu": "Tu utilises déjà Claude : ton cerveau travaillera avec lui (il te faudra un abonnement Pro ou Max pour Claude Code).",
-    "chatgpt_bientot": "Tu utilises ChatGPT : ton cerveau marche avec Claude pour l'instant (abonnement Pro ou Max) ; Codex, l'IA de ChatGPT, arrive bientôt ici. À la fin, tu pourras y apporter ta mémoire ChatGPT.",
+    "chatgpt_bientot": "Tu utilises ChatGPT : ton cerveau marche avec Claude, il te faudra un abonnement Claude Pro ou Max (ton abonnement ChatGPT ne suffit pas). Codex, l'IA de ChatGPT, arrive bientôt ici. À la fin, tu pourras apporter à ton cerveau ce que ChatGPT sait de toi.",
     "rien": "Ton cerveau marche avec Claude : il te faudra un abonnement Claude Pro ou Max.",
-    "codex": "Tu utilises ChatGPT : ton cerveau peut travailler avec Codex, l'IA de ChatGPT, sur ton abonnement ChatGPT. À la fin, tu pourras y apporter ta mémoire ChatGPT.",
+    "codex": "Tu utilises ChatGPT : ton cerveau peut travailler avec Codex, l'IA de ChatGPT, sur ton abonnement ChatGPT. À la fin, tu pourras apporter à ton cerveau ce que ChatGPT sait de toi.",
     "les_deux": "Tu as Claude et ChatGPT : ton cerveau peut travailler avec les deux, Claude d'abord.",
-    "hermes": "J'ai vu Hermes : je ne l'installe pas et n'y touche pas ; ses meilleures compétences sont déjà dans Claude, et ton résumé du soir lit aussi ses conversations."
+    "hermes": "J'ai vu Hermes : je ne l'installe pas et n'y touche pas. Ses meilleures compétences arrivent dans Claude avec ton cerveau.",
+    "hermes_lu": "J'ai vu Hermes : je ne l'installe pas et n'y touche pas. Ses meilleures compétences arrivent dans Claude avec ton cerveau, et chaque soir ton cerveau lit aussi ses conversations."
   }
 }
 """
@@ -105,6 +113,11 @@ def _hermes(home, env):
     return any(os.path.isfile(os.path.join(d, exe)) for d in [os.path.join(home, ".local", "bin")] + dirs)
 
 
+def _hermes_lu(home, env):
+    """daily-reflection.py's HERMES_DB is there."""
+    return _existe((env.get("HERMES_DB") or "").strip() or os.path.join(home, ".hermes", "state.db"))
+
+
 def _methode(argv0):
     """authMethod of `claude auth status`, run as the questions are (a private folder, an allow-list
     environment); None when it cannot tell."""
@@ -135,11 +148,13 @@ def sondes(home=None, env=None, claude=None, codex=None, applications=None, code
     return {"porte": _agents.ouvert("codex", codex_ouvert=codex_ouvert),
             "claude": bool(claude) or apps["claude"], "claude_connecte": connecte,
             "chatgpt": bool(codex) or auth or apps["chatgpt"], "chatgpt_connecte": auth,
-            "hermes": _hermes(home, env)}
+            "hermes": _hermes(home, env), "hermes_lu": _hermes_lu(home, env)}
 
 
 def conseil(faits=None, **kw):
     faits = faits if faits is not None else sondes(**kw)
     choix, cle = decider(faits)
     p = REGLES["phrases"]
-    return {"conseil": choix, "phrase": p[cle], "hermes": p["hermes"] if faits.get("hermes") else None, "vu": faits}
+    hermes = next((r["phrase"] for r in REGLES["hermes"] if all(bool(faits.get(k)) == v for k, v in r["si"].items())),
+                  None)
+    return {"conseil": choix, "phrase": p[cle], "hermes": p[hermes] if hermes else None, "vu": faits}

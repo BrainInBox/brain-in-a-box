@@ -40,7 +40,7 @@ class Conseil(unittest.TestCase):
         (self.home / ".claude" / "fake").mkdir(parents=True)
         self.apps.mkdir()
         self.saved_env = dict(os.environ)
-        for k in ("CODEX_HOME", "HERMES_HOME", "CLAUDE_CODE_OAUTH_TOKEN"):
+        for k in ("CODEX_HOME", "HERMES_HOME", "HERMES_DB", "CLAUDE_CODE_OAUTH_TOKEN"):
             os.environ.pop(k, None)
         os.environ.update(HOME=str(self.home), USERPROFILE=str(self.home), LOCALAPPDATA=str(self.home / "AppData"),
                           PATH=str(self.root / "nobin"))
@@ -132,6 +132,40 @@ class Conseil(unittest.TestCase):
         (self.root / "ailleurs" / "state.db").write_bytes(b"")
         self.assertIsNotNone(self.ask()["hermes"])
 
+    def test_the_evening_reading_of_hermes_is_said_only_where_it_happens(self):
+        # The reflection reads $HERMES_DB, else ~/.hermes/state.db (daily-reflection.py): only then is it said.
+        soir = "chaque soir ton cerveau lit aussi ses conversations"
+        (self.home / ".hermes").mkdir()
+        (self.home / ".hermes" / "config.yaml").write_text("model: x\n", encoding="utf-8")
+        c = self.ask()
+        self.assertTrue(c["vu"]["hermes"] and not c["vu"]["hermes_lu"])
+        self.assertNotIn("soir", c["hermes"])
+        (self.home / ".hermes" / "state.db").write_bytes(b"")
+        self.assertIn(soir, self.ask()["hermes"])
+        # Hermes elsewhere: seen, but its conversations are not where the reflection looks.
+        shutil.rmtree(str(self.home / ".hermes"))
+        os.environ["HERMES_HOME"] = str(self.root / "ailleurs")
+        (self.root / "ailleurs").mkdir()
+        (self.root / "ailleurs" / "state.db").write_bytes(b"")
+        c = self.ask()
+        self.assertTrue(c["vu"]["hermes"] and not c["vu"]["hermes_lu"])
+        self.assertNotIn("soir", c["hermes"])
+        os.environ["HERMES_DB"] = str(self.root / "ailleurs" / "state.db")
+        self.assertIn(soir, self.ask()["hermes"])
+        # Nothing is promised before the brain is there: its skills come with it.
+        for h in (c["hermes"], self.ask()["hermes"]):
+            self.assertIn("arrivent dans Claude avec ton cerveau", h)
+            self.assertNotIn("déjà dans Claude", h)
+
+    def test_a_chatgpt_user_is_told_which_subscription(self):
+        self.app("ChatGPT")
+        p = self.ask()["phrase"]
+        self.assertIn("abonnement Claude Pro ou Max", p)
+        self.assertIn("ton abonnement ChatGPT ne suffit pas", p)
+        self.assertIn("ce que ChatGPT sait de toi", p)
+        for phrase in _conseil.REGLES["phrases"].values():
+            self.assertNotIn(" y apporter", phrase)
+
     def test_no_login_file_is_ever_opened(self):
         self.codex_login()
         (self.home / ".hermes").mkdir()
@@ -167,7 +201,11 @@ class Conseil(unittest.TestCase):
         block = json.loads(text[start:text.index('\n"""', start)])
         self.assertEqual(block, _conseil.REGLES)
         self.assertEqual(set(block["faits"]), {"porte", "claude", "claude_connecte", "chatgpt", "chatgpt_connecte",
-                                               "hermes"})
+                                               "hermes", "hermes_lu"})
+        for r in block["hermes"]:
+            self.assertLessEqual(set(r["si"]), set(block["faits"]))
+            self.assertTrue(r["si"]["hermes"])
+            self.assertIn(r["phrase"], block["phrases"])
         for r in block["regles"]:
             self.assertLessEqual(set(r["si"]), set(block["faits"]))
             self.assertIn(r["phrase"], block["phrases"])
@@ -182,13 +220,14 @@ class Conseil(unittest.TestCase):
         (self.home / ".hermes" / "state.db").write_bytes(b"")
         with mock.patch.object(_conseil, "sondes", lambda **kw: {"porte": False, "claude": False,
                                                                  "claude_connecte": False, "chatgpt": True,
-                                                                 "chatgpt_connecte": False, "hermes": True}):
+                                                                 "chatgpt_connecte": False, "hermes": True,
+                                                                 "hermes_lu": True}):
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
                 rc = im.main(["conseil"])
         self.assertEqual(rc, 0)
         lines = out.getvalue().strip().split("\n")
-        self.assertEqual(lines, [_conseil.REGLES["phrases"]["chatgpt_bientot"], _conseil.REGLES["phrases"]["hermes"]])
+        self.assertEqual(lines, [_conseil.REGLES["phrases"]["chatgpt_bientot"], _conseil.REGLES["phrases"]["hermes_lu"]])
 
 
 if __name__ == "__main__":

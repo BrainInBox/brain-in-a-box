@@ -28,7 +28,15 @@ const SUBSCRIBED: [&str; 2] = ["claude.ai", "oauth_token"];
 #[derive(Deserialize)]
 struct Rules {
     regles: Vec<Rule>,
+    /// Hermes's sentence: the first whose conditions match.
+    hermes: Vec<HermesRule>,
     phrases: BTreeMap<String, String>,
+}
+
+#[derive(Deserialize)]
+struct HermesRule {
+    si: BTreeMap<String, bool>,
+    phrase: String,
 }
 
 #[derive(Deserialize)]
@@ -62,6 +70,8 @@ pub struct Facts {
     pub chatgpt_connecte: bool,
     /// Hermes Agent is on this computer.
     pub hermes: bool,
+    /// The evening reflection reads Hermes's conversations: $HERMES_DB, else ~/.hermes/state.db, is there.
+    pub hermes_lu: bool,
 }
 
 impl Facts {
@@ -74,6 +84,7 @@ impl Facts {
             "chatgpt" => self.chatgpt,
             "chatgpt_connecte" => self.chatgpt_connecte,
             "hermes" => self.hermes,
+            "hermes_lu" => self.hermes_lu,
             _ => false,
         }
     }
@@ -83,11 +94,12 @@ impl Facts {
 /// None only if the block cannot be read (a test proves it can).
 pub fn decide(f: &Facts) -> Option<Advice> {
     let rules = RULES.as_ref()?;
-    let rule = rules.regles.iter().find(|r| r.si.iter().all(|(k, v)| f.get(k) == *v))?;
+    let matches = |si: &BTreeMap<String, bool>| si.iter().all(|(k, v)| f.get(k) == *v);
+    let rule = rules.regles.iter().find(|r| matches(&r.si))?;
     Some(Advice {
         conseil: rule.conseil.clone(),
         text: rules.phrases.get(&rule.phrase)?.clone(),
-        hermes: f.hermes.then(|| rules.phrases.get("hermes").cloned()).flatten(),
+        hermes: rules.hermes.iter().find(|r| matches(&r.si)).and_then(|r| rules.phrases.get(&r.phrase).cloned()),
     })
 }
 
@@ -123,6 +135,7 @@ fn probe_with(p: &Place, claude_bin: bool, method: Option<&str>, codex_bin: bool
         chatgpt: codex_bin || auth || chatgpt_app,
         chatgpt_connecte: auth,
         hermes: hermes(p),
+        hermes_lu: hermes_read(p),
     }
 }
 
@@ -179,6 +192,13 @@ fn hermes(p: &Place) -> bool {
         .any(|d| d.join(&exe).is_file())
 }
 
+/// daily-reflection.py's HERMES_DB ($HERMES_DB, else ~/.hermes/state.db) is there: the evening
+/// reflection reads Hermes's conversations.
+fn hermes_read(p: &Place) -> bool {
+    let set = (p.env)("HERMES_DB").map(|v| v.to_string_lossy().trim().to_string()).unwrap_or_default();
+    there(&if set.is_empty() { p.home.join(".hermes").join("state.db") } else { PathBuf::from(set) })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -191,7 +211,7 @@ mod tests {
     }
 
     fn all_facts() -> Vec<Facts> {
-        (0..64u8)
+        (0..128u8)
             .map(|b| Facts {
                 porte: b & 1 != 0,
                 claude: b & 2 != 0,
@@ -199,6 +219,7 @@ mod tests {
                 chatgpt: b & 8 != 0,
                 chatgpt_connecte: b & 16 != 0,
                 hermes: b & 32 != 0,
+                hermes_lu: b & 64 != 0,
             })
             .collect()
     }
@@ -234,7 +255,12 @@ mod tests {
         let a = decide(&Facts { hermes: true, ..Facts::default() }).unwrap();
         let h = a.hermes.expect("a sentence when Hermes is there");
         assert!(h.contains("je ne l'installe pas"), "{h}");
+        // The evening reading only where the reflection reads it.
+        assert!(!h.contains("soir"), "{h}");
+        let read = decide(&Facts { hermes: true, hermes_lu: true, ..Facts::default() }).unwrap().hermes.unwrap();
+        assert!(read.contains("chaque soir ton cerveau lit aussi ses conversations"), "{read}");
         assert!(decide(&Facts::default()).unwrap().hermes.is_none());
+        assert!(decide(&Facts { hermes_lu: true, ..Facts::default() }).unwrap().hermes.is_none());
     }
 
     /// The kit's _conseil.decider and conseil() on every case: the same advice, word for word.
@@ -255,7 +281,7 @@ mod tests {
         let out = child.wait_with_output().unwrap();
         assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
         let theirs: Vec<Value> = serde_json::from_slice(&out.stdout).unwrap();
-        assert_eq!(theirs.len(), 64);
+        assert_eq!(theirs.len(), 128);
         for (f, t) in all_facts().iter().zip(theirs) {
             let a = decide(f).unwrap();
             assert_eq!(json!({"conseil": a.conseil, "phrase": a.text, "hermes": a.hermes}), t, "{f:?}");
@@ -331,6 +357,15 @@ mod tests {
         let env = move |k: &str| (k == "HERMES_HOME").then(|| set.clone());
         let other = tempfile::tempdir().unwrap();
         assert!(hermes(&place(other.path(), &env, Vec::new())));
+        // What the evening reflection reads: ~/.hermes/state.db, or $HERMES_DB.
+        assert!(!hermes_read(&place(other.path(), &env, Vec::new())));
+        fs::write(elsewhere.join("state.db"), "").unwrap();
+        let db = elsewhere.join("state.db").into_os_string();
+        let env_db = move |k: &str| (k == "HERMES_DB").then(|| db.clone());
+        assert!(hermes_read(&place(other.path(), &env_db, Vec::new())));
+        assert!(!hermes_read(&p));
+        fs::write(home.join(".hermes/state.db"), "").unwrap();
+        assert!(hermes_read(&p));
 
         let bin = other.path().join(".local").join("bin");
         fs::create_dir_all(&bin).unwrap();
