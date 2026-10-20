@@ -63,8 +63,10 @@ same file later resumes the rest.
 ## Getting the export
 
 - **ChatGPT**: Settings > Data controls > Export data. An e-mail arrives with a link valid
-  24 hours: download the .zip. Recent exports no longer carry ChatGPT's saved memories:
-  for those, the copy-paste works better.
+  24 hours: download the .zip. Recent exports often no longer carry ChatGPT's saved
+  memories: for those, the copy-paste works better. If the browser opened the .zip into a
+  folder (Safari does), the user zips that folder again (right click > Compress) and gives
+  that .zip.
 - **Claude** (claude.ai, web or desktop app, not the phone): Settings > Privacy > Export
   data. An e-mail with a link valid 24 hours (signed in). It may be one .zip, several
   .zip, or a small file of links: the user opens the links in their browser and downloads

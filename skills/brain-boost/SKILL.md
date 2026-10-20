@@ -36,6 +36,9 @@ yourself. Ask them to type something only when it must stay out of the chat
     more. Needs Node.js 20 or later; the skill explains how to get it.
   - `controle`: the night check (what it fixed, what to look at, undoing a
     fix, gbrain's updates).
+  - `importer-memoire`: brings what ChatGPT or Claude (claude.ai) knows of the
+    user into the brain, from their export or a copy-paste, and says which AI
+    suits them.
 - **Night shift**: the vault is re-indexed every night and the day's
   sessions are summarized. The night check masks secrets, archives old
   memory and flags contradictions, one undoable git commit per fix, report in

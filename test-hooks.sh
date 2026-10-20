@@ -1760,7 +1760,8 @@ done
 # kit's copies of the sources this change touches and installed.json; this one's re-run leaves the
 # install as it found it; ~/.codex untouched, no ~/.agents. What the change adds (a source, a launcher,
 # a skill master has not) is the one more thing: the lines that name it, its files, the skills'
-# manifest; each of those lines must be there. Master is origin/master, which test.yml fetches;
+# manifest; each of those lines must be there. A skill master has too and this change edits: its
+# files differ, and the skills' manifest. Master is origin/master, which test.yml fetches;
 # .github/ci/same-as-master.ps1 is install.ps1's.
 MK="$IX/master-kit"; rm -rf "$MK"; mkdir -p "$MK"
 if git -C "$REPO" rev-parse -q --verify origin/master >/dev/null 2>&1 \
@@ -1771,6 +1772,7 @@ if git -C "$REPO" rev-parse -q --verify origin/master >/dev/null 2>&1 \
   # What it adds: the line install.sh prints for each new copy, install_skills.py's for a new skill.
   added=$(git -C "$REPO" diff --diff-filter=A --name-only origin/master -- engine/hooks engine/bin skills)
   added_skills=$(printf '%s\n' "$added" | sed -nE 's#^skills/([^/]+)/SKILL\.md$#\1#p' | sort -u)
+  edited_skills=$(git -C "$REPO" diff --diff-filter=M --name-only origin/master -- skills | sed 's#^skills/#.claude/skills/#')
   smesc(){ printf '%s' "$1" | sed 's/[][\.*^$()+?{}|/]/\\&/g'; }
   : > "$IX/sm-added"
   for n in $(printf '%s\n' "$added" | sed -nE 's#^engine/(hooks|bin)/([^/]+)$#\2#p' | sort -u); do
@@ -1814,9 +1816,10 @@ if git -C "$REPO" rev-parse -q --verify origin/master >/dev/null 2>&1 \
     want=$(cut -d' ' -f1 "$IX/sm-b.tree" | while read -r f; do
       printf '%s\n' "$changed" | grep -qxF "$(basename "$f")" && echo "$f"
       for sk in $added_skills; do [ "${f#".claude/skills/$sk/"}" = "$f" ] || echo "$f"; done
+      printf '%s\n' "$edited_skills" | grep -qxF "$f" && echo "$f"
     done)
     [ -n "$want" ] && want=$(printf '%s\n.brain-in-a-box/installed.json\n' "$want" | sort -u)
-    [ -n "$added_skills" ] && want=$(printf '%s\n.brain-in-a-box/skills.json\n' "$want" | sort -u)
+    [ -n "$added_skills$edited_skills" ] && want=$(printf '%s\n.brain-in-a-box/skills.json\n' "$want" | sort -u)
     [ "$apart" = "$want" ] || bad="$bad $choice:files[$(echo $apart)]not[$(echo $want)]"
     ixtree | grep -E '^\.(codex|agents)/' | cmp -s - "$IX/sm-codex" || bad="$bad $choice:user-codex"
   done
