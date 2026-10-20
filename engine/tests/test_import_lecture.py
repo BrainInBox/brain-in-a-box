@@ -272,7 +272,7 @@ class Hostiles(unittest.TestCase):
             self.assertEqual(list(L.valeurs(morceaux)), [L.TROP_GROS])
         self.assertEqual(len(list(L.valeurs(['[{"mapping": [' + "[]," * 1000 + "[]]}]"]))[0]["mapping"]), 1001)
 
-    @unittest.skipUnless(POSIX, "ru_maxrss: macOS and Linux")
+    @unittest.skipUnless(POSIX, "the peak of memory: macOS and Linux")
     def test_such_an_element_in_a_json_export_keeps_memory_low(self):
         # A .json given alone has no compression ratio to check: 12 MB of text, 4 million lists.
         good = F.chatgpt_conversations(2)
@@ -281,19 +281,21 @@ class Hostiles(unittest.TestCase):
         p = d / "conversations.json"
         p.write_text("[" + F.js(good[0]) + ', {"mapping": [' + "[]," * 4000000 + "[]]}, " + F.js(good[1]) + "]",
                      encoding="utf-8")
+        # The peak of this process alone: Linux's ru_maxrss outlives exec (the test runner's own, forked),
+        # its VmHWM does not; macOS's ru_maxrss, in bytes, starts again at exec.
         script = ("import resource, sys\nsys.path.insert(0, sys.argv[1])\nimport _import_lecture as L\n"
                   "with open(sys.argv[2], 'rb') as f:\n    lec = L.lire_fichiers([f])\n"
-                  "print(lec.compte['conversations'], lec.compte['trop_gros'], "
-                  "resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)")
+                  "try:\n    pic = [int(l.split()[1]) * 1024 for l in open('/proc/self/status')\n"
+                  "           if l.startswith('VmHWM:')][0]\n"
+                  "except OSError:\n    pic = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss\n"
+                  "print(lec.compte['conversations'], lec.compte['trop_gros'], pic)")
         out = subprocess.run([sys.executable, "-I", "-c", script, str(HERE.parent / "hooks"), str(p)],
                              capture_output=True, text=True, timeout=300)
         self.assertEqual(out.returncode, 0, out.stderr)
-        conversations, trop_gros, rss = (int(x) for x in out.stdout.split())
-        rss = rss if sys.platform == "darwin" else rss * 1024
+        conversations, trop_gros, pic = (int(x) for x in out.stdout.split())
         self.assertEqual((conversations, trop_gros), (2, 1))
-        # Skipped as it streams once past its count: not held whole either (Linux's malloc kept 449 MB
-        # of a 12 MB element growing in one string; 30 MB on a Mac).
-        self.assertLess(rss, 100 << 20, "%d MB at the peak" % (rss >> 20))
+        # Before: json built the 4 million lists (385 MB on a Mac); then the element was held whole (100 MB).
+        self.assertLess(pic, 80 << 20, "%d MB at the peak" % (pic >> 20))
 
     def test_a_huge_message_is_skipped_as_it_streams(self):
         data = F.message_geant()   # 100 MB, in one message
