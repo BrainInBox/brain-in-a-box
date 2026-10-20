@@ -665,6 +665,16 @@ mod tests {
         session().note = None;
     }
 
+    /// The picker is opened from Rust: the window gets no dialog of its own, nor any plugin's command.
+    #[test]
+    fn the_window_can_open_no_dialog() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let caps: Value = serde_json::from_str(&std::fs::read_to_string(dir.join("capabilities/default.json")).unwrap()).unwrap();
+        assert_eq!(caps["permissions"], serde_json::json!(["core:default"]));
+        let cargo = std::fs::read_to_string(dir.join("Cargo.toml")).unwrap();
+        assert!(!cargo.contains("tauri-plugin"), "a Tauri plugin in Cargo.toml");
+    }
+
     #[test]
     fn the_importers_errors_are_masked_and_short() {
         let e = engine_error(&serde_json::json!({"code": "cerveau_absent", "message": "Je ne trouve pas ton cerveau (/Users/jo/Brain) sk-ant-api03-SECRETSECRETSECRET\nici"}));
