@@ -263,6 +263,8 @@ pub fn read_files(kit: &Kit, paths: &[PathBuf], progress: &mut dyn FnMut(Value))
             }
             Err(e) => {
                 if let Some(id) = id {
+                    // Stopped by « Arrêter » too: the plan begun goes all the same.
+                    CANCEL.store(false, Ordering::SeqCst);
                     annuler(kit, &id);
                 }
                 return Err(e);
