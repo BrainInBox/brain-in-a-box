@@ -291,7 +291,9 @@ class Hostiles(unittest.TestCase):
         conversations, trop_gros, rss = (int(x) for x in out.stdout.split())
         rss = rss if sys.platform == "darwin" else rss * 1024
         self.assertEqual((conversations, trop_gros), (2, 1))
-        self.assertLess(rss, 200 << 20, "%d MB at the peak" % (rss >> 20))
+        # Skipped as it streams once past its count: not held whole either (Linux's malloc kept 449 MB
+        # of a 12 MB element growing in one string; 30 MB on a Mac).
+        self.assertLess(rss, 100 << 20, "%d MB at the peak" % (rss >> 20))
 
     def test_a_huge_message_is_skipped_as_it_streams(self):
         data = F.message_geant()   # 100 MB, in one message

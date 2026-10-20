@@ -415,7 +415,7 @@ def _valeur(f, dec, limite):
             i, prof, chaine, fin, haut, nb = _avance(f.buf, i, prof, chaine, haut, nb)
         if fin is not None:
             break
-        if garde and i - debut > limite:
+        if garde and (i - debut > limite or nb > VALEURS_MAX):
             garde = False                  # skipped as it streams: only the scanner's state goes on
         coupe = debut if garde else i
         if not f.plus(coupe):
