@@ -480,6 +480,8 @@ mod tests {
         path
     }
 
+    /// The fake Claude's answer to the n-th request (the requests run on macOS and Linux only).
+    #[cfg(unix)]
     fn answer(b: &Bench, n: usize, facts: &Value) {
         let p = b.home.join(".claude/fake/answers").join(format!("{n}.json"));
         std::fs::write(p, facts.to_string()).unwrap();
