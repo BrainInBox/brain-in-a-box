@@ -1813,7 +1813,7 @@ if git -C "$REPO" rev-parse -q --verify origin/master >/dev/null 2>&1 \
     apart=$(diff "$IX/sm-m.tree" "$IX/sm-b.tree" | sed -n 's/^[<>] \([^ ]*\) .*/\1/p' | sort -u)
     want=$(cut -d' ' -f1 "$IX/sm-b.tree" | while read -r f; do
       printf '%s\n' "$changed" | grep -qxF "$(basename "$f")" && echo "$f"
-      for sk in $added_skills; do case "$f" in ".claude/skills/$sk/"*) echo "$f";; esac; done
+      for sk in $added_skills; do [ "${f#".claude/skills/$sk/"}" = "$f" ] || echo "$f"; done
     done)
     [ -n "$want" ] && want=$(printf '%s\n.brain-in-a-box/installed.json\n' "$want" | sort -u)
     [ -n "$added_skills" ] && want=$(printf '%s\n.brain-in-a-box/skills.json\n' "$want" | sort -u)
