@@ -385,7 +385,7 @@ python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import import_fixtur
   && ok "no secret, account data nor hidden text of the export in the vault, the output, the prompt or the state" \
   || no "a canary leaked: $(grep -rlF -f "$IM/canaries" "$IV" "$IM/out-lancer" "$IF/prompts" "$IM/.brain-in-a-box")"
 imr preparer "$IM/fx/chatgpt-2026.zip" > "$IM/out-again" 2>&1; rc=$?
-[ "$rc" = 3 ] && [ "$(imcalls)" = "$PN" ] && grep -q "Déjà importé" "$IM/out-again" \
+[ "$rc" = 3 ] && [ "$(imcalls)" = "$PN" ] && grep -q "Tu l.as déjà importé le " "$IM/out-again" \
   && ok "the same export again: already imported, nothing asked" || no "re-import not recognised (rc $rc)"
 
 echo "════ 6) gbrain-selfupdate.sh — relays to gbrain_update.py (the 7-day rule: engine/tests) ════"

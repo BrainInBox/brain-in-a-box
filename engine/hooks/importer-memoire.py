@@ -51,7 +51,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _import_lecture as lecture  # noqa: E402
 import _controle_rules as rules  # noqa: E402
-from _redact import MASK, redact  # noqa: E402
+from _redact import MASK, find_secrets, redact  # noqa: E402
 from _vault_write import clean_item, write_atomic  # noqa: E402
 
 SENTINEL = "<!-- brain-import-memoire -->"
@@ -239,6 +239,16 @@ def deja(empreinte, brain=None):
     return None
 
 
+def _dire_deja(fait):
+    """Where an import already took this file, in words."""
+    jour = fait.get("date") or ""
+    quand = " le " + _date_fr(jour) if _jour_valide(jour) else ""
+    note = fait.get("note") or ""
+    if note:
+        return "Tu l'as déjà importé%s : c'est dans la note Imports › %s." % (quand, Path(note).stem)
+    return "Tu l'as déjà importé%s : je n'y avais trouvé aucun fait à garder." % quand
+
+
 def _court(empreintes):
     return hashlib.sha256("\n".join(sorted(empreintes)).encode()).hexdigest()[:12]
 
@@ -363,17 +373,19 @@ def besoin(plan):
 
 # --------------------------------------------------------------------------- the prompt
 
+BALISE = re.compile(r"<\s*(/?)\s*(memoires|projets|conversations|collage)\b", re.I)
+
+
 def _donnees(texte):
     """Text for inside one of the prompt's tags: it can neither open nor close one, nor forge a block's
     header line."""
-    texte = re.sub(r"<\s*(/?)\s*(memoires|projets|conversations|collage)\b", r"‹\1\2", texte, flags=re.I)
-    return re.sub(r"(?m)^(\s*)\[(?=\s*[a-z]\d+\s*·)", r"\1(", texte)
+    return re.sub(r"(?m)^(\s*)\[(?=\s*[a-z]\d+\s*·)", r"\1(", BALISE.sub(r"‹\1\2", texte))
 
 
 def _entete(b):
     parts = [b["ref"], ENTETES.get(b["genre"], b["genre"])]
     if b["genre"] in ("conversation", "projet", "memoire_projet"):
-        parts.append("« %s »" % b["titre"])
+        parts.append("« %s »" % BALISE.sub(r"‹\1\2", b["titre"]))
     elif b["genre"] in ("souvenir", "instructions"):
         parts.append(b["titre"])
     if b.get("date"):
@@ -442,14 +454,15 @@ def moteurs():
 
 def vers(ordre):
     """Where the text goes, said before anything leaves."""
-    noms = {"claude": ("Claude", "Claude Code sur cet ordinateur, ton abonnement"),
-            "codex": ("Codex", "Codex sur cet ordinateur, ton abonnement ChatGPT")}
+    noms = {"claude": ("Claude", "Anthropic", "par Claude Code et ton abonnement"),
+            "codex": ("Codex", "OpenAI", "par Codex et ton abonnement ChatGPT")}
     if not ordre:
         return "nulle part : aucune IA n'est utilisable (relance l'installation)"
-    nom, ou = noms[ordre[0]]
+    nom, chez, par = noms[ordre[0]]
     if len(ordre) == 1:
-        return "vers %s seulement (%s), rien ailleurs" % (nom, ou)
-    return "vers %s (%s), ou %s s'il ne répond pas, rien ailleurs" % (nom, ou, noms[ordre[1]][0])
+        return "vers %s seulement, chez %s (%s), rien ailleurs" % (nom, chez, par)
+    return "vers %s, chez %s (%s), ou vers %s chez %s s'il ne répond pas, rien ailleurs" % (
+        nom, chez, par, noms[ordre[1]][0], noms[ordre[1]][1])
 
 
 def demander(e):
@@ -499,7 +512,7 @@ def nettoyer(out, blocs):
             jetes["sans_source"] += 1
         elif INJECTION.search(texte) or rules.has_marker(texte):
             jetes["marqueur"] += 1
-        elif IDENTIFIANT.search(texte) or MASK in texte:
+        elif IDENTIFIANT.search(texte) or MASK in texte or find_secrets(texte):
             jetes["identifiant"] += 1
         else:
             jour = _jour_valide(f["date"]) or max((refs[s].get("date") or "" for s in sources), default="") or None
@@ -591,8 +604,10 @@ def note_texte(plan, faits, ia, jour, partiel, suspect, court):
               "> %s a tiré ces faits de %s. Corrige ou supprime ce qui est faux. À part une ligne dans memory.md, "
               "rien d'autre n'a été changé dans ton cerveau." % (ia, de)]
     if partiel:
-        lignes += ["", "> [!warning] Import partiel : %d demande%s sur %d. Relance l'import plus tard : il reprendra "
-                       "la suite, sans refaire ce qui est là." % (partiel[0], "s" if partiel[0] > 1 else "", partiel[1])]
+        avec = "en collant la même réponse" if src == "collage" else "avec le même fichier"
+        lignes += ["", "> [!warning] Import partiel : %d demande%s sur %d. Relance l'import plus tard %s : il "
+                       "reprendra la suite, sans refaire ce qui est là." % (partiel[0], "s" if partiel[0] > 1 else "",
+                                                                            partiel[1], avec)]
     if suspect:
         lignes += ["", "> [!caution] Une partie de ce qui a été lu s'adressait à une IA (des consignes cachées dans "
                        "une conversation ou un texte collé). Ces faits ont été triés sans les suivre : relis-les avec "
@@ -758,18 +773,32 @@ def ligne_memoire(plan, jour, n, rel_note):
 # --------------------------------------------------------------------------- output
 
 class Sortie:
-    """What the person reads, or one JSON line per event for the app (no conversation text in them)."""
+    """What the person reads, or one JSON line per event for the app (no conversation text in them).
+    When no one reads any more (the app quit, the terminal closed), the import goes on to the end and
+    writes its note: what was sent is not lost."""
 
     def __init__(self, en_json):
-        self.json = en_json
+        self.json, self.coupee = en_json, False
+
+    def _ligne(self, texte):
+        if self.coupee:
+            return
+        try:
+            print(texte, flush=True)
+        except OSError:   # a broken pipe, or a terminal gone
+            self.coupee = True
+            try:
+                os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())   # nor at exit
+            except (OSError, ValueError, AttributeError):
+                pass
 
     def ev(self, **kw):
         if self.json:
-            print(json.dumps(kw, ensure_ascii=True), flush=True)
+            self._ligne(json.dumps(kw, ensure_ascii=True))
 
     def dit(self, texte=""):
         if not self.json:
-            print(texte, flush=True)
+            self._ligne(texte)
 
 
 def _pluriel(n, mot, s="s"):
@@ -920,6 +949,18 @@ def _presse_papiers_windows():
         u32.CloseClipboard()
 
 
+# The sentence, whatever its line breaks and spaces became on the way.
+PHRASE_COLLEE = re.compile(r"\s+".join(re.escape(m) for m in PHRASE.split()))
+
+
+def sans_phrase(texte):
+    """A pasted answer without the sentence asked (copied with it, or alone: Erreur)."""
+    reste = PHRASE_COLLEE.sub("", texte)
+    if reste != texte and not re.search(r"\w", reste):
+        raise Erreur(2, "phrase", "Tu as collé ma phrase : colle plutôt la réponse de ChatGPT ou de Claude.")
+    return reste
+
+
 def _texte_borne(f):
     raw = f.read(lecture.COLLAGE_MAX * 4 + 4)
     try:
@@ -954,11 +995,11 @@ def cmd_preparer(opts, s):
             ("un copier-coller", "un fichier") if collage is False else ("un fichier", "un copier-coller")))
     try:
         if collage:
-            texte = _collage(opts)
+            texte = sans_phrase(_collage(opts))
             lec = lecture.lire_collage([texte], cles)
             fait = deja(lec.empreintes[0])
             if fait:
-                raise Erreur(3, "deja", "Déjà importé le %s : %s." % (fait.get("date", "?"), fait.get("note") or "aucun fait gardé"))
+                raise Erreur(3, "deja", _dire_deja(fait))
         else:
             fichiers = []
             try:
@@ -975,10 +1016,9 @@ def cmd_preparer(opts, s):
                     fait = deja(lecture.empreinte(f), brain)
                     (faits if fait else neufs).append(fait or f)
                 if not neufs:
-                    raise Erreur(3, "deja", "Déjà importé le %s : %s." % (faits[0].get("date", "?"), faits[0].get("note") or
-                                                                          "aucun fait gardé"))
+                    raise Erreur(3, "deja", _dire_deja(faits[0]))
                 for fait in faits:
-                    s.dit("Un de ces fichiers est déjà importé (%s) : je le laisse." % (fait.get("note") or fait.get("date")))
+                    s.dit("Un de ces fichiers, je le laisse. %s" % _dire_deja(fait))
                 lec = lecture.lire_fichiers(neufs, cles, progres=lambda a, b: s.ev(etape="lecture", fait=a, total=b))
             finally:
                 for f in fichiers:
@@ -1065,7 +1105,7 @@ def _dire_ia(e):
         return "Claude Code ne démarre pas ou est trop ancien : mets-le à jour (claude update), puis relance."
     if kind in ("timeout", "api"):
         return "L'IA ne répond pas pour l'instant : relance l'import plus tard."
-    return "L'IA a répondu autre chose que ce qui était demandé : rien n'a été écrit pour cette demande."
+    return "L'IA a répondu autre chose que ce qui était demandé."
 
 
 def cmd_lancer(opts, s):
