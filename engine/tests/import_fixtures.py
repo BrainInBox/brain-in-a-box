@@ -327,10 +327,12 @@ def taille_menteuse():
 def noms_hostiles():
     good = js(chatgpt_conversations(3))
     data = zip_bytes([("../conversations.json", good), ("/abs/conversations.json", good),
-                      ("a\\conversations.json", good), ("conversations.jsonX.exe", good),
+                      ("aYconversations.json", good), ("conversations.jsonX.exe", good),
                       ("memories/../../x.json", good), ("conversations-001.json", good)])
-    # zipfile cuts a name at its NUL when it writes it: put the NUL in the bytes.
-    return data.replace(b"conversations.jsonX.exe", b"conversations.json\x00.exe")
+    # zipfile cuts a name at its NUL, and on Windows turns its backslashes into slashes, when it
+    # writes it: both put in the bytes.
+    return data.replace(b"conversations.jsonX.exe", b"conversations.json\x00.exe").replace(
+        b"aYconversations.json", b"a\\conversations.json")
 
 
 def doublon():

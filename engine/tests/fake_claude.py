@@ -37,9 +37,15 @@ def record(name, data):
         f.write(data)
 
 
+def out(line):
+    """UTF-8 whatever the locale, as Claude Code writes: on Windows a cp1252 stdout would turn an
+    accented answer into replacement characters."""
+    sys.stdout.buffer.write((line + "\n").encode("utf-8"))
+    sys.stdout.buffer.flush()
+
+
 def emit(event):
-    sys.stdout.write(json.dumps(event, ensure_ascii=False) + "\n")
-    sys.stdout.flush()
+    out(json.dumps(event, ensure_ascii=False))
 
 
 def main(args):
@@ -54,7 +60,7 @@ def main(args):
         return 0
     if "-p" not in args:
         return 2
-    prompt = sys.stdin.read()
+    prompt = sys.stdin.buffer.read().decode("utf-8")   # what the launcher writes, whatever the locale
     with open(os.path.join(FAKE, "calls"), "a") as f:
         f.write("-p\n")
     with open(os.path.join(FAKE, "calls")) as f:
@@ -90,7 +96,7 @@ def main(args):
         try:
             event = json.loads(line)
         except ValueError:
-            sys.stdout.write(line + "\n")  # broken-json: replayed as captured
+            out(line)  # broken-json: replayed as captured
             continue
         content = (event.get("message") or {}).get("content")
         answering = event.get("type") == "assistant" and isinstance(content, list) and any(

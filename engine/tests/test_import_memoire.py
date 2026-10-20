@@ -388,7 +388,8 @@ class Memoire(Base):
                 if case == "edited":
                     def touch(_):
                         self.memory.write_text("# Memory\nencore une ligne\n", encoding="utf-8")
-                    with mock.patch.object(im.time, "sleep", touch):
+                    # Written a moment ago, then again while the import waits: never written over.
+                    with mock.patch.object(im.time, "sleep", touch), mock.patch.object(im, "QUIET", 3600):
                         plan = self.preparer(self.fichier(F.chatgpt_2025()))
                         self.memory.write_text("# Memory\n", encoding="utf-8")
                         before = b"# Memory\nencore une ligne\n"
