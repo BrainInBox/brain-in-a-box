@@ -130,6 +130,57 @@
 ### s=repair-auth&go=done&os=linux
 20 21 203 4 204 205 206 207 85 86 208 209 210 211 212 213 214 215 99 216 217 218 219 220 18 19
 
+### s=manque&go=diag&conseil=chatgpt_bientot&hermes=1
+1 2 221
+
+### s=installe&go=diag&conseil=claude_vu&os=windows
+20 21 222
+
+### s=installe&go=import-done&click=import
+1 2 56 18 54 223 224 225 226 227 228 229 230 231 232 233
+
+### s=installe&go=import-done&click=import,size-rapide&sent=1
+1 2 56 18 54 223 224 225 226 227 234 235 236 232 233
+
+### s=installe&go=import-done&click=import&fichiers=3&os=windows
+20 21 57 18 54 223 237 225 238 239 240 241 228 229 230 231 232 242
+
+### s=installe&go=import-done&click=import,paste&colle=1
+1 2 56 18 54 223 224 243 244 245 246 247 248 232 249
+
+### s=installe&go=import-paste&click=import,paste&os=linux
+20 21 61 18 54 223 237 250 251
+
+### s=installe&go=import-done&click=import&imp=partiel
+1 2 56 18 54 223 224 225 226 227 228 229 232 252
+
+### s=installe&go=import-done&click=import&imp=suspect
+1 2 56 18 54 223 224 225 226 253 228 229 230 231 232 254
+
+### s=installe&go=import-done&click=import&imp=rien
+1 2 56 18 54 223 224 225 226 227 228 229 230 231 232 255
+
+### s=installe&go=import-error&click=import&imp=deja
+1 2 56 18 54 223 224 225 256
+
+### s=installe&go=import-error&click=import&imp=compte
+1 2 56 18 54 223 224 225 257
+
+### s=installe&go=import-error&click=import&imp=auth
+1 2 56 18 54 223 224 225 226 227 228 258
+
+### s=installe&go=import-error&click=import&imp=quota
+1 2 56 18 54 223 224 225 226 227 228 259
+
+### s=installe&go=import-error&click=import&imp=a_jour
+1 2 56 18 54 223 260
+
+### s=installe&go=import&nth=2&click=import,next,back
+1 2 56 18 54 223 224 225 226 227 261
+
+### s=installe&go=import&nth=2&click=import,next,next,stop&pause=import
+1 2 56 18 54 223 224 225 226 227 228 262
+
 #1
 == welcome
 Salut, moi c’est Bibo !
@@ -151,6 +202,7 @@ Vérification en cours
 J’ai fait le tour.
 Il manque Claude Code, les outils Apple, Bun, Obsidian et ton cerveau. Je m’en occupe.
 macOS 15.4 · Puce Apple · 16 Go de mémoire · 182 Go libres
+Mon conseil : Ton cerveau marche avec Claude : il te faudra un abonnement Claude Pro ou Max.
 Version de macOS : OKmacOS 15.4
 Espace disque : OK182 Go libres
 Connexion internet : OKgithub.com et claude.ai répondent.
@@ -384,6 +436,8 @@ Ton second cerveau est prêt !
 Claude retient maintenant ce que tu lui apprends.
 Ton cerveau retrouve tes notes par mots-clés. Il peut aussi les retrouver par le sens.
 [Activer la recherche par le sens]
+Tu utilisais ChatGPT ou Claude ? Apporte ce qu’ils savent de toi.
+[Importer ma mémoire]
 Dernière chose : présente-toi à lui. Il te pose quelques questions pour te connaître.
 [Ouvrir mon cerveau dans Obsidian]
 [Personnaliser mon cerveau (15 min)]
@@ -409,6 +463,7 @@ Vérification en cours
 J’ai fait le tour.
 Il manque Claude Code et ton cerveau. Je m’en occupe.
 Windows 11 (24H2) · 16 Go de mémoire · 182 Go libres
+Mon conseil : Ton cerveau marche avec Claude : il te faudra un abonnement Claude Pro ou Max.
 Version de Windows : OKWindows 11 (24H2)
 Espace disque : OK182 Go libres
 Connexion internet : OKgithub.com et claude.ai répondent.
@@ -602,6 +657,7 @@ Détails
 J’ai fait le tour.
 Il manque les outils de base, Claude Code, Bun, Obsidian et ton cerveau. Je m’en occupe.
 Ubuntu 24.04.1 LTS · 16 Go de mémoire · 182 Go libres
+Mon conseil : Ton cerveau marche avec Claude : il te faudra un abonnement Claude Pro ou Max.
 Système : OKUbuntu 24.04.1 LTS
 Espace disque : OK182 Go libres
 Connexion internet : OKgithub.com et claude.ai répondent.
@@ -843,6 +899,8 @@ Clé valide
 == done
 Ton second cerveau est prêt !
 Claude retient maintenant ce que tu lui apprends.
+Tu utilisais ChatGPT ou Claude ? Apporte ce qu’ils savent de toi.
+[Importer ma mémoire]
 Dernière chose : présente-toi à lui. Il te pose quelques questions pour te connaître.
 [Ouvrir mon cerveau dans Obsidian]
 [Personnaliser mon cerveau (15 min)]
@@ -867,6 +925,7 @@ Clé bridée
 Tout est déjà installé !
 Ton Mac a tout ce qu’il faut.
 macOS 15.4 · Puce Apple · 16 Go de mémoire · 182 Go libres
+Mon conseil : Tu as déjà Claude Code, connecté à ton abonnement : ton cerveau travaillera avec lui.
 Version de macOS : OKmacOS 15.4
 Espace disque : OK182 Go libres
 Connexion internet : OKgithub.com et claude.ai répondent.
@@ -887,6 +946,7 @@ Recherche par le sens : OKActivée (Voyage AI)
 Tout est déjà installé !
 Ton PC a tout ce qu’il faut.
 Windows 11 (24H2) · 16 Go de mémoire · 182 Go libres
+Mon conseil : Tu as déjà Claude Code, connecté à ton abonnement : ton cerveau travaillera avec lui.
 Version de Windows : OKWindows 11 (24H2)
 Espace disque : OK182 Go libres
 Connexion internet : OKgithub.com et claude.ai répondent.
@@ -907,6 +967,8 @@ Recherche par le sens : OKActivée (Voyage AI)
 == done
 Ton second cerveau est prêt !
 Claude retient maintenant ce que tu lui apprends.
+Tu utilisais ChatGPT ou Claude ? Apporte ce qu’ils savent de toi.
+[Importer ma mémoire]
 Dernière chose : présente-toi à lui. Il te pose quelques questions pour te connaître.
 [Ouvrir mon cerveau dans Obsidian]
 [Personnaliser mon cerveau (15 min) (inactif)]
@@ -915,6 +977,8 @@ Dernière chose : présente-toi à lui. Il te pose quelques questions pour te c
 == done
 C’est parti !
 Une fenêtre Terminal s’ouvre : réponds aux questions de Claude.
+Tu utilisais ChatGPT ou Claude ? Apporte ce qu’ils savent de toi.
+[Importer ma mémoire]
 Dernière chose : présente-toi à lui. Il te pose quelques questions pour te connaître.
 [Ouvrir mon cerveau dans Obsidian]
 [Personnaliser mon cerveau (15 min) (inactif)]
@@ -923,6 +987,8 @@ Dernière chose : présente-toi à lui. Il te pose quelques questions pour te c
 == done
 C’est parti !
 Une fenêtre Terminal s’ouvre : réponds aux questions de Claude.
+Tu utilisais ChatGPT ou Claude ? Apporte ce qu’ils savent de toi.
+[Importer ma mémoire]
 Dernière chose : présente-toi à lui. Il te pose quelques questions pour te connaître.
 [Ouvrir mon cerveau dans Obsidian]
 [Personnaliser mon cerveau (15 min)]
@@ -932,6 +998,7 @@ Dernière chose : présente-toi à lui. Il te pose quelques questions pour te c
 Tout est déjà installé !
 Ton PC a tout ce qu’il faut.
 Ubuntu 24.04.1 LTS · 16 Go de mémoire · 182 Go libres
+Mon conseil : Tu as déjà Claude Code, connecté à ton abonnement : ton cerveau travaillera avec lui.
 Système : OKUbuntu 24.04.1 LTS
 Espace disque : OK182 Go libres
 Connexion internet : OKgithub.com et claude.ai répondent.
@@ -951,6 +1018,8 @@ Recherche par le sens : OKActivée (Voyage AI)
 == done
 Ton second cerveau est prêt !
 Claude retient maintenant ce que tu lui apprends.
+Tu utilisais ChatGPT ou Claude ? Apporte ce qu’ils savent de toi.
+[Importer ma mémoire]
 Dernière chose : présente-toi à lui. Il te pose quelques questions pour te connaître.
 [Ouvrir mon cerveau dans Obsidian (inactif)]
 [Personnaliser mon cerveau (15 min)]
@@ -959,6 +1028,8 @@ Dernière chose : présente-toi à lui. Il te pose quelques questions pour te c
 == done
 J’ouvre Obsidian…
 Ton cerveau est dans Documents › Brain.
+Tu utilisais ChatGPT ou Claude ? Apporte ce qu’ils savent de toi.
+[Importer ma mémoire]
 Dernière chose : présente-toi à lui. Il te pose quelques questions pour te connaître.
 [Ouvrir mon cerveau dans Obsidian (inactif)]
 [Personnaliser mon cerveau (15 min)]
@@ -967,6 +1038,8 @@ Dernière chose : présente-toi à lui. Il te pose quelques questions pour te c
 == done
 J’ouvre Obsidian…
 Ton cerveau est dans Documents › Brain.
+Tu utilisais ChatGPT ou Claude ? Apporte ce qu’ils savent de toi.
+[Importer ma mémoire]
 Dernière chose : présente-toi à lui. Il te pose quelques questions pour te connaître.
 [Ouvrir mon cerveau dans Obsidian]
 [Personnaliser mon cerveau (15 min)]
@@ -976,6 +1049,7 @@ Dernière chose : présente-toi à lui. Il te pose quelques questions pour te c
 Tout est déjà installé !
 Ton cerveau cherche par mots-clés : tu peux lui apprendre à chercher par le sens.
 macOS 15.4 · Puce Apple · 16 Go de mémoire · 182 Go libres
+Mon conseil : Tu as déjà Claude Code, connecté à ton abonnement : ton cerveau travaillera avec lui.
 Version de macOS : OKmacOS 15.4
 Espace disque : OK182 Go libres
 Connexion internet : OKgithub.com et claude.ai répondent.
@@ -1011,6 +1085,7 @@ Ta clé Voyage
 Tout est déjà installé !
 Ton cerveau cherche par mots-clés : tu peux lui apprendre à chercher par le sens.
 Ubuntu 24.04.1 LTS · 16 Go de mémoire · 182 Go libres
+Mon conseil : Tu as déjà Claude Code, connecté à ton abonnement : ton cerveau travaillera avec lui.
 Système : OKUbuntu 24.04.1 LTS
 Espace disque : OK182 Go libres
 Connexion internet : OKgithub.com et claude.ai répondent.
@@ -1032,6 +1107,7 @@ Recherche par le sens : À noterRecherche par mots-clés seulement. Une clé Vo
 Je ne peux pas installer pour l’instant.
 Règle d’abord ce qui est en rouge, puis clique sur Revérifier.
 macOS 12.7 · Intel · 8 Go de mémoire · 2,3 Go libres
+Mon conseil : Ton cerveau marche avec Claude : il te faudra un abonnement Claude Pro ou Max.
 Version de macOS : BloquantmacOS 12.7 : il faut macOS 13 ou plus récent. Fais la mise à jour dans Réglages Système.
 Espace disque : BloquantIl reste 2,3 Go, il en faut au moins 3. Fais un peu de place, puis relance.
 Connexion internet : BloquantPas d’internet : ni github.com ni claude.ai ne répondent. Vérifie ton Wi-Fi, puis relance.
@@ -1052,6 +1128,7 @@ Recherche par le sens : À noterRecherche par mots-clés seulement. Une clé Vo
 J’ai fait le tour.
 Il manque les outils Apple, Bun, Obsidian et ton cerveau. Je m’en occupe.
 macOS 15.4 · Puce Apple · 16 Go de mémoire · 182 Go libres
+Mon conseil : Tu utilises déjà Claude : ton cerveau travaillera avec lui (il te faudra un abonnement Pro ou Max pour Claude Code).
 Version de macOS : OKmacOS 15.4
 Espace disque : OK182 Go libres
 Connexion internet : OKgithub.com et claude.ai répondent.
@@ -1367,6 +1444,7 @@ J’attends ta connexion…
 J’ai fait le tour.
 Il manque Obsidian et ton cerveau. Je m’en occupe.
 macOS 15.4 · Puce Apple · 16 Go de mémoire · 182 Go libres
+Mon conseil : Tu as déjà Claude Code, connecté à ton abonnement : ton cerveau travaillera avec lui.
 Version de macOS : OKmacOS 15.4
 Espace disque : OK182 Go libres
 Connexion internet : OKgithub.com et claude.ai répondent.
@@ -1512,6 +1590,7 @@ Détails
 J’ai fait le tour.
 Il manque ton cerveau. Je m’en occupe.
 macOS 15.4 · Puce Apple · 16 Go de mémoire · 182 Go libres
+Mon conseil : Tu as déjà Claude Code, connecté à ton abonnement : ton cerveau travaillera avec lui.
 Version de macOS : OKmacOS 15.4
 Espace disque : OK182 Go libres
 Connexion internet : OKgithub.com et claude.ai répondent.
@@ -1725,6 +1804,7 @@ Détails
 J’ai fait le tour.
 Il manque Bun et ton cerveau. Je m’en occupe.
 macOS 15.4 · Puce Apple · 16 Go de mémoire · 182 Go libres
+Mon conseil : Tu as déjà Claude Code, connecté à ton abonnement : ton cerveau travaillera avec lui.
 Version de macOS : OKmacOS 15.4
 Espace disque : OK182 Go libres
 Connexion internet : OKgithub.com et claude.ai répondent.
@@ -2100,6 +2180,7 @@ Ses questions s’affichent en anglais : « Yes » veut dire oui, « No » 
 J’ai fait le tour.
 Il manque Obsidian et ton cerveau. Je m’en occupe.
 macOS 15.4 · Puce Apple · 16 Go de mémoire · 182 Go libres
+Mon conseil : Tu utilises déjà Claude : ton cerveau travaillera avec lui (il te faudra un abonnement Pro ou Max pour Claude Code).
 Version de macOS : OKmacOS 15.4
 Espace disque : OK182 Go libres
 Connexion internet : OKgithub.com et claude.ai répondent.
@@ -2444,6 +2525,7 @@ Détails
 J’ai fait le tour.
 Il manque Obsidian et ton cerveau. Je m’en occupe.
 Windows 11 (24H2) · 16 Go de mémoire · 182 Go libres
+Mon conseil : Tu as déjà Claude Code, connecté à ton abonnement : ton cerveau travaillera avec lui.
 Version de Windows : OKWindows 11 (24H2)
 Espace disque : OK182 Go libres
 Connexion internet : OKgithub.com et claude.ai répondent.
@@ -2519,6 +2601,7 @@ Détails
 J’ai fait le tour.
 Il manque Bun et ton cerveau. Je m’en occupe.
 Ubuntu 24.04.1 LTS · 16 Go de mémoire · 182 Go libres
+Mon conseil : Tu as déjà Claude Code, connecté à ton abonnement : ton cerveau travaillera avec lui.
 Système : OKUbuntu 24.04.1 LTS
 Espace disque : OK182 Go libres
 Connexion internet : OKgithub.com et claude.ai répondent.
@@ -2666,6 +2749,7 @@ Détails
 J’ai fait le tour.
 Il manque Obsidian et ton cerveau. Je m’en occupe.
 Ubuntu 24.04.1 LTS · 16 Go de mémoire · 182 Go libres
+Mon conseil : Tu as déjà Claude Code, connecté à ton abonnement : ton cerveau travaillera avec lui.
 Système : OKUbuntu 24.04.1 LTS
 Espace disque : OK182 Go libres
 Connexion internet : OKgithub.com et claude.ai répondent.
@@ -2863,3 +2947,514 @@ ObsidianPour feuilleter ton cerveau.Fait
 Ton cerveauTes notes, ta mémoire et tes automatismes.Fait
 Ton ordinateur va te demander ton mot de passe pour installer des outils du système ou Obsidian : c’est normal, tape-le.
 Détails
+
+#221
+== diag
+J’ai fait le tour.
+Il manque Claude Code, les outils Apple, Bun, Obsidian et ton cerveau. Je m’en occupe.
+macOS 15.4 · Puce Apple · 16 Go de mémoire · 182 Go libres
+Mon conseil : Tu utilises ChatGPT : ton cerveau marche avec Claude pour l’instant (abonnement Pro ou Max) ; Codex, l’IA de ChatGPT, arrive bientôt ici. À la fin, tu pourras y apporter ta mémoire ChatGPT.
+J’ai vu Hermes : je ne l’installe pas et n’y touche pas ; ses meilleures compétences sont déjà dans Claude, et ton résumé du soir lit aussi ses conversations.
+Version de macOS : OKmacOS 15.4
+Espace disque : OK182 Go libres
+Connexion internet : OKgithub.com et claude.ai répondent.
+Outils Apple (git, python3) : À installerPas encore installés. Apple s’en charge, il suffit de cliquer.
+Bun (le moteur de la mémoire) : À installerPas encore installé.
+Claude Code : À installerPas encore installé.
+Connexion à Claude : À noterTu te connecteras une fois Claude Code installé.
+Obsidian (pour lire tes notes) : À installerPas encore installé.
+Ton dossier Brain : À installerPas encore créé.
+Les automatismes de Claude : À installerPas encore branchés.
+Les compétences de Claude : À installerPas encore installées.
+La mémoire de recherche : À installerPas encore créée.
+Recherche par le sens : À noterRecherche par mots-clés seulement. Une clé Voyage permet de chercher par le sens.
+[Revérifier]
+[Tout installer]
+
+#222
+== diag
+Tout est déjà installé !
+Ton PC a tout ce qu’il faut.
+Windows 11 (24H2) · 16 Go de mémoire · 182 Go libres
+Mon conseil : Tu utilises déjà Claude : ton cerveau travaillera avec lui (il te faudra un abonnement Pro ou Max pour Claude Code).
+Version de Windows : OKWindows 11 (24H2)
+Espace disque : OK182 Go libres
+Connexion internet : OKgithub.com et claude.ai répondent.
+Python (pour les automatismes) : OKPython 3.12.10
+Git (l’historique de tes notes) : OKGit 2.51.0
+Bun (le moteur de la mémoire) : OKBun 1.4.2
+Claude Code : OKClaude Code 2.1.296
+Connexion à Claude : OKTu es connecté.
+Obsidian (pour lire tes notes) : OKObsidian 1.14.4
+Ton dossier Brain : OKIl est dans Documents/Brain.
+Les automatismes de Claude : OKClaude note tes corrections et tes séances.
+Les compétences de Claude : OKInstallées.
+La mémoire de recherche : OKPrête.
+Recherche par le sens : OKActivée (Voyage AI)
+[Continuer]
+
+#223
+== import
+Un instant…
+
+#224
+== import
+D’où vient ta mémoire ?
+ChatGPT ou Claude savent déjà des choses sur toi. Claude en tire l’essentiel, je le range dans ton cerveau.
+Ton fichier d’export (.zip)
+ChatGPT et Claude t’envoient tes conversations dans un fichier. Le plus complet.
+Un copier-coller (2 min)
+Tu demandes à ChatGPT ou à Claude ce qu’il sait de toi, et tu colles sa réponse ici.
+Comment obtenir mon export ?
+ChatGPT : Réglages › Contrôle des données › Exporter les données. Un e-mail t’envoie un lien, valable 24 h : télécharge le fichier .zip.
+Claude : Réglages › Confidentialité › Exporter les données, sur le site ou l’app de bureau. Un e-mail t’envoie tes fichiers .zip : choisis-les tous d’un coup.
+Pour les souvenirs de ChatGPT, le copier-coller marche mieux : son export ne les contient souvent plus.
+Ce que tu importes est lu sur ton Mac, les secrets masqués, puis trié par Claude avec ton abonnement Claude : rien ne part ailleurs. Le résultat est une nouvelle note de ton cerveau, que tu relis.
+[Retour]
+[Je copie-colle une réponse]
+[Choisir mon fichier d’export]
+
+#225
+== import-read
+Choisis ton fichier d’export
+Dans la fenêtre qui s’ouvre. Pour Claude, choisis tous ses fichiers .zip d’un coup.
+
+#226
+== import-read
+Je lis ton export…
+Rien ne part pendant cette lecture.
+[Arrêter]
+
+#227
+== import-plan
+Voilà ce que j’ai lu
+Claude va en tirer ce qui compte pour toi. Choisis combien de demandes il fait.
+Ton export ChatGPT
+312 conversations, du 2 novembre 2025 au 18 octobre 2026.
+23 souvenirs enregistrés.
+Secrets masqués avant tout envoi : 4.
+Passages laissés de côté (journaux, code, collages de machine) : 17.
+[Rapide : 2 demandes]
+[Normal : 4 demandes]
+[Complet : 10 demandes]
+4 demandes : 84 conversations parmi les plus récentes, environ 4 min.
+Ce qui part : vers Claude seulement (Claude Code sur cet ordinateur, ton abonnement), rien ailleurs.
+Ça ne te coûte rien de plus, mais ça compte dans ta limite d’usage Claude, à peu près comme une longue question par demande.
+Voir exactement ce que j’envoie
+[Annuler]
+[Lancer (4 demandes)]
+
+#228
+== import-run
+Claude trie ta mémoire…
+Demande 1 sur 4. Tu peux continuer à utiliser ton ordinateur.
+Environ 4 min en tout
+Claude n’a aucun outil : il lit, il répond, il ne touche à rien. Je vérifie chaque fait avant de l’écrire.
+[Arrêter]
+
+#229
+== import-run
+Claude trie ta mémoire…
+Demande 2 sur 4. Tu peux continuer à utiliser ton ordinateur.
+Environ 4 min en tout
+Claude n’a aucun outil : il lit, il répond, il ne touche à rien. Je vérifie chaque fait avant de l’écrire.
+[Arrêter]
+
+#230
+== import-run
+Claude trie ta mémoire…
+Demande 3 sur 4. Tu peux continuer à utiliser ton ordinateur.
+Environ 4 min en tout
+Claude n’a aucun outil : il lit, il répond, il ne touche à rien. Je vérifie chaque fait avant de l’écrire.
+[Arrêter]
+
+#231
+== import-run
+Claude trie ta mémoire…
+Demande 4 sur 4. Tu peux continuer à utiliser ton ordinateur.
+Environ 4 min en tout
+Claude n’a aucun outil : il lit, il répond, il ne touche à rien. Je vérifie chaque fait avant de l’écrire.
+[Arrêter]
+
+#232
+== import-run
+Je range tout dans ton cerveau…
+Une nouvelle note, et une ligne dans ta mémoire.
+J’écris la note
+Claude n’a aucun outil : il lit, il répond, il ne touche à rien. Je vérifie chaque fait avant de l’écrire.
+[Arrêter (inactif)]
+
+#233
+== import-done
+C’est rangé !
+42 faits dans Imports › 2026-10-13-import-chatgpt.
+Ce que je retiens de toi
+Qui tu es : 6
+Tes préférences : 12
+Tes projets : 9
+Les personnes : 5
+Tes outils : 7
+Tes décisions : 3
+3 faits laissés de côté (sans source, numéro, adresse ou consigne pour une IA).
+Relis-les : corrige ou supprime ce qui est faux. Rien d’autre n’a changé dans ton cerveau.
+[Terminé]
+[Voir la note]
+
+#234
+== import-plan
+Voilà ce que j’ai lu
+Claude va en tirer ce qui compte pour toi. Choisis combien de demandes il fait.
+Ton export ChatGPT
+312 conversations, du 2 novembre 2025 au 18 octobre 2026.
+23 souvenirs enregistrés.
+Secrets masqués avant tout envoi : 4.
+Passages laissés de côté (journaux, code, collages de machine) : 17.
+[Rapide : 2 demandes]
+[Normal : 4 demandes]
+[Complet : 10 demandes]
+2 demandes : 31 conversations parmi les plus récentes, environ 2 min.
+Ce qui part : vers Claude seulement (Claude Code sur cet ordinateur, ton abonnement), rien ailleurs.
+Ça ne te coûte rien de plus, mais ça compte dans ta limite d’usage Claude, à peu près comme une longue question par demande.
+Voir exactement ce que j’envoie
+[Annuler]
+[Lancer (2 demandes)]
+
+#235
+== import-run
+Claude trie ta mémoire…
+Demande 1 sur 2. Tu peux continuer à utiliser ton ordinateur.
+Environ 2 min en tout
+Claude n’a aucun outil : il lit, il répond, il ne touche à rien. Je vérifie chaque fait avant de l’écrire.
+[Arrêter]
+
+#236
+== import-run
+Claude trie ta mémoire…
+Demande 2 sur 2. Tu peux continuer à utiliser ton ordinateur.
+Environ 2 min en tout
+Claude n’a aucun outil : il lit, il répond, il ne touche à rien. Je vérifie chaque fait avant de l’écrire.
+[Arrêter]
+
+#237
+== import
+D’où vient ta mémoire ?
+ChatGPT ou Claude savent déjà des choses sur toi. Claude en tire l’essentiel, je le range dans ton cerveau.
+Ton fichier d’export (.zip)
+ChatGPT et Claude t’envoient tes conversations dans un fichier. Le plus complet.
+Un copier-coller (2 min)
+Tu demandes à ChatGPT ou à Claude ce qu’il sait de toi, et tu colles sa réponse ici.
+Comment obtenir mon export ?
+ChatGPT : Réglages › Contrôle des données › Exporter les données. Un e-mail t’envoie un lien, valable 24 h : télécharge le fichier .zip.
+Claude : Réglages › Confidentialité › Exporter les données, sur le site ou l’app de bureau. Un e-mail t’envoie tes fichiers .zip : choisis-les tous d’un coup.
+Pour les souvenirs de ChatGPT, le copier-coller marche mieux : son export ne les contient souvent plus.
+Ce que tu importes est lu sur ton PC, les secrets masqués, puis trié par Claude avec ton abonnement Claude : rien ne part ailleurs. Le résultat est une nouvelle note de ton cerveau, que tu relis.
+[Retour]
+[Je copie-colle une réponse]
+[Choisir mon fichier d’export]
+
+#238
+== import-read
+Je lis ton export…
+Rien ne part pendant cette lecture.
+Fichier 1 sur 3
+[Arrêter]
+
+#239
+== import-read
+Je lis ton export…
+Rien ne part pendant cette lecture.
+Fichier 2 sur 3
+[Arrêter]
+
+#240
+== import-read
+Je lis ton export…
+Rien ne part pendant cette lecture.
+Fichier 3 sur 3
+[Arrêter]
+
+#241
+== import-plan
+Voilà ce que j’ai lu
+Claude va en tirer ce qui compte pour toi. Choisis combien de demandes il fait.
+Ton export Claude
+312 conversations, du 2 novembre 2025 au 18 octobre 2026.
+41 souvenirs enregistrés.
+6 projets.
+Secrets masqués avant tout envoi : 4.
+Passages laissés de côté (journaux, code, collages de machine) : 17.
+[Rapide : 2 demandes]
+[Normal : 4 demandes]
+[Complet : 10 demandes]
+4 demandes : 84 conversations parmi les plus récentes, environ 4 min.
+Ce qui part : vers Claude seulement (Claude Code sur cet ordinateur, ton abonnement), rien ailleurs.
+Ça ne te coûte rien de plus, mais ça compte dans ta limite d’usage Claude, à peu près comme une longue question par demande.
+Voir exactement ce que j’envoie
+[Annuler]
+[Lancer (4 demandes)]
+
+#242
+== import-done
+C’est rangé !
+42 faits dans Imports › 2026-10-13-import-claude.
+Ce que je retiens de toi
+Qui tu es : 6
+Tes préférences : 12
+Tes projets : 9
+Les personnes : 5
+Tes outils : 7
+Tes décisions : 3
+3 faits laissés de côté (sans source, numéro, adresse ou consigne pour une IA).
+Relis-les : corrige ou supprime ce qui est faux. Rien d’autre n’a changé dans ton cerveau.
+[Terminé]
+[Voir la note]
+
+#243
+== import-paste
+Demande-lui ce qu’il sait de toi
+Trois étapes, deux minutes. Rien ne part avant que tu valides.
+Copie cette phrase.
+Je prépare la phrase…
+[Copier la phrase (inactif)]
+Colle-la dans une nouvelle conversation, chez celui qui te connaît.
+[Ouvrir ChatGPT]
+[Ouvrir Claude]
+Copie sa réponse avec le bouton Copier de son bloc de code, et colle-la ici.
+S’il dit qu’il en reste, écris-lui « Continue » et colle la suite à la fin.
+Ce que tu importes est lu sur ton Mac, les secrets masqués, puis trié par Claude avec ton abonnement Claude : rien ne part ailleurs. Le résultat est une nouvelle note de ton cerveau, que tu relis.
+[Retour]
+[Continuer (inactif)]
+
+#244
+== import-paste
+Demande-lui ce qu’il sait de toi
+Trois étapes, deux minutes. Rien ne part avant que tu valides.
+Copie cette phrase.
+Je change d'outil et j'ai besoin d'exporter mes données. Liste chaque souvenir que tu as enregistré sur moi, et tout ce que tu as appris de moi dans nos conversations passées. Mets tout dans un seul bloc de code, pour que je puisse le copier facilement. Une entrée par ligne, au format : [date d'enregistrement, si tu l'as] - le souvenir. Couvre tout ce qui suit, avec mes propres mots autant que possible : les consignes que je t'ai données sur ta façon de répondre (ton, format, style, « fais toujours… », « ne fais jamais… ») ; qui je suis : prénom, ville, métier, langues, centres d'intérêt ; mes projets, mes objectifs et les sujets qui reviennent ; les outils, logiciels et langages que j'utilise ; les personnes avec qui je travaille (prénom et rôle) ; mes préférences et les corrections que je t'ai faites ; tout autre contexte enregistré. Ne résume pas, ne regroupe pas, n'oublie rien, n'invente rien. N'écris aucun mot de passe, aucun numéro, aucun identifiant. Après le bloc de code, dis-moi si la liste est complète ou s'il en reste.
+[Copier la phrase]
+Colle-la dans une nouvelle conversation, chez celui qui te connaît.
+[Ouvrir ChatGPT]
+[Ouvrir Claude]
+Copie sa réponse avec le bouton Copier de son bloc de code, et colle-la ici.
+S’il dit qu’il en reste, écris-lui « Continue » et colle la suite à la fin.
+Ce que tu importes est lu sur ton Mac, les secrets masqués, puis trié par Claude avec ton abonnement Claude : rien ne part ailleurs. Le résultat est une nouvelle note de ton cerveau, que tu relis.
+[Retour]
+[Continuer (inactif)]
+
+#245
+== import-paste
+Demande-lui ce qu’il sait de toi
+Trois étapes, deux minutes. Rien ne part avant que tu valides.
+Copie cette phrase.
+Je change d'outil et j'ai besoin d'exporter mes données. Liste chaque souvenir que tu as enregistré sur moi, et tout ce que tu as appris de moi dans nos conversations passées. Mets tout dans un seul bloc de code, pour que je puisse le copier facilement. Une entrée par ligne, au format : [date d'enregistrement, si tu l'as] - le souvenir. Couvre tout ce qui suit, avec mes propres mots autant que possible : les consignes que je t'ai données sur ta façon de répondre (ton, format, style, « fais toujours… », « ne fais jamais… ») ; qui je suis : prénom, ville, métier, langues, centres d'intérêt ; mes projets, mes objectifs et les sujets qui reviennent ; les outils, logiciels et langages que j'utilise ; les personnes avec qui je travaille (prénom et rôle) ; mes préférences et les corrections que je t'ai faites ; tout autre contexte enregistré. Ne résume pas, ne regroupe pas, n'oublie rien, n'invente rien. N'écris aucun mot de passe, aucun numéro, aucun identifiant. Après le bloc de code, dis-moi si la liste est complète ou s'il en reste.
+[Copier la phrase]
+Colle-la dans une nouvelle conversation, chez celui qui te connaît.
+[Ouvrir ChatGPT]
+[Ouvrir Claude]
+Copie sa réponse avec le bouton Copier de son bloc de code, et colle-la ici.
+S’il dit qu’il en reste, écris-lui « Continue » et colle la suite à la fin.
+Ce que tu importes est lu sur ton Mac, les secrets masqués, puis trié par Claude avec ton abonnement Claude : rien ne part ailleurs. Le résultat est une nouvelle note de ton cerveau, que tu relis.
+[Retour]
+[Continuer]
+
+#246
+== import-read
+Je lis sa réponse…
+Rien ne part pendant cette lecture.
+Un instant
+
+#247
+== import-plan
+Voilà ce que j’ai lu
+Claude va en tirer ce qui compte pour toi. Choisis combien de demandes il fait.
+La réponse collée
+Sa réponse : 27 lignes.
+Secrets masqués avant tout envoi : 0.
+1 demande : environ 1 min.
+Ce qui part : vers Claude seulement (Claude Code sur cet ordinateur, ton abonnement), rien ailleurs.
+Ça ne te coûte rien de plus, mais ça compte dans ta limite d’usage Claude, à peu près comme une longue question par demande.
+Voir exactement ce que j’envoie
+[Annuler]
+[Lancer (1 demande)]
+
+#248
+== import-run
+Claude trie ta mémoire…
+Demande 1 sur 1. Tu peux continuer à utiliser ton ordinateur.
+Environ 1 min en tout
+Claude n’a aucun outil : il lit, il répond, il ne touche à rien. Je vérifie chaque fait avant de l’écrire.
+[Arrêter]
+
+#249
+== import-done
+C’est rangé !
+42 faits dans Imports › 2026-10-13-import-collage.
+Ce que je retiens de toi
+Qui tu es : 6
+Tes préférences : 12
+Tes projets : 9
+Les personnes : 5
+Tes outils : 7
+Tes décisions : 3
+3 faits laissés de côté (sans source, numéro, adresse ou consigne pour une IA).
+Relis-les : corrige ou supprime ce qui est faux. Rien d’autre n’a changé dans ton cerveau.
+[Terminé]
+[Voir la note]
+
+#250
+== import-paste
+Demande-lui ce qu’il sait de toi
+Trois étapes, deux minutes. Rien ne part avant que tu valides.
+Copie cette phrase.
+Je prépare la phrase…
+[Copier la phrase (inactif)]
+Colle-la dans une nouvelle conversation, chez celui qui te connaît.
+[Ouvrir ChatGPT]
+[Ouvrir Claude]
+Copie sa réponse avec le bouton Copier de son bloc de code, et colle-la ici.
+S’il dit qu’il en reste, écris-lui « Continue » et colle la suite à la fin.
+Ce que tu importes est lu sur ton PC, les secrets masqués, puis trié par Claude avec ton abonnement Claude : rien ne part ailleurs. Le résultat est une nouvelle note de ton cerveau, que tu relis.
+[Retour]
+[Continuer (inactif)]
+
+#251
+== import-paste
+Demande-lui ce qu’il sait de toi
+Trois étapes, deux minutes. Rien ne part avant que tu valides.
+Copie cette phrase.
+Je change d'outil et j'ai besoin d'exporter mes données. Liste chaque souvenir que tu as enregistré sur moi, et tout ce que tu as appris de moi dans nos conversations passées. Mets tout dans un seul bloc de code, pour que je puisse le copier facilement. Une entrée par ligne, au format : [date d'enregistrement, si tu l'as] - le souvenir. Couvre tout ce qui suit, avec mes propres mots autant que possible : les consignes que je t'ai données sur ta façon de répondre (ton, format, style, « fais toujours… », « ne fais jamais… ») ; qui je suis : prénom, ville, métier, langues, centres d'intérêt ; mes projets, mes objectifs et les sujets qui reviennent ; les outils, logiciels et langages que j'utilise ; les personnes avec qui je travaille (prénom et rôle) ; mes préférences et les corrections que je t'ai faites ; tout autre contexte enregistré. Ne résume pas, ne regroupe pas, n'oublie rien, n'invente rien. N'écris aucun mot de passe, aucun numéro, aucun identifiant. Après le bloc de code, dis-moi si la liste est complète ou s'il en reste.
+[Copier la phrase]
+Colle-la dans une nouvelle conversation, chez celui qui te connaît.
+[Ouvrir ChatGPT]
+[Ouvrir Claude]
+Copie sa réponse avec le bouton Copier de son bloc de code, et colle-la ici.
+S’il dit qu’il en reste, écris-lui « Continue » et colle la suite à la fin.
+Ce que tu importes est lu sur ton PC, les secrets masqués, puis trié par Claude avec ton abonnement Claude : rien ne part ailleurs. Le résultat est une nouvelle note de ton cerveau, que tu relis.
+[Retour]
+[Continuer (inactif)]
+
+#252
+== import-done
+C’est rangé !
+19 faits dans Imports › 2026-10-13-import-chatgpt.
+Ce que je retiens de toi
+Qui tu es : 4
+Tes préférences : 7
+Tes projets : 5
+Tes outils : 3
+Import partiel : 2 demandes sur 4. Relance-le plus tard : je reprendrai la suite.
+3 faits laissés de côté (sans source, numéro, adresse ou consigne pour une IA).
+Relis-les : corrige ou supprime ce qui est faux. Rien d’autre n’a changé dans ton cerveau.
+[Terminé]
+[Voir la note]
+
+#253
+== import-plan
+Voilà ce que j’ai lu
+Claude va en tirer ce qui compte pour toi. Choisis combien de demandes il fait.
+Ton export ChatGPT
+312 conversations, du 2 novembre 2025 au 18 octobre 2026.
+23 souvenirs enregistrés.
+Secrets masqués avant tout envoi : 4.
+Passages laissés de côté (journaux, code, collages de machine) : 17.
+Du texte invisible a été retiré : il cachait peut-être des consignes pour une IA.
+[Rapide : 2 demandes]
+[Normal : 4 demandes]
+[Complet : 10 demandes]
+4 demandes : 84 conversations parmi les plus récentes, environ 4 min.
+Ce qui part : vers Claude seulement (Claude Code sur cet ordinateur, ton abonnement), rien ailleurs.
+Ça ne te coûte rien de plus, mais ça compte dans ta limite d’usage Claude, à peu près comme une longue question par demande.
+Voir exactement ce que j’envoie
+[Annuler]
+[Lancer (4 demandes)]
+
+#254
+== import-done
+C’est rangé !
+42 faits dans Imports › 2026-10-13-import-chatgpt.
+Ce que je retiens de toi
+Qui tu es : 6
+Tes préférences : 12
+Tes projets : 9
+Les personnes : 5
+Tes outils : 7
+Tes décisions : 3
+Attention : une partie ressemblait à des consignes pour une IA. Elles n’ont pas été suivies : relis bien la note.
+3 faits laissés de côté (sans source, numéro, adresse ou consigne pour une IA).
+Relis-les : corrige ou supprime ce qui est faux. Rien d’autre n’a changé dans ton cerveau.
+[Terminé]
+[Voir la note]
+
+#255
+== import-done
+Je n’ai rien trouvé de durable à garder.
+Rien n’a été écrit dans ton cerveau.
+[Terminé]
+
+#256
+== import-error
+C’est déjà dans ton cerveau.
+Déjà importé le 2026-10-12 : Imports/2026-10-12-import-chatgpt.md.
+[Retour]
+[Terminé]
+
+#257
+== import-error
+Je ne peux pas importer ça.
+Ce fichier ne contient que les infos de ton compte Claude. Donne-moi les autres fichiers .zip de ton export (conversations, mémoire, projets).
+[Terminé]
+[Essayer autre chose]
+
+#258
+== import-error
+Claude n’est pas connecté à ton abonnement.
+Connecte-le, puis relance l’import. Rien n’est parti.
+[Retour]
+[Connecter mon compte Claude]
+
+#259
+== import-error
+Ton forfait Claude est à sa limite pour le moment.
+Il se recharge tout seul en quelques heures : relance l’import plus tard. Rien n’est parti de plus.
+[Terminé]
+
+#260
+== import-error
+Ton cerveau doit d’abord être mis à jour
+Il a été installé avant l’import de mémoire. 1 à 5 minutes, et rien de tes notes ne change.
+[Retour]
+[Mettre à jour mon cerveau]
+
+#261
+== import
+C’est annulé.
+Rien n’est parti. D’où vient ta mémoire ?
+Ton fichier d’export (.zip)
+ChatGPT et Claude t’envoient tes conversations dans un fichier. Le plus complet.
+Un copier-coller (2 min)
+Tu demandes à ChatGPT ou à Claude ce qu’il sait de toi, et tu colles sa réponse ici.
+Comment obtenir mon export ?
+ChatGPT : Réglages › Contrôle des données › Exporter les données. Un e-mail t’envoie un lien, valable 24 h : télécharge le fichier .zip.
+Claude : Réglages › Confidentialité › Exporter les données, sur le site ou l’app de bureau. Un e-mail t’envoie tes fichiers .zip : choisis-les tous d’un coup.
+Pour les souvenirs de ChatGPT, le copier-coller marche mieux : son export ne les contient souvent plus.
+Ce que tu importes est lu sur ton Mac, les secrets masqués, puis trié par Claude avec ton abonnement Claude : rien ne part ailleurs. Le résultat est une nouvelle note de ton cerveau, que tu relis.
+[Retour]
+[Je copie-colle une réponse]
+[Choisir mon fichier d’export]
+
+#262
+== import
+Arrêté.
+Rien n’a été écrit dans ton cerveau.
+Ton fichier d’export (.zip)
+ChatGPT et Claude t’envoient tes conversations dans un fichier. Le plus complet.
+Un copier-coller (2 min)
+Tu demandes à ChatGPT ou à Claude ce qu’il sait de toi, et tu colles sa réponse ici.
+Comment obtenir mon export ?
+ChatGPT : Réglages › Contrôle des données › Exporter les données. Un e-mail t’envoie un lien, valable 24 h : télécharge le fichier .zip.
+Claude : Réglages › Confidentialité › Exporter les données, sur le site ou l’app de bureau. Un e-mail t’envoie tes fichiers .zip : choisis-les tous d’un coup.
+Pour les souvenirs de ChatGPT, le copier-coller marche mieux : son export ne les contient souvent plus.
+Ce que tu importes est lu sur ton Mac, les secrets masqués, puis trié par Claude avec ton abonnement Claude : rien ne part ailleurs. Le résultat est une nouvelle note de ton cerveau, que tu relis.
+[Retour]
+[Je copie-colle une réponse]
+[Choisir mon fichier d’export]
