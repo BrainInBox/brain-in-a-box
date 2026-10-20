@@ -34,7 +34,8 @@ macos/08-connexion-installation.png 122 31 780 674  bibo-4-connexion
 macos/13-dialogue-install-command-line-developer.png 122 31 780 580 bibo-5-outils-apple
 macos/21-etape-brain.png           122  31 780 580  bibo-6-cerveau
 macos/24-connexion.png             122  31 780 674  bibo-7-compte
-macos/25-fini.png                  122  31 780 674  bibo-8-pret
+macos/26-fini.png                  122  31 780 674  bibo-8-pret
+macos/28-import-choix.png          122  31 780 674  bibo-9-memoire
 # The same window on Windows and Linux
 windows/17-etape-brain.png          60  50 780 400  bibo-windows
 linux/10-etape-obsidian.png        250  98 780 580  bibo-linux

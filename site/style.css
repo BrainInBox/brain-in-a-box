@@ -160,6 +160,7 @@ code {
 .tag-blue-violet { --t1: #93c5fd; --t2: #d8b4fe; }
 .tag-violet-blue { --t1: #a5b4fc; --t2: #f0abfc; }
 .tag-green-teal { --t1: #bbf7d0; --t2: #34d399; }
+.tag-orange-pink { --t1: #fdba74; --t2: #f9a8d4; }
 .tag + h2 { margin-top: 20px; }
 
 /* Buttons and links */
@@ -491,6 +492,8 @@ code {
 .softs { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .after { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .after h3 { font-size: 20px; }
+.ways { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.memoire-cli { max-width: 46em; margin-top: 24px; color: var(--ink-3); font-size: 14.5px; }
 
 .plain { margin: 0; padding: 0; list-style: none; }
 .plain > li + li { margin-top: 8px; }
@@ -889,7 +892,7 @@ pre.cmd code { padding: 0; background: none; border: 0; color: inherit; font: in
   .hero-bibo { width: 88px; margin-bottom: 20px; }
   .lead { margin-top: 22px; }
   .section-lead { font-size: 17px; }
-  .needs, .softs, .after { grid-template-columns: minmax(0, 1fr); }
+  .needs, .softs, .after, .ways { grid-template-columns: minmax(0, 1fr); }
   .grid-frame > .cell { padding: 26px 20px 30px; }
   .grid-frame, .trio { margin-top: 40px; }
   .tabs { margin-top: 32px; }
