@@ -301,7 +301,7 @@ jobs:
           # The pull request's merge commit: its first parent is master.
           files=$(git diff --name-only HEAD^1 HEAD)
           echo "$files"
-          if grep -qE '^(app/|install\.ps1$|\.github/workflows/test\.yml$|\.github/ci/)' <<< "$files"; then app=true; else app=false; fi
+          if grep -qE '^(app/|install\.ps1$|engine/hooks/_agents\.py$|\.github/workflows/test\.yml$|\.github/ci/)' <<< "$files"; then app=true; else app=false; fi
           echo "app=$app" | tee -a "$GITHUB_OUTPUT"
           if grep -qE '^(engine/hooks/(_headless(_codex|_claude)?|_agents|_codex_rollout|_controle_judge|daily-reflection|session-recap|session-logger|correction-detector|controle-sessionstart)\.py|engine/codex-features\.json|engine/tests/(codex_mock|mock_openai|codex_captures)\.py|\.github/workflows/test\.yml|install\.sh|install\.ps1|engine/codex/[^/]+|engine/CLAUDE\.global\.template\.md|engine/install_skills\.py|skills/[^/]+/SKILL\.md)$' <<< "$files"; then codex=true; else codex=false; fi
           echo "codex=$codex" | tee -a "$GITHUB_OUTPUT"
@@ -382,10 +382,18 @@ jobs:
             libssl-dev libxdo-dev
       - name: Rust tests
         run: cargo test --locked
+      # The app's Codex step for real (steps.rs): OpenAI's official installer of the pinned Codex, checked
+      # against the SHA-256 install.sh and install.ps1 pin, run as the step runs it, into a throwaway home.
+      - name: The Codex step installs the pinned Codex
+        run: cargo test --locked -- --ignored codex_real
       - name: Clippy, warnings are errors
         run: cargo clippy --locked --all-targets -- -D warnings
       - name: The window's script parses
         run: node --check ../src/app.js
+      # Every screen of the mock's scenarios with Claude alone, word for word as screens-claude.txt
+      # holds them (master's, before Codex), and the checks of Codex's screens where the mock opens it.
+      - name: The window's screens with Claude alone have not changed
+        run: node ../dev/screens.mjs
 
       - name: Without its window, the app examines the PC and says so in JSON
         if: runner.os == 'Windows'
@@ -1118,9 +1126,10 @@ jobs:
           # Whatever the gate says: closed today, open on some systems once a change opens them.
           if (([regex]::Matches($g, '(?m)^CODEX_OUVERT = frozenset\(.*\)\r?$')).Count -ne 1) { throw "the gate's line moved" }
           [IO.File]::WriteAllText($gate, ($g -replace '(?m)^CODEX_OUVERT = frozenset\(.*\)(?=\r?$)', 'CODEX_OUVERT = frozenset({"darwin", "linux", "windows"})'))
-          # Claude's side, but the gate itself (the copy's _agents.py replaces the one in place, and says so).
+          # Claude's side, but the gate itself (the copy's _agents.py replaces the one in place, and says so)
+          # and the list of Codex's features, which Codex's launcher reads next to it (read with -B: no __pycache__).
           $claude = { @(Get-ChildItem "$H\.claude" -Recurse -File -Force) + @(Get-ChildItem "$H\.local\bin" -File) |
-                      Where-Object { $_.Name -ne '_agents.py' } | ForEach-Object { "$($_.FullName) $((Get-FileHash $_.FullName).Hash)" } | Sort-Object }
+                      Where-Object { $_.Name -notin '_agents.py', 'codex-features.json' } | ForEach-Object { "$($_.FullName) $((Get-FileHash $_.FullName).Hash)" } | Sort-Object }
           $before = @(& $claude)
           $user = @{}; foreach ($n in 'config.toml', 'AGENTS.md', 'hooks.json') { $user[$n] = [IO.File]::ReadAllText("$C\$n") }
           powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$K\install.ps1" -Agents claude,codex -Prefere claude *>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\install-codex.txt"
@@ -1139,6 +1148,10 @@ jobs:
           $want = "& '$py' '$H\.claude\hooks\brain\correction-detector.py' --agent codex"
           $cd = $j.hooks.UserPromptSubmit[0].hooks[0]
           if ($cd.commandWindows -cne $want -or $cd.command -cne $want -or $cd.timeout -ne 30) { throw "correction-detector wired as $($cd | ConvertTo-Json -Compress), not $want" }
+          $list = "$H\.claude\hooks\brain\codex-features.json"
+          if (-not (Test-Path $list) -or (Get-FileHash $list).Hash -ne (Get-FileHash "$K\engine\codex-features.json").Hash) { throw "the launcher's list of Codex's features is not installed" }
+          & $py -I -B -c 'import sys; sys.path.insert(0, sys.argv[1]); import _headless_codex as c; assert len(c.load_features()) > 50' "$H\.claude\hooks\brain"
+          if ($LASTEXITCODE) { throw 'the launcher, as installed, does not read its list of features' }
           $mine = @(@($j.hooks.UserPromptSubmit.hooks) + @($j.hooks.Stop.hooks) + @($j.hooks.SessionStart.hooks) | Where-Object { "$($_.commandWindows)" -like '& *--agent codex' })
           if ($mine.Count -ne 6) { throw "$($mine.Count) of the kit's hooks in hooks.json" }
           $toml = [IO.File]::ReadAllText("$C\config.toml")

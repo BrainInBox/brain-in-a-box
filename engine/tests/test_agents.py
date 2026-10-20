@@ -657,6 +657,64 @@ class CliCodex(Home):
         self.assertEqual(self.cli("pose-hooks"), (0, b""))
         self.assertTrue(ag._pose(self.home))
 
+    def lire_cli(self, ouvert=False):
+        """`_agents.py lire` as the app runs it, Codex open here or not: (exit code, stdout)."""
+        gate = "ag.CODEX_OUVERT = frozenset([ag.systeme()]); " if ouvert else ""
+        code = "import sys; sys.path.insert(0, %r); import _agents as ag; %ssys.exit(ag.main(['lire']))" % (str(HOOKS), gate)
+        e = dict(os.environ, HOME=self.home, USERPROFILE=self.home, LC_ALL="C", LANG="C", PYTHONIOENCODING="ascii")
+        p = subprocess.run([sys.executable, "-I", "-c", code], env=e, capture_output=True, timeout=20)
+        return p.returncode, p.stdout
+
+    def test_lire_is_what_lire_says_for_the_app(self):
+        def said(ouvert=False):
+            rc, out = self.lire_cli(ouvert)
+            self.assertEqual(rc, 0)
+            out.decode("ascii")   # one ASCII line, whatever the locale
+            self.assertEqual(out.count(b"\n"), 1, out)
+            return json.loads(out)
+        self.assertEqual(said(), {"etat": "absent", "agents": ["claude"], "prefere": "claude", "codex_home": None})
+        self.put({"version": 1, "agents": ["claude"], "prefere": "claude"})
+        self.assertEqual(said(), {"etat": "ok", "agents": ["claude"], "prefere": "claude", "codex_home": None})
+        home = os.path.join(self.home, "Données é")
+        both = {"version": 1, "agents": ["codex", "claude"], "prefere": "codex", "codex_home": home}
+        self.put(both)
+        self.assertEqual(said(), {"etat": "ferme", "agents": [], "prefere": None, "codex_home": None},
+                         "Codex is closed here: the file is not trusted")
+        self.assertEqual(said(ouvert=True),
+                         {"etat": "ok", "agents": ["claude", "codex"], "prefere": "codex", "codex_home": home})
+        self.put({"version": 1, "agents": ["claude"], "prefere": "codex"})
+        self.assertEqual(said(ouvert=True), {"etat": "invalide", "agents": [], "prefere": None, "codex_home": None})
+        self.put("{not json")
+        self.assertEqual(said()["etat"], "illisible")
+        # As the installers call it, with the gate as shipped.
+        self.assertEqual(self.cli("lire")[0], 0)
+
+    def muets_cli(self, ouvert=False):
+        gate = "ag.CODEX_OUVERT = frozenset([ag.systeme()]); " if ouvert else ""
+        code = "import sys; sys.path.insert(0, %r); import _agents as ag; %ssys.exit(ag.main(['hooks-muets']))" % (str(HOOKS), gate)
+        e = dict(os.environ, HOME=self.home, USERPROFILE=self.home)
+        p = subprocess.run([sys.executable, "-I", "-c", code], env=e, capture_output=True, timeout=20)
+        return p.returncode, p.stdout.rstrip(b"\r\n") + b"\n"   # print() ends the line with CRLF on Windows
+
+    def test_hooks_muets_for_the_app_only_of_the_codex_agents_json_records(self):
+        codex = os.path.join(self.home, "Données é")
+        state = Path(self.home) / ".brain-in-a-box"
+        state.mkdir()
+        (state / ag.POSES).write_text(json.dumps({"version": 1, "date": time.strftime(ag.UTC, time.gmtime(time.time() - 3600))}))
+        day = Path(codex) / "sessions" / "2026" / "10" / "17"
+        day.mkdir(parents=True)
+        (day / "rollout-2026-10-17T10-00-00-0199f0a0-0000-7000-8000-000000000001.jsonl").write_text("{}\n")
+        self.assertEqual(self.muets_cli(ouvert=True), (0, b"non\n"), "no agents.json: Claude alone")
+        self.put({"version": 1, "agents": ["claude"], "prefere": "claude"})
+        self.assertEqual(self.muets_cli(ouvert=True), (0, b"non\n"), "Claude alone")
+        self.put({"version": 1, "agents": ["claude", "codex"], "prefere": "claude", "codex_home": codex})
+        self.assertEqual(self.muets_cli(), (0, b"non\n"), "Codex closed here: the file is not trusted")
+        self.assertEqual(self.muets_cli(ouvert=True), (0, b"oui\n"))
+        self.put({"version": 1, "agents": ["claude", "codex"], "prefere": "claude", "codex_home": os.path.join(self.home, "other")})
+        self.assertEqual(self.muets_cli(ouvert=True), (0, b"non\n"), "another Codex home: its sessions only")
+        rc, out = self.cli("hooks-muets")
+        self.assertEqual((rc, out.strip()), (0, b"non"), "as shipped")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -34,5 +34,10 @@ sha2 = "0.10"
 [target.'cfg(windows)'.dependencies]
 winreg = "0.56"
 
+# Already in the build through tauri (macOS): a configuration profile that would pass over the
+# settings the app gives Codex (com.openai.codex), read as the kit's launcher reads it.
+[target.'cfg(target_os = "macos")'.dependencies]
+plist = "1"
+
 [dev-dependencies]
 tempfile = "3"

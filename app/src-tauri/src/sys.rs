@@ -313,7 +313,7 @@ pub fn run_with(program: &Path, args: &[&str], env: &[(&str, &str)], stdin: Opti
     for (k, v) in env {
         cmd.env(k, v);
     }
-    let (mut child, rx) = match start(&mut cmd) {
+    let (mut child, rx) = match start(&mut cmd, None) {
         Ok(started) => started,
         Err(e) => return Output { code: -1, stdout: String::new(), stderr: e.to_string() },
     };
@@ -359,7 +359,7 @@ pub fn run_streaming(
     if let Some(d) = cwd {
         cmd.current_dir(d);
     }
-    let (mut child, rx) = match start(&mut cmd) {
+    let (mut child, rx) = match start(&mut cmd, None) {
         Ok(started) => started,
         Err(e) => {
             on_line(format!("impossible de lancer {}: {}", program.display(), e));
@@ -391,15 +391,35 @@ pub struct Isolated<'a> {
 /// and hands every stdout/stderr line to `on_line`, raw. Returns the exit code, -1
 /// if it could not start, was cancelled or ran past `iso.limit`.
 pub fn run_isolated(program: &Path, args: &[&str], iso: &Isolated, on_line: &mut dyn FnMut(String)) -> i32 {
-    let mut cmd = Command::new(program);
-    cmd.args(args).env_clear().envs(iso.env.iter().copied()).current_dir(iso.cwd).stdin(Stdio::piped());
-    let (mut child, rx) = match start(&mut cmd) {
-        Ok(started) => started,
+    match run_alone(program, args, iso, false, None, &mut |_, line| on_line(line)) {
+        Ok(code) => code.unwrap_or(-1),
         Err(e) => {
             on_line(format!("impossible de lancer {}: {}", program.display(), e));
-            return -1;
+            -1
         }
-    };
+    }
+}
+
+/// `run_isolated`, each line with the pipe it came from (Codex says its login on stderr, its
+/// stream is stdout alone). The exit code, None when it was killed; Err when it could not start.
+/// Once the program has exited, what it left running in its group is killed too, as the kit's
+/// launcher does (engine/hooks/_headless_claude.py, `supervise`). A line longer than `line_cap`
+/// bytes is dropped as it is read, never held whole, as the launcher's `_pump` does.
+pub fn run_isolated_pipes(program: &Path, args: &[&str], iso: &Isolated, line_cap: usize, on_line: &mut dyn FnMut(Pipe, String)) -> io::Result<Option<i32>> {
+    run_alone(program, args, iso, true, Some(line_cap), on_line)
+}
+
+fn run_alone(
+    program: &Path,
+    args: &[&str],
+    iso: &Isolated,
+    sweep: bool,
+    line_cap: Option<usize>,
+    on_line: &mut dyn FnMut(Pipe, String),
+) -> io::Result<Option<i32>> {
+    let mut cmd = Command::new(program);
+    cmd.args(args).env_clear().envs(iso.env.iter().copied()).current_dir(iso.cwd).stdin(Stdio::piped());
+    let (mut child, rx) = start(&mut cmd, line_cap)?;
     if let Some(mut sin) = child.stdin.take() {
         // On a thread: a program that never reads its stdin must not keep us past the
         // limit. Dropping `sin` closes the pipe, which ends its input.
@@ -408,10 +428,15 @@ pub fn run_isolated(program: &Path, args: &[&str], iso: &Isolated, on_line: &mut
             let _ = sin.write_all(data.as_bytes());
         });
     }
-    let code = supervise(&mut child, &rx, iso.limit, Some(iso.cancel), &mut |_, bytes| {
-        on_line(String::from_utf8_lossy(&bytes).trim_end_matches(['\n', '\r']).to_string());
+    let code = supervise(&mut child, &rx, iso.limit, Some(iso.cancel), &mut |pipe, bytes| {
+        on_line(pipe, String::from_utf8_lossy(&bytes).trim_end_matches(['\n', '\r']).to_string());
     });
-    code.unwrap_or(-1)
+    // Reaped, its pid still names its group while anything is left in it (POSIX reuses no pid
+    // a group still holds). Windows has no group: taskkill /T needs the program alive.
+    if sweep && code.is_some() && cfg!(unix) {
+        kill_group(&mut child);
+    }
+    Ok(code)
 }
 
 fn command(program: &Path) -> Command {
@@ -433,8 +458,8 @@ fn without_ps7_modules(cmd: &mut Command) {
     cmd.env_remove("PSModulePath");
 }
 
-#[derive(Clone, Copy)]
-enum Pipe {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Pipe {
     Out,
     Err,
 }
@@ -444,31 +469,47 @@ type Lines = Receiver<(Pipe, Vec<u8>)>;
 
 /// Spawns the program in a process group of its own, so that a timeout stops it with
 /// everything it started, and reads both pipes on threads that send each line on.
-fn start(cmd: &mut Command) -> io::Result<(Child, Lines)> {
+fn start(cmd: &mut Command, line_cap: Option<usize>) -> io::Result<(Child, Lines)> {
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
     detach(cmd);
     let mut child = cmd.spawn()?;
     let (tx, rx) = mpsc::channel();
     if let Some(out) = child.stdout.take() {
-        pump(out, Pipe::Out, tx.clone());
+        pump(out, Pipe::Out, tx.clone(), line_cap);
     }
     if let Some(err) = child.stderr.take() {
-        pump(err, Pipe::Err, tx);
+        pump(err, Pipe::Err, tx, line_cap);
     }
     Ok((child, rx))
 }
 
 /// Raw bytes, newline included: a line that is not UTF-8 must not stop the reading,
 /// or the program blocks on a full pipe.
-fn pump(r: impl Read + Send + 'static, pipe: Pipe, tx: Sender<(Pipe, Vec<u8>)>) {
+/// Past `line_cap` (newline aside), a line is read in pieces of at most the cap and dropped
+/// until its newline, as the launcher's `_pump` does: it is never held whole.
+fn pump(r: impl Read + Send + 'static, pipe: Pipe, tx: Sender<(Pipe, Vec<u8>)>, line_cap: Option<usize>) {
     thread::spawn(move || {
         let mut r = BufReader::new(r);
+        let mut skipping = false;
         loop {
             let mut line = Vec::new();
-            match r.read_until(b'\n', &mut line) {
+            let read = match line_cap {
+                Some(cap) => (&mut r).take(cap as u64 + 1).read_until(b'\n', &mut line),
+                None => r.read_until(b'\n', &mut line),
+            };
+            match read {
                 Ok(0) | Err(_) => break,
-                Ok(_) if tx.send((pipe, line)).is_err() => break,
                 Ok(_) => {}
+            }
+            if let Some(cap) = line_cap {
+                let whole = line.ends_with(b"\n");
+                if skipping || (!whole && line.len() > cap) {
+                    skipping = !whole;
+                    continue;
+                }
+            }
+            if tx.send((pipe, line)).is_err() {
+                break;
             }
         }
     });
@@ -984,6 +1025,71 @@ mod tests {
         let mut lines = Vec::new();
         assert_eq!(run_isolated(&dir.path().join("missing"), &[], &iso, &mut |l| lines.push(l)), -1);
         assert!(lines[0].starts_with("impossible de lancer"), "{lines:?}");
+        assert!(run_isolated_pipes(&dir.path().join("missing"), &[], &iso, 100, &mut |_, _| {}).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn each_line_comes_with_its_pipe() {
+        let dir = tempfile::tempdir().unwrap();
+        let cancel = AtomicBool::new(false);
+        let mut lines = Vec::new();
+        let script = "echo out; echo err >&2; exit 3";
+        let code = run_isolated_pipes(Path::new("/bin/sh"), &["-c", script], &isolated(&[], dir.path(), "", &cancel), 100, &mut |p, l| lines.push((p, l)));
+        lines.sort_by_key(|(p, _)| *p == Pipe::Err);
+        assert_eq!(code.unwrap(), Some(3));
+        assert_eq!(lines, [(Pipe::Out, "out".to_string()), (Pipe::Err, "err".to_string())]);
+    }
+
+    /// A line past the cap is dropped as it comes, on both pipes: never held whole, and the next
+    /// line still arrives (the launcher's `_pump`). A line of exactly the cap is kept.
+    #[cfg(unix)]
+    #[test]
+    fn a_line_past_the_cap_is_dropped_as_it_comes() {
+        let dir = tempfile::tempdir().unwrap();
+        let cancel = AtomicBool::new(false);
+        let mut lines = Vec::new();
+        let script = "head -c 9000000 /dev/zero | tr '\\0' x; echo; echo ok; head -c 9000000 /dev/zero | tr '\\0' y >&2; echo >&2; echo err >&2; \
+                      head -c 16 /dev/zero | tr '\\0' z; echo";
+        let code = run_isolated_pipes(Path::new("/bin/sh"), &["-c", script], &isolated(&[], dir.path(), "", &cancel), 16, &mut |p, l| lines.push((p, l)));
+        assert_eq!(code.unwrap(), Some(0));
+        lines.sort_by_key(|(p, _)| *p == Pipe::Err);
+        let seen: Vec<(Pipe, String)> = lines.into_iter().map(|(p, l)| (p, if l.len() > 16 { format!("{} bytes", l.len()) } else { l })).collect();
+        assert_eq!(seen, [(Pipe::Out, "ok".to_string()), (Pipe::Out, "z".repeat(16)), (Pipe::Err, "err".to_string())]);
+        // Without a cap (Claude's repair), every line as before.
+        let mut long = 0;
+        run_alone(
+            Path::new("/bin/sh"),
+            &["-c", "head -c 100000 /dev/zero | tr '\\0' x; echo"],
+            &isolated(&[], dir.path(), "", &cancel),
+            false,
+            None,
+            &mut |_, l| long = l.len(),
+        )
+        .unwrap();
+        assert_eq!(long, 100000);
+    }
+
+    /// What a program left running when it exited goes with it (Codex's run), not with the repair's.
+    #[cfg(unix)]
+    #[test]
+    fn what_a_program_leaves_behind_is_swept_with_it() {
+        for (sweep, survives) in [(true, false), (false, true)] {
+            let dir = tempfile::tempdir().unwrap();
+            let cancel = AtomicBool::new(false);
+            let mut lines = Vec::new();
+            let script = "/bin/sleep 30 </dev/null >/dev/null 2>&1 & echo $!; exit 0";
+            let code = run_alone(Path::new("/bin/sh"), &["-c", script], &isolated(&[], dir.path(), "", &cancel), sweep, None, &mut |_, l| lines.push(l));
+            assert_eq!(code.unwrap(), Some(0));
+            let pid = lines[0].trim().to_string();
+            let t = Instant::now();
+            while alive(&pid) && !survives && t.elapsed() < Duration::from_secs(3) {
+                thread::sleep(TICK);
+            }
+            thread::sleep(if survives { Duration::from_millis(300) } else { Duration::ZERO });
+            assert_eq!(alive(&pid), survives, "sweep {sweep}: sleep {pid}");
+            let _ = Command::new("/bin/kill").args(["-KILL", &pid]).status();
+        }
     }
 
     /// Linux: what an AppImage's AppRun sets (AppImageKit's and linuxdeploy's GTK hook), as the

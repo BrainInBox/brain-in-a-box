@@ -766,7 +766,7 @@ replaceable() {  # replaceable <source> <destination>: may the new version of <s
 place() {  # place <source> <destination> [label]
   local tmp name label mode=755
   name="$(basename "$2")"; label="${3:-$name}"
-  case "$name" in *.plist|*.service|*.timer|*.rules) mode=644;; esac
+  case "$name" in *.plist|*.service|*.timer|*.rules|*.json) mode=644;; esac
   tmp="$(mktemp)"
   fill "$1" > "$tmp"
   chmod "$mode" "$tmp"  # before it lands: a hook that fires meanwhile finds it whole and executable
@@ -850,6 +850,8 @@ if with_agent codex; then
   say "Codex ($CODEX_DIR)"
   ( umask 077; mkdir -p "$CODEX_DIR" ) || die "could not create $CODEX_DIR"   # where auth.json goes: private
   codex_install
+  # What Codex must have turned off before a question without tools: read by the launcher next to it.
+  place "$REPO/engine/codex-features.json" "$HOOKS/codex-features.json"
   codex_global
   codex_wire
   codex_rules

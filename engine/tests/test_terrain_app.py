@@ -83,18 +83,50 @@ def neuf(installe):
     }
 
 
+def neuf_codex(installe):
+    """The same Mac where the kit lets Codex be chosen (the gate open in the robot's copy): the welcome
+    names no AI, the choice comes first, Codex's step and its ChatGPT login in Claude's place."""
+    e = neuf(installe)
+    e["bienvenue"] = {"titre": "Salut, moi c’est Bibo" + NB + "!",
+                      "texte": "Je vais installer ton second cerveau pour ton IA, Claude ou Codex. 10 à 20 minutes, tu n’as aucune commande à taper.",
+                      "boutons": {"Choisir mon IA": "choix"}}
+    e["choix"] = {"titre": "Avec quelle IA veux-tu travailler" + NB + "?",
+                  "texte": "Ton cerveau marche avec Claude, avec Codex, ou avec les deux.",
+                  "boutons": {"Claude": "diag-en-cours", "Codex": "diag-en-cours", "Les deux": "resume"}}
+    e["resume"] = {"titre": "Lequel écrit le résumé de chaque soir" + NB + "?", "boutons": {"Retour": "choix", "Claude": None, "Codex": None}}
+    e["diag"] = dict(e["diag"], texte="Il manque Codex, Bun, Obsidian et ton cerveau. Je m’en occupe.")
+    e["voyage"] = dict(e["voyage"], boutons=dict(e["voyage"]["boutons"], **{"Passer (recherche par mots-clés)": "codex"}))
+    e["codex"] = {"titre": "J’installe Codex.", "texte": "Étape 1 sur 4. L’outil officiel d’OpenAI.", "apres": (30, "bun")}
+    e["installe"] = dict(e["installe"], apres=(2, "verif-codex"))
+    e["deja"] = dict(e["deja"], boutons={"Activer la recherche par le sens": None, "Continuer": "verif-codex"})
+    e["verif-codex"] = {"titre": "Je vérifie la connexion de Codex…", "apres": (2, "login-codex")}
+    e["login-codex"] = {"titre": "Dernière étape" + NB + ": ton compte ChatGPT",
+                        "texte": "Connecte Codex à ton compte ChatGPT pour qu’il puisse travailler avec ton cerveau.",
+                        "boutons": {"Plus tard": "fini", "Connecter Codex à mon compte ChatGPT": None}}
+    # The ChatGPT login put off: Codex's login comes first, the onboarding after it (§4.3).
+    e["fini"] = dict(e["fini"], texte="Codex retient maintenant ce que tu lui apprends.",
+                     boutons={"Activer la recherche par le sens": None, "Ouvrir mon cerveau dans Obsidian": None,
+                              "Connecter Codex à mon compte ChatGPT": None},
+                     textes=["Pense à connecter Codex à ton compte ChatGPT. S’il te le demande au premier lancement, "
+                             "choisis « Sign in with ChatGPT », jamais une clé API : elle serait facturée."])
+    return e
+
+
 class FauxPilote(ta.Pilote):
     """The app's window, played from a table of screens on a fake clock."""
 
     machine = "Mac"
     suffixe = "_macos-universal.dmg"
 
-    def __init__(self, horloge, home=None, change=None):
+    def __init__(self, horloge, home=None, change=None, codex=False):
         self.h = horloge
         self.home = home
         self.fait = False
+        self.codex = codex
         self.sources = True     # the app unpacks the sources it was handed
-        self.ecrans = neuf(lambda: self.fait)
+        self.ecrans = (neuf_codex if codex else neuf)(lambda: self.fait)
+        self.portes = []        # the gate of the kit's sources on disk, each time the app opens
+        self.marqueurs = []     # whether the robot's marker was there, each time the app opens
         for k, v in (change or {}).items():
             self.ecrans[k] = v
         self.etat = None
@@ -122,20 +154,24 @@ class FauxPilote(ta.Pilote):
         if not self.home:
             return
         home = Path(self.home)
-        for rel in (".local/bin/claude", ".bun/bin/bun"):
+        for rel in (".local/bin/codex" if self.codex else ".local/bin/claude", ".bun/bin/bun"):
             (home / rel).parent.mkdir(parents=True, exist_ok=True)
             (home / rel).write_text("x")
         (home / "Applications" / "Obsidian.app" / "Contents" / "MacOS").mkdir(parents=True)
         archive = self.envs[-1].get("BIAB_ARCHIVE")
         if archive and self.sources:
             src = home / ".brain-in-a-box" / "src"
-            src.mkdir(parents=True)
+            src.mkdir(parents=True, exist_ok=True)
             with zipfile.ZipFile(archive) as z:
                 root = z.namelist()[0].split("/")[0]
                 (src / ta.MARQUEUR).write_bytes(z.read(root + "/" + ta.MARQUEUR))
 
     def ouvrir(self, env):
         self.envs.append(env)
+        gate = Path(self.home or "/nowhere") / ".brain-in-a-box" / "src" / "engine" / "hooks" / "_agents.py"
+        line = re.search(r"^CODEX_OUVERT = .*$", gate.read_text(encoding="utf-8"), re.M) if gate.is_file() else None
+        self.portes.append(line.group(0) if line else None)
+        self.marqueurs.append((gate.parents[2] / ta.MARQUEUR).is_file())
         self.aller("bienvenue")
 
     def vivante(self):
@@ -357,6 +393,82 @@ class Walk(Base):
         brain = next(e for e in b["ecrans"] if e["ecran"] == "etape-brain")
         self.assertGreaterEqual(brain["duree_s"], 400)
         self.assertEqual(b["bibo"]["titre"], "Ton second cerveau est prêt !")
+
+    def test_codex_chosen_alone_is_clicked_through_to_the_brain(self):
+        p = FauxPilote(self.h, codex=True)
+        pa = ta.Parcours(self.t, p, self.shots, horloge=self.h, dormir=self.h.dormir, codex=True)
+        pa.premier_lancement({})
+        self.assertEqual(p.clics, ["Choisir mon IA", "Codex", "Tout installer", "Passer (recherche par mots-clés)", "Plus tard"])
+        for step in ("app-bienvenue", "app-choix", "app-diagnostic", "app-etape-codex", "app-verif-compte-codex",
+                     "app-connexion-chatgpt", "app-fini"):
+            self.assertIn(step, self.t.vus)
+        p.fermer()
+        del p.clics[:]
+        vus = pa.relance({})
+        self.assertIn("deja-installe", vus)
+        self.assertEqual(p.clics, ["Choisir mon IA", "Codex", "Continuer", "Plus tard"])
+        # Opened again, the app asks again who the brain works with (« rouvre l'app et refais ce choix »).
+        p.fermer()
+        p.ecrans["bienvenue"] = dict(p.ecrans["bienvenue"], boutons={"Choisir mon IA": "diag-en-cours"})
+        with self.assertRaises(terrain.Echec) as cm:
+            pa.relance({})
+        self.assertIn("au deuxième lancement, l'app n'a pas redemandé quelle IA", str(cm.exception))
+
+    def test_each_path_fails_on_the_other_ones_screens(self):
+        # The app users get keeps Codex closed: a choice asked on the path of Claude alone is a failure.
+        p = FauxPilote(self.h, codex=True)
+        with self.assertRaises(terrain.Echec) as cm:
+            self.parcours(p).premier_lancement({})
+        self.assertIn("n'offre pas le bouton « Vérifier mon Mac »", str(cm.exception))
+        p = FauxPilote(Horloge(), codex=True)
+        p.ecrans["bienvenue"]["boutons"] = {"Vérifier mon Mac": "choix"}
+        with self.assertRaises(terrain.Echec) as cm:
+            ta.Parcours(Noms(), p, self.shots, horloge=p.h, dormir=p.h.dormir).premier_lancement({})
+        self.assertIn("écran « choix » : l'app livrée garde Codex fermé", str(cm.exception))
+        # Codex alone: no Claude Code step, no Claude login, and the end names Codex.
+        for change, said in (({"codex": {"titre": "J’installe Codex.", "texte": "Étape 1 sur 5.", "apres": (30, "claude")},
+                               "claude": {"titre": "J’installe Claude Code.", "texte": "Étape 2 sur 5.", "apres": (30, "bun")}},
+                              "l'app a installé Claude Code alors que seul Codex est choisi"),
+                             ({"voyage": {"titre": "Une option avant de commencer", "boutons": {"Passer (recherche par mots-clés)": "bun"}}},
+                              "le parcours n'est pas passé par l'écran « etape-codex »"),
+                             ({"verif-codex": {"titre": "Je vérifie ton compte Claude…", "apres": (2, "login-codex")}},
+                              "écran « verif-compte » : Codex est choisi seul"),
+                             ({"verif-codex": {"titre": "Je vérifie la connexion de Codex…", "apres": (2, "login")}},
+                              "écran « connexion » : Codex est choisi seul"),
+                             ({"fini": {"titre": "Ton second cerveau est prêt" + NB + "!", "texte": "Claude retient maintenant ce que tu lui apprends.",
+                                        "boutons": {"Ouvrir mon cerveau dans Obsidian": None, "Personnaliser mon cerveau (15 min)": None}}},
+                              "l'écran final ne nomme pas Codex"),
+                             ({"choix": {"titre": "Avec quelle IA veux-tu travailler" + NB + "?", "boutons": {"Codex": "resume"}}},
+                              "écran « choix-resume » : Codex est choisi seul"),
+                             ({"fini": {"titre": "Ton second cerveau est prêt" + NB + "!", "texte": "Codex retient maintenant ce que tu lui apprends.",
+                                        "boutons": {"Ouvrir mon cerveau dans Obsidian": None, "Personnaliser mon cerveau (15 min)": None,
+                                                    "Connecter Codex à mon compte ChatGPT": None},
+                                        "textes": ["choisis « Sign in with ChatGPT »"]}},
+                              "l'écran final propose de personnaliser le cerveau avec un Codex qui n'est pas connecté à ChatGPT"),
+                             ({"fini": {"titre": "Ton second cerveau est prêt" + NB + "!", "texte": "Codex retient maintenant ce que tu lui apprends.",
+                                        "boutons": {"Ouvrir mon cerveau dans Obsidian": None, "Connecter Codex à mon compte ChatGPT": None},
+                                        "textes": ["Pense à connecter Codex : il te le demandera au premier lancement."]}},
+                              "l'écran final ne dit pas de choisir « Sign in with ChatGPT »")):
+            h = Horloge()
+            p = FauxPilote(h, codex=True, change=change)
+            with self.subTest(said=said), self.assertRaises(terrain.Echec) as cm:
+                ta.Parcours(Noms(), p, self.shots, horloge=h, dormir=h.dormir, codex=True).premier_lancement({})
+            self.assertIn(said, str(cm.exception))
+
+    def test_claude_alone_says_claude_where_it_always_did(self):
+        # The words of before Codex: Claude named in the welcome and at the end (all of them: app/dev/screens.mjs).
+        for change, said in (({"bienvenue": {"titre": "Salut, moi c’est Bibo" + NB + "!",
+                                             "texte": "Je vais installer ton second cerveau pour ton IA. 10 à 20 minutes, tu n’as aucune commande à taper.",
+                                             "boutons": {"Vérifier mon Mac": "diag-en-cours"}}},
+                              "la bienvenue ne parle pas de Claude"),
+                             ({"fini": {"titre": "Ton second cerveau est prêt" + NB + "!", "texte": "Ton IA retient maintenant ce que tu lui apprends.",
+                                        "boutons": {"Ouvrir mon cerveau dans Obsidian": None, "Personnaliser mon cerveau (15 min)": None}}},
+                              "l'écran final ne nomme pas Claude")):
+            h = Horloge()
+            p = FauxPilote(h, change=change)
+            with self.subTest(said=said), self.assertRaises(terrain.Echec) as cm:
+                ta.Parcours(Noms(), p, self.shots, horloge=h, dormir=h.dormir).premier_lancement({})
+            self.assertIn(said, str(cm.exception))
 
     def test_quick_reads_stand_for_full_ones_while_bibo_says_the_same(self):
         slow, quick = FauxPilote(self.h), FauxPilote(Horloge())
@@ -1624,14 +1736,14 @@ class Scenario(Base):
     """The whole scenario on the build path, a fake window and a fake check of the kit: what reaches
     the app, what the results say."""
 
-    def run_it(self, pilote=None, check=None):
+    def run_it(self, pilote=None, check=None, parcours="app", source="build", release=None):
         home = Path(self.tmp) / "home"
         home.mkdir(exist_ok=True)
         dmg = Path(self.tmp) / "Brain-in-a-Box_0.1.0-terrain.abc_macos-universal.dmg"
         dmg.write_bytes(b"dmg")
         sha = subprocess.run(["git", "-C", REPO, "rev-parse", "HEAD"], capture_output=True).stdout.decode().strip()
-        opts = types.SimpleNamespace(home=home, json=str(Path(self.tmp) / "r.json"), parcours="app", vm=True,
-                                     source="build", fichier=str(dmg), captures=str(self.shots))
+        opts = types.SimpleNamespace(home=home, json=str(Path(self.tmp) / "r.json"), parcours=parcours, vm=True,
+                                     source=source, fichier=str(dmg), captures=str(self.shots))
         checked = []
         self.nights = []
         kit = types.SimpleNamespace(Echec=terrain.Echec, workdir=terrain.workdir, run=terrain.run, REPO=terrain.REPO,
@@ -1641,7 +1753,7 @@ class Scenario(Base):
         p = pilote or FauxPilote(self.h, home=home)
         p.home = home
         secrets = {"GH_TOKEN": "ghs_x", "GITHUB_TOKEN": "ghs_y", "CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-z"}
-        with mock.patch.dict(os.environ, secrets):
+        with mock.patch.dict(os.environ, secrets), mock.patch.object(ta, "depuis_release", release or ta.depuis_release):
             terrain.play("app", lambda t, o: ta.scenario(t, o, kit, pilote=p, horloge=self.h, dormir=self.h.dormir), opts)
             left = {k: os.environ.get(k) for k in secrets}
         with open(opts.json, encoding="utf-8") as f:
@@ -1668,6 +1780,85 @@ class Scenario(Base):
         self.assertEqual(self.nights, [["ecartee", "rendue"]])
         self.assertIn("une nuit lancée par le planificateur", row["raison"])
         self.assertNotIn("install_log", d)
+
+    def test_codex_chosen_alone_in_the_robots_copy_of_the_kit(self):
+        def zipped_gate(env):
+            with zipfile.ZipFile(env["BIAB_ARCHIVE"]) as z:
+                text = z.read("brain-in-a-box-terrain/engine/hooks/_agents.py").decode("utf-8")
+            return re.search(r"^CODEX_OUVERT = .*$", text, re.M).group(0)
+
+        for source in ("build", "release"):
+            with self.subTest(source=source):
+                shutil.rmtree(Path(self.tmp) / "home", True)
+                p = FauxPilote(Horloge(), home=Path(self.tmp) / "home", codex=True)
+                self.h = p.h
+                release = lambda t, pilote, dossier, token, details, sha=None: Path(dossier) / "app.dmg"
+                row, p, checked, sha, _, home = self.run_it(pilote=p, parcours="app-codex", source=source, release=release)
+                self.assertEqual(row["statut"], "ok", row["raison"])
+                self.assertIn("Codex choisi seul", row["raison"])
+                # The gate open in the robot's copy only: the archive the app gets, and its sources on
+                # disk before its first start, without the marker it must bring itself.
+                self.assertEqual([zipped_gate(env) for env in p.envs], [ta.PORTE_OUVERTE] * 2)
+                self.assertEqual(p.portes, [ta.PORTE_OUVERTE] * 2)
+                # The marker comes with the app's own install only: absent before its first start.
+                self.assertEqual(p.marqueurs, [False, True])
+                self.assertIn("Codex ouvert dans cette copie", row["details"]["sources_du_cerveau"])
+                with zipfile.ZipFile(p.envs[0]["BIAB_ARCHIVE"]) as z, \
+                        zipfile.ZipFile(ta.archive_testee(terrain, terrain.Etapes(), types.SimpleNamespace(home=home), sha)) as plain:
+                    self.assertEqual(sorted(z.namelist()), sorted(plain.namelist()))
+                    for name in plain.namelist():
+                        if not name.endswith("/engine/hooks/_agents.py"):
+                            self.assertEqual(z.read(name), plain.read(name), name)
+                            self.assertEqual(z.getinfo(name).external_attr, plain.getinfo(name).external_attr, name)
+                self.assertTrue(os.access(home / ".brain-in-a-box" / "src" / "install.sh", os.X_OK))
+        # The app that installs from master's zip on the path of Claude alone gets no copy of the robot's.
+        shutil.rmtree(Path(self.tmp) / "home", True)
+        p = FauxPilote(Horloge(), home=Path(self.tmp) / "home")
+        self.h = p.h
+        row, p, _, _, _, home = self.run_it(pilote=p, source="release", release=lambda t, pi, d, tok, det, sha=None: Path(d) / "app.dmg")
+        self.assertEqual(row["statut"], "ok", row["raison"])
+        self.assertEqual([env.get("BIAB_ARCHIVE") for env in p.envs], [None, None])
+        self.assertEqual(p.portes, [None, None])
+
+    def test_codex_alone_wants_codex_and_no_claude_code(self):
+        p = FauxPilote(self.h, home=Path(self.tmp) / "home", codex=True)
+        original = p.installer_le_kit
+        p.installer_le_kit = lambda: (original(), (Path(p.home) / ".local" / "bin" / "claude").write_text("x"))
+        row, _, _, _, _, _ = self.run_it(pilote=p, parcours="app-codex")
+        self.assertEqual((row["statut"], row["etape"]), ("echec", "app-outils"))
+        self.assertIn("Claude Code est installé alors que seul Codex est choisi", row["raison"])
+        shutil.rmtree(Path(self.tmp) / "home", True)
+        p = FauxPilote(Horloge(), home=Path(self.tmp) / "home", codex=True)
+        self.h = p.h
+        original2 = p.installer_le_kit
+        p.installer_le_kit = lambda: (original2(), (Path(p.home) / ".local" / "bin" / "codex").unlink())
+        row, _, _, _, _, _ = self.run_it(pilote=p, parcours="app-codex")
+        self.assertEqual((row["statut"], row["etape"]), ("echec", "app-outils"))
+        self.assertIn("Codex n'est pas installé", row["raison"])
+
+    def test_codex_is_looked_for_where_the_pilots_system_puts_it(self):
+        # The system of the window driven, not the one the harness runs on: OpenAI's installer puts
+        # Codex in ~/.local/bin on a Mac or Linux, under LOCALAPPDATA on Windows.
+        home = Path(self.tmp) / "home"
+        local = Path(self.tmp) / "Local"
+        self.assertEqual(FauxPilote(self.h, home=home).codex_installe(home), [home / ".local" / "bin" / "codex"])
+        with mock.patch.dict(os.environ, {"LOCALAPPDATA": str(local)}):
+            self.assertEqual(FauxWindows(self.h, self.tmp).codex_installe(home),
+                             [local / "Programs" / "OpenAI" / "Codex" / "bin" / "codex.exe"])
+        p = FauxPilote(self.h, home=home, codex=True)
+        elsewhere = Path(self.tmp) / "ailleurs" / "codex"
+        p.codex_installe = lambda h: [elsewhere]
+        row, _, _, _, _, _ = self.run_it(pilote=p, parcours="app-codex")
+        self.assertEqual((row["statut"], row["etape"]), ("echec", "app-outils"))
+        self.assertIn("Codex n'est pas installé (%s)" % elsewhere, row["raison"])
+
+    def test_the_gate_is_opened_in_the_line_it_is(self):
+        with open(os.path.join(REPO, "engine", "hooks", "_agents.py"), encoding="utf-8") as f:
+            text = f.read()
+        opened = ta.ouvrir_porte(text)
+        self.assertEqual([l for l in opened.splitlines() if l.startswith("CODEX_OUVERT")], [ta.PORTE_OUVERTE])
+        self.assertEqual(len(opened.splitlines()), len(text.splitlines()))
+        self.assertIsNone(ta.ouvrir_porte(text.replace("CODEX_OUVERT = frozenset", "CODEX_OUVERT=frozenset")))
 
     def test_a_click_no_user_could_do_fails_the_night(self):
         p = FauxPilote(self.h, home=Path(self.tmp) / "home")

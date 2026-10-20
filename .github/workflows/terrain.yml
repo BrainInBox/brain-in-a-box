@@ -537,22 +537,29 @@ jobs:
   # No Claude token here: the robot clicks « Plus tard » at the login, and the app and what it
   # starts get a fresh user's environment (GH_TOKEN, read-only, only lists the releases and
   # checks the attestation). The captures are public: the VM's screen only.
+  # Two paths on each system: "app", Claude alone as users get it (the app's gate closed, no choice
+  # asked), and "app-codex", Codex chosen alone, the gate open in the robot's copy of the kit only
+  # (terrain_app.py), as the other benches open it.
   app-macos:
-    name: The app, clicked through (macOS)
+    name: The app, clicked through (macOS${{ matrix.parcours == 'app-codex' && ', Codex chosen' || '' }})
     needs: ref
     runs-on: macos-latest
     timeout-minutes: 185
     permissions:
       contents: read
       attestations: read
+    strategy:
+      fail-fast: false
+      matrix:
+        parcours: [app, app-codex]
     env:
-      PARCOURS: app
+      PARCOURS: ${{ matrix.parcours }}
       TERRAIN_SHA: ${{ needs.ref.outputs.sha }}
     steps:
       - name: Where the results and the captures go
         run: |
-          echo "TERRAIN_JSON=$RUNNER_TEMP/terrain-macos-app.json" >> "$GITHUB_ENV"
-          echo "TERRAIN_CAPTURES=$RUNNER_TEMP/captures-macos-app" >> "$GITHUB_ENV"
+          echo "TERRAIN_JSON=$RUNNER_TEMP/terrain-macos-$PARCOURS.json" >> "$GITHUB_ENV"
+          echo "TERRAIN_CAPTURES=$RUNNER_TEMP/captures-macos-$PARCOURS" >> "$GITHUB_ENV"
 
       - uses: actions/checkout@v4
         with:
@@ -673,7 +680,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: terrain-macos-app
+          name: terrain-macos-${{ matrix.parcours }}
           path: ${{ env.TERRAIN_JSON }}
           if-no-files-found: warn
           retention-days: 14
@@ -682,7 +689,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: captures-macos-app
+          name: captures-macos-${{ matrix.parcours }}
           path: ${{ env.TERRAIN_CAPTURES }}
           if-no-files-found: warn
           retention-days: 14
@@ -695,15 +702,19 @@ jobs:
   # uninstalls the runner's (PiloteWindows.poste_neuf, .github/ci/sans-git.ps1, its proof in
   # TERRAIN_SANS_GIT's file). The app has to bring both. No Claude token here either.
   app-windows:
-    name: The app, clicked through (Windows)
+    name: The app, clicked through (Windows${{ matrix.parcours == 'app-codex' && ', Codex chosen' || '' }})
     needs: ref
     runs-on: windows-latest
     timeout-minutes: 185
     permissions:
       contents: read
       attestations: read
+    strategy:
+      fail-fast: false
+      matrix:
+        parcours: [app, app-codex]
     env:
-      PARCOURS: app
+      PARCOURS: ${{ matrix.parcours }}
       TERRAIN_SHA: ${{ needs.ref.outputs.sha }}
     defaults:
       run:
@@ -711,8 +722,8 @@ jobs:
     steps:
       - name: Where the results and the captures go
         run: |
-          "TERRAIN_JSON=$env:RUNNER_TEMP\terrain-windows-app.json" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          "TERRAIN_CAPTURES=$env:RUNNER_TEMP\captures-windows-app" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "TERRAIN_JSON=$env:RUNNER_TEMP\terrain-windows-$env:PARCOURS.json" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "TERRAIN_CAPTURES=$env:RUNNER_TEMP\captures-windows-$env:PARCOURS" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "TERRAIN_SANS_GIT=$env:RUNNER_TEMP\sans-git.json" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - uses: actions/checkout@v4
@@ -850,7 +861,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: terrain-windows-app
+          name: terrain-windows-${{ matrix.parcours }}
           path: ${{ env.TERRAIN_JSON }}
           if-no-files-found: warn
           retention-days: 14
@@ -859,7 +870,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: captures-windows-app
+          name: captures-windows-${{ matrix.parcours }}
           path: ${{ env.TERRAIN_CAPTURES }}
           if-no-files-found: warn
           retention-days: 14
@@ -980,21 +991,25 @@ jobs:
   # password typed there (the only stand-in), and logs what the window would show; the journal
   # shows what ran as root.
   app-linux:
-    name: The app, clicked through (Linux)
+    name: The app, clicked through (Linux${{ matrix.parcours == 'app-codex' && ', Codex chosen' || '' }})
     needs: [ref, app-linux-build]
     runs-on: ubuntu-latest
     timeout-minutes: 150
     permissions:
       contents: read
       attestations: read
+    strategy:
+      fail-fast: false
+      matrix:
+        parcours: [app, app-codex]
     env:
-      PARCOURS: app
+      PARCOURS: ${{ matrix.parcours }}
       TERRAIN_SHA: ${{ needs.ref.outputs.sha }}
     steps:
       - name: Where the results and the captures go
         run: |
-          echo "TERRAIN_JSON=$RUNNER_TEMP/terrain-linux-app.json" >> "$GITHUB_ENV"
-          echo "TERRAIN_CAPTURES=$RUNNER_TEMP/captures-linux-app" >> "$GITHUB_ENV"
+          echo "TERRAIN_JSON=$RUNNER_TEMP/terrain-linux-$PARCOURS.json" >> "$GITHUB_ENV"
+          echo "TERRAIN_CAPTURES=$RUNNER_TEMP/captures-linux-$PARCOURS" >> "$GITHUB_ENV"
 
       - uses: actions/checkout@v4
         with:
@@ -1067,7 +1082,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: terrain-linux-app
+          name: terrain-linux-${{ matrix.parcours }}
           path: ${{ env.TERRAIN_JSON }}
           if-no-files-found: warn
           retention-days: 14
@@ -1076,7 +1091,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: captures-linux-app
+          name: captures-linux-${{ matrix.parcours }}
           path: ${{ env.TERRAIN_CAPTURES }}
           if-no-files-found: warn
           retention-days: 14
@@ -1091,7 +1106,7 @@ jobs:
       contents: read
       issues: write
     env:
-      ATTENDUS: macos-neuf,macos-montee,windows-neuf,windows-montee,linux-neuf,linux-reinstallation,macos-claude,windows-claude,macos-app,windows-app,linux-app
+      ATTENDUS: macos-neuf,macos-montee,windows-neuf,windows-montee,linux-neuf,linux-reinstallation,macos-claude,windows-claude,macos-app,windows-app,linux-app,macos-app-codex,windows-app-codex,linux-app-codex
       # A job that did not succeed is a failure even when its rows say nothing (terrain.py JOBS).
       JOBS: ref=${{ needs.ref.result }},macos=${{ needs.macos.result }},windows=${{ needs.windows.result }},linux=${{ needs.linux.result }},claude=${{ needs.claude.result }},app-macos=${{ needs.app-macos.result }},app-windows=${{ needs.app-windows.result }},app-linux-build=${{ needs.app-linux-build.result }},app-linux=${{ needs.app-linux.result }}
     steps:

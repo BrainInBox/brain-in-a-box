@@ -14,7 +14,8 @@ use std::time::Duration;
 
 use serde_json::Value;
 
-use crate::sys;
+use crate::agents::{self, Agents, Engine};
+use crate::{codex, sys};
 
 pub type Version = (u32, u32, u32);
 
@@ -291,6 +292,20 @@ fn auth_method(status: &str) -> Option<String> {
     v.get("authMethod").and_then(Value::as_str).map(String::from)
 }
 
+// ── Codex ───────────────────────────────────────────────────────────────────
+
+/// Codex where the kit's launcher finds it (the official installer's place first), installed when it
+/// answers `--version` ("codex-cli 0.162.1").
+pub fn codex(setup: &codex::Setup) -> Found {
+    codex::find(setup).map_or(Found::Absent, |bin| version_of(&bin, CLAUDE_TIMEOUT))
+}
+
+/// Recent enough for the kit's launcher, which pauses an older one.
+pub fn codex_ok(found: &Found) -> bool {
+    let (major, minor, patch) = codex::MIN_CODEX;
+    found.version().is_some_and(|v| (u64::from(v.0), u64::from(v.1), u64::from(v.2)) >= (major, minor, patch))
+}
+
 // ── Obsidian ────────────────────────────────────────────────────────────────
 
 /// In /Applications or ~/Applications, with its program inside: an empty or
@@ -432,33 +447,88 @@ pub fn obsidian_installable(os: &OsRelease) -> bool {
 
 // ── The brain ───────────────────────────────────────────────────────────────
 
-/// What install.sh (install.ps1 on Windows) leaves behind once it went through.
+/// What install.sh (install.ps1 on Windows) leaves behind once it went through: the vault and the
+/// memory, then the part of each agent agents.json lists. Without the file, Claude's alone, as before
+/// Codex.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Brain {
     /// ~/Documents/Brain
     pub vault: bool,
-    /// Claude Code's hooks, in ~/.claude/settings.json.
-    pub hooks: bool,
-    pub skills: bool,
     /// gbrain's database. On Windows also the keyword index install.ps1 falls back on
     /// when gbrain does not install: the brain finds notes by keywords then.
     pub memory: bool,
+    /// Claude Code's part, when Claude is one of the agents.
+    pub claude: Option<ClaudePart>,
+    /// Codex's, when Codex is one of them.
+    pub codex: Option<CodexPart>,
+    /// agents.json can be trusted, or is absent: otherwise no agent is wired (agents.rs), and the brain
+    /// is not whole until the choice is made again. Not either while a choice made in the window waits
+    /// for the installer to record it (agents::pending).
+    pub chosen: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClaudePart {
+    /// Claude Code's hooks, in ~/.claude/settings.json.
+    pub hooks: bool,
+    pub skills: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CodexPart {
+    /// The kit's hooks, in Codex's hooks.json.
+    pub hooks: bool,
+    /// The kit's block in the global instructions Codex reads (engine/codex/wire.py writes it).
+    pub instructions: bool,
+    /// The kit's skills, in ~/.agents/skills.
+    pub skills: bool,
 }
 
 impl Brain {
     pub fn complete(self) -> bool {
-        self.vault && self.hooks && self.skills && self.memory
+        self.vault
+            && self.memory
+            && self.chosen
+            && self.claude.is_none_or(|c| c.hooks && c.skills)
+            && self.codex.is_none_or(|c| c.hooks && c.instructions && c.skills)
     }
 }
 
-pub fn brain(home: &Path) -> Brain {
-    let settings = fs::read_to_string(home.join(".claude/settings.json")).unwrap_or_default();
+pub fn brain(home: &Path, agents: &Agents) -> Brain {
     Brain {
         vault: vault(home).is_some(),
-        // The shell form on a Mac, the exec form (python.exe + the hook in "args") on Windows.
-        hooks: settings.contains("correction-detector.py"),
-        skills: home.join(".claude/skills/brain-boost/SKILL.md").is_file(),
         memory: home.join(".gbrain/brain.pglite").exists() || keyword_index(home),
+        claude: agents
+            .lists(Engine::Claude)
+            .then(|| ClaudePart { hooks: claude_hooks(home), skills: home.join(".claude/skills/brain-boost/SKILL.md").is_file() }),
+        codex: agents.codex_home.as_deref().filter(|_| agents.lists(Engine::Codex)).map(|codex_home| CodexPart {
+            // The command form on a Mac, the PowerShell one on Windows: the hook's name either way.
+            hooks: fs::read_to_string(codex_home.join("hooks.json")).unwrap_or_default().contains("correction-detector.py"),
+            instructions: codex_instructions(codex_home).contains(KIT_MARK),
+            skills: home.join(".agents/skills/brain-boost/SKILL.md").is_file(),
+        }),
+        chosen: !agents.order.is_empty() && !agents::pending(agents),
+    }
+}
+
+/// The kit's hooks are in Claude Code's settings.json: the shell form on a Mac, the exec form
+/// (python.exe + the hook in "args") on Windows.
+pub fn claude_hooks(home: &Path) -> bool {
+    fs::read_to_string(home.join(".claude/settings.json")).unwrap_or_default().contains("correction-detector.py")
+}
+
+/// What the installers write before the kit's block in an instructions file.
+const KIT_MARK: &str = "<!-- brain-in-a-box -->";
+
+/// The global instructions Codex reads: AGENTS.override.md when it holds text, else AGENTS.md
+/// (codex-rs/codex-home/src/instructions/mod.rs; wire.py writes the kit's block where Codex reads).
+fn codex_instructions(codex_home: &Path) -> String {
+    let text = |name: &str| fs::read(codex_home.join(name)).map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default();
+    let over = text("AGENTS.override.md");
+    if over.trim().is_empty() {
+        text("AGENTS.md")
+    } else {
+        over
     }
 }
 
@@ -758,19 +828,101 @@ pub(crate) mod tests {
     fn brain_needs_all_four_markers() {
         let tmp = tempfile::tempdir().unwrap();
         let h = tmp.path();
-        let none = Brain { vault: false, hooks: false, skills: false, memory: false };
-        assert_eq!(brain(h), none);
-        assert!(!brain(h).complete());
+        let claude = Agents::claude_alone();
+        let none = Brain { vault: false, memory: false, claude: Some(ClaudePart { hooks: false, skills: false }), codex: None, chosen: true };
+        assert_eq!(brain(h, &claude), none);
+        assert!(!brain(h, &claude).complete());
         fs::create_dir_all(h.join("Documents")).unwrap();
         fs::write(h.join("Documents/Brain"), "a file, not the vault").unwrap();
         assert_eq!(vault(h), None);
         fs::remove_file(h.join("Documents/Brain")).unwrap();
         fake_brain(h);
-        assert!(brain(h).complete());
+        assert!(brain(h, &claude).complete());
         assert_eq!(vault(h), Some(brain_dir(h)));
         fs::write(h.join(".claude/settings.json"), r#"{"hooks":{}}"#).unwrap();
-        assert_eq!(brain(h), Brain { vault: true, hooks: false, skills: true, memory: true });
-        assert!(!brain(h).complete());
+        let unhooked = Brain { vault: true, memory: true, claude: Some(ClaudePart { hooks: false, skills: true }), codex: None, chosen: true };
+        assert_eq!(brain(h, &claude), unhooked);
+        assert!(!brain(h, &claude).complete());
+        assert!(!claude_hooks(h));
+    }
+
+    /// Codex's part: its hooks.json, the instructions it reads, the skills in ~/.agents. Only the agents
+    /// agents.json lists count, and a choice the kit cannot trust is never a whole brain.
+    #[test]
+    fn each_agent_listed_has_its_part() {
+        let tmp = tempfile::tempdir().unwrap();
+        let h = tmp.path();
+        let codex_home = h.join("Données é").join(".codex");
+        let agents = |order: Vec<Engine>| {
+            let codex_home = order.contains(&Engine::Codex).then(|| codex_home.clone());
+            Agents { order, codex_home, etat: "ok".into() }
+        };
+        fake_brain(h);
+        let both = agents(vec![Engine::Codex, Engine::Claude]);
+        let codex = agents(vec![Engine::Codex]);
+        assert_eq!(brain(h, &codex).claude, None, "Claude excluded: its files say nothing");
+        assert_eq!(brain(h, &codex).codex, Some(CodexPart { hooks: false, instructions: false, skills: false }));
+        assert!(!brain(h, &both).complete() && !brain(h, &codex).complete());
+
+        fake_codex_brain(h, &codex_home);
+        assert!(brain(h, &both).complete() && brain(h, &codex).complete());
+        fs::remove_file(h.join(".claude/settings.json")).unwrap();
+        assert!(brain(h, &codex).complete(), "Codex alone needs nothing of Claude's");
+        assert!(!brain(h, &both).complete());
+
+        // AGENTS.override.md with text is what Codex reads: the block must be there.
+        fs::write(codex_home.join("AGENTS.override.md"), "# mine\n").unwrap();
+        assert!(!brain(h, &codex).codex.unwrap().instructions);
+        assert!(!brain(h, &codex).complete());
+        fs::write(codex_home.join("AGENTS.override.md"), " \n").unwrap();
+        assert!(brain(h, &codex).codex.unwrap().instructions, "blank: Codex reads AGENTS.md");
+        fs::write(codex_home.join("hooks.json"), r#"{"hooks": {}}"#).unwrap();
+        assert!(!brain(h, &codex).codex.unwrap().hooks);
+        fs::remove_dir_all(h.join(".agents")).unwrap();
+        assert!(!brain(h, &codex).codex.unwrap().skills);
+
+        // A choice the kit cannot trust: no agent, never complete.
+        fake_brain(h);
+        let untrusted = brain(h, &Agents::none("ferme"));
+        assert_eq!((untrusted.claude, untrusted.codex, untrusted.chosen), (None, None, false));
+        assert!(untrusted.vault && untrusted.memory && !untrusted.complete());
+    }
+
+    /// What install.sh leaves for Codex (engine/codex/wire.py, install_skills.py).
+    pub(crate) fn fake_codex_brain(home: &Path, codex_home: &Path) {
+        fs::create_dir_all(codex_home).unwrap();
+        let hook = home.join(".claude/hooks/brain/correction-detector.py");
+        let hooks = serde_json::json!({ "hooks": { "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": format!("{} --agent codex", hook.display()), "timeout": 30 }] }] } });
+        fs::write(codex_home.join("hooks.json"), hooks.to_string()).unwrap();
+        fs::write(codex_home.join("AGENTS.md"), "# mine\n\n<!-- brain-in-a-box -->\n# AGENTS.md\n").unwrap();
+        fs::create_dir_all(home.join(".agents/skills/brain-boost")).unwrap();
+        fs::write(home.join(".agents/skills/brain-boost/SKILL.md"), "# skill").unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn codex_counts_once_it_tells_a_recent_enough_version() {
+        let tmp = tempfile::tempdir().unwrap();
+        let setup = codex::Setup {
+            home: tmp.path().to_path_buf(),
+            codex_home: tmp.path().join(".codex"),
+            work_root: tmp.path().to_path_buf(),
+            features: tmp.path().join("none.json"),
+            layers: codex::Layers::default(),
+            vars: Box::new(|_| None),
+            command: None,
+        };
+        assert_eq!(codex(&setup), Found::Absent);
+        let bin = tmp.path().join(".local/bin/codex");
+        write_exec(&bin, "#!/bin/sh\necho codex-cli 0.162.1\n");
+        assert_eq!(codex(&setup), Found::Version("codex-cli 0.162.1".into()));
+        assert!(codex_ok(&codex(&setup)));
+        for (said, ok) in [("codex-cli 0.161.9", false), ("codex-cli 0.163.0-alpha.11", true), ("codex-cli 1.0.0", true), ("?", false)] {
+            assert_eq!(codex_ok(&Found::Version(said.into())), ok, "{said}");
+        }
+        assert!(!codex_ok(&Found::NoVersion) && !codex_ok(&Found::Absent));
+        write_exec(&bin, "#!/bin/sh\nexit 1\n");
+        assert_eq!(codex(&setup), Found::NoVersion);
     }
 
     #[test]
@@ -800,10 +952,10 @@ pub(crate) mod tests {
     fn a_keyword_index_is_a_memory_on_windows() {
         let tmp = tempfile::tempdir().unwrap();
         let h = tmp.path();
-        assert!(!brain(h).memory);
+        assert!(!brain(h, &Agents::claude_alone()).memory);
         fs::create_dir_all(h.join(".brain-search")).unwrap();
         fs::write(h.join(".brain-search/engine"), "brain_search\n").unwrap();
-        assert!(brain(h).memory);
+        assert!(brain(h, &Agents::claude_alone()).memory);
     }
 
     #[cfg(windows)]

@@ -1,6 +1,9 @@
 //! The configuration guard: around every run of the brain step and every repair,
 //! what the user already had in ~/.claude, their scheduled jobs (LaunchAgents on a Mac,
 //! systemd's user units on Linux) and their shell files comes out exactly as it went in.
+//! When Codex is one of the agents, its folders too (~/.codex, the CODEX_HOME agents.json records)
+//! and ~/.agents/skills. With Claude alone the installers do not write there, and the guard leaves
+//! them to the user's own Codex, as before the choice existed.
 //!
 //! `take` copies every protected file into a private folder before the step, `check`
 //! compares after it, `restore` puts back, byte for byte, whatever the step should
@@ -13,13 +16,15 @@ use std::fmt;
 use std::fs;
 use std::io;
 use std::path::{Component, Path, PathBuf};
+use std::sync::LazyLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use regex::Regex;
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 
-use crate::perms;
 use crate::steps::write_atomic;
+use crate::{agents, perms};
 
 const SETTINGS: &str = ".claude/settings.json";
 /// The old bytes must stay at the start: install.sh appends to CLAUDE.md, Bun's
@@ -30,6 +35,16 @@ const APPEND_ONLY: &[&str] =
 const SINGLE: &[&str] = &[".local/bin/gbq"];
 const HOOKS: &str = ".claude/hooks";
 const SKILLS: &str = ".claude/skills";
+/// Codex's own files the kit writes in, in each of Codex's folders (engine/codex/wire.py): hooks.json,
+/// like Claude's settings; config.toml, where only the kit's approvals may appear; the global
+/// instructions, appended to; the rules (*.rules), the kit's own among the user's.
+const CODEX_DEFAULT: &str = ".codex";
+const CODEX_HOOKS: &str = "hooks.json";
+const CODEX_CONFIG: &str = "config.toml";
+const CODEX_APPEND_ONLY: &[&str] = &["AGENTS.md", "AGENTS.override.md"];
+const CODEX_RULES: &str = "rules";
+/// Where install_skills.py puts the kit's skills for Codex, where people keep theirs too.
+const AGENT_SKILLS: &str = ".agents/skills";
 /// The user's scheduled jobs, where install.sh writes the kit's.
 #[cfg(not(target_os = "linux"))]
 const AGENTS: (&str, &[&str]) = ("Library/LaunchAgents", &[".plist"]);
@@ -59,8 +74,8 @@ const KIT_HOOKS: &str = ".claude/hooks/brain";
 /// install.ps1's gbq for Git Bash holds this PC's paths (Python, the brain), so no source
 /// matches it: its first lines say it is ours.
 const GBQ_MARK: (&str, &[u8]) = (".local/bin/gbq", b"#!/bin/sh\n# brain-in-a-box : gbq pour Git Bash");
-/// install_skills.py's list: skill name -> hash of the whole folder.
-const SKILLS_MANIFEST: &str = ".brain-in-a-box/skills.json";
+/// install_skills.py's lists, one per skills folder: skill name -> hash of the whole folder.
+const SKILLS_MANIFESTS: &[(&str, &str)] = &[(".brain-in-a-box/skills.json", SKILLS), (".brain-in-a-box/skills-codex.json", AGENT_SKILLS)];
 /// The guard's own list of what a guarded run wrote, next to the snapshots.
 const WRITTEN: &str = "ecrits.json";
 /// install_skills.py leaves these out of a skill's hash.
@@ -74,8 +89,11 @@ enum Rule {
     Same,
     /// The old bytes stay at the start.
     Append,
-    /// Claude's settings: still a JSON object, every hook still there, every other key unchanged.
+    /// Claude's settings, or Codex's hooks.json: still a JSON object, every hook still there, every
+    /// other key unchanged.
     Settings,
+    /// Codex's config.toml: only the kit's approvals added (codex_config_change).
+    CodexConfig,
 }
 
 /// A copy of a file's content, private to the snapshot.
@@ -101,8 +119,10 @@ pub struct Snapshot {
     saved: Vec<Saved>,
     /// (path from home, sha256) of files we wrote and that nobody edited since.
     ours: HashSet<(String, String)>,
-    /// Bundled skills still exactly as install_skills.py left them.
-    our_skills: HashSet<String>,
+    /// The folders of the bundled skills still exactly as install_skills.py left them.
+    our_skills: HashSet<PathBuf>,
+    /// Codex's folders, from home when they are in it.
+    codex_homes: Vec<PathBuf>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -111,8 +131,8 @@ pub struct Violation {
     pub path: String,
     /// What happened to it, in French: "réécrit", "supprimé"...
     pub what: &'static str,
-    /// Index in `Snapshot::saved`; None for a settings.json the step created broken.
-    at: Option<usize>,
+    /// Index in `Snapshot::saved`; None for a file of settings the step created wrong (its path).
+    at: Result<usize, PathBuf>,
 }
 
 impl fmt::Display for Violation {
@@ -154,20 +174,61 @@ fn slashed(rel: &Path) -> String {
     rel.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/")
 }
 
+/// A protected path's name in the lists: from home with '/', or whole when it is elsewhere (a
+/// CODEX_HOME out of the home folder), as the installers' manifest writes it.
+fn key(rel: &Path) -> String {
+    if rel.is_absolute() {
+        rel.to_string_lossy().into_owned()
+    } else {
+        slashed(rel)
+    }
+}
+
+/// As the user reads it: "~/.claude/settings.json", or the whole path.
+fn shown(rel: &Path) -> String {
+    if rel.is_absolute() {
+        rel.display().to_string()
+    } else {
+        format!("~/{}", slashed(rel))
+    }
+}
+
+/// Codex's folders when the agents of now list Codex (agents.json's, or a choice made in the window
+/// that the installer is about to record): ~/.codex and their CODEX_HOME. From home when they are in
+/// it, once each. None with Claude alone.
+fn codex_homes(home: &Path) -> Vec<PathBuf> {
+    let agents = agents::current(home);
+    if !agents.lists(agents::Engine::Codex) {
+        return Vec::new();
+    }
+    let mut homes: Vec<PathBuf> = Vec::new();
+    let mut seen = HashSet::new();
+    for h in std::iter::once(home.join(CODEX_DEFAULT)).chain(agents.codex_home) {
+        if seen.insert(fs::canonicalize(&h).unwrap_or_else(|_| h.clone())) {
+            homes.push(h.strip_prefix(home).map_or_else(|_| h.clone(), Path::to_path_buf));
+        }
+    }
+    homes
+}
+
 // ── Before ──────────────────────────────────────────────────────────────────
 
 /// Copies every protected file of `home` into a fresh private folder under `store`.
 /// Fails rather than leave a file unprotected: the step must not run then.
 pub fn take(home: &Path, store: &Path) -> Result<Snapshot, String> {
+    take_with(home, store, codex_homes(home))
+}
+
+fn take_with(home: &Path, store: &Path, codex_homes: Vec<PathBuf>) -> Result<Snapshot, String> {
     let dir = new_dir(store).map_err(|e| format!("dossier de la garde : {e}"))?;
     let mut saved = Vec::new();
-    for (rel, rule) in protected(home) {
+    for (rel, rule) in protected(home, &codex_homes) {
         match save(home, &rel, rule, &dir, saved.len()) {
             Ok(Some(s)) => saved.push(s),
             Ok(None) => {}
             Err(e) => {
                 let _ = fs::remove_dir_all(&dir);
-                return Err(format!("~/{} : {e}", rel.display()));
+                return Err(format!("{} : {e}", shown(&rel)));
             }
         }
     }
@@ -176,25 +237,47 @@ pub fn take(home: &Path, store: &Path) -> Result<Snapshot, String> {
     ours.extend(shipped(home));
     ours.extend(marked(home));
     let our_skills = untouched_skills(home);
-    Ok(Snapshot { store: store.to_path_buf(), dir, saved, ours, our_skills })
+    Ok(Snapshot { store: store.to_path_buf(), dir, saved, ours, our_skills, codex_homes })
 }
 
 /// Every protected path that exists now, with its rule.
-fn protected(home: &Path) -> Vec<(PathBuf, Rule)> {
+fn protected(home: &Path, codex_homes: &[PathBuf]) -> Vec<(PathBuf, Rule)> {
     let mut out = vec![(PathBuf::from(SETTINGS), Rule::Settings)];
     out.extend(APPEND_ONLY.iter().map(|p| (PathBuf::from(p), Rule::Append)));
     out.extend(SINGLE.iter().map(|p| (PathBuf::from(p), Rule::Same)));
     let mut hooks = Vec::new();
     walk(home, Path::new(HOOKS), 0, &mut hooks);
     out.extend(hooks.into_iter().map(|p| (p, Rule::Same)));
-    for skill in names_in(&home.join(SKILLS)) {
-        out.push((Path::new(SKILLS).join(skill).join("SKILL.md"), Rule::Same));
+    // Codex's skills folder goes with Codex's folders: guarded only when Codex is one of the agents.
+    let skill_dirs: &[&str] = if codex_homes.is_empty() { &[SKILLS] } else { &[SKILLS, AGENT_SKILLS] };
+    for skills in skill_dirs {
+        for skill in names_in(&home.join(skills)) {
+            out.push((Path::new(skills).join(skill).join("SKILL.md"), Rule::Same));
+        }
     }
     let (agents, endings) = AGENTS;
     for agent in names_in(&home.join(agents)).into_iter().filter(|n| endings.iter().any(|e| n.to_string_lossy().ends_with(e))) {
         out.push((Path::new(agents).join(agent), Rule::Same));
     }
+    for codex in codex_homes {
+        out.extend([(codex.join(CODEX_HOOKS), Rule::Settings), (codex.join(CODEX_CONFIG), Rule::CodexConfig)]);
+        out.extend(CODEX_APPEND_ONLY.iter().map(|f| (codex.join(f), Rule::Append)));
+        let rules = codex.join(CODEX_RULES);
+        for rule in names_in(&home.join(&rules)).into_iter().filter(|n| n.to_string_lossy().ends_with(".rules")) {
+            out.push((rules.join(rule), Rule::Same));
+        }
+    }
     out.retain(|(rel, _)| fs::symlink_metadata(home.join(rel)).is_ok());
+    out
+}
+
+/// The files of settings a step may create: Claude's settings.json, and Codex's hooks.json and
+/// config.toml in each of its folders.
+fn creatable(codex_homes: &[PathBuf]) -> Vec<(PathBuf, Rule)> {
+    let mut out = vec![(PathBuf::from(SETTINGS), Rule::Settings)];
+    for codex in codex_homes {
+        out.extend([(codex.join(CODEX_HOOKS), Rule::Settings), (codex.join(CODEX_CONFIG), Rule::CodexConfig)]);
+    }
     out
 }
 
@@ -348,19 +431,24 @@ fn is_sha256(s: &str) -> bool {
     s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
-/// The skills listed by install_skills.py whose folder still hashes as it wrote it.
-fn untouched_skills(home: &Path) -> HashSet<String> {
-    let Ok(text) = fs::read_to_string(home.join(SKILLS_MANIFEST)) else { return HashSet::new() };
-    let Ok(Value::Object(map)) = serde_json::from_str::<Value>(&text) else { return HashSet::new() };
-    map.into_iter()
-        .filter(|(name, _)| is_plain_name(name))
-        .filter(|(name, hash)| {
-            let root = home.join(SKILLS).join(name);
-            fs::symlink_metadata(&root).is_ok_and(|m| m.is_dir())
-                && tree_hash(&root).is_some_and(|h| hash.as_str() == Some(h.as_str()))
-        })
-        .map(|(name, _)| name)
-        .collect()
+/// The folders of the skills install_skills.py listed (Claude's, Codex's) that still hash as it wrote them.
+fn untouched_skills(home: &Path) -> HashSet<PathBuf> {
+    let mut out = HashSet::new();
+    for (manifest, skills) in SKILLS_MANIFESTS {
+        let Ok(text) = fs::read_to_string(home.join(manifest)) else { continue };
+        let Ok(Value::Object(map)) = serde_json::from_str::<Value>(&text) else { continue };
+        out.extend(
+            map.into_iter()
+                .filter(|(name, _)| is_plain_name(name))
+                .map(|(name, hash)| (Path::new(skills).join(name), hash))
+                .filter(|(rel, hash)| {
+                    let root = home.join(rel);
+                    fs::symlink_metadata(&root).is_ok_and(|m| m.is_dir()) && tree_hash(&root).is_some_and(|h| hash.as_str() == Some(h.as_str()))
+                })
+                .map(|(rel, _)| rel),
+        );
+    }
+    out
 }
 
 fn is_plain_name(name: &str) -> bool {
@@ -439,23 +527,21 @@ pub(crate) fn hex(bytes: &[u8]) -> String {
 impl Snapshot {
     /// A file we wrote ourselves and nobody edited since may be rewritten.
     fn was_ours(&self, s: &Saved, k: &Kept) -> bool {
-        if skill_of(&s.rel).is_some_and(|name| self.our_skills.contains(name)) {
+        if skill_of(&s.rel).is_some_and(|dir| self.our_skills.contains(dir)) {
             return true;
         }
-        let key = slashed(&s.rel);
+        let key = key(&s.rel);
         self.ours.iter().any(|(p, _)| *p == key)
             && sha256_file(&k.file).is_some_and(|h| self.ours.contains(&(key.clone(), h)))
     }
 }
 
-/// "<name>" for ".claude/skills/<name>/SKILL.md".
-fn skill_of(rel: &Path) -> Option<&str> {
-    let rest = rel.strip_prefix(SKILLS).ok()?;
-    let mut parts = rest.components();
-    match (parts.next(), parts.next(), parts.next()) {
-        (Some(Component::Normal(name)), Some(Component::Normal(file)), None) if file == "SKILL.md" => name.to_str(),
-        _ => None,
-    }
+/// The skill's folder, for "<skills>/<name>/SKILL.md" in Claude's or Codex's skills.
+fn skill_of(rel: &Path) -> Option<&Path> {
+    let dir = rel.parent()?;
+    let skills = dir.parent()?;
+    let named = matches!(dir.components().next_back(), Some(Component::Normal(_)));
+    (rel.file_name()? == "SKILL.md" && named && [SKILLS, AGENT_SKILLS].iter().any(|s| skills == Path::new(s))).then_some(dir)
 }
 
 /// What the step changed that it should not have.
@@ -464,14 +550,19 @@ pub fn check(snap: &Snapshot, home: &Path) -> Vec<Violation> {
         .saved
         .iter()
         .enumerate()
-        .filter_map(|(i, s)| Some(Violation { path: format!("~/{}", slashed(&s.rel)), what: changed(snap, home, s)?, at: Some(i) }))
+        .filter_map(|(i, s)| Some(Violation { path: shown(&s.rel), what: changed(snap, home, s)?, at: Ok(i) }))
         .collect();
-    let had_settings = snap.saved.iter().any(|s| s.rel == Path::new(SETTINGS));
-    if !had_settings {
-        if let Ok(bytes) = fs::read(home.join(SETTINGS)) {
-            if let Some(what) = created_settings(&bytes) {
-                found.push(Violation { path: format!("~/{SETTINGS}"), what, at: None });
-            }
+    for (rel, rule) in creatable(&snap.codex_homes) {
+        if snap.saved.iter().any(|s| s.rel == rel) {
+            continue;
+        }
+        let Ok(bytes) = fs::read(home.join(&rel)) else { continue };
+        let what = match rule {
+            Rule::CodexConfig => codex_config_change(b"", &bytes, rel.parent().unwrap_or(&rel), home),
+            _ => created_settings(&bytes),
+        };
+        if let Some(what) = what {
+            found.push(Violation { path: shown(&rel), what, at: Err(rel) });
         }
     }
     found
@@ -506,6 +597,7 @@ fn changed(snap: &Snapshot, home: &Path, s: &Saved) -> Option<&'static str> {
         Rule::Append if after.starts_with(&before) => None,
         Rule::Append => Some("début modifié"),
         Rule::Settings => settings_change(&before, &after, home),
+        Rule::CodexConfig => codex_config_change(&before, &after, s.rel.parent().unwrap_or(&s.rel), home),
     };
     // A file of ours rewritten as allowed may change mode too; nothing else may.
     let mode_kept = perms::mode(&now) == k.mode || (s.rule == Rule::Same && before != after);
@@ -541,16 +633,21 @@ fn settings_change(before: &[u8], after: &[u8], home: &Path) -> Option<&'static 
 
 /// The kit's hook a settings entry runs ("correction-detector.py"), whatever runs it: the
 /// shell form ("python3 /Users/jo/.claude/hooks/brain/x.py", "~/.claude/hooks/brain/x.py") or
-/// the exec form (python.exe, the script in "args"), with any Python. None for anything else.
+/// the exec form (python.exe, the script in "args"), with any Python; Codex's forms too
+/// ("<hook> --agent codex", "& '<python.exe>' '<hook>' --agent codex"). None for anything else.
 fn kit_hook(hook: &Value, home: &Path) -> Option<String> {
     let mut text = hook.get("command")?.as_str()?.to_string();
     for arg in hook.get("args").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str) {
         text.push(' ');
         text.push_str(arg);
     }
+    kit_hook_in(&text, home)
+}
+
+fn kit_hook_in(text: &str, home: &Path) -> Option<String> {
     // Windows paths have either slash and any case.
     let plain = |s: &str| s.replace('\\', "/").to_lowercase();
-    let text = plain(&text);
+    let text = plain(text);
     let home = plain(&home.to_string_lossy());
     let rest = [home.as_str(), "~", "$home", "${home}", "%userprofile%"].iter().find_map(|root| {
         let at = format!("{}/{KIT_HOOKS}/", root.trim_end_matches('/'));
@@ -558,6 +655,93 @@ fn kit_hook(hook: &Value, home: &Path) -> Option<String> {
     })?;
     let name: String = rest.chars().take_while(|c| !c.is_whitespace() && !matches!(c, '"' | '\'' | '/')).collect();
     (!name.is_empty()).then_some(name)
+}
+
+/// A table header of Codex's approvals, its key: [hooks.state."<key>"], the key as wire.py writes it.
+static APPROVAL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"^\[hooks\.state\.("(?:[^"\\\x00-\x1f]|\\.)*")\]$"#).unwrap());
+/// What an approval holds: the hash of the hook's command (wire.py's trust()).
+static TRUSTED_HASH: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"^trusted_hash = "sha256:[0-9a-f]{64}"$"#).unwrap());
+
+/// What a step may change in Codex's config.toml, as engine/codex/wire.py's approve() does: tables
+/// [hooks.state."<key>"] added at its end, each with one hash and approving a hook of the kit's where
+/// this folder's hooks.json has it now; in such a table already there, its hash and the comment naming
+/// the command it approves (a hook of the kit's moved to another Python). Nothing else: no other
+/// setting, no approval of a hook that is not the kit's, nothing of the user's changed or removed.
+fn codex_config_change(before: &[u8], after: &[u8], codex_home: &Path, home: &Path) -> Option<&'static str> {
+    if before == after {
+        return None;
+    }
+    let Ok(old) = std::str::from_utf8(before) else { return Some("réécrit alors qu'il était illisible") };
+    let Ok(new) = std::str::from_utf8(after) else { return Some("réglages modifiés") };
+    let old: Vec<&str> = if old.is_empty() { Vec::new() } else { old.split('\n').collect() };
+    let new: Vec<&str> = new.split('\n').collect();
+    if new.len() < old.len() {
+        return Some("réglages modifiés");
+    }
+    let approval = |line: &str| APPROVAL.captures(line.trim()).and_then(|c| serde_json::from_str::<String>(&c[1]).ok());
+    let kit = |key: &str| kit_approval(key, codex_home, home);
+    let mut table: Option<String> = None;
+    for (a, b) in old.iter().zip(&new) {
+        if b.trim_start().starts_with('[') {
+            table = approval(b);
+        }
+        if a == b {
+            continue;
+        }
+        let both = |ok: &dyn Fn(&str) -> bool| ok(a.trim()) && ok(b.trim());
+        let hash_or_note = both(&|l| TRUSTED_HASH.is_match(l)) || both(&|l| l.starts_with("# command: "));
+        if !(hash_or_note && table.as_deref().is_some_and(kit)) {
+            return Some("réglages modifiés");
+        }
+    }
+    let mut keys: HashSet<String> = old.iter().filter_map(|l| approval(l)).collect();
+    // The table being added, and how many hashes it holds.
+    let mut adding: Option<usize> = None;
+    for line in &new[old.len()..] {
+        let t = line.trim();
+        if t.is_empty() || t.starts_with('#') {
+            continue;
+        }
+        if let Some(key) = approval(t) {
+            if adding.is_some_and(|n| n != 1) || !kit(&key) || !keys.insert(key) {
+                return Some("réglages modifiés");
+            }
+            adding = Some(0);
+        } else if TRUSTED_HASH.is_match(t) && adding.is_some() {
+            adding = adding.map(|n| n + 1);
+        } else {
+            return Some("réglages modifiés");
+        }
+    }
+    adding.is_some_and(|n| n != 1).then_some("réglages modifiés")
+}
+
+/// "<hooks.json>:<event>:<group>:<entry>" names one of the kit's hooks in this folder's hooks.json as
+/// it is now: the hooks.json Codex reaches (through a link or not), a group without a matcher, an
+/// entry every command of which runs the same hook of the kit's.
+fn kit_approval(key: &str, codex_home: &Path, home: &Path) -> bool {
+    let mut parts = key.rsplitn(4, ':');
+    let (Some(entry), Some(group), Some(event), Some(path)) = (parts.next(), parts.next(), parts.next(), parts.next()) else { return false };
+    let event = match event {
+        "user_prompt_submit" => "UserPromptSubmit",
+        "stop" => "Stop",
+        "session_start" => "SessionStart",
+        _ => return false,
+    };
+    let (Ok(group), Ok(entry)) = (group.parse::<usize>(), entry.parse::<usize>()) else { return false };
+    let hooks_json = home.join(codex_home).join(CODEX_HOOKS);
+    let same = Path::new(path).is_absolute() && matches!((fs::canonicalize(path), fs::canonicalize(&hooks_json)), (Ok(a), Ok(b)) if a == b);
+    let Some(Value::Object(d)) = same.then(|| fs::read(&hooks_json).ok().and_then(|b| serde_json::from_slice(&b).ok())).flatten() else {
+        return false;
+    };
+    let Some(group) = d.get("hooks").and_then(|h| h.get(event)).and_then(|a| a.get(group)) else { return false };
+    if group.get("matcher").is_some() {
+        return false;
+    }
+    let Some(Value::Object(h)) = group.get("hooks").and_then(|h| h.get(entry)) else { return false };
+    let named: Vec<Option<String>> =
+        ["command", "commandWindows", "command_windows"].iter().filter_map(|k| h.get(*k)).map(|c| c.as_str().and_then(|c| kit_hook_in(c, home))).collect();
+    named.first().is_some_and(|first| first.is_some() && named.iter().all(|n| n == first))
 }
 
 /// (event, matcher, hook) for every hook. Anything not shaped as expected counts as
@@ -610,9 +794,9 @@ pub fn settle(snap: Snapshot, home: &Path) -> Report {
 fn restore(snap: &Snapshot, home: &Path, found: &[Violation]) -> Vec<Violation> {
     for v in found {
         // A failure shows in the check below.
-        let _ = match v.at {
-            Some(i) => put_back(home, &snap.saved[i]),
-            None => remove_file_only(&home.join(SETTINGS)),
+        let _ = match &v.at {
+            Ok(i) => put_back(home, &snap.saved[*i]),
+            Err(created) => remove_file_only(&home.join(created)),
         };
     }
     let again = check(snap, home);
@@ -668,7 +852,7 @@ fn remember(snap: &Snapshot, home: &Path) {
     let file = snap.store.join(WRITTEN);
     let mut written: Map<String, Value> = hashes(home, &file).into_iter().map(|(p, h)| (p, Value::String(h))).collect();
     let mut grew = false;
-    for (rel, rule) in protected(home) {
+    for (rel, rule) in protected(home, &snap.codex_homes) {
         let path = home.join(&rel);
         if rule != Rule::Same || !fs::symlink_metadata(&path).is_ok_and(|m| m.is_file()) {
             continue;
@@ -678,7 +862,7 @@ fn remember(snap: &Snapshot, home: &Path) {
             None => true,
         };
         if let Some(hash) = new.then(|| sha256_file(&path)).flatten() {
-            written.insert(slashed(&rel), Value::String(hash));
+            written.insert(key(&rel), Value::String(hash));
             grew = true;
         }
     }
@@ -784,7 +968,7 @@ mod tests {
 
     fn snapshot_of(h: &Home) -> Vec<(String, Vec<u8>)> {
         let mut files = Vec::new();
-        for (rel, _) in protected(&h.home) {
+        for (rel, _) in protected(&h.home, &[PathBuf::from(CODEX_DEFAULT)]) {
             if let Ok(bytes) = fs::read(h.home.join(&rel)) {
                 files.push((rel.to_string_lossy().into_owned(), bytes));
             }
@@ -1121,10 +1305,10 @@ mod tests {
             assert_eq!(ours, theirs);
         }
 
-        h.write(SKILLS_MANIFEST, &format!(r#"{{"brain-boost":"{ours}","../evil":"{ours}"}}"#));
+        h.write(".brain-in-a-box/skills.json", &format!(r#"{{"brain-boost":"{ours}","../evil":"{ours}"}}"#));
         h.write(".claude/skills/mine/SKILL.md", "# mine\n");
         let snap = h.take();
-        assert_eq!(snap.our_skills, HashSet::from(["brain-boost".to_string()]));
+        assert_eq!(snap.our_skills, HashSet::from([PathBuf::from(".claude/skills/brain-boost")]));
         h.install(r#"echo v2 > "$H/.claude/skills/brain-boost/SKILL.md"; echo v2 > "$H/.claude/skills/mine/SKILL.md""#);
         let found: Vec<String> = check(&snap, &h.home).iter().map(ToString::to_string).collect();
         assert_eq!(found, ["~/.claude/skills/mine/SKILL.md (réécrit)"]);
@@ -1215,8 +1399,11 @@ mod tests {
         assert_eq!(got, [("/elsewhere/x".into(), low.clone()), ("a".into(), low.clone()), ("b".into(), low)]);
         assert!(hashes(&h.home, &h.home.join("missing.json")).is_empty());
         assert!(is_plain_name("brain-boost") && !is_plain_name("../x") && !is_plain_name("a/b") && !is_plain_name(""));
-        assert_eq!(skill_of(Path::new(".claude/skills/x/SKILL.md")), Some("x"));
+        assert_eq!(skill_of(Path::new(".claude/skills/x/SKILL.md")), Some(Path::new(".claude/skills/x")));
+        assert_eq!(skill_of(Path::new(".agents/skills/x/SKILL.md")), Some(Path::new(".agents/skills/x")));
         assert_eq!(skill_of(Path::new(".claude/skills/x/y/SKILL.md")), None);
+        assert_eq!(skill_of(Path::new(".claude/skills/x/README.md")), None);
+        assert_eq!(skill_of(Path::new("elsewhere/skills/x/SKILL.md")), None);
     }
 
     /// The incident, replayed on a copy of the real install.sh in a temp home: no
@@ -1281,6 +1468,9 @@ mod tests {
 
             let user = sys::output_text(Path::new("/usr/bin/id"), &["-un"], Duration::from_secs(5)).unwrap();
             personal(&h);
+            // Claude alone, next to a Codex of the user's own: nothing of it is touched (not guarded
+            // then: what install.sh itself does is compared below).
+            personal_codex_files(&h);
             #[cfg(target_os = "macos")]
             h.write(&format!("Library/LaunchAgents/com.{user}.gbrain-nightly.plist"), "<plist>my own nightly</plist>\n");
             #[cfg(target_os = "linux")]
@@ -1333,6 +1523,341 @@ mod tests {
                 }
             }
         }
+    }
+
+    // ── Codex's files ───────────────────────────────────────────────────────
+
+    /// Codex chosen, its folder ~/.codex (agents.json, the gate open in this home's copy of the kit).
+    fn codex_chosen(h: &Home) {
+        crate::agents::tests::plant_agents_py(&crate::agents::tests::installed(&h.home), true);
+        let chosen = serde_json::json!({ "version": 1, "agents": ["codex"], "prefere": "codex", "codex_home": h.home.join(".codex") });
+        crate::agents::tests::choose(&h.home, &chosen);
+    }
+
+    /// The user's own Codex, and Codex chosen.
+    fn personal_codex(h: &Home) {
+        personal_codex_files(h);
+        codex_chosen(h);
+    }
+
+    /// The user's own Codex: a hook of theirs in each of two events, their settings and their own
+    /// approval of their Stop hook in config.toml, their instructions, rules and a skill.
+    fn personal_codex_files(h: &Home) {
+        let hooks = serde_json::json!({
+            "hooks": {
+                "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "/opt/mine/prompt-hook" }] }],
+                "Stop": [{ "hooks": [{ "type": "command", "command": "/opt/mine/stop-hook" }] }]
+            },
+            "mine": { "keep": true }
+        });
+        h.write(".codex/hooks.json", &serde_json::to_string_pretty(&hooks).unwrap());
+        let mine = h.home.join(".codex").join("hooks.json");
+        h.write(
+            ".codex/config.toml",
+            &format!(
+                "model = \"gpt-5\"\n\n[projects.\"/Users/jo/code\"]\ntrust_level = \"trusted\"\n\n[hooks.state.{}]\ntrusted_hash = \"sha256:{}\"\n",
+                serde_json::to_string(&format!("{}:stop:0:0", mine.display())).unwrap(),
+                "a".repeat(64)
+            ),
+        );
+        h.write(".codex/AGENTS.md", "# Mes consignes\n");
+        h.write(".codex/rules/default.rules", "prefix_rule(pattern=[\"git\", \"status\"], decision=\"allow\")\n");
+        h.write(".agents/skills/mine/SKILL.md", "# mine\n");
+    }
+
+    /// engine/codex/wire.py, as install.sh runs it (install.ps1's form on Windows), on this home's Codex.
+    fn wire(h: &Home, op: &str) {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let python = crate::agents::tests::python();
+        let codex = h.home.join(".codex");
+        let hooks = h.home.join(".claude").join("hooks").join("brain");
+        let arg = if op == "global" { repo.join("engine/CLAUDE.global.template.md") } else { hooks };
+        let (python_text, wire, codex_text, arg_text) =
+            (python.to_string_lossy(), repo.join("engine/codex/wire.py"), codex.to_string_lossy(), arg.to_string_lossy());
+        let wire_text = wire.to_string_lossy();
+        let mut args = vec!["-I", "-B", wire_text.as_ref()];
+        if cfg!(windows) {
+            args.extend(["--ps1", python_text.as_ref()]);
+        }
+        args.extend([op, codex_text.as_ref(), arg_text.as_ref()]);
+        let home = h.home.to_string_lossy();
+        let out = crate::sys::run_with(&python, &args, &[("HOME", &home), ("USERPROFILE", &home)], None, std::time::Duration::from_secs(60));
+        assert!(out.ok(), "wire.py {op}: {} {}", out.stdout, out.stderr);
+    }
+
+    fn codex_key(h: &Home, event: &str, group: usize, entry: usize) -> String {
+        format!("{}:{event}:{group}:{entry}", h.home.join(".codex").join("hooks.json").display())
+    }
+
+    fn approval(key: &str, hash: char) -> String {
+        format!("[hooks.state.{}]\ntrusted_hash = \"sha256:{}\"\n", serde_json::to_string(key).unwrap(), hash.to_string().repeat(64))
+    }
+
+    /// What the kit writes for Codex, by the installers' own wire.py, next to what the user keeps
+    /// there: nothing to put back. Its skills and rules land as files of its own.
+    #[test]
+    fn the_kits_lines_in_codex_files_pass_and_the_users_stay() {
+        let h = Home::new();
+        personal_codex(&h);
+        let before = snapshot_of(&h);
+        let snap = h.take();
+        for op in ["merge", "approve", "global"] {
+            wire(&h, op);
+        }
+        h.write(".codex/rules/brain-in-a-box.rules", "prefix_rule(pattern=[\"gbq\", \"query\"], decision=\"allow\")\n");
+        h.write(".agents/skills/brain-boost/SKILL.md", "# boost\n");
+        let config = String::from_utf8(h.read(".codex/config.toml")).unwrap();
+        assert_eq!(config.matches("[hooks.state.").count(), 7, "the user's approval and the kit's six: {config}");
+        let report = settle(snap, &h.home);
+        assert!(report.clean(), "{report:?}");
+        for (rel, bytes) in before {
+            let now = h.read(&rel);
+            match rel.replace('\\', "/").as_str() {
+                ".codex/config.toml" | ".codex/AGENTS.md" => assert!(now.starts_with(&bytes), "{rel}"),
+                ".codex/hooks.json" => assert_eq!(settings_change(&bytes, &now, &h.home), None),
+                _ => assert_eq!(now, bytes, "{rel}"),
+            }
+        }
+        // A second run of the kit changes nothing more; a config.toml it creates holds its tables only.
+        let snap = h.take();
+        wire(&h, "approve");
+        assert!(settle(snap, &h.home).clean());
+        // The kit's skill for Codex, as install_skills.py listed it, is the kit's to update; without
+        // the list (and the guard's own record of the run that wrote it), it is kept as it is.
+        fs::remove_file(h.store.join(WRITTEN)).unwrap();
+        let snap = h.take();
+        h.write(".agents/skills/brain-boost/SKILL.md", "# boost v2\n");
+        assert!(!settle(snap, &h.home).clean());
+        let ours = tree_hash(&h.home.join(".agents/skills/brain-boost")).unwrap();
+        h.write(".brain-in-a-box/skills-codex.json", &format!(r#"{{"brain-boost":"{ours}"}}"#));
+        let snap = h.take();
+        h.write(".agents/skills/brain-boost/SKILL.md", "# boost v2\n");
+        assert!(settle(snap, &h.home).clean());
+        fs::remove_file(h.home.join(".codex/config.toml")).unwrap();
+        let snap = h.take();
+        wire(&h, "approve");
+        assert!(settle(snap, &h.home).clean());
+        assert!(h.home.join(".codex/config.toml").is_file());
+    }
+
+    /// Anything else a step does to Codex's files is put back, byte for byte: a setting, an approval
+    /// of a hook that is not the kit's (the user's, a hash slipped into their table, another
+    /// hooks.json), the user's own approval rewritten, a hook removed, a rewritten file.
+    #[test]
+    fn codex_files_come_back_when_a_step_oversteps() {
+        type Edit = Box<dyn Fn(&Home)>;
+        // What a step appends to config.toml, written for this home's hooks.json.
+        let append = |text: fn(&Home) -> String| -> Edit {
+            Box::new(move |h: &Home| {
+                let mut c = h.read(".codex/config.toml");
+                c.extend_from_slice(text(h).as_bytes());
+                fs::write(h.home.join(".codex/config.toml"), c).unwrap();
+            })
+        };
+        let replace = |rel: &'static str, from: String, to: String| -> Edit {
+            Box::new(move |h: &Home| {
+                let text = String::from_utf8(h.read(rel)).unwrap();
+                assert!(text.contains(&from), "{rel}: {from}");
+                fs::write(h.home.join(rel), text.replacen(&from, &to, 1)).unwrap();
+            })
+        };
+        fn user_prompt(h: &Home) -> String {
+            codex_key(h, "user_prompt_submit", 0, 0)
+        }
+        fn kit_prompt(h: &Home) -> String {
+            codex_key(h, "user_prompt_submit", 1, 0)
+        }
+        let cases: Vec<(&str, &str, Edit)> = vec![
+            ("a setting added", "réglages modifiés", append(|_| "\nmodel_provider = \"elsewhere\"\n".into())),
+            // A blank line does not end a TOML table: this hash would be the user's last table's.
+            ("a hash in the user's last table", "réglages modifiés", append(|_| format!("\ntrusted_hash = \"sha256:{}\"\n", "b".repeat(64)))),
+            ("the user's hook approved", "réglages modifiés", append(|h| format!("\n{}", approval(&user_prompt(h), 'c')))),
+            (
+                "another hooks.json's hook approved",
+                "réglages modifiés",
+                append(|h| format!("\n{}", approval(&kit_prompt(h).replace(".codex", ".codex-other"), 'c'))),
+            ),
+            ("the kit's table twice", "réglages modifiés", append(|h| format!("\n{}{}", approval(&kit_prompt(h), 'c'), approval(&kit_prompt(h), 'd')))),
+            (
+                "two hashes in a table",
+                "réglages modifiés",
+                append(|h| format!("\n{}trusted_hash = \"sha256:{}\"\n", approval(&kit_prompt(h), 'c'), "d".repeat(64))),
+            ),
+            ("the user's approval changed", "réglages modifiés", replace(".codex/config.toml", "a".repeat(64), "e".repeat(64))),
+            ("a value of the user's changed", "réglages modifiés", replace(".codex/config.toml", "gpt-5".into(), "gpt-4".into())),
+            ("the user's hook removed", "hooks retirés", replace(".codex/hooks.json", "/opt/mine/stop-hook".into(), "/opt/other".into())),
+            ("a key of hooks.json changed", "réglages modifiés", replace(".codex/hooks.json", "\"keep\": true".into(), "\"keep\": false".into())),
+            ("AGENTS.md rewritten", "début modifié", replace(".codex/AGENTS.md", "Mes".into(), "Nos".into())),
+            ("a rule of the user's rewritten", "réécrit", replace(".codex/rules/default.rules", "status".into(), "push".into())),
+            ("a skill of the user's rewritten", "réécrit", replace(".agents/skills/mine/SKILL.md", "mine".into(), "ours".into())),
+            (
+                "a hook of the kit's under a matcher approved",
+                "réglages modifiés",
+                Box::new(|h: &Home| {
+                    let hook = h.home.join(".claude/hooks/brain/correction-detector.py");
+                    let mut d: Value = serde_json::from_slice(&h.read(".codex/hooks.json")).unwrap();
+                    let entry = serde_json::json!({ "type": "command", "command": format!("{} --agent codex", hook.display()) });
+                    d["hooks"]["UserPromptSubmit"].as_array_mut().unwrap().push(serde_json::json!({ "matcher": "x", "hooks": [entry] }));
+                    fs::write(h.home.join(".codex/hooks.json"), d.to_string()).unwrap();
+                    let mut c = h.read(".codex/config.toml");
+                    c.extend_from_slice(format!("\n{}", approval(&codex_key(h, "user_prompt_submit", 2, 0), 'c')).as_bytes());
+                    fs::write(h.home.join(".codex/config.toml"), c).unwrap();
+                }),
+            ),
+            (
+                "a hook of the kit's that runs something else on Windows approved",
+                "réglages modifiés",
+                Box::new(|h: &Home| {
+                    let mut d: Value = serde_json::from_slice(&h.read(".codex/hooks.json")).unwrap();
+                    d["hooks"]["UserPromptSubmit"][1]["hooks"][0]["commandWindows"] = "C:\\elsewhere\\run.exe".into();
+                    fs::write(h.home.join(".codex/hooks.json"), d.to_string()).unwrap();
+                    let mut c = h.read(".codex/config.toml");
+                    c.extend_from_slice(format!("\n{}", approval(&codex_key(h, "user_prompt_submit", 1, 0), 'c')).as_bytes());
+                    fs::write(h.home.join(".codex/config.toml"), c).unwrap();
+                }),
+            ),
+        ];
+        // Control: the kit's own approval, appended the same way, passes.
+        let h = Home::new();
+        personal_codex(&h);
+        wire(&h, "merge");
+        let snap = h.take();
+        append(|h| format!("\n{}", approval(&kit_prompt(h), 'c')))(&h);
+        assert!(check(&snap, &h.home).is_empty());
+        settle(snap, &h.home);
+        for (label, what, edit) in cases {
+            let h = Home::new();
+            personal_codex(&h);
+            wire(&h, "merge");
+            let before = snapshot_of(&h);
+            let snap = h.take();
+            edit(&h);
+            let found = check(&snap, &h.home);
+            assert_eq!(found.iter().map(|v| v.what).collect::<Vec<_>>(), [what], "{label}");
+            let report = settle(snap, &h.home);
+            assert!(report.failed.is_empty(), "{label}: {report:?}");
+            // A hook added to hooks.json may stay (Codex asks before it runs one nobody approved).
+            for ((rel, was), (_, now)) in before.iter().zip(&snapshot_of(&h)) {
+                match rel.replace('\\', "/").as_str() {
+                    ".codex/hooks.json" => assert_eq!(settings_change(was, now, &h.home), None, "{label}"),
+                    _ => assert!(was == now, "{label}: {rel}"),
+                }
+            }
+            assert_eq!(snapshot_of(&h).len(), before.len(), "{label}");
+        }
+    }
+
+    /// The kit's own table, its hash and the comment naming its command changed in place (its hook moved
+    /// to another Python, wire.py on Windows): allowed for a hook of the kit's only.
+    #[test]
+    fn a_kit_approval_may_change_its_hash_in_place() {
+        let h = Home::new();
+        personal_codex(&h);
+        wire(&h, "merge");
+        wire(&h, "approve");
+        let text = String::from_utf8(h.read(".codex/config.toml")).unwrap();
+        let start = text.find(&format!("[hooks.state.{}]", serde_json::to_string(&codex_key(&h, "user_prompt_submit", 1, 0)).unwrap())).unwrap();
+        let table: String = text[start..].lines().take(3).flat_map(|l| [l, "\n"]).collect();
+        assert!(table.lines().nth(2).is_some_and(|l| l.starts_with("# command: ")), "{table}");
+        let mut moved: Vec<String> = table.lines().map(String::from).collect();
+        moved[1] = format!("trusted_hash = \"sha256:{}\"", "f".repeat(64));
+        moved[2] = "# command: & 'C:\\Python313\\python.exe' '…' --agent codex".into();
+        let moved: String = moved.iter().flat_map(|l| [l.as_str(), "\n"]).collect();
+        let snap = h.take();
+        fs::write(h.home.join(".codex/config.toml"), text.replacen(&table, &moved, 1)).unwrap();
+        assert!(check(&snap, &h.home).is_empty());
+        settle(snap, &h.home);
+        // The kit's table given a second hash in place of its comment: TOML Codex refuses.
+        let snap = h.take();
+        let now = String::from_utf8(h.read(".codex/config.toml")).unwrap();
+        let comment = moved.lines().nth(2).unwrap();
+        fs::write(h.home.join(".codex/config.toml"), now.replacen(comment, &format!("trusted_hash = \"sha256:{}\"", "1".repeat(64)), 1)).unwrap();
+        assert_eq!(check(&snap, &h.home).first().map(|v| v.what), Some("réglages modifiés"));
+        settle(snap, &h.home);
+        // A hash slipped in where a setting was: not a hash of the kit's table.
+        let snap = h.take();
+        let now = String::from_utf8(h.read(".codex/config.toml")).unwrap();
+        fs::write(h.home.join(".codex/config.toml"), now.replacen("trust_level = \"trusted\"", &format!("trusted_hash = \"sha256:{}\"", "f".repeat(64)), 1))
+            .unwrap();
+        assert_eq!(check(&snap, &h.home).first().map(|v| v.what), Some("réglages modifiés"));
+        settle(snap, &h.home);
+    }
+
+    /// A config.toml or a hooks.json a step creates holds what the kit writes there, or goes.
+    #[test]
+    fn codex_files_a_step_creates_hold_the_kits_only() {
+        let h = Home::new();
+        codex_chosen(&h);
+        wire(&h, "merge");
+        let kit_prompt = codex_key(&h, "user_prompt_submit", 0, 0);
+        for (label, bytes, kept) in [
+            ("the kit's approval", approval(&kit_prompt, 'c').into_bytes(), true),
+            ("a setting", b"model = \"x\"\n".to_vec(), false),
+            ("a setting after the kit's approval", format!("{}model = \"x\"\n", approval(&kit_prompt, 'c')).into_bytes(), false),
+            ("not text", vec![0xff, 0xfe], false),
+        ] {
+            let _ = fs::remove_file(h.home.join(".codex/config.toml"));
+            let snap = h.take();
+            fs::write(h.home.join(".codex/config.toml"), bytes).unwrap();
+            let report = settle(snap, &h.home);
+            assert_eq!((report.clean(), h.home.join(".codex/config.toml").exists()), (kept, kept), "{label}: {report:?}");
+        }
+        fs::remove_file(h.home.join(".codex/hooks.json")).unwrap();
+        let snap = h.take();
+        h.write(".codex/hooks.json", r#"{"hooks": {}, "other": 1}"#);
+        let found = check(&snap, &h.home);
+        assert_eq!(found.iter().map(|v| (v.path.as_str(), v.what)).collect::<Vec<_>>(), [("~/.codex/hooks.json", "créé avec d'autres réglages que des hooks")]);
+        settle(snap, &h.home);
+        assert!(!h.home.join(".codex/hooks.json").exists());
+    }
+
+    /// Claude alone: Codex's folders are not the step's (install.sh does not touch them then, and
+    /// master never looked at them). The user's own Codex writing there meanwhile (a folder trusted,
+    /// /hooks, a skill of theirs) is neither reported nor put back, as on master.
+    #[test]
+    fn with_claude_alone_codexs_folders_are_left_to_the_user() {
+        for claude in [None, Some(serde_json::json!({ "version": 1, "agents": ["claude"], "prefere": "claude" }))] {
+            let h = Home::new();
+            personal_codex_files(&h);
+            if let Some(chosen) = &claude {
+                crate::agents::tests::plant_agents_py(&crate::agents::tests::installed(&h.home), false);
+                crate::agents::tests::choose(&h.home, chosen);
+            }
+            assert_eq!(codex_homes(&h.home), Vec::<PathBuf>::new(), "{claude:?}");
+            let snap = h.take();
+            let config = String::from_utf8(h.read(".codex/config.toml")).unwrap().replace("gpt-5", "gpt-4");
+            h.write(".codex/config.toml", &config);
+            h.write(".agents/skills/mine/SKILL.md", "# changed by the user's Codex\n");
+            assert!(check(&snap, &h.home).is_empty(), "{claude:?}");
+            assert!(settle(snap, &h.home).clean(), "{claude:?}");
+            assert_eq!(String::from_utf8(h.read(".codex/config.toml")).unwrap(), config);
+            assert_eq!(h.read(".agents/skills/mine/SKILL.md"), b"# changed by the user's Codex\n");
+        }
+    }
+
+    /// The CODEX_HOME agents.json records is guarded too, wherever it is.
+    #[test]
+    fn the_codex_home_agents_json_records_is_guarded_wherever_it_is() {
+        let h = Home::new();
+        let elsewhere = h.home.parent().unwrap().join("Codex é");
+        fs::create_dir_all(&elsewhere).unwrap();
+        fs::write(elsewhere.join("AGENTS.md"), "# mine\n").unwrap();
+        crate::agents::tests::plant_agents_py(&crate::agents::tests::installed(&h.home), true);
+        let chosen = serde_json::json!({ "version": 1, "agents": ["codex"], "prefere": "codex", "codex_home": elsewhere });
+        crate::agents::tests::choose(&h.home, &chosen);
+        assert_eq!(codex_homes(&h.home), [PathBuf::from(CODEX_DEFAULT), elsewhere.clone()]);
+        let snap = h.take();
+        fs::write(elsewhere.join("AGENTS.md"), "# ours\n").unwrap();
+        let found: Vec<String> = check(&snap, &h.home).iter().map(ToString::to_string).collect();
+        assert_eq!(found, [format!("{} (début modifié)", elsewhere.join("AGENTS.md").display())]);
+        settle(snap, &h.home);
+        assert_eq!(fs::read_to_string(elsewhere.join("AGENTS.md")).unwrap(), "# mine\n");
+        // ~/.codex itself, named in agents.json: once.
+        crate::agents::tests::choose(
+            &h.home,
+            &serde_json::json!({ "version": 1, "agents": ["codex"], "prefere": "codex", "codex_home": h.home.join(".codex") }),
+        );
+        assert_eq!(codex_homes(&h.home), [PathBuf::from(CODEX_DEFAULT)]);
     }
 
     // ── Windows: the same promises, the installer's writes done by hand ─────
