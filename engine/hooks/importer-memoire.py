@@ -946,6 +946,8 @@ def cmd_preparer(opts, s):
     ancien = charger(opts.plan) if opts.plan else None
     cles = connues()
     collage = bool(opts.presse_papiers or opts.fichier)
+    if collage and opts.fichiers:
+        raise Erreur(2, "usage", "Un import à la fois : le fichier d'export, ou la réponse copiée.")
     if ancien and (ancien["source"] == "collage") != collage:
         raise Erreur(2, "plan", "Ce plan attend %s : prépare un autre import pour %s." % (
             ("un copier-coller", "un fichier") if collage is False else ("un fichier", "un copier-coller")))
@@ -1052,6 +1054,8 @@ def _dire_ia(e):
     kind = e.kind
     if kind == "quota":
         return "La limite d'usage de ton abonnement est atteinte : relance l'import plus tard."
+    if kind == "auth" and getattr(e, "moteur", None) == "codex":
+        return "Codex n'est pas connecté à ton compte ChatGPT : connecte-le (codex login), puis relance."
     if kind == "auth":
         return "Claude Code n'est pas connecté à ton abonnement Claude : connecte-le (claude auth login), puis relance."
     if kind == "agents":
