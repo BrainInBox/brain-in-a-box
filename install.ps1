@@ -711,6 +711,15 @@ $ctlSh = "#!/bin/sh`n# brain-in-a-box : controle pour Git Bash, meme logique que
          "[ -n `"`$BRAIN_DIR`" ] || BRAIN_DIR=$(ShQuote (& $fwd $BrainDir))`nexport BRAIN_DIR`n" +
          "exec $(ShQuote (& $fwd $Py)) -I $(ShQuote (& $fwd "$HOOKS\controle.py")) `"`$@`"`n"
 Place-File "$BIN\controle" (New-Object Text.UTF8Encoding $false).GetBytes($ctlSh)
+# importer-memoire.cmd et importer-memoire (Git Bash) -> importer-memoire.py : la memoire de ChatGPT ou
+# de Claude dans le cerveau (skill importer-memoire, qui passe par Git Bash : cmd.exe relit ses arguments).
+$imp = "@echo off`r`nsetlocal`r`nset `"BRAIN_DIR=$(To-CmdPath $BrainDir)`"`r`n" +
+       "`"$pyCmd`" -I `"$(To-CmdPath "$HOOKS\importer-memoire.py")`" %*`r`nexit /b %ERRORLEVEL%`r`n"
+Place-File "$BIN\importer-memoire.cmd" $oem.GetBytes($imp)
+$impSh = "#!/bin/sh`n# brain-in-a-box : importer-memoire pour Git Bash, meme logique que importer-memoire.cmd`n" +
+         "[ -n `"`$BRAIN_DIR`" ] || BRAIN_DIR=$(ShQuote (& $fwd $BrainDir))`nexport BRAIN_DIR`n" +
+         "exec $(ShQuote (& $fwd $Py)) -I $(ShQuote (& $fwd "$HOOKS\importer-memoire.py")) `"`$@`"`n"
+Place-File "$BIN\importer-memoire" (New-Object Text.UTF8Encoding $false).GetBytes($impSh)
 $userPath = [Environment]::GetEnvironmentVariable("PATH","User")
 if ($userPath -notlike "*$BIN*") { [Environment]::SetEnvironmentVariable("PATH","$userPath;$BIN","User") }
 # Aussi pour ce processus : l'installeur Claude (etape 10) verifie le PATH qu'il herite et sinon
@@ -719,6 +728,7 @@ if (($env:Path -split ";") -notcontains $BIN) { $env:Path = "$BIN;$env:Path" }
 [Environment]::SetEnvironmentVariable("BRAIN_DIR",$BrainDir,"User")
 Ok "gbq installe ($BIN\gbq.cmd + gbq pour Git Bash)"
 Ok "controle installe ($BIN\controle.cmd + controle pour Git Bash)"
+Ok "importer-memoire installe ($BIN\importer-memoire.cmd + importer-memoire pour Git Bash)"
 
 # 5-6bis. Claude Code, quand il est choisi : ses hooks, son CLAUDE.md et ses skills.
 # Sans retrait : le '@ qui ferme le script de fusion doit rester en debut de ligne.

@@ -1,0 +1,4 @@
+#!/bin/sh
+# importer-memoire — brings what ChatGPT or Claude knows of you into the brain (the importer-memoire skill runs it).
+# The import itself is ~/.claude/hooks/brain/importer-memoire.py; `importer-memoire --help` lists its commands.
+exec /usr/bin/env python3 -I "$HOME/.claude/hooks/brain/importer-memoire.py" "$@"

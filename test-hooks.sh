@@ -342,6 +342,52 @@ HOME="$H" BRAIN_NO_NOTIFY=1 python3 "$LONE/daily-reflection.py" --slot evening 2
   && ok "without _redact.py or _headless_claude.py: Claude is never asked" || no "ran without its helper modules"
 rm -rf "$M" "$LONE" "$H/work" "$H/.claude/projects" "$H/.gitconfig" "$FK" "$H/.local/bin/claude"   # leave the shared HOME as section 6 expects it
 
+echo "════ 5bis) importer-memoire — the launcher, an export sorted by a faked Claude: one new note, one line ════"
+# A home of its own: the installed hooks, the launcher as install.sh places it, fake_claude.py as
+# ~/.local/bin/claude, the synthetic exports of engine/tests/import_fixtures.py (the cases:
+# engine/tests/test_import_*.py).
+IM="$H/import-home"; IV="$IM/Documents/Brain"; IF="$IM/.claude/fake"
+mkdir -p "$IM/.claude/hooks" "$IM/.local/bin" "$IV/Profile" "$IF" "$IM/fx"
+cp -R "$HB" "$IM/.claude/hooks/brain"
+sed "s#__HOME__#$IM#g" "$REPO/engine/bin/importer-memoire" > "$IM/.local/bin/importer-memoire"
+{ echo "#!$(command -v python3)"; cat "$REPO/engine/tests/fake_claude.py"; } > "$IM/.local/bin/claude"
+chmod +x "$IM/.local/bin/importer-memoire" "$IM/.local/bin/claude"
+echo "$REPO/app/src-tauri/tests/fixtures/repair" > "$IF/fixtures"
+cp "$REPO/vault-skeleton/Profile/memory.md" "$IV/Profile/memory.md"; touch -t 202001010000 "$IV/Profile/memory.md"
+cp "$IV/Profile/memory.md" "$IM/memory-before"
+python3 -I "$REPO/engine/tests/import_fixtures.py" "$IM/fx"
+imr(){ env -u BRAIN_DIR -u CLAUDE_BIN HOME="$IM" ANTHROPIC_API_KEY=canary-anthropic "$IM/.local/bin/importer-memoire" "$@"; }
+imcalls(){ grep -c . "$IF/calls" 2>/dev/null || echo 0; }
+out=$(imr --help 2>&1); rc=$?
+[ "$rc" = 0 ] && echo "$out" | grep -q preparer && echo "$out" | grep -q lancer && echo "$out" | grep -q defaire \
+  && ok "the launcher runs the installed importer-memoire.py (--help lists its commands)" || no "importer-memoire --help: $out"
+imr phrase | grep -q "un seul bloc de code" && ok "importer-memoire phrase: the sentence to paste" || no "no sentence to paste"
+printf '%s' '{"faits":[{"categorie":"identite","texte":"Tient une boulangerie à Lyon.","sources":["c1"],"date":"","confiance":"sur"}],"suspect":false}' > "$IF/answer.json"
+read -r PID PN PACC < <(imr preparer "$IM/fx/chatgpt-2026.zip" --json | python3 -c '
+import json, sys
+d = [json.loads(l) for l in sys.stdin if l.strip()][-1]["plan"]
+c = [x for x in d["choix"] if x["appels"] == d["defaut"]][0]
+print(d["id"], c["appels"], c["accord"])')
+[ -n "${PACC:-}" ] && [ "$(imcalls)" = 0 ] && ok "preparer: a plan and its agreement code, no AI asked" || no "preparer made no plan"
+imr lancer "$PID" --appels "$PN" --accord 0123456789ab > "$IM/out-refused" 2>&1; rc=$?
+[ "$rc" = 2 ] && [ "$(imcalls)" = 0 ] && [ ! -e "$IV/Imports" ] && ok "a wrong agreement code: refused, nothing sent" || no "wrong agreement went on (rc $rc)"
+imr lancer "$PID" --appels "$PN" --accord "$PACC" > "$IM/out-lancer" 2>&1; rc=$?
+NOTE=$(ls "$IV/Imports/"*.md 2>/dev/null)
+[ "$rc" = 0 ] && [ "$(imcalls)" = "$PN" ] && [ "$(printf '%s\n' "$NOTE" | grep -c .)" = 1 ] && grep -q "^source: export ChatGPT$" "$NOTE" \
+  && grep -q "^- Tient une boulangerie à Lyon\. \*(conversation « " "$NOTE" \
+  && ok "lancer: $PN request(s) as announced, one new note in Imports/" || no "lancer (rc $rc): $(cat "$IM/out-lancer")"
+[ "$(diff "$IM/memory-before" "$IV/Profile/memory.md" | grep -c '^[<>]')" = 3 ] \
+  && diff "$IM/memory-before" "$IV/Profile/memory.md" | grep -q "^> - ChatGPT, importé le $DAY (conversations jusqu'au .*) : 1 fait → \[\[$DAY-import-chatgpt\]\]$" \
+  && ok "memory.md: one line under a new Imported memory section, nothing else moved" || no "memory.md changed otherwise: $(diff "$IM/memory-before" "$IV/Profile/memory.md")"
+python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import import_fixtures as F; print("\n".join(F.canaris()))' \
+  "$REPO/engine/tests" > "$IM/canaries"
+! grep -rqF -f "$IM/canaries" "$IV" "$IM/out-lancer" "$IF/prompts" "$IM/.brain-in-a-box" \
+  && ok "no secret, account data nor hidden text of the export in the vault, the output, the prompt or the state" \
+  || no "a canary leaked: $(grep -rlF -f "$IM/canaries" "$IV" "$IM/out-lancer" "$IF/prompts" "$IM/.brain-in-a-box")"
+imr preparer "$IM/fx/chatgpt-2026.zip" > "$IM/out-again" 2>&1; rc=$?
+[ "$rc" = 3 ] && [ "$(imcalls)" = "$PN" ] && grep -q "Déjà importé" "$IM/out-again" \
+  && ok "the same export again: already imported, nothing asked" || no "re-import not recognised (rc $rc)"
+
 echo "════ 6) gbrain-selfupdate.sh — relays to gbrain_update.py (the 7-day rule: engine/tests) ════"
 # The relay runs the gbrain_update.py next to it and hands it the log file.
 RL6="$H/relay"; mkdir -p "$RL6"
@@ -1712,14 +1758,26 @@ done
 # then master's and this one's again over that install; without a choice, then with --agents claude.
 # The same lines on screen, the same calls, the same commands in install.log, the same files but the
 # kit's copies of the sources this change touches and installed.json; this one's re-run leaves the
-# install as it found it; ~/.codex untouched, no ~/.agents. Master is origin/master, which test.yml
-# fetches; .github/ci/same-as-master.ps1 is install.ps1's.
+# install as it found it; ~/.codex untouched, no ~/.agents. What the change adds (a source, a launcher,
+# a skill master has not) is the one more thing: the lines that name it, its files, the skills'
+# manifest; each of those lines must be there. Master is origin/master, which test.yml fetches;
+# .github/ci/same-as-master.ps1 is install.ps1's.
 MK="$IX/master-kit"; rm -rf "$MK"; mkdir -p "$MK"
 if git -C "$REPO" rev-parse -q --verify origin/master >/dev/null 2>&1 \
    && git -C "$REPO" archive origin/master install.sh engine skills vault-skeleton onboarding | tar -x -C "$MK"; then
   cp "$KIT/test-hooks.sh" "$MK/test-hooks.sh"
   # The sources install.sh copies into the home, by name, that differ from master's.
   changed=$(git -C "$REPO" diff --name-only origin/master -- engine/hooks engine/bin engine/nightly engine/search | sed 's#.*/##' | sort -u)
+  # What it adds: the line install.sh prints for each new copy, install_skills.py's for a new skill.
+  added=$(git -C "$REPO" diff --diff-filter=A --name-only origin/master -- engine/hooks engine/bin skills)
+  added_skills=$(printf '%s\n' "$added" | sed -nE 's#^skills/([^/]+)/SKILL\.md$#\1#p' | sort -u)
+  smesc(){ printf '%s' "$1" | sed 's/[][\.*^$()+?{}|/]/\\&/g'; }
+  : > "$IX/sm-added"
+  for n in $(printf '%s\n' "$added" | sed -nE 's#^engine/(hooks|bin)/([^/]+)$#\2#p' | sort -u); do
+    printf '^  ✓ %s( → .*)?$\n' "$(smesc "$n")" >> "$IX/sm-added"
+  done
+  for n in $added_skills; do printf '^  (installed|up to date) +%s$\n' "$(smesc "$n")" >> "$IX/sm-added"; done
+  smmine(){ if [ -s "$IX/sm-added" ]; then grep -Ev -f "$IX/sm-added" "$1"; else cat "$1"; fi; }
   # The kits' folders, and mktemp's names (install.sh hands crontab a file of its own).
   smnorm(){ sed -E -e "s#$MK#<kit>#g" -e "s#$KIT#<kit>#g" -e 's#/tmp\.[A-Za-z0-9]{6,}/#/tmp.<x>/#g'; }
   smrun(){ local name="$1" kit="$2" log="$IX/home/.brain-in-a-box/install.log" from; shift 2
@@ -1741,19 +1799,28 @@ if git -C "$REPO" rev-parse -q --verify origin/master >/dev/null 2>&1 \
     for r in m b m2 b2; do [ "$(cat "$IX/sm-$r.rc")" = 0 ] || bad="$bad $choice:$r-rc$(cat "$IX/sm-$r.rc")"; done
     for pair in m:b m2:b2; do
       for what in out calls log; do
-        cmp -s "$IX/sm-${pair%:*}.$what" "$IX/sm-${pair#*:}.$what" \
-          || { bad="$bad $choice:${pair#*:}-$what"; diff "$IX/sm-${pair%:*}.$what" "$IX/sm-${pair#*:}.$what" | head -6; }
+        mine="$IX/sm-${pair#*:}.$what"
+        if [ "$what" = out ]; then smmine "$mine" > "$mine.sans-ajout"; mine="$mine.sans-ajout"; fi
+        cmp -s "$IX/sm-${pair%:*}.$what" "$mine" \
+          || { bad="$bad $choice:${pair#*:}-$what"; diff "$IX/sm-${pair%:*}.$what" "$mine" | head -6; }
       done
+      while IFS= read -r p; do
+        grep -qE "$p" "$IX/sm-${pair#*:}.out" || bad="$bad $choice:${pair#*:}-says-nothing-of[$p]"
+      done < "$IX/sm-added"
     done
     [ -s "$IX/sm-b.log" ] || bad="$bad $choice:no-command-in-install.log"
     cmp -s "$IX/sm-b.tree" "$IX/sm-b2.tree" || bad="$bad $choice:re-run-changed-the-install"
     apart=$(diff "$IX/sm-m.tree" "$IX/sm-b.tree" | sed -n 's/^[<>] \([^ ]*\) .*/\1/p' | sort -u)
-    want=$(cut -d' ' -f1 "$IX/sm-b.tree" | while read -r f; do printf '%s\n' "$changed" | grep -qxF "$(basename "$f")" && echo "$f"; done)
+    want=$(cut -d' ' -f1 "$IX/sm-b.tree" | while read -r f; do
+      printf '%s\n' "$changed" | grep -qxF "$(basename "$f")" && echo "$f"
+      for sk in $added_skills; do case "$f" in ".claude/skills/$sk/"*) echo "$f";; esac; done
+    done)
     [ -n "$want" ] && want=$(printf '%s\n.brain-in-a-box/installed.json\n' "$want" | sort -u)
+    [ -n "$added_skills" ] && want=$(printf '%s\n.brain-in-a-box/skills.json\n' "$want" | sort -u)
     [ "$apart" = "$want" ] || bad="$bad $choice:files[$(echo $apart)]not[$(echo $want)]"
     ixtree | grep -E '^\.(codex|agents)/' | cmp -s - "$IX/sm-codex" || bad="$bad $choice:user-codex"
   done
-  [ -z "$bad" ] && ok "e2e: Claude alone, install.sh says, runs and installs what master's does (new and re-run, no choice and --agents claude), but the copies this change touches ($(echo $want)); the user's Codex untouched" \
+  [ -z "$bad" ] && ok "e2e: Claude alone, install.sh says, runs and installs what master's does (new and re-run, no choice and --agents claude), but the copies this change touches or adds ($(echo $want)), and the $(grep -c . "$IX/sm-added") line(s) naming what it adds; the user's Codex untouched" \
     || no "e2e: Claude alone differs from master's install.sh:$bad"
 elif [ "${GITHUB_ACTIONS:-}" = true ]; then
   no "e2e: no origin/master to compare Claude alone with (test.yml fetches it before this file)"
