@@ -58,6 +58,13 @@
   // unless agents.json already lists it,
   // &at=<css> stops the driving on &go's screen only once that element is there, &nth=<n> only on its n-th arrival there,
   // &click=<act>[,<act>…] clicks those buttons in that order, once each, and &go's screen counts only after the last.
+  // The advice (advice.rs, the kit's sentences): &conseil=claude_connecte|claude_vu|chatgpt_bientot|rien|codex|les_deux
+  // (else the scenario's: connected where Claude Code is, nothing on a fresh Mac), &hermes=1 Hermes seen too, &hermes=lu
+  // seen and its conversations read by the evening reflection.
+  // « Importer ma mémoire » (import.rs), the end's card: &imp=<what> is what the importer answers: a_jour (a brain of
+  // before the import), deja, compte, pas_un_zip, trop_de_fichiers (5 picked), auth, quota, timeout, phrase (the sentence
+  // pasted back), partiel, rien (no fact kept), suspect; &fichiers=3 reads
+  // three files; &pause=import leaves the requests running (« Arrêter »); &colle=1 pastes an answer on the paste screen.
   // Bibo: &sleep=3 makes it doze off after 3 s without activity instead of 45.
   // Windows: &os=windows shows the PC's words and checks (manque, installe, motscles, echec with &fail=brain):
   // Python and Git instead of Apple's tools, install.ps1's sections under the brain step.
@@ -192,8 +199,27 @@
     };
 
 
+    // _conseil.py's sentences (CONSEIL_JSON).
+    const PHRASES = {
+      claude_connecte: 'Tu as déjà Claude Code, connecté à ton abonnement : ton cerveau travaillera avec lui.',
+      claude_vu: 'Tu utilises déjà Claude : ton cerveau travaillera avec lui (il te faudra un abonnement Pro ou Max pour Claude Code).',
+      chatgpt_bientot: 'Tu utilises ChatGPT : ton cerveau marche avec Claude, il te faudra un abonnement Claude Pro ou Max (ton abonnement ChatGPT ne suffit pas). Codex, l\'IA de ChatGPT, arrive bientôt ici. À la fin, tu pourras apporter à ton cerveau ce que ChatGPT sait de toi.',
+      rien: 'Ton cerveau marche avec Claude : il te faudra un abonnement Claude Pro ou Max.',
+      codex: 'Tu utilises ChatGPT : ton cerveau peut travailler avec Codex, l\'IA de ChatGPT, sur ton abonnement ChatGPT. À la fin, tu pourras apporter à ton cerveau ce que ChatGPT sait de toi.',
+      les_deux: 'Tu as Claude et ChatGPT : ton cerveau peut travailler avec les deux, Claude d\'abord.',
+      hermes: 'J\'ai vu Hermes : je ne l\'installe pas et n\'y touche pas. Ses meilleures compétences arrivent dans Claude avec ton cerveau.',
+      hermes_lu: 'J\'ai vu Hermes : je ne l\'installe pas et n\'y touche pas. Ses meilleures compétences arrivent dans Claude avec ton cerveau, et chaque soir ton cerveau lit aussi ses conversations.',
+    };
+    // Claude Code connected where the scenario has it, seen where it is not connected, else nothing.
+    function advice() {
+      const which = Object.hasOwn(PHRASES, P.get('conseil') || '') ? P.get('conseil')
+        : scenario === 'installe' || scenario === 'motscles' || REPAIR ? 'claude_connecte' : Object.hasOwn(CLAUDE_ONLY, scenario) ? 'claude_vu' : 'rien';
+      const hermes = { 1: PHRASES.hermes, lu: PHRASES.hermes_lu }[P.get('hermes')] || null;
+      return { conseil: { codex: 'codex', les_deux: 'les_deux' }[which] || 'claude', text: PHRASES[which], hermes };
+    }
+
     function diagnosis() {
-      const d = diagnosisOfClaude();
+      const d = { ...diagnosisOfClaude(), advice: advice() };
       if (!chosen) return d;
       // What the agents chosen change: their checks, a choice still to record, their steps.
       const installed = scenario === 'installe' || scenario === 'motscles';
@@ -530,6 +556,109 @@
       async open_link({ url }) { console.log('open_link', url); },
     };
 
+    // « Importer ma mémoire »: what importer-memoire answers through import.rs (no agreement code here).
+    const IMP = P.get('imp') || '';
+    const PHRASE = "Je change d'outil et j'ai besoin d'exporter mes données. Liste chaque souvenir que tu as enregistré sur moi, et tout ce que tu as appris de moi dans nos conversations passées. Mets tout dans un seul bloc de code, pour que je puisse le copier facilement. Une entrée par ligne, au format : [date d'enregistrement, si tu l'as] - le souvenir. Couvre tout ce qui suit, avec mes propres mots autant que possible : les consignes que je t'ai données sur ta façon de répondre (ton, format, style, « fais toujours… », « ne fais jamais… ») ; qui je suis : prénom, ville, métier, langues, centres d'intérêt ; mes projets, mes objectifs et les sujets qui reviennent ; les outils, logiciels et langages que j'utilise ; les personnes avec qui je travaille (prénom et rôle) ; mes préférences et les corrections que je t'ai faites ; tout autre contexte enregistré. Ne résume pas, ne regroupe pas, n'oublie rien, n'invente rien. N'écris aucun mot de passe, aucun numéro, aucun identifiant. Après le bloc de code, dis-moi si la liste est complète ou s'il en reste.";
+    const IMP_ERRORS = {
+      a_jour: { code: 'a_jour', message: 'Ton cerveau a été installé avant l\'import de mémoire : je dois d\'abord le mettre à jour.' },
+      deja: { code: 'deja', message: 'Tu l\'as déjà importé le 12 octobre 2026 : c\'est dans la note Imports › 2026-10-12-import-chatgpt.' },
+      compte: { code: 'compte', message: 'Ce fichier ne contient que les infos de ton compte Claude. Donne-moi les autres fichiers .zip de ton export (conversations, mémoire, projets).' },
+      pas_un_zip: { code: 'pas_un_zip', message: 'Ce fichier n\'est ni une archive .zip lisible ni un export en .json.' },
+      auth: { code: 'auth', message: 'Claude Code n\'est pas connecté à ton abonnement Claude : connecte-le (claude auth login), puis relance. Rien n\'a été écrit.' },
+      quota: { code: 'quota', message: 'La limite d\'usage de ton abonnement est atteinte : relance l\'import plus tard. Rien n\'a été écrit.' },
+      timeout: { code: 'timeout', message: 'L\'IA ne répond pas pour l\'instant : relance l\'import plus tard. Rien n\'a été écrit.' },
+      trop_de_fichiers: { code: 'usage', message: 'Choisis de 1 à 4 fichiers de ton export.' },
+      phrase: { code: 'phrase', message: 'Tu as collé ma phrase : colle plutôt la réponse de ChatGPT ou de Claude.' },
+    };
+    const VERS = 'vers Claude seulement, chez Anthropic (par Claude Code et ton abonnement), rien ailleurs';
+    const USAGE = 'ça compte dans ta limite d\'usage Claude';
+    const EXPORT_PLAN = {
+      id: '3f2a9c1e5b7d', source: 'chatgpt', conversations: 312, souvenirs: 23, projets: 0, jours: ['2025-11-02', '2026-10-18'],
+      deja: 0, masques: 4, ecartes: 17, caches: IMP === 'suspect' ? 1 : 0, inconnues: 0, ia: 'claude', vers: VERS, usage: USAGE,
+      choix: [
+        { nom: 'rapide', appels: 2, conversations: 31, minutes: 2 },
+        { nom: 'normal', appels: 4, conversations: 84, minutes: 4 },
+        { nom: 'complet', appels: 10, conversations: 212, minutes: 10 },
+      ],
+      defaut: 4, besoin: 14,
+    };
+    const PASTE_PLAN = {
+      id: '8c41d07a9e23', source: 'collage', conversations: 0, souvenirs: 27, projets: 0, jours: [], deja: 0, masques: 0, ecartes: 0,
+      caches: 0, inconnues: 0, ia: 'claude', vers: VERS, usage: USAGE, choix: [{ nom: 'complet', appels: 1, conversations: 0, minutes: 1 }],
+      defaut: 1, besoin: 1,
+    };
+    let importPlan = null;
+    const sorted = (plan, n) => {
+      if (IMP === 'rien') return { import: plan.id, note: null, faits: 0, par_categorie: {}, jetes: {}, masques: 0, ecartes: 0, demandes: n, sur: n, partiel: false, suspect: false, memoire: false, avis: null, ia: 'claude' };
+      const partiel = IMP === 'partiel';
+      return {
+        import: plan.id, note: `Imports/2026-10-13-import-${plan.source}.md`, faits: partiel ? 19 : 42,
+        par_categorie: partiel ? { identite: 4, preference: 7, projet: 5, outil: 3 } : { identite: 6, preference: 12, projet: 9, personne: 5, outil: 7, decision: 3 },
+        jetes: { sans_source: 2, identifiant: 1 }, masques: plan.masques, ecartes: plan.ecartes, demandes: partiel ? 2 : n, sur: n,
+        partiel, suspect: IMP === 'suspect', memoire: true, avis: null, ia: 'claude',
+      };
+    };
+    let importCancel = null;
+    const stoppableImport = (ms) => new Promise((resolve, reject) => {
+      const t = ms === Infinity ? 0 : setTimeout(resolve, ms);
+      importCancel = () => { clearTimeout(t); reject({ code: 'arrete', message: 'Arrêté : rien n\'a été écrit dans ton cerveau.' }); };
+    });
+    Object.assign(handlers, {
+      async machine_advice() { await wait(T(300)); return advice(); },
+      async import_check() { await wait(50); if (IMP === 'a_jour') throw IMP_ERRORS.a_jour; },
+      async import_phrase() { await wait(T(200)); return PHRASE; },
+      async import_pick() {
+        // The system's picker, then the reading.
+        await wait(T(800));
+        if (['deja', 'compte', 'pas_un_zip', 'trop_de_fichiers'].includes(IMP)) throw IMP_ERRORS[IMP];
+        const files = Number(P.get('fichiers')) || 1;
+        for (let f = 1; f <= files; f++) {
+          for (let i = 0; i <= 4; i++) {
+            await stoppableImport(T(250));
+            emit('import-progress', { etape: 'lecture', fait: i * 2.5e7, total: 1e8, fichier: f, fichiers: files });
+          }
+        }
+        importPlan = files > 1 ? { ...EXPORT_PLAN, source: 'claude', souvenirs: 41, projets: 6 } : EXPORT_PLAN;
+        return importPlan;
+      },
+      async import_paste({ text }) {
+        await wait(T(400));
+        if (!String(text).trim()) throw { code: 'vide', message: 'Il n\'y a rien à importer dans ce texte.' };
+        if (IMP === 'phrase') throw IMP_ERRORS.phrase;
+        importPlan = PASTE_PLAN;
+        return PASTE_PLAN;
+      },
+      async import_preview({ appels }) {
+        await wait(T(300));
+        return [
+          '=== Consignes données à l\'IA (les mêmes à chaque demande) ===',
+          'You sort what another AI assistant knew of a person into lasting facts for that person\'s notes vault. You have no tool…',
+          '',
+          `=== Demande 1 sur ${appels} (8412 caractères) ===`,
+          '<!-- brain-import-memoire -->',
+          '<memoires>', '[m1 · souvenir · 2026-03-02] User lives in Lyon.', '</memoires>',
+          '<conversations>', '[c1 · conversation « Pain au levain » · 2026-10-18]', 'user: Je fais du pain au levain le dimanche, [REDACTED]…', '</conversations>',
+        ].join('\n');
+      },
+      async import_run({ appels }) {
+        const plan = importPlan;
+        if (!plan) throw { code: 'plan', message: 'Il n\'y a pas d\'import préparé : recommence.' };
+        if (['auth', 'quota', 'timeout'].includes(IMP)) { await wait(T(600)); throw IMP_ERRORS[IMP]; }
+        for (let k = 1; k <= appels; k++) {
+          emit('import-progress', { etape: 'tri', demande: k, sur: appels });
+          await stoppableImport(P.get('pause') === 'import' ? Infinity : T(1500));
+          if (IMP === 'partiel' && k === 2) break;
+        }
+        emit('import-progress', { etape: 'ecriture' });
+        await wait(T(400));
+        importPlan = null;
+        return sorted(plan, appels);
+      },
+      async import_cancel() { if (importCancel) importCancel(); },
+      async import_forget() { importPlan = null; },
+      async import_open_note() { await wait(100); },
+    });
+
     window.__TAURI__ = {
       core: {
         invoke: (cmd, args = {}) => (Object.hasOwn(handlers, cmd) ? handlers[cmd](args) : Promise.reject(`commande inconnue : ${cmd}`)),
@@ -548,6 +677,7 @@
     let typed = false;
     let pressed = false;
     let added = false;
+    let pasted = false;
     const jump = P.get('jump');
     const at = P.get('at');
     const clicks = (P.get('click') || '').split(',').filter(Boolean);
@@ -578,6 +708,13 @@
         if (s === 'voyage' && key && !typed) {
           const input = q('#voyage-key');
           if (input) { typed = true; input.value = key; input.dispatchEvent(new Event('input')); q('[data-act=verify]').click(); }
+          return;
+        }
+        if (s === 'import-paste' && P.get('colle') && !pasted && q('textarea.paste') && q('[data-act=copy-phrase]:not(:disabled)')) {
+          pasted = true;
+          const area = q('textarea.paste');
+          area.value = '- [2026-03-02] Habite à Lyon, boulangère.\n- Préfère des réponses courtes, en français.\n- Travaille avec Malik (comptable).';
+          area.dispatchEvent(new Event('input'));
           return;
         }
         if (s === 'choice' && choix.length && q(`[data-agent=${choix[0]}]:not(:disabled)`) && !q('[data-act=back]')) {
@@ -618,7 +755,10 @@
           ['porte ouverte', '?s=manque&porte=1'], ['Codex installé', '?s=installe&porte=1&agents=codex'],
           ['Codex facturé', '?s=manque&porte=1&codex=billed'], ['Codex d’entreprise', '?s=manque&porte=1&after=managed'],
           ['PC aux réglages ouverts', '?s=manque&porte=1&os=windows&codex=system'], ['Codex avant le cerveau', '?s=echec&porte=1&choix=codex'],
-          ['les deux', '?s=installe&porte=1&agents=claude,codex']]) {
+          ['les deux', '?s=installe&porte=1&agents=claude,codex'],
+          ['conseil ChatGPT + Hermes', '?s=manque&conseil=chatgpt_bientot&hermes=1'], ['importer', '?s=installe&go=import&at=.choices&click=import'],
+          ['import : à jour', '?s=installe&imp=a_jour&go=import-error&click=import'], ['import : forfait', '?s=installe&imp=quota&go=import-plan&click=import'],
+          ['import partiel', '?s=installe&imp=partiel&go=import-plan&click=import']]) {
           const a = document.createElement('a');
           a.href = qs;
           a.textContent = label;

@@ -796,6 +796,7 @@ say "gbq, controle + nightly"
 mkdir -p "$BIN"
 place "$REPO/engine/bin/gbq" "$BIN/gbq" "gbq → $BIN/gbq"
 place "$REPO/engine/bin/controle" "$BIN/controle" "controle → $BIN/controle"
+place "$REPO/engine/bin/importer-memoire" "$BIN/importer-memoire" "importer-memoire → $BIN/importer-memoire"
 for s in gbrain-nightly gbrain-lint gbrain-selfupdate; do
   place "$REPO/engine/nightly/$s.sh" "$HOOKS/$s.sh"
 done

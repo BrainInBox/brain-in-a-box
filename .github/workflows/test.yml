@@ -160,6 +160,22 @@ jobs:
           test ! -e "$H/.brain-in-a-box/agents.json"
           if grep -q 'AI agents' "$RUNNER_TEMP/install-1.txt"; then echo "::error::a line about agents with nothing chosen"; exit 1; fi
 
+      # What the importer-memoire skill runs, on synthetic exports (engine/tests/import_fixtures.py): an
+      # export read and its plan announced, no AI asked (no token on this job). Its state goes after.
+      - name: importer-memoire reads an export and says what would leave, no AI asked
+        run: |
+          set -e
+          python3 -I engine/tests/import_fixtures.py "$RUNNER_TEMP/fx"
+          test -x ~/.local/bin/importer-memoire
+          out=$(~/.local/bin/importer-memoire --help) && grep -q preparer <<< "$out"
+          ~/.local/bin/importer-memoire preparer "$RUNNER_TEMP/fx/chatgpt-2026.zip" --json | tee "$RUNNER_TEMP/plan.jsonl"
+          id=$(python3 -c 'import json, sys; d = [json.loads(l) for l in open(sys.argv[1])][-1]["plan"]; assert (d["source"], d["conversations"]) == ("chatgpt", 150), d; print(d["id"])' "$RUNNER_TEMP/plan.jsonl")
+          ~/.local/bin/importer-memoire estimer "$id" --appels 1 | tee "$RUNNER_TEMP/estimate.txt"
+          grep -q "Ce qui part : vers Claude seulement" "$RUNNER_TEMP/estimate.txt"
+          out=$(~/.local/bin/importer-memoire preparer --fichier "$RUNNER_TEMP/fx/collage.txt") && grep -q "Réponse collée lue" <<< "$out"
+          ~/.local/bin/importer-memoire statut
+          rm -rf ~/.brain-in-a-box/import
+
       # Codex runs gbq query and gbq search without asking, outside its sandbox, from a session's folder,
       # where the session may write a bunfig.toml whose preload Bun runs before gbrain.
       - name: gbq's reads start gbrain from /, so a folder's bunfig.toml never runs (the real Bun and gbrain)
@@ -414,6 +430,8 @@ jobs:
           if (-not $d.can_install) { throw 'a fresh runner cannot install' }
           foreach ($step in @($d.todo)) { if ($step -notin 'claude', 'brain') { throw "unknown step $step" } }
           if ($d.ram_gb -le 0 -or $d.disk_free_gb -le 0) { throw "memory $($d.ram_gb), free $($d.disk_free_gb)" }
+          # Bibo's advice, from _conseil.py's rules: Codex is closed, so Claude.
+          if ($d.advice.conseil -ne 'claude' -or -not $d.advice.text) { throw "advice: $($d.advice | ConvertTo-Json -Compress)" }
 
       - name: Without its window, the app examines the Linux machine and says so in JSON
         if: runner.os == 'Linux'
@@ -432,6 +450,8 @@ jobs:
           assert set(d["todo"]) <= {"paquets", "claude", "bun", "obsidian", "brain"}, d["todo"]
           assert "paquets" not in d["todo"], "a runner has git, python3, curl and unzip"
           assert d["ram_gb"] > 0 and d["disk_free_gb"] > 0, (d["ram_gb"], d["disk_free_gb"])
+          # Bibo's advice, from _conseil.py's rules: Codex is closed, so Claude.
+          assert d["advice"]["conseil"] == "claude" and d["advice"]["text"], d.get("advice")
           print("linux:", d["os"], len(ids), "checks, to do:", d["todo"])
           PY
 
@@ -739,6 +759,28 @@ jobs:
           # Nothing chosen: Claude alone, as before there was a choice, and no file says so.
           if (Test-Path "$H\.brain-in-a-box\agents.json") { throw 'nothing was chosen, yet agents.json was written' }
           if ((Get-Content "$env:RUNNER_TEMP\install-1.txt" -Raw) -match 'agents IA') { throw 'a line about agents with nothing chosen' }
+          foreach ($f in 'importer-memoire.cmd', 'importer-memoire') {
+            if (-not (Test-Path "$H\.local\bin\$f")) { throw "$f not installed in ~\.local\bin" }
+          }
+
+      # What a terminal user runs (importer-memoire.cmd), on synthetic exports: an export read and its
+      # plan announced, no AI asked. Git Bash's launcher, the skill's, in the step after the next ones.
+      - name: importer-memoire.cmd reads an export and says what would leave, no AI asked
+        run: |
+          $py = (@((Get-Content "$env:USERPROFILE\.claude\settings.json" -Raw | ConvertFrom-Json).hooks.UserPromptSubmit.hooks)[0]).command
+          & $py -I engine/tests/import_fixtures.py "$env:RUNNER_TEMP\fx"
+          if ($LASTEXITCODE) { throw "fixtures: exit $LASTEXITCODE" }
+          $im = "$env:USERPROFILE\.local\bin\importer-memoire.cmd"
+          $lines = @(& $im preparer "$env:RUNNER_TEMP\fx\chatgpt-2026.zip" --json)
+          if ($LASTEXITCODE) { throw "preparer exited $LASTEXITCODE : $lines" }
+          $plan = ($lines[-1] | ConvertFrom-Json).plan
+          if ($plan.source -ne 'chatgpt' -or $plan.conversations -ne 150) { throw "unexpected plan: $($lines[-1])" }
+          $out = (& $im estimer $plan.id --appels 1) -join "`n"
+          $out
+          if ($LASTEXITCODE -or $out -notmatch 'Ce qui part : vers Claude seulement') { throw 'estimer did not say where it goes' }
+          & $im annuler $plan.id
+          if ($LASTEXITCODE) { throw "annuler exited $LASTEXITCODE" }
+          Remove-Item "$env:USERPROFILE\.brain-in-a-box\import" -Recurse -Force
 
       # Python comes first: _agents.py decides. Nothing after it runs: not even the install log.
       - name: Codex is refused on this system (-Agents or BIAB_AGENTS), before anything changes
@@ -830,6 +872,14 @@ jobs:
           # What the /controle skill runs; statut only reads the state, the check itself runs below.
           out=$(~/.local/bin/controle --help) && echo "$out" | grep -q 'annuler'
           ~/.local/bin/controle statut
+          # What the importer-memoire skill runs (the export from the step above), no AI asked.
+          out=$(~/.local/bin/importer-memoire --help) && echo "$out" | grep -q 'preparer'
+          ~/.local/bin/importer-memoire conseil
+          id=$(~/.local/bin/importer-memoire preparer "$RUNNER_TEMP/fx/claude-combinee.zip" --json | tail -1 | sed -nE 's/.*"id": "([0-9a-f]{12})".*/\1/p')
+          [ -n "$id" ]
+          out=$(~/.local/bin/importer-memoire estimer "$id") && grep -q 'Ce qui part : vers Claude seulement' <<< "$out"
+          ~/.local/bin/importer-memoire annuler "$id"
+          rm -rf ~/.brain-in-a-box/import
 
       - name: The 7-day gbrain update, dry run against the real GitHub (reads, decides, changes nothing)
         run: |

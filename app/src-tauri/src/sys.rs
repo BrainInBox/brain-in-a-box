@@ -439,6 +439,100 @@ fn run_alone(
     Ok(code)
 }
 
+/// What a program started by `run_fed` reads as its standard input.
+pub enum Input {
+    /// A file the app opened: the program reads it through the descriptor, never by its path.
+    File(std::fs::File),
+    Text(String),
+}
+
+/// How `run_fed` runs a program of the kit.
+pub struct Fed<'a> {
+    /// Added to the app's environment.
+    pub env: &'a [(&'a str, &'a std::ffi::OsStr)],
+    pub limit: Duration,
+    /// Set from anywhere: the program and what it started in its group are killed at the next tick.
+    pub cancel: &'a AtomicBool,
+    /// A stdout line longer than this many bytes is dropped as it is read.
+    pub line_cap: usize,
+}
+
+/// Runs a program of the kit with the app's environment, `input` as its standard input, and hands each
+/// line of its stdout to `on_line`; stderr is read and dropped. Past `fed.limit`, or once `fed.cancel`
+/// is set, it is killed. The exit code, None when it was killed; Err when it could not start.
+pub fn run_fed(program: &Path, args: &[&str], fed: &Fed, input: Input, on_line: &mut dyn FnMut(String)) -> io::Result<Option<i32>> {
+    let mut cmd = command(program);
+    cmd.args(args).envs(fed.env.iter().copied());
+    let text = match input {
+        Input::File(f) => {
+            cmd.stdin(Stdio::from(f));
+            None
+        }
+        Input::Text(t) => {
+            cmd.stdin(Stdio::piped());
+            Some(t)
+        }
+    };
+    let (mut child, rx) = start(&mut cmd, Some(fed.line_cap))?;
+    if let (Some(t), Some(mut sin)) = (text, child.stdin.take()) {
+        // On a thread: a program that stops reading must not keep us past the limit.
+        thread::spawn(move || {
+            let _ = sin.write_all(t.as_bytes());
+        });
+    }
+    // Stopped, the program first gets SIGTERM, to stop what it started in groups of its own (the
+    // importer's Claude); the kill of its whole group follows, at once on Windows (taskkill /T).
+    let (hard, done) = (AtomicBool::new(false), AtomicBool::new(false));
+    let pid = child.id();
+    let code = thread::scope(|s| {
+        s.spawn(|| {
+            while !done.load(Ordering::SeqCst) {
+                if fed.cancel.load(Ordering::SeqCst) {
+                    if cfg!(unix) {
+                        terminate(pid);
+                        let until = Instant::now() + GRACE;
+                        while Instant::now() < until && !done.load(Ordering::SeqCst) {
+                            thread::sleep(TICK);
+                        }
+                    }
+                    hard.store(true, Ordering::SeqCst);
+                    return;
+                }
+                thread::sleep(TICK);
+            }
+        });
+        let code = supervise(&mut child, &rx, fed.limit, Some(&hard), &mut |pipe, bytes| {
+            if pipe == Pipe::Out {
+                on_line(String::from_utf8_lossy(&bytes).trim_end_matches(['\n', '\r']).to_string());
+            }
+        });
+        done.store(true, Ordering::SeqCst);
+        code
+    });
+    // Reaped, its pid still names its group while anything is left in it (see run_alone).
+    if code.is_some() && cfg!(unix) {
+        kill_group(&mut child);
+    }
+    Ok(code)
+}
+
+/// How long a program stopped by `run_fed` has to stop what it started, before its group is killed.
+const GRACE: Duration = Duration::from_secs(5);
+
+/// SIGTERM to the program alone, not its group: it stops what it started itself.
+#[cfg(unix)]
+fn terminate(pid: u32) {
+    let _ = outside_appimage(&mut Command::new("/bin/kill"))
+        .args(["-TERM", &pid.to_string()])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+}
+
+#[cfg(windows)]
+fn terminate(_: u32) {}
+
 fn command(program: &Path) -> Command {
     let mut cmd = Command::new(program);
     outside_appimage(&mut cmd).env("PATH", tool_path());

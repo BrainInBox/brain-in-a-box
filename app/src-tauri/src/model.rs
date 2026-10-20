@@ -47,6 +47,19 @@ pub struct Diagnosis {
     pub todo: Vec<String>,
     /// No check in Status::Error.
     pub can_install: bool,
+    /// Which AI the brain should work with, from what is already on this computer (advice.rs).
+    pub advice: Option<Advice>,
+}
+
+/// Bibo's advice, in the kit's words (engine/hooks/_conseil.py).
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+pub struct Advice {
+    /// "claude", "codex" or "les_deux".
+    pub conseil: String,
+    /// One sentence for the user.
+    pub text: String,
+    /// One more when Hermes Agent is there: the kit does not install it.
+    pub hermes: Option<String>,
 }
 
 #[derive(Serialize, Clone, Debug)]

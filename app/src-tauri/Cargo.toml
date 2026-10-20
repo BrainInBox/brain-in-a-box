@@ -29,6 +29,12 @@ regex = "1"
 # the same on a Mac and on Windows (which has no shasum).
 sha2 = "0.10"
 
+# The system's own file picker for « Importer ma mémoire », used from Rust only (no plugin, no
+# permission for the window). Its own dependencies are all in the build already (tao and wry's
+# AppKit, windows-sys and GTK bindings, raw-window-handle): this crate is the one it adds.
+# Without its defaults: GTK's picker on Linux, no xdg-desktop-portal (ashpd, zbus).
+rfd = { version = "=0.15.4", default-features = false, features = ["gtk3"] }
+
 # Already in the build through tauri-build (embed-resource): the brain folder install.ps1
 # saved for the user (HKCU\Environment), read and written without a PowerShell.
 [target.'cfg(windows)'.dependencies]

@@ -331,6 +331,19 @@ body.big .plan { justify-content: center; text-align: left; }
 
 .check.is-error { background: rgba(192, 57, 43, 0.07); }
 
+/* Bibo's advice: which AI, from what is already there. */
+.advice {
+  padding: 8px 12px;
+  border-left: 3px solid var(--accent);
+  border-radius: 0 10px 10px 0;
+  background: var(--accent-soft);
+  font-size: 14px;
+}
+
+.advice .note { margin-top: 4px; font-size: 13.5px; }
+
+.advice-slot:empty { display: none; }
+
 /* Which AI */
 
 .choices {
@@ -593,6 +606,52 @@ body.big .plan { justify-content: center; text-align: left; }
   -webkit-user-select: text;
   user-select: text;
 }
+
+/* « Importer ma mémoire » */
+
+.help .bullets { margin-top: 8px; font-size: 14px; }
+
+.bullets li.warn,
+.note.warn { color: var(--warn); }
+
+.sizes { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.screen > .sizes + .note { margin-top: 8px; }
+
+.phrase {
+  margin: 8px 0;
+  padding: 10px 12px;
+  max-height: 120px;
+  overflow: auto;
+  border-radius: 10px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  font-size: 13.5px;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+
+.paste {
+  display: block;
+  width: 100%;
+  height: 110px;
+  margin: 8px 0 4px;
+  resize: vertical;
+  font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1.5px solid var(--line-strong);
+  border-radius: 10px;
+  padding: 8px 10px;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.paste::placeholder { color: var(--ink-2); opacity: 0.7; }
+
+.reading > * + * { margin-top: 8px; }
 
 /* Screen entrance */
 

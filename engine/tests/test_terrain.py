@@ -67,11 +67,17 @@ if plan.get("refuse"):   # what Claude Code prints when the service refuses the 
           "result": "Failed to authenticate. API Error: 401 OAuth access token is invalid \u00b7 Please run /login"})
     sys.exit(1)
 schema = args[args.index("--json-schema") + 1]
-if ("constats" if '"constats"' in schema else "reflexion") in plan.get("quota_on", []):
+kind = "constats" if '"constats"' in schema else "import" if '"faits"' in schema else "reflexion"
+if kind in plan.get("quota_on", []):
     with open(plan["quota"], encoding="utf-8") as f:   # what Claude Code prints at the usage limit
         sys.stdout.write(f.read())
     sys.exit(1)
-if '"constats"' in schema:
+if kind == "import":   # three facts, each citing a block of the request, unless the plan says none
+    refs = re.findall(r"^\[([a-z]\d+) \u00b7", stdin, re.M)
+    answer = {"faits": [{"categorie": "identite", "texte": "Fait num\u00e9ro %%s de l'import." %% w,
+                         "sources": [] if plan.get("sans_source") else [refs[k %% len(refs)]], "date": "",
+                         "confiance": "sur"} for k, w in enumerate(("un", "deux", "trois"))], "suspect": False}
+elif kind == "constats":
     excerpts = re.findall(r'<extrait id="(E\d+)" note="([^"]*)"[^>]*>(.*?)</extrait>', stdin, re.S)
     found = lambda rel, q: next((i for i, n, t in excerpts if n == rel and q in t), None)
     constats = []
@@ -170,12 +176,13 @@ class OffAVm(Sandbox):
 
 @unittest.skipIf(os.name == "nt", "CLAUDE_BIN must be an executable: a script stands in for claude on POSIX only")
 class RealClaudeScenario(Sandbox):
-    def stub(self, constats, quota_on=(), refuse=False):
+    def stub(self, constats, quota_on=(), refuse=False, sans_source=False):
         here = os.path.join(self.home, ".terrain-stub")
         os.makedirs(here)
         plan = {"help": HELP, "init": OK_STREAM[0], "assistant": OK_STREAM[1], "user": OK_STREAM[2],
                 "result": OK_STREAM[-1], "constats": constats, "reflexion": REFLEXION,
-                "quota": os.path.join(FIXTURES, "quota.jsonl"), "quota_on": list(quota_on), "refuse": refuse}
+                "quota": os.path.join(FIXTURES, "quota.jsonl"), "quota_on": list(quota_on), "refuse": refuse,
+                "sans_source": sans_source}
         with open(os.path.join(here, "plan.json"), "w", encoding="utf-8") as f:
             json.dump(plan, f, ensure_ascii=False)
         path = os.path.join(self.tmp, "claude")
@@ -195,8 +202,11 @@ class RealClaudeScenario(Sandbox):
         m = r["details"]["mesure"]
         self.assertEqual((m["trouvees"], m["constats"], m["justes"], m["annotations_fausses"]), (6, 6, 6, []))
         with open(calls, encoding="utf-8") as f:
-            self.assertEqual(f.read().split(), ["token", "token"], "one review, one reflection, the token passed on")
+            self.assertEqual(f.read().split(), ["token"] * 4,
+                             "one review, one reflection, one request per import, the token passed on")
         self.assertNotIn("factice-pas-un-secret", json.dumps(r) + out)
+        self.assertEqual((r["details"]["import"]["zip"]["faits"], r["details"]["import"]["collage"]["faits"]), (3, 3))
+        self.assertIn("import : 3 + 3 fait(s)", r["raison"])
 
     def test_with_the_token_only_the_repositorys_scripts_run(self):
         # On a VM, a launcher left by an installer (or rewritten by code that ran before) is never
@@ -216,7 +226,7 @@ class RealClaudeScenario(Sandbox):
         self.assertFalse(os.path.exists(trace), "a launcher found on the machine ran with the token")
         self.assertEqual(self.results()["vrai-claude"]["details"]["controle"], "controle.py du dépôt")
         with open(calls, encoding="utf-8") as f:
-            self.assertEqual(f.read().split(), ["token", "token"])
+            self.assertEqual(f.read().split(), ["token"] * 4)
 
     def test_the_usage_limit_is_skipped_not_red(self):
         # Chad's subscription at its limit: nothing to repair, and nothing to retry.
@@ -231,6 +241,22 @@ class RealClaudeScenario(Sandbox):
                 self.assertEqual(r["statut"], "saute", out)
                 self.assertIn("quota de l'abonnement atteint", r["raison"])
                 self.assertIn(where, r["raison"])
+
+    def test_the_import_counts_its_facts_and_skips_at_the_usage_limit(self):
+        self.stub([constat(p, "contradiction") for p in terrain.PAIRES], sans_source=True)
+        rc, out = self.terrain("vrai-claude", "--home", self.home, "--json", self.json)
+        self.assertEqual(rc, 1, out)
+        r = self.results()["vrai-claude"]
+        self.assertEqual((r["statut"], r["etape"]), ("echec", "import-zip"))
+        self.assertIn("0 fait(s) tiré(s) de l'export", r["raison"])
+        shutil.rmtree(self.home)
+        os.makedirs(self.home)
+        self.stub([constat(p, "contradiction") for p in terrain.PAIRES], quota_on=["import"])
+        rc, out = self.terrain("vrai-claude", "--home", self.home, "--json", self.json)
+        self.assertEqual(rc, 0, out)
+        r = self.results()["vrai-claude"]
+        self.assertEqual(r["statut"], "saute", out)
+        self.assertIn("(import)", r["raison"])
 
     def test_a_refused_token_says_what_claude_said(self):
         # First run with the real token (2026-10-14): "saute:connexion" alone, nothing to tell a
@@ -922,7 +948,7 @@ class Imports(unittest.TestCase):
         self.addCleanup(shutil.rmtree, tmp, True)
         tests = os.path.join(tmp, "engine", "tests")
         os.makedirs(tests)
-        for name in ("terrain.py", "terrain_app.py", "vault_piege.py"):
+        for name in ("terrain.py", "terrain_app.py", "vault_piege.py", "import_fixtures.py"):
             shutil.copy(os.path.join(HERE, name), tests)
         marks = os.path.join(tmp, "ran")
         for name in ("uuid", "textwrap", "urllib", "unicodedata", "hashlib", "argparse", "json", "pwd", "winreg"):

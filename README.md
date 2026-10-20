@@ -9,7 +9,7 @@ Everyone gets the **same engine**, with **their own data** — everything stays 
 | Layer | What |
 |---|---|
 | **Vault** (`~/Documents/Brain`) | Your markdown notes: Profile · **Team · Agents · Decisions · Skills** · Journal · Projects · Clients · Resources |
-| **Skills** (`~/.claude/skills`) | `brain-boost` (what the setup does, how to grow it safely) · `controle` (the night check: what it fixed, undo, GBrain updates) · `quick-research` · `html-artifact` · `convert-documents-to-markdown`. Installed with the box; a skill of yours with the same name, or one you edited, is never overwritten |
+| **Skills** (`~/.claude/skills`) | `brain-boost` (what the setup does, how to grow it safely) · `controle` (the night check: what it fixed, undo, GBrain updates) · `importer-memoire` (what ChatGPT or Claude knows of you, from their export or a copy-paste, into the brain) · `quick-research` · `html-artifact` · `convert-documents-to-markdown`. Installed with the box; a skill of yours with the same name, or one you edited, is never overwritten |
 | **Hooks** (`~/.claude/hooks/brain`) | Auto-capture: corrections → `lessons.md`, sessions → `Journal/`, summaries → `memory.md` |
 | **GBrain** (`~/.gbrain`) | Search over the vault (`gbq query "..."`): by meaning with a Voyage AI key, by keywords without one |
 | **Nightly** (launchd 04:00; Linux: a systemd user timer, else cron) | update GBrain → night check → commit vault → sync → dream cycle (dedup, facts, consolidation). Windows (Task Scheduler 04:00, catches up when the PC wakes): update GBrain → night check → commit vault → sync → embed |

@@ -466,13 +466,15 @@ jobs:
 
   # The real Claude on a VM of its own: only Anthropic's installer ran there before, never the
   # kit's installers nor gbrain (third-party, updated every week), and the scenario runs the
-  # repository's scripts, not installed launchers. A run of another ref or workflow than
-  # master's own says "skipped: token kept for master" and never gets the token.
+  # repository's scripts, not installed launchers: the night check's review, the reflection, and
+  # importer-memoire on a synthetic export and a pasted answer (one Sonnet request each). A run of
+  # another ref or workflow than master's own says "skipped: token kept for master" and never
+  # gets the token.
   claude:
     name: Real Claude (${{ matrix.os }})
     needs: ref
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 70
+    timeout-minutes: 75
     environment: ${{ github.ref == 'refs/heads/master' && (inputs.ref || 'master') == 'master' && 'terrain-claude' || '' }}
     strategy:
       fail-fast: false
@@ -513,7 +515,7 @@ jobs:
 
       - name: "Scenario: the real Claude (skipped without the token, or off master)"
         if: ${{ !cancelled() }}
-        timeout-minutes: 45
+        timeout-minutes: 55
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ env.TERRAIN_JETON == 'master' && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
         run: ${{ matrix.python }} -I engine/tests/terrain.py vrai-claude --parcours "$PARCOURS" --vm --json "$TERRAIN_JSON"

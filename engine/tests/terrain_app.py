@@ -3,8 +3,10 @@
 
 On a fresh GitHub VM (terrain.yml, jobs app-macos, app-windows and app-linux), the robot gets the app the
 way a user does, installs it, opens it and clicks through its real window, Bienvenue to the final
-screen, with a capture of every screen. Then it checks the brain works and opens the app a second
-time: it must say everything is already installed.
+screen, with a capture of every screen. Bibo's advice must be at the diagnosis (on the choice screen
+where Codex is open). At the end, the robot goes into « Importer ma mémoire », to the copy-paste that
+shows the sentence to paste, and back: nothing is sent, no AI is asked. Then it checks the brain works
+and opens the app a second time: it must say everything is already installed.
 
 The path "app-codex" does the same with Codex chosen alone, where the robot opened Codex in its copy of
 the kit, as the other benches open it (test-hooks.sh, codex_captures.open_gate): the tested commit's
@@ -103,6 +105,11 @@ ECRANS = (
     ("codex-systeme", "Codex suit des réglages de ce "),
     ("installe", "C'est installé"),
     ("fini", "Ton second cerveau est prêt"),
+    ("import-verif", "Je prépare l'import"),
+    ("import-choix", "D'où vient ta mémoire"),
+    ("import-collage", "Demande-lui ce qu'il sait de toi"),
+    ("import-a-jour", "Ton cerveau doit d'abord être mis à jour"),
+    ("import-erreur", "Je ne peux pas importer"),
     ("echec", "Oups, ça a coincé"),
     ("hors-app", "Ouvre l'app Brain in a Box"),
 )
@@ -118,7 +125,14 @@ ETAPES = {
     "J'active la recherche par le sens.": "voyage",
 }
 # Screens that end the run, whatever the robot was doing.
-ARRETS = {"diagnostic-impossible", "bloque", "echec", "hors-app"}
+ARRETS = {"diagnostic-impossible", "bloque", "echec", "hors-app", "import-a-jour", "import-erreur"}
+# Bibo's advice (app.js, adviceLines): at the diagnosis, on the choice screen where Codex is open.
+CONSEIL = "Mon conseil"
+# The sentence to paste in ChatGPT or Claude, as the kit's importer-memoire.py starts it.
+PHRASE = "Je change d'outil"
+# The copy-paste screen asks the kit for its sentence when it shows: given this long to come.
+DELAI_PHRASE = 60
+DELAI_IMPORT = 3 * 60
 # Buttons that only come with a failure (the repair screens have many titles).
 BOUTONS_ECHEC = {"Réessayer", "Copier le rapport", "Revérifier"}
 # The screens each path must never see: Codex's on the path of Claude alone (the app users get keeps it
@@ -317,6 +331,16 @@ def reponse_dialogue(dialogue):
     if NOMME_APP.search(texte):
         return ("echec", "demande système inattendue au nom de l'app (%s) : « %s »" % (dialogue.get("processus"), texte[:300]))
     return None
+
+
+def conseil(ecran):
+    """Bibo's advice on that screen (its sentence after « Mon conseil : »), or ""."""
+    textes = ecran.textes
+    for i, x in enumerate(textes):
+        if x.startswith(CONSEIL):
+            rest = x[len(CONSEIL):].lstrip(" :")
+            return rest or (textes[i + 1] if i + 1 < len(textes) else "")
+    return ""
 
 
 def deja_presents(textes, labels):
@@ -2429,6 +2453,9 @@ class Parcours:
         self.plein_a = 0.0
         self.forcer = True      # the next reading is a full one (after a launch, a missing button)
         self.clics = []         # [{"a_s", "ecran", "bouton", "comment"}]
+        # « Importer ma mémoire » from the end: "aller" to the copy-paste, "retour" back to the end, else None.
+        self.marche = None
+        self.arrive = horloge()  # when the current screen showed
 
     def secondes(self):
         return int(self.horloge() - self.debut)
@@ -2499,6 +2526,7 @@ class Parcours:
         if self.ecrans and self.ecrans[-1]["duree_s"] is None:
             self.ecrans[-1]["duree_s"] = self.secondes() - self.ecrans[-1]["debut_s"]
         self.ecrans.append({"ecran": prefixe + cle, "debut_s": self.secondes(), "duree_s": None})
+        self.arrive = self.horloge()
         self.p.nouvel_ecran()
         # A failure keeps the step it happened in (app-etape-brain, not app-echec).
         if cle not in ARRETS:
@@ -2522,14 +2550,25 @@ class Parcours:
             self.echouer({"echec": "l'installation a échoué dans l'app",
                           "bloque": "l'app refuse d'installer (diagnostic en rouge)",
                           "diagnostic-impossible": "l'app n'a pas pu faire son diagnostic",
-                          "hors-app": "la fenêtre ne parle pas à l'app (pas de __TAURI__)"}[cle])
+                          "hors-app": "la fenêtre ne parle pas à l'app (pas de __TAURI__)",
+                          "import-a-jour": "l'app ne trouve pas l'import dans le cerveau qu'elle vient d'installer",
+                          "import-erreur": "« Importer ma mémoire » s'arrête sur une erreur"}[cle])
         if cle in HORS_PARCOURS[self.codex]:
             self.echouer("écran « %s » : %s" % (cle, "Codex est choisi seul" if self.codex else
                                                  "l'app livrée garde Codex fermé, elle ne demande pas quelle IA"))
         if cle == "bienvenue":
             return "Choisir mon IA" if self.codex else "Vérifier mon %s" % self.p.machine
         if cle == "choix":
+            # The advice comes a moment after the screen (machine_advice): read before choosing.
+            if not conseil(e) and self.horloge() - self.arrive < DELAI_PHRASE / 2:
+                return None
             return "Codex"
+        if self.marche == "aller" and cle == "fini":
+            return "Importer ma mémoire"
+        if cle == "import-choix":
+            return "Je copie-colle une réponse" if self.marche == "aller" else "Retour"
+        if cle == "import-collage":
+            return "Retour"
         if cle in ("connexion", "connexion-chatgpt"):
             return "Plus tard"
         if relance:
@@ -2594,8 +2633,33 @@ class Parcours:
             self.capturer(prefixe + "sans-fenetre")
             self.echouer("aucune fenêtre %d s après l'ouverture de l'app" % DELAI_FENETRE)
 
+    def importer(self):
+        """« Importer ma mémoire » from the end: its choice, the copy-paste showing the sentence to paste,
+        and back to the end. Nothing is sent: no AI is asked on these VMs."""
+        self.marche = "aller"
+        vus = self.avancer("import-collage", DELAI_IMPORT)
+        self.t.check("import-choix" in vus, "« Importer ma mémoire » n'a pas mené à « D'où vient ta mémoire ? »")
+        phrase = self.phrase()
+        self.t.check(phrase, "l'écran du copier-coller ne montre pas la phrase à coller (%d s)" % DELAI_PHRASE)
+        self.t.details["import"] = {"phrase": phrase[:120], "choix": vus["import-choix"].texte}
+        self.marche = "retour"
+        self.avancer("fini", DELAI_IMPORT)
+        self.marche = None
+
+    def phrase(self):
+        """The sentence to paste, once the window shows it: the window asks the kit for it."""
+        fin = self.horloge() + DELAI_PHRASE
+        while True:
+            self.forcer = True
+            e = self.lire()
+            found = next((x for x in e.textes if PHRASE in x), None)
+            if found or self.horloge() >= fin or (not e.partiel and cle_ecran(e)[0] != "import-collage"):
+                return found
+            self.dormir(POLL)
+
     def premier_lancement(self, env):
-        """Bienvenue to the final screen; returns how long it took, in seconds."""
+        """Bienvenue to the final screen, then « Importer ma mémoire » there and back; returns how long the
+        install took, in seconds."""
         self.lancer(env)
         start = self.horloge()
         vus = self.avancer("fini", DELAI_PREMIER)
@@ -2615,15 +2679,21 @@ class Parcours:
             self.t.check("pour Claude" in vus["bienvenue"].texte, "la bienvenue ne parle pas de Claude : « %s »" % vus["bienvenue"].texte)
             self.t.check(fini.texte.startswith("Claude retient"), "l'écran final ne nomme pas Claude : « %s »" % fini.texte)
             boutons = ("Personnaliser mon cerveau (15 min)", "Ouvrir mon cerveau dans Obsidian")
-        for b in boutons:
+        for b in boutons + ("Importer ma mémoire",):
             self.t.check(fini.bouton(b) is not None, "l'écran final n'a pas le bouton « %s »" % b)
+        # Bibo's advice: at the diagnosis, or where Codex is open on the choice screen (the app's own words).
+        ou = "choix" if self.codex else "diagnostic"
+        self.t.check(conseil(vus[ou]), "%s ne donne pas « %s »" % ("l'écran du choix" if self.codex else "le diagnostic", CONSEIL))
+        self.t.details["conseil"] = conseil(vus[ou])
         self.t.details["diagnostic"] = {"bibo": vus["diagnostic"].texte, "textes": vus["diagnostic"].textes[:60]}
         for label, detail in deja_presents(vus["diagnostic"].textes, self.p.neufs):
             self.t.notes.append("déjà sur la VM avant l'app : %s (%s), son installation par l'app n'est pas testée"
                                 % (label, detail))
         manque = etapes_manquees(vus)
         self.t.check(not manque, manque)
-        return int(self.horloge() - start)
+        took = int(self.horloge() - start)
+        self.importer()
+        return took
 
     def relance(self, env):
         """The app opened again: it must say everything is installed, and get to the end."""

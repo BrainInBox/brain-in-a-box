@@ -64,6 +64,31 @@ const SCENARIOS = [
   's=repair-fail&go=done&os=linux',
   's=repair-ok&go=analyze&pause=analyze&click=stop',
   's=repair-auth&go=done&os=linux',
+  // The advice at the diagnosis: ChatGPT seen while Codex is closed, Hermes seen (and read each evening).
+  's=manque&go=diag&conseil=chatgpt_bientot&hermes=1',
+  's=installe&go=diag&conseil=claude_vu&os=windows',
+  's=installe&go=diag&hermes=lu&os=linux',
+  // « Importer ma mémoire » from the end: an export read, sized, sent, written; the paste; each stop.
+  's=installe&go=import-done&click=import',
+  's=installe&go=import-done&click=import,size-rapide&sent=1',
+  's=installe&go=import-done&click=import&fichiers=3&os=windows',
+  's=installe&go=import-done&click=import,paste&colle=1',
+  's=installe&go=import-paste&click=import,paste&os=linux',
+  's=installe&go=import-done&click=import&imp=partiel',
+  's=installe&go=import-done&click=import&imp=suspect',
+  's=installe&go=import-done&click=import&imp=rien',
+  's=installe&go=import-error&click=import&imp=deja',
+  's=installe&go=import-error&click=import&imp=compte',
+  's=installe&go=import-error&click=import&imp=auth',
+  's=installe&go=import-error&click=import&imp=quota',
+  's=installe&go=import-error&click=import&imp=a_jour',
+  // A beginner's likeliest stops: not an export, a folder's five files, the AI silent, the sentence pasted back.
+  's=installe&go=import-error&click=import&imp=pas_un_zip',
+  's=installe&go=import-error&click=import&imp=trop_de_fichiers&os=windows',
+  's=installe&go=import-error&click=import&imp=timeout',
+  's=installe&go=import-paste&nth=2&click=import,paste&colle=1&imp=phrase',
+  's=installe&go=import&nth=2&click=import,next,back',
+  's=installe&go=import&nth=2&click=import,next,next,stop&pause=import',
 ];
 
 // Where Codex can be chosen (&porte=1, as the tests open it): what some screens must say, or not.
@@ -128,8 +153,21 @@ const CODEX_CHECKS = [
     query: 's=manque&porte=1&choix=codex,claude&click=change&go=diag&nth=2',
     ok: (shots, claude) => {
       const alone = claude.get('s=manque&go=done').find((s) => s.startsWith('== diag\nJ’ai fait le tour.'));
-      return Boolean(alone) && last(shots, 'diag') === alone.replace('\n[Revérifier]', '\n[Changer d’IA]\n[Revérifier]');
+      // Where Codex can be chosen, the advice is on the choice screen, not at the diagnosis.
+      return Boolean(alone) && last(shots, 'diag') === alone.replace(/\nMon conseil[^\n]*/, '').replace('\n[Revérifier]', '\n[Changer d’IA]\n[Revérifier]');
     },
+  },
+  {
+    name: 'Where Codex can be chosen, the advice may name it, on the choice screen',
+    query: 's=manque&porte=1&conseil=codex&go=choice&at=.advice',
+    ok: (shots) => has(shots, 'choice', 'Mon conseil') && has(shots, 'choice', 'ton cerveau peut travailler avec Codex')
+      && !shots.some((s) => s.startsWith('== diag') && s.includes('Mon conseil')),
+  },
+  {
+    name: 'Codex closed: the advice at the diagnosis never offers Codex, Hermes is not installed',
+    query: 's=manque&conseil=chatgpt_bientot&hermes=1&go=diag',
+    ok: (shots) => has(shots, 'diag', 'Codex, l’IA de ChatGPT, arrive bientôt ici') && has(shots, 'diag', 'je ne l’installe pas')
+      && !shots.some((s) => s.includes('peut travailler avec Codex')),
   },
   {
     name: 'One account rule everywhere: a personal ChatGPT plan, and both accounts for both',
@@ -150,7 +188,13 @@ class Node_ {
     n.parent = this;
     return n;
   }
-  append(...ns) { for (const n of ns.flat()) if (n != null) this.childNodes.push(this.adopt(n)); }
+  // As the browser's: an array or null would be appended as its text ("[object …]", "null").
+  append(...ns) {
+    for (const n of ns) {
+      if (n == null || Array.isArray(n)) throw new TypeError(`append(${n === null ? 'null' : Array.isArray(n) ? 'an array' : n}): the window would show it as text`);
+      this.childNodes.push(this.adopt(n));
+    }
+  }
   replaceChildren(...ns) { for (const c of this.childNodes) c.parent = null; this.childNodes = []; this.append(...ns); }
   remove() { if (this.parent) { this.parent.childNodes = this.parent.childNodes.filter((c) => c !== this); this.parent = null; } }
   before(...ns) { this.insert(0, ns); }

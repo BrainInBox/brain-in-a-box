@@ -201,6 +201,10 @@ const state = {
   // alone, every screen as before Codex.
   agents: null,
   diag: null,
+  // machine_advice, for the choice screen where Codex can be chosen: undefined until asked.
+  advice: undefined,
+  // « Importer ma mémoire »: the plan the importer made (what it read, the choices, no agreement code).
+  importPlan: null,
   // The Voyage key lives only here, in memory, and only once Voyage accepted it.
   key: '',
   // A brain step went through with a key: search by meaning is no longer on offer.
@@ -231,7 +235,7 @@ const state = {
 
 // DOM handles and per-screen timers. screen() resets them.
 const ui = {};
-const view = { gen: 0, timers: [], rows: {}, log: null, bar: null, polling: null, failure: null, progress: null, onLine: null, asking: null, asked: null };
+const view = { gen: 0, timers: [], rows: {}, log: null, bar: null, polling: null, failure: null, progress: null, onLine: null, asking: null, asked: null, onImport: null };
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -394,6 +398,7 @@ function screen(name, { big = false } = {}) {
   view.onLine = null;
   view.asking = null;
   view.asked = null;
+  view.onImport = null;
   document.body.dataset.screen = name;
   document.body.classList.toggle('big', big);
   ui.screen.replaceChildren();
@@ -603,9 +608,18 @@ function choiceButton(id, label, onClick, pre) {
 }
 
 function showChoice() {
-  screen('choice');
+  const gen = screen('choice');
   say('idle', 'Avec quelle IA veux-tu travailler ?', 'Ton cerveau marche avec Claude, avec Codex, ou avec les deux.');
+  const advice = h('div', { class: 'advice-slot' }, adviceLines(state.advice));
+  if (state.advice === undefined) {
+    state.advice = null;
+    invoke('machine_advice').then((a) => {
+      state.advice = a;
+      if (gen === view.gen) advice.replaceChildren(...adviceLines(a));
+    }).catch(() => {});
+  }
   ui.screen.append(
+    advice,
     h('ul', { class: 'choices card' },
       h('li', {}, h('p', { class: 'choice-name' }, 'Claude'), h('p', { class: 'note' }, 'Avec ton abonnement Claude (Pro ou Max). Claude Code, l’outil d’Anthropic.')),
       h('li', {}, h('p', { class: 'choice-name' }, 'Codex'), h('p', { class: 'note' }, `Avec ${CHATGPT_PLAN}. Codex, l’outil d’OpenAI : ton résumé de chaque soir est écrit chez OpenAI.`)),
@@ -694,6 +708,14 @@ function sysLine(d) {
   return parts.filter(Boolean).join(' · ');
 }
 
+// « Mon conseil » (advice.rs, in the kit's words), and a word on Hermes when it is there.
+function adviceLines(a) {
+  if (!a || typeof a !== 'object' || !a.text) return [];
+  return [h('div', { class: 'advice' },
+    h('p', {}, h('strong', {}, 'Mon conseil : '), String(a.text)),
+    a.hermes ? h('p', { class: 'note' }, String(a.hermes)) : null)];
+}
+
 function checkList(checks) {
   return h('ul', { class: 'checks card' }, checks.map((c) => {
     const status = Object.hasOwn(CHECK_STATUS, c.status) ? c.status : 'warn';
@@ -714,6 +736,8 @@ function showDiagnosis() {
   screen('diag');
   const line = sysLine(d);
   if (line) ui.screen.append(h('p', { class: 'sys' }, line));
+  // Where Codex can be chosen, the advice comes with that choice instead.
+  if (!state.offer.open) ui.screen.append(...adviceLines(d.advice));
   ui.screen.append(checkList(d.checks));
   const change = changeButton();
   if (change) ui.actions.append(change);
@@ -1925,6 +1949,9 @@ function showDone() {
       h('p', { class: 'note' }, 'Ton cerveau retrouve tes notes par mots-clés. Il peut aussi les retrouver par le sens.'),
       button('Activer la recherche par le sens', () => addMeaning(showDone), { kind: 'secondary', small: true, act: 'voyage' })));
   }
+  ui.screen.append(h('div', { class: 'upgrade' },
+    h('p', { class: 'note' }, 'Tu utilisais ChatGPT ou Claude ? Apporte ce qu’ils savent de toi.'),
+    button('Importer ma mémoire', showImport, { kind: 'secondary', small: true, act: 'import' })));
   // The preferred one does the onboarding. Codex only on the login the kit uses (§4.3): logged in
   // another way it would bill a key, or offer one on its first screen, so its login comes first.
   const codexOff = chose('codex') && state.codexLogin !== 'chatgpt';
@@ -1994,6 +2021,458 @@ async function connectThenDone(btn) {
   poll(showDone, 'codex', showDone, state.codexLogin);
 }
 
+// ── 7. Importer ma mémoire ────────────────────────────────────────────────
+// What ChatGPT or Claude knows of the user, from their export or from the answer to a sentence pasted
+// there, sorted by the brain's AI without any tool into one new note (import.rs runs the kit's
+// importer-memoire). The window gives no path: the export comes from the system's picker, opened by
+// Rust. The importer says what it read and what would leave before anything does; the agreement codes
+// stay in Rust, the window only says how many requests.
+
+const MONTHS = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
+const SIZES = { rapide: 'Rapide', normal: 'Normal', complet: 'Complet', choisi: 'Sur mesure' };
+const CATEGORIES = [['identite', 'Qui tu es'], ['preference', 'Tes préférences'], ['projet', 'Tes projets'], ['personne', 'Les personnes'], ['outil', 'Tes outils'], ['decision', 'Tes décisions']];
+const CHATGPT_URL = 'https://chatgpt.com';
+const CLAUDE_URL = 'https://claude.ai';
+
+// "2026-03-02" → "2 mars 2026".
+function dayFr(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ''));
+  if (!m || Number(m[2]) < 1 || Number(m[2]) > 12) return String(iso || '');
+  return `${Number(m[3])} ${MONTHS[Number(m[2]) - 1]} ${m[1]}`;
+}
+
+function count(n, one, many = `${one}s`) {
+  const k = Number(n) || 0;
+  return `${k} ${k > 1 ? many : one}`;
+}
+
+// The AI that sorts: the brain's preferred one (the importer names it again in its plan).
+function importAi(plan = null) {
+  const id = plan && ['claude', 'codex'].includes(plan.ia) ? plan.ia : (state.agents || state.offer.agents || ['claude'])[0];
+  return ai(id);
+}
+
+// Where the AI sorts what leaves: not on this computer.
+function importAiHome(a) {
+  return a === AIS.codex ? 'OpenAI' : 'Anthropic';
+}
+
+function privacyNote(a) {
+  return h('p', { class: 'note' }, `Ce que tu importes est lu sur ton ${OS.machine} et ses secrets masqués. Puis ${a.name} le trie, chez ${importAiHome(a)}, avec ${a.plan} : rien ne part ailleurs. Le résultat est une nouvelle note de ton cerveau, que tu relis.`);
+}
+
+// A browser that opens the .zip by itself (Safari does) leaves a folder: zipped again, it is read.
+const FOLDER_TIP = {
+  macos: 'Tu as un dossier au lieu d’un .zip (Safari l’ouvre tout seul) ? Clic droit sur le dossier › Compresser, puis choisis ce .zip.',
+  // Its label changes with Windows 11's builds (« Compresser dans le fichier ZIP », « Compresser vers › Fichier ZIP »).
+  windows: 'Tu as un dossier au lieu d’un .zip ? Clic droit sur le dossier, compresse-le en fichier ZIP, puis choisis ce .zip.',
+  linux: 'Tu as un dossier au lieu d’un .zip ? Clic droit sur le dossier › Compresser, puis choisis ce .zip.',
+}[SYSTEM];
+const SEVERAL = SYSTEM === 'macos' ? 'Cmd-clic' : 'Ctrl-clic';
+
+function exportHelp() {
+  return h('details', { class: 'log help' },
+    h('summary', {}, 'Comment obtenir mon export ?'),
+    h('ul', { class: 'bullets' },
+      h('li', {}, 'ChatGPT : Paramètres › Contrôles de données › Exporter les données. Un e-mail t’envoie un lien, valable 24 h : télécharge le fichier .zip.'),
+      h('li', {}, `Claude : Paramètres › Confidentialité › Exporter les données, sur le site ou l’app de bureau. Un e-mail t’envoie tes fichiers .zip : choisis-les tous d’un coup (${SEVERAL} pour en prendre plusieurs).`),
+      h('li', {}, FOLDER_TIP),
+      h('li', {}, 'Pour les souvenirs de ChatGPT, le copier-coller marche mieux : son export ne les contient souvent plus.')));
+}
+
+async function showImport() {
+  const gen = screen('import');
+  say('thinking', 'Je prépare l’import…');
+  try {
+    await invoke('import_check');
+  } catch (e) {
+    if (gen === view.gen) showImportError(e);
+    return;
+  }
+  if (gen === view.gen) showImportChoice();
+}
+
+function showImportChoice(intro = null) {
+  screen('import');
+  const a = importAi();
+  if (intro) say(...intro);
+  else say('idle', 'D’où vient ta mémoire ?', `ChatGPT ou Claude savent déjà des choses sur toi. ${a.name} en tire l’essentiel, je le range dans ton cerveau.`);
+  ui.screen.append(
+    h('ul', { class: 'choices card' },
+      h('li', {}, h('p', { class: 'choice-name' }, 'Ton fichier d’export (.zip)'), h('p', { class: 'note' }, 'ChatGPT et Claude t’envoient tes conversations dans un fichier. Le plus complet.')),
+      h('li', {}, h('p', { class: 'choice-name' }, 'Un copier-coller (2 min)'), h('p', { class: 'note' }, 'Tu demandes à ChatGPT ou à Claude ce qu’il sait de toi, et tu colles sa réponse ici.'))),
+    exportHelp(),
+    privacyNote(a));
+  ui.actions.append(
+    button('Retour', showDone, { kind: 'ghost', act: 'back' }),
+    button('Je copie-colle une réponse', () => showPaste(), { kind: 'secondary', act: 'paste' }),
+    button('Choisir mon fichier d’export', pickExport, { act: 'next' }));
+  focusMain();
+}
+
+function onImportProgress(event) {
+  const p = event && event.payload;
+  if (p && typeof p === 'object' && view.onImport) view.onImport(p);
+}
+
+// The picker, then the reading: the same screen, Bibo says which.
+async function pickExport() {
+  const gen = screen('import-read');
+  say('idle', 'Choisis ton fichier d’export', `Dans la fenêtre qui s’ouvre. Pour Claude, choisis tous ses fichiers .zip d’un coup (${SEVERAL} pour en prendre plusieurs).`);
+  const bar = h('span', { class: 'bar-fill' });
+  const where = h('p', { class: 'note' });
+  const reading = h('div', { class: 'reading' }, h('div', { class: 'bar', 'aria-hidden': 'true' }, bar), where);
+  const stop = button('Arrêter', () => {
+    stop.disabled = true;
+    invoke('import_cancel').catch(() => {});
+  }, { kind: 'secondary', act: 'stop' });
+  // The picker closes on the first line of the reading.
+  let started = false;
+  view.onImport = (p) => {
+    if (p.etape !== 'lecture') return;
+    if (!started) {
+      started = true;
+      say('thinking', 'Je lis ton export…', 'Rien ne part pendant cette lecture.');
+      ui.screen.append(reading);
+      ui.actions.append(stop);
+    }
+    const total = Number(p.total) || 0;
+    bar.style.width = `${total ? Math.min(100, (100 * (Number(p.fait) || 0)) / total) : 0}%`;
+    where.textContent = Number(p.fichiers) > 1 ? nbsp(`Fichier ${p.fichier} sur ${p.fichiers}`) : '';
+  };
+  let plan;
+  try {
+    plan = await invoke('import_pick');
+  } catch (e) {
+    if (gen === view.gen) showImportError(e);
+    return;
+  }
+  if (gen !== view.gen) return;
+  if (!plan || typeof plan !== 'object') showImportChoice();
+  else showEstimate(plan);
+}
+
+function showPaste(intro = null) {
+  const gen = screen('import-paste');
+  if (intro) say(...intro);
+  else say('idle', 'Demande-lui ce qu’il sait de toi', 'Trois étapes, deux minutes. Rien ne part avant que tu valides.');
+  const phrase = h('p', { class: 'phrase', tabindex: '0' }, 'Je prépare la phrase…');
+  let text = '';
+  const copy = button('Copier la phrase', async () => {
+    if (!text) return;
+    let ok = false;
+    try {
+      await navigator.clipboard.writeText(text);
+      ok = true;
+    } catch {
+      ok = legacyCopy(text);
+    }
+    copy.textContent = ok ? 'Phrase copiée' : 'Sélectionne-la et copie-la';
+    later(() => { copy.textContent = 'Copier la phrase'; }, 2500);
+  }, { kind: 'secondary', small: true, act: 'copy-phrase' });
+  copy.disabled = true;
+  const open = (url) => async () => {
+    try {
+      await invoke('open_link', { url });
+    } catch (e) {
+      if (gen === view.gen) say('worried', errText(e), `Ouvre toi-même ${url.replace('https://', '')} dans ton navigateur.`);
+    }
+  };
+  const area = h('textarea', { class: 'paste', maxlength: 200000, 'aria-label': 'La réponse de ChatGPT ou de Claude', placeholder: 'Colle sa réponse ici', spellcheck: 'false' });
+  const next = button('Continuer', () => readPaste(area.value), { act: 'next' });
+  next.disabled = true;
+  area.addEventListener('input', () => { next.disabled = !area.value.trim(); });
+  ui.screen.append(
+    h('ol', { class: 'vsteps card' },
+      h('li', {}, h('p', {}, 'Copie cette phrase.'), phrase, copy),
+      h('li', {},
+        h('p', {}, 'Colle-la dans une nouvelle conversation, chez celui qui te connaît.'),
+        h('div', { class: 'row' },
+          button('Ouvrir ChatGPT', open(CHATGPT_URL), { kind: 'secondary', small: true, act: 'open-chatgpt' }),
+          button('Ouvrir Claude', open(CLAUDE_URL), { kind: 'secondary', small: true, act: 'open-claude' }))),
+      h('li', {},
+        h('p', {}, 'Copie sa réponse avec le bouton Copier de son bloc de code, et colle-la ici.'),
+        area,
+        h('p', { class: 'note' }, 'S’il dit qu’il en reste, écris-lui « Continue » et colle la suite à la fin.'))),
+    privacyNote(importAi()));
+  ui.actions.append(button('Retour', () => showImportChoice(), { kind: 'ghost', act: 'back' }), next);
+  invoke('import_phrase').then((p) => {
+    if (gen !== view.gen) return;
+    text = String(p || '');
+    phrase.textContent = text;
+    copy.disabled = !text;
+  }).catch((e) => {
+    if (gen === view.gen) showImportError(e);
+  });
+}
+
+async function readPaste(text) {
+  const gen = screen('import-read');
+  say('thinking', 'Je lis sa réponse…', 'Rien ne part pendant cette lecture.');
+  ui.screen.append(h('p', { class: 'loading' }, h('span', { class: 'spinner', 'aria-hidden': 'true' }), 'Un instant'));
+  let plan;
+  try {
+    plan = await invoke('import_paste', { text });
+  } catch (e) {
+    if (gen === view.gen) showImportError(e);
+    return;
+  }
+  if (gen === view.gen) showEstimate(plan);
+}
+
+// What the importer read, in words.
+function readLines(plan) {
+  const out = [];
+  if (plan.source === 'collage') {
+    out.push(`Sa réponse : ${count(plan.souvenirs, 'ligne')}.`);
+  } else {
+    const days = Array.isArray(plan.jours) && plan.jours.length === 2 ? `, du ${dayFr(plan.jours[0])} au ${dayFr(plan.jours[1])}` : '';
+    if (plan.conversations) out.push(`${count(plan.conversations, 'conversation')}${days}.`);
+    if (plan.souvenirs) out.push(`${count(plan.souvenirs, 'souvenir')} enregistré${plan.souvenirs > 1 ? 's' : ''}.`);
+    if (plan.projets) out.push(`${count(plan.projets, 'projet')}.`);
+  }
+  if (plan.deja) out.push(`${count(plan.deja, 'élément')} déjà importé${plan.deja > 1 ? 's' : ''} avant : laissé${plan.deja > 1 ? 's' : ''} de côté.`);
+  out.push(`Secrets masqués avant tout envoi : ${Number(plan.masques) || 0}.`);
+  if (plan.ecartes) out.push(`Passages laissés de côté (journaux, code, collages de machine) : ${plan.ecartes}.`);
+  return out;
+}
+
+function showEstimate(plan) {
+  const gen = screen('import-plan');
+  state.importPlan = plan;
+  const a = importAi(plan);
+  const choices = (Array.isArray(plan.choix) ? plan.choix : []).filter((c) => c && Number(c.appels) > 0);
+  if (!choices.length) {
+    showImportError({ code: 'interne', message: 'L’import n’a rien proposé.' });
+    return;
+  }
+  let chosen = choices.find((c) => c.appels === plan.defaut) || choices[choices.length - 1];
+  say('idle', 'Voilà ce que j’ai lu', `${a.name} va en tirer ce qui compte pour toi. Choisis combien de demandes il fait.`);
+  const warnings = [
+    plan.caches ? 'Du texte invisible a été retiré : il cachait peut-être des consignes pour une IA.' : null,
+    plan.inconnues ? 'Certaines parties avaient une forme que je ne connais pas : lues au mieux ou laissées.' : null,
+  ].filter(Boolean);
+  const sizes = h('div', { class: 'sizes', role: 'group', 'aria-label': 'Nombre de demandes' });
+  const detail = h('p', { class: 'note' });
+  const go = button('', () => runImport(chosen.appels), { act: 'next' });
+  const pre = h('pre', { class: 'log-lines', tabindex: '0', 'aria-label': `Ce que j’envoie à ${a.name}` });
+  const sent = h('details', { class: 'log sent' }, h('summary', {}, 'Voir exactement ce que j’envoie'), pre);
+  let shown = 0;
+  const paintSent = async () => {
+    if (!sent.open || shown === chosen.appels) return;
+    const n = chosen.appels;
+    shown = n;
+    pre.textContent = 'Je prépare le texte…';
+    let text = '';
+    try {
+      text = String(await invoke('import_preview', { appels: n }));
+    } catch (e) {
+      text = errText(e);
+    }
+    if (gen === view.gen && shown === n) pre.textContent = text;
+  };
+  sent.addEventListener('toggle', paintSent);
+  const paint = () => {
+    for (const b of sizes.querySelectorAll('button')) {
+      const on = Number(b.dataset.appels) === chosen.appels;
+      b.className = `btn btn-small ${on ? 'btn-primary' : 'btn-secondary'}`;
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    }
+    const convs = plan.source === 'collage' ? '' : `${count(chosen.conversations, 'conversation')} parmi les plus récentes, `;
+    detail.textContent = nbsp(`${count(chosen.appels, 'demande')} : ${convs}environ ${chosen.minutes || chosen.appels} min.`);
+    go.textContent = nbsp(`Lancer (${count(chosen.appels, 'demande')})`);
+    paintSent();
+  };
+  if (choices.length > 1) {
+    for (const c of choices) {
+      const b = button(`${SIZES[c.nom] || c.nom} : ${count(c.appels, 'demande')}`, () => { chosen = c; paint(); }, { kind: 'secondary', small: true, act: `size-${c.nom}` });
+      b.dataset.appels = String(c.appels);
+      sizes.append(b);
+    }
+  }
+  ui.screen.append(
+    h('div', { class: 'repair-card card' },
+      h('p', { class: 'card-title' }, plan.source === 'collage' ? 'La réponse collée' : `Ton export ${plan.source === 'claude' ? 'Claude' : 'ChatGPT'}`),
+      h('ul', { class: 'bullets' }, readLines(plan).map((l) => h('li', {}, l)), warnings.map((w) => h('li', { class: 'warn' }, w)))),
+    ...(choices.length > 1 ? [sizes] : []),
+    detail,
+    h('p', { class: 'note' }, `Ce qui part : ${String(plan.vers || '')}.`),
+    h('p', { class: 'note' }, `Ça ne te coûte rien de plus, mais ${String(plan.usage || 'ça compte dans ta limite d’usage')}, à peu près comme une longue question par demande.`),
+    sent);
+  paint();
+  ui.actions.append(
+    button('Annuler', () => {
+      state.importPlan = null;
+      invoke('import_forget').catch(() => {});
+      showImportChoice(['idle', 'C’est annulé.', 'Rien n’est parti. D’où vient ta mémoire ?']);
+    }, { kind: 'ghost', act: 'back' }),
+    go);
+  focusMain();
+}
+
+async function runImport(n) {
+  const gen = screen('import-run');
+  const a = importAi(state.importPlan);
+  const per = 'Tu peux utiliser ton ordinateur, mais laisse cette fenêtre ouverte jusqu’à la fin.';
+  say('working', `${a.name} trie ta mémoire…`, `Demande 1 sur ${n}. ${per}`);
+  const started = Date.now();
+  const time = h('span', { class: 'chrono-time' }, '0:00');
+  const stage = h('span', { class: 'chrono-stage' }, `Environ ${n} min en tout`);
+  const bar = h('span', { class: 'bar-fill' });
+  ui.screen.append(
+    h('div', { class: 'chrono card' }, h('span', { class: 'spinner', 'aria-hidden': 'true' }), h('span', { class: 'chrono-text' }, time, stage)),
+    h('div', { class: 'bar', 'aria-hidden': 'true' }, bar),
+    h('p', { class: 'note' }, `${a.name} n’a aucun outil : il lit, il répond, il ne touche à rien. Je vérifie chaque fait avant de l’écrire.`));
+  every(() => { time.textContent = clock(Date.now() - started); }, 1000);
+  const stop = button('Arrêter', () => {
+    stop.disabled = true;
+    say('thinking', `J’arrête ${a.name}…`);
+    invoke('import_cancel').catch(() => {});
+  }, { kind: 'secondary', act: 'stop' });
+  ui.actions.append(stop);
+  view.onImport = (p) => {
+    if (p.etape === 'tri') {
+      const k = Number(p.demande) || 1;
+      const of = Number(p.sur) || n;
+      bar.style.width = `${(100 * (k - 1)) / of}%`;
+      if (!stop.disabled) say('working', `${a.name} trie ta mémoire…`, `Demande ${k} sur ${of}. ${per}`);
+    } else if (p.etape === 'ecriture') {
+      // Writing the note: stopping now could leave half of it, Rust lets it finish.
+      stop.disabled = true;
+      bar.style.width = '100%';
+      stage.textContent = nbsp('J’écris la note');
+      say('working', 'Je range tout dans ton cerveau…', 'Une nouvelle note, et une ligne dans ta mémoire.');
+    }
+  };
+  let res;
+  try {
+    res = await invoke('import_run', { appels: n });
+  } catch (e) {
+    if (gen === view.gen) showImportError(e);
+    return;
+  }
+  if (gen === view.gen) showImportResult(res);
+}
+
+function showImportResult(r) {
+  screen('import-done');
+  const pasted = Boolean(state.importPlan && state.importPlan.source === 'collage');
+  state.importPlan = null;
+  const faits = Number(r && r.faits) || 0;
+  if (!r || !r.note || !faits) {
+    say('idle', 'Je n’ai rien trouvé de durable à garder.', 'Rien n’a été écrit dans ton cerveau.');
+    ui.actions.append(button('Terminé', showDone, { act: 'next' }));
+    focusMain();
+    return;
+  }
+  const name = String(r.note).replace(/^Imports\//, '').replace(/\.md$/, '');
+  say('happy', 'C’est rangé !', `${count(faits, 'fait')} dans Imports › ${name}.`);
+  const par = r.par_categorie && typeof r.par_categorie === 'object' ? r.par_categorie : {};
+  const jetes = Object.values(r.jetes && typeof r.jetes === 'object' ? r.jetes : {}).reduce((x, y) => x + (Number(y) || 0), 0);
+  // [text, warning]
+  const notes = [
+    r.partiel ? [`Import partiel : ${count(r.demandes, 'demande')} sur ${r.sur}. Plus tard, reviens sur « Importer ma mémoire » et ${pasted ? 'colle la même réponse' : 'choisis le même fichier'} : je reprendrai là où je me suis arrêté.`, true] : null,
+    r.suspect ? ['Attention : une partie ressemblait à des consignes pour une IA. Elles n’ont pas été suivies : relis bien la note.', true] : null,
+    jetes ? [`${count(jetes, 'fait')} laissé${jetes > 1 ? 's' : ''} de côté (sans source, numéro, adresse ou consigne pour une IA).`, false] : null,
+    r.avis ? [String(r.avis), true] : null,
+  ].filter(Boolean);
+  ui.screen.append(
+    h('div', { class: 'repair-card card' },
+      h('p', { class: 'card-title' }, 'Ce que je retiens de toi'),
+      h('ul', { class: 'bullets' }, CATEGORIES.filter(([k]) => Number(par[k]) > 0).map(([k, label]) => h('li', {}, `${label} : ${par[k]}`)))),
+    ...notes.map(([t, warn]) => h('p', { class: warn ? 'note warn' : 'note' }, t)),
+    h('p', { class: 'note' }, 'Relis-les : corrige ou supprime ce qui est faux. Rien d’autre n’a changé dans ton cerveau.'));
+  const open = button('Voir la note', async () => {
+    open.disabled = true;
+    try {
+      await invoke('import_open_note');
+      say('happy', 'J’ouvre la note…', 'Elle est dans Obsidian, dossier Imports.');
+    } catch (e) {
+      say('worried', 'Ça n’a pas marché.', errText(e));
+    }
+    later(() => { open.disabled = false; }, 3000);
+  }, { act: 'next' });
+  ui.actions.append(button('Terminé', showDone, { kind: 'secondary', act: 'done' }), open);
+  focusMain();
+}
+
+// Each stop, one sentence and what to do next. Nothing was written unless the result said so.
+function showImportError(e) {
+  const code = e && typeof e === 'object' ? String(e.code || '') : '';
+  const message = e && typeof e === 'object' && e.message ? String(e.message) : errText(e);
+  const a = importAi(state.importPlan);
+  if (code === 'arrete') {
+    showImportChoice(['idle', 'Arrêté.', 'Rien n’a été écrit dans ton cerveau.']);
+    return;
+  }
+  if (code === 'phrase') {
+    showPaste(['worried', 'Tu as collé ma phrase.', 'À l’étape 3, colle plutôt la réponse de ChatGPT ou de Claude.']);
+    return;
+  }
+  screen('import-error');
+  const back = () => button('Retour', () => showImportChoice(), { kind: 'ghost', act: 'back' });
+  if (code === 'a_jour') {
+    say('idle', 'Ton cerveau doit d’abord être mis à jour', 'Il a été installé avant l’import de mémoire. 1 à 5 minutes, et rien de tes notes ne change.');
+    ui.actions.append(button('Retour', showDone, { kind: 'ghost', act: 'back' }), button('Mettre à jour mon cerveau', updateBrain, { act: 'next' }));
+  } else if (code === 'deja') {
+    say('idle', 'C’est déjà dans ton cerveau.', message);
+    ui.actions.append(back(), button('Terminé', showDone, { act: 'next' }));
+  } else if (code === 'auth') {
+    say('worried', `${a.name} n’est pas connecté à ton abonnement.`, 'Connecte-le, puis relance l’import. Rien n’est parti.');
+    const engine = a === AIS.codex ? 'codex' : 'claude';
+    const connect = connectButton(a, async () => {
+      connect.disabled = true;
+      try {
+        await invoke(LOGINS[engine].open);
+      } catch (err) {
+        say('worried', 'La fenêtre ne s’est pas ouverte.', errText(err));
+        connect.disabled = false;
+        return;
+      }
+      say('thinking', 'J’attends que tu te connectes…', `Suis les étapes ${OS.inTerminal}.`);
+      poll(() => {
+        if (state.importPlan) showEstimate(state.importPlan);
+        else showImportChoice();
+      }, engine);
+    });
+    ui.actions.append(back(), connect);
+  } else if (code === 'quota') {
+    say('worried', `${a.forfait} est à sa limite pour le moment.`, 'Il se recharge tout seul en quelques heures : reviens alors sur « Importer ma mémoire ». Rien n’a été écrit.');
+    ui.actions.append(button('Terminé', showDone, { act: 'next' }));
+  } else if (['timeout', 'api', 'invalid', 'start', 'unsupported'].includes(code)) {
+    // The AI, not the file: the plan is still there, trying again sends nothing more than agreed.
+    const slow = ['timeout', 'api', 'invalid'].includes(code);
+    say('worried', slow ? `${a.name} ne répond pas pour l’instant.` : `${a.product} ne démarre pas comme il faut.`,
+      `${slow ? '' : 'Il se met à jour tout seul en général. '}Rien n’a été écrit : réessaie dans un moment.`);
+    ui.actions.append(back(), button('Réessayer', () => {
+      if (state.importPlan) showEstimate(state.importPlan);
+      else showImportChoice();
+    }, { act: 'next' }));
+  } else if (code === 'agents') {
+    say('worried', 'Je ne sais plus avec quelle IA tu travailles.', 'Ton choix est illisible : je ne demande rien, ni à Claude ni à Codex. Rien n’a été écrit.');
+    ui.actions.append(button('Terminé', showDone, { act: 'next' }));
+  } else if (code === 'occupe' || code === 'en_cours') {
+    say('worried', 'Un import est déjà en cours.', 'Attends qu’il finisse, puis réessaie.');
+    ui.actions.append(back());
+  } else if (code === 'cerveau_absent' || code === 'python') {
+    say('worried', 'Je ne peux pas importer pour l’instant.', message);
+    ui.actions.append(button('Retour', showDone, { act: 'next' }));
+  } else {
+    say('worried', 'Je ne peux pas importer ça.', message);
+    if (['pas_un_zip', 'pas_un_export', 'illisible', 'usage'].includes(code)) ui.screen.append(h('p', { class: 'note' }, FOLDER_TIP));
+    ui.actions.append(button('Terminé', showDone, { kind: 'ghost', act: 'done' }), button('Essayer autre chose', () => showImportChoice(), { act: 'next' }));
+  }
+  focusMain();
+}
+
+// A brain of before the import: the brain step again brings the importer, then the end.
+function updateBrain() {
+  state.plan = ['brain'];
+  state.steps = {};
+  state.failed = null;
+  runInstall(0);
+}
+
 // ── Start ──────────────────────────────────────────────────────────────────
 
 // WebKit's right-click menu offers « Reload »: mid-install, that would drop the
@@ -2014,6 +2493,7 @@ function start() {
   }
   window.__TAURI__.event.listen('step-log', onLog).catch(() => {});
   window.__TAURI__.event.listen('repair-progress', onRepairProgress).catch(() => {});
+  window.__TAURI__.event.listen('import-progress', onImportProgress).catch(() => {});
   readOffer().then(showWelcome);
 }
 

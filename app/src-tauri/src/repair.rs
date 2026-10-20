@@ -3993,6 +3993,7 @@ pub(crate) mod tests {
                 .collect(),
             todo: Vec::new(),
             can_install: true,
+            advice: None,
         }
     }
 
