@@ -230,6 +230,13 @@ class Hostiles(unittest.TestCase):
         self.assertEqual((lec.compte["trop_gros"], lec.compte["conversations"]), (1, 2))
         self.assertLess(peak, 24 << 20, "memory grew with the message")
 
+    def test_thousands_of_projects_are_capped(self):
+        projets = [{"uuid": "%08d-1111-4a8e-9c2d-5f6e7a8b9c0d" % i, "name": "Projet %d" % i,
+                    "description": "Description du projet %d." % i} for i in range(3000)]
+        lec = lire(F.zip_bytes([("projects.json", json.dumps(projets))]))
+        self.assertEqual(len(lec.blocs()), L.MEMOIRES_MAX)
+        self.assertEqual(lec.compte["memoires_en_trop"], 1000)
+
     def test_names_that_climb_or_hide_are_never_read(self):
         with Ouverts() as o:
             lec = lire(F.noms_hostiles())

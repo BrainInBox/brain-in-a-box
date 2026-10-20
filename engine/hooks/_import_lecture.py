@@ -56,6 +56,7 @@ CONVERSATION_MAX = 12000
 MEMOIRE_MAX = 20000
 PROJET_MAX = 2000
 INCONNUE_MAX = 30000
+MEMOIRES_MAX, MEMOIRES_TOTAL = 2000, 400000   # memories, instructions and projects kept, in blocks and characters
 COLLAGE_MAX = 300000
 COLLAGE_BLOC = 95000
 SNIFF = 1 << 20
@@ -181,7 +182,7 @@ class Lecture:
         self.empreintes = []
         self.tas, self.taille, self.seq, self.vues = [], 0, 0, set()
         self.jours = []                  # the first and last day of the conversations found
-        self.memoires = []               # souvenirs, instructions, project memories, projects
+        self.memoires, self.taille_memoires = [], 0   # souvenirs, instructions, project memories, projects
         self.noms_projets = {}
         self.contexte = self.instructions = None   # ChatGPT's: the most recent of each, (t, ...)
         self.bio = {}
@@ -263,6 +264,9 @@ class Lecture:
         self.de(source)
         if not isinstance(texte, str) or not texte.strip():
             return
+        if len(self.memoires) >= MEMOIRES_MAX or self.taille_memoires >= MEMOIRES_TOTAL:
+            self.compte["memoires_en_trop"] += 1   # thousands of projects or memory files: the rest left
+            return
         t, caches = self._texte(texte, cap)
         if not t:
             return
@@ -273,6 +277,7 @@ class Lecture:
         self.compte["souvenirs" if genre in ("souvenir", "memoire_projet", "instructions") else "projets"] += 1
         self.memoires.append({"genre": genre, "titre": titre(nom), "date": _jour(quand), "cle": k, "texte": t,
                               "caches": caches, "quand": quand or 0})
+        self.taille_memoires += len(t)
         if projet is not None:
             self.memoires[-1]["projet"] = projet   # names a project memory, here or in another zip
 
