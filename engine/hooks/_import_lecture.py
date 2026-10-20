@@ -50,6 +50,7 @@ MORCEAU = 1 << 20
 FICHIERS_MAX = 2000            # conversations-NNN.json, 100 conversations each
 NOEUDS_MAX = 100000
 CHIFFRES_MAX = 30              # Python 3.9.6 has no guard against int("9" * 10**6) (CVE-2020-10735)
+PROFONDEUR_MAX = 200           # an export nests a dozen levels; json's own limit depends on the Python
 MESSAGE_MAX = 1000
 MESSAGES_GARDES = 6            # the first and the last ones of the person, per conversation
 CONVERSATION_MAX = 12000
@@ -353,45 +354,47 @@ class _Flux:
         return False
 
 
-def _avance(buf, i, prof, chaine):
-    """Scans buf from i: (where to go on from, depth, inside a string, end of the value or None)."""
+def _avance(buf, i, prof, chaine, haut=0):
+    """Scans buf from i: (where to go on from, depth, inside a string, end of the value or None,
+    deepest depth seen)."""
     n = len(buf)
     while i < n:
         if chaine:
             j = _CHAINE.match(buf, i).end()
             if j >= n:
-                return n, prof, True, None
+                return n, prof, True, None, haut
             if buf[j] == "\\":            # a backslash last: the character it escapes is to come
-                return j, prof, True, None
+                return j, prof, True, None, haut
             chaine, i = False, j + 1
             if prof == 0:
-                return i, 0, False, i
+                return i, 0, False, i, haut
             continue
         m = _JETON.search(buf, i)
         if not m:
-            return n, prof, False, None
+            return n, prof, False, None, haut
         c, i = m.group(), m.end()
         if c == '"':
             chaine = True
         elif c in "[{":
             prof += 1
+            haut = max(haut, prof)
         else:
             prof -= 1
             if prof <= 0:
-                return i, 0, False, i
-    return i, prof, chaine, None
+                return i, 0, False, i, haut
+    return i, prof, chaine, None, haut
 
 
 def _valeur(f, dec, limite):
     debut = i = f.pos
-    prof, chaine, garde = 0, False, True
+    prof, chaine, garde, haut = 0, False, True, 0
     scalaire = f.buf[debut] not in '[{"'
     while True:
         if scalaire:
             i = _SCALAIRE.match(f.buf, i).end()
             fin = (i if i > debut else debut + 1) if i < len(f.buf) else None
         else:
-            i, prof, chaine, fin = _avance(f.buf, i, prof, chaine)
+            i, prof, chaine, fin, haut = _avance(f.buf, i, prof, chaine, haut)
         if fin is not None:
             break
         if garde and i - debut > limite:
@@ -407,6 +410,8 @@ def _valeur(f, dec, limite):
     f.pos = fin
     if not garde or fin - debut > limite:
         return TROP_GROS
+    if haut > PROFONDEUR_MAX:
+        return ILLISIBLE   # never handed to json, whose limit is the Python's (3.14: the C stack's)
     try:
         v, end = dec.raw_decode(f.buf, debut)
     except (ValueError, RecursionError):

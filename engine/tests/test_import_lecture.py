@@ -215,6 +215,16 @@ class Hostiles(unittest.TestCase):
                 self.assertEqual(lec.compte["illisibles"], 1)
                 self.assertEqual(lec.compte["conversations"], 2)
 
+    def test_depth_is_bounded_by_the_reader_not_by_json(self):
+        # json's own limit is the interpreter's (3.9: 1000 levels; 3.14: the C stack): never reached.
+        deep = "[" + "[" * (L.PROFONDEUR_MAX + 1) + "]" * (L.PROFONDEUR_MAX + 1) + "]"
+        with mock.patch.object(L.json.JSONDecoder, "raw_decode", side_effect=AssertionError("json reached")):
+            self.assertEqual(list(L.valeurs([deep])), [L.ILLISIBLE])
+        nested = []
+        for _ in range(49):
+            nested = [nested]
+        self.assertEqual(list(L.valeurs(["[" + "[" * 50 + "]" * 50 + "]"])), [nested])
+
     def test_a_huge_message_is_skipped_as_it_streams(self):
         data = F.message_geant()   # 100 MB, in one message
         lec = lire(data)
