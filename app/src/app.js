@@ -2064,7 +2064,8 @@ function privacyNote(a) {
 // A browser that opens the .zip by itself (Safari does) leaves a folder: zipped again, it is read.
 const FOLDER_TIP = {
   macos: 'Tu as un dossier au lieu d’un .zip (Safari l’ouvre tout seul) ? Clic droit sur le dossier › Compresser, puis choisis ce .zip.',
-  windows: 'Tu as un dossier au lieu d’un .zip ? Clic droit sur le dossier › Compresser dans un fichier ZIP, puis choisis ce .zip.',
+  // Its label changes with Windows 11's builds (« Compresser dans le fichier ZIP », « Compresser vers › Fichier ZIP »).
+  windows: 'Tu as un dossier au lieu d’un .zip ? Clic droit sur le dossier, compresse-le en fichier ZIP, puis choisis ce .zip.',
   linux: 'Tu as un dossier au lieu d’un .zip ? Clic droit sur le dossier › Compresser, puis choisis ce .zip.',
 }[SYSTEM];
 const SEVERAL = SYSTEM === 'macos' ? 'Cmd-clic' : 'Ctrl-clic';
