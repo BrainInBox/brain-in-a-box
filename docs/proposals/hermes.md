@@ -1,0 +1,158 @@
+# Hermès, l'interface par défaut (proposition)
+
+Statut : brouillon du 20/10/2026, rien n'est codé. À valider par Chafic (décisions 1, 2 et 4), puis par Chad (décisions 0 et 3), avant toute phase.
+Base : `master` à `fa1ed66`, doc officielle de Hermès lue le 20/10/2026 (`llms-full.txt`), page « Legal and compliance » de Claude Code lue le même jour.
+
+---
+
+## 0. En bref
+
+- **La demande** : un lien, un bouton « Installer », et la personne arrive sur Hermès, déjà relié à son cerveau et à son abonnement, puis branché sur WhatsApp et Telegram. Ni Python ni terminal à gérer. Claude par défaut.
+- **Déjà dans Bibo** :
+  - le diagnostic voit Claude Code et sa connexion (`claude`, `claude_auth`), ainsi que Codex et sa connexion ChatGPT (`codex`, `codex_auth`), cachés tant que Codex est fermé ;
+  - l'écran « Avec quelle IA veux-tu travailler ? » (`agents.json`) ;
+  - l'installation de Claude Code et de Codex ;
+  - les boutons de connexion (`open_claude_login`, `open_codex_login`).
+- **À ajouter** : une étape `hermes`, la connexion de Hermès à une IA, le lien entre Hermès et le cerveau, la messagerie guidée.
+- **Bloquant** : Hermès ne peut pas utiliser l'abonnement Claude de l'utilisateur (§3), pour deux raisons :
+  - techniquement, Claude Pro est refusé et Claude Max ne marche que sur des crédits payés en plus ;
+  - les règles d'Anthropic l'interdisent.
+
+  « Claude par défaut » et « Hermès par défaut » ne vont donc pas ensemble aujourd'hui.
+- **Changement de cap** : depuis #24 (13/10), le kit est centré sur Claude Code. Le CHANGELOG dit « Hermes is no longer a target » pour les compétences, et `test-hooks.sh` vérifie qu'il ne reste aucune trace de Hermès dans les compétences fournies. Remettre Hermès au centre se décide avec Chad (décision 0).
+
+---
+
+## 1. Le parcours visé
+
+1. **Diagnostic** (existant), plus trois lignes : « Hermès (ton assistant) », « Connexion de Hermès », « Hermès relié à ton cerveau ».
+2. **Choix d'IA** (écran existant, `codex.md` §4.1) : on ajoute une phrase qui dit avec quoi Hermès répondra (§3).
+3. **Installer** : un seul bouton. Étapes : agent(s), outils (`clt`, `bun`, `obsidian`), `brain`, puis `hermes`.
+4. **Connexions** : une fenêtre du fournisseur par compte. Ce geste reste humain :
+   - Anthropic exige que la connexion passe par son propre parcours ;
+   - OpenAI passe par un code d'appareil.
+5. **Hermès s'ouvre**, déjà relié au cerveau (§4).
+6. **Messagerie** (facultatif, « Plus tard » possible) : Telegram en un scan, WhatsApp en un scan (§5).
+
+---
+
+## 2. Installer Hermès sans rien gérer
+
+Faits vérifiés le 20/10/2026 :
+
+- **Paquets officiels**, liés depuis le site de Hermès :
+  - `https://hermes-assets.nousresearch.com/Hermes-Setup.dmg` (6 752 854 octets, modifié le 06/06/2026) ;
+  - `https://hermes-assets.nousresearch.com/Hermes-Setup.exe`.
+- **Signature** : une app installée depuis ce paquet (`Hermes.app`, identifiant `com.nousresearch.hermes.setup`, arm64) est signée Developer ID (équipe `T2F6S8MF7C`) et notarisée. Gatekeeper l'accepte, contrairement à Bibo aujourd'hui.
+- **Rien à installer à côté** (doc, pages installation et bureau) :
+  - les paquets embarquent le moteur, Python et les dépendances ;
+  - au premier lancement, l'app installe le moteur dans `~/.hermes` (`%LOCALAPPDATA%\hermes` sous Windows), avec la même structure qu'une installation en ligne de commande.
+- **Mac Intel** : non pris en charge par Hermès.
+- **Linux** : pas de paquet bureau. L'installeur en ligne de commande fournit lui-même uv, un Python épinglé, Node, ripgrep et FFmpeg.
+- **Installeur sans question** :
+  - Mac et Linux : `curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash -s -- --non-interactive` ;
+  - Windows : `install.ps1` avec `-NonInteractive`.
+
+Proposition :
+
+- Étape `hermes` à la fin de `ORDER` (`steps.rs` l.45-52), sur les trois systèmes.
+- **macOS** : même mécanique qu'Obsidian (téléchargement, `hdiutil`, copie dans `/Applications`). L'URL n'est pas versionnée (`?build=`) : on vérifie la **signature** (équipe `T2F6S8MF7C`, `spctl`) plutôt qu'une empreinte figée, qui casserait à chaque mise à jour de Hermès.
+- **Moteur** : Bibo lance l'installeur non interactif plutôt que d'attendre le premier lancement de l'app, pour garder le journal et les erreurs dans Bibo. À vérifier en phase 0 : l'app reprend bien un moteur déjà installé.
+- **Mac Intel** : étape sautée, avec une phrase claire. L'utilisateur garde Claude Code.
+- **Linux** : moteur seul. WhatsApp et Telegram marchent, mais il n'y a pas d'app bureau.
+- **Disque** : à mesurer en phase 0. L'installeur ajoute un navigateur Chromium par défaut ; `--skip-browser` existe.
+
+---
+
+## 3. Relier Hermès à une IA : le point dur
+
+### Claude
+
+- **Doc Hermès** (fournisseurs) : la connexion par abonnement « only works on a Claude Max plan with purchased extra usage credits », et « the base Max allowance is never consumed by Hermes ». **Claude Pro ne peut pas l'utiliser.** La seule autre voie documentée est une clé API Anthropic, payée à l'usage.
+- **Règles d'Anthropic** (Claude Code, section « Authentication and credential use ») : « Anthropic does not permit third-party developers to offer Claude.ai login into their own applications, or to route requests through Free, Pro, or Max plan credentials on behalf of their users. Moreover, developers may not collect, store, or intermediate Claude.ai credentials or session tokens ». Anthropic peut appliquer ces règles sans préavis.
+- **Ce qui reste permis** : l'utilisateur qui se connecte lui-même au binaire Claude Code non modifié. C'est ce que fait le kit aujourd'hui.
+- **Constaté en pratique** : un branchement direct de Hermès sur un abonnement Claude Max a déjà été refusé (erreurs 400 et 429, septembre 2026).
+- **Conséquence** : Bibo ne branche pas Hermès sur l'abonnement Claude et ne copie aucun jeton Claude. Pour un utilisateur Claude, Hermès a besoin d'une autre source : une clé API Anthropic saisie par l'utilisateur, un abonnement ChatGPT ou un abonnement Nous Portal.
+
+### ChatGPT
+
+- **Prise en charge officielle** par Hermès (`openai-codex`) : connexion par code d'appareil, jetons dans `~/.hermes/auth.json`, sans Codex CLI. Ça fonctionne en pratique avec un abonnement ChatGPT.
+- **Non documenté** par Hermès : quels forfaits ChatGPT sont éligibles, et comment l'usage est décompté.
+- **Un seul détenteur par compte** (doc Hermès, sécurité et fournisseurs) :
+  - deux connexions du même compte OpenAI partagent une famille de jetons, et OpenAI révoque la plus ancienne ;
+  - un jeton emprunté à Codex CLI est invalidé chez l'autre au premier rafraîchissement (`auth.adopt_external_logins`).
+
+  Si le kit fait tourner Codex et Hermès sur le même compte ChatGPT, il faut choisir qui tient la connexion (décision 3).
+
+### Recommandation
+
+Quand l'utilisateur n'a rien, proposer **ChatGPT par défaut** : un seul abonnement fait tourner à la fois le cerveau (Codex) et Hermès. Claude reste proposé, et Bibo dit alors clairement que Hermès demandera une autre source.
+
+---
+
+## 4. Relier Hermès au cerveau
+
+- **Import** : `hermes import-agent claude-code --yes` (ou `codex`) importe :
+  - les consignes (`CLAUDE.md` ou `AGENTS.md`), dans la mémoire de Hermès ;
+  - les permissions Bash ;
+  - les serveurs MCP ;
+  - les compétences.
+
+  Il ne lit jamais les identifiants. Les changements suivants se reprennent grâce à `~/.hermes/import-sync.json`.
+- **Recherche dans les notes** : déclarer GBrain comme serveur MCP de Hermès (`gbrain serve` en stdio). Hermès interroge alors la mémoire directement. À vérifier : le chemin du binaire, et la cohabitation avec la réindexation de 4 h.
+- **Résumé du soir** : la réflexion lit déjà les sessions Hermès quand Hermès est installé (CHANGELOG, `HERMES_DB`). À vérifier sur une installation neuve.
+- **Taille** : la mémoire de Hermès a un plafond de caractères. Vérifier que le bloc du kit y tient après l'import.
+
+---
+
+## 5. WhatsApp et Telegram
+
+- **Telegram** : l'app Hermès a un bouton « Create with QR » (Messagerie, Telegram). Un scan dans Telegram suffit : Hermès crée le bot, détecte l'identifiant de l'utilisateur et enregistre les réglages.
+- **WhatsApp** passe par le pont Baileys, non officiel, comme WhatsApp Web. Un scan du QR depuis WhatsApp (Appareils connectés) suffit. Deux modes :
+  - numéro personnel, en se parlant à soi-même : rapide ;
+  - numéro dédié : conseillé par la doc, car WhatsApp peut restreindre un compte relié à un outil non officiel.
+
+  La voie officielle (WhatsApp Business Cloud API) demande un compte Meta Business et une adresse web publique : elle sort du parcours simple.
+- **Toujours joignable** : la passerelle est installée en service (`hermes gateway install`, tâche planifiée sous Windows), et l'ordinateur doit rester allumé. À dire à l'écran : « Ton assistant répond tant que ton ordinateur est allumé. »
+- **Proposition v1** : Bibo ne refait pas ces écrans. Il ouvre Hermès sur Messagerie et guide pas à pas ; le scan reste le seul geste.
+
+---
+
+## 6. Phases
+
+0. **VM propres** (Mac arm64, Windows 11, Ubuntu 22.04). À tester : installation non interactive, taille et durée, reprise par l'app, connexion ChatGPT, import, GBrain en MCP, Telegram et WhatsApp. Les résultats sont écrits ici.
+1. **Diagnostic** : `hermes`, `hermes_auth`, `hermes_brain`, en lecture seule.
+2. **Étape `hermes`**, fermée par une porte comme Codex tant que la phase 0 n'est pas verte.
+3. **Connexion de Hermès à une IA**, selon les décisions 1 à 3.
+4. **Lien au cerveau** (import, MCP).
+5. **Messagerie guidée.**
+6. **Ouverture**, système par système.
+
+Chaque phase est fusionnée seule, avec les gardes habituelles (`test-hooks.sh`, terrain).
+
+---
+
+## 7. Décisions
+
+0. **Chad** : remettre Hermès dans le kit, comme interface par défaut.
+1. **Chafic** : l'IA par défaut pour qui n'a rien. Recommandé : ChatGPT.
+2. **Chafic** : l'utilisateur qui n'a que Claude. Trois possibilités :
+   - proposer en plus ChatGPT pour Hermès ;
+   - une clé API Anthropic ;
+   - rester sur Claude Code, sans Hermès.
+3. **Chad** : avec Codex et Hermès sur le même compte ChatGPT, qui tient la connexion.
+4. **Chafic** : WhatsApp sur le numéro personnel (avec avertissement) ou sur un numéro dédié.
+
+---
+
+## Sources
+
+- **Hermès** :
+  - https://hermes-agent.nousresearch.com/docs/getting-started/installation
+  - https://hermes-agent.nousresearch.com/docs/user-guide/desktop
+  - https://hermes-agent.nousresearch.com/docs/integrations/providers
+  - https://hermes-agent.nousresearch.com/docs/user-guide/import-from-other-agents
+  - https://hermes-agent.nousresearch.com/docs/user-guide/messaging (pages WhatsApp et Telegram)
+  - `https://hermes-agent.nousresearch.com/docs/llms-full.txt`, lu le 20/10/2026
+- **Anthropic** : https://code.claude.com/docs/en/legal-and-compliance, section « Authentication and credential use », lue le 20/10/2026.
+- **Téléchargements** : liens « Desktop » du site https://hermes-agent.nousresearch.com/
