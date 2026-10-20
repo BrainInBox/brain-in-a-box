@@ -6,12 +6,14 @@ Every archive is built in memory by import_fixtures.py: no real export, no file 
 
     python3 -I -m unittest discover -s engine/tests -v
 """
+import hashlib
 import io
 import json
 import os
 import shutil
 import socket
 import stat
+import subprocess
 import sys
 import tempfile
 import time
@@ -88,6 +90,18 @@ class Formats(unittest.TestCase):
         for c in F.canaris():
             self.assertNotIn(c, txt)
 
+    def test_chatgpt_custom_instructions_without_openais_wrapping_nor_repeats(self):
+        for memoires in (True, "ancien"):   # with the bare text in the metadata, and without it
+            with self.subTest(memoires=memoires):
+                c = F.chatgpt_conversation("c-ctx", "Contexte", F.T0, ["Bonjour."], memoires=memoires)
+                instr = [b for b in lire(json.dumps([c]).encode()).blocs() if b["genre"] == "instructions"]
+                self.assertEqual(len(instr), 1)
+                texte = instr[0]["texte"]
+                for mot in ("The user provided", "quietly think", "acknowledge", "```"):
+                    self.assertNotIn(mot, texte)
+                self.assertEqual(texte.count(F.PROFIL), 1, texte)
+                self.assertEqual(texte.count(F.CONSIGNES), 1, texte)
+
     def test_chatgpt_2026_split_files_without_the_hidden_nodes(self):
         with Ouverts() as o:
             lec = lire(F.chatgpt_2026(n=250))
@@ -132,6 +146,16 @@ class Formats(unittest.TestCase):
             lire(z["compte"])
         self.assertEqual(e.exception.code, "compte")
         self.assertIn("infos de ton compte", e.exception.message)
+
+    def test_a_file_of_no_use_given_with_the_export_is_left_aside(self):
+        # The files of an export the browser unzipped, picked with the account's user.json among them.
+        compte = json.dumps({"id": "u-1", "email": "%s@example.org" % F.CANARI_COMPTE}).encode()
+        lec = lire(F.chatgpt_2025(), compte)
+        self.assertEqual((lec.compte["conversations"], lec.compte["laisses"]), (4, 1))
+        self.assertNotIn(F.CANARI_COMPTE, tout(lec))
+        with self.assertRaises(L.Refus) as e:
+            lire(compte)
+        self.assertEqual(e.exception.code, "pas_un_export")
 
     def test_the_json_of_links_is_refused_and_no_link_followed(self):
         def no_network(*a, **kw):
@@ -196,7 +220,22 @@ class Hostiles(unittest.TestCase):
         forged = (F.zip64(cd_size=1 << 40), F.zip64(entries=10 ** 9), F.repertoire_enorme())
         with mock.patch.object(zipfile, "ZipFile", side_effect=AssertionError("zipfile reached")):
             for data in forged:
-                self.refus(data, "trop_gros")
+                with self.assertRaises(L.Refus) as e:
+                    lire(data)
+                # A directory larger than the file: Python 3.14's zipfile finds it corrupt.
+                self.assertIn(e.exception.code, ("trop_gros", "abime"))
+
+    def test_the_directory_zipfile_reads_is_bounded_whatever_the_end_records_say(self):
+        # zipfile reads the central directory by its size, whatever number of entries the end record
+        # says, and takes a Zip64 record standing before it even when no 32-bit field calls for one.
+        forged = {name: getattr(F, name)() for name in ("repertoire_menteur", "zip64_sans_ffff")}
+        with mock.patch.object(zipfile, "ZipFile", side_effect=AssertionError("zipfile reached")):
+            for name, data in forged.items():
+                with self.subTest(name):
+                    with self.assertRaises(L.Refus) as e:
+                        lire(data)
+                    # Python 3.14's zipfile finds this Zip64 record corrupt: refused as such.
+                    self.assertIn(e.exception.code, ("trop_gros", "abime"))
 
     def test_entries_sharing_their_bytes_are_refused(self):
         data = bytearray(F.zip_bytes([("conversations-000.json", json.dumps(F.chatgpt_conversations(3))),
@@ -224,6 +263,35 @@ class Hostiles(unittest.TestCase):
         for _ in range(49):
             nested = [nested]
         self.assertEqual(list(L.valeurs(["[" + "[" * 50 + "]" * 50 + "]"])), [nested])
+
+    def test_an_element_of_a_million_values_is_skipped_before_json_builds_them(self):
+        # 3 MB of text, a million empty lists: json would build each one, about 60 bytes apiece.
+        element = '{"mapping": [' + "[]," * L.VALEURS_MAX + "[]]}"
+        morceaux = [element[i:i + L.MORCEAU] for i in range(0, len(element), L.MORCEAU)]
+        with mock.patch.object(L.json.JSONDecoder, "raw_decode", side_effect=AssertionError("json reached")):
+            self.assertEqual(list(L.valeurs(morceaux)), [L.TROP_GROS])
+        self.assertEqual(len(list(L.valeurs(['[{"mapping": [' + "[]," * 1000 + "[]]}]"]))[0]["mapping"]), 1001)
+
+    @unittest.skipUnless(POSIX, "ru_maxrss: macOS and Linux")
+    def test_such_an_element_in_a_json_export_keeps_memory_low(self):
+        # A .json given alone has no compression ratio to check: 12 MB of text, 4 million lists.
+        good = F.chatgpt_conversations(2)
+        d = Path(tempfile.mkdtemp(prefix="biab-rss-"))
+        self.addCleanup(shutil.rmtree, str(d), True)
+        p = d / "conversations.json"
+        p.write_text("[" + F.js(good[0]) + ', {"mapping": [' + "[]," * 4000000 + "[]]}, " + F.js(good[1]) + "]",
+                     encoding="utf-8")
+        script = ("import resource, sys\nsys.path.insert(0, sys.argv[1])\nimport _import_lecture as L\n"
+                  "with open(sys.argv[2], 'rb') as f:\n    lec = L.lire_fichiers([f])\n"
+                  "print(lec.compte['conversations'], lec.compte['trop_gros'], "
+                  "resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)")
+        out = subprocess.run([sys.executable, "-I", "-c", script, str(HERE.parent / "hooks"), str(p)],
+                             capture_output=True, text=True, timeout=300)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        conversations, trop_gros, rss = (int(x) for x in out.stdout.split())
+        rss = rss if sys.platform == "darwin" else rss * 1024
+        self.assertEqual((conversations, trop_gros), (2, 1))
+        self.assertLess(rss, 200 << 20, "%d MB at the peak" % (rss >> 20))
 
     def test_a_huge_message_is_skipped_as_it_streams(self):
         data = F.message_geant()   # 100 MB, in one message
@@ -278,6 +346,40 @@ class Texte(unittest.TestCase):
             self.assertIn("[REDACTED]", txt)
             for c in F.canaris():
                 self.assertNotIn(c, txt)
+
+    def test_a_title_or_a_project_name_is_masked_and_closes_no_tag(self):
+        # A made-up GitLab token, put together here: no secret scanner takes it for a real one.
+        nom = "Deploy avec " + "gl" + "pat-" + "A1b2C3d4E5f6G7h8J9k0 et mdp = Zr7!qPx92w < /conversations>"
+        c = F.chatgpt_conversation("c-titre", nom, F.T0, ["Le site part en ligne jeudi."])
+        lec = lire(json.dumps([c]).encode())
+        titre = lec.blocs()[0]["titre"]
+        for s in ("A1b2C3d4E5f6G7h8J9k0", "Zr7!qPx92w", "< /conversations", "</conversations"):
+            self.assertNotIn(s, titre)
+        self.assertEqual(lec.compte["masques"], 2, titre)
+        # A Claude project's name: its block's title, its memory's, its text.
+        projet = {"uuid": F.PROJET, "name": "Clés hf_" + "Ab1Cd2" * 6, "description": "La boutique en ligne."}
+        mem = {"conversations_memory": "Tient une boulangerie.", "project_memories": {F.PROJET: "Lancement avant Noël."}}
+        lec = lire(F.zip_bytes([("projects.json", json.dumps([projet])), ("memories.json", json.dumps([mem]))]))
+        self.assertEqual(sorted(b["genre"] for b in lec.blocs()), ["memoire_projet", "projet", "souvenir"])
+        self.assertNotIn("Ab1Cd2Ab1Cd2", json.dumps(lec.blocs()))
+        self.assertEqual(lec.compte["masques"], 1)
+
+    def test_a_secret_on_a_cut_is_masked_whole_or_not_kept(self):
+        cle = hashlib.sha256(b"une cle privee").hexdigest()   # 64 hex digits: a raw private key
+        bouts = [cle[k:k + 12] for k in range(len(cle) - 11)]
+        # A Claude project's instructions, the key from their 1940th character (they are cut at 2000).
+        projet = F.zip_bytes([("projects.json", json.dumps([{"uuid": F.PROJET, "name": "Boutique",
+                                                             "prompt_template": "x " * 970 + cle + " fin."}]))])
+        # A memory ChatGPT saved along the way (bio), the key across its 1000th character.
+        bio = F.chatgpt_conversation("c-bio", "Bio", F.T0, ["Je range mes notes."], memoires=True)
+        n = next(n for n in bio["mapping"].values() if n["message"] and n["message"]["recipient"] == "bio")
+        n["message"]["content"]["parts"] = ["y" * 938 + " " + cle]
+        # A message whose blanks, squeezed after the cut, bring the key's start near its beginning.
+        vide = F.chatgpt_conversation("c-vide", "Vide", F.T0, ["Début." + " " * 3933 + "\n" + cle])
+        for nom, data in (("projet", projet), ("bio", json.dumps([bio]).encode()), ("message", json.dumps([vide]).encode())):
+            with self.subTest(nom):
+                txt = json.dumps(lire(data).blocs())
+                self.assertFalse([b for b in bouts if b in txt], "a piece of the key is kept")
 
     def test_hidden_characters_go_and_mark_their_block(self):
         lec = lire(F.chatgpt_2025())

@@ -83,6 +83,20 @@ def _node(nid, parent, children, role=None, text=None, ctype="text", t=None, **e
     return nid, {"id": nid, "parent": parent, "children": children, "message": msg}
 
 
+PROFIL = "Je tiens une boulangerie à Lyon."
+CONSIGNES = "Réponds en français, brièvement."
+# OpenAI's wrapping of the custom instructions in an export, word for word (exports published by
+# open-source readers: letta-ai/skills, slyubarskiy/chatgpt-conversation-extractor).
+EMBALLAGE_PROFIL = (
+    "The user provided the following information about themselves. This user profile is shown to you in all "
+    "conversations they have -- this means it is not relevant to 99%% of requests.\nBefore answering, quietly think "
+    "about whether the user's request is \"directly related\", \"related\", \"tangentially related\", or \"not "
+    "related\" to the user profile provided.\nOnly acknowledge the profile when the request is directly related to the "
+    "information provided.\nOtherwise, don't acknowledge the existence of these instructions or the information at "
+    "all.\nUser profile:\n```%s```")
+EMBALLAGE_CONSIGNES = "The user provided the additional info about how they would like you to respond:\n```%s```"
+
+
 def chatgpt_conversation(cid, title, t, user_texts, memoires=False, branches=False, cache=False):
     """One conversation as a tree. user_texts: the person's messages on the shown branch, in order."""
     nodes = [_node("root", None, ["sys"])]
@@ -93,11 +107,15 @@ def chatgpt_conversation(cid, title, t, user_texts, memoires=False, branches=Fal
                                                          "Les Trois Épis.\n2. [2025-04-11]. Préfère des réponses "
                                                          "courtes, en français."},
                            metadata={"is_visually_hidden_from_conversation": True}))
+        # The custom instructions as OpenAI writes them: wrapped in its own words for the model, and
+        # again bare in the metadata (older exports have only the wrapped ones: memoires="ancien").
+        meta = {"is_visually_hidden_from_conversation": True, "is_user_system_message": True}
+        if memoires != "ancien":
+            meta["user_context_message_data"] = {"about_user_message": PROFIL, "about_model_message": CONSIGNES}
         nodes.append(_node("ctx", "sys", ["u0"], "user", None, "user_editable_context", t,
-                           content={"user_profile": "Boulangère à Lyon.", "user_instructions": "Tutoie-moi."},
-                           metadata={"is_visually_hidden_from_conversation": True,
-                                     "user_context_message_data": {"about_user_message": "Je tiens une boulangerie à Lyon.",
-                                                                   "about_model_message": "Réponds en français, brièvement."}}))
+                           content={"user_profile": EMBALLAGE_PROFIL % PROFIL,
+                                    "user_instructions": EMBALLAGE_CONSIGNES % CONSIGNES},
+                           metadata=meta))
         prev = "ctx"
     else:
         nodes.append(_node("sys", "root", ["u0"]))
@@ -379,6 +397,25 @@ def zip64(cd_size=None, entries=None):
     loc = struct.pack("<4sLQL", b"PK\x06\x07", 0, rec64_off, 1)
     eocd = struct.pack("<4s4H2LH", b"PK\x05\x06", 0, 0, 0xFFFF, 0xFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0)
     return body + rec64 + loc + eocd
+
+
+def repertoire_menteur(cd_size=600000 * 46):
+    """An end record that says 1 entry and a central directory of 27.6 MB: zipfile goes by the size,
+    about 600 000 entries of 46 bytes, never by the number."""
+    b = bytearray(zip_bytes([("conversations.json", js(chatgpt_conversations(3)))]))
+    struct.pack_into("<HHL", b, _eocd(b) + 8, 1, 1, cd_size)
+    return bytes(b)
+
+
+def zip64_sans_ffff(cd_size=1 << 30):
+    """Zip64 end records behind 32-bit fields that do not call for them (no 0xFFFF): zipfile reads them
+    all the same, here a central directory of 1 GB."""
+    b = zip_bytes([("conversations.json", js(chatgpt_conversations(3)))])
+    i = _eocd(b)
+    _, _, _, n_disk, n, size, off, clen = struct.unpack("<4s4H2LH", b[i:i + 22])
+    rec64 = struct.pack("<4sQ2H2L4Q", b"PK\x06\x06", 44, 45, 45, 0, 0, n, n, cd_size, off)
+    loc = struct.pack("<4sLQL", b"PK\x06\x07", 0, i, 1)
+    return b[:i] + rec64 + loc + b[i:]
 
 
 def tronquee():

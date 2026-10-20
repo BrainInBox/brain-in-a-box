@@ -39,19 +39,23 @@ from _redact import MASK, find_secrets, redact  # noqa: E402
 from _vault_write import clean_item  # noqa: E402
 
 FICHIER_MAX = 8 << 30          # an export, as a file
-REPERTOIRE_MAX = 64 << 20      # Python 3.9 reads the whole central directory in memory
 ENTREES_MAX = 500000
+# zipfile reads the whole central directory in memory and makes an object of each entry in it, as
+# many as its size holds (46 bytes at least each), whatever number the end record says.
+REPERTOIRE_MAX = ENTREES_MAX * 46
 ENTREE_MAX = 1 << 30           # one file of the archive, as declared
 RATIO_MAX = 200                # a JSON export deflates 5 to 15 times; a bomb, thousands
 RATIO_DES = 1 << 20            # below this size, the ratio says nothing
 LU_MAX = 3 << 30               # all the files read, inflated
-ELEMENT_MAX = 64 << 20         # one conversation, in characters
+ELEMENT_MAX = 16 << 20         # one conversation, in characters
+VALEURS_MAX = 1000000          # its arrays, objects and strings: json builds each (a real one, < 350 000)
 MORCEAU = 1 << 20
 FICHIERS_MAX = 2000            # conversations-NNN.json, 100 conversations each
 NOEUDS_MAX = 100000
 CHIFFRES_MAX = 30              # Python 3.9.6 has no guard against int("9" * 10**6) (CVE-2020-10735)
 PROFONDEUR_MAX = 200           # an export nests a dozen levels; json's own limit depends on the Python
 MESSAGE_MAX = 1000
+TITRE_MAX = 1000               # what of a title is looked at, its secrets masked, before it is cut to 100
 MESSAGES_GARDES = 6            # the first and the last ones of the person, per conversation
 CONVERSATION_MAX = 12000
 MEMOIRE_MAX = 20000
@@ -70,6 +74,8 @@ NOMS = re.compile(r"(?:conversations(?:-\d{3,5})?|memories|projects)\.json"
                   r"|(?:memories|projects)/[0-9A-Za-z-]{8,64}\.json")
 # What Claude's archive of account data holds, and nothing else of use.
 COMPTE_CLAUDE = {"users.json", "login_history.json"}
+# Refusals of a file that the other files given with it make up for.
+LAISSES = ("compte", "pas_un_export", "liens")
 
 MESSAGES = {
     "introuvable": "Je ne trouve pas ce fichier.",
@@ -134,14 +140,26 @@ def _code(texte):
     return len(lignes) >= 4 and 2 * sum(1 for l in lignes if CODE.search(l)) > len(lignes)
 
 
+def _borne(texte, n):
+    """texte cut at n characters, without the word the cut falls in: a secret is then masked whole
+    afterwards, or not kept at all, never a piece of it too short for its pattern."""
+    if len(texte) <= n:
+        return texte
+    return texte[:n] if texte[n].isspace() else re.sub(r"\S+\Z", "", texte[:n])
+
+
 def _couper(texte, cap):
     texte = re.sub(r"[ \t]+\n", "\n", re.sub(r"\n{3,}", "\n\n", texte)).strip()
     return texte if len(texte) <= cap else texte[:cap - 1].rstrip() + "…"
 
 
-def titre(texte, cap=100):
-    """A title for a block header and a note: one line, plain, no bracket or emphasis mark."""
-    return clean_item(re.sub(r"[\[\]*_|]", " ", texte if isinstance(texte, str) else ""), cap) or "sans titre"
+def titre(texte, cap=100, compte=None):
+    """A title for a block header and a note: one line, plain, its secrets masked before it is cut
+    (counted in compte["masques"]), no bracket, emphasis mark nor "<" (no tag of the prompt's)."""
+    t, n = masquer(_borne(texte, TITRE_MAX)) if isinstance(texte, str) else ("", 0)
+    if compte is not None:
+        compte["masques"] += n
+    return clean_item(re.sub(r"[\[\]*_|]", " ", t.replace("<", "‹")), cap) or "sans titre"
 
 
 def _jour(quand):
@@ -184,7 +202,7 @@ class Lecture:
         self.tas, self.taille, self.seq, self.vues = [], 0, 0, set()
         self.jours = []                  # the first and last day of the conversations found
         self.memoires, self.taille_memoires = [], 0   # souvenirs, instructions, project memories, projects
-        self.noms_projets = {}
+        self.noms_projets = {}           # uuid: the project's name, as a title (masked)
         self.contexte = self.instructions = None   # ChatGPT's: the most recent of each, (t, ...)
         self.bio = {}
 
@@ -195,7 +213,7 @@ class Lecture:
 
     def _texte(self, texte, cap):
         """(text safe to keep, characters hidden in it); masked before it is cut."""
-        t, caches = propre(texte[:cap * 4])
+        t, caches = propre(_borne(texte, cap * 4))
         t, n = masquer(t)
         self.compte["masques"] += n
         return _couper(t, cap), caches
@@ -203,7 +221,7 @@ class Lecture:
     def _message(self, texte):
         if not isinstance(texte, str) or not texte.strip():
             return None
-        t, caches = propre(texte[:MESSAGE_MAX * 4])
+        t, caches = propre(_borne(texte, MESSAGE_MAX * 4))
         if is_relayed(t) or _code(t):
             self.compte["ecartes"] += 1
             return None
@@ -250,8 +268,8 @@ class Lecture:
         if not gardes:
             return
         texte = _couper("\n".join("• " + t for t, _ in gardes), CONVERSATION_MAX)
-        bloc = {"genre": "conversation", "titre": titre(nom), "date": jour, "cle": k, "texte": texte,
-                "caches": sum(c for _, c in gardes), "quand": quand or 0}
+        bloc = {"genre": "conversation", "titre": titre(nom, compte=self.compte), "date": jour, "cle": k,
+                "texte": texte, "caches": sum(c for _, c in gardes), "quand": quand or 0}
         self.seq += 1
         heapq.heappush(self.tas, (quand or 0, self.seq, bloc))
         self.taille += len(texte)
@@ -276,8 +294,8 @@ class Lecture:
             self.compte["deja"] += 1
             return
         self.compte["souvenirs" if genre in ("souvenir", "memoire_projet", "instructions") else "projets"] += 1
-        self.memoires.append({"genre": genre, "titre": titre(nom), "date": _jour(quand), "cle": k, "texte": t,
-                              "caches": caches, "quand": quand or 0})
+        self.memoires.append({"genre": genre, "titre": titre(nom, compte=self.compte), "date": _jour(quand), "cle": k,
+                              "texte": t, "caches": caches, "quand": quand or 0})
         self.taille_memoires += len(t)
         if projet is not None:
             self.memoires[-1]["projet"] = projet   # names a project memory, here or in another zip
@@ -304,7 +322,7 @@ class Lecture:
                 [b for _, _, b in sorted(self.tas, key=lambda x: (-x[0], -x[1]))]:
             b = dict(b)
             if b["genre"] == "memoire_projet" and b.get("projet") in self.noms_projets:
-                b["titre"] = titre(self.noms_projets[b["projet"]])
+                b["titre"] = self.noms_projets[b["projet"]]
             out.append(b)
         return out
 
@@ -354,47 +372,47 @@ class _Flux:
         return False
 
 
-def _avance(buf, i, prof, chaine, haut=0):
+def _avance(buf, i, prof, chaine, haut=0, nb=0):
     """Scans buf from i: (where to go on from, depth, inside a string, end of the value or None,
-    deepest depth seen)."""
+    deepest depth seen, arrays, objects and strings opened)."""
     n = len(buf)
     while i < n:
         if chaine:
             j = _CHAINE.match(buf, i).end()
             if j >= n:
-                return n, prof, True, None, haut
+                return n, prof, True, None, haut, nb
             if buf[j] == "\\":            # a backslash last: the character it escapes is to come
-                return j, prof, True, None, haut
+                return j, prof, True, None, haut, nb
             chaine, i = False, j + 1
             if prof == 0:
-                return i, 0, False, i, haut
+                return i, 0, False, i, haut, nb
             continue
         m = _JETON.search(buf, i)
         if not m:
-            return n, prof, False, None, haut
+            return n, prof, False, None, haut, nb
         c, i = m.group(), m.end()
         if c == '"':
-            chaine = True
+            chaine, nb = True, nb + 1
         elif c in "[{":
-            prof += 1
+            prof, nb = prof + 1, nb + 1
             haut = max(haut, prof)
         else:
             prof -= 1
             if prof <= 0:
-                return i, 0, False, i, haut
-    return i, prof, chaine, None, haut
+                return i, 0, False, i, haut, nb
+    return i, prof, chaine, None, haut, nb
 
 
 def _valeur(f, dec, limite):
     debut = i = f.pos
-    prof, chaine, garde, haut = 0, False, True, 0
+    prof, chaine, garde, haut, nb = 0, False, True, 0, 0
     scalaire = f.buf[debut] not in '[{"'
     while True:
         if scalaire:
             i = _SCALAIRE.match(f.buf, i).end()
             fin = (i if i > debut else debut + 1) if i < len(f.buf) else None
         else:
-            i, prof, chaine, fin, haut = _avance(f.buf, i, prof, chaine, haut)
+            i, prof, chaine, fin, haut, nb = _avance(f.buf, i, prof, chaine, haut, nb)
         if fin is not None:
             break
         if garde and i - debut > limite:
@@ -408,8 +426,8 @@ def _valeur(f, dec, limite):
             return ILLISIBLE if garde else TROP_GROS
         debut, i = debut - coupe, i - coupe
     f.pos = fin
-    if not garde or fin - debut > limite:
-        return TROP_GROS
+    if not garde or fin - debut > limite or nb > VALEURS_MAX:
+        return TROP_GROS   # json would build each of its values: memory many times the text's
     if haut > PROFONDEUR_MAX:
         return ILLISIBLE   # never handed to json, whose limit is the Python's (3.14: the C stack's)
     try:
@@ -422,8 +440,9 @@ def _valeur(f, dec, limite):
 def valeurs(morceaux, limite=None):
     """The values of a JSON text read in chunks, one at a time in memory: each element of a top-level
     array, or the text's one value. A value past `limite` characters is skipped as it streams
-    (TROP_GROS); one that does not parse, holds a number of more than CHIFFRES_MAX digits or NaN, or
-    is nested too deep is ILLISIBLE. ValueError when the text is empty."""
+    (TROP_GROS), as is one of more than VALEURS_MAX arrays, objects and strings; one that does not
+    parse, holds a number of more than CHIFFRES_MAX digits or NaN, or is nested too deep is
+    ILLISIBLE. ValueError when the text is empty."""
     limite = limite or ELEMENT_MAX
     f, dec = _Flux(morceaux), _decodeur()
     while True:
@@ -532,6 +551,17 @@ def _branche(mapping, courant):
     return chemin
 
 
+def _deballe(v):
+    """The person's text of a custom instruction as an export writes it: "The user provided ...:
+    ```text```", or older, the text alone. None when only OpenAI's words are there."""
+    if not isinstance(v, str):
+        return None
+    m = re.search(r"```(.*)```", v, re.S)
+    if m:
+        return m.group(1)
+    return None if v.lstrip().startswith("The user provided") else v
+
+
 def _chatgpt(c, lecture):
     mapping = c.get("mapping")
     if not isinstance(mapping, dict):
@@ -550,18 +580,20 @@ def _chatgpt(c, lecture):
             if isinstance(content.get("model_set_context"), str) and (not lecture.contexte or t >= lecture.contexte[0]):
                 lecture.contexte = (t, content["model_set_context"])
         elif kind == "user_editable_context" or isinstance(contexte, dict):
-            champs = [("À propos de moi", content.get("user_profile")), ("Consignes", content.get("user_instructions"))]
+            # The person's own words: bare in the metadata; in the content, wrapped in OpenAI's words
+            # for its model, which go.
             if isinstance(contexte, dict):
-                champs += [("À propos de moi", contexte.get("about_user_message")),
-                           ("Comment répondre", contexte.get("about_model_message"))]
-            texte = "\n".join("%s : %s" % (k, v) for k, v in dict.fromkeys(
-                (k, v) for k, v in champs if isinstance(v, str) and v.strip()))
+                champs = [contexte.get("about_user_message"), contexte.get("about_model_message")]
+            else:
+                champs = [_deballe(content.get("user_profile")), _deballe(content.get("user_instructions"))]
+            texte = "\n".join("%s : %s" % (k, v.strip()) for k, v in zip(("À propos de moi", "Comment répondre"),
+                                                                          champs) if isinstance(v, str) and v.strip())
             if texte and (not lecture.instructions or t >= lecture.instructions[0]):
                 lecture.instructions = (t, texte)
         elif role == "assistant" and m.get("recipient") == "bio":
-            texte = _parts(content)
-            if texte and len(lecture.bio) < 2000:
-                lecture.bio[texte[:MESSAGE_MAX]] = max(t, lecture.bio.get(texte[:MESSAGE_MAX], 0))
+            texte = _borne(_parts(content), MESSAGE_MAX)
+            if texte.strip() and len(lecture.bio) < 2000:
+                lecture.bio[texte] = max(t, lecture.bio.get(texte, 0))
         elif role == "user" and kind in ("text", "multimodal_text") \
                 and not meta.get("is_visually_hidden_from_conversation"):
             paroles.append(_parts(content))
@@ -640,15 +672,17 @@ def _projets_claude(v, lecture):
     for p in (v if isinstance(v, list) else [v])[:500]:
         if not isinstance(p, dict):
             continue
-        nom = p.get("name") if isinstance(p.get("name"), str) else "projet"
+        if p.get("is_starter_project") is True:
+            if p.get("uuid") is not None:
+                lecture.noms_projets[str(p["uuid"])] = titre(p.get("name"))
+            continue   # Claude's own example project
+        nom = titre(p.get("name") if isinstance(p.get("name"), str) else "projet", compte=lecture.compte)
         if p.get("uuid") is not None:
             lecture.noms_projets[str(p["uuid"])] = nom
-        if p.get("is_starter_project") is True:
-            continue   # Claude's own example project
         lignes = ["Projet : " + nom]
         for label, champ in (("Description", "description"), ("Consignes du projet", "prompt_template")):
             if isinstance(p.get(champ), str) and p[champ].strip():
-                lignes.append("%s : %s" % (label, p[champ][:PROJET_MAX]))
+                lignes.append("%s : %s" % (label, _borne(p[champ], PROJET_MAX)))
         if len(lignes) > 1:
             lecture.memoire("claude", "projet", nom, "\n".join(lignes), _iso(p.get("created_at")), cap=2 * PROJET_MAX + 200,
                             ident=p.get("uuid"), projet=str(p["uuid"]) if p.get("uuid") is not None else None)
@@ -686,29 +720,17 @@ def _nom_sur(nom):
                 or any(p in ("", ".", "..") for p in nom.rstrip("/").split("/")))
 
 
-def _fin_du_zip(f, taille):
-    """Checks the end records before zipfile reads them: the central directory's size and number of
-    entries, Zip64 included. Refus otherwise."""
-    n = min(taille, 22 + 65535 + 20)
-    f.seek(taille - n)
-    fin = f.read(n)
-    i = fin.rfind(b"PK\x05\x06")
-    if i < 0 or len(fin) - i < 22:
+def _fin_du_zip(f):
+    """The central directory that zipfile is about to read in memory, bounded before it does: its size
+    as zipfile's own _EndRecData finds it, the function ZipFile() calls first, Zip64 record included
+    as this Python reads it (whether or not a 32-bit field calls for one). Refus otherwise."""
+    try:
+        fin = zipfile._EndRecData(f)
+    except (zipfile.BadZipFile, OSError, ValueError, EOFError, struct.error):
+        fin = None
+    if not fin:
         raise Refus("abime")   # it starts as a zip: a download cut short
-    entries, cd_size, cd_off = struct.unpack("<10xHLL", fin[i:i + 20])
-    if entries == 0xFFFF or cd_size == 0xFFFFFFFF or cd_off == 0xFFFFFFFF:
-        j = i - 20
-        if j < 0 or fin[j:j + 4] != b"PK\x06\x07":
-            raise Refus("abime")
-        off64 = struct.unpack("<Q", fin[j + 8:j + 16])[0]
-        if off64 > taille - 56:
-            raise Refus("abime")
-        f.seek(off64)
-        rec = f.read(56)
-        if len(rec) < 56 or rec[:4] != b"PK\x06\x06":
-            raise Refus("abime")
-        entries, cd_size = struct.unpack("<QQ", rec[32:48])
-    if entries > ENTREES_MAX or cd_size > REPERTOIRE_MAX:
+    if fin[zipfile._ECD_SIZE] > REPERTOIRE_MAX or fin[zipfile._ECD_ENTRIES_TOTAL] > ENTREES_MAX:
         raise Refus("trop_gros")
     f.seek(0)
 
@@ -768,8 +790,8 @@ def _ordre(nom):
     return (0 if nom.startswith("projects") else 1 if nom.startswith("memories") else 2, nom)
 
 
-def _lire_zip(f, taille, lecture, progres):
-    _fin_du_zip(f, taille)
+def _lire_zip(f, lecture, progres):
+    _fin_du_zip(f)
     try:
         zf = zipfile.ZipFile(f)
     except (zipfile.BadZipFile, zipfile.LargeZipFile, NotImplementedError, ValueError, EOFError, OSError,
@@ -863,17 +885,20 @@ def lire_fichiers(fichiers, connues=frozenset(), plafond=PLAFOND, progres=None, 
         lecture.empreintes.append(empreinte(f))
         tete = f.read(4)
         f.seek(0)
-        if tete[:2] == b"PK":
-            try:
-                _lire_zip(f, taille, lecture, progres)
-            except Refus as e:
-                if e.code != "compte" or len(fichiers) == 1:
-                    raise
-                lecture.compte["compte_seul"] += 1   # Claude's account data, given with the rest: left
+        try:
+            if tete[:2] == b"PK":
+                _lire_zip(f, lecture, progres)
+                continue
+            if taille > LU_MAX:
+                raise Refus("trop_gros")
+            nom = _flairer(f)
+        except Refus as e:
+            # Given with the rest, a file of no use is left: Claude's account data, or one of an
+            # export the browser unzipped (user.json...). Refused before anything of it was read.
+            if e.code not in LAISSES or len(fichiers) == 1:
+                raise
+            lecture.compte["compte_seul" if e.code == "compte" else "laisses"] += 1
             continue
-        if taille > LU_MAX:
-            raise Refus("trop_gros")
-        nom = _flairer(f)
         try:
             _lire_entree(nom, _texte_de(f, _Etat(taille, progres)), lecture)
         except (UnicodeDecodeError, ValueError):
