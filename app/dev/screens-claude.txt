@@ -3043,8 +3043,8 @@ ChatGPT et Claude t’envoient tes conversations dans un fichier. Le plus comple
 Un copier-coller (2 min)
 Tu demandes à ChatGPT ou à Claude ce qu’il sait de toi, et tu colles sa réponse ici.
 Comment obtenir mon export ?
-ChatGPT : Réglages › Contrôle des données › Exporter les données. Un e-mail t’envoie un lien, valable 24 h : télécharge le fichier .zip.
-Claude : Réglages › Confidentialité › Exporter les données, sur le site ou l’app de bureau. Un e-mail t’envoie tes fichiers .zip : choisis-les tous d’un coup (Cmd-clic pour en prendre plusieurs).
+ChatGPT : Paramètres › Contrôles de données › Exporter les données. Un e-mail t’envoie un lien, valable 24 h : télécharge le fichier .zip.
+Claude : Paramètres › Confidentialité › Exporter les données, sur le site ou l’app de bureau. Un e-mail t’envoie tes fichiers .zip : choisis-les tous d’un coup (Cmd-clic pour en prendre plusieurs).
 Tu as un dossier au lieu d’un .zip (Safari l’ouvre tout seul) ? Clic droit sur le dossier › Compresser, puis choisis ce .zip.
 Pour les souvenirs de ChatGPT, le copier-coller marche mieux : son export ne les contient souvent plus.
 Ce que tu importes est lu sur ton Mac et ses secrets masqués. Puis Claude le trie, chez Anthropic, avec ton abonnement Claude : rien ne part ailleurs. Le résultat est une nouvelle note de ton cerveau, que tu relis.
@@ -3182,8 +3182,8 @@ ChatGPT et Claude t’envoient tes conversations dans un fichier. Le plus comple
 Un copier-coller (2 min)
 Tu demandes à ChatGPT ou à Claude ce qu’il sait de toi, et tu colles sa réponse ici.
 Comment obtenir mon export ?
-ChatGPT : Réglages › Contrôle des données › Exporter les données. Un e-mail t’envoie un lien, valable 24 h : télécharge le fichier .zip.
-Claude : Réglages › Confidentialité › Exporter les données, sur le site ou l’app de bureau. Un e-mail t’envoie tes fichiers .zip : choisis-les tous d’un coup (Ctrl-clic pour en prendre plusieurs).
+ChatGPT : Paramètres › Contrôles de données › Exporter les données. Un e-mail t’envoie un lien, valable 24 h : télécharge le fichier .zip.
+Claude : Paramètres › Confidentialité › Exporter les données, sur le site ou l’app de bureau. Un e-mail t’envoie tes fichiers .zip : choisis-les tous d’un coup (Ctrl-clic pour en prendre plusieurs).
 Tu as un dossier au lieu d’un .zip ? Clic droit sur le dossier, compresse-le en fichier ZIP, puis choisis ce .zip.
 Pour les souvenirs de ChatGPT, le copier-coller marche mieux : son export ne les contient souvent plus.
 Ce que tu importes est lu sur ton PC et ses secrets masqués. Puis Claude le trie, chez Anthropic, avec ton abonnement Claude : rien ne part ailleurs. Le résultat est une nouvelle note de ton cerveau, que tu relis.
@@ -3354,8 +3354,8 @@ ChatGPT et Claude t’envoient tes conversations dans un fichier. Le plus comple
 Un copier-coller (2 min)
 Tu demandes à ChatGPT ou à Claude ce qu’il sait de toi, et tu colles sa réponse ici.
 Comment obtenir mon export ?
-ChatGPT : Réglages › Contrôle des données › Exporter les données. Un e-mail t’envoie un lien, valable 24 h : télécharge le fichier .zip.
-Claude : Réglages › Confidentialité › Exporter les données, sur le site ou l’app de bureau. Un e-mail t’envoie tes fichiers .zip : choisis-les tous d’un coup (Ctrl-clic pour en prendre plusieurs).
+ChatGPT : Paramètres › Contrôles de données › Exporter les données. Un e-mail t’envoie un lien, valable 24 h : télécharge le fichier .zip.
+Claude : Paramètres › Confidentialité › Exporter les données, sur le site ou l’app de bureau. Un e-mail t’envoie tes fichiers .zip : choisis-les tous d’un coup (Ctrl-clic pour en prendre plusieurs).
 Tu as un dossier au lieu d’un .zip ? Clic droit sur le dossier › Compresser, puis choisis ce .zip.
 Pour les souvenirs de ChatGPT, le copier-coller marche mieux : son export ne les contient souvent plus.
 Ce que tu importes est lu sur ton PC et ses secrets masqués. Puis Claude le trie, chez Anthropic, avec ton abonnement Claude : rien ne part ailleurs. Le résultat est une nouvelle note de ton cerveau, que tu relis.
@@ -3551,8 +3551,8 @@ ChatGPT et Claude t’envoient tes conversations dans un fichier. Le plus comple
 Un copier-coller (2 min)
 Tu demandes à ChatGPT ou à Claude ce qu’il sait de toi, et tu colles sa réponse ici.
 Comment obtenir mon export ?
-ChatGPT : Réglages › Contrôle des données › Exporter les données. Un e-mail t’envoie un lien, valable 24 h : télécharge le fichier .zip.
-Claude : Réglages › Confidentialité › Exporter les données, sur le site ou l’app de bureau. Un e-mail t’envoie tes fichiers .zip : choisis-les tous d’un coup (Cmd-clic pour en prendre plusieurs).
+ChatGPT : Paramètres › Contrôles de données › Exporter les données. Un e-mail t’envoie un lien, valable 24 h : télécharge le fichier .zip.
+Claude : Paramètres › Confidentialité › Exporter les données, sur le site ou l’app de bureau. Un e-mail t’envoie tes fichiers .zip : choisis-les tous d’un coup (Cmd-clic pour en prendre plusieurs).
 Tu as un dossier au lieu d’un .zip (Safari l’ouvre tout seul) ? Clic droit sur le dossier › Compresser, puis choisis ce .zip.
 Pour les souvenirs de ChatGPT, le copier-coller marche mieux : son export ne les contient souvent plus.
 Ce que tu importes est lu sur ton Mac et ses secrets masqués. Puis Claude le trie, chez Anthropic, avec ton abonnement Claude : rien ne part ailleurs. Le résultat est une nouvelle note de ton cerveau, que tu relis.
@@ -3569,8 +3569,8 @@ ChatGPT et Claude t’envoient tes conversations dans un fichier. Le plus comple
 Un copier-coller (2 min)
 Tu demandes à ChatGPT ou à Claude ce qu’il sait de toi, et tu colles sa réponse ici.
 Comment obtenir mon export ?
-ChatGPT : Réglages › Contrôle des données › Exporter les données. Un e-mail t’envoie un lien, valable 24 h : télécharge le fichier .zip.
-Claude : Réglages › Confidentialité › Exporter les données, sur le site ou l’app de bureau. Un e-mail t’envoie tes fichiers .zip : choisis-les tous d’un coup (Cmd-clic pour en prendre plusieurs).
+ChatGPT : Paramètres › Contrôles de données › Exporter les données. Un e-mail t’envoie un lien, valable 24 h : télécharge le fichier .zip.
+Claude : Paramètres › Confidentialité › Exporter les données, sur le site ou l’app de bureau. Un e-mail t’envoie tes fichiers .zip : choisis-les tous d’un coup (Cmd-clic pour en prendre plusieurs).
 Tu as un dossier au lieu d’un .zip (Safari l’ouvre tout seul) ? Clic droit sur le dossier › Compresser, puis choisis ce .zip.
 Pour les souvenirs de ChatGPT, le copier-coller marche mieux : son export ne les contient souvent plus.
 Ce que tu importes est lu sur ton Mac et ses secrets masqués. Puis Claude le trie, chez Anthropic, avec ton abonnement Claude : rien ne part ailleurs. Le résultat est une nouvelle note de ton cerveau, que tu relis.

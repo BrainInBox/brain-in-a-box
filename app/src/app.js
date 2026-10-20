@@ -2074,8 +2074,8 @@ function exportHelp() {
   return h('details', { class: 'log help' },
     h('summary', {}, 'Comment obtenir mon export ?'),
     h('ul', { class: 'bullets' },
-      h('li', {}, 'ChatGPT : Réglages › Contrôle des données › Exporter les données. Un e-mail t’envoie un lien, valable 24 h : télécharge le fichier .zip.'),
-      h('li', {}, `Claude : Réglages › Confidentialité › Exporter les données, sur le site ou l’app de bureau. Un e-mail t’envoie tes fichiers .zip : choisis-les tous d’un coup (${SEVERAL} pour en prendre plusieurs).`),
+      h('li', {}, 'ChatGPT : Paramètres › Contrôles de données › Exporter les données. Un e-mail t’envoie un lien, valable 24 h : télécharge le fichier .zip.'),
+      h('li', {}, `Claude : Paramètres › Confidentialité › Exporter les données, sur le site ou l’app de bureau. Un e-mail t’envoie tes fichiers .zip : choisis-les tous d’un coup (${SEVERAL} pour en prendre plusieurs).`),
       h('li', {}, FOLDER_TIP),
       h('li', {}, 'Pour les souvenirs de ChatGPT, le copier-coller marche mieux : son export ne les contient souvent plus.')));
 }
