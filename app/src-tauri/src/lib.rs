@@ -6,6 +6,7 @@ mod config_guard;
 mod detect;
 mod diagnose;
 mod guide;
+mod hermes;
 mod import;
 mod model;
 mod perms;

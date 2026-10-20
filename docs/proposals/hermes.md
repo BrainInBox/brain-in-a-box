@@ -1,7 +1,32 @@
 # Hermès, l'interface par défaut (proposition)
 
-Statut : brouillon du 20/10/2026, rien n'est codé. À valider par Chafic (décisions 1, 2 et 4), puis par Chad (décisions 0 et 3), avant toute phase.
+Statut : brouillon. Décisions de Chafic du 20/10/2026 ci-dessous ; code en cours sur les branches `feat/hermes-*`, rien n'est fusionné. Il manque l'accord de Chad (décisions 0 et 3).
 Base : `master` à `fa1ed66`, doc officielle de Hermès lue le 20/10/2026 (`llms-full.txt`), page « Legal and compliance » de Claude Code lue le même jour.
+
+---
+
+## Mise à jour du 20/10/2026 : décisions de Chafic
+
+Cette section remplace la recommandation du §3 et les décisions 1, 2 et 4 du §7.
+
+- **Claude par défaut, grâce au plugin officiel `claude-subscription-directsdk`** (catalogue de Nous Research, marqué « Experimental »).
+  - Il fait tourner Hermès sur un abonnement Claude Pro ou Max en pilotant le programme Claude Code officiel, non modifié, avec le compte où l'utilisateur s'est connecté lui-même. Hermès ne touche jamais aux identifiants, ce qui reste dans le cadre des règles d'Anthropic.
+  - Installation : `hermes plugins install claude-subscription-directsdk`, puis choisir le fournisseur `claude-subscription-directsdk-experimental`.
+  - Prérequis : Hermès 0.21.4 ou plus récent, `claude` installé et connecté.
+  - Décompte : chaque tour est pris sur le quota « Agent SDK » de l'abonnement.
+- **Une personne qui a ChatGPT** : Hermès se connecte avec `openai-codex`. La décision 3 reste à Chad.
+- **WhatsApp** : numéro personnel, en mode « message à soi-même », avec un avertissement clair sur le risque de restriction.
+- **Nouveau : les autorisations de l'ordinateur, sur Mac et Windows.** Bibo guide l'utilisateur pour que Hermès puisse utiliser l'ordinateur.
+  - Sur Mac : l'accès complet au disque pour `Hermes.app` ; l'Accessibilité et l'Enregistrement de l'écran pour l'identité donnée par `hermes computer-use doctor` ; le micro.
+  - Aucune app ne peut s'accorder ces droits elle-même : Bibo ouvre le bon panneau, explique, puis vérifie.
+  - Sous Windows : le micro, et l'Accès contrôlé aux dossiers de Defender s'il est activé.
+- **Découpage en branches**, depuis `feat/hermes`, qui porte la base commune `app/src-tauri/src/hermes.rs` :
+  - `feat/hermes-1-audit` : le diagnostic ;
+  - `feat/hermes-2-install` : l'étape `hermes` ;
+  - `feat/hermes-3-connexion` : le plugin Claude ou ChatGPT ;
+  - `feat/hermes-4-cerveau` : l'import et GBrain en serveur MCP ;
+  - `feat/hermes-5-messagerie` : WhatsApp et Telegram, et la passerelle en service ;
+  - `feat/hermes-6-autorisations` : les autorisations.
 
 ---
 
