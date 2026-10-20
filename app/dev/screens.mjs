@@ -64,9 +64,10 @@ const SCENARIOS = [
   's=repair-fail&go=done&os=linux',
   's=repair-ok&go=analyze&pause=analyze&click=stop',
   's=repair-auth&go=done&os=linux',
-  // The advice at the diagnosis: ChatGPT seen while Codex is closed, Hermes seen.
+  // The advice at the diagnosis: ChatGPT seen while Codex is closed, Hermes seen (and read each evening).
   's=manque&go=diag&conseil=chatgpt_bientot&hermes=1',
   's=installe&go=diag&conseil=claude_vu&os=windows',
+  's=installe&go=diag&hermes=lu&os=linux',
   // « Importer ma mémoire » from the end: an export read, sized, sent, written; the paste; each stop.
   's=installe&go=import-done&click=import',
   's=installe&go=import-done&click=import,size-rapide&sent=1',
@@ -81,6 +82,11 @@ const SCENARIOS = [
   's=installe&go=import-error&click=import&imp=auth',
   's=installe&go=import-error&click=import&imp=quota',
   's=installe&go=import-error&click=import&imp=a_jour',
+  // A beginner's likeliest stops: not an export, a folder's five files, the AI silent, the sentence pasted back.
+  's=installe&go=import-error&click=import&imp=pas_un_zip',
+  's=installe&go=import-error&click=import&imp=trop_de_fichiers&os=windows',
+  's=installe&go=import-error&click=import&imp=timeout',
+  's=installe&go=import-paste&nth=2&click=import,paste&colle=1&imp=phrase',
   's=installe&go=import&nth=2&click=import,next,back',
   's=installe&go=import&nth=2&click=import,next,next,stop&pause=import',
 ];

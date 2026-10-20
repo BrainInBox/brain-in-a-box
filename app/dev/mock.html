@@ -59,9 +59,11 @@
   // &at=<css> stops the driving on &go's screen only once that element is there, &nth=<n> only on its n-th arrival there,
   // &click=<act>[,<act>…] clicks those buttons in that order, once each, and &go's screen counts only after the last.
   // The advice (advice.rs, the kit's sentences): &conseil=claude_connecte|claude_vu|chatgpt_bientot|rien|codex|les_deux
-  // (else the scenario's: connected where Claude Code is, nothing on a fresh Mac), &hermes=1 Hermes seen too.
+  // (else the scenario's: connected where Claude Code is, nothing on a fresh Mac), &hermes=1 Hermes seen too, &hermes=lu
+  // seen and its conversations read by the evening reflection.
   // « Importer ma mémoire » (import.rs), the end's card: &imp=<what> is what the importer answers: a_jour (a brain of
-  // before the import), deja, compte, pas_un_zip, auth, quota, partiel, rien (no fact kept), suspect; &fichiers=3 reads
+  // before the import), deja, compte, pas_un_zip, trop_de_fichiers (5 picked), auth, quota, timeout, phrase (the sentence
+  // pasted back), partiel, rien (no fact kept), suspect; &fichiers=3 reads
   // three files; &pause=import leaves the requests running (« Arrêter »); &colle=1 pastes an answer on the paste screen.
   // Bibo: &sleep=3 makes it doze off after 3 s without activity instead of 45.
   // Windows: &os=windows shows the PC's words and checks (manque, installe, motscles, echec with &fail=brain):
@@ -201,17 +203,19 @@
     const PHRASES = {
       claude_connecte: 'Tu as déjà Claude Code, connecté à ton abonnement : ton cerveau travaillera avec lui.',
       claude_vu: 'Tu utilises déjà Claude : ton cerveau travaillera avec lui (il te faudra un abonnement Pro ou Max pour Claude Code).',
-      chatgpt_bientot: 'Tu utilises ChatGPT : ton cerveau marche avec Claude pour l\'instant (abonnement Pro ou Max) ; Codex, l\'IA de ChatGPT, arrive bientôt ici. À la fin, tu pourras y apporter ta mémoire ChatGPT.',
+      chatgpt_bientot: 'Tu utilises ChatGPT : ton cerveau marche avec Claude, il te faudra un abonnement Claude Pro ou Max (ton abonnement ChatGPT ne suffit pas). Codex, l\'IA de ChatGPT, arrive bientôt ici. À la fin, tu pourras apporter à ton cerveau ce que ChatGPT sait de toi.',
       rien: 'Ton cerveau marche avec Claude : il te faudra un abonnement Claude Pro ou Max.',
-      codex: 'Tu utilises ChatGPT : ton cerveau peut travailler avec Codex, l\'IA de ChatGPT, sur ton abonnement ChatGPT. À la fin, tu pourras y apporter ta mémoire ChatGPT.',
+      codex: 'Tu utilises ChatGPT : ton cerveau peut travailler avec Codex, l\'IA de ChatGPT, sur ton abonnement ChatGPT. À la fin, tu pourras apporter à ton cerveau ce que ChatGPT sait de toi.',
       les_deux: 'Tu as Claude et ChatGPT : ton cerveau peut travailler avec les deux, Claude d\'abord.',
-      hermes: 'J\'ai vu Hermes : je ne l\'installe pas et n\'y touche pas ; ses meilleures compétences sont déjà dans Claude, et ton résumé du soir lit aussi ses conversations.',
+      hermes: 'J\'ai vu Hermes : je ne l\'installe pas et n\'y touche pas. Ses meilleures compétences arrivent dans Claude avec ton cerveau.',
+      hermes_lu: 'J\'ai vu Hermes : je ne l\'installe pas et n\'y touche pas. Ses meilleures compétences arrivent dans Claude avec ton cerveau, et chaque soir ton cerveau lit aussi ses conversations.',
     };
     // Claude Code connected where the scenario has it, seen where it is not connected, else nothing.
     function advice() {
       const which = Object.hasOwn(PHRASES, P.get('conseil') || '') ? P.get('conseil')
         : scenario === 'installe' || scenario === 'motscles' || REPAIR ? 'claude_connecte' : Object.hasOwn(CLAUDE_ONLY, scenario) ? 'claude_vu' : 'rien';
-      return { conseil: { codex: 'codex', les_deux: 'les_deux' }[which] || 'claude', text: PHRASES[which], hermes: P.get('hermes') === '1' ? PHRASES.hermes : null };
+      const hermes = { 1: PHRASES.hermes, lu: PHRASES.hermes_lu }[P.get('hermes')] || null;
+      return { conseil: { codex: 'codex', les_deux: 'les_deux' }[which] || 'claude', text: PHRASES[which], hermes };
     }
 
     function diagnosis() {
@@ -557,13 +561,16 @@
     const PHRASE = "Je change d'outil et j'ai besoin d'exporter mes données. Liste chaque souvenir que tu as enregistré sur moi, et tout ce que tu as appris de moi dans nos conversations passées. Mets tout dans un seul bloc de code, pour que je puisse le copier facilement. Une entrée par ligne, au format : [date d'enregistrement, si tu l'as] - le souvenir. Couvre tout ce qui suit, avec mes propres mots autant que possible : les consignes que je t'ai données sur ta façon de répondre (ton, format, style, « fais toujours… », « ne fais jamais… ») ; qui je suis : prénom, ville, métier, langues, centres d'intérêt ; mes projets, mes objectifs et les sujets qui reviennent ; les outils, logiciels et langages que j'utilise ; les personnes avec qui je travaille (prénom et rôle) ; mes préférences et les corrections que je t'ai faites ; tout autre contexte enregistré. Ne résume pas, ne regroupe pas, n'oublie rien, n'invente rien. N'écris aucun mot de passe, aucun numéro, aucun identifiant. Après le bloc de code, dis-moi si la liste est complète ou s'il en reste.";
     const IMP_ERRORS = {
       a_jour: { code: 'a_jour', message: 'Ton cerveau a été installé avant l\'import de mémoire : je dois d\'abord le mettre à jour.' },
-      deja: { code: 'deja', message: 'Déjà importé le 2026-10-12 : Imports/2026-10-12-import-chatgpt.md.' },
+      deja: { code: 'deja', message: 'Tu l\'as déjà importé le 12 octobre 2026 : c\'est dans la note Imports › 2026-10-12-import-chatgpt.' },
       compte: { code: 'compte', message: 'Ce fichier ne contient que les infos de ton compte Claude. Donne-moi les autres fichiers .zip de ton export (conversations, mémoire, projets).' },
       pas_un_zip: { code: 'pas_un_zip', message: 'Ce fichier n\'est ni une archive .zip lisible ni un export en .json.' },
       auth: { code: 'auth', message: 'Claude Code n\'est pas connecté à ton abonnement Claude : connecte-le (claude auth login), puis relance. Rien n\'a été écrit.' },
       quota: { code: 'quota', message: 'La limite d\'usage de ton abonnement est atteinte : relance l\'import plus tard. Rien n\'a été écrit.' },
+      timeout: { code: 'timeout', message: 'L\'IA ne répond pas pour l\'instant : relance l\'import plus tard. Rien n\'a été écrit.' },
+      trop_de_fichiers: { code: 'usage', message: 'Choisis de 1 à 4 fichiers de ton export.' },
+      phrase: { code: 'phrase', message: 'Tu as collé ma phrase : colle plutôt la réponse de ChatGPT ou de Claude.' },
     };
-    const VERS = 'vers Claude seulement (Claude Code sur cet ordinateur, ton abonnement), rien ailleurs';
+    const VERS = 'vers Claude seulement, chez Anthropic (par Claude Code et ton abonnement), rien ailleurs';
     const USAGE = 'ça compte dans ta limite d\'usage Claude';
     const EXPORT_PLAN = {
       id: '3f2a9c1e5b7d', source: 'chatgpt', conversations: 312, souvenirs: 23, projets: 0, jours: ['2025-11-02', '2026-10-18'],
@@ -603,7 +610,7 @@
       async import_pick() {
         // The system's picker, then the reading.
         await wait(T(800));
-        if (['deja', 'compte', 'pas_un_zip'].includes(IMP)) throw IMP_ERRORS[IMP];
+        if (['deja', 'compte', 'pas_un_zip', 'trop_de_fichiers'].includes(IMP)) throw IMP_ERRORS[IMP];
         const files = Number(P.get('fichiers')) || 1;
         for (let f = 1; f <= files; f++) {
           for (let i = 0; i <= 4; i++) {
@@ -617,6 +624,7 @@
       async import_paste({ text }) {
         await wait(T(400));
         if (!String(text).trim()) throw { code: 'vide', message: 'Il n\'y a rien à importer dans ce texte.' };
+        if (IMP === 'phrase') throw IMP_ERRORS.phrase;
         importPlan = PASTE_PLAN;
         return PASTE_PLAN;
       },
@@ -635,7 +643,7 @@
       async import_run({ appels }) {
         const plan = importPlan;
         if (!plan) throw { code: 'plan', message: 'Il n\'y a pas d\'import préparé : recommence.' };
-        if (IMP === 'auth' || IMP === 'quota') { await wait(T(600)); throw IMP_ERRORS[IMP]; }
+        if (['auth', 'quota', 'timeout'].includes(IMP)) { await wait(T(600)); throw IMP_ERRORS[IMP]; }
         for (let k = 1; k <= appels; k++) {
           emit('import-progress', { etape: 'tri', demande: k, sur: appels });
           await stoppableImport(P.get('pause') === 'import' ? Infinity : T(1500));

@@ -136,50 +136,65 @@
 ### s=installe&go=diag&conseil=claude_vu&os=windows
 20 21 222
 
+### s=installe&go=diag&hermes=lu&os=linux
+20 21 223
+
 ### s=installe&go=import-done&click=import
-1 2 56 18 54 223 224 225 226 227 228 229 230 231 232 233
+1 2 56 18 54 224 225 226 227 228 229 230 231 232 233 234
 
 ### s=installe&go=import-done&click=import,size-rapide&sent=1
-1 2 56 18 54 223 224 225 226 227 234 235 236 232 233
+1 2 56 18 54 224 225 226 227 228 235 236 237 233 234
 
 ### s=installe&go=import-done&click=import&fichiers=3&os=windows
-20 21 57 18 54 223 237 225 238 239 240 241 228 229 230 231 232 242
+20 21 57 18 54 224 238 239 240 241 242 243 229 230 231 232 233 244
 
 ### s=installe&go=import-done&click=import,paste&colle=1
-1 2 56 18 54 223 224 243 244 245 246 247 248 232 249
+1 2 56 18 54 224 225 245 246 247 248 249 250 233 251
 
 ### s=installe&go=import-paste&click=import,paste&os=linux
-20 21 61 18 54 223 237 250 251
+20 21 61 18 54 224 252 253 254
 
 ### s=installe&go=import-done&click=import&imp=partiel
-1 2 56 18 54 223 224 225 226 227 228 229 232 252
+1 2 56 18 54 224 225 226 227 228 229 230 233 255
 
 ### s=installe&go=import-done&click=import&imp=suspect
-1 2 56 18 54 223 224 225 226 253 228 229 230 231 232 254
+1 2 56 18 54 224 225 226 227 256 229 230 231 232 233 257
 
 ### s=installe&go=import-done&click=import&imp=rien
-1 2 56 18 54 223 224 225 226 227 228 229 230 231 232 255
+1 2 56 18 54 224 225 226 227 228 229 230 231 232 233 258
 
 ### s=installe&go=import-error&click=import&imp=deja
-1 2 56 18 54 223 224 225 256
+1 2 56 18 54 224 225 226 259
 
 ### s=installe&go=import-error&click=import&imp=compte
-1 2 56 18 54 223 224 225 257
+1 2 56 18 54 224 225 226 260
 
 ### s=installe&go=import-error&click=import&imp=auth
-1 2 56 18 54 223 224 225 226 227 228 258
+1 2 56 18 54 224 225 226 227 228 229 261
 
 ### s=installe&go=import-error&click=import&imp=quota
-1 2 56 18 54 223 224 225 226 227 228 259
+1 2 56 18 54 224 225 226 227 228 229 262
 
 ### s=installe&go=import-error&click=import&imp=a_jour
-1 2 56 18 54 223 260
+1 2 56 18 54 224 263
+
+### s=installe&go=import-error&click=import&imp=pas_un_zip
+1 2 56 18 54 224 225 226 264
+
+### s=installe&go=import-error&click=import&imp=trop_de_fichiers&os=windows
+20 21 57 18 54 224 238 239 265
+
+### s=installe&go=import-error&click=import&imp=timeout
+1 2 56 18 54 224 225 226 227 228 229 266
+
+### s=installe&go=import-paste&nth=2&click=import,paste&colle=1&imp=phrase
+1 2 56 18 54 224 225 245 246 247 248 267 268
 
 ### s=installe&go=import&nth=2&click=import,next,back
-1 2 56 18 54 223 224 225 226 227 261
+1 2 56 18 54 224 225 226 227 228 269
 
 ### s=installe&go=import&nth=2&click=import,next,next,stop&pause=import
-1 2 56 18 54 223 224 225 226 227 228 262
+1 2 56 18 54 224 225 226 227 228 229 270
 
 #1
 == welcome
@@ -2953,8 +2968,8 @@ Détails
 J’ai fait le tour.
 Il manque Claude Code, les outils Apple, Bun, Obsidian et ton cerveau. Je m’en occupe.
 macOS 15.4 · Puce Apple · 16 Go de mémoire · 182 Go libres
-Mon conseil : Tu utilises ChatGPT : ton cerveau marche avec Claude pour l’instant (abonnement Pro ou Max) ; Codex, l’IA de ChatGPT, arrive bientôt ici. À la fin, tu pourras y apporter ta mémoire ChatGPT.
-J’ai vu Hermes : je ne l’installe pas et n’y touche pas ; ses meilleures compétences sont déjà dans Claude, et ton résumé du soir lit aussi ses conversations.
+Mon conseil : Tu utilises ChatGPT : ton cerveau marche avec Claude, il te faudra un abonnement Claude Pro ou Max (ton abonnement ChatGPT ne suffit pas). Codex, l’IA de ChatGPT, arrive bientôt ici. À la fin, tu pourras apporter à ton cerveau ce que ChatGPT sait de toi.
+J’ai vu Hermes : je ne l’installe pas et n’y touche pas. Ses meilleures compétences arrivent dans Claude avec ton cerveau.
 Version de macOS : OKmacOS 15.4
 Espace disque : OK182 Go libres
 Connexion internet : OKgithub.com et claude.ai répondent.
@@ -2994,10 +3009,32 @@ Recherche par le sens : OKActivée (Voyage AI)
 [Continuer]
 
 #223
+== diag
+Tout est déjà installé !
+Ton PC a tout ce qu’il faut.
+Ubuntu 24.04.1 LTS · 16 Go de mémoire · 182 Go libres
+Mon conseil : Tu as déjà Claude Code, connecté à ton abonnement : ton cerveau travaillera avec lui.
+J’ai vu Hermes : je ne l’installe pas et n’y touche pas. Ses meilleures compétences arrivent dans Claude avec ton cerveau, et chaque soir ton cerveau lit aussi ses conversations.
+Système : OKUbuntu 24.04.1 LTS
+Espace disque : OK182 Go libres
+Connexion internet : OKgithub.com et claude.ai répondent.
+Outils de base (git, python3, curl) : OKgit, python3, curl et unzip sont là.
+Bun (le moteur de la mémoire) : OKBun 1.4.2
+Claude Code : OKClaude Code 2.1.296
+Connexion à Claude : OKTu es connecté.
+Obsidian (pour lire tes notes) : OKObsidian 1.14.4
+Ton dossier Brain : OKIl est dans Documents/Brain.
+Les automatismes de Claude : OKClaude note tes corrections et tes séances.
+Les compétences de Claude : OKInstallées.
+La mémoire de recherche : OKPrête.
+Recherche par le sens : OKActivée (Voyage AI)
+[Continuer]
+
+#224
 == import
 Je prépare l’import…
 
-#224
+#225
 == import
 D’où vient ta mémoire ?
 ChatGPT ou Claude savent déjà des choses sur toi. Claude en tire l’essentiel, je le range dans ton cerveau.
@@ -3007,25 +3044,26 @@ Un copier-coller (2 min)
 Tu demandes à ChatGPT ou à Claude ce qu’il sait de toi, et tu colles sa réponse ici.
 Comment obtenir mon export ?
 ChatGPT : Réglages › Contrôle des données › Exporter les données. Un e-mail t’envoie un lien, valable 24 h : télécharge le fichier .zip.
-Claude : Réglages › Confidentialité › Exporter les données, sur le site ou l’app de bureau. Un e-mail t’envoie tes fichiers .zip : choisis-les tous d’un coup.
+Claude : Réglages › Confidentialité › Exporter les données, sur le site ou l’app de bureau. Un e-mail t’envoie tes fichiers .zip : choisis-les tous d’un coup (Cmd-clic pour en prendre plusieurs).
+Tu as un dossier au lieu d’un .zip (Safari l’ouvre tout seul) ? Clic droit sur le dossier › Compresser, puis choisis ce .zip.
 Pour les souvenirs de ChatGPT, le copier-coller marche mieux : son export ne les contient souvent plus.
-Ce que tu importes est lu sur ton Mac, les secrets masqués, puis trié par Claude avec ton abonnement Claude : rien ne part ailleurs. Le résultat est une nouvelle note de ton cerveau, que tu relis.
+Ce que tu importes est lu sur ton Mac et ses secrets masqués. Puis Claude le trie, chez Anthropic, avec ton abonnement Claude : rien ne part ailleurs. Le résultat est une nouvelle note de ton cerveau, que tu relis.
 [Retour]
 [Je copie-colle une réponse]
 [Choisir mon fichier d’export]
 
-#225
+#226
 == import-read
 Choisis ton fichier d’export
-Dans la fenêtre qui s’ouvre. Pour Claude, choisis tous ses fichiers .zip d’un coup.
+Dans la fenêtre qui s’ouvre. Pour Claude, choisis tous ses fichiers .zip d’un coup (Cmd-clic pour en prendre plusieurs).
 
-#226
+#227
 == import-read
 Je lis ton export…
 Rien ne part pendant cette lecture.
 [Arrêter]
 
-#227
+#228
 == import-plan
 Voilà ce que j’ai lu
 Claude va en tirer ce qui compte pour toi. Choisis combien de demandes il fait.
@@ -3038,24 +3076,16 @@ Passages laissés de côté (journaux, code, collages de machine) : 17.
 [Normal : 4 demandes]
 [Complet : 10 demandes]
 4 demandes : 84 conversations parmi les plus récentes, environ 4 min.
-Ce qui part : vers Claude seulement (Claude Code sur cet ordinateur, ton abonnement), rien ailleurs.
+Ce qui part : vers Claude seulement, chez Anthropic (par Claude Code et ton abonnement), rien ailleurs.
 Ça ne te coûte rien de plus, mais ça compte dans ta limite d’usage Claude, à peu près comme une longue question par demande.
 Voir exactement ce que j’envoie
 [Annuler]
 [Lancer (4 demandes)]
 
-#228
-== import-run
-Claude trie ta mémoire…
-Demande 1 sur 4. Tu peux continuer à utiliser ton ordinateur.
-Environ 4 min en tout
-Claude n’a aucun outil : il lit, il répond, il ne touche à rien. Je vérifie chaque fait avant de l’écrire.
-[Arrêter]
-
 #229
 == import-run
 Claude trie ta mémoire…
-Demande 2 sur 4. Tu peux continuer à utiliser ton ordinateur.
+Demande 1 sur 4. Tu peux utiliser ton ordinateur, mais laisse cette fenêtre ouverte jusqu’à la fin.
 Environ 4 min en tout
 Claude n’a aucun outil : il lit, il répond, il ne touche à rien. Je vérifie chaque fait avant de l’écrire.
 [Arrêter]
@@ -3063,7 +3093,7 @@ Claude n’a aucun outil : il lit, il répond, il ne touche à rien. Je vérifi
 #230
 == import-run
 Claude trie ta mémoire…
-Demande 3 sur 4. Tu peux continuer à utiliser ton ordinateur.
+Demande 2 sur 4. Tu peux utiliser ton ordinateur, mais laisse cette fenêtre ouverte jusqu’à la fin.
 Environ 4 min en tout
 Claude n’a aucun outil : il lit, il répond, il ne touche à rien. Je vérifie chaque fait avant de l’écrire.
 [Arrêter]
@@ -3071,12 +3101,20 @@ Claude n’a aucun outil : il lit, il répond, il ne touche à rien. Je vérifi
 #231
 == import-run
 Claude trie ta mémoire…
-Demande 4 sur 4. Tu peux continuer à utiliser ton ordinateur.
+Demande 3 sur 4. Tu peux utiliser ton ordinateur, mais laisse cette fenêtre ouverte jusqu’à la fin.
 Environ 4 min en tout
 Claude n’a aucun outil : il lit, il répond, il ne touche à rien. Je vérifie chaque fait avant de l’écrire.
 [Arrêter]
 
 #232
+== import-run
+Claude trie ta mémoire…
+Demande 4 sur 4. Tu peux utiliser ton ordinateur, mais laisse cette fenêtre ouverte jusqu’à la fin.
+Environ 4 min en tout
+Claude n’a aucun outil : il lit, il répond, il ne touche à rien. Je vérifie chaque fait avant de l’écrire.
+[Arrêter]
+
+#233
 == import-run
 Je range tout dans ton cerveau…
 Une nouvelle note, et une ligne dans ta mémoire.
@@ -3084,7 +3122,7 @@ J’écris la note
 Claude n’a aucun outil : il lit, il répond, il ne touche à rien. Je vérifie chaque fait avant de l’écrire.
 [Arrêter (inactif)]
 
-#233
+#234
 == import-done
 C’est rangé !
 42 faits dans Imports › 2026-10-13-import-chatgpt.
@@ -3100,7 +3138,7 @@ Relis-les : corrige ou supprime ce qui est faux. Rien d’autre n’a changé d
 [Terminé]
 [Voir la note]
 
-#234
+#235
 == import-plan
 Voilà ce que j’ai lu
 Claude va en tirer ce qui compte pour toi. Choisis combien de demandes il fait.
@@ -3113,29 +3151,29 @@ Passages laissés de côté (journaux, code, collages de machine) : 17.
 [Normal : 4 demandes]
 [Complet : 10 demandes]
 2 demandes : 31 conversations parmi les plus récentes, environ 2 min.
-Ce qui part : vers Claude seulement (Claude Code sur cet ordinateur, ton abonnement), rien ailleurs.
+Ce qui part : vers Claude seulement, chez Anthropic (par Claude Code et ton abonnement), rien ailleurs.
 Ça ne te coûte rien de plus, mais ça compte dans ta limite d’usage Claude, à peu près comme une longue question par demande.
 Voir exactement ce que j’envoie
 [Annuler]
 [Lancer (2 demandes)]
 
-#235
-== import-run
-Claude trie ta mémoire…
-Demande 1 sur 2. Tu peux continuer à utiliser ton ordinateur.
-Environ 2 min en tout
-Claude n’a aucun outil : il lit, il répond, il ne touche à rien. Je vérifie chaque fait avant de l’écrire.
-[Arrêter]
-
 #236
 == import-run
 Claude trie ta mémoire…
-Demande 2 sur 2. Tu peux continuer à utiliser ton ordinateur.
+Demande 1 sur 2. Tu peux utiliser ton ordinateur, mais laisse cette fenêtre ouverte jusqu’à la fin.
 Environ 2 min en tout
 Claude n’a aucun outil : il lit, il répond, il ne touche à rien. Je vérifie chaque fait avant de l’écrire.
 [Arrêter]
 
 #237
+== import-run
+Claude trie ta mémoire…
+Demande 2 sur 2. Tu peux utiliser ton ordinateur, mais laisse cette fenêtre ouverte jusqu’à la fin.
+Environ 2 min en tout
+Claude n’a aucun outil : il lit, il répond, il ne touche à rien. Je vérifie chaque fait avant de l’écrire.
+[Arrêter]
+
+#238
 == import
 D’où vient ta mémoire ?
 ChatGPT ou Claude savent déjà des choses sur toi. Claude en tire l’essentiel, je le range dans ton cerveau.
@@ -3145,35 +3183,41 @@ Un copier-coller (2 min)
 Tu demandes à ChatGPT ou à Claude ce qu’il sait de toi, et tu colles sa réponse ici.
 Comment obtenir mon export ?
 ChatGPT : Réglages › Contrôle des données › Exporter les données. Un e-mail t’envoie un lien, valable 24 h : télécharge le fichier .zip.
-Claude : Réglages › Confidentialité › Exporter les données, sur le site ou l’app de bureau. Un e-mail t’envoie tes fichiers .zip : choisis-les tous d’un coup.
+Claude : Réglages › Confidentialité › Exporter les données, sur le site ou l’app de bureau. Un e-mail t’envoie tes fichiers .zip : choisis-les tous d’un coup (Ctrl-clic pour en prendre plusieurs).
+Tu as un dossier au lieu d’un .zip ? Clic droit sur le dossier › Compresser dans un fichier ZIP, puis choisis ce .zip.
 Pour les souvenirs de ChatGPT, le copier-coller marche mieux : son export ne les contient souvent plus.
-Ce que tu importes est lu sur ton PC, les secrets masqués, puis trié par Claude avec ton abonnement Claude : rien ne part ailleurs. Le résultat est une nouvelle note de ton cerveau, que tu relis.
+Ce que tu importes est lu sur ton PC et ses secrets masqués. Puis Claude le trie, chez Anthropic, avec ton abonnement Claude : rien ne part ailleurs. Le résultat est une nouvelle note de ton cerveau, que tu relis.
 [Retour]
 [Je copie-colle une réponse]
 [Choisir mon fichier d’export]
 
-#238
+#239
+== import-read
+Choisis ton fichier d’export
+Dans la fenêtre qui s’ouvre. Pour Claude, choisis tous ses fichiers .zip d’un coup (Ctrl-clic pour en prendre plusieurs).
+
+#240
 == import-read
 Je lis ton export…
 Rien ne part pendant cette lecture.
 Fichier 1 sur 3
 [Arrêter]
 
-#239
+#241
 == import-read
 Je lis ton export…
 Rien ne part pendant cette lecture.
 Fichier 2 sur 3
 [Arrêter]
 
-#240
+#242
 == import-read
 Je lis ton export…
 Rien ne part pendant cette lecture.
 Fichier 3 sur 3
 [Arrêter]
 
-#241
+#243
 == import-plan
 Voilà ce que j’ai lu
 Claude va en tirer ce qui compte pour toi. Choisis combien de demandes il fait.
@@ -3187,13 +3231,13 @@ Passages laissés de côté (journaux, code, collages de machine) : 17.
 [Normal : 4 demandes]
 [Complet : 10 demandes]
 4 demandes : 84 conversations parmi les plus récentes, environ 4 min.
-Ce qui part : vers Claude seulement (Claude Code sur cet ordinateur, ton abonnement), rien ailleurs.
+Ce qui part : vers Claude seulement, chez Anthropic (par Claude Code et ton abonnement), rien ailleurs.
 Ça ne te coûte rien de plus, mais ça compte dans ta limite d’usage Claude, à peu près comme une longue question par demande.
 Voir exactement ce que j’envoie
 [Annuler]
 [Lancer (4 demandes)]
 
-#242
+#244
 == import-done
 C’est rangé !
 42 faits dans Imports › 2026-10-13-import-claude.
@@ -3209,7 +3253,7 @@ Relis-les : corrige ou supprime ce qui est faux. Rien d’autre n’a changé d
 [Terminé]
 [Voir la note]
 
-#243
+#245
 == import-paste
 Demande-lui ce qu’il sait de toi
 Trois étapes, deux minutes. Rien ne part avant que tu valides.
@@ -3221,11 +3265,11 @@ Colle-la dans une nouvelle conversation, chez celui qui te connaît.
 [Ouvrir Claude]
 Copie sa réponse avec le bouton Copier de son bloc de code, et colle-la ici.
 S’il dit qu’il en reste, écris-lui « Continue » et colle la suite à la fin.
-Ce que tu importes est lu sur ton Mac, les secrets masqués, puis trié par Claude avec ton abonnement Claude : rien ne part ailleurs. Le résultat est une nouvelle note de ton cerveau, que tu relis.
+Ce que tu importes est lu sur ton Mac et ses secrets masqués. Puis Claude le trie, chez Anthropic, avec ton abonnement Claude : rien ne part ailleurs. Le résultat est une nouvelle note de ton cerveau, que tu relis.
 [Retour]
 [Continuer (inactif)]
 
-#244
+#246
 == import-paste
 Demande-lui ce qu’il sait de toi
 Trois étapes, deux minutes. Rien ne part avant que tu valides.
@@ -3237,11 +3281,11 @@ Colle-la dans une nouvelle conversation, chez celui qui te connaît.
 [Ouvrir Claude]
 Copie sa réponse avec le bouton Copier de son bloc de code, et colle-la ici.
 S’il dit qu’il en reste, écris-lui « Continue » et colle la suite à la fin.
-Ce que tu importes est lu sur ton Mac, les secrets masqués, puis trié par Claude avec ton abonnement Claude : rien ne part ailleurs. Le résultat est une nouvelle note de ton cerveau, que tu relis.
+Ce que tu importes est lu sur ton Mac et ses secrets masqués. Puis Claude le trie, chez Anthropic, avec ton abonnement Claude : rien ne part ailleurs. Le résultat est une nouvelle note de ton cerveau, que tu relis.
 [Retour]
 [Continuer (inactif)]
 
-#245
+#247
 == import-paste
 Demande-lui ce qu’il sait de toi
 Trois étapes, deux minutes. Rien ne part avant que tu valides.
@@ -3253,17 +3297,17 @@ Colle-la dans une nouvelle conversation, chez celui qui te connaît.
 [Ouvrir Claude]
 Copie sa réponse avec le bouton Copier de son bloc de code, et colle-la ici.
 S’il dit qu’il en reste, écris-lui « Continue » et colle la suite à la fin.
-Ce que tu importes est lu sur ton Mac, les secrets masqués, puis trié par Claude avec ton abonnement Claude : rien ne part ailleurs. Le résultat est une nouvelle note de ton cerveau, que tu relis.
+Ce que tu importes est lu sur ton Mac et ses secrets masqués. Puis Claude le trie, chez Anthropic, avec ton abonnement Claude : rien ne part ailleurs. Le résultat est une nouvelle note de ton cerveau, que tu relis.
 [Retour]
 [Continuer]
 
-#246
+#248
 == import-read
 Je lis sa réponse…
 Rien ne part pendant cette lecture.
 Un instant
 
-#247
+#249
 == import-plan
 Voilà ce que j’ai lu
 Claude va en tirer ce qui compte pour toi. Choisis combien de demandes il fait.
@@ -3271,21 +3315,21 @@ La réponse collée
 Sa réponse : 27 lignes.
 Secrets masqués avant tout envoi : 0.
 1 demande : environ 1 min.
-Ce qui part : vers Claude seulement (Claude Code sur cet ordinateur, ton abonnement), rien ailleurs.
+Ce qui part : vers Claude seulement, chez Anthropic (par Claude Code et ton abonnement), rien ailleurs.
 Ça ne te coûte rien de plus, mais ça compte dans ta limite d’usage Claude, à peu près comme une longue question par demande.
 Voir exactement ce que j’envoie
 [Annuler]
 [Lancer (1 demande)]
 
-#248
+#250
 == import-run
 Claude trie ta mémoire…
-Demande 1 sur 1. Tu peux continuer à utiliser ton ordinateur.
+Demande 1 sur 1. Tu peux utiliser ton ordinateur, mais laisse cette fenêtre ouverte jusqu’à la fin.
 Environ 1 min en tout
 Claude n’a aucun outil : il lit, il répond, il ne touche à rien. Je vérifie chaque fait avant de l’écrire.
 [Arrêter]
 
-#249
+#251
 == import-done
 C’est rangé !
 42 faits dans Imports › 2026-10-13-import-collage.
@@ -3301,7 +3345,25 @@ Relis-les : corrige ou supprime ce qui est faux. Rien d’autre n’a changé d
 [Terminé]
 [Voir la note]
 
-#250
+#252
+== import
+D’où vient ta mémoire ?
+ChatGPT ou Claude savent déjà des choses sur toi. Claude en tire l’essentiel, je le range dans ton cerveau.
+Ton fichier d’export (.zip)
+ChatGPT et Claude t’envoient tes conversations dans un fichier. Le plus complet.
+Un copier-coller (2 min)
+Tu demandes à ChatGPT ou à Claude ce qu’il sait de toi, et tu colles sa réponse ici.
+Comment obtenir mon export ?
+ChatGPT : Réglages › Contrôle des données › Exporter les données. Un e-mail t’envoie un lien, valable 24 h : télécharge le fichier .zip.
+Claude : Réglages › Confidentialité › Exporter les données, sur le site ou l’app de bureau. Un e-mail t’envoie tes fichiers .zip : choisis-les tous d’un coup (Ctrl-clic pour en prendre plusieurs).
+Tu as un dossier au lieu d’un .zip ? Clic droit sur le dossier › Compresser, puis choisis ce .zip.
+Pour les souvenirs de ChatGPT, le copier-coller marche mieux : son export ne les contient souvent plus.
+Ce que tu importes est lu sur ton PC et ses secrets masqués. Puis Claude le trie, chez Anthropic, avec ton abonnement Claude : rien ne part ailleurs. Le résultat est une nouvelle note de ton cerveau, que tu relis.
+[Retour]
+[Je copie-colle une réponse]
+[Choisir mon fichier d’export]
+
+#253
 == import-paste
 Demande-lui ce qu’il sait de toi
 Trois étapes, deux minutes. Rien ne part avant que tu valides.
@@ -3313,11 +3375,11 @@ Colle-la dans une nouvelle conversation, chez celui qui te connaît.
 [Ouvrir Claude]
 Copie sa réponse avec le bouton Copier de son bloc de code, et colle-la ici.
 S’il dit qu’il en reste, écris-lui « Continue » et colle la suite à la fin.
-Ce que tu importes est lu sur ton PC, les secrets masqués, puis trié par Claude avec ton abonnement Claude : rien ne part ailleurs. Le résultat est une nouvelle note de ton cerveau, que tu relis.
+Ce que tu importes est lu sur ton PC et ses secrets masqués. Puis Claude le trie, chez Anthropic, avec ton abonnement Claude : rien ne part ailleurs. Le résultat est une nouvelle note de ton cerveau, que tu relis.
 [Retour]
 [Continuer (inactif)]
 
-#251
+#254
 == import-paste
 Demande-lui ce qu’il sait de toi
 Trois étapes, deux minutes. Rien ne part avant que tu valides.
@@ -3329,11 +3391,11 @@ Colle-la dans une nouvelle conversation, chez celui qui te connaît.
 [Ouvrir Claude]
 Copie sa réponse avec le bouton Copier de son bloc de code, et colle-la ici.
 S’il dit qu’il en reste, écris-lui « Continue » et colle la suite à la fin.
-Ce que tu importes est lu sur ton PC, les secrets masqués, puis trié par Claude avec ton abonnement Claude : rien ne part ailleurs. Le résultat est une nouvelle note de ton cerveau, que tu relis.
+Ce que tu importes est lu sur ton PC et ses secrets masqués. Puis Claude le trie, chez Anthropic, avec ton abonnement Claude : rien ne part ailleurs. Le résultat est une nouvelle note de ton cerveau, que tu relis.
 [Retour]
 [Continuer (inactif)]
 
-#252
+#255
 == import-done
 C’est rangé !
 19 faits dans Imports › 2026-10-13-import-chatgpt.
@@ -3342,13 +3404,13 @@ Qui tu es : 4
 Tes préférences : 7
 Tes projets : 5
 Tes outils : 3
-Import partiel : 2 demandes sur 4. Relance-le plus tard : je reprendrai la suite.
+Import partiel : 2 demandes sur 4. Plus tard, reviens sur « Importer ma mémoire » et choisis le même fichier : je reprendrai là où je me suis arrêté.
 3 faits laissés de côté (sans source, numéro, adresse ou consigne pour une IA).
 Relis-les : corrige ou supprime ce qui est faux. Rien d’autre n’a changé dans ton cerveau.
 [Terminé]
 [Voir la note]
 
-#253
+#256
 == import-plan
 Voilà ce que j’ai lu
 Claude va en tirer ce qui compte pour toi. Choisis combien de demandes il fait.
@@ -3362,13 +3424,13 @@ Du texte invisible a été retiré : il cachait peut-être des consignes pour u
 [Normal : 4 demandes]
 [Complet : 10 demandes]
 4 demandes : 84 conversations parmi les plus récentes, environ 4 min.
-Ce qui part : vers Claude seulement (Claude Code sur cet ordinateur, ton abonnement), rien ailleurs.
+Ce qui part : vers Claude seulement, chez Anthropic (par Claude Code et ton abonnement), rien ailleurs.
 Ça ne te coûte rien de plus, mais ça compte dans ta limite d’usage Claude, à peu près comme une longue question par demande.
 Voir exactement ce que j’envoie
 [Annuler]
 [Lancer (4 demandes)]
 
-#254
+#257
 == import-done
 C’est rangé !
 42 faits dans Imports › 2026-10-13-import-chatgpt.
@@ -3385,47 +3447,102 @@ Relis-les : corrige ou supprime ce qui est faux. Rien d’autre n’a changé d
 [Terminé]
 [Voir la note]
 
-#255
+#258
 == import-done
 Je n’ai rien trouvé de durable à garder.
 Rien n’a été écrit dans ton cerveau.
 [Terminé]
 
-#256
+#259
 == import-error
 C’est déjà dans ton cerveau.
-Déjà importé le 2026-10-12 : Imports/2026-10-12-import-chatgpt.md.
+Tu l’as déjà importé le 12 octobre 2026 : c’est dans la note Imports › 2026-10-12-import-chatgpt.
 [Retour]
 [Terminé]
 
-#257
+#260
 == import-error
 Je ne peux pas importer ça.
 Ce fichier ne contient que les infos de ton compte Claude. Donne-moi les autres fichiers .zip de ton export (conversations, mémoire, projets).
 [Terminé]
 [Essayer autre chose]
 
-#258
+#261
 == import-error
 Claude n’est pas connecté à ton abonnement.
 Connecte-le, puis relance l’import. Rien n’est parti.
 [Retour]
 [Connecter mon compte Claude]
 
-#259
+#262
 == import-error
 Ton forfait Claude est à sa limite pour le moment.
-Il se recharge tout seul en quelques heures : relance l’import plus tard. Rien n’est parti de plus.
+Il se recharge tout seul en quelques heures : reviens alors sur « Importer ma mémoire ». Rien n’a été écrit.
 [Terminé]
 
-#260
+#263
 == import-error
 Ton cerveau doit d’abord être mis à jour
 Il a été installé avant l’import de mémoire. 1 à 5 minutes, et rien de tes notes ne change.
 [Retour]
 [Mettre à jour mon cerveau]
 
-#261
+#264
+== import-error
+Je ne peux pas importer ça.
+Ce fichier n’est ni une archive .zip lisible ni un export en .json.
+Tu as un dossier au lieu d’un .zip (Safari l’ouvre tout seul) ? Clic droit sur le dossier › Compresser, puis choisis ce .zip.
+[Terminé]
+[Essayer autre chose]
+
+#265
+== import-error
+Je ne peux pas importer ça.
+Choisis de 1 à 4 fichiers de ton export.
+Tu as un dossier au lieu d’un .zip ? Clic droit sur le dossier › Compresser dans un fichier ZIP, puis choisis ce .zip.
+[Terminé]
+[Essayer autre chose]
+
+#266
+== import-error
+Claude ne répond pas pour l’instant.
+Rien n’a été écrit : réessaie dans un moment.
+[Retour]
+[Réessayer]
+
+#267
+== import-paste
+Tu as collé ma phrase.
+À l’étape 3, colle plutôt la réponse de ChatGPT ou de Claude.
+Copie cette phrase.
+Je prépare la phrase…
+[Copier la phrase (inactif)]
+Colle-la dans une nouvelle conversation, chez celui qui te connaît.
+[Ouvrir ChatGPT]
+[Ouvrir Claude]
+Copie sa réponse avec le bouton Copier de son bloc de code, et colle-la ici.
+S’il dit qu’il en reste, écris-lui « Continue » et colle la suite à la fin.
+Ce que tu importes est lu sur ton Mac et ses secrets masqués. Puis Claude le trie, chez Anthropic, avec ton abonnement Claude : rien ne part ailleurs. Le résultat est une nouvelle note de ton cerveau, que tu relis.
+[Retour]
+[Continuer (inactif)]
+
+#268
+== import-paste
+Tu as collé ma phrase.
+À l’étape 3, colle plutôt la réponse de ChatGPT ou de Claude.
+Copie cette phrase.
+Je change d'outil et j'ai besoin d'exporter mes données. Liste chaque souvenir que tu as enregistré sur moi, et tout ce que tu as appris de moi dans nos conversations passées. Mets tout dans un seul bloc de code, pour que je puisse le copier facilement. Une entrée par ligne, au format : [date d'enregistrement, si tu l'as] - le souvenir. Couvre tout ce qui suit, avec mes propres mots autant que possible : les consignes que je t'ai données sur ta façon de répondre (ton, format, style, « fais toujours… », « ne fais jamais… ») ; qui je suis : prénom, ville, métier, langues, centres d'intérêt ; mes projets, mes objectifs et les sujets qui reviennent ; les outils, logiciels et langages que j'utilise ; les personnes avec qui je travaille (prénom et rôle) ; mes préférences et les corrections que je t'ai faites ; tout autre contexte enregistré. Ne résume pas, ne regroupe pas, n'oublie rien, n'invente rien. N'écris aucun mot de passe, aucun numéro, aucun identifiant. Après le bloc de code, dis-moi si la liste est complète ou s'il en reste.
+[Copier la phrase]
+Colle-la dans une nouvelle conversation, chez celui qui te connaît.
+[Ouvrir ChatGPT]
+[Ouvrir Claude]
+Copie sa réponse avec le bouton Copier de son bloc de code, et colle-la ici.
+S’il dit qu’il en reste, écris-lui « Continue » et colle la suite à la fin.
+Ce que tu importes est lu sur ton Mac et ses secrets masqués. Puis Claude le trie, chez Anthropic, avec ton abonnement Claude : rien ne part ailleurs. Le résultat est une nouvelle note de ton cerveau, que tu relis.
+[Retour]
+[Continuer (inactif)]
+
+#269
 == import
 C’est annulé.
 Rien n’est parti. D’où vient ta mémoire ?
@@ -3435,14 +3552,15 @@ Un copier-coller (2 min)
 Tu demandes à ChatGPT ou à Claude ce qu’il sait de toi, et tu colles sa réponse ici.
 Comment obtenir mon export ?
 ChatGPT : Réglages › Contrôle des données › Exporter les données. Un e-mail t’envoie un lien, valable 24 h : télécharge le fichier .zip.
-Claude : Réglages › Confidentialité › Exporter les données, sur le site ou l’app de bureau. Un e-mail t’envoie tes fichiers .zip : choisis-les tous d’un coup.
+Claude : Réglages › Confidentialité › Exporter les données, sur le site ou l’app de bureau. Un e-mail t’envoie tes fichiers .zip : choisis-les tous d’un coup (Cmd-clic pour en prendre plusieurs).
+Tu as un dossier au lieu d’un .zip (Safari l’ouvre tout seul) ? Clic droit sur le dossier › Compresser, puis choisis ce .zip.
 Pour les souvenirs de ChatGPT, le copier-coller marche mieux : son export ne les contient souvent plus.
-Ce que tu importes est lu sur ton Mac, les secrets masqués, puis trié par Claude avec ton abonnement Claude : rien ne part ailleurs. Le résultat est une nouvelle note de ton cerveau, que tu relis.
+Ce que tu importes est lu sur ton Mac et ses secrets masqués. Puis Claude le trie, chez Anthropic, avec ton abonnement Claude : rien ne part ailleurs. Le résultat est une nouvelle note de ton cerveau, que tu relis.
 [Retour]
 [Je copie-colle une réponse]
 [Choisir mon fichier d’export]
 
-#262
+#270
 == import
 Arrêté.
 Rien n’a été écrit dans ton cerveau.
@@ -3452,9 +3570,10 @@ Un copier-coller (2 min)
 Tu demandes à ChatGPT ou à Claude ce qu’il sait de toi, et tu colles sa réponse ici.
 Comment obtenir mon export ?
 ChatGPT : Réglages › Contrôle des données › Exporter les données. Un e-mail t’envoie un lien, valable 24 h : télécharge le fichier .zip.
-Claude : Réglages › Confidentialité › Exporter les données, sur le site ou l’app de bureau. Un e-mail t’envoie tes fichiers .zip : choisis-les tous d’un coup.
+Claude : Réglages › Confidentialité › Exporter les données, sur le site ou l’app de bureau. Un e-mail t’envoie tes fichiers .zip : choisis-les tous d’un coup (Cmd-clic pour en prendre plusieurs).
+Tu as un dossier au lieu d’un .zip (Safari l’ouvre tout seul) ? Clic droit sur le dossier › Compresser, puis choisis ce .zip.
 Pour les souvenirs de ChatGPT, le copier-coller marche mieux : son export ne les contient souvent plus.
-Ce que tu importes est lu sur ton Mac, les secrets masqués, puis trié par Claude avec ton abonnement Claude : rien ne part ailleurs. Le résultat est une nouvelle note de ton cerveau, que tu relis.
+Ce que tu importes est lu sur ton Mac et ses secrets masqués. Puis Claude le trie, chez Anthropic, avec ton abonnement Claude : rien ne part ailleurs. Le résultat est une nouvelle note de ton cerveau, que tu relis.
 [Retour]
 [Je copie-colle une réponse]
 [Choisir mon fichier d’export]

@@ -40,8 +40,9 @@ const FILE_MAX: u64 = 8 << 30;
 const PASTE_MAX: usize = 300_000 * 4;
 const APPELS_MAX: u32 = 20;
 /// Errors the importer gives for one file of several that the rest makes up for: already imported,
-/// Claude's account data alone, Claude's file of links.
-const SKIPPED_WITH_OTHERS: [&str; 3] = ["deja", "compte", "liens"];
+/// Claude's account data alone, Claude's file of links, a file of no use (an export the browser
+/// unzipped: its user.json picked with the conversations).
+const SKIPPED_WITH_OTHERS: [&str; 4] = ["deja", "compte", "liens", "pas_un_export"];
 
 static ID: LazyLock<Option<Regex>> = LazyLock::new(|| Regex::new(r"\A[0-9a-f]{12}\z").ok());
 static NOTE: LazyLock<Option<Regex>> = LazyLock::new(|| Regex::new(r"\AImports/[0-9A-Za-z][0-9A-Za-z._-]{0,100}\.md\z").ok());
@@ -600,6 +601,19 @@ mod tests {
         let second = export(&b, "second.zip", 2);
         let plan = read_files(&b.kit, &[first, second], &mut |_| {}).unwrap();
         assert_eq!(plan["conversations"], 2, "{plan}");
+    }
+
+    #[test]
+    fn of_several_files_one_of_no_use_is_left_aside() {
+        let _one = SERIAL.lock().unwrap_or_else(|p| p.into_inner());
+        let b = bench();
+        let zip = export(&b, "conversations.zip", 2);
+        let user = b.root.join("user.json");
+        std::fs::write(&user, r#"{"id": "user-1", "chatgpt_plus_user": false}"#).unwrap();
+        let plan = read_files(&b.kit, &[user.clone(), zip], &mut |_| {}).unwrap();
+        assert_eq!(plan["conversations"], 2, "{plan}");
+        // Alone, it is said.
+        assert_eq!(read_files(&b.kit, &[user], &mut |_| {}).unwrap_err().code, "pas_un_export");
     }
 
     #[cfg(unix)]
