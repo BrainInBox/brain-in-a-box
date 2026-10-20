@@ -38,6 +38,7 @@ import os
 import re
 import secrets
 import shutil
+import signal
 import stat
 import subprocess
 import sys
@@ -1270,6 +1271,10 @@ COMMANDES = {"phrase": cmd_phrase, "conseil": cmd_conseil, "preparer": cmd_prepa
              "defaire": cmd_defaire}
 
 
+def _arret(signum, frame):
+    raise SystemExit(128 + signum)
+
+
 def main(argv=None):
     # Under -I, PYTHONIOENCODING is ignored: a Windows console or pipe would be cp1252.
     for stream in (sys.stdout, sys.stderr):
@@ -1300,4 +1305,8 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
+    if os.name != "nt":
+        # The app's « Arrêter » is a SIGTERM: ended like a Ctrl-C, so that the AI started is stopped too
+        # (_headless_claude.supervise) and nothing is half written. Windows' taskkill /T takes the tree.
+        signal.signal(signal.SIGTERM, _arret)
     sys.exit(main())

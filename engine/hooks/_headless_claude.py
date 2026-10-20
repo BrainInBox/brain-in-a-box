@@ -278,34 +278,40 @@ def supervise(argv, env, cwd, stdin_text, timeout, on_line):
     deadline = time.monotonic() + timeout
     err_tail, open_pipes, total, exited_at = deque(maxlen=20), 2, 0, None
     timed_out = stopped = overflow = False
-    while open_pipes:
-        now = time.monotonic()
-        if now >= deadline:
-            timed_out = True
-            break
-        if exited_at is None and proc.poll() is not None:
-            exited_at = now
-        if exited_at is not None and now - exited_at > DRAIN:
-            break
-        try:
-            tag, chunk = q.get(timeout=0.1)
-        except queue.Empty:
-            continue
-        if chunk is None:
-            open_pipes -= 1
-        elif tag == "err":
-            err_tail.append(chunk[:1000].decode("utf-8", "replace").rstrip())
-        else:
-            total += len(chunk)
-            overflow = total > STREAM_CAP
-            if overflow or on_line(chunk.decode("utf-8", "replace").rstrip("\r\n")) is False:
-                stopped = True
+    try:
+        while open_pipes:
+            now = time.monotonic()
+            if now >= deadline:
+                timed_out = True
                 break
-    if not (timed_out or stopped):
-        try:
-            proc.wait(timeout=max(0.1, deadline - time.monotonic()))
-        except subprocess.TimeoutExpired:
-            timed_out = True
+            if exited_at is None and proc.poll() is not None:
+                exited_at = now
+            if exited_at is not None and now - exited_at > DRAIN:
+                break
+            try:
+                tag, chunk = q.get(timeout=0.1)
+            except queue.Empty:
+                continue
+            if chunk is None:
+                open_pipes -= 1
+            elif tag == "err":
+                err_tail.append(chunk[:1000].decode("utf-8", "replace").rstrip())
+            else:
+                total += len(chunk)
+                overflow = total > STREAM_CAP
+                if overflow or on_line(chunk.decode("utf-8", "replace").rstrip("\r\n")) is False:
+                    stopped = True
+                    break
+        if not (timed_out or stopped):
+            try:
+                proc.wait(timeout=max(0.1, deadline - time.monotonic()))
+            except subprocess.TimeoutExpired:
+                timed_out = True
+    except BaseException:
+        # Stopped from outside (the app's « Arrêter », Ctrl-C): Claude and what it started go too,
+        # never left to finish a request.
+        _kill_tree(proc)
+        raise
     if timed_out or stopped or exited_at is not None and open_pipes:
         _kill_tree(proc)
     try:

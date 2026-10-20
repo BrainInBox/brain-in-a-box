@@ -494,6 +494,49 @@ class Reprise(Base):
         self.assertEqual((rc, ev[-1]["erreur"]["code"]), (1, "en_cours"))
         self.assertEqual(self.calls(), 0)
 
+    @unittest.skipUnless(POSIX, "the app stops the importer with SIGTERM on macOS and Linux (Windows: taskkill /T)")
+    def test_stopped_from_the_app_claude_goes_too_and_nothing_is_written(self):
+        """The app's « Arrêter » sends SIGTERM to the importer: the Claude it started (a session of its
+        own) and what Claude started are killed, not left to finish a request; the plan stays."""
+        import signal
+        import subprocess
+        plan = self.preparer(self.fichier(F.chatgpt_2025()))
+        self.scenario(1, "hang")
+        claude = self.root / "claude"
+        claude.write_text("#!/bin/sh\nexec '%s' -I '%s' \"$@\"\n" % (sys.executable, FAKE), encoding="utf-8")
+        claude.chmod(0o755)
+        env = dict(os.environ, CLAUDE_BIN=str(claude))
+        argv = [sys.executable, "-I", str(HOOKS / "importer-memoire.py"), "lancer", plan["id"], "--appels", "1",
+                "--accord", self.choix(plan, 1)["accord"], "--json"]
+        proc = subprocess.Popen(argv, env=env, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, start_new_session=True)
+        pid_file = self.fake / "grandchild.pid"
+        try:
+            for _ in range(200):
+                if pid_file.exists() and pid_file.read_text(encoding="utf-8").strip():
+                    break
+                time.sleep(0.05)
+            self.assertTrue(pid_file.exists(), "Claude never started")
+            grandchild = int(pid_file.read_text(encoding="utf-8"))
+            proc.send_signal(signal.SIGTERM)
+            proc.wait(timeout=20)
+        finally:
+            if proc.poll() is None:
+                os.killpg(proc.pid, signal.SIGKILL)
+            proc.stdout.close()
+
+        def alive(pid):
+            try:
+                os.kill(pid, 0)
+            except OSError:
+                return False
+            return True
+        deadline = time.time() + 10
+        while alive(grandchild) and time.time() < deadline:
+            time.sleep(0.1)
+        self.assertFalse(alive(grandchild), "what Claude started outlived the stopped import")
+        self.assertEqual(self.notes(), [])
+        self.assertTrue((self.home / ".brain-in-a-box" / "import" / "plans" / plan["id"]).is_dir(), "the plan stays")
+
     def test_a_plan_lasts_a_day(self):
         plan = self.preparer(self.fichier(F.chatgpt_2025()))
         d = self.home / ".brain-in-a-box" / "import" / "plans" / plan["id"]
