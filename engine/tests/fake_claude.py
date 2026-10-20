@@ -6,9 +6,11 @@ reflection passes on):
     scenario     a capture to replay (default plan-ok), or tool-bash, second-init (a start-up line
                  with Bash after a clean one), orphan (leaves a child that let go of the pipes), hang
     answer.json  the structured answer put in place of the capture's one
+    answers/<n>.json, scenarios/<n>   the same for the n-th `-p` run only (the import's requests)
     auth         authMethod `claude auth status` reports (default claude.ai)
     version      what `claude --version` prints (default 2.1.296 (Claude Code))
-Each `-p` run appends to calls and records argv.json, env.json, cwd.json and prompt.txt.
+Each `-p` run appends to calls and records argv.json, env.json, cwd.json and prompt.txt
+(and prompts/<n>.txt).
 """
 import json
 import os
@@ -55,19 +57,24 @@ def main(args):
     prompt = sys.stdin.read()
     with open(os.path.join(FAKE, "calls"), "a") as f:
         f.write("-p\n")
+    with open(os.path.join(FAKE, "calls")) as f:
+        n = f.read().count("-p")
     record("argv.json", json.dumps(args))
     record("env.json", json.dumps(dict(os.environ)))
     cwd = os.getcwd()
     record("cwd.json", json.dumps({"cwd": cwd, "mode": oct(stat.S_IMODE(os.stat(cwd).st_mode))}))
     record("prompt.txt", prompt)
-    scenario = setting("scenario", "plan-ok")
+    os.makedirs(os.path.join(FAKE, "prompts"), exist_ok=True)
+    record(os.path.join("prompts", "%d.txt" % n), prompt)
+    scenario = setting(os.path.join("scenarios", str(n)), "") or setting("scenario", "plan-ok")
     if scenario == "hang":
         # A child of its own, as Claude Code's tools would start: the group kill must reach it.
         child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
         record("grandchild.pid", str(child.pid))
         time.sleep(60)
         return 0
-    with open(os.path.join(FAKE, "answer.json"), encoding="utf-8") as f:
+    nth = os.path.join(FAKE, "answers", "%d.json" % n)
+    with open(nth if os.path.exists(nth) else os.path.join(FAKE, "answer.json"), encoding="utf-8") as f:
         answer = json.load(f)
     if scenario == "orphan":
         child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], stdin=subprocess.DEVNULL,
