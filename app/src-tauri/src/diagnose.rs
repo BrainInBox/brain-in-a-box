@@ -23,7 +23,7 @@ use crate::detect::parse_version;
 use crate::detect::Version;
 use crate::detect::{self, fmt_version, Brain, Found};
 use crate::model::{Check, Diagnosis, Status};
-use crate::{codex, steps, sys};
+use crate::{advice, codex, steps, sys};
 
 #[cfg(target_os = "macos")]
 const MIN_MACOS: Version = (13, 0, 0);
@@ -121,6 +121,8 @@ struct Facts {
     bun: Found,
     claude: Found,
     claude_logged_in: bool,
+    /// What the advice reads (advice.rs): files only, and the login `claude auth status` gave.
+    advice: advice::Facts,
     obsidian: Found,
     /// Who the brain works with (agents.json): Claude's facts are looked for only when Claude is one
     /// of them, Codex's when Codex is.
@@ -194,6 +196,7 @@ pub fn failed(why: &str) -> Diagnosis {
         )],
         todo: Vec::new(),
         can_install: false,
+        advice: None,
     }
 }
 
@@ -205,13 +208,17 @@ fn probe(home: &Path) -> Facts {
         // The slow probes (network, `claude auth status`, Codex's login) run alongside the rest.
         let github = s.spawn(|| answers("https://github.com"));
         let claude_ai = s.spawn(move || claude && answers("https://claude.ai"));
-        let logged_in = s.spawn(move || claude && detect::claude_logged_in());
+        // `claude auth status` once: whether Claude is logged in, and for the advice how.
+        let login = s.spawn(move || {
+            let method = if claude { detect::claude_auth_method() } else { None };
+            (method.as_deref().is_some_and(|m| m != "none"), advice::probe(home, method.as_deref()))
+        });
         let chatgpt = s.spawn(move || codex && answers(CHATGPT));
         let codex = s.spawn(|| probe_codex(home, &agents));
 
         let home_arg = home.to_string_lossy();
         // Fields are evaluated in this order: the threads are joined last.
-        Facts {
+        let facts = Facts {
             macos: command_text("/usr/bin/sw_vers", &["-productVersion"]),
             arch: command_text("/usr/bin/uname", &["-m"]).unwrap_or_default(),
             ram_bytes: command_text("/usr/sbin/sysctl", &["-n", "hw.memsize"]).and_then(|t| t.parse().ok()),
@@ -222,11 +229,14 @@ fn probe(home: &Path) -> Facts {
             obsidian: detect::obsidian(home),
             github: github.join().unwrap_or(false),
             claude_ai: claude_ai.join().unwrap_or(false),
-            claude_logged_in: logged_in.join().unwrap_or(false),
+            claude_logged_in: false,
+            advice: advice::Facts::default(),
             chatgpt: chatgpt.join().unwrap_or(false),
             codex: codex.join().ok().flatten(),
             agents: agents.clone(),
-        }
+        };
+        let (claude_logged_in, seen) = login.join().unwrap_or_default();
+        Facts { claude_logged_in, advice: seen, ..facts }
     })
 }
 
@@ -251,7 +261,11 @@ fn probe(home: &Path) -> Facts {
     thread::scope(|s| {
         let github = s.spawn(|| answers("https://github.com"));
         let claude_ai = s.spawn(move || claude && answers("https://claude.ai"));
-        let logged_in = s.spawn(move || claude && detect::claude_logged_in());
+        // `claude auth status` once: whether Claude is logged in, and for the advice how.
+        let login = s.spawn(move || {
+            let method = if claude { detect::claude_auth_method() } else { None };
+            (method.as_deref().is_some_and(|m| m != "none"), advice::probe(home, method.as_deref()))
+        });
         let chatgpt = s.spawn(move || codex && answers(CHATGPT));
         let codex = s.spawn(|| probe_codex(home, &agents));
         // PowerShell takes a second or two to start: alongside the rest too.
@@ -270,7 +284,7 @@ fn probe(home: &Path) -> Facts {
         let claude = if claude { detect::claude() } else { Found::Absent };
         let obsidian = detect::obsidian(home);
         let system = system.join().unwrap_or_default();
-        Facts {
+        let facts = Facts {
             windows: system.version,
             arch: system.arch,
             ram_bytes: system.ram_bytes,
@@ -281,12 +295,15 @@ fn probe(home: &Path) -> Facts {
             git,
             bun,
             claude,
-            claude_logged_in: logged_in.join().unwrap_or(false),
+            claude_logged_in: false,
+            advice: advice::Facts::default(),
             obsidian,
             chatgpt: chatgpt.join().unwrap_or(false),
             codex: codex.join().ok().flatten(),
             agents: agents.clone(),
-        }
+        };
+        let (claude_logged_in, seen) = login.join().unwrap_or_default();
+        Facts { claude_logged_in, advice: seen, ..facts }
     })
 }
 
@@ -297,14 +314,18 @@ fn probe(home: &Path) -> Facts {
     thread::scope(|s| {
         let github = s.spawn(|| answers("https://github.com"));
         let claude_ai = s.spawn(move || claude && answers("https://claude.ai"));
-        let logged_in = s.spawn(move || claude && detect::claude_logged_in());
+        // `claude auth status` once: whether Claude is logged in, and for the advice how.
+        let login = s.spawn(move || {
+            let method = if claude { detect::claude_auth_method() } else { None };
+            (method.as_deref().is_some_and(|m| m != "none"), advice::probe(home, method.as_deref()))
+        });
         let chatgpt = s.spawn(move || codex && answers(CHATGPT));
         let codex = s.spawn(|| probe_codex(home, &agents));
 
         let home_arg = home.to_string_lossy();
         let os = detect::os_release();
         let debian = detect::debian_like(&os);
-        Facts {
+        let facts = Facts {
             linux: LinuxFacts {
                 name: os.pretty.clone(),
                 debian,
@@ -321,11 +342,14 @@ fn probe(home: &Path) -> Facts {
             obsidian: detect::obsidian(home),
             github: github.join().unwrap_or(false),
             claude_ai: claude_ai.join().unwrap_or(false),
-            claude_logged_in: logged_in.join().unwrap_or(false),
+            claude_logged_in: false,
+            advice: advice::Facts::default(),
             chatgpt: chatgpt.join().unwrap_or(false),
             codex: codex.join().ok().flatten(),
             agents: agents.clone(),
-        }
+        };
+        let (claude_logged_in, seen) = login.join().unwrap_or_default();
+        Facts { claude_logged_in, advice: seen, ..facts }
     })
 }
 
@@ -502,6 +526,7 @@ fn decide(home: &Path, f: &Facts) -> Diagnosis {
         checks,
         todo,
         can_install,
+        advice: advice::decide(&f.advice),
     }
 }
 
@@ -917,11 +942,28 @@ mod tests {
             bun: Found::Version("1.4.2".into()),
             claude: Found::Version("2.1.296 (Claude Code)".into()),
             claude_logged_in: true,
+            advice: advice::Facts { claude: true, claude_connecte: true, ..advice::Facts::default() },
             obsidian: Found::Version("1.14.4".into()),
             agents: Agents::claude_alone(),
             chatgpt: false,
             codex: None,
         }
+    }
+
+    #[test]
+    fn the_advice_comes_with_the_checks() {
+        let tmp = tempfile::tempdir().unwrap();
+        let d = decide(tmp.path(), &healthy_facts());
+        let a = d.advice.expect("an advice");
+        assert_eq!(a.conseil, "claude");
+        assert!(a.text.starts_with("Tu as déjà Claude Code, connecté"), "{}", a.text);
+        assert!(a.hermes.is_none());
+        let hermes = Facts { advice: advice::Facts { hermes: true, ..healthy_facts().advice }, ..healthy_facts() };
+        assert!(decide(tmp.path(), &hermes).advice.unwrap().hermes.is_some());
+        // The JSON the window and --diagnose get.
+        let v = serde_json::to_value(decide(tmp.path(), &healthy_facts())).unwrap();
+        assert_eq!(v["advice"]["conseil"], "claude");
+        assert!(failed("x").advice.is_none());
     }
 
     #[cfg(target_os = "macos")]

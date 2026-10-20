@@ -98,7 +98,7 @@ const INSTALLER_LIMIT: Duration = Duration::from_secs(20 * 60);
 const BRAIN_LIMIT: Duration = Duration::from_secs(if cfg!(windows) { 60 } else { 40 } * 60);
 /// Our work folders (see TempDir): nothing else is ever named like them.
 const WORK_PREFIX: &str = ".biab-";
-const LINK_HOSTS: &[&str] = &["dashboard.voyageai.com", "docs.voyageai.com", "claude.com", "claude.ai", "obsidian.md"];
+const LINK_HOSTS: &[&str] = &["dashboard.voyageai.com", "docs.voyageai.com", "claude.com", "claude.ai", "obsidian.md", "chatgpt.com"];
 
 /// The sentence for the user: Ok when done, Err with the cause and what to do.
 type Step = Result<String, String>;
@@ -1349,6 +1349,16 @@ fn terminal_file(file: &str, bytes: &[u8], mode: u32) -> Result<PathBuf, String>
 }
 
 pub fn open_vault() -> Result<(), String> {
+    open_in_obsidian(None)
+}
+
+/// A note of the brain (an import's), the vault opened on it.
+pub fn open_note(note: &Path) -> Result<(), String> {
+    open_in_obsidian(Some(note))
+}
+
+/// The vault in Obsidian, on `note` when given and the vault is one Obsidian knows already.
+fn open_in_obsidian(note: Option<&Path>) -> Result<(), String> {
     let home = sys::home();
     let Some(vault) = detect::vault(&home) else {
         return Err("Ton cerveau n'est pas encore installé.".into());
@@ -1356,8 +1366,11 @@ pub fn open_vault() -> Result<(), String> {
     let Some(app) = obsidian_program(&home) else {
         return Err("Obsidian n'est pas encore installé.".into());
     };
+    if note.is_some_and(|n| !n.starts_with(&vault) || !n.is_file()) {
+        return Err("Cette note n'est plus dans ton cerveau.".into());
+    }
     let vault = vault.to_string_lossy();
-    let by_uri = format!("obsidian://open?path={}", percent_encode(&vault));
+    let by_uri = format!("obsidian://open?path={}", percent_encode(&note.map_or_else(|| vault.to_string(), |n| n.to_string_lossy().into_owned())));
     // A running Obsidian rewrites its vault list when it quits and would drop our
     // entry: ask it directly instead.
     if obsidian_running() {
@@ -1740,12 +1753,16 @@ mod tests {
             "https://claude.ai/download",
             "https://claude.ai",
             "https://obsidian.md/download?x=1#top",
+            "https://chatgpt.com",
+            "https://chatgpt.com/",
         ] {
             assert!(link_allowed(ok), "{ok} should open");
         }
         for bad in [
             "http://claude.ai/",
             "https://claude.ai.evil.com/",
+            "https://chatgpt.com.evil.com/",
+            "https://chat.openai.com/",
             "https://evil.com/claude.ai/",
             "https://claude.ai@evil.com/",
             "https://claude.ai:8443/",

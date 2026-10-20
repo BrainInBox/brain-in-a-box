@@ -1,8 +1,10 @@
+mod advice;
 mod agents;
 mod codex;
 mod config_guard;
 mod detect;
 mod diagnose;
+mod import;
 mod model;
 mod perms;
 mod redact;
@@ -14,7 +16,9 @@ mod steps;
 mod sys;
 mod voyage;
 
-use tauri::Emitter;
+use std::path::PathBuf;
+
+use tauri::{Emitter, Manager};
 
 #[tauri::command]
 async fn diagnose_machine() -> model::Diagnosis {
@@ -185,6 +189,118 @@ async fn open_repair_terminal(step: String) -> Result<(), String> {
     off_main(move || repair::open_terminal(&step)).await
 }
 
+/// Which AI the brain should work with, for the screen that asks it (where Codex can be chosen).
+#[tauri::command]
+async fn machine_advice() -> Option<model::Advice> {
+    tauri::async_runtime::spawn_blocking(|| advice::now(&sys::home())).await.ok().flatten()
+}
+
+/// One step of « Importer ma mémoire » off the main thread, with the installed importer.
+async fn importing<T: Send + 'static>(
+    f: impl FnOnce(&import::Kit) -> Result<T, import::ImportError> + Send + 'static,
+) -> Result<T, import::ImportError> {
+    tauri::async_runtime::spawn_blocking(move || f(&import::Kit::for_user()?))
+        .await
+        .unwrap_or_else(|e| Err(import::ImportError { code: "interne".into(), message: format!("Erreur interne : {e}") }))
+}
+
+/// Whether the import can run: the brain is there, and new enough to have the importer.
+#[tauri::command]
+async fn import_check() -> Result<(), import::ImportError> {
+    importing(|_| Ok(())).await
+}
+
+/// The sentence to paste in ChatGPT or Claude.
+#[tauri::command]
+async fn import_phrase() -> Result<String, import::ImportError> {
+    importing(import::phrase).await
+}
+
+/// The system's file picker, then the export read: None when nothing was picked. The reading's
+/// progress arrives as "import-progress" events.
+#[tauri::command]
+async fn import_pick(app: tauri::AppHandle) -> Result<Option<import::PlanView>, import::ImportError> {
+    importing(move |kit| {
+        let Some(paths) = pick_export(&app) else { return Ok(None) };
+        import::read_files(kit, &paths, &mut |ev| {
+            let _ = app.emit("import-progress", ev);
+        })
+        .map(Some)
+    })
+    .await
+}
+
+/// The answer pasted from ChatGPT or Claude.
+#[tauri::command]
+async fn import_paste(text: String) -> Result<import::PlanView, import::ImportError> {
+    importing(move |kit| import::read_paste(kit, &text)).await
+}
+
+/// Exactly what would leave for that many requests.
+#[tauri::command]
+async fn import_preview(appels: u32) -> Result<String, import::ImportError> {
+    importing(move |kit| import::preview(kit, appels)).await
+}
+
+/// The requests sent, the note written; "import-progress" events meanwhile.
+#[tauri::command]
+async fn import_run(app: tauri::AppHandle, appels: u32) -> Result<import::Outcome, import::ImportError> {
+    importing(move |kit| {
+        import::run(kit, appels, &mut |ev| {
+            let _ = app.emit("import-progress", ev);
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+fn import_cancel() {
+    import::cancel();
+}
+
+/// The plan not run is thrown away.
+#[tauri::command]
+async fn import_forget() {
+    let _ = importing(|kit| {
+        import::forget(kit);
+        Ok(())
+    })
+    .await;
+}
+
+/// « Voir la note »: the last import's note in Obsidian.
+#[tauri::command]
+async fn import_open_note() -> Result<(), String> {
+    off_main(|| {
+        let home = sys::home();
+        let note = detect::vault(&home).and_then(|v| import::note(&v)).ok_or_else(|| "Il n'y a pas de note à ouvrir.".to_string())?;
+        steps::open_note(&note)
+    })
+    .await
+}
+
+/// The picker of the system, opened from Rust: the window opens no dialog itself and never gives a
+/// path. Made on the main thread and awaited off it, as Tauri's dialog plugin does on every system.
+fn pick_export(app: &tauri::AppHandle) -> Option<Vec<PathBuf>> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let window = app.get_webview_window("main");
+    app.run_on_main_thread(move || {
+        let mut dialog = rfd::AsyncFileDialog::new()
+            .set_title("Ton export de ChatGPT ou de Claude")
+            .add_filter("Export (.zip, .json)", &["zip", "json"]);
+        if let Some(w) = &window {
+            dialog = dialog.set_parent(w);
+        }
+        let picked = dialog.pick_files();
+        std::thread::spawn(move || {
+            let _ = tx.send(tauri::async_runtime::block_on(picked));
+        });
+    })
+    .ok()?;
+    let files = rx.recv().ok().flatten()?;
+    Some(files.iter().map(|f| f.path().to_path_buf()).collect())
+}
+
 /// println! panics when the reader goes away (`--diagnose | head`): write and move on.
 fn out(line: &str) {
     use std::io::Write;
@@ -272,7 +388,17 @@ pub fn run() {
             open_vault,
             open_link,
             open_settings,
-            open_repair_terminal
+            open_repair_terminal,
+            machine_advice,
+            import_check,
+            import_phrase,
+            import_pick,
+            import_paste,
+            import_preview,
+            import_run,
+            import_cancel,
+            import_forget,
+            import_open_note
         ])
         .run(tauri::generate_context!())
         .expect("error while running Brain in a Box");

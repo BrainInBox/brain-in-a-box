@@ -372,18 +372,18 @@ fn parse(stdout: &str) -> Option<Agents> {
 /// The Python the kit's hooks run with. Without Apple's tools, /usr/bin/python3 opens their
 /// install window: theirs, or another one.
 #[cfg(target_os = "macos")]
-fn kit_python() -> Option<PathBuf> {
+pub(crate) fn kit_python() -> Option<PathBuf> {
     let apple = crate::detect::clt_dir().map(|d| d.join("usr/bin/python3")).filter(|p| sys::is_executable(p));
     apple.or_else(|| sys::which_all("python3").into_iter().find(|p| p != Path::new("/usr/bin/python3")))
 }
 
 #[cfg(target_os = "linux")]
-fn kit_python() -> Option<PathBuf> {
+pub(crate) fn kit_python() -> Option<PathBuf> {
     sys::find_tool("python3")
 }
 
 #[cfg(windows)]
-fn kit_python() -> Option<PathBuf> {
+pub(crate) fn kit_python() -> Option<PathBuf> {
     crate::detect::python().map(|p| p.exe)
 }
 
