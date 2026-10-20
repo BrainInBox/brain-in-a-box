@@ -56,7 +56,9 @@ def neuf(installe):
                           "apres": (3, lambda: "deja" if installe() else "diag")},
         "diag": {"titre": "J’ai fait le tour.", "texte": "Il manque Claude Code, Bun, Obsidian et ton cerveau. Je m’en occupe.",
                  "boutons": {"Revérifier": "diag-en-cours", "Tout installer": "voyage"},
-                 "textes": ["macOS 26.6 · Puce Apple · 7 Go de mémoire", "Claude Code", "À installer"]},
+                 "textes": ["macOS 26.6 · Puce Apple · 7 Go de mémoire", "Mon conseil" + NB + ":",
+                            "Ton cerveau marche avec Claude" + NB + ": il te faudra un abonnement Claude Pro ou Max.",
+                            "Claude Code", "À installer"]},
         "deja": {"titre": "Tout est déjà installé" + NB + "!",
                  "texte": "Ton cerveau cherche par mots-clés" + NB + ": tu peux lui apprendre à chercher par le sens.",
                  "boutons": {"Activer la recherche par le sens": None, "Continuer": "verif"}},
@@ -78,8 +80,17 @@ def neuf(installe):
                   "texte": "Connecte-toi pour que Claude puisse travailler avec ton cerveau.",
                   "boutons": {"Plus tard": "fini", "Connecter mon compte Claude": None}},
         "fini": {"titre": "Ton second cerveau est prêt" + NB + "!", "texte": "Claude retient maintenant ce que tu lui apprends.",
-                 "boutons": {"Activer la recherche par le sens": None, "Ouvrir mon cerveau dans Obsidian": None,
-                             "Personnaliser mon cerveau (15 min)": None}},
+                 "boutons": {"Activer la recherche par le sens": None, "Importer ma mémoire": "import-verif",
+                             "Ouvrir mon cerveau dans Obsidian": None, "Personnaliser mon cerveau (15 min)": None}},
+        # « Importer ma mémoire »: the robot goes to the copy-paste and back, no AI asked.
+        "import-verif": {"titre": "Je prépare l’import…", "apres": (3, "import-choix")},
+        "import-choix": {"titre": "D’où vient ta mémoire" + NB + "?",
+                         "texte": "ChatGPT ou Claude savent déjà des choses sur toi. Claude en tire l’essentiel, je le range dans ton cerveau.",
+                         "boutons": {"Retour": "fini", "Je copie-colle une réponse": "import-collage", "Choisir mon fichier d’export": None}},
+        "import-collage": {"titre": "Demande-lui ce qu’il sait de toi", "texte": "Trois étapes, deux minutes. Rien ne part avant que tu valides.",
+                           "boutons": {"Copier la phrase": None, "Ouvrir ChatGPT": None, "Ouvrir Claude": None, "Retour": "import-choix",
+                                       "Continuer": None},
+                           "textes": ["Copie cette phrase.", "Je change d'outil et j'ai besoin d'exporter mes données. Liste chaque souvenir…"]},
     }
 
 
@@ -92,9 +103,13 @@ def neuf_codex(installe):
                       "boutons": {"Choisir mon IA": "choix"}}
     e["choix"] = {"titre": "Avec quelle IA veux-tu travailler" + NB + "?",
                   "texte": "Ton cerveau marche avec Claude, avec Codex, ou avec les deux.",
-                  "boutons": {"Claude": "diag-en-cours", "Codex": "diag-en-cours", "Les deux": "resume"}}
+                  "boutons": {"Claude": "diag-en-cours", "Codex": "diag-en-cours", "Les deux": "resume"},
+                  "textes": ["Mon conseil" + NB + ":", "Ton cerveau marche avec Claude" + NB + ": il te faudra un abonnement Claude Pro ou Max."]}
+    # Where Codex can be chosen, the advice is on the choice screen.
+    e["diag"] = dict(e["diag"], textes=[x for x in e["diag"]["textes"] if "conseil" not in x and "Pro ou Max" not in x])
     e["resume"] = {"titre": "Lequel écrit le résumé de chaque soir" + NB + "?", "boutons": {"Retour": "choix", "Claude": None, "Codex": None}}
     e["diag"] = dict(e["diag"], texte="Il manque Codex, Bun, Obsidian et ton cerveau. Je m’en occupe.")
+    e["import-choix"] = dict(e["import-choix"], texte="ChatGPT ou Claude savent déjà des choses sur toi. Codex en tire l’essentiel, je le range dans ton cerveau.")
     e["voyage"] = dict(e["voyage"], boutons=dict(e["voyage"]["boutons"], **{"Passer (recherche par mots-clés)": "codex"}))
     e["codex"] = {"titre": "J’installe Codex.", "texte": "Étape 1 sur 4. L’outil officiel d’OpenAI.", "apres": (30, "bun")}
     e["installe"] = dict(e["installe"], apres=(2, "verif-codex"))
@@ -105,8 +120,8 @@ def neuf_codex(installe):
                         "boutons": {"Plus tard": "fini", "Connecter Codex à mon compte ChatGPT": None}}
     # The ChatGPT login put off: Codex's login comes first, the onboarding after it (§4.3).
     e["fini"] = dict(e["fini"], texte="Codex retient maintenant ce que tu lui apprends.",
-                     boutons={"Activer la recherche par le sens": None, "Ouvrir mon cerveau dans Obsidian": None,
-                              "Connecter Codex à mon compte ChatGPT": None},
+                     boutons={"Activer la recherche par le sens": None, "Importer ma mémoire": "import-verif",
+                              "Ouvrir mon cerveau dans Obsidian": None, "Connecter Codex à mon compte ChatGPT": None},
                      textes=["Pense à connecter Codex à ton compte ChatGPT. S’il te le demande au premier lancement, "
                              "choisis « Sign in with ChatGPT », jamais une clé API : elle serait facturée."])
     return e
@@ -372,13 +387,13 @@ class Walk(Base):
         pa = self.parcours(p)
         took = pa.premier_lancement({"HOME": "/h"})
         self.assertEqual(p.clics, ["Vérifier mon Mac", "Tout installer", "Passer (recherche par mots-clés)",
-                                   "Plus tard", "Plus tard"])
+                                   "Plus tard", "Plus tard", "Importer ma mémoire", "Je copie-colle une réponse", "Retour", "Retour"])
         self.assertGreater(took, 500)
         shots = p.captures
         self.assertEqual(shots[:5], ["01-bienvenue.png", "02-diagnostic-en-cours.png", "03-diagnostic.png",
                                      "04-voyage.png", "05-etape-claude.png"])
         for name in ("etape-bun", "etape-obsidian", "etape-brain", "etape-brain-2min", "etape-brain-4min",
-                     "etape-brain-6min", "connexion-installation", "connexion", "fini"):
+                     "etape-brain-6min", "connexion-installation", "connexion", "fini", "import-choix", "import-collage"):
             self.assertTrue(any(re.match(r"^\d\d-%s\.png$" % name, s) for s in shots), name)
         self.assertEqual(shots, sorted(shots))
         self.assertEqual(sorted(os.listdir(self.shots)), shots)
@@ -393,12 +408,16 @@ class Walk(Base):
         brain = next(e for e in b["ecrans"] if e["ecran"] == "etape-brain")
         self.assertGreaterEqual(brain["duree_s"], 400)
         self.assertEqual(b["bibo"]["titre"], "Ton second cerveau est prêt !")
+        self.assertIn("app-import-collage", self.t.vus)
+        self.assertEqual(self.t.details["conseil"], "Ton cerveau marche avec Claude : il te faudra un abonnement Claude Pro ou Max.")
+        self.assertTrue(self.t.details["import"]["phrase"])
 
     def test_codex_chosen_alone_is_clicked_through_to_the_brain(self):
         p = FauxPilote(self.h, codex=True)
         pa = ta.Parcours(self.t, p, self.shots, horloge=self.h, dormir=self.h.dormir, codex=True)
         pa.premier_lancement({})
-        self.assertEqual(p.clics, ["Choisir mon IA", "Codex", "Tout installer", "Passer (recherche par mots-clés)", "Plus tard"])
+        self.assertEqual(p.clics, ["Choisir mon IA", "Codex", "Tout installer", "Passer (recherche par mots-clés)", "Plus tard",
+                                   "Importer ma mémoire", "Je copie-colle une réponse", "Retour", "Retour"])
         for step in ("app-bienvenue", "app-choix", "app-diagnostic", "app-etape-codex", "app-verif-compte-codex",
                      "app-connexion-chatgpt", "app-fini"):
             self.assertIn(step, self.t.vus)
@@ -470,6 +489,42 @@ class Walk(Base):
                 ta.Parcours(Noms(), p, self.shots, horloge=h, dormir=h.dormir).premier_lancement({})
             self.assertIn(said, str(cm.exception))
 
+    def test_the_advice_and_the_import_are_on_the_screens(self):
+        # The advice at the diagnosis (the choice screen where Codex is open), « Importer ma mémoire » at the
+        # end, its copy-paste showing the sentence to paste: each missing one fails, named.
+        diag = neuf(lambda: False)["diag"]
+        fini = neuf(lambda: False)["fini"]
+        collage = neuf(lambda: False)["import-collage"]
+        for codex, change, said in (
+                (False, {"diag": dict(diag, textes=["Claude Code", "À installer"])}, "le diagnostic ne donne pas « Mon conseil »"),
+                (True, {"choix": dict(neuf_codex(lambda: False)["choix"], textes=[])}, "l'écran du choix ne donne pas « Mon conseil »"),
+                (False, {"fini": dict(fini, boutons={k: v for k, v in fini["boutons"].items() if k != "Importer ma mémoire"})},
+                 "l'écran final n'a pas le bouton « Importer ma mémoire »"),
+                (False, {"import-collage": dict(collage, textes=["Copie cette phrase.", "Je prépare la phrase…"])},
+                 "l'écran du copier-coller ne montre pas la phrase à coller"),
+                (False, {"import-verif": {"titre": "Je prépare l’import…", "apres": (1, "a-jour")},
+                         "a-jour": {"titre": "Ton cerveau doit d’abord être mis à jour",
+                                    "texte": "Il a été installé avant l’import de mémoire.", "boutons": {"Retour": "fini"}}},
+                 "l'app ne trouve pas l'import dans le cerveau qu'elle vient d'installer"),
+                (False, {"import-verif": {"titre": "Je prépare l’import…", "apres": (1, "erreur")},
+                         "erreur": {"titre": "Je ne peux pas importer pour l’instant.", "texte": "Python n’est pas là.",
+                                    "boutons": {"Retour": "fini"}}},
+                 "« Importer ma mémoire » s'arrête sur une erreur")):
+            h = Horloge()
+            p = FauxPilote(h, change=change, codex=codex)
+            with self.subTest(said=said), self.assertRaises(terrain.Echec) as cm:
+                ta.Parcours(Noms(), p, self.shots, horloge=h, dormir=h.dormir, codex=codex).premier_lancement({})
+            self.assertIn(said, str(cm.exception))
+
+    def test_the_sentence_may_come_a_moment_after_the_screen(self):
+        # The window asks the kit for the sentence when the screen shows: the robot waits for it, not forever.
+        h = Horloge()
+        p = FauxPilote(h, change={"import-collage": {"titre": "Demande-lui ce qu’il sait de toi", "boutons": {"Retour": "import-choix"},
+                                                     "textes": ["Je prépare la phrase…"], "apres": (6, "import-collage-2")},
+                                  "import-collage-2": dict(neuf(lambda: False)["import-collage"])})
+        ta.Parcours(Noms(), p, self.shots, horloge=h, dormir=h.dormir).premier_lancement({})
+        self.assertEqual(p.clics[-4:], ["Importer ma mémoire", "Je copie-colle une réponse", "Retour", "Retour"])
+
     def test_quick_reads_stand_for_full_ones_while_bibo_says_the_same(self):
         slow, quick = FauxPilote(self.h), FauxPilote(Horloge())
         quick.vite = True
@@ -499,7 +554,8 @@ class Walk(Base):
         pa = ta.Parcours(Noms(), quick, self.shots, horloge=quick.h, dormir=quick.h.dormir)
         pa.premier_lancement({})
         self.assertEqual(len([n for n in quick.captures if n.endswith("-etape-bun.png")]), 1)
-        self.assertEqual(quick.clics, slow.clics)
+        # The slow one failed at the end of the install, before « Importer ma mémoire ».
+        self.assertEqual(quick.clics, slow.clics + ["Importer ma mémoire", "Je copie-colle une réponse", "Retour", "Retour"])
 
     def test_every_step_of_the_plan_is_counted(self):
         vus = lambda *etapes: {cle: ta.Ecran(True, "x", texte) for cle, texte in etapes}
@@ -522,7 +578,7 @@ class Walk(Base):
         self.assertEqual(click["bouton"], "Plus tard")
         self.assertLessEqual(click["a_s"] - shown["debut_s"], 5, "not at the next periodic full read")
         self.assertEqual([c["bouton"] for c in pa.clics], ["Vérifier mon Mac", "Tout installer",
-                                                           "Passer (recherche par mots-clés)", "Plus tard", "Plus tard"])
+                                                           "Passer (recherche par mots-clés)", "Plus tard", "Plus tard", "Importer ma mémoire", "Je copie-colle une réponse", "Retour", "Retour"])
 
     def test_opened_again_it_says_all_is_installed(self):
         p = FauxPilote(self.h)
@@ -783,7 +839,8 @@ class ReadingTheWindow(unittest.TestCase):
             app = ta.norm(f.read().replace("${OS.machine}", "Mac"))
         words = [start for _, start in ta.ECRANS] + list(ta.ETAPES) + list(ta.BOUTONS_ECHEC) + [
             "Vérifier mon Mac", "Tout installer", "Passer (recherche par mots-clés)", "Plus tard", "Continuer",
-            "Personnaliser mon cerveau (15 min)", "Ouvrir mon cerveau dans Obsidian"]
+            "Personnaliser mon cerveau (15 min)", "Ouvrir mon cerveau dans Obsidian", "Importer ma mémoire",
+            "Je copie-colle une réponse", "Retour", ta.CONSEIL]
         for w in words:
             self.assertIn(ta.norm(w), app, w)
 
@@ -1224,7 +1281,7 @@ class WindowsApp(Base):
         f.ecrans["brain"] = dict(f.ecrans["brain"], texte="Étape 2 sur 2. C’est l’étape la plus longue : 10 à 20 minutes.")
         self.parcours(f).premier_lancement({})
         self.assertEqual(f.clics, ["Vérifier mon PC", "Tout installer", "Passer (recherche par mots-clés)",
-                                   "Plus tard", "Plus tard"])
+                                   "Plus tard", "Plus tard", "Importer ma mémoire", "Je copie-colle une réponse", "Retour", "Retour"])
         self.assertFalse([c for c in f.captures if "etape-bun" in c or "etape-obsidian" in c])
 
 
@@ -1903,7 +1960,8 @@ class Scenario(Base):
     def test_what_the_vm_had_before_the_app_is_said(self):
         p = FauxPilote(self.h, home=Path(self.tmp) / "home")
         p.neufs = ("Outils Apple (git, python3)",)
-        p.ecrans["diag"]["textes"] = ["Version de macOS", ": OK", "macOS 26.6.2", "Outils Apple (git, python3)", ": OK",
+        p.ecrans["diag"]["textes"] = ["Mon conseil :", "Ton cerveau marche avec Claude : il te faudra un abonnement Claude Pro ou Max.",
+                                      "Version de macOS", ": OK", "macOS 26.6.2", "Outils Apple (git, python3)", ": OK",
                                       "git et python3 sont là.", "Bun (le moteur de la mémoire)", ": À installer", "Pas encore installé."]
         row, _, _, _, _, _ = self.run_it(pilote=p)
         self.assertEqual(row["statut"], "ok", row["raison"])

@@ -430,6 +430,8 @@ jobs:
           if (-not $d.can_install) { throw 'a fresh runner cannot install' }
           foreach ($step in @($d.todo)) { if ($step -notin 'claude', 'brain') { throw "unknown step $step" } }
           if ($d.ram_gb -le 0 -or $d.disk_free_gb -le 0) { throw "memory $($d.ram_gb), free $($d.disk_free_gb)" }
+          # Bibo's advice, from _conseil.py's rules: Codex is closed, so Claude.
+          if ($d.advice.conseil -ne 'claude' -or -not $d.advice.text) { throw "advice: $($d.advice | ConvertTo-Json -Compress)" }
 
       - name: Without its window, the app examines the Linux machine and says so in JSON
         if: runner.os == 'Linux'
@@ -448,6 +450,8 @@ jobs:
           assert set(d["todo"]) <= {"paquets", "claude", "bun", "obsidian", "brain"}, d["todo"]
           assert "paquets" not in d["todo"], "a runner has git, python3, curl and unzip"
           assert d["ram_gb"] > 0 and d["disk_free_gb"] > 0, (d["ram_gb"], d["disk_free_gb"])
+          # Bibo's advice, from _conseil.py's rules: Codex is closed, so Claude.
+          assert d["advice"]["conseil"] == "claude" and d["advice"]["text"], d.get("advice")
           print("linux:", d["os"], len(ids), "checks, to do:", d["todo"])
           PY
 

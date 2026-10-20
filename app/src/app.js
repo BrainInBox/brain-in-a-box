@@ -2067,7 +2067,7 @@ function exportHelp() {
 
 async function showImport() {
   const gen = screen('import');
-  say('thinking', 'Un instant…');
+  say('thinking', 'Je prépare l’import…');
   try {
     await invoke('import_check');
   } catch (e) {

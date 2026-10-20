@@ -2995,7 +2995,7 @@ Recherche par le sens : OKActivée (Voyage AI)
 
 #223
 == import
-Un instant…
+Je prépare l’import…
 
 #224
 == import
