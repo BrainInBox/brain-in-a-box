@@ -434,13 +434,14 @@ function reading() {
 // The clipboard's image: a PNG as it is, another kind (a screenshot in JPEG or TIFF) redrawn as one.
 async function imageOf(data) {
   const files = [];
-  for (const item of (data && data.items) || []) {
+  // Array.from: a DataTransferItemList is array-like everywhere, iterable not in every webview.
+  for (const item of Array.from((data && data.items) || [])) {
     if (item.kind === 'file' && /^image\//.test(item.type)) {
       const f = item.getAsFile();
       if (f) files.push(f);
     }
   }
-  if (!files.length) for (const f of (data && data.files) || []) if (/^image\//.test(f.type)) files.push(f);
+  if (!files.length) for (const f of Array.from((data && data.files) || [])) if (/^image\//.test(f.type)) files.push(f);
   const file = files.find((f) => f.type === 'image/png') || files[0];
   if (!file) return null;
   if (file.type === 'image/png') return new Uint8Array(await file.arrayBuffer());
