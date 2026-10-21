@@ -40,7 +40,7 @@ const IMAGE: Duration = Duration::from_secs(5);
 const STOP: Duration = Duration::from_secs(2);
 const POLL: Duration = Duration::from_millis(100);
 /// ScreenCaptureKit's codes (SCStreamErrorCode): the user declined (the permission), no capture source
-/// left (the window closed).
+/// left (the window gone).
 const DECLINED: isize = -3801;
 const NO_SOURCE: isize = -3815;
 
@@ -274,19 +274,29 @@ pub fn grab(chosen: &Window) -> Result<Rgba, Rate> {
     one_image(&filter.0)
 }
 
-fn rate_of(error: &NSError) -> Rate {
-    match error.code() {
+/// A stream stopped by the system.
+fn rate_of(code: isize) -> Rate {
+    match code {
         DECLINED => Rate::Indisponible,
         NO_SOURCE => Rate::Introuvable,
         _ => Rate::Noire,
     }
 }
 
-/// What a stream gave: its first complete image; before any, whether it gave a frame at all, and
-/// whether it said it had nothing to show (a blank frame, or suspended: the window minimized).
+/// A stream the system would not start: the window closed since the choice (macOS 14, 15 and 26 say
+/// « Start stream failed », 1003), to be picked again; the permission refused, paste mode.
+fn refused_start(code: isize) -> Rate {
+    if code == DECLINED {
+        Rate::Indisponible
+    } else {
+        Rate::Introuvable
+    }
+}
+
+/// What a stream gave: its first complete image, and whether it said, before any, that it had nothing
+/// to show (a blank frame, or suspended: the window minimized).
 struct Frames {
     image: Arc<Slot<Result<Rgba, Rate>>>,
-    some: AtomicBool,
     nothing: AtomicBool,
 }
 
@@ -304,7 +314,6 @@ define_class!(
             if kind != SCStreamOutputType::Screen {
                 return;
             }
-            self.ivars().some.store(true, Ordering::SeqCst);
             match status(sample) {
                 Some(SCFrameStatus::Complete) => {
                     // SAFETY: the stream's buffer, read during its callback.
@@ -320,7 +329,7 @@ define_class!(
     unsafe impl SCStreamDelegate for Output {
         #[unsafe(method(stream:didStopWithError:))]
         fn did_stop(&self, _stream: &SCStream, error: &NSError) {
-            self.ivars().image.set(Err(rate_of(error)));
+            self.ivars().image.set(Err(rate_of(error.code())));
         }
     }
 );
@@ -372,7 +381,7 @@ fn one_image(filter: &SCContentFilter) -> Result<Rgba, Rate> {
     if !(w >= 1.0 && h >= 1.0 && w <= f64::from(MAX_SIDE) && h <= f64::from(MAX_SIDE)) {
         return Err(Rate::Noire);
     }
-    let frames = Arc::new(Frames { image: Slot::new(), some: AtomicBool::new(false), nothing: AtomicBool::new(false) });
+    let frames = Arc::new(Frames { image: Slot::new(), nothing: AtomicBool::new(false) });
     let slot = frames.image.clone();
     let output = Output::new(frames.clone());
     let queue = DispatchQueue::new("com.braininbox.guide.image", None);
@@ -395,18 +404,14 @@ fn one_image(filter: &SCContentFilter) -> Result<Rgba, Rate> {
     let on_start = RcBlock::new(move |error: *mut NSError| {
         // SAFETY: ScreenCaptureKit's error, or null.
         if let Some(e) = unsafe { error.as_ref() } {
-            started.set(Err(rate_of(e)));
+            started.set(Err(refused_start(e.code())));
         }
     });
     // SAFETY: our stream; the block is copied by the call.
     unsafe { stream.startCaptureWithCompletionHandler(Some(&on_start)) };
-    // No image in time. A stream that said it had nothing to show: a window minimized (macOS 26). One
-    // that gave no frame at all: a window closed (macOS 15, 26).
-    let nothing = || match (frames.some.load(Ordering::SeqCst), frames.nothing.load(Ordering::SeqCst)) {
-        (_, true) => Rate::Reduite,
-        (false, false) => Rate::Introuvable,
-        (true, false) => Rate::Noire,
-    };
+    // No image in time: a stream that said it had nothing to show is a window minimized (macOS 14, 15
+    // and 26); any other, an image Bibo cannot have.
+    let nothing = || if frames.nothing.load(Ordering::SeqCst) { Rate::Reduite } else { Rate::Noire };
     let image = slot.wait(IMAGE, &|| false).unwrap_or_else(|| Err(nothing()));
     // Stopped before its output and queue go: no frame comes to them after.
     let stopped: Arc<Slot<()>> = Slot::new();
@@ -416,4 +421,24 @@ fn one_image(filter: &SCContentFilter) -> Result<Rgba, Rate> {
     unsafe { stream.stopCaptureWithCompletionHandler(Some(&on_stop)) };
     stopped.wait(STOP, &|| false);
     image
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// macOS 14.8, 15.7 and 26.6 (the desk job): the stream of a window closed since the choice is
+    /// refused at its start (« Start stream failed », 1003). The window is gone, to be picked again;
+    /// only the permission refused means paste mode.
+    #[test]
+    fn a_stream_refused_at_its_start_is_a_window_gone() {
+        assert_eq!(refused_start(1003), Rate::Introuvable);
+        assert_eq!(refused_start(NO_SOURCE), Rate::Introuvable);
+        assert_eq!(refused_start(-3805), Rate::Introuvable);
+        assert_eq!(refused_start(DECLINED), Rate::Indisponible);
+        // Stopped once started: the window gone, the permission, or an image Bibo cannot read.
+        assert_eq!(rate_of(NO_SOURCE), Rate::Introuvable);
+        assert_eq!(rate_of(DECLINED), Rate::Indisponible);
+        assert_eq!(rate_of(-3805), Rate::Noire);
+    }
 }
