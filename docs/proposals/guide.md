@@ -8,6 +8,8 @@ Rédigée le 2026-10-21 sur `origin/master` fa1ed66, d'après le code et les ess
 
 **Phase 0 faite le 2026-10-21** : résultats et corrections en §15 (« Phase 0 — résultats »), qui prime sur le corps. En bref : modèle **Opus**, seuils inchangés, `--effort low` gardé ; sélecteur macOS **GO** avec un `SCStream` d'une image (pas `SCScreenshotManager`) ; Codex : `-i` relatif ; alphabet du code sans U ; aucun refus « cyber » mesuré.
 
+**Phase 4 faite le 2026-10-21** (§18) : la fenêtre du guide en mode collage (G1 à G10), `ui.js`, les entrées de l'accueil et de la fin, l'enregistrement de la procédure dans `Guides/` (avancé de la phase 5), la maquette et `screens-guide.txt`. Le guide marche de bout en bout en collant une capture, sur les 3 OS.
+
 **Phase 3 faite le 2026-10-21** (§17) : `guide.rs`, `shot.rs` (avancé de 2a), les commandes et la fenêtre « guide », `--guide-ask`, `consignes.md` et le skill `guide-moi` ; mode collage seulement, sans entrée dans l'interface (phase 4).
 
 **Phase 1 faite le 2026-10-21** (§16) : `claude.rs` sorti de `repair.rs` sans changement, puis l'image sur stdin, les nouvelles règles de `Watch` (refus du modèle, `modelUsage`, limites d'usage), le côté Python et le test de contrat. Écarts : `--guide-ask` en phase 3, six fichiers de code au lieu de cinq.
@@ -916,3 +918,49 @@ Même appel (s1, Opus, low) avec et sans : ligne d'init identique champ par cham
 - le cas « forfait sans Opus » (phase 0 g) n'a toujours pas d'erreur dédiée ;
 - l'accueil, les textes de G1 à G10, la page `claude.ai/settings/data-privacy-controls` dans la liste des liens connus, et Cmd+V sur Mac (menu Édition) : phase 4 ;
 - le contrôle de `consignes.md` dans `test-hooks.sh` (section 11) : phase 5. Côté app, `print_consignes_is_the_rules_file_byte_for_byte` le fait déjà.
+
+## 18. Phase 4 — fait et écarts (2026-10-21)
+
+**Prime sur le corps et sur §15 à §17 là où elle les contredit.** Branche `feat/bibo-guide`, PR brouillon #59. Aucun appel réel à `claude -p`, aucune capture d'écran : la maquette dessine un logiciel inventé.
+
+**Livré**
+1. **`ui.js`**, commit à part, déplacement pur : le dessin de Bibo, les icônes, `detectSystem`, `nbsp`, `h`, `fromMarkup`, `icon`, `button`, `invoke`, `errText`. Les 66 scénarios de `screens-claude.txt` restent identiques à ce commit, et l'`app.js` de master tourne encore seul (`--app`).
+2. **La fenêtre du guide** (`guide.html` sans script en ligne, `guide.js`, un bloc de `styles.css`), G1 à G10 en mode collage :
+   - le collage : une zone qui prend Cmd+V ou Ctrl+V (et le menu contextuel « Coller ») ; un PNG part tel quel, une autre image (JPEG, TIFF) est redessinée en PNG dans la page ; ou un fichier glissé sur Bibo, lu en Rust (`guide-depose`) ;
+   - l'aperçu est l'image exacte qui part, bande comprise ; les zones à cacher se tracent dessus et sont peintes en Rust ; « Annuler la dernière » ;
+   - une étape : la consigne, les bandeaux (clic définitif, écran qui donne des ordres), la capture et son ellipse, le zoom, « 12 regards sur 40 » et la note jaune à 80 % ;
+   - les variantes (question et ses choix, pas ici, bloqué), « On dirait que rien n'a changé », « Je suis bloqué » (puces, champ libre, et au troisième « On n'y arrive pas ensemble »), la fin et son récapitulatif ;
+   - chaque cas de §2 a ses mots et sa suite : connexion (un terminal, une fois, puis l'attente), « Mettre à jour », clé facturée, limite et son heure, hors ligne, délai, refus, lancement non conforme, budget ;
+   - mode réduit (360×220 : la consigne, le zoom, « C'est fait »), fenêtre large (900 px) au clic sur l'image, épingle.
+3. **G10, avancé de la phase 5** : `guide_brouillon` et `guide_enregistrer` (`guide.rs`) :
+   - le brouillon vient des `resume_etape`, sans appel à l'IA ; liens, adresses, IBAN et suites de 3 chiffres ou plus deviennent « … », et Bibo le dit ;
+   - à l'enregistrement, Bibo relit tout ce que la personne a gardé : le filtre §4.6 (refus nommé : « L'étape 2 contient un lien, un numéro ou une commande »), puis les règles de `_vault_write.clean_item` (pas de `<`, de `` ` ``, de clôture, de commentaire Obsidian, de marque de liste ou de titre en tête, d'image intégrée ; secrets masqués) ; 80 caractères pour le titre, 30 étapes de 160 au plus ;
+   - la note : `Guides/<logiciel>-<titre>.md`, son en-tête écrit par Bibo (`allowed-tools: []`, `source: "bibo-guide"`), la forme même que `procedure` relit (testé aller-retour) ;
+   - écrite à côté puis liée au premier nom libre (`-2`, `-3`…) : jamais par-dessus un fichier, jamais à travers un lien, jamais dans un `Guides` qui serait un lien ; une fois par séance ;
+   - « … et envoyée chaque nuit sur github.com » : l'hôte d'`origin` seul, lu dans `.git/config`, jamais son utilisateur ni son jeton.
+4. **Les entrées (G0)** : avec le cerveau et Claude Code sur le disque (`guide_offert`, rien n'est lancé), l'accueil dit « Content de te revoir ! », « Guide-moi dans un logiciel » en principal, « Vérifier mon Mac » à côté (« Choisir mon IA » là où Codex peut être choisi). La fin a une carte « Nouveau : je peux te guider pas à pas dans n'importe quel logiciel » et « Essayer le guide », quand Claude est choisi.
+5. **Commandes ajoutées** : `guide_offert`, `guide_fermer` (la fenêtre se ferme, la séance avec elle, et la fenêtre d'installation revient), `guide_brouillon`, `guide_enregistrer`, `open_claude_update` (`claude update` dans un terminal, le script de la connexion avec une autre sous-commande fixe).
+6. **Maquette** `app/dev/guide-mock.html` : `guide.rs` rejoué sur « Atelier Démo », un logiciel inventé dessiné en SVG (clients et montants inventés), donc aucune image dans le dépôt. `screens.mjs` fait tourner ses 40 scénarios dans `screens-guide.txt` ; un scénario qui n'arrive pas à son écran échoue. Le job `app` vérifie que les trois scripts se lisent.
+7. **Terrain** : le robot de `terrain_app.py` connaît l'accueil de retour. Au deuxième lancement (Claude seul), l'app doit dire « Content de te revoir » et proposer le guide, sans l'ouvrir : aucune IA n'est appelée sur ces VM.
+
+**Écarts (priment sur le corps)**
+1. **Capture automatique : rien en v1.** Ni choix au clic, ni liste de fenêtres, ni sélecteur (phases 2a, 2b). En collage, « Autre fenêtre » et « Regarde à nouveau » demandent une nouvelle capture ; Bibo ne change pas de coin (le cadre de la fenêtre est inconnu) ; la case « Ne plus me montrer l'aperçu » n'existe pas (R8).
+2. **Le champ « Logiciel » est tapé**, avec des suggestions (la liste intégrée de G2) : une capture collée ne dit pas de quelle app elle vient. Il est sur l'écran de l'objectif.
+3. **G1, ligne 1, dit le collage** : « Je ne vois que les captures que tu colles ici, rien d'autre de ton écran. » Pas de phrase Team ou Enterprise : `auth status` ne dit pas le forfait (phase 0 g, ouverte).
+4. **G10 : la zone modifiable, c'est le titre et les étapes**, une par ligne. L'en-tête est toujours écrit par Bibo, jamais par la personne. La date est celle du jour en UTC.
+5. **« Regarde à nouveau »** demande `debut` tant qu'aucune étape n'a été montrée, `fait` ensuite.
+6. **« Arrêter le guide » ferme la fenêtre**, comme « Fermer le guide ». Après un arrêt ou un refus, l'aperçu est redemandé à Rust : la bande montrée est celle du prochain envoi.
+7. **Ellipse** : dessinée en SVG dans les pixels de l'image (`viewBox`), sans aucun calcul d'échelle ; elle contient la boîte (demi-axes × √2, plus 4 px) au lieu de « + 6 px », qui coupait les coins ; trait de largeur fixe à l'écran. **Zoom** : la même image en fond, à sa taille (au moins deux fois la vue entière dès que l'image dépasse 740 px de large), centrée par CSS seule.
+8. **`Ia::Arrete`** : un Claude lancé une fois hors de son cadre n'est plus « trop ancien » (`unsupported`) ; une mise à jour n'y changerait rien.
+9. **Cmd+V sur Mac** : Tauri 2.11 pose son menu Édition par défaut quand l'app n'en définit pas (`Builder::build`, `enable_macos_default_menu`), vérifié dans ses sources. Le collage dans la vraie fenêtre reste à voir en phase 5 (terrain).
+10. **Fichiers** : au-delà des cinq prévus (`guide.html`, `guide.js`, `ui.js`, `app.js`, `styles.css`, plus la maquette) : `guide.rs`, `lib.rs` et `steps.rs` (G10 et les commandes), `terrain_app.py` et son test (l'accueil de retour), `test.yml` (trois scripts vérifiés).
+11. **`screens-claude.txt`** ne change que pour l'accueil (`s=installe`, `s=motscles`) et la fin (la carte), vérifié écran par écran : mêmes scénarios, même nombre d'écrans, aucun autre mot.
+
+**Vérifié** : en local (macOS), `cargo clippy --all-targets -D warnings` (aussi pour la cible Windows, sans édition de liens), `cargo test` (297 + 4 + 1), `python3 -I -m unittest discover -s engine/tests` (751), `test-hooks.sh` (229/229), `screens.mjs` (66 scénarios de l'installation, 11 vérifications de Codex, 40 du guide), `actionlint`. Playwright sur la maquette : l'étape (ellipse pleine et pointillée, zoom), le mode réduit à 360×220, l'aperçu avec une zone cachée, le collage en mode sombre, l'enregistrement, l'accueil de retour et la fin de l'installation.
+
+**Mutations** : 18 protections retirées une à une côté Rust (filtre des étapes et du titre, données retirées, `<`, `` ` ``, marques de tête, images intégrées, IBAN, coupe, 30 étapes, guillemets du titre, lien `Guides`, jamais par-dessus, `origin` seul, hôte sans utilisateur, « une fois par séance », « j'ai retiré », `Arrete`) et 16 côté page (bandeau sensible, note des pointillés, `debut`/`fait`, troisième blocage, élision « d'Odoo », « rien n'a changé », ellipse et zoom au niveau « aucun », G1 la première fois, bouton d'enregistrement, procédure connue, ligne du va-et-vient, accueil et carte de la fin, note jaune, zones oubliées quand la taille change) : chacune fait rougir au moins un test. Deux restaient d'abord vertes (le zoom au niveau « aucun », les zones oubliées) : le zoom a reçu un texte pour les lecteurs d'écran, et la maquette un scénario de capture d'une autre taille.
+
+**Reste ouvert** :
+- le parcours terrain `guide` (fausse IA, collage dans la vraie fenêtre, note écrite) et la vérification réelle de nuit : phase 5 ;
+- le cas « forfait sans Opus » (phase 0 g) n'a toujours pas d'erreur dédiée ;
+- le contrôle de `consignes.md` dans `test-hooks.sh` : phase 5.
