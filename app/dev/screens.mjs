@@ -141,7 +141,29 @@ const GUIDE_SCENARIOS = [
   'g=vieux&go=vieux',
   'g=arrete&go=arrete',
   'g=installer&go=installer',
+  // The review's (a beginner's stops): the capture of before pasted again, the filter alone, the limit
+  // today or tomorrow, a client's name in a step to save, back from the first capture, the reduced
+  // mode kept from a step to the next and its note, no image in what was pasted, a JPEG dropped.
+  'g=ok&go=apercu&nth=2&meme=1',
+  'g=filtre&go=bloque',
+  'g=quota&go=erreur&reprise=7200',
+  'g=quota&go=erreur&reprise=86400',
+  'g=ambigu&go=enregistrer',
+  'g=ok&go=objectif&nth=2&click=back',
+  'g=pointille&go=etape&click=reduire',
+  'g=ok&go=etape&nth=2&click=reduire',
+  'g=ok&go=apercu&vide=1',
+  'g=ok&go=apercu&vide=1&os=windows',
+  'g=ok&go=erreur&depose=jpeg',
+  'g=ok&go=etape&nth=2&lache=1',
 ];
+
+// The guide's window sizes, as the page asks Rust for them, in turn: the image made wide to hide a zone
+// and kept so while zones are drawn, the reduced mode kept from a step to the next.
+const GUIDE_SIZES = {
+  'g=ok&go=apercu&nth=2&click=cacher&cache=1': 'large',
+  'g=ok&go=etape&nth=2&click=reduire': 'reduit normal reduit',
+};
 
 // Where Codex can be chosen (&porte=1, as the tests open it): what some screens must say, or not.
 const has = (shots, start, text) => shots.some((s) => s.startsWith(`== ${start}`) && s.includes(text));
@@ -384,9 +406,32 @@ function seeded() {
 
 // ── One run ────────────────────────────────────────────────────────────────
 
+// The guide's reduced mode hides what styles.css says it hides: its own rules, applied here as written.
+const STYLES = fs.readFileSync(path.join(HERE, '..', 'src', 'styles.css'), 'utf8');
+// A selector list split on its commas, those inside :not(…) aside.
+const selectors = (list) => list.split(/,(?![^(]*\))/).map((sel) => sel.trim()).filter(Boolean);
+const REDUCED = [...STYLES.matchAll(/^(body\.guide\.reduit [^{}]+)\{\s*display: none;\s*\}/gm)]
+  .flatMap((m) => selectors(m[1])).filter((sel) => sel.startsWith('body.guide.reduit ')).map((sel) => sel.replace(/^body\.guide\.reduit /, ''));
+function hiddenWhenReduced(n) {
+  if (!n.doc || !n.doc.body || !n.doc.body.classList.contains('reduit')) return false;
+  return REDUCED.some((sel) => {
+    const child = sel.match(/^(\S+) > :not\((.*)\)$/);
+    if (child) return n.parent instanceof El && n.parent.matches(child[1]) && !child[2].split(',').some((k) => matchOne(n, k.trim()));
+    const parts = sel.split(/\s+/);
+    if (!matchOne(n, parts[parts.length - 1])) return false;
+    let at = n.parent;
+    for (const up of parts.slice(0, -1).reverse()) {
+      while (at instanceof El && !matchOne(at, up)) at = at.parent;
+      if (!(at instanceof El)) return false;
+      at = at.parent;
+    }
+    return true;
+  });
+}
+
 function visible(n) {
   if (n instanceof Text_) return n.t;
-  if (n.hidden || ['SVG', 'PRE'].includes(n.tagName) || n.classList.contains('chrono-time')) return '';
+  if (n.hidden || ['SVG', 'PRE'].includes(n.tagName) || n.classList.contains('chrono-time') || hiddenWhenReduced(n)) return '';
   const inner = n.childNodes.map(visible).join('');
   if (n.tagName === 'BUTTON') return `\n[${inner}${n.disabled ? ' (inactif)' : ''}]`;
   return ['P', 'LI', 'SUMMARY', 'H1', 'H2', 'BLOCKQUOTE', 'DIV'].includes(n.tagName) ? `\n${inner}` : inner;
@@ -430,7 +475,9 @@ async function screens(mockText, scripts, query) {
   const snap = () => {
     const name = doc.body.dataset.screen;
     if (!name) return;
-    const text = `== ${name}${visible(doc.body).replace(/\n\s*\n/g, '\n')}`;
+    // The guide's window made wide or reduced: said next to the screen's name.
+    const size = ['large', 'reduit'].find((c) => doc.body.classList.contains(c));
+    const text = `== ${name}${size ? ` (${size})` : ''}${visible(doc.body).replace(/\n\s*\n/g, '\n')}`;
     if (!shots.includes(text)) shots.push(text);
   };
   // Promises settle between two timers, as in the window.
@@ -441,8 +488,11 @@ async function screens(mockText, scripts, query) {
     await settle();
     snap();
   }
-  // Where the run stopped, though its screen may have been seen before.
+  // Where the run stopped, though its screen may have been seen before; the guide's window sizes asked,
+  // and its looks refused for their capture.
   shots.last = doc.body.dataset.screen;
+  shots.sizes = (ctx.__tailles || []).join(' ');
+  shots.refused = ctx.__refused || 0;
   return shots;
 }
 
@@ -529,6 +579,14 @@ if (guide.size) {
   // A scenario that does not get to its screen is a failure, whatever the golden file says.
   for (const [q, shots] of guide) {
     const to = new URLSearchParams(q).get('go');
+    if (shots.refused) {
+      differ += 1;
+      console.log(`FAIL ${q}: ${shots.refused} look(s) sent with another capture than the one shown`);
+    }
+    if (q in GUIDE_SIZES && shots.sizes !== GUIDE_SIZES[q]) {
+      differ += 1;
+      console.log(`FAIL ${q}: the window's sizes « ${shots.sizes} », not « ${GUIDE_SIZES[q]} »`);
+    }
     if (shots.last === to) continue;
     differ += 1;
     console.log(`FAIL ${q} does not end on « ${to} »:\n${shots.slice(-2).join('\n\n')}\n`);

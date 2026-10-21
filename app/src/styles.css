@@ -1119,7 +1119,7 @@ body.guide.reduit .screen {
 
 body.guide.reduit .screen > * { margin: 0; }
 
-body.guide.reduit .screen > :not(.consigne, .zoom, .banner) { display: none; }
+body.guide.reduit .screen > :not(.consigne, .zoom, .banner, .note.warn) { display: none; }
 
 body.guide.reduit .zoom { grid-column: 1; grid-row: 1 / span 2; height: 96px; }
 

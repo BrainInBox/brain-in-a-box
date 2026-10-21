@@ -36,6 +36,12 @@ const CAPTURE_HOW = {
     file: 'L’outil de capture en garde aussi une copie dans Images › Captures d’écran : tu peux l’effacer ensuite.',
   },
 }[SYSTEM];
+// What to say when the clipboard holds no new capture: the likeliest slip on each system.
+const SLIP = {
+  macos: 'As-tu appuyé aussi sur Ctrl ? Sans lui, la capture va sur le Bureau : glisse ce fichier ici, ou refais Cmd + Ctrl + Maj + 4 puis Espace.',
+  windows: 'Refais Windows + Maj + S, choisis « Fenêtre » et clique sur ton logiciel, puis colle ici.',
+  linux: 'Refais la capture avec la touche Impr. écran, en mode « Fenêtre », puis colle-la ici.',
+}[SYSTEM];
 const STUCK = ['Je ne trouve pas le bouton', 'Un message d’erreur s’affiche', 'Ce n’est pas le bon écran'];
 const PIN_SVG = '<svg viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M7 2.5h6l-1 5 3 3v1.5H5V10.5l3-3z"/><path d="M10 12v5.5"/></svg>';
 const SMALL_SVG = '<svg viewBox="0 0 20 20" aria-hidden="true" focusable="false"><rect x="2.5" y="3.5" width="15" height="13" rx="2"/><rect x="9.5" y="10" width="6" height="4.5" rx="1"/></svg>';
@@ -67,6 +73,8 @@ const G = {
   hinted: false,
   pinned: true,
   size: 'normal',
+  // The reduced mode, as the user chose it: each step keeps it (R3, small laptops).
+  reduit: false,
   // Claude Code checked this window's life: guide-progress says so once.
   checking: false,
 };
@@ -81,8 +89,10 @@ function mount() {
   gui.message = h('div', { class: 'message', role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' }, gui.title, gui.text);
   gui.pin = h('button', { type: 'button', class: 'tool', 'aria-pressed': 'true', title: 'Toujours au-dessus de tes fenêtres', onclick: togglePin },
     fromMarkup(PIN_SVG), h('span', { class: 'sr-only' }, 'Toujours au-dessus'));
-  gui.small = h('button', { type: 'button', class: 'tool', title: 'Réduire Bibo', 'data-act': 'reduire', onclick: () => setSize(G.size === 'reduit' ? 'normal' : 'reduit') },
-    fromMarkup(SMALL_SVG), h('span', { class: 'sr-only' }, 'Réduire'));
+  gui.small = h('button', { type: 'button', class: 'tool', title: 'Réduire Bibo', 'data-act': 'reduire', onclick: () => {
+    G.reduit = G.size !== 'reduit';
+    setSize(G.reduit ? 'reduit' : 'normal');
+  } }, fromMarkup(SMALL_SVG), h('span', { class: 'sr-only' }, 'Réduire'));
   gui.small.hidden = true;
   gui.screen = h('main', { class: 'screen' });
   gui.actions = h('footer', { class: 'actions' });
@@ -109,7 +119,7 @@ function screen(name) {
   gui.actions.replaceChildren();
   gui.screen.scrollTop = 0;
   // Reduced and wide are for a step or an image: anywhere else, the window's own size.
-  const sized = name === 'etape' || name === 'apercu';
+  const sized = ['etape', 'apercu', 'cacher'].includes(name);
   gui.small.hidden = name !== 'etape';
   if (!sized && G.size !== 'normal') setSize('normal');
   return G.gen;
@@ -137,9 +147,12 @@ function of(name) {
 // Sizes and the pin are set in Rust: the page has no window permission.
 function setSize(taille) {
   G.size = taille;
-  document.body.classList.toggle('reduit', taille === 'reduit');
+  const reduced = taille === 'reduit';
+  document.body.classList.toggle('reduit', reduced);
   document.body.classList.toggle('large', taille === 'large');
-  gui.small.setAttribute('aria-pressed', String(taille === 'reduit'));
+  gui.small.setAttribute('aria-pressed', String(reduced));
+  gui.small.setAttribute('title', reduced ? 'Agrandir Bibo' : 'Réduire Bibo');
+  gui.small.querySelector('.sr-only').textContent = reduced ? 'Agrandir' : 'Réduire';
   invoke('guide_taille', { taille }).catch(() => {});
 }
 
@@ -375,13 +388,15 @@ function askCapture(next) {
   gui.screen.append(
     h('ol', { class: 'plan how-to' }, ...CAPTURE_HOW.steps.map((s) => h('li', {}, s)), h('li', {}, `Reviens ici et appuie sur ${PASTE_KEYS}.`)),
     zone,
-    note('Tu peux aussi glisser une image PNG sur cette fenêtre.'));
+    note('Tu peux aussi glisser le fichier de ta capture sur cette fenêtre.'));
   if (CAPTURE_HOW.file) gui.screen.append(note(CAPTURE_HOW.file));
   if (next.demande === 'debut' && G.status && G.status.capture && G.status.capture.mode === 'collage') {
     gui.screen.append(note(`Sur ce ${MACHINE}, je ne sais pas encore voir tes fenêtres tout seul : la capture, c’est toi qui la fais.`));
   }
   gui.actions.append(stopButton());
   if (G.step) gui.actions.append(button('Retour', () => showAnswer(G.step, G.stepLook), { kind: 'secondary', act: 'back' }));
+  // The first capture: the objective or the program can still be put right.
+  else if (next.demande === 'debut') gui.actions.append(button('Retour', () => showGoal(), { kind: 'secondary', act: 'back' }));
   zone.focus();
 }
 
@@ -401,7 +416,7 @@ async function onPaste(e) {
   }
   if (gen !== G.gen) return;
   if (!bytes) {
-    say('worried', 'Je ne trouve pas d’image dans ce que tu as collé.', 'Refais la capture de ta fenêtre, puis colle-la ici.');
+    say('worried', 'Je ne trouve pas d’image dans ce que tu as collé.', SLIP);
     return;
   }
   const read = reading();
@@ -473,15 +488,19 @@ async function imageOf(data) {
 
 function showPreview(a, said = null) {
   G.apercu = a;
-  // A new window size: Rust forgot the zones (R7).
-  if (!a.zones) G.zones = [];
+  // Rust keeps the zones, for each size of capture (R7): the page shows its list.
+  G.zones = a.cachees || [];
   const gen = screen('apercu');
-  say('idle', said ? said.title : 'Voici ce que Claude va voir.', said ? said.text : 'Vérifie qu’il n’y a rien que tu ne veux pas envoyer : tu peux cacher des zones.');
+  if (said) say('idle', said.title, said.text);
+  // The capture an answer came for, again: the clipboard still held it.
+  else if (a.meme) say('worried', 'C’est la même capture que la dernière fois.', SLIP);
+  else say('idle', 'Voici ce que Claude va voir.', 'Vérifie qu’il n’y a rien que tu ne veux pas envoyer : tu peux cacher des zones.');
   const fig = shotFigure(a.apercu, a, null, true);
   gui.screen.append(fig);
   if (a.noir) gui.screen.append(note('La capture est presque noire : ta fenêtre est peut-être réduite ou cachée.', 'warn'));
   if (a.petit) gui.screen.append(note('Cette fenêtre est toute petite : c’est la bonne ?', 'warn'));
-  if (G.zones.length) gui.screen.append(note(G.zones.length > 1 ? `${G.zones.length} zones cachées, gardées pour les prochaines captures de cette fenêtre.` : '1 zone cachée, gardée pour les prochaines captures de cette fenêtre.'));
+  if (a.ailleurs) gui.screen.append(note('Cette capture n’a pas la même taille que celle où tu as caché des zones : elles ne s’appliquent pas ici. Cache-les à nouveau si besoin.', 'warn'));
+  if (G.zones.length) gui.screen.append(note(G.zones.length > 1 ? `${G.zones.length} zones cachées, gardées pour tes prochaines captures de la même taille.` : '1 zone cachée, gardée pour tes prochaines captures de la même taille.'));
   const sent = h('details', { class: 'log sent' }, h('summary', {}, 'Voir exactement ce que j’envoie'));
   let filled = false;
   sent.addEventListener('toggle', async () => {
@@ -497,10 +516,17 @@ function showPreview(a, said = null) {
     sent.append(h('p', { class: 'note' }, 'L’image ci-dessus, puis ce texte :'), h('pre', { class: 'log-lines' }, text));
   });
   gui.screen.append(sent, note('Elle part chez Anthropic avec ton abonnement Claude. Bibo n’en garde rien.'));
-  gui.actions.append(
-    button('Autre capture', () => askCapture(G.next), { kind: 'secondary', act: 'autre' }),
-    button('Cacher une zone', showHide, { kind: 'secondary', act: 'cacher' }),
-    button('Envoyer à Claude', () => send(envoiOf(G.next)), { act: 'next' }));
+  if (a.meme) {
+    gui.actions.append(
+      button('Envoyer quand même', () => send(envoiOf(G.next)), { kind: 'secondary', act: 'envoyer' }),
+      button('Cacher une zone', showHide, { kind: 'secondary', act: 'cacher' }),
+      button('Refaire la capture', () => askCapture(G.next), { act: 'next' }));
+  } else {
+    gui.actions.append(
+      button('Autre capture', () => askCapture(G.next), { kind: 'secondary', act: 'autre' }),
+      button('Cacher une zone', showHide, { kind: 'secondary', act: 'cacher' }),
+      button('Envoyer à Claude', () => send(envoiOf(G.next)), { act: 'next' }));
+  }
   focusMain();
 }
 
@@ -512,7 +538,9 @@ function envoiOf(next) {
 // « Cacher une zone »: rectangles drawn on the image, painted black in Rust before anything leaves.
 function showHide() {
   const gen = screen('cacher');
-  say('idle', 'Glisse sur l’image pour cacher une zone.', 'Elle sera noire pour Claude, et le restera pour les captures suivantes de cette fenêtre.');
+  // A precise rectangle wants the image big: a client's line is 4 px high at 370.
+  if (G.size !== 'large') setSize('large');
+  say('idle', 'Glisse sur l’image pour cacher une zone.', 'Elle sera noire pour Claude, et le restera pour tes captures suivantes de la même taille.');
   const fig = shotFigure(G.apercu.apercu, G.apercu, null, false);
   const img = fig.querySelector('img');
   const layer = h('div', { class: 'draw' });
@@ -572,8 +600,8 @@ async function hide(zones, gen) {
     return showError(e);
   }
   if (gen !== G.gen) return;
-  G.zones = zones;
   G.apercu = a;
+  G.zones = a.cachees || [];
   showHide();
 }
 
@@ -621,13 +649,16 @@ function showAnswer(e, look) {
 
 function banners(e) {
   const out = [];
-  if (e.suspect) out.push(h('p', { class: 'banner banner-suspect', role: 'alert' }, 'Cette fenêtre contient un texte qui essaie de donner des ordres. Je ne le suis pas. Ne tape aucun code ni mot de passe qu’il te demande.'));
+  // Bibo's filter alone (Claude saw nothing wrong): no word of orders on the screen, a plain warning.
+  if (e.filtre) out.push(h('p', { class: 'banner banner-sensible', role: 'alert' }, 'Si ton écran te le demande lui-même, ne le fais pas non plus : c’est souvent une arnaque.'));
+  else if (e.suspect) out.push(h('p', { class: 'banner banner-suspect', role: 'alert' }, 'Cette fenêtre contient un texte qui essaie de donner des ordres. Je ne le suis pas. Ne tape aucun code ni mot de passe qu’il te demande.'));
   else if (e.sensible) out.push(h('p', { class: 'banner banner-sensible' }, 'Attention : ce clic est définitif (supprimer, valider, envoyer, payer). Vérifie avant.'));
   return out;
 }
 
 function counters(e) {
-  const out = [h('p', { class: 'note small' }, `${e.regards} regard${e.regards > 1 ? 's' : ''} sur ${e.regards_max}`)];
+  const many = e.regards > 1 ? 's' : '';
+  const out = [h('p', { class: 'note small' }, `${e.regards} capture${many} envoyée${many} à Claude, sur ${e.regards_max} pour cette fois.`)];
   const u = e.usage;
   if (u && u.presque) {
     const five = u.cinq_heures != null && u.cinq_heures >= 0.8;
@@ -639,11 +670,16 @@ function counters(e) {
 
 function showStep(e, look) {
   screen('etape');
+  if (G.reduit && G.size !== 'reduit') setSize('reduit');
   if (G.steps < e.numero) G.steps = e.numero;
   say('idle', `Étape ${e.numero}`, '');
   const ring = e.cible && e.niveau !== 'aucun';
   const kids = [h('p', { class: 'consigne' }, e.consigne), ...banners(e)];
   if (ring && e.niveau === 'pointille') kids.push(note(e.libelle ? `Vérifie que le bouton s’appelle « ${e.libelle} ».` : 'Vérifie que c’est le bon endroit.', 'warn'));
+  // No ring: say why, or the user looks for one on the image.
+  if (!ring && !e.suspect) {
+    kids.push(note(`Je ne suis pas sûr de l’endroit exact, alors je ne l’entoure pas : cherche ${e.libelle ? `« ${e.libelle} »` : 'ce que dit la phrase ci-dessus'} sur ton écran.`, 'warn'));
+  }
   if (ring) kids.push(zoomBox(look, e));
   kids.push(shotFigure(look.image, look, e, true));
   if (!G.hinted) {
@@ -682,15 +718,15 @@ function showNotHere(e) {
   screen('pas-ici');
   say('worried', 'Je ne vois pas ça dans cette fenêtre.', '');
   gui.screen.append(h('p', { class: 'consigne' }, e.consigne), ...banners(e), ...counters(e));
-  gui.actions.append(stopButton(), button('Autre fenêtre', relook, { kind: 'secondary', act: 'autre' }), button('Regarde à nouveau', relook, { act: 'next' }));
+  gui.actions.append(stopButton(), button('Nouvelle capture', relook, { act: 'next' }));
   focusMain();
 }
 
 function showBlocked(e) {
   screen('bloque');
-  say('worried', e.suspect ? 'Méfie-toi de cet écran.' : 'Ça coince.', '');
+  say('worried', e.filtre ? 'Je préfère ne pas te guider là-dessus.' : e.suspect ? 'Méfie-toi de cet écran.' : 'Ça coince.', '');
   gui.screen.append(h('p', { class: 'consigne' }, e.consigne), ...banners(e), ...counters(e));
-  gui.actions.append(stopButton(), button('Je suis bloqué', () => showStuck(e), { kind: 'secondary', act: 'bloque' }), button('Regarde à nouveau', relook, { act: 'next' }));
+  gui.actions.append(stopButton(), button('Je suis bloqué', () => showStuck(e), { kind: 'secondary', act: 'bloque' }), button('Nouvelle capture', relook, { act: 'next' }));
   focusMain();
 }
 
@@ -733,7 +769,7 @@ function showStuck(e) {
   });
   const free = h('textarea', { class: 'input goal', rows: '2', maxlength: REMARQUE_MAX, 'aria-label': 'Ce qui se passe, avec tes mots (facultatif)', placeholder: 'Avec tes mots, si tu veux' });
   gui.screen.append(h('div', { class: 'chips' }, ...chips), free);
-  gui.actions.append(button('Retour', () => showAnswer(G.step, G.stepLook), { kind: 'ghost', act: 'back' }), button('Regarde mon écran', () => {
+  gui.actions.append(button('Retour', () => showAnswer(G.step, G.stepLook), { kind: 'ghost', act: 'back' }), button('Continuer', () => {
     const remarque = [picked, free.value.trim()].filter(Boolean).join(' : ').slice(0, REMARQUE_MAX);
     askCapture({ demande: 'bloque', remarque });
   }, { act: 'next' }));
@@ -775,10 +811,12 @@ async function showDraft() {
   const steps = h('textarea', { id: 'guide-etapes', class: 'input steps-edit', rows: String(Math.min(10, d.etapes.length + 1)) }, d.etapes.join('\n'));
   steps.value = d.etapes.join('\n');
   const said = h('p', { class: 'key-msg', role: 'alert' });
+  // A step may come from Claude's sentence, which can name the client (rule 6): both fields are read.
   gui.screen.append(h('div', { class: 'card form' },
-    field(h('label', { for: 'guide-titre' }, 'Le titre'), title, note('Vérifie qu’aucun nom de client n’est dans le titre.', 'warn')),
+    field(h('label', { for: 'guide-titre' }, 'Le titre'), title),
     field(h('label', { for: 'guide-etapes' }, `Les étapes dans ${d.logiciel || 'ton logiciel'}, une par ligne`), steps,
       d.retire ? note('J’ai retiré les nombres et les adresses.') : null),
+    note('Vérifie qu’aucun nom de client n’est dans le titre ni dans les étapes.', 'warn'),
     said));
   const save = button('Enregistrer dans mon cerveau', async () => {
     save.disabled = true;
@@ -858,25 +896,33 @@ function zoomBox(look, e) {
 
 // ── Errors (§2) ─────────────────────────────────────────────────────────────
 
+// When the limit ends: the hour today, else its day too (the 7-day window may end next week).
 function reprise(unix) {
   if (!unix) return '';
   const d = new Date(unix * 1000);
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  const hour = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  const day = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const days = Math.round((day(d) - day(new Date())) / 86400000);
+  if (days <= 0) return hour;
+  if (days === 1) return `demain ${hour}`;
+  const when = days < 7 ? { weekday: 'long' } : { weekday: 'long', day: 'numeric', month: 'long' };
+  return `${d.toLocaleDateString('fr-FR', when)} ${hour}`;
 }
 
 // What Bibo says of an error, as words only.
 function errorWords(e) {
   const kind = (e && e.kind) || '';
   switch (kind) {
-    case 'quota': return { title: e.reprise ? `Ton abonnement est à sa limite jusqu’à ${reprise(e.reprise)}.` : 'Ton abonnement est à sa limite pour l’instant.', text: 'Le guide reprendra quand la limite sera passée.' };
+    case 'quota': return { title: e.reprise ? `Ton abonnement est à sa limite jusqu’à ${reprise(e.reprise)}.` : 'Ton abonnement est à sa limite pour l’instant.', text: e.reprise ? 'Reviens après cette heure et relance le guide.' : 'Reviens plus tard et relance le guide.' };
     case 'hors_ligne': return { title: 'Pas d’internet : je ne peux pas demander à Claude.', text: 'Vérifie ton Wi-Fi, puis réessaie.' };
     case 'api': return { title: 'Claude ne répond pas pour l’instant.', text: 'Réessaie dans un moment.' };
-    case 'delai': return { title: 'Claude met trop de temps.', text: 'Tu peux réessayer : ça compte un regard.' };
+    case 'delai': return { title: 'Claude met trop de temps.', text: 'Tu peux réessayer : ça compte une capture de plus.' };
     case 'image_non_vue':
-    case 'invalide': return { title: 'Claude n’a pas bien vu l’image.', text: 'Tu peux réessayer : ça compte un regard.' };
-    case 'refus': return { title: 'Claude n’a pas voulu analyser cette capture.', text: 'Cache la zone suspecte, ou passe à un autre écran.' };
+    case 'invalide': return { title: 'Claude n’a pas bien vu l’image.', text: 'Tu peux réessayer : ça compte une capture de plus.' };
+    case 'refus': return { title: 'Claude n’a pas voulu analyser cette capture.', text: 'Quelque chose sur cette capture l’a gêné (un code, un mot de passe, un message d’alerte ?). Cache-le, ou montre un autre écran.' };
     case 'lancement': return { title: 'Claude ne s’est pas lancé comme prévu : je préfère arrêter le guide.', text: 'Relance l’app pour réessayer.' };
     case 'image_illisible': return { title: 'Je n’arrive pas à lire cette image.', text: 'Refais une capture de la fenêtre seule, puis colle-la ici.' };
+    case 'pas_png': return { title: 'Je ne lis que les captures d’écran au format PNG.', text: 'Ouvre ce fichier, copie l’image, puis colle-la ici.' };
     case 'budget': return { title: 'On a fait beaucoup d’étapes.', text: 'Pour ménager ton abonnement, recommence une séance.' };
     case 'sans_capture': return { title: 'Il me faut une nouvelle capture.', text: 'Montre-moi ta fenêtre telle qu’elle est maintenant.' };
     case 'sans_seance': return { title: 'Le guide est reparti de zéro.', text: 'Redis-moi ce que tu veux faire.' };
@@ -914,9 +960,9 @@ async function showError(e) {
   if (['delai', 'image_non_vue', 'invalide', 'api', 'hors_ligne'].includes(kind) && G.envoi) {
     gui.actions.append(stopButton(), retry());
   } else if (kind === 'refus') {
-    gui.actions.append(stopButton(), button('Regarde à nouveau', () => askCapture(G.next || { demande: 'debut' }), { kind: 'secondary', act: 'autre' }),
+    gui.actions.append(stopButton(), button('Nouvelle capture', () => askCapture(G.next || { demande: 'debut' }), { kind: 'secondary', act: 'autre' }),
       button('Cacher une zone', showHide, { act: 'next' }));
-  } else if (kind === 'image_illisible') {
+  } else if (kind === 'image_illisible' || kind === 'pas_png') {
     gui.actions.append(stopButton(), button('Réessayer', () => askCapture(G.next || { demande: 'debut' }), { act: 'next' }));
   } else if (kind === 'budget') {
     gui.actions.append(button('Fermer le guide', closeGuide, { kind: 'ghost', act: 'stop' }), button('Nouvel objectif', () => showGoal(), { act: 'next' }));
