@@ -9,6 +9,7 @@
 //                                                                   second colour over it
 //   atelier.exe message <title> <x> <y> <w> <h> <rrggbb>            a window, then the system's message box
 //   atelier.exe protege <title> <x> <y> <w> <h> <rrggbb>            a window Windows keeps out of captures
+//   atelier.exe intrus  <title> <x> <y> <w> <h> <rrggbb> <hwnd>     a window owned by another program's
 using System;
 using System.Drawing;
 using System.Reflection;
@@ -24,6 +25,21 @@ static class Atelier
 
     const int WS_EX_NOACTIVATE = 0x08000000;
     const uint WDA_MONITOR = 1;
+
+    class Intrus : Form
+    {
+        public IntPtr Proprietaire;
+
+        protected override CreateParams CreateParams
+        {
+            get
+            {
+                CreateParams p = base.CreateParams;
+                p.Parent = Proprietaire;
+                return p;
+            }
+        }
+    }
 
     class Dessus : Form
     {
@@ -51,7 +67,21 @@ static class Atelier
     {
         SetProcessDPIAware();
         string mode = a[0];
-        Form f = mode == "dessus" ? new Dessus() : new Form();
+        Form f;
+        if (mode == "dessus")
+        {
+            f = new Dessus();
+        }
+        else if (mode == "intrus")
+        {
+            Intrus i = new Intrus();
+            i.Proprietaire = new IntPtr(long.Parse(a[7]));
+            f = i;
+        }
+        else
+        {
+            f = new Form();
+        }
         f.Text = a[1];
         f.StartPosition = FormStartPosition.Manual;
         f.Bounds = new Rectangle(int.Parse(a[2]), int.Parse(a[3]), int.Parse(a[4]), int.Parse(a[5]));

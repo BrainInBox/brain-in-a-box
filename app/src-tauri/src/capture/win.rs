@@ -365,7 +365,9 @@ mod tests {
     use std::time::{Duration, Instant};
     use windows::core::w;
     use windows::Win32::Foundation::POINT;
-    use windows::Win32::UI::Input::KeyboardAndMouse::{SendInput, INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEINPUT, MOUSE_EVENT_FLAGS};
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        EnableWindow, SendInput, INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEINPUT, MOUSE_EVENT_FLAGS,
+    };
     use windows::Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DestroyWindow, GetAncestor, GetWindowDisplayAffinity, SetCursorPos, ShowWindowAsync, WindowFromPoint, GA_ROOT, SW_MINIMIZE, SW_RESTORE,
         WINDOW_EX_STYLE, WS_OVERLAPPEDWINDOW, WS_VISIBLE,
@@ -597,6 +599,45 @@ mod tests {
         let area = (place.2 - place.0) * (place.3 - place.1);
         assert!(count(&img, ORANGE) as i32 > area * 6 / 10, "its colour over most of it: {} of {area}", count(&img, ORANGE));
         assert!(count(&img, BLUE) > pixels(&img) / 3, "and the window around it");
+
+        // A click in the dialog says its window (R4).
+        let (_o, other) = d.open("fenetre", "Autre", (740, 440, 260, 220), &[GREY]);
+        click(center(&other));
+        until("the other window in front", || front() == other.window.id);
+        let waiting = std::thread::spawn(guide::attendre_clic);
+        std::thread::sleep(Duration::from_millis(600));
+        let r = frame(dialog).unwrap();
+        click(((r.left + r.right) / 2, (r.top + r.bottom) / 2));
+        assert_eq!(waiting.join().unwrap().map(|f| f.id), Ok(win.window.id));
+        guide::fin();
+    }
+
+    /// R11: a window of another program that makes itself a popup of the chosen one, while that one
+    /// waits (disabled), is never drawn on its capture: the same process only.
+    #[test]
+    #[ignore = "a Windows desktop (VM)"]
+    fn bureau_another_programs_popup_is_never_drawn() {
+        let d = desk();
+        let (_p, win) = d.open("fenetre", "Compta", (80, 80, 640, 480), &[BLUE]);
+        let h = handle(win.window.id);
+        let mut cmd = Command::new(&d.exe);
+        let titre = format!("Atelier Intrus {}", d.nonce);
+        cmd.args(["intrus", &titre, "240", "200", "320", "220", "ff00ff", &win.window.id.to_string()]);
+        let _intrus = Program(cmd.spawn().unwrap());
+        // SAFETY: a window of the test's program, enabled again below.
+        let _ = unsafe { EnableWindow(h, false) };
+        let intrus = || {
+            // SAFETY: any value is accepted.
+            let p = unsafe { GetLastActivePopup(h) };
+            (p != h && visible(p) && title(p) == titre).then_some(p)
+        };
+        until("its popup, of another process", || intrus().is_some());
+        assert_ne!(pid_of(intrus().unwrap()), win.window.pid);
+        let img = grab(&win.window).unwrap();
+        assert_eq!(count(&img, MAGENTA), 0, "not a pixel of the other program's window");
+        assert!(count(&img, BLUE) > pixels(&img) * 8 / 10);
+        // SAFETY: as above.
+        let _ = unsafe { EnableWindow(h, true) };
     }
 
     /// The system's own message box (a #32770 dialog), as many programs ask « Enregistrer ? ».
