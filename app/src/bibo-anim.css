@@ -20,7 +20,6 @@
 .bibo .b-tic,
 .bibo .b-clock,
 .bibo .b-memories,
-.bibo .b-dust,
 .bibo .b-confetti,
 .bibo .b-hat,
 .bibo .b-crackle,
@@ -44,7 +43,6 @@
 .bibo .b-tic,
 .bibo .b-clock,
 .bibo .b-memories,
-.bibo .b-dust,
 .bibo .b-confetti,
 .bibo .b-hat,
 .bibo .b-crackle,
@@ -133,7 +131,6 @@
 .bibo .b-gear-2,
 .bibo .b-heart,
 .bibo .b-dots circle,
-.bibo .b-dust circle,
 .bibo .b-rays,
 .bibo .b-bigpupil,
 .bibo .b-cf-spin,
@@ -185,13 +182,6 @@
 /* « Here »: the arm towards a button or the capture (--point), the finger taps twice, the eyes follow. */
 .bibo.cue-montre .p-point { opacity: 1; transform: rotate(var(--point, 35deg)); animation: bb-point 1.4s ease-out both; }
 .bibo.cue-montre .b-pupil { transform: translate(var(--lx, 3px), var(--ly, 2px)); }
-
-/* « Look at the other window »: a hand up that waves, then a finger up and to the right. */
-.bibo.cue-demande .p-palm { opacity: 1; animation: bb-hail 1.7s ease-in-out both; }
-.bibo.cue-demande .p-point { animation: bb-up 1.7s ease-out both; }
-.bibo.cue-demande .b-pupil { transform: translate(3px, -4px); }
-.bibo.cue-demande .m-smile { opacity: 0; }
-.bibo.cue-demande .m-o { opacity: 1; }
 
 /* An idea: a light bulb over the head. */
 .bibo.cue-ampoule .b-bulb { opacity: 1; animation: bb-bulb 1.7s ease-out both; }
@@ -250,8 +240,16 @@
 
 /* ── Scenes: for as long as the screen lasts. A gesture borrows the arms meanwhile. ── */
 
+/* An arm that moves stops after a few times on its still pose: the props may go on (gears, sparks,
+   the eye in the magnifier), but an arm on a loop costs WebView2 a repaint at every frame. A bubble
+   the scene hides does not blow either. */
+.bibo[data-scene="loupe"] .b-bubbles circle,
+.bibo[data-scene="reflechit"] .b-bubbles circle,
+.bibo[data-scene="lit"] .b-bubbles circle,
+.bibo[data-scene="gratte"] .b-bubbles circle { animation: none; }
+
 /* The diagnosis: a magnifying glass on the right eye, sweeping, the big eye looking around in it. */
-.bibo[data-scene="loupe"]:not([class*="cue-"]) .p-loupe { opacity: 1; animation: bb-arm-in 0.22s ease-out backwards, bb-scan 2.4s 0.22s ease-in-out infinite alternate; }
+.bibo[data-scene="loupe"]:not([class*="cue-"]) .p-loupe { opacity: 1; animation: bb-arm-in 0.22s ease-out backwards, bb-scan 2.4s 0.22s ease-in-out 2; }
 .bibo[data-scene="loupe"] .b-bigpupil { animation: bb-scan-eye 2.4s 0.22s ease-in-out infinite alternate; }
 .bibo[data-scene="loupe"] .b-pupil { transform: translate(3px, 1px); }
 .bibo[data-scene="loupe"] .b-bubbles { opacity: 0; }
@@ -278,6 +276,14 @@
 .bibo[data-scene="casque"] .b-screw { opacity: 1; animation: bb-screw 0.35s ease-in-out infinite alternate; }
 .bibo[data-scene="casque"]:not([class*="cue-"]) .b-tic { opacity: 1; animation: bb-tic 0.7s infinite; }
 
+/* « Look at the other window », for as long as the step waits on the user there: a hand up that
+   waves, then a finger up and to the right that stays, the eyes on it. Every few seconds (b-nudge,
+   from bibo.js) the finger taps again; bb-up goes on, finished, under it. */
+.bibo[data-scene="demande"]:not([class*="cue-"]) .p-palm { animation: bb-hail 1.7s ease-in-out both; }
+.bibo[data-scene="demande"]:not([class*="cue-"]) .p-point { opacity: 1; transform: rotate(-62deg); animation: bb-up 1.7s ease-out both; }
+.bibo[data-scene="demande"].b-nudge:not([class*="cue-"]) .p-point { animation: bb-up 1.7s ease-out both, bb-up-tap 0.6s ease-in-out; }
+.bibo[data-scene="demande"] .b-pupil { transform: translate(3px, -4px); }
+
 /* Thinking (Claude reads): gears turn above the head, sparks crackle on the brain, chin in hand. */
 .bibo[data-scene="reflechit"] .b-gears,
 .bibo[data-scene="reflechit"] .b-crackle,
@@ -289,16 +295,10 @@
 .bibo[data-scene="reflechit"] .b-crackle g:nth-child(3) path { animation-delay: 0.6s; }
 .bibo[data-scene="reflechit"] .b-bubbles { opacity: 0; }
 .bibo[data-scene="reflechit"] .b-pupil { transform: translate(-2.5px, -4px); }
-.bibo[data-scene="reflechit"]:not([class*="cue-"]) .p-chin { opacity: 1; animation: bb-arm-in 0.22s ease-out backwards, bb-chin 1.6s 0.22s ease-in-out infinite alternate; }
+.bibo[data-scene="reflechit"]:not([class*="cue-"]) .p-chin { opacity: 1; animation: bb-arm-in 0.22s ease-out backwards, bb-chin 1.6s 0.22s ease-in-out 4 alternate; }
 
-/* A long wait: the box taps its corner, « … » in the bubble, still smiling. The same when he has
-   been thinking a while without news (b-long, from bibo.js), over what that screen shows. */
-.bibo[data-scene="attend"] .b-act,
-.bibo.b-long:not([class*="cue-"]) .b-act { animation: bb-tap 1.6s ease-in-out infinite; }
-.bibo[data-scene="attend"] .b-dust,
-.bibo.b-long .b-dust { opacity: 1; }
-.bibo[data-scene="attend"] .b-dust circle,
-.bibo.b-long .b-dust circle { opacity: 0; animation: bb-dust 1.6s ease-out infinite; }
+/* A long wait: « … » in the bubble, still smiling, nothing that hurries. The same when he has been
+   thinking a while without news (b-long, from bibo.js), unless the screen's scene hides the bubble. */
 .bibo[data-scene="attend"] .b-bubbles,
 .bibo.b-long:not([data-scene]) .b-bubbles { opacity: 1; }
 .bibo[data-scene="attend"] .b-bubbles circle,
@@ -306,24 +306,29 @@
 .bibo[data-scene="attend"] .b-dots,
 .bibo.b-long:not([data-scene]) .b-dots { opacity: 1; }
 .bibo[data-scene="attend"] .b-dots circle,
-.bibo.b-long .b-dots circle { animation: bb-dot 1.2s ease-in-out infinite backwards; }
+.bibo.b-long:not([data-scene]) .b-dots circle { animation: bb-dot 1.2s ease-in-out infinite backwards; }
 .bibo[data-scene="attend"] .b-dots circle:nth-child(2),
-.bibo.b-long .b-dots circle:nth-child(2) { animation-delay: 0.2s; }
+.bibo.b-long:not([data-scene]) .b-dots circle:nth-child(2) { animation-delay: 0.2s; }
 .bibo[data-scene="attend"] .b-dots circle:nth-child(3),
-.bibo.b-long .b-dots circle:nth-child(3) { animation-delay: 0.4s; }
+.bibo.b-long:not([data-scene]) .b-dots circle:nth-child(3) { animation-delay: 0.4s; }
 .bibo[data-scene="attend"] .m-o,
 .bibo.b-long:not([data-scene]) .m-o { opacity: 0; }
 .bibo[data-scene="attend"] .m-smile,
 .bibo.b-long:not([data-scene]) .m-smile { opacity: 1; }
 
-/* Something failed: a little « ouch » shake, then he slumps (the mood brings the drop). */
+/* Something failed (bibo.js's FAILED screens): a little « ouch » shake, then he slumps (the mood brings the drop). */
 .bibo[data-scene="triste"] .b-rise { transform: translateY(3px) scale(1, 0.96); animation: bb-ouch 0.6s ease-out backwards; }
 
-/* The login: a golden key held up, which glints. */
-.bibo[data-scene="cle"]:not([class*="cue-"]) .p-key { opacity: 1; animation: bb-arm-in 0.22s ease-out backwards, bb-bob 1.6s 0.22s ease-in-out infinite alternate; }
+/* The login: a golden key held up, which glints, with a smile: logging in is no trouble, even
+   where the invitation is worded as a worry (the guide's). */
+.bibo[data-scene="cle"]:not([class*="cue-"]) .p-key { opacity: 1; animation: bb-arm-in 0.22s ease-out backwards, bb-bob 1.6s 0.22s ease-in-out 4 alternate; }
 .bibo[data-scene="cle"]:not([class*="cue-"]) .b-glint-key { opacity: 1; }
 .bibo[data-scene="cle"] .b-glint-key path { animation: bb-glint 2.5s 0.4s ease-in-out infinite backwards; }
 .bibo[data-scene="cle"] .b-pupil { transform: translate(3px, -3px); }
+.bibo[data-scene="cle"] .b-drop,
+.bibo[data-scene="cle"] .b-brows,
+.bibo[data-scene="cle"] .m-wobble { opacity: 0; animation: none; }
+.bibo[data-scene="cle"] .m-smile { opacity: 1; }
 
 /* The memory import: cards fly from the little box of memories into his head, one at a time. */
 .bibo[data-scene="memoire"] .b-memories { opacity: 1; }
@@ -350,15 +355,14 @@
 .bibo[data-scene="lit"] .b-bubbles { opacity: 0; }
 
 /* « Give me your capture »: both hands held out, bouncing gently. */
-.bibo[data-scene="mains"]:not([class*="cue-"]) .p-offer { opacity: 1; animation: bb-arm-in 0.22s ease-out backwards, bb-offer 1.2s 0.22s ease-in-out infinite alternate; }
+.bibo[data-scene="mains"]:not([class*="cue-"]) .p-offer { opacity: 1; animation: bb-arm-in 0.22s ease-out backwards, bb-offer 1.2s 0.22s ease-in-out 4 alternate; }
 .bibo[data-scene="mains"] .b-pupil { transform: translate(1px, 4px); }
 
-/* Hiding zones: hands over the eyes, a peek between the fingers now and then. */
+/* Hiding zones: both hands over the eyes, and they stay there: he does not look. */
 .bibo[data-scene="cache"]:not([class*="cue-"]) .p-eye { opacity: 1; animation: bb-arm-in 0.22s ease-out backwards; }
-.bibo[data-scene="cache"]:not([class*="cue-"]) .b-arm-l .p-eye { animation: bb-arm-in 0.22s ease-out backwards, bb-peek 3s 0.22s ease-in-out infinite; }
 
 /* Stuck: he scratches his head, leaning, a question mark beside him. */
-.bibo[data-scene="gratte"]:not([class*="cue-"]) .p-head { opacity: 1; animation: bb-arm-in 0.22s ease-out backwards, bb-scratch 4s 0.22s ease-in-out infinite; }
+.bibo[data-scene="gratte"]:not([class*="cue-"]) .p-head { opacity: 1; animation: bb-arm-in 0.22s ease-out backwards, bb-scratch 4s 0.22s ease-in-out 2; }
 .bibo[data-scene="gratte"] .b-rise { transform: rotate(-5deg); animation: bb-lean-in 0.4s ease-out backwards; }
 .bibo[data-scene="gratte"] .b-question { opacity: 1; animation: bb-pop 0.35s 0.15s ease-out backwards; }
 .bibo[data-scene="gratte"] .b-pupil { transform: translate(2px, -4px); }
@@ -376,8 +380,9 @@
 .bibo[data-scene="plisse"] .m-o { opacity: 0; }
 .bibo[data-scene="plisse"] .m-flat { opacity: 1; }
 
-/* « Careful »: a hand up, palm out, serious eyebrows; he protects, he is not afraid (no drop). */
-.bibo[data-scene="stop"]:not([class*="cue-"]) .p-palm { opacity: 1; animation: bb-arm-in 0.22s ease-out backwards, bb-push 1.4s 0.22s ease-in-out infinite alternate; }
+/* « Careful »: a hand up, palm out, still, straight eyebrows; he protects, he is neither afraid
+   (no drop) nor cross. */
+.bibo[data-scene="stop"]:not([class*="cue-"]) .p-palm { opacity: 1; animation: bb-arm-in 0.22s ease-out backwards; }
 .bibo[data-scene="stop"] .b-serious,
 .bibo[data-scene="stop"] .m-flat { opacity: 1; }
 .bibo[data-scene="stop"] .b-brows,
@@ -532,9 +537,13 @@
 
 @keyframes bb-up {
   0%, 50% { opacity: 0; transform: rotate(-62deg) scale(0.6); }
-  56%, 72%, 88% { opacity: 1; transform: rotate(-62deg); }
+  56%, 72%, 88%, 100% { opacity: 1; transform: rotate(-62deg); }
   64%, 80% { transform: rotate(-62deg) translateX(4px); }
-  100% { opacity: 0; transform: rotate(-62deg) scale(0.3); }
+}
+
+@keyframes bb-up-tap {
+  0%, 50%, 100% { transform: rotate(-62deg); }
+  25%, 75% { transform: rotate(-62deg) translateX(4px); }
 }
 
 @keyframes bb-bulb {
@@ -619,8 +628,9 @@
 }
 
 @keyframes bb-scan {
-  from { transform: rotate(-7deg); }
-  to { transform: rotate(9deg); }
+  0%, 100% { transform: none; }
+  30% { transform: rotate(-7deg); }
+  70% { transform: rotate(9deg); }
 }
 
 @keyframes bb-scan-eye {
@@ -659,21 +669,6 @@
 @keyframes bb-chin {
   from { transform: none; }
   to { transform: rotate(-4deg); }
-}
-
-@keyframes bb-tap {
-  0%, 40%, 100% { transform: none; }
-  10%, 30% { transform: rotate(-2.5deg); }
-  20% { transform: none; }
-}
-
-@keyframes bb-dust {
-  0%, 18% { opacity: 0; transform: scale(0.4); }
-  21% { opacity: 1; transform: none; }
-  33% { opacity: 0; transform: translate(5px, -3px) scale(1.4); }
-  38% { opacity: 0; transform: scale(0.4); }
-  41% { opacity: 1; transform: none; }
-  53%, 100% { opacity: 0; transform: translate(5px, -3px) scale(1.4); }
 }
 
 @keyframes bb-dot {
@@ -732,11 +727,6 @@
   to { transform: translateY(-3px); }
 }
 
-@keyframes bb-peek {
-  0%, 62%, 100% { transform: none; }
-  70%, 86% { transform: translate(-7px, 5px) rotate(-6deg); }
-}
-
 @keyframes bb-scratch {
   0%, 32%, 100% { transform: none; }
   6%, 22% { transform: rotate(-5deg); }
@@ -756,9 +746,4 @@
 @keyframes bb-peer {
   0%, 100% { transform: none; }
   50% { transform: translateY(-3px) scale(1.04); }
-}
-
-@keyframes bb-push {
-  from { transform: none; }
-  to { transform: scale(1.06); }
 }

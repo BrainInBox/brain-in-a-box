@@ -23,14 +23,13 @@
     photo: 1600,
     pouce: 1100,
     montre: 1400,
-    demande: 1700,
     ampoule: 1700,
     cadenas: 1700,
     haussement: 1100,
     range: 1700,
     confettis: 1900,
   };
-  const SCENES = ['loupe', 'bricole', 'casque', 'reflechit', 'attend', 'triste', 'cle', 'memoire', 'lit', 'mains', 'cache', 'gratte', 'plisse', 'stop', 'dodo'];
+  const SCENES = ['loupe', 'bricole', 'casque', 'demande', 'reflechit', 'attend', 'triste', 'cle', 'memoire', 'lit', 'mains', 'cache', 'gratte', 'plisse', 'stop', 'dodo'];
   const STILL_MS = 1500;
 
   // ── The drawing's new parts ──────────────────────────────────────────────
@@ -171,7 +170,7 @@
     </g>
     <g class="b-wink"><ellipse cx="100" cy="102" rx="16" ry="18.5" fill="${PINK}" stroke="none"/><path d="M88 104 Q100 112 112 104" fill="none"/></g>
     <g class="b-doubt" fill="none"><path d="M88 83 L111 82"/><path d="M129 74 Q141 65 154 71"/></g>
-    <g class="b-serious" fill="none"><path d="M87 77 L110 83"/><path d="M130 83 L153 77"/></g>
+    <g class="b-serious" fill="none"><path d="M88 79.5 L111 79.5"/><path d="M129 79.5 L152 79.5"/></g>
     <path class="m-flat" d="M113 126 L127 126" fill="none"/>`;
 
   // Above the brain, moving with it: the hard hat and the sparks of a busy brain.
@@ -219,7 +218,7 @@
     <g class="b-glint b-glint-thumb">${star(208, 86, 0.6)}</g>
     ${marks('b-tic', 'M186 82 l-5 -4 M199 76 v-7 M212 82 l5 -4')}`;
 
-  // On the floor, beside the box: the alarm clock, the box of memories, dust, confetti.
+  // On the floor, beside the box: the alarm clock, the box of memories, confetti.
   const CARD = '<rect x="13" y="165" width="24" height="16" rx="2.5" fill="#fff" stroke="#4b2e2b" stroke-width="2.2"/><path d="M17.5 170 h15 M17.5 175.5 h9" stroke="#da6f98" stroke-width="2.2" stroke-linecap="round"/>';
   const CONFETTI = ['#f7a9c4', GOLD, '#8fd3ff', '#e7a96b', '#da6f98', '#f7a9c4', GOLD, '#8fd3ff', '#da6f98', '#e7a96b', GOLD, '#8fd3ff'];
   const FLOOR = `
@@ -236,7 +235,6 @@
       ${[1, 2, 3].map((n) => `<g class="b-card b-card-${n}"><g class="b-card-up"><g class="b-card-spin">${CARD}</g></g></g>`).join('')}
       <rect x="6" y="180" width="38" height="25" rx="4" fill="#e7a96b" stroke-width="2.5"/>
       <path d="M25 199 C18 194 19 187 23 187.5 C24 187.6 24.7 188.4 25 189.5 C25.3 188.4 26 187.6 27 187.5 C31 187 32 194 25 199 Z" fill="#da6f98" stroke-width="1.8"/></g>
-    <g class="b-dust" fill="#f2c08a" stroke="${INK}" stroke-width="1.5"><circle cx="201" cy="203" r="3.2"/><circle cx="208" cy="198" r="2.3"/><circle cx="208" cy="206" r="1.9"/></g>
     <g class="b-confetti" stroke="${INK}" stroke-width="1.4">${CONFETTI.map((c, i) => `<g class="b-cf"><g class="b-cf-spin">${i % 3 === 2
       ? `<circle cx="120" cy="128" r="2.8" fill="${c}"/>`
       : `<rect x="117.8" y="124.2" width="4.4" height="7.6" rx="1.2" fill="${c}"/>`}</g></g>`).join('')}</g>`;
@@ -397,8 +395,11 @@
     }
   }
 
+  // The drawing's parts the rig builds on (dev/screens.mjs checks BIBO_SVG has them): without one, Bibo stays still.
+  const PARTS = ['.b-body', '.b-brain', '.b-front', '.b-bubbles'];
+
   function rig(svg) {
-    if (!svg) return null;
+    if (!svg || !PARTS.every((p) => svg.querySelector(p))) return null;
     if (!svg.biboRig) svg.biboRig = new Bibo(svg);
     return svg.biboRig;
   }
@@ -415,21 +416,28 @@
   const hero = document.querySelector('.hero .bibo');
   if (!hero) return;
   const bibo = rig(hero);
+  if (!bibo) return;
   const isGuide = document.body.classList.contains('guide');
   const MOODS = ['idle', 'thinking', 'working', 'happy', 'worried'];
-  const CALM = ['welcome', 'choice', 'diag', 'done', 'voyage', 'comment', 'objectif', 'apercu'];
-  const POINT_AFTER_MS = 8000;
+  // The screens where Bibo may show the button. Not where the user reads or checks before agreeing
+  // (how he sees the screen, the capture about to leave): there, a finger would hurry the user.
+  const CALM = ['welcome', 'choice', 'diag', 'done', 'voyage', 'objectif'];
+  const POINT_AFTER_MS = 15000;
   const POINT_GAP_MS = 25000;
-  // Thinking this long with nothing new to say: he waits, patiently (Claude reading a capture, sooner).
+  // Thinking this long with nothing new to say: he waits, patiently.
   const LONG_MS = 20000;
-  const LONG_LOOK_MS = 10000;
+  // While the other window waits on the user, the raised finger taps again now and then.
+  const NUDGE_MS = 7000;
+  // A worried look on these screens is a failure: he winces and slumps. Anywhere else it is a word of
+  // caution (install first, the same capture again), and the worried face says enough.
+  const FAILED = ['erreur', 'abandon', 'arrete', 'choice', 'diag', 'voyage', 'install', 'repair-error', 'repairing', 'proposal', 'terminal', 'done', 'import', 'import-read', 'import-error'];
 
   // Screen and mood to scene. The first that matches wins: [screen or '*', mood or '*', scene].
   const RULES = [
-    // The guide's login: the key, then waiting for it (its invitation is worded as a worry).
+    // The guide's login: the key, held up with a smile though the invitation is worded as a worry.
     ['connexion', 'worried', 'cle'],
     ['connexion', 'thinking', 'attend'],
-    ['*', 'worried', 'triste'],
+    ...FAILED.map((s) => [s, 'worried', 'triste']),
     ['diag', 'thinking', 'loupe'],
     ['install', 'working', 'bricole'],
     ['repairing', 'working', 'casque'],
@@ -453,7 +461,7 @@
     ['enregistrer', 'thinking', 'lit'],
   ];
   // A few screens keep their own look whatever the mood says.
-  const OVERRIDES = { bloque: 'stop', confirmer: 'gratte', 'pas-ici': 'loupe' };
+  const OVERRIDES = { confirmer: 'gratte', 'pas-ici': 'loupe' };
 
   const now = {
     screen: '',
@@ -465,6 +473,7 @@
     pointTimer: 0,
     blinkTimer: 0,
     longTimer: 0,
+    nudgeTimer: 0,
     done: 0,
     cheered: false,
   };
@@ -476,6 +485,9 @@
   function sceneFor(screen, mood) {
     if (now.pinned) return now.pinned;
     if (Object.hasOwn(OVERRIDES, screen)) return OVERRIDES[screen];
+    // « Careful » only for a screen Bibo filtered or one that gives orders (their banner is an alert);
+    // a plain « Ça coince » is a scratch of the head.
+    if (screen === 'bloque') return document.querySelector('.banner[role="alert"]') ? 'stop' : 'gratte';
     // The install screen holds the login card for a while: the key, then waiting for the login.
     if (screen === 'install' && document.querySelector('.login-card')) return mood === 'thinking' ? 'attend' : mood === 'idle' ? 'cle' : '';
     if (screen === 'etape' && lowConfidence()) return 'plisse';
@@ -520,14 +532,11 @@
       bibo.cue('cadenas');
     } else if (shown && screen === 'proposal' && mood === 'idle' && now.pinned !== 'plisse') {
       bibo.cue('ampoule');
-    } else if (shown && (screen === 'comment' || screen === 'lecture')) {
-      // How he sees the screen, and the capture just pasted: a photo.
-      bibo.cue('photo');
     } else if (shown && (screen === 'pas-ici' || (screen === 'import-done' && mood === 'idle'))) {
       // Not on this window; nothing worth keeping in the import.
       bibo.cue('haussement');
-    } else if (turned && mood === 'worried' && screen === 'coller') {
-      // Pasted, but no image in it.
+    } else if (mood === 'worried' && ((turned && screen === 'coller') || (shown && screen === 'apercu'))) {
+      // Pasted, but no image in it; the same capture as last time.
       bibo.cue('haussement');
     } else if (shown && screen === 'etape' && !lowConfidence()) {
       const target = document.querySelector('.zoom, .ring, .capture');
@@ -550,6 +559,16 @@
     return turned ? bibo.cue('pouce') : undefined;
   }
 
+  // A new word from Bibo: the raised hand of the step before is over (the install screen stays from
+  // one step to the next, so no new screen says it), and the wait starts over.
+  function said() {
+    if (now.pinned === 'demande') {
+      now.pinned = '';
+      update();
+    }
+    waitLater();
+  }
+
   // Each new word from Bibo starts the wait over; thinking long without one, he waits patiently.
   function waitLater() {
     clearTimeout(now.longTimer);
@@ -557,7 +576,23 @@
     if (now.mood !== 'thinking') return;
     now.longTimer = setTimeout(() => {
       if (now.mood === 'thinking') hero.classList.add('b-long');
-    }, now.screen === 'regarde' ? LONG_LOOK_MS : LONG_MS);
+    }, LONG_MS);
+  }
+
+  // The finger up again, once, while the other window still waits.
+  function nudgeLater() {
+    clearTimeout(now.nudgeTimer);
+    if (now.pinned !== 'demande' || still.matches) return;
+    now.nudgeTimer = setTimeout(() => {
+      if (now.pinned !== 'demande') return;
+      if (!document.hidden && !bibo.cueName) {
+        hero.classList.remove('b-nudge');
+        void hero.getBoundingClientRect();
+        hero.classList.add('b-nudge');
+        setTimeout(() => hero.classList.remove('b-nudge'), 700);
+      }
+      nudgeLater();
+    }, NUDGE_MS);
   }
 
   // The user has not moved for a while on a screen that waits for a click: Bibo shows the button.
@@ -598,17 +633,25 @@
   }
 
   // The few moments only the windows know: window.biboCue?.(name, options). A gesture plays once;
-  // a scene (dodo with { reprise }, doute for plisse) stays until the screen changes.
+  // a scene (dodo with { reprise }, doute for plisse) stays until the screen changes, demande until
+  // Bibo's next word. The windows call it before adding their buttons: whatever goes wrong here
+  // stays here.
   window.biboCue = (name, opts = {}) => {
-    if (Object.hasOwn(CUES, name)) return bibo.cue(name, opts);
-    const scene = name === 'doute' ? 'plisse' : name;
-    if (!SCENES.includes(scene)) return Promise.resolve();
-    // The screen this comes with was just shown: that first, with the pin, for this screen only.
-    const pending = watch.takeRecords();
-    if (pending.length) changed(pending, scene);
-    now.pinned = scene;
-    now.pinOpts = opts;
-    bibo.scene(scene, opts);
+    try {
+      if (Object.hasOwn(CUES, name)) return bibo.cue(name, opts);
+      const scene = name === 'doute' ? 'plisse' : name;
+      if (!SCENES.includes(scene)) return Promise.resolve();
+      // The screen and the word this comes with: that first, with the pin, for this screen (or word) only.
+      const pending = watch.takeRecords();
+      if (pending.length) changed(pending, scene);
+      if (words.takeRecords().length) waitLater();
+      now.pinned = scene;
+      now.pinOpts = opts;
+      bibo.scene(scene, opts);
+      nudgeLater();
+    } catch {
+      // Bibo stands still; the window goes on.
+    }
     return Promise.resolve();
   };
 
@@ -630,8 +673,9 @@
   }
 
   // What Bibo says: each new message.
+  const words = new MutationObserver(said);
   const message = document.querySelector('.hero .message');
-  if (message) new MutationObserver(waitLater).observe(message, { childList: true, characterData: true, subtree: true });
+  if (message) words.observe(message, { childList: true, characterData: true, subtree: true });
 
   // « C'est fait » on a step (and « Oui, c'est fait »): a thumbs up while the next screen comes.
   document.addEventListener('click', (e) => {
