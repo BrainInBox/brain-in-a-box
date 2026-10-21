@@ -26,7 +26,7 @@ use serde_json::{json, Value};
 use crate::claude::{self, ClaudeError, RateLimit, MIN_CLAUDE, REQUIRED_FLAGS};
 use crate::detect::{self, parse_version};
 use crate::shot::{self, Rgb, Rgba, Zone};
-use crate::{diagnose, perms, redact, sys};
+use crate::{agents, diagnose, perms, redact, sys};
 
 /// The rules Claude follows, the terminal skill's too (skills/guide-moi/SKILL.md reads the same file).
 pub const CONSIGNES: &str = include_str!("../../../skills/guide-moi/consignes.md");
@@ -1807,10 +1807,15 @@ impl Guide {
 
 // ── Entry points ────────────────────────────────────────────────────────────
 
-/// Whether the installer's welcome offers the guide (G0): the brain and Claude Code are there. Nothing
-/// is run, unlike `status`, whose three runs of Claude Code would hold the first screen up.
+/// Whether the installer's welcome offers the guide (G0): the brain is whole, as the installer's own
+/// check says it, and Claude Code is there. Files are read, nothing is run, unlike `status`, whose
+/// three runs of Claude Code would hold the first screen up.
 pub fn offert() -> bool {
-    detect::vault(&sys::home()).is_some() && detect::claude_bin().is_some()
+    offered(&sys::home(), detect::claude_bin().is_some())
+}
+
+fn offered(home: &Path, claude: bool) -> bool {
+    claude && detect::brain(home, &agents::current(home)).complete()
 }
 
 pub fn status() -> Status {
@@ -2841,6 +2846,21 @@ mod tests {
         let _held = Busy::take(&b.guide.busy).unwrap();
         assert_eq!(b.send(Demande::Debut), Err(GuideError::Occupe));
         assert_eq!(b.guide.paste(&png_of(1, 1, png::ColorType::Rgb, png::BitDepth::Eight, &[0; 3])), Err(GuideError::Occupe), "no capture swapped under a question");
+    }
+
+    /// The welcome says « Ton second cerveau est installé » and leads to the guide only when the brain
+    /// is whole, as the installer's own check says it: a vault left by an install that failed later
+    /// (hooks, memory, skills) keeps the welcome of before, which leads to the check of the computer.
+    #[test]
+    fn the_guide_is_offered_only_with_a_whole_brain_and_claude() {
+        let home = tempfile::tempdir().unwrap();
+        fs::create_dir_all(home.path().join("Documents/Brain")).unwrap();
+        assert!(!offered(home.path(), true), "the vault alone");
+        crate::detect::tests::fake_brain(home.path());
+        assert!(!offered(home.path(), false), "no Claude Code");
+        assert!(offered(home.path(), true));
+        fs::remove_dir_all(home.path().join(".gbrain")).unwrap();
+        assert!(!offered(home.path(), true), "no memory");
     }
 
     #[test]
