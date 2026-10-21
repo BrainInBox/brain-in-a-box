@@ -9,6 +9,7 @@ only, in this process. Every run happens in a throwaway HOME.
 
     python3 -I -m unittest discover -s engine/tests -v
 """
+import hashlib
 import json
 import os
 import re
@@ -36,14 +37,19 @@ import _agents  # noqa: E402
 import _headless  # noqa: E402
 import _headless_claude  # noqa: E402
 import _headless_codex  # noqa: E402
+import fake_claude  # noqa: E402
 import mock_openai  # noqa: E402
 from _headless_claude import HeadlessError  # noqa: E402
 
 POSIX = os.name != "nt"
+FAKE_FLAGS = fake_claude.FLAGS
 OPEN = frozenset({_agents.systeme()})
 SCHEMA = {"type": "object", "additionalProperties": False, "required": ["verdict"],
           "properties": {"verdict": {"type": "string", "enum": ["ok", "ko"]}}}
 ANSWER = {"verdict": "ok"}
+# Stand-ins for screenshots: only their bytes count (nothing reads them as images).
+PNG = b"\x89PNG\r\n\x1a\n"
+IMAGES = [PNG + b"\x00\xff" * 7, PNG + bytes(range(256)) * 600]
 CLAUDE = {"budget_usd": 0.4, "timeout": 30, "max_turns": 3, "model": "sonnet", "effort": "medium"}
 CODEX = {"timeout": 20, "effort": "medium"}
 KINDS = ("start", "unsupported", "auth", "init", "timeout", "quota", "api", "invalid")
@@ -128,6 +134,21 @@ class Order(Recorded):
         self.assertEqual(kw, CLAUDE, "the caller's settings, and nothing more, reach the Claude launcher")
         self.assertEqual((a.output, a.moteur, a.version, a.cost_usd, a.num_turns, a.tokens, a.secours),
                          (dict(ANSWER, by="claude"), None, "2.1.296", 0.12, 2, None, None))
+
+    def test_images_reach_the_claude_launcher_only_when_given(self):
+        self.run_(images=IMAGES)
+        _, _, kw = self.calls[0]
+        kw.pop("args")
+        self.assertEqual(kw, dict(CLAUDE, images=IMAGES))
+        self.calls.clear()
+        self.run_(images=None)
+        self.assertNotIn("images", self.calls[0][2], "without images, the call it got before")
+
+    def test_codex_takes_no_image_yet_and_says_so(self):
+        self.both("codex")
+        a = self.run_(images=IMAGES)
+        self.assertEqual((self.asked(), a.moteur), (["claude"], "claude"))
+        self.assertEqual(a.secours, "codex: unsupported: Codex is not given images yet")
 
     def test_the_preferred_engine_first_then_only_on_failure_the_other(self):
         self.both("codex")
@@ -422,6 +443,62 @@ class Whole(unittest.TestCase):
             _headless.run("prompt", SCHEMA, "system", claude=claude, codex=codex, essais=2)
         self.assertEqual(_headless.texte(cm.exception), "claude: refused: cyber")
         self.assertEqual((self.claude_calls(), self.codex_calls()), (1, 0))
+
+    def sha(self, data):
+        return hashlib.sha256(data).hexdigest()
+
+    def test_images_go_first_on_one_line_of_stream_json_said_last(self):
+        claude, _ = self.settings()
+        text = "Où est « Nouveau » ?\n\t\"guillemets\" \\ \u2028 🙂"
+        _headless_claude.run(text, SCHEMA, "system", **claude)
+        without = json.loads(self.get(self.claude_fake, "argv.json"))
+        a = _headless_claude.run(text, SCHEMA, "system", images=IMAGES, **claude)
+        self.assertEqual(a.output, ANSWER)
+        argv = json.loads(self.get(self.claude_fake, "argv.json"))
+        self.assertEqual(argv, without + ["--input-format", "stream-json"])
+        self.assertEqual(self.get(self.claude_fake, "prompt.txt"), text)
+        self.assertEqual(json.loads(self.get(self.claude_fake, "images.json")),
+                         [{"media_type": "image/png", "sha256": self.sha(p), "bytes": len(p)} for p in IMAGES])
+        line = _headless_claude.stdin_text(text, IMAGES).encode("utf-8")
+        self.assertEqual(json.loads(self.get(self.claude_fake, "stdin.json")), {"sha256": self.sha(line), "bytes": len(line)})
+        self.assertEqual((line.count(b"\n"), line[-1:]), (1, b"\n"), "one line, and its end")
+        content = json.loads(line)["message"]["content"]
+        self.assertEqual([b["type"] for b in content], ["image", "image", "text"])
+        self.assertTrue(line.startswith(b'{"type":"user","message":{"role":"user","content":[{"type":"image","source":'
+                                        b'{"type":"base64","media_type":"image/png","data":"iVBORw0KGgoA/wD/A'), line[:120])
+
+    def test_without_images_the_call_is_the_one_it_was(self):
+        claude, _ = self.settings()
+        _headless_claude.run("prompt é", SCHEMA, "system", **claude)
+        before = self.recorded_call()
+        for none in (None, []):
+            with self.subTest(images=none):
+                _headless_claude.run("prompt é", SCHEMA, "system", images=none, **claude)
+                self.assertEqual(self.recorded_call(), before)
+                self.assertEqual(json.loads(self.get(self.claude_fake, "stdin.json"))["sha256"],
+                                 self.sha("prompt é".encode("utf-8")))
+                self.assertEqual(json.loads(self.get(self.claude_fake, "images.json")), [])
+
+    def test_a_claude_that_cannot_read_stream_json_gets_no_image(self):
+        claude, _ = self.settings()
+        self.put(self.claude_fake, "flags", FAKE_FLAGS.replace(" --input-format", ""))
+        with self.assertRaises(HeadlessError) as cm:
+            _headless_claude.run("prompt", SCHEMA, "system", images=IMAGES, **claude)
+        self.assertEqual((cm.exception.kind, cm.exception.reason, cm.exception.detail),
+                         ("unsupported", "flags", "this claude lacks --input-format"))
+        self.assertEqual(self.claude_calls(), 0)
+        self.assertEqual(_headless_claude.run("prompt", SCHEMA, "system", **claude).output, ANSWER)
+
+    def test_through_the_chosen_ai_the_images_reach_claude_never_codex(self):
+        claude, codex = self.settings()
+        a = _headless.run("prompt", SCHEMA, "system", claude=claude, codex=codex, images=IMAGES)
+        self.assertEqual((a.output, a.moteur), (ANSWER, None))
+        self.assertEqual(len(json.loads(self.get(self.claude_fake, "images.json"))), 2)
+        write_agents(self.home, ["claude", "codex"], "codex", self.codex_home)
+        a = _headless.run("prompt", SCHEMA, "system", claude=claude, codex=codex, images=IMAGES)
+        self.assertEqual((a.moteur, self.codex_calls()), ("claude", 0))
+        self.assertEqual(a.secours, "codex: unsupported: Codex is not given images yet")
+        self.assertEqual(self.claude_calls(), 2)
 
     def test_codex_running_a_tool_is_not_covered_by_claude(self):
         write_agents(self.home, ["claude", "codex"], "codex", self.codex_home)

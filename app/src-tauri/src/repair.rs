@@ -2317,6 +2317,7 @@ fn effort(round: usize) -> &'static str {
 fn question<'a>(schema: &'a str, dossier: &'a str, round: usize) -> claude::Question<'a> {
     claude::Question {
         text: dossier,
+        images: &[],
         schema,
         system: SYSTEM_PROMPT,
         model: Some("sonnet"),

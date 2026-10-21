@@ -15,7 +15,10 @@ Each engine has its own launcher, cage and checks: _headless_claude.py, _headles
 - the other engine only when the error shows the first one cannot answer now: it does not start,
   is not supported or is paused, is not logged in with the subscription, is at its usage limit,
   or its service failed again; after a timeout, only towards Claude. Never after init (it did not
-  run as required) nor invalid (its answer was off): anomalies are shown, not covered.
+  run as required), invalid (its answer was off) nor refused (the model refused): anomalies are
+  shown, not covered.
+Images (PNG, bytes) go to Claude only, before the prompt; Codex is given none yet
+(docs/proposals/guide.md §4.9): asked with images, it says so, and Claude, when listed, answers.
 
     answer = run(prompt, schema, system_prompt, claude={...}, codex={...})
     answer.output    # the JSON object the engine returned, already parsed
@@ -115,15 +118,19 @@ def _in_order(agents, ask, essais=1, pause=0, journal=None):
     raise first
 
 
-def run(prompt, schema, system_prompt, *, claude, codex, essais=1, pause=0, journal=None, agents=None):
+def run(prompt, schema, system_prompt, *, claude, codex, essais=1, pause=0, journal=None, agents=None, images=None):
     """One isolated question to the chosen AI. Returns an Answer, or raises HeadlessError: the
     preferred engine's error (the fallback's in its detail), its `moteur` set as Answer's.
     essais: tries per engine; pause: seconds before a second one; journal(moteur, essai, essais,
-    error) hears each failed try; agents: what lire() gave, else agents.json is read now."""
+    error) hears each failed try; agents: what lire() gave, else agents.json is read now;
+    images: PNG images (bytes) Claude sees before the prompt (_headless_claude.run)."""
     def ask(moteur, choix):
         if moteur == "claude":
-            a = claude_engine.run(prompt, schema, system_prompt, **claude)
+            # Without images, the Claude launcher gets the caller's settings and nothing more, as before.
+            a = claude_engine.run(prompt, schema, system_prompt, **(dict(claude, images=images) if images else claude))
             return a.output, a.version, a.cost_usd, a.num_turns, None
+        if images:
+            raise HeadlessError("unsupported", "Codex is not given images yet", "images")
         a = _codex_engine().run(prompt, schema, system_prompt, codex_home=choix.codex_home, model=_model(), **codex)
         return a.output, a.version, a.cost_usd, a.num_turns, a.tokens
     moteur, (output, version, cost, turns, tokens), secours = _in_order(agents, ask, essais, pause, journal)

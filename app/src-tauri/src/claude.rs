@@ -3,7 +3,8 @@
 //!
 //! `claude -p` runs with no tool but its JSON answer, no MCP server, no hook, no skill, none of
 //! the user's settings, in a folder of its own, with a short list for environment (`child_env`).
-//! The question goes through stdin, after every option. Its stream is checked line by line
+//! The question goes through stdin, after every option: as it is, or with images, as one line of
+//! stream-json (`stdin`), the images in memory only. Its stream is checked line by line
 //! (`Watch`): the start-up line first, fail closed, and a run that does not behave is stopped at
 //! once: a tool, a second start-up line that is not clean, a model the question did not ask for,
 //! or a refusal of the model, which Claude Code would otherwise have another model answer. The
@@ -12,6 +13,7 @@
 //! Where the two differ, this side keeps the repair's words: no start-up line is a bad start
 //! (the launcher says "start"), no result line is an answer off (the launcher says "api").
 
+use std::borrow::Cow;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -35,10 +37,13 @@ pub const REQUIRED_FLAGS: &[&str] = &[
     "--strict-mcp-config",
 ];
 
-/// One question, as _headless_claude.run takes it. `schema` is the JSON text Claude gets, as is.
+/// One question, as _headless_claude.run takes it. `schema` is the JSON text Claude gets, as is:
+/// compact and ASCII, it is what the launcher's json.dumps writes of the same schema.
 pub struct Question<'a> {
-    /// What Claude reads on stdin.
+    /// What Claude reads, after the images.
     pub text: &'a str,
+    /// PNG images Claude sees first (the guide's capture); none for the repair.
+    pub images: &'a [&'a [u8]],
     pub schema: &'a str,
     pub system: &'a str,
     pub model: Option<&'a str>,
@@ -103,7 +108,43 @@ pub fn argv(q: &Question) -> Vec<String> {
         a.extend(["--effort".into(), effort.into()]);
     }
     a.extend(["--json-schema", q.schema, "--append-system-prompt", q.system, "--output-format", "stream-json", "--verbose"].map(String::from));
+    // Said last: an option of its own after every one the repair's command has.
+    if !q.images.is_empty() {
+        a.extend(["--input-format", "stream-json"].map(String::from));
+    }
     a
+}
+
+/// What Claude reads on stdin: the text as it is or, with images, one line of stream-json, one user
+/// message: each image, then the text. Compact, the text unescaped but for what JSON requires: the
+/// same bytes as the launcher's stdin_text (the contract test).
+pub fn stdin<'a>(q: &Question<'a>) -> Cow<'a, str> {
+    if q.images.is_empty() {
+        return Cow::Borrowed(q.text);
+    }
+    let mut line = String::from(r#"{"type":"user","message":{"role":"user","content":["#);
+    for png in q.images {
+        line.push_str(r#"{"type":"image","source":{"type":"base64","media_type":"image/png","data":""#);
+        line.push_str(&base64(png));
+        line.push_str(r#""}},"#);
+    }
+    line.push_str(r#"{"type":"text","text":"#);
+    line.push_str(&Value::from(q.text).to_string());
+    line.push_str("}]}}\n");
+    Cow::Owned(line)
+}
+
+/// Standard base64, padded (RFC 4648, §4), as Python's base64.b64encode writes it.
+fn base64(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let n = chunk.iter().enumerate().fold(0u32, |n, (i, b)| n | (u32::from(*b) << (16 - 8 * i)));
+        for i in 0..4 {
+            out.push(if i <= chunk.len() { char::from(ALPHABET[((n >> (18 - 6 * i)) & 63) as usize]) } else { '=' });
+        }
+    }
+    out
 }
 
 /// The child's whole environment. USER is required: without it Claude Code misses
@@ -197,7 +238,8 @@ pub struct Asked {
 pub fn ask(claude: &Path, q: &Question, place: &Place, sink: &mut dyn FnMut(&str)) -> Asked {
     let args = argv(q);
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
-    let iso = sys::Isolated { env: place.env, cwd: place.cwd, stdin: q.text, limit: place.limit, cancel: place.cancel };
+    let input = stdin(q);
+    let iso = sys::Isolated { env: place.env, cwd: place.cwd, stdin: &input, limit: place.limit, cancel: place.cancel };
     let started = Instant::now();
     let mut watch = Watch::new(q.model);
     let code = sys::run_isolated(claude, &args, &iso, &mut |line| {
@@ -421,6 +463,7 @@ fn parse_result(result: &Value, api_errors: &[String]) -> Result<Value, ClaudeEr
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sha2::Digest;
 
     const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/repair");
 
@@ -673,5 +716,179 @@ mod tests {
         w.line(fixture("plan-ok.jsonl").lines().next().unwrap());
         w.line(r#"{"type":"rate_limit_event","rate_limit_info":{"status":"rejected <b>","unifiedWindows":{"five_hour":{"utilization":"0.9","resetsAt":1}}}}"#);
         assert_eq!(w.rate_limit, Some(RateLimit { status: "rejectedb".into(), five_hour: None, seven_day: None }));
+    }
+
+    // ── Images, and the launcher's contract ─────────────────────────────────
+
+    const PNG: &[u8] = b"\x89PNG\r\n\x1a\n";
+
+    fn question<'a>(text: &'a str, images: &'a [&'a [u8]]) -> Question<'a> {
+        Question {
+            text,
+            images,
+            schema: r#"{"type":"object","required":["a"],"properties":{"a":{"type":"string"}}}"#,
+            system: "Tu es Bibo.",
+            model: Some("sonnet"),
+            effort: Some("low"),
+            budget_usd: 0.25,
+            max_turns: 3,
+        }
+    }
+
+    #[test]
+    fn base64_is_the_standard_one() {
+        // RFC 4648, §10, then the two last letters of the alphabet.
+        for (raw, b64) in [("", ""), ("f", "Zg=="), ("fo", "Zm8="), ("foo", "Zm9v"), ("foob", "Zm9vYg=="), ("fooba", "Zm9vYmE="), ("foobar", "Zm9vYmFy")] {
+            assert_eq!(base64(raw.as_bytes()), b64, "{raw}");
+        }
+        assert_eq!(base64(&[0xfb, 0xff, 0xbf]), "+/+/");
+    }
+
+    #[test]
+    fn with_images_the_command_says_so_last_and_without_any_nothing_changes() {
+        let without = argv(&question("x", &[]));
+        let with = argv(&question("x", &[PNG]));
+        assert_eq!(with[..without.len()], without[..]);
+        assert_eq!(with[without.len()..], ["--input-format", "stream-json"]);
+        assert!(!without.iter().any(|a| a == "--input-format"));
+        assert_eq!(stdin(&question("le dossier\n", &[])), "le dossier\n", "without an image, the text as it is");
+    }
+
+    #[test]
+    fn the_images_go_first_then_the_text_on_one_line() {
+        let a: &[u8] = b"\x89PNG\r\n\x1a\nA";
+        let b: &[u8] = b"\x89PNG\r\n\x1a\nBB";
+        let text = "Ligne « 1 »\n\t\"guillemets\" \\ \u{1} \u{2028} 🙂</historique>";
+        let images = [a, b];
+        let line = stdin(&question(text, &images));
+        let expected = [
+            r#"{"type":"user","message":{"role":"user","content":["#,
+            r#"{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgpB"}},"#,
+            r#"{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgpCQg=="}},"#,
+            r#"{"type":"text","text":"Ligne « 1 »\n\t\"guillemets\" \\ \u0001 "#,
+            "\u{2028}",
+            r#" 🙂</historique>"}]}}"#,
+            "\n",
+        ]
+        .concat();
+        assert_eq!(line, expected);
+        assert_eq!(line.matches('\n').count(), 1, "one line");
+        let v: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(v["message"]["content"][2]["text"], text);
+    }
+
+    /// A PNG's signature, then bytes enough for a capture's weight.
+    fn capture(n: usize, seed: u8) -> Vec<u8> {
+        let mut png = PNG.to_vec();
+        png.extend((0..n).map(|i| (i as u8).wrapping_mul(31).wrapping_add(seed)));
+        png
+    }
+
+    /// The command and the line `ask` says are what Claude gets, byte for byte, its answer back.
+    #[cfg(unix)]
+    #[test]
+    fn ask_sends_claude_the_command_and_the_line_it_says() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(tmp.path()).unwrap();
+        let (out, work) = (root.join("out"), root.join("work"));
+        for d in [&out, &work] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        let replay = root.join("stream.jsonl");
+        std::fs::write(&replay, fixture("plan-ok.jsonl")).unwrap();
+        let claude = root.join("claude");
+        let script = format!("#!/bin/sh\nprintf '%s\\n' \"$@\" > '{o}/argv'\n/bin/cat > '{o}/stdin'\n/bin/cat '{r}'\n", o = out.display(), r = replay.display());
+        std::fs::write(&claude, script).unwrap();
+        std::fs::set_permissions(&claude, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let png = capture(700_000, 7);
+        let images: [&[u8]; 1] = [&png];
+        let q = question("Où est « Nouveau » ?", &images);
+        let env = [("PATH", "/usr/bin:/bin")];
+        let cancel = AtomicBool::new(false);
+        let place = Place { env: &env, cwd: &work, limit: Duration::from_secs(20), cancel: &cancel };
+        let mut heard = 0;
+        let asked = ask(&claude, &q, &place, &mut |_| heard += 1);
+        assert_eq!(asked.answer.map(|a| a["cause_id"].clone()), Ok(json!("reseau")));
+        assert_eq!(heard, 5, "each line went to the sink");
+        assert!(std::fs::read(out.join("stdin")).unwrap() == stdin(&q).as_bytes(), "the line, byte for byte");
+        let sent: Vec<String> = std::fs::read_to_string(out.join("argv")).unwrap().lines().map(String::from).collect();
+        assert_eq!(sent, argv(&q));
+    }
+
+    fn python() -> String {
+        let name = if cfg!(windows) { "python" } else { "python3" };
+        let out = std::process::Command::new(name)
+            .args(["-I", "-c", "import sys; print(sys.executable)"])
+            .output()
+            .unwrap_or_else(|e| panic!("the contract between the app and the kit's launcher needs {name}: {e}"));
+        assert!(out.status.success(), "{name}: {}", String::from_utf8_lossy(&out.stderr));
+        String::from_utf8(out.stdout).unwrap().trim().to_string()
+    }
+
+    /// The guide's schema (docs/proposals/guide.md §4.5), compact and in its own order, as guide.rs will hold it.
+    const GUIDE_SCHEMA: &str = r#"{"type":"object","additionalProperties":false,"required":["code_vu","etat","consigne","libelle","cible","confiance","question","choix","precedente","action_sensible","suspect","resume_etape"],"properties":{"code_vu":{"type":"string","maxLength":8},"etat":{"enum":["etape","question","pas_ici","termine","bloque"]},"consigne":{"type":"string","maxLength":240},"libelle":{"type":["string","null"],"maxLength":60},"cible":{"anyOf":[{"type":"null"},{"type":"object","additionalProperties":false,"required":["x","y","largeur","hauteur"],"properties":{"x":{"type":"integer","minimum":0},"y":{"type":"integer","minimum":0},"largeur":{"type":"integer","minimum":1},"hauteur":{"type":"integer","minimum":1}}}]},"confiance":{"type":"number","minimum":0,"maximum":1},"question":{"type":["string","null"],"maxLength":160},"choix":{"type":"array","maxItems":4,"items":{"type":"string","maxLength":60}},"precedente":{"enum":["faite","pas_faite","incertain","sans_objet"]},"action_sensible":{"type":"boolean"},"suspect":{"type":"boolean"},"resume_etape":{"type":"string","maxLength":120}}}"#;
+
+    /// The same questions through claude.rs and through the kit's launcher (_headless_claude.run,
+    /// engine/tests/claude_contract.py, fake_claude.py for claude): the same argv and the same stdin,
+    /// byte for byte, images included. Without Python, it fails: no skip.
+    #[test]
+    fn the_app_and_the_launcher_send_alike() {
+        let small = capture(64, 1);
+        let big = capture(400_000, 2);
+        let other = capture(90_000, 3);
+        let one: [&[u8]; 1] = [&big];
+        let two: [&[u8]; 2] = [&small, &other];
+        let system = "Tu es Bibo, un guide.\n1. « Une seule action » par réponse ; \"guillemets\" \\ fin.";
+        let text = "<capture largeur=\"1280\" hauteur=\"800\" logiciel=\"Odoo\"/>\n<demande>debut</demande>\n\
+                    <objectif>Faire une facture à « Martin » \\ \"test\"\t\u{1} \u{2028} 🙂</objectif>";
+        let dossier = "<etape>brain</etape>\n<journal>\nerror: ConnectionRefused\n</journal>\nAccents : é è à ç.";
+        let repair_schema = r#"{"type":"object","additionalProperties":false,"required":["cause_id"],"properties":{"cause_id":{"enum":["reseau","inconnu"]}}}"#;
+        let cases: Vec<(&str, Question, &str)> = vec![
+            ("the repair's", Question { text: dossier, images: &[], schema: repair_schema, system, model: Some("sonnet"), effort: Some("medium"), budget_usd: 0.50, max_turns: 3 }, "ok"),
+            // The guide's model: the fake's start-up line says Sonnet, the launcher stops it there.
+            ("the guide's", Question { text, images: &one, schema: GUIDE_SCHEMA, system, model: Some("opus"), effort: Some("low"), budget_usd: 0.25, max_turns: 3 }, "init"),
+            ("two images", Question { text, images: &two, schema: GUIDE_SCHEMA, system, model: Some("sonnet"), effort: None, budget_usd: 0.25, max_turns: 2 }, "ok"),
+            ("nothing optional", Question { text, images: &[], schema: repair_schema, system, model: None, effort: None, budget_usd: 1.0, max_turns: 3 }, "ok"),
+        ];
+        let hex = crate::config_guard::hex;
+        let sha = |b: &[u8]| hex(&sha2::Sha256::digest(b));
+        let asked: Vec<Value> = cases
+            .iter()
+            .map(|(name, q, _)| {
+                json!({ "name": name, "text": q.text, "images": q.images.iter().map(|i| hex(i)).collect::<Vec<_>>(), "schema": q.schema,
+                        "system": q.system, "model": q.model, "effort": q.effort, "budget_usd": q.budget_usd, "max_turns": q.max_turns })
+            })
+            .collect();
+        let python = python();
+        let dir = tempfile::tempdir().unwrap();
+        let mut child = std::process::Command::new(&python)
+            .arg("-I")
+            .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../engine/tests/claude_contract.py"))
+            .args([dir.path().as_os_str(), python.as_ref()])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut sin = child.stdin.take().unwrap();
+        let data = Value::from(asked).to_string();
+        let writer = std::thread::spawn(move || std::io::Write::write_all(&mut sin, data.as_bytes()));
+        let out = child.wait_with_output().unwrap();
+        writer.join().unwrap().unwrap();
+        assert!(out.status.success(), "claude_contract.py: {}", String::from_utf8_lossy(&out.stderr));
+        let got: Vec<Value> = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(got.len(), cases.len());
+
+        for ((name, q, outcome), rec) in cases.iter().zip(&got) {
+            assert_eq!(rec["argv"], json!(argv(q)), "{name}: the argv");
+            let line = stdin(q);
+            assert_eq!(rec["stdin"], json!({ "sha256": sha(line.as_bytes()), "bytes": line.len() }), "{name}: the stdin");
+            assert_eq!(rec["prompt"], q.text, "{name}: the text Claude reads");
+            let images: Vec<Value> = q.images.iter().map(|i| json!({ "media_type": "image/png", "sha256": sha(i), "bytes": i.len() })).collect();
+            assert_eq!(rec["images"], json!(images), "{name}: the images Claude sees");
+            assert_eq!(rec["outcome"], *outcome, "{name}");
+        }
     }
 }

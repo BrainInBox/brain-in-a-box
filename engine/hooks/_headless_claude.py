@@ -13,16 +13,19 @@ login` stores, or on a machine without a browser the token `claude setup-token`
 prints, in CLAUDE_CODE_OAUTH_TOKEN or, for the scheduled jobs, in
 ~/.brain-in-a-box/claude-oauth-token (mode 600), read only when Claude is asked:
 the one credential the child is given, never in the jobs' own environment, its
-value never written anywhere. Same contract as the Mac app's repair
-(app/src-tauri/src/repair.rs), which knows only the first.
+value never written anywhere. Same contract as the app's copy (app/src-tauri/src/claude.rs, which
+the repair asks through), which knows only the first; the test the_app_and_the_launcher_send_alike
+checks both send the same argv and stdin.
 
     answer = run(prompt, schema, system_prompt, budget_usd=1.0, timeout=600)
     answer.output  # the JSON object Claude returned, already parsed
+    run(prompt, ..., images=[png])   # PNG images it sees first (Bibo's guide's nightly check)
     check()        # the same checks of this claude, without asking it anything
 
 Used by daily-reflection.py and by the night check's review (_controle_judge.py).
 Not a hook: installed next to them, never registered in settings.json.
 """
+import base64
 import json
 import os
 import queue
@@ -44,6 +47,8 @@ WINDOWS = os.name == "nt"
 MIN_CLAUDE = (2, 1, 296)
 REQUIRED_FLAGS = ("--restricted", "--safe-mode", "--tools", "--permission-prompts", "--json-schema",
                   "--max-budget-usd", "--no-session-persistence", "--strict-mcp-config")
+# A question with images is read as stream-json.
+IMAGE_FLAGS = REQUIRED_FLAGS + ("--input-format",)
 PROBE_TIMEOUT = 60
 # One stream line, and the whole stream: a result line carries the full answer.
 LINE_CAP = 4_000_000
@@ -118,9 +123,11 @@ def find_claude():
     return [found] if found and (not WINDOWS or found.lower().endswith(".exe")) else None
 
 
-def base_argv(schema, system_prompt, *, budget_usd, max_turns=3, model=None, effort=None):
+def base_argv(schema, system_prompt, *, budget_usd, max_turns=3, model=None, effort=None, with_images=False):
     """claude's options, without the program itself. The prompt goes through stdin, after every
-    option: --disallowedTools takes several values and would swallow a prompt placed last."""
+    option: --disallowedTools takes several values and would swallow a prompt placed last.
+    with_images: the question is a line of stream-json (stdin_text), said last. The same argv as the
+    app's (claude.rs, argv), byte for byte: the schema compact, as json.dumps writes it."""
     a = ["-p", "--restricted", "--safe-mode", "--tools", "",
          "--disallowedTools", "Bash", "Edit", "Write", "NotebookEdit", "WebFetch", "WebSearch", "Agent", "Task", "Skill",
          "--strict-mcp-config", "--disable-slash-commands", "--no-chrome",
@@ -131,8 +138,22 @@ def base_argv(schema, system_prompt, *, budget_usd, max_turns=3, model=None, eff
         a += ["--model", model]
     if effort:
         a += ["--effort", effort]
-    return a + ["--json-schema", json.dumps(schema, separators=(",", ":")), "--append-system-prompt", system_prompt,
-                "--output-format", "stream-json", "--verbose"]
+    a += ["--json-schema", json.dumps(schema, separators=(",", ":")), "--append-system-prompt", system_prompt,
+          "--output-format", "stream-json", "--verbose"]
+    return a + (["--input-format", "stream-json"] if with_images else [])
+
+
+def stdin_text(prompt, images=None):
+    """What claude reads on stdin: the prompt as is or, with images (PNG, bytes), one line of
+    stream-json, one user message: each image, then the prompt. Compact, the text unescaped but for
+    what JSON requires: the same bytes as the app's (claude.rs, stdin)."""
+    if not images:
+        return prompt
+    content = [{"type": "image", "source": {"type": "base64", "media_type": "image/png",
+                                            "data": base64.b64encode(png).decode("ascii")}} for png in images]
+    content.append({"type": "text", "text": prompt})
+    return json.dumps({"type": "user", "message": {"role": "user", "content": content}},
+                      ensure_ascii=False, separators=(",", ":")) + "\n"
 
 
 def child_path(program, git=None):
@@ -353,10 +374,10 @@ def parse_version(text):
     return tuple(int(x) for x in m.groups()) if m else None
 
 
-def missing_flags(help_text):
-    """The REQUIRED_FLAGS that `claude --help` does not list."""
+def missing_flags(help_text, flags=REQUIRED_FLAGS):
+    """The flags (REQUIRED_FLAGS) that `claude --help` does not list."""
     words = set(re.split(r"[^A-Za-z0-9-]+", help_text or ""))
-    return [f for f in REQUIRED_FLAGS if f not in words]
+    return [f for f in flags if f not in words]
 
 
 def auth_method(status):
@@ -411,9 +432,9 @@ def rerouted():
     return sorted(found)
 
 
-def check_cli(argv0, env, cwd):
-    """Version, flags and login of this claude, checked before any question is asked.
-    Returns the version; raises HeadlessError (unsupported, auth, start)."""
+def check_cli(argv0, env, cwd, flags=REQUIRED_FLAGS):
+    """Version, flags (REQUIRED_FLAGS, IMAGE_FLAGS) and login of this claude, checked before any
+    question is asked. Returns the version; raises HeadlessError (unsupported, auth, start)."""
     _, out, err = _capture(argv0 + ["--version"], env, cwd)
     version = parse_version(out)
     if version is None:
@@ -422,7 +443,7 @@ def check_cli(argv0, env, cwd):
         raise HeadlessError("unsupported", f"Claude Code {'.'.join(map(str, version))} is older than "
                                            f"{'.'.join(map(str, MIN_CLAUDE))}: run `claude update`", "version")
     _, out, _ = _capture(argv0 + ["--help"], env, cwd)
-    missing = missing_flags(out)
+    missing = missing_flags(out, flags)
     if missing:
         raise HeadlessError("unsupported", "this claude lacks " + ", ".join(missing), "flags")
     elsewhere = rerouted()
@@ -644,14 +665,16 @@ def check(command=None, *, work_root=None, git=None):
 
 
 def run(prompt, schema, system_prompt, *, budget_usd, timeout, max_turns=3, model=None, effort=None, command=None,
-        work_root=None, git=None):
+        work_root=None, git=None, images=None):
     """One isolated question to Claude Code. Returns an Answer, or raises HeadlessError.
-    command: argv that stands for claude (tests); default, the user's claude."""
+    command: argv that stands for claude (tests); default, the user's claude.
+    images: PNG images (bytes) Claude sees before the prompt, in memory only (stdin_text); then
+    this claude must read stream-json. None or empty: the question as it always was."""
     argv0 = _claude(command)
     with _cage(argv0, work_root, git) as (work, env):
-        check_cli(argv0, env, work)
+        check_cli(argv0, env, work, IMAGE_FLAGS if images else REQUIRED_FLAGS)
         watch = Watch(model)
         args = argv0 + base_argv(schema, system_prompt, budget_usd=budget_usd, max_turns=max_turns,
-                                 model=model, effort=effort)
-        _, timed_out, err = supervise(args, env, work, prompt, timeout, watch.line)
+                                 model=model, effort=effort, with_images=bool(images))
+        _, timed_out, err = supervise(args, env, work, stdin_text(prompt, images), timeout, watch.line)
         return watch.conclude(timed_out, err)
