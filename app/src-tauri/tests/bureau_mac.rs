@@ -278,9 +278,9 @@ mod desk {
             stopped.0 == Pick::Arrete && stopped.1 < Duration::from_secs(5),
             serde_json::json!({"pick": format!("{:?}", stopped.0), "secs": stopped.1.as_secs_f64()}),
         );
-        std::thread::sleep(Duration::from_secs(1));
+        // The picker off, its window goes with it: a stream of it no longer shows that window.
         let kept = System.grab(&found.window);
-        r.scenario("apres_arreter_mesure", kept.as_ref().map_or(true, |img| count(img, MAGENTA) == 0), outcome(&kept));
+        r.scenario("apres_arreter_la_fenetre_oubliee", kept.as_ref().err() == Some(&Rate::Introuvable), outcome(&kept));
 
         // The user closes the picker without a window.
         r.ask("fermer_le_selecteur", false);

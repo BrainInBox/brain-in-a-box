@@ -85,7 +85,6 @@ pub enum Rate {
     /// Closed, or its id now another program's window (R22).
     Introuvable,
     /// Minimized or hidden: there is nothing to draw.
-    #[cfg_attr(target_os = "macos", allow(dead_code))]
     Reduite,
     /// The window would not draw itself: black, never the screen instead (R20).
     Noire,

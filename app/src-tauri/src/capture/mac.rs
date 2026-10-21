@@ -225,6 +225,11 @@ pub fn pick(cancel: &AtomicBool) -> Pick {
         // Bibo stopped waiting: the picker must not stay out on the screen.
         None => true,
     };
+    if off {
+        // The picker off, a stream of the window it gave no longer shows that window (measured on
+        // macOS 15): it goes with it.
+        *lock(&CHOSEN) = None;
+    }
     DispatchQueue::main().exec_async(move || put_away(off));
     match picked {
         Some(Picked::Filtre(filter)) => {
@@ -277,10 +282,17 @@ fn rate_of(error: &NSError) -> Rate {
     }
 }
 
+/// What a stream gave: its first complete image, and whether it said, before any, that it had nothing
+/// to show (a blank frame, or suspended: the window minimized or hidden).
+struct Frames {
+    image: Arc<Slot<Result<Rgba, Rate>>>,
+    nothing: AtomicBool,
+}
+
 define_class!(
     // SAFETY: NSObject has no subclassing requirements, and this class has no Drop.
     #[unsafe(super(NSObject))]
-    #[ivars = Arc<Slot<Result<Rgba, Rate>>>]
+    #[ivars = Arc<Frames>]
     struct Output;
 
     unsafe impl NSObjectProtocol for Output {}
@@ -288,10 +300,17 @@ define_class!(
     unsafe impl SCStreamOutput for Output {
         #[unsafe(method(stream:didOutputSampleBuffer:ofType:))]
         fn did_output(&self, _stream: &SCStream, sample: &CMSampleBuffer, kind: SCStreamOutputType) {
-            if kind == SCStreamOutputType::Screen {
-                if let Some(image) = whole_image(sample) {
-                    self.ivars().set(image);
+            if kind != SCStreamOutputType::Screen {
+                return;
+            }
+            match status(sample) {
+                Some(SCFrameStatus::Complete) => {
+                    // SAFETY: the stream's buffer, read during its callback.
+                    let image = unsafe { sample.image_buffer() }.and_then(|pixels| read(&pixels)).ok_or(Rate::Noire);
+                    self.ivars().image.set(image);
                 }
+                Some(SCFrameStatus::Blank | SCFrameStatus::Suspended) => self.ivars().nothing.store(true, Ordering::SeqCst),
+                _ => {}
             }
         }
     }
@@ -299,33 +318,28 @@ define_class!(
     unsafe impl SCStreamDelegate for Output {
         #[unsafe(method(stream:didStopWithError:))]
         fn did_stop(&self, _stream: &SCStream, error: &NSError) {
-            self.ivars().set(Err(rate_of(error)));
+            self.ivars().image.set(Err(rate_of(error)));
         }
     }
 );
 
 impl Output {
-    fn new(slot: Arc<Slot<Result<Rgba, Rate>>>) -> Retained<Self> {
-        let this = Self::alloc().set_ivars(slot);
+    fn new(frames: Arc<Frames>) -> Retained<Self> {
+        let this = Self::alloc().set_ivars(frames);
         // SAFETY: NSObject's own initializer.
         unsafe { msg_send![super(this), init] }
     }
 }
 
-/// A frame the stream says complete, read; None for the others (idle, blank, started...).
-fn whole_image(sample: &CMSampleBuffer) -> Option<Result<Rgba, Rate>> {
+/// A frame's status, as the stream attaches it.
+fn status(sample: &CMSampleBuffer) -> Option<SCFrameStatus> {
     // SAFETY: the stream's buffer, read during its callback.
     let infos = unsafe { sample.sample_attachments_array(false) }?;
     // SAFETY: CFArray and NSArray are toll-free bridged, as are its CFDictionaries and NSDictionary.
     let infos: &NSArray<NSDictionary<NSString, AnyObject>> = unsafe { &*(&*infos as *const CFArray).cast() };
     // SAFETY: a key ScreenCaptureKit defines.
     let status = infos.firstObject()?.objectForKey(unsafe { SCStreamFrameInfoStatus })?;
-    if status.downcast::<NSNumber>().ok()?.integerValue() != SCFrameStatus::Complete.0 {
-        return None;
-    }
-    // SAFETY: as above.
-    let pixels = unsafe { sample.image_buffer() }?;
-    Some(read(&pixels).ok_or(Rate::Noire))
+    Some(SCFrameStatus(status.downcast::<NSNumber>().ok()?.integerValue()))
 }
 
 /// The pixels of a CoreVideo buffer in BGRA, copied while it is locked for reading.
@@ -356,8 +370,9 @@ fn one_image(filter: &SCContentFilter) -> Result<Rgba, Rate> {
     if !(w >= 1.0 && h >= 1.0 && w <= f64::from(MAX_SIDE) && h <= f64::from(MAX_SIDE)) {
         return Err(Rate::Noire);
     }
-    let slot: Arc<Slot<Result<Rgba, Rate>>> = Slot::new();
-    let output = Output::new(slot.clone());
+    let frames = Arc::new(Frames { image: Slot::new(), nothing: AtomicBool::new(false) });
+    let slot = frames.image.clone();
+    let output = Output::new(frames.clone());
     let queue = DispatchQueue::new("com.braininbox.guide.image", None);
     // SAFETY: a configuration and a stream of ours, our output and its queue kept until the end.
     let stream = unsafe {
@@ -383,7 +398,9 @@ fn one_image(filter: &SCContentFilter) -> Result<Rgba, Rate> {
     });
     // SAFETY: our stream; the block is copied by the call.
     unsafe { stream.startCaptureWithCompletionHandler(Some(&on_start)) };
-    let image = slot.wait(IMAGE, &|| false).unwrap_or(Err(Rate::Noire));
+    // No image in time: a stream that said it had nothing to show is a window minimized or hidden.
+    let nothing = || if frames.nothing.load(Ordering::SeqCst) { Rate::Reduite } else { Rate::Noire };
+    let image = slot.wait(IMAGE, &|| false).unwrap_or_else(|| Err(nothing()));
     // Stopped before its output and queue go: no frame comes to them after.
     let stopped: Arc<Slot<()>> = Slot::new();
     let done = stopped.clone();

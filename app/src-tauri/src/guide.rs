@@ -3046,6 +3046,7 @@ mod tests {
         assert_eq!((f.id, f.app.as_str(), f.titre.as_str()), (1, "Google Chrome", "Odoo"));
         assert_eq!(lock(&b.guide.session).as_ref().unwrap().fenetre, Some(picked.window.clone()));
         assert_eq!(b.guide.look(&screen).unwrap().largeur, 900);
+        assert_eq!(b.guide.choose(&screen, Some(1)), Err(GuideError::FenetreIntrouvable), "the window picked, but by its id: no");
 
         // Closed, refused, nobody chose: the window picked before stays the one captured.
         for (then, said) in [

@@ -24,7 +24,7 @@ CACHE = (200, 250, 400, 300)
 
 SCENARIOS = [
     "sans_permission_au_depart", "le_selecteur_donne_la_fenetre", "une_image_sans_permission", "cest_fait_le_meme_filtre",
-    "la_fenetre_telle_quelle_est", "reduite_mesuree", "rouverte", "arreter_pendant_le_choix", "apres_arreter_mesure",
+    "la_fenetre_telle_quelle_est", "reduite_mesuree", "rouverte", "arreter_pendant_le_choix", "apres_arreter_la_fenetre_oubliee",
     "selecteur_ferme", "choisie_de_nouveau", "fenetre_fermee", "oubliee_a_la_fin", "sans_permission_a_la_fin",
 ]
 
@@ -217,6 +217,9 @@ def main():
             elif gesture == "couvrir":
                 say("cover in front", jxa({"op": "devant", "titre": cover}))
             elif gesture == "clic_page":
+                # In front first: a click on a window behind only brings it there.
+                say("target in front", jxa({"op": "devant", "titre": target}))
+                time.sleep(1)
                 f = frame(target)
                 say("click in the page", jxa({"op": "souris", "x": f["pos"][0] + 0.5 * f["size"][0], "y": f["pos"][1] + 0.2 * f["size"][1], "clic": True}))
             elif gesture == "reduire":
