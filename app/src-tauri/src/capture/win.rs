@@ -469,16 +469,15 @@ mod tests {
         b
     }
 
-    /// The share of black in the first and last columns and rows: an invisible border left in, or a
-    /// window drawn off its place, shows there.
-    fn black_edges(img: &Rgba) -> [f32; 4] {
-        let black = |x: u32, y: u32| {
-            let p = &img.px[((y * img.w + x) * 4) as usize..][..3];
-            p.iter().all(|&v| v <= 6)
-        };
-        let col = |x: u32| (0..img.h).filter(|&y| black(x, y)).count() as f32 / img.h as f32;
-        let row = |y: u32| (0..img.w).filter(|&x| black(x, y)).count() as f32 / img.w as f32;
-        [col(0), col(img.w - 1), row(0), row(img.h - 1)]
+    /// How many lines are mostly black from each side (left, right, top, bottom): the invisible
+    /// borders of Windows 10 and 11 left in, or a window drawn off its place, show as several; the
+    /// 1 px line Windows 11 draws around a window itself (not the window) as one.
+    fn black_margins(img: &Rgba) -> [u32; 4] {
+        let black = |x: u32, y: u32| img.px[((y * img.w + x) * 4) as usize..][..3].iter().all(|&v| v <= 6);
+        let col = |x: u32| (0..img.h).filter(|&y| black(x, y)).count() * 2 > img.h as usize;
+        let row = |y: u32| (0..img.w).filter(|&x| black(x, y)).count() * 2 > img.w as usize;
+        let run = |n: u32, line: &dyn Fn(u32) -> bool| (0..n).take_while(|&i| line(i)).count() as u32;
+        [run(img.w, &col), run(img.w, &|i| col(img.w - 1 - i)), run(img.h, &row), run(img.h, &|i| row(img.h - 1 - i))]
     }
 
     fn center(f: &Found) -> (i32, i32) {
@@ -501,6 +500,19 @@ mod tests {
         assert_eq!(sent, 2, "SendInput");
     }
 
+    /// Any top-level window with this title, owned ones included (the list leaves those out).
+    fn any_titled(titre: &str) -> Option<HWND> {
+        unsafe extern "system" fn each(h: HWND, all: LPARAM) -> BOOL {
+            // SAFETY: the Vec lent below, alive for the whole call.
+            unsafe { (*(all.0 as *mut Vec<HWND>)).push(h) };
+            BOOL(1)
+        }
+        let mut all: Vec<HWND> = Vec::new();
+        // SAFETY: `each` only pushes to `all`, which outlives the call.
+        let _ = unsafe { EnumWindows(Some(each), LPARAM(&mut all as *mut Vec<HWND> as isize)) };
+        all.into_iter().find(|&h| visible(h) && title(h) == titre)
+    }
+
     fn front() -> u64 {
         // SAFETY: no argument.
         id_of(unsafe { GetForegroundWindow() })
@@ -517,8 +529,8 @@ mod tests {
         let alone = grab(&win.window).unwrap();
         let shown = frame(handle(win.window.id)).unwrap();
         assert_eq!((alone.w as i32, alone.h as i32), (shown.right - shown.left, shown.bottom - shown.top), "its frame, the invisible borders left out");
-        let edges = black_edges(&alone);
-        assert!(edges.iter().all(|&e| e < 0.5), "no black border kept: {edges:?}");
+        let margins = black_margins(&alone);
+        assert!(margins.iter().all(|&m| m <= 1), "no invisible border kept: {margins:?}");
         let blue = count(&alone, BLUE);
         assert!(blue > pixels(&alone) * 8 / 10, "its colour: {blue} of {}", pixels(&alone));
 
@@ -624,15 +636,16 @@ mod tests {
         let titre = format!("Atelier Intrus {}", d.nonce);
         cmd.args(["intrus", &titre, "240", "200", "320", "220", "ff00ff", &win.window.id.to_string()]);
         let _intrus = Program(cmd.spawn().unwrap());
+        until("the other program's window, owned by the chosen one", || any_titled(&titre).is_some_and(|p| owner(p) == Some(h)));
+        let popup = any_titled(&titre).unwrap();
+        assert_ne!(pid_of(popup), win.window.pid);
+        // Clicked once, it is the chosen window's last active popup.
+        let r = frame(popup).unwrap();
+        click(((r.left + r.right) / 2, (r.top + r.bottom) / 2));
+        // SAFETY: any value is accepted.
+        until("its last active popup", || unsafe { GetLastActivePopup(h) } == popup);
         // SAFETY: a window of the test's program, enabled again below.
         let _ = unsafe { EnableWindow(h, false) };
-        let intrus = || {
-            // SAFETY: any value is accepted.
-            let p = unsafe { GetLastActivePopup(h) };
-            (p != h && visible(p) && title(p) == titre).then_some(p)
-        };
-        until("its popup, of another process", || intrus().is_some());
-        assert_ne!(pid_of(intrus().unwrap()), win.window.pid);
         let img = grab(&win.window).unwrap();
         assert_eq!(count(&img, MAGENTA), 0, "not a pixel of the other program's window");
         assert!(count(&img, BLUE) > pixels(&img) * 8 / 10);
@@ -651,9 +664,9 @@ mod tests {
         let dialog = modal(h, win.window.pid).unwrap();
         assert_eq!(class(dialog), "#32770");
         let (alone, _) = print(dialog).unwrap();
-        let edges = black_edges(&alone);
-        eprintln!("message box {}x{}, black edges {edges:?}", alone.w, alone.h);
-        assert!(edges.iter().all(|&e| e < 0.5), "drawn at its place in its own image: {edges:?}");
+        let margins = black_margins(&alone);
+        eprintln!("message box {}x{}, black margins {margins:?}", alone.w, alone.h);
+        assert!(margins.iter().all(|&m| m <= 1), "drawn at its place in its own image: {margins:?}");
         let img = grab(&win.window).unwrap();
         let white = count(&img, [255, 255, 255]);
         assert!(white > pixels(&alone) / 4, "its white in the window's capture: {white}");
@@ -750,8 +763,17 @@ mod tests {
         use std::os::windows::process::CommandExt;
         let d = desk();
         let titre = format!("Terminal {}", d.nonce);
-        // CREATE_NEW_CONSOLE: a console window of its own, as a user opens one.
-        let _t = Program(Command::new("cmd.exe").args(["/k", &format!("title {titre}")]).creation_flags(0x10).spawn().unwrap());
+        // CREATE_NEW_CONSOLE: a console window of its own, as a user opens one, kept open without reading
+        // anything (the test's input is no keyboard).
+        let _t = Program(
+            Command::new("cmd.exe")
+                .raw_arg(format!("/c title {titre}& ping -n 600 127.0.0.1 >nul"))
+                .creation_flags(0x10)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .spawn()
+                .unwrap(),
+        );
         let term = listed_as(|f| f.titre.contains(&titre));
         eprintln!("terminal: {} ({}), class {}", term.nom, term.window.app, class(handle(term.window.id)));
         assert!(term.terminal);
