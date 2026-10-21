@@ -36,6 +36,8 @@ const BIBO: &str = "com.braininbox.installer";
 const CHOIX: Duration = Duration::from_secs(300);
 /// How long a stream has to give its first whole image.
 const IMAGE: Duration = Duration::from_secs(5);
+/// How long a stream has to stop.
+const STOP: Duration = Duration::from_secs(2);
 const POLL: Duration = Duration::from_millis(100);
 /// ScreenCaptureKit's codes (SCStreamErrorCode): the user declined (the permission), no capture source
 /// left (the window closed).
@@ -382,7 +384,12 @@ fn one_image(filter: &SCContentFilter) -> Result<Rgba, Rate> {
     // SAFETY: our stream; the block is copied by the call.
     unsafe { stream.startCaptureWithCompletionHandler(Some(&on_start)) };
     let image = slot.wait(IMAGE, &|| false).unwrap_or(Err(Rate::Noire));
-    // SAFETY: as above; nothing waits for the stop.
-    unsafe { stream.stopCaptureWithCompletionHandler(None) };
+    // Stopped before its output and queue go: no frame comes to them after.
+    let stopped: Arc<Slot<()>> = Slot::new();
+    let done = stopped.clone();
+    let on_stop = RcBlock::new(move |_: *mut NSError| done.set(()));
+    // SAFETY: as above.
+    unsafe { stream.stopCaptureWithCompletionHandler(Some(&on_stop)) };
+    stopped.wait(STOP, &|| false);
     image
 }

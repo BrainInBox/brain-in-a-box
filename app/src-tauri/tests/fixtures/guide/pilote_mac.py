@@ -34,35 +34,47 @@ function run(argv) {
   var req = JSON.parse(argv[0]);
   var se = Application('System Events');
   var out = null;
-  if (req.op === 'fenetre') out = fenetre(se, req.pid);
+  if (req.op === 'fenetre') out = fenetre(se, req.titre);
   else if (req.op === 'souris') out = souris(req.x, req.y, req.clic);
   else if (req.op === 'touche') out = touche(req.code);
   else if (req.op === 'boutons') out = boutons(se);
-  else if (req.op === 'devant') out = devant(se, req.pid);
-  else if (req.op === 'reduire') out = reduire(se, req.pid, req.oui);
+  else if (req.op === 'devant') out = devant(se, req.titre);
+  else if (req.op === 'reduire') out = reduire(se, req.titre, req.oui);
+  else if (req.op === 'placer') out = placer(se, req.titre, req.at);
   return JSON.stringify(out);
 }
 function p(el, n) { try { var v = el[n](); return v === undefined ? null : v; } catch (e) { return null; } }
-function proc(se, pid) { return se.processes.whose({unixId: pid})[0]; }
-function fenetre(se, pid) {
-  try {
-    var ws = proc(se, pid).windows();
-    for (var i = 0; i < ws.length; i++) return {pos: ws[i].position(), size: ws[i].size(), titre: p(ws[i], 'name')};
-  } catch (e) { return {erreur: String(e)}; }
+// Chrome's windows, a minimized one included, by a part of their title.
+function win(se, titre) {
+  var ws = se.processes.byName('Google Chrome').windows();
+  for (var i = 0; i < ws.length; i++) if (String(p(ws[i], 'name') || '').indexOf(titre) >= 0) return ws[i];
   return null;
 }
-function devant(se, pid) {
+function fenetre(se, titre) {
   try {
-    var pr = proc(se, pid);
+    var w = win(se, titre);
+    return w ? {pos: w.position(), size: w.size(), titre: p(w, 'name')} : null;
+  } catch (e) { return {erreur: String(e)}; }
+}
+function placer(se, titre, at) {
+  try {
+    var w = win(se, titre);
+    w.position = [at[0], at[1]];
+    w.size = [at[2], at[3]];
+    return {pos: w.position(), size: w.size()};
+  } catch (e) { return {erreur: String(e)}; }
+}
+function devant(se, titre) {
+  try {
+    var pr = se.processes.byName('Google Chrome');
     pr.frontmost = true;
-    var w = pr.windows()[0];
-    w.actions.byName('AXRaise').perform();
+    win(se, titre).actions.byName('AXRaise').perform();
     return {ok: true, devant: p(pr, 'frontmost')};
   } catch (e) { return {erreur: String(e)}; }
 }
-function reduire(se, pid, oui) {
+function reduire(se, titre, oui) {
   try {
-    var w = proc(se, pid).windows()[0];
+    var w = win(se, titre);
     w.attributes.byName('AXMinimized').value = oui;
     return {ok: true, reduite: w.attributes.byName('AXMinimized').value()};
   } catch (e) { return {erreur: String(e)}; }
@@ -133,21 +145,22 @@ def page(name, title, colour, then=None):
     return path
 
 
-def chrome(name, path, at):
+def chrome(path, at):
+    """A window of one Chrome (one profile, so one process System Events sees), placed there."""
     x, y, w, h = at
-    return subprocess.Popen([CHROME, "--user-data-dir=" + os.path.join(DIR, "profil-" + name), "--no-first-run", "--no-default-browser-check",
+    return subprocess.Popen([CHROME, "--user-data-dir=" + os.path.join(DIR, "profil"), "--no-first-run", "--no-default-browser-check",
                              "--disable-features=Translate", "--window-position=%d,%d" % (x, y), "--window-size=%d,%d" % (w, h),
                              "--app=file://" + path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
-def frame(pid):
+def frame(titre):
     deadline = time.time() + 30
     while time.time() < deadline:
-        f = jxa({"op": "fenetre", "pid": pid})
+        f = jxa({"op": "fenetre", "titre": titre})
         if isinstance(f, dict) and f.get("pos"):
             return f
         time.sleep(1)
-    raise SystemExit("no window for process %d" % pid)
+    raise SystemExit("no window titled %s" % titre)
 
 
 def choose(target):
@@ -172,10 +185,12 @@ def choose(target):
 def main():
     os.makedirs(DIR, exist_ok=True)
     nonce = str(os.getpid())
-    target = chrome("cible", page("cible", "Cible Bibo " + nonce, "#00aac8", then="#2e7d32"), CIBLE)
-    say("target", frame(target.pid))
-    cover = chrome("cache", page("cache", "Cache Bibo " + nonce, "#ff00ff"), CACHE)
-    say("cover", frame(cover.pid))
+    target, cover = "Cible Bibo " + nonce, "Cache Bibo " + nonce
+    browser = chrome(page("cible", target, "#00aac8", then="#2e7d32"), CIBLE)
+    say("target", frame(target))
+    chrome(page("cache", cover, "#ff00ff"), CACHE).wait(timeout=60)
+    frame(cover)
+    say("cover", jxa({"op": "placer", "titre": cover, "at": list(CACHE)}))
     open(LOG, "w").close()
     subprocess.run(["/usr/bin/open", "-n", APP, "--stdout", LOG, "--stderr", LOG, "--args", "--bureau", DIR], check=True)
 
@@ -198,29 +213,28 @@ def main():
             if not gesture:
                 continue
             if gesture == "choisir":
-                choose(target.pid)
+                choose(target)
             elif gesture == "couvrir":
-                say("cover in front", jxa({"op": "devant", "pid": cover.pid}))
+                say("cover in front", jxa({"op": "devant", "titre": cover}))
             elif gesture == "clic_page":
-                f = frame(target.pid)
+                f = frame(target)
                 say("click in the page", jxa({"op": "souris", "x": f["pos"][0] + 0.5 * f["size"][0], "y": f["pos"][1] + 0.2 * f["size"][1], "clic": True}))
             elif gesture == "reduire":
-                say("minimize", jxa({"op": "reduire", "pid": target.pid, "oui": True}))
+                say("minimize", jxa({"op": "reduire", "titre": target, "oui": True}))
             elif gesture == "rouvrir":
-                say("open again", jxa({"op": "reduire", "pid": target.pid, "oui": False}), jxa({"op": "devant", "pid": target.pid}))
+                say("open again", jxa({"op": "reduire", "titre": target, "oui": False}), jxa({"op": "devant", "titre": target}))
             elif gesture == "fermer_le_selecteur":
                 time.sleep(3)
                 say("escape", jxa({"op": "touche", "code": 53}))
             elif gesture == "fermer_la_fenetre":
-                target.send_signal(signal.SIGTERM)
-                target.wait(timeout=30)
+                browser.send_signal(signal.SIGTERM)
+                browser.wait(timeout=30)
                 say("target closed")
             open(os.path.join(DIR, "fait-%d" % msg["n"]), "w").close()
         time.sleep(0.5)
 
-    for p in (target, cover):
-        if p.poll() is None:
-            p.terminate()
+    if browser.poll() is None:
+        browser.terminate()
     results = {m["scenario"]: m for m in lines if "scenario" in m}
     missing = [s for s in SCENARIOS if s not in results]
     failed = [s for s, m in results.items() if not m.get("ok")]
