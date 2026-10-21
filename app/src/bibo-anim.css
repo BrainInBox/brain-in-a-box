@@ -1,0 +1,752 @@
+/* Bibo's gestures and scenes. bibo.js adds the parts (arms, props), and sets on the drawing
+   data-scene (a loop, for as long as the screen lasts) or a cue-… class (a gesture, once).
+   Each part has a still pose, which is what reduced motion shows and what a capture catches:
+   the moves only go from or come back to it. Transform and opacity only, and nothing here
+   takes a click. Loaded after styles.css, whose mood rules these follow and sometimes beat. */
+
+/* ── The parts: hidden, out of the way of clicks ── */
+
+.bibo .b-arms,
+.bibo .b-lid,
+.bibo .b-bar,
+.bibo .b-lock,
+.bibo .b-glint,
+.bibo .b-sheet,
+.bibo .b-sheet-in,
+.bibo .b-dots,
+.bibo .b-gears,
+.bibo .b-bulb,
+.bibo .b-question,
+.bibo .b-tic,
+.bibo .b-clock,
+.bibo .b-memories,
+.bibo .b-dust,
+.bibo .b-confetti,
+.bibo .b-hat,
+.bibo .b-crackle,
+.bibo .b-squint,
+.bibo .b-wink,
+.bibo .b-doubt,
+.bibo .b-serious,
+.bibo .m-flat { pointer-events: none; }
+
+.bibo .b-pose,
+.bibo .b-lid,
+.bibo .b-bar,
+.bibo .b-lock,
+.bibo .b-glint,
+.bibo .b-sheet,
+.bibo .b-sheet-in,
+.bibo .b-dots,
+.bibo .b-gears,
+.bibo .b-bulb,
+.bibo .b-question,
+.bibo .b-tic,
+.bibo .b-clock,
+.bibo .b-memories,
+.bibo .b-dust,
+.bibo .b-confetti,
+.bibo .b-hat,
+.bibo .b-crackle,
+.bibo .b-squint,
+.bibo .b-wink,
+.bibo .b-doubt,
+.bibo .b-serious,
+.bibo .m-flat,
+.bibo .b-screw,
+.bibo .b-iris,
+.bibo .b-flash,
+.bibo .b-click { opacity: 0; }
+
+.bibo .b-pose,
+.bibo .b-bar,
+.bibo .b-gears,
+.bibo .b-question,
+.bibo .b-clock,
+.bibo .b-memories,
+.bibo .b-hat,
+.bibo .b-crackle,
+.bibo .b-squint,
+.bibo .b-doubt,
+.bibo .b-serious,
+.bibo .m-flat,
+.bibo .b-dots { transition: opacity 0.15s ease; }
+
+/* Turning points, in the drawing's units (viewBox 0 0 240 240). */
+.bibo .b-act,
+.bibo .b-rise,
+.bibo .b-pose,
+.bibo .b-lid-l,
+.bibo .b-lid-r,
+.bibo .b-flap-l,
+.bibo .b-flap-r,
+.bibo .b-wrench,
+.bibo .b-screw,
+.bibo .b-hat,
+.bibo .b-bulb,
+.bibo .b-question,
+.bibo .b-bar-fill,
+.bibo .b-glint-bar,
+.bibo .b-shackle,
+.bibo .b-lockkey,
+.bibo .b-hand-h,
+.bibo .b-hand-m,
+.bibo .b-camera,
+.bibo .b-photo,
+.bibo .b-sheet,
+.bibo .b-sheet-in,
+.bibo .b-squint,
+.bibo .b-cf,
+.bibo .b-card,
+.bibo .b-card-up { transform-box: view-box; }
+
+.bibo .b-act { transform-origin: 46px 204px; }
+.bibo .b-rise { transform-origin: 120px 140px; }
+.bibo .b-arm-r .b-pose { transform-origin: 174px 128px; }
+.bibo .b-arm-l .b-pose { transform-origin: 66px 128px; }
+.bibo .b-lid-l { transform-origin: 46px 131px; }
+.bibo .b-lid-r { transform-origin: 194px 131px; }
+.bibo .b-flap-l { transform-origin: 53px 131px; }
+.bibo .b-flap-r { transform-origin: 187px 131px; }
+.bibo .b-wrench,
+.bibo .b-screw { transform-origin: 200px 114px; }
+.bibo .b-hat { transform-origin: 120px 54px; }
+.bibo .b-bulb { transform-origin: 120px 44px; }
+.bibo .b-question { transform-origin: 200px 86px; }
+.bibo .b-bar-fill { transform-origin: 76px 195px; }
+.bibo .b-shackle { transform-origin: 129px 170px; }
+.bibo .b-lockkey { transform-origin: 137px 177px; }
+.bibo .b-hand-h,
+.bibo .b-hand-m { transform-origin: 26px 186px; }
+.bibo .b-camera,
+.bibo .b-photo { transform-origin: 142px 100px; }
+.bibo .b-sheet,
+.bibo .b-sheet-in { transform-origin: 120px 150px; }
+.bibo .b-squint { transform-origin: 120px 81px; }
+.bibo .b-cf { transform-origin: 120px 128px; }
+
+.bibo .b-iris,
+.bibo .b-flash path,
+.bibo .b-glint path,
+.bibo .b-crackle path,
+.bibo .b-gear-1,
+.bibo .b-gear-2,
+.bibo .b-heart,
+.bibo .b-dots circle,
+.bibo .b-dust circle,
+.bibo .b-rays,
+.bibo .b-bigpupil,
+.bibo .b-cf-spin,
+.bibo .b-card-spin {
+  transform-box: fill-box;
+  transform-origin: 50% 50%;
+}
+
+/* ── Gestures: once, then back to the scene ── */
+
+/* Out of the box: the taped box shakes, the lid pops, Bibo springs out, blinks and waves. */
+.bibo.cue-sortie .b-act { animation: bb-shake 0.28s ease-in-out; }
+.bibo.cue-sortie .b-lid { animation: bb-lid 0.42s linear both; }
+.bibo.cue-sortie .b-lid-l,
+.bibo.cue-sortie .b-lid-r { animation: bb-lid-open 0.16s 0.26s ease-in both; }
+.bibo.cue-sortie .b-tape { animation: bb-tape 0.18s 0.22s ease-out both; }
+.bibo.cue-sortie .b-flap-l,
+.bibo.cue-sortie .b-flap-r { animation: bb-flap 0.3s 0.3s cubic-bezier(0.3, 1.5, 0.5, 1) both; }
+.bibo.cue-sortie .b-rise { animation: bb-spring 0.62s 0.3s both; }
+.bibo.cue-sortie .b-eyes { animation: bb-blink 0.16s 0.94s; }
+.bibo.cue-sortie .m-smile,
+.bibo.cue-coucou .m-smile { opacity: 0; }
+.bibo.cue-sortie .m-open,
+.bibo.cue-coucou .m-open { opacity: 1; }
+.bibo.cue-sortie .p-wave { opacity: 1; animation: bb-wave 0.75s 1s ease-in-out both; }
+.bibo.cue-coucou .p-wave { opacity: 1; animation: bb-wave 1.2s ease-in-out both; }
+
+/* A photo: the camera to the right eye, a wink, click, one small flash, the print comes out. */
+.bibo.cue-photo .p-cam { opacity: 1; animation: bb-hold-arm 1.6s ease-out both; }
+.bibo.cue-photo .b-wink { opacity: 1; animation: bb-hold 1.6s both; }
+.bibo.cue-photo .b-camera { animation: bb-recoil 1.6s both; }
+.bibo.cue-photo .b-iris { animation: bb-shutter 1.6s both; }
+.bibo.cue-photo .b-flash { opacity: 1; }
+.bibo.cue-photo .b-flash path { opacity: 0; animation: bb-flash 1.6s ease-out both; }
+.bibo.cue-photo .b-click { animation: bb-click 1.6s both; }
+.bibo.cue-photo .b-photo { transform: translateY(-17px) rotate(-4deg); animation: bb-print 1.6s ease-out both; }
+
+/* Thumbs up, a nod, a spark. */
+.bibo.cue-pouce .p-thumb { opacity: 1; animation: bb-thumb 1.1s ease-out both; }
+.bibo.cue-pouce .b-rise { animation: bb-nod 0.5s 0.2s ease-in-out; }
+.bibo.cue-pouce .b-eyes,
+.bibo.cue-pouce .m-smile,
+.bibo.cue-pouce .m-o { opacity: 0; }
+.bibo.cue-pouce .b-glee,
+.bibo.cue-pouce .m-open,
+.bibo.cue-pouce .b-glint-thumb { opacity: 1; }
+.bibo.cue-pouce .b-glint-thumb path { animation: twinkle 0.7s 0.25s ease-in-out both; }
+
+/* « Here »: the arm towards a button or the capture (--point), the finger taps twice, the eyes follow. */
+.bibo.cue-montre .p-point { opacity: 1; transform: rotate(var(--point, 35deg)); animation: bb-point 1.4s ease-out both; }
+.bibo.cue-montre .b-pupil { transform: translate(var(--lx, 3px), var(--ly, 2px)); }
+
+/* « Look at the other window »: a hand up that waves, then a finger up and to the right. */
+.bibo.cue-demande .p-palm { opacity: 1; animation: bb-hail 1.7s ease-in-out both; }
+.bibo.cue-demande .p-point { animation: bb-up 1.7s ease-out both; }
+.bibo.cue-demande .b-pupil { transform: translate(3px, -4px); }
+.bibo.cue-demande .m-smile { opacity: 0; }
+.bibo.cue-demande .m-o { opacity: 1; }
+
+/* An idea: a light bulb over the head. */
+.bibo.cue-ampoule .b-bulb { opacity: 1; animation: bb-bulb 1.7s ease-out both; }
+.bibo.cue-ampoule .b-rays { animation: bb-rays 0.5s 0.3s ease-in-out 2; }
+.bibo.cue-ampoule .b-pupil { transform: translate(0, -5px); }
+.bibo.cue-ampoule .m-smile,
+.bibo.cue-ampoule .m-o { opacity: 0; }
+.bibo.cue-ampoule .m-open { opacity: 1; }
+
+/* Logged in: the key goes into the padlock, turns, the padlock opens. */
+.bibo.cue-cadenas .b-lock { opacity: 1; animation: bb-hold 1.7s both; }
+.bibo.cue-cadenas .p-lock { opacity: 1; animation: bb-hold-arm 1.7s ease-out both; }
+.bibo.cue-cadenas .b-lockkey { animation: bb-key-in 1.7s ease-in-out both; }
+.bibo.cue-cadenas .b-shackle { transform: translateY(-6px) rotate(20deg); animation: bb-unlock 1.7s ease-out both; }
+.bibo.cue-cadenas .b-glint-lock { opacity: 1; }
+.bibo.cue-cadenas .b-glint-lock path { animation: twinkle 0.6s 0.95s ease-in-out both; }
+.bibo.cue-cadenas .b-pupil { transform: translate(-1px, 4px); }
+
+/* « I don't know »: both hands open, shoulders up. */
+.bibo.cue-haussement .p-shrug { opacity: 1; animation: bb-hold-arm 1.1s ease-out both; }
+.bibo.cue-haussement .b-rise { animation: bb-shrug 1.1s ease-in-out both; }
+.bibo.cue-haussement .b-pupil { transform: translate(-2px, -3px); }
+.bibo.cue-haussement .m-smile,
+.bibo.cue-haussement .m-o,
+.bibo.cue-haussement .m-wobble { opacity: 0; }
+.bibo.cue-haussement .m-flat { opacity: 1; }
+
+/* Saved: he lifts the sheet over the rim and drops it in his box, whose heart beats once. */
+.bibo.cue-range .p-sheet { opacity: 1; }
+.bibo.cue-range .b-arm-r .p-sheet { animation: bb-lift-r 1.7s ease-in-out both; }
+.bibo.cue-range .b-arm-l .p-sheet { animation: bb-lift-l 1.7s ease-in-out both; }
+.bibo.cue-range .b-sheet { animation: bb-sheet-up 1.7s ease-in-out both; }
+.bibo.cue-range .b-sheet-in { opacity: 1; transform: translateY(-14px); animation: bb-sheet-in 1.7s ease-in both; }
+.bibo.cue-range .b-rise { animation: bb-gulp 1.7s ease-in-out both; }
+.bibo.cue-range .b-heart { animation: bb-beat 0.45s 1.15s ease-in-out both; }
+.bibo.cue-range .b-pupil { transform: translate(0, 4px); }
+
+/* Ready: a burst of confetti out of the box, the heart beats twice. */
+.bibo.cue-confettis .b-confetti { opacity: 1; }
+.bibo.cue-confettis .b-cf { transform: translate(var(--dx), var(--dy)); animation: bb-burst 1.9s both; }
+.bibo.cue-confettis .b-cf-spin { transform: rotate(var(--r)); animation: bb-tumble 1.9s linear both; }
+.bibo.cue-confettis .b-heart { animation: bb-beat 0.45s 0.1s ease-in-out 2; }
+
+.bibo .b-cf:nth-child(1) { --dx: -96px; --dy: -62px; --fx: -112px; --fy: 58px; --r: 340deg; }
+.bibo .b-cf:nth-child(2) { --dx: -74px; --dy: -104px; --fx: -88px; --fy: 30px; --r: -260deg; }
+.bibo .b-cf:nth-child(3) { --dx: -48px; --dy: -84px; --fx: -60px; --fy: 56px; --r: 300deg; }
+.bibo .b-cf:nth-child(4) { --dx: -24px; --dy: -112px; --fx: -30px; --fy: 22px; --r: -200deg; }
+.bibo .b-cf:nth-child(5) { --dx: 2px; --dy: -96px; --fx: 6px; --fy: 50px; --r: 280deg; }
+.bibo .b-cf:nth-child(6) { --dx: 24px; --dy: -114px; --fx: 30px; --fy: 24px; --r: -320deg; }
+.bibo .b-cf:nth-child(7) { --dx: 48px; --dy: -80px; --fx: 58px; --fy: 54px; --r: 240deg; }
+.bibo .b-cf:nth-child(8) { --dx: 74px; --dy: -106px; --fx: 86px; --fy: 34px; --r: -300deg; }
+.bibo .b-cf:nth-child(9) { --dx: 96px; --dy: -64px; --fx: 112px; --fy: 60px; --r: 360deg; }
+.bibo .b-cf:nth-child(10) { --dx: -66px; --dy: -40px; --fx: -80px; --fy: 68px; --r: -220deg; }
+.bibo .b-cf:nth-child(11) { --dx: 66px; --dy: -42px; --fx: 80px; --fy: 66px; --r: 260deg; }
+.bibo .b-cf:nth-child(12) { --dx: -6px; --dy: -124px; --fx: -12px; --fy: 40px; --r: -280deg; }
+
+/* ── Scenes: for as long as the screen lasts. A gesture borrows the arms meanwhile. ── */
+
+/* The diagnosis: a magnifying glass on the right eye, sweeping, the big eye looking around in it. */
+.bibo[data-scene="loupe"]:not([class*="cue-"]) .p-loupe { opacity: 1; animation: bb-arm-in 0.22s ease-out backwards, bb-scan 2.4s 0.22s ease-in-out infinite alternate; }
+.bibo[data-scene="loupe"] .b-bigpupil { animation: bb-scan-eye 2.4s 0.22s ease-in-out infinite alternate; }
+.bibo[data-scene="loupe"] .b-pupil { transform: translate(3px, 1px); }
+.bibo[data-scene="loupe"] .b-bubbles { opacity: 0; }
+
+/* The install: a wrench on the box's rim, the bar on the box fills with the real one. */
+.bibo[data-scene="bricole"]:not([class*="cue-"]) .p-tool,
+.bibo[data-scene="casque"]:not([class*="cue-"]) .p-tool { opacity: 1; animation: bb-arm-in 0.22s ease-out backwards; }
+.bibo[data-scene="bricole"] .b-wrench { animation: bb-turn 0.55s ease-in-out infinite alternate; }
+.bibo[data-scene="bricole"] .b-bar,
+.bibo[data-scene="casque"] .b-bar { opacity: 1; }
+.bibo .b-bar-fill { transform: scaleX(var(--p, 0)); transition: transform 0.6s ease-out; }
+.bibo.working[data-scene="bricole"] .b-brain,
+.bibo.working[data-scene="casque"] .b-brain { animation: bb-wiggle 0.9s ease-in-out infinite alternate; }
+
+/* A step done: a spark at the end of the filled bar. */
+.bibo .b-glint-bar { transform: translateX(calc((var(--p, 0) - 1) * 88px)); }
+.bibo.b-step[data-scene="bricole"] .b-glint-bar,
+.bibo.b-step[data-scene="casque"] .b-glint-bar { opacity: 1; }
+.bibo.b-step .b-glint-bar path { animation: twinkle 0.6s ease-in-out both; }
+
+/* The repair: a hard hat drops on, the screwdriver turns, little « tic » marks. */
+.bibo[data-scene="casque"] .b-hat { opacity: 1; animation: bb-hat 0.5s ease-out backwards; }
+.bibo[data-scene="casque"] .b-wrench { opacity: 0; }
+.bibo[data-scene="casque"] .b-screw { opacity: 1; animation: bb-screw 0.35s ease-in-out infinite alternate; }
+.bibo[data-scene="casque"]:not([class*="cue-"]) .b-tic { opacity: 1; animation: bb-tic 0.7s infinite; }
+
+/* Thinking (Claude reads): gears turn above the head, sparks crackle on the brain, chin in hand. */
+.bibo[data-scene="reflechit"] .b-gears,
+.bibo[data-scene="reflechit"] .b-crackle,
+.bibo[data-scene="memoire"] .b-crackle { opacity: 1; }
+.bibo[data-scene="reflechit"] .b-gear-1 { animation: bb-spin 2s linear infinite; }
+.bibo[data-scene="reflechit"] .b-gear-2 { animation: bb-spin 1.5s linear infinite reverse; }
+.bibo[data-scene="reflechit"] .b-crackle path { animation: twinkle 0.9s ease-in-out infinite backwards; }
+.bibo[data-scene="reflechit"] .b-crackle g:nth-child(2) path { animation-delay: 0.3s; }
+.bibo[data-scene="reflechit"] .b-crackle g:nth-child(3) path { animation-delay: 0.6s; }
+.bibo[data-scene="reflechit"] .b-bubbles { opacity: 0; }
+.bibo[data-scene="reflechit"] .b-pupil { transform: translate(-2.5px, -4px); }
+.bibo[data-scene="reflechit"]:not([class*="cue-"]) .p-chin { opacity: 1; animation: bb-arm-in 0.22s ease-out backwards, bb-chin 1.6s 0.22s ease-in-out infinite alternate; }
+
+/* A long wait: the box taps its corner, « … » in the bubble, still smiling. */
+.bibo[data-scene="attend"] .b-act { animation: bb-tap 1.6s ease-in-out infinite; }
+.bibo[data-scene="attend"] .b-dust { opacity: 1; }
+.bibo[data-scene="attend"] .b-dust circle { opacity: 0; animation: bb-dust 1.6s ease-out infinite; }
+.bibo[data-scene="attend"] .b-bubbles { opacity: 1; }
+.bibo[data-scene="attend"] .b-bubbles circle { opacity: 1; animation: none; }
+.bibo[data-scene="attend"] .b-dots { opacity: 1; }
+.bibo[data-scene="attend"] .b-dots circle { animation: bb-dot 1.2s ease-in-out infinite backwards; }
+.bibo[data-scene="attend"] .b-dots circle:nth-child(2) { animation-delay: 0.2s; }
+.bibo[data-scene="attend"] .b-dots circle:nth-child(3) { animation-delay: 0.4s; }
+.bibo[data-scene="attend"] .m-o { opacity: 0; }
+.bibo[data-scene="attend"] .m-smile { opacity: 1; }
+
+/* Something failed: a little « ouch » shake, then he slumps (the mood brings the drop). */
+.bibo[data-scene="triste"] .b-rise { transform: translateY(3px) scale(1, 0.96); animation: bb-ouch 0.6s ease-out backwards; }
+
+/* The login: a golden key held up, which glints. */
+.bibo[data-scene="cle"]:not([class*="cue-"]) .p-key { opacity: 1; animation: bb-arm-in 0.22s ease-out backwards, bb-bob 1.6s 0.22s ease-in-out infinite alternate; }
+.bibo[data-scene="cle"]:not([class*="cue-"]) .b-glint-key { opacity: 1; }
+.bibo[data-scene="cle"] .b-glint-key path { animation: bb-glint 2.5s 0.4s ease-in-out infinite backwards; }
+.bibo[data-scene="cle"] .b-pupil { transform: translate(3px, -3px); }
+
+/* The memory import: cards fly from the little box of memories into his head, one at a time. */
+.bibo[data-scene="memoire"] .b-memories { opacity: 1; }
+.bibo[data-scene="memoire"] .b-card-1 { transform: translateX(42px); }
+.bibo[data-scene="memoire"] .b-card-1 .b-card-up { transform: translateY(-120px); }
+.bibo[data-scene="memoire"] .b-card-1 .b-card-spin { transform: rotate(80deg) scale(0.8); }
+.bibo[data-scene="memoire"] .b-card-2 { transform: translateX(14px); }
+.bibo[data-scene="memoire"] .b-card-2 .b-card-up { transform: translateY(-66px); }
+.bibo[data-scene="memoire"] .b-card-2 .b-card-spin { transform: rotate(30deg); }
+.bibo[data-scene="memoire"] .b-card { animation: bb-card-x 2.7s linear infinite backwards; }
+.bibo[data-scene="memoire"] .b-card-up { animation: bb-card-y 2.7s infinite backwards; }
+.bibo[data-scene="memoire"] .b-card-spin { animation: bb-card-spin 2.7s linear infinite backwards; }
+.bibo[data-scene="memoire"] .b-card-2,
+.bibo[data-scene="memoire"] .b-card-2 * { animation-delay: 0.9s; }
+.bibo[data-scene="memoire"] .b-card-3,
+.bibo[data-scene="memoire"] .b-card-3 * { animation-delay: 1.8s; }
+.bibo[data-scene="memoire"] .b-crackle path { animation: twinkle 0.9s 0.36s ease-in-out infinite backwards; }
+.bibo[data-scene="memoire"] .b-pupil { transform: translate(-3px, -3px); }
+
+/* Reading: a sheet in both hands, the eyes go along the lines. */
+.bibo[data-scene="lit"]:not([class*="cue-"]) .p-sheet,
+.bibo[data-scene="lit"]:not([class*="cue-"]) .b-sheet { opacity: 1; animation: bb-arm-in 0.22s ease-out backwards; }
+.bibo[data-scene="lit"] .b-pupil { transform: translate(0, 3px); animation: bb-read 1.5s linear infinite; }
+.bibo[data-scene="lit"] .b-bubbles { opacity: 0; }
+
+/* « Give me your capture »: both hands held out, bouncing gently. */
+.bibo[data-scene="mains"]:not([class*="cue-"]) .p-offer { opacity: 1; animation: bb-arm-in 0.22s ease-out backwards, bb-offer 1.2s 0.22s ease-in-out infinite alternate; }
+.bibo[data-scene="mains"] .b-pupil { transform: translate(1px, 4px); }
+
+/* Hiding zones: hands over the eyes, a peek between the fingers now and then. */
+.bibo[data-scene="cache"]:not([class*="cue-"]) .p-eye { opacity: 1; animation: bb-arm-in 0.22s ease-out backwards; }
+.bibo[data-scene="cache"]:not([class*="cue-"]) .b-arm-l .p-eye { animation: bb-arm-in 0.22s ease-out backwards, bb-peek 3s 0.22s ease-in-out infinite; }
+
+/* Stuck: he scratches his head, leaning, a question mark beside him. */
+.bibo[data-scene="gratte"]:not([class*="cue-"]) .p-head { opacity: 1; animation: bb-arm-in 0.22s ease-out backwards, bb-scratch 4s 0.22s ease-in-out infinite; }
+.bibo[data-scene="gratte"] .b-rise { transform: rotate(-5deg); animation: bb-lean-in 0.4s ease-out backwards; }
+.bibo[data-scene="gratte"] .b-question { opacity: 1; animation: bb-pop 0.35s 0.15s ease-out backwards; }
+.bibo[data-scene="gratte"] .b-pupil { transform: translate(2px, -4px); }
+.bibo[data-scene="gratte"] .b-bubbles { opacity: 0; }
+.bibo[data-scene="gratte"] .m-smile,
+.bibo[data-scene="gratte"] .m-wobble { opacity: 0; }
+.bibo[data-scene="gratte"] .m-o { opacity: 1; }
+
+/* Not sure: squinting, one eyebrow up, a lean towards the image. */
+.bibo[data-scene="plisse"] .b-squint { opacity: 1; animation: bb-squint 0.3s ease-out backwards; }
+.bibo[data-scene="plisse"] .b-doubt { opacity: 1; }
+.bibo[data-scene="plisse"] .b-rise { animation: bb-peer 0.45s 0.1s ease-in-out; }
+.bibo[data-scene="plisse"] .b-pupil { transform: translate(2px, 3px); }
+.bibo[data-scene="plisse"] .m-smile,
+.bibo[data-scene="plisse"] .m-o { opacity: 0; }
+.bibo[data-scene="plisse"] .m-flat { opacity: 1; }
+
+/* « Careful »: a hand up, palm out, serious eyebrows; he protects, he is not afraid (no drop). */
+.bibo[data-scene="stop"]:not([class*="cue-"]) .p-palm { opacity: 1; animation: bb-arm-in 0.22s ease-out backwards, bb-push 1.4s 0.22s ease-in-out infinite alternate; }
+.bibo[data-scene="stop"] .b-serious,
+.bibo[data-scene="stop"] .m-flat { opacity: 1; }
+.bibo[data-scene="stop"] .b-brows,
+.bibo[data-scene="stop"] .b-drop,
+.bibo[data-scene="stop"] .m-wobble,
+.bibo[data-scene="stop"] .m-smile,
+.bibo[data-scene="stop"] .m-o { opacity: 0; animation: none; }
+
+/* At the limit: asleep until the hour the alarm clock shows. Its own class, not app.js's asleep. */
+.bibo[data-scene="dodo"] .b-eyes,
+.bibo[data-scene="dodo"] .b-brows,
+.bibo[data-scene="dodo"] .b-drop,
+.bibo[data-scene="dodo"] .b-bubbles,
+.bibo[data-scene="dodo"] .b-sparks,
+.bibo[data-scene="dodo"] .m-smile,
+.bibo[data-scene="dodo"] .m-open,
+.bibo[data-scene="dodo"] .m-wobble { opacity: 0; animation: none; }
+.bibo[data-scene="dodo"] .b-lids,
+.bibo[data-scene="dodo"] .b-zzz,
+.bibo[data-scene="dodo"] .b-clock { opacity: 1; }
+.bibo[data-scene="dodo"] .m-o { opacity: 1; transform: scale(0.75); }
+.bibo[data-scene="dodo"] .b-body { animation: none; }
+.bibo[data-scene="dodo"] .b-brain { animation: breathe 4s ease-in-out infinite; }
+.bibo[data-scene="dodo"] .b-zzz path { animation: snooze 3.6s ease-in-out infinite backwards; }
+.bibo[data-scene="dodo"] .b-zzz g:nth-child(2) path { animation-delay: 1.2s; }
+.bibo[data-scene="dodo"] .b-zzz g:nth-child(3) path { animation-delay: 2.4s; }
+.bibo[data-scene="dodo"] .b-hand-h { transform: rotate(var(--h, 0deg)); }
+.bibo[data-scene="dodo"] .b-hand-m { transform: rotate(var(--m, 0deg)); }
+.bibo.b-no-time .b-clock { opacity: 0; }
+
+/* A hidden window, or a Bibo out of sight: everything waits where it is. */
+.bibo.b-paused,
+.bibo.b-paused *,
+.bibo.b-away,
+.bibo.b-away * { animation-play-state: paused !important; }
+
+/* ── The moves ── */
+
+@keyframes bb-arm-in {
+  from { opacity: 0; transform: scale(0.3) rotate(20deg); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes bb-hold-arm {
+  0% { opacity: 0; transform: scale(0.3) rotate(20deg); }
+  12%, 88% { opacity: 1; transform: none; }
+  100% { opacity: 0; transform: scale(0.3) rotate(20deg); }
+}
+
+@keyframes bb-hold {
+  0%, 10% { opacity: 0; }
+  16%, 86% { opacity: 1; }
+  94%, 100% { opacity: 0; }
+}
+
+@keyframes bb-spin { to { transform: rotate(360deg); } }
+
+@keyframes bb-shake {
+  0%, 100% { transform: none; }
+  20% { transform: rotate(-3deg); }
+  45% { transform: rotate(2.5deg); }
+  70% { transform: rotate(-2deg); }
+}
+
+@keyframes bb-lid {
+  0%, 96% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+@keyframes bb-lid-open { to { transform: scaleX(0); } }
+
+@keyframes bb-tape { to { opacity: 0; transform: translateY(-8px); } }
+
+@keyframes bb-flap { from { transform: scale(0); } }
+
+@keyframes bb-spring {
+  0% { transform: translateY(100px) scale(0.92, 1.04); animation-timing-function: cubic-bezier(0.2, 0.8, 0.4, 1); }
+  55% { transform: translateY(-14px) scale(0.96, 1.06); animation-timing-function: ease-in; }
+  78% { transform: scale(1.07, 0.92); animation-timing-function: ease-out; }
+  100% { transform: none; }
+}
+
+@keyframes bb-blink { 50% { transform: scaleY(0.1); } }
+
+@keyframes bb-wave {
+  0% { opacity: 0; transform: scale(0.3) rotate(25deg); }
+  14% { opacity: 1; transform: none; }
+  32% { transform: rotate(-16deg); }
+  50% { transform: rotate(6deg); }
+  68% { transform: rotate(-16deg); }
+  86% { opacity: 1; transform: none; }
+  100% { opacity: 0; transform: scale(0.3) rotate(25deg); }
+}
+
+@keyframes bb-recoil {
+  0%, 34%, 46%, 100% { transform: none; }
+  38% { transform: translate(2px, -1.5px) rotate(2deg); }
+}
+
+@keyframes bb-shutter {
+  0%, 31% { opacity: 0; transform: scale(0.2); }
+  35% { opacity: 1; transform: none; }
+  41%, 100% { opacity: 0; transform: scale(0.2); }
+}
+
+@keyframes bb-flash {
+  0%, 33% { opacity: 0; transform: scale(0); }
+  37% { opacity: 1; transform: scale(1.3) rotate(20deg); }
+  52%, 100% { opacity: 0; transform: scale(1.6) rotate(40deg); }
+}
+
+@keyframes bb-click {
+  0%, 34% { opacity: 0; }
+  37%, 50% { opacity: 1; }
+  54%, 100% { opacity: 0; }
+}
+
+@keyframes bb-print {
+  0%, 44% { transform: none; }
+  62% { transform: translateY(-20px) rotate(-6deg); }
+  72%, 100% { transform: translateY(-17px) rotate(-4deg); }
+}
+
+@keyframes bb-thumb {
+  0% { opacity: 0; transform: scale(0.3) rotate(30deg); }
+  18% { opacity: 1; transform: rotate(-6deg) scale(1.08); }
+  30%, 85% { opacity: 1; transform: none; }
+  100% { opacity: 0; transform: scale(0.3) rotate(30deg); }
+}
+
+@keyframes bb-nod {
+  0%, 100% { transform: none; }
+  40% { transform: translateY(3px); }
+  70% { transform: translateY(-1px); }
+}
+
+@keyframes bb-point {
+  0% { opacity: 0; transform: rotate(var(--point, 35deg)) scale(0.3); }
+  14%, 34%, 52%, 88% { opacity: 1; transform: rotate(var(--point, 35deg)); }
+  26%, 44% { transform: rotate(var(--point, 35deg)) translateX(4px); }
+  100% { opacity: 0; transform: rotate(var(--point, 35deg)) scale(0.3); }
+}
+
+@keyframes bb-hail {
+  0% { opacity: 0; transform: scale(0.3) rotate(20deg); }
+  8% { opacity: 1; transform: none; }
+  18%, 38% { transform: rotate(-12deg); }
+  28% { transform: rotate(8deg); }
+  48% { opacity: 1; transform: none; }
+  54%, 100% { opacity: 0; transform: none; }
+}
+
+@keyframes bb-up {
+  0%, 50% { opacity: 0; transform: rotate(-62deg) scale(0.6); }
+  56%, 72%, 88% { opacity: 1; transform: rotate(-62deg); }
+  64%, 80% { transform: rotate(-62deg) translateX(4px); }
+  100% { opacity: 0; transform: rotate(-62deg) scale(0.3); }
+}
+
+@keyframes bb-bulb {
+  0% { opacity: 0; transform: scale(0); }
+  16% { opacity: 1; transform: scale(1.2); }
+  26%, 86% { opacity: 1; transform: none; }
+  100% { opacity: 0; transform: translateY(-4px) scale(0.8); }
+}
+
+@keyframes bb-rays {
+  0%, 100% { opacity: 1; transform: none; }
+  50% { opacity: 0.3; transform: scale(0.85); }
+}
+
+@keyframes bb-key-in {
+  0%, 14% { transform: translateX(14px); }
+  30%, 38% { transform: none; }
+  46%, 100% { transform: scaleY(0.3); }
+}
+
+@keyframes bb-unlock {
+  0%, 46% { transform: none; }
+  56% { transform: translateY(-9px); }
+  66%, 100% { transform: translateY(-6px) rotate(20deg); }
+}
+
+@keyframes bb-shrug {
+  0%, 100% { transform: none; }
+  22%, 72% { transform: translateY(-5px); }
+}
+
+@keyframes bb-lift-r {
+  0% { opacity: 0; transform: scale(0.3); }
+  10%, 28% { opacity: 1; transform: none; }
+  44% { opacity: 1; transform: rotate(24deg); }
+  54%, 100% { opacity: 0; transform: rotate(24deg); }
+}
+
+@keyframes bb-lift-l {
+  0% { opacity: 0; transform: scale(0.3); }
+  10%, 28% { opacity: 1; transform: none; }
+  44% { opacity: 1; transform: rotate(-24deg); }
+  54%, 100% { opacity: 0; transform: rotate(-24deg); }
+}
+
+@keyframes bb-sheet-up {
+  0% { opacity: 0; transform: scale(0.5); }
+  10%, 28% { opacity: 1; transform: none; }
+  44% { opacity: 1; transform: translateY(-17px); }
+  45%, 100% { opacity: 0; transform: translateY(-17px); }
+}
+
+@keyframes bb-sheet-in {
+  0%, 44% { opacity: 0; transform: translateY(-17px); }
+  45% { opacity: 1; transform: translateY(-17px); }
+  64% { opacity: 1; transform: translateY(36px) scale(0.9, 0.7); }
+  65%, 100% { opacity: 0; transform: translateY(36px); }
+}
+
+@keyframes bb-gulp {
+  0%, 44%, 70%, 100% { transform: none; }
+  54% { transform: translateY(-6px) scale(1.02, 0.98); }
+}
+
+@keyframes bb-beat {
+  0%, 100% { transform: none; }
+  35% { transform: scale(1.2); }
+  70% { transform: scale(0.95); }
+}
+
+@keyframes bb-burst {
+  0% { opacity: 0; transform: scale(0.3); animation-timing-function: cubic-bezier(0.15, 0.8, 0.35, 1); }
+  5% { opacity: 1; }
+  30% { transform: translate(var(--dx), var(--dy)); animation-timing-function: cubic-bezier(0.45, 0, 0.75, 0.6); }
+  82% { opacity: 1; }
+  100% { opacity: 0; transform: translate(var(--fx), var(--fy)); }
+}
+
+@keyframes bb-tumble {
+  from { transform: none; }
+  to { transform: rotate(var(--r)); }
+}
+
+@keyframes bb-scan {
+  from { transform: rotate(-7deg); }
+  to { transform: rotate(9deg); }
+}
+
+@keyframes bb-scan-eye {
+  from { transform: translate(-2.5px, 2px); }
+  to { transform: translate(2.5px, -1.5px); }
+}
+
+@keyframes bb-turn {
+  from { transform: rotate(-24deg); }
+  to { transform: rotate(14deg); }
+}
+
+@keyframes bb-screw {
+  from { transform: rotate(-28deg); }
+  to { transform: rotate(28deg); }
+}
+
+@keyframes bb-wiggle {
+  from { transform: rotate(-1.8deg); }
+  to { transform: rotate(1.8deg) translateY(-1px); }
+}
+
+@keyframes bb-hat {
+  0% { opacity: 0; transform: translateY(-44px); }
+  45% { opacity: 1; transform: translateY(3px) scale(1.06, 0.9); }
+  70% { transform: translateY(-5px); }
+  100% { transform: none; }
+}
+
+@keyframes bb-tic {
+  0%, 45% { opacity: 0; }
+  50%, 95% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+@keyframes bb-chin {
+  from { transform: none; }
+  to { transform: rotate(-4deg); }
+}
+
+@keyframes bb-tap {
+  0%, 40%, 100% { transform: none; }
+  10%, 30% { transform: rotate(-2.5deg); }
+  20% { transform: none; }
+}
+
+@keyframes bb-dust {
+  0%, 18% { opacity: 0; transform: scale(0.4); }
+  21% { opacity: 1; transform: none; }
+  33% { opacity: 0; transform: translate(5px, -3px) scale(1.4); }
+  38% { opacity: 0; transform: scale(0.4); }
+  41% { opacity: 1; transform: none; }
+  53%, 100% { opacity: 0; transform: translate(5px, -3px) scale(1.4); }
+}
+
+@keyframes bb-dot {
+  0%, 60%, 100% { opacity: 0.25; transform: none; }
+  25% { opacity: 1; transform: translateY(-2px); }
+}
+
+@keyframes bb-ouch {
+  0% { transform: none; }
+  15% { transform: rotate(-4deg); }
+  30% { transform: rotate(4deg); }
+  45% { transform: rotate(-3deg); }
+  60% { transform: rotate(1.5deg); }
+  100% { transform: translateY(3px) scale(1, 0.96); }
+}
+
+@keyframes bb-bob {
+  from { transform: none; }
+  to { transform: rotate(-5deg); }
+}
+
+@keyframes bb-glint {
+  0%, 30%, 100% { opacity: 0; transform: scale(0.3); }
+  15% { opacity: 1; transform: scale(1.1) rotate(25deg); }
+}
+
+@keyframes bb-card-x {
+  0% { transform: none; }
+  30%, 100% { transform: translateX(90px); }
+}
+
+@keyframes bb-card-y {
+  0% { transform: none; animation-timing-function: cubic-bezier(0.2, 0.7, 0.4, 1); }
+  17% { transform: translateY(-130px); animation-timing-function: cubic-bezier(0.6, 0, 0.9, 0.5); }
+  30%, 100% { transform: translateY(-108px); }
+}
+
+@keyframes bb-card-spin {
+  0% { opacity: 0; transform: none; }
+  3%, 24% { opacity: 1; }
+  30%, 100% { opacity: 0; transform: rotate(220deg) scale(0.4); }
+}
+
+@keyframes bb-read {
+  0% { transform: translate(-3px, 2px); }
+  28% { transform: translate(3px, 2px); }
+  33% { transform: translate(-3px, 3px); }
+  61% { transform: translate(3px, 3px); }
+  66% { transform: translate(-3px, 4px); }
+  94% { transform: translate(3px, 4px); }
+  100% { transform: translate(-3px, 2px); }
+}
+
+@keyframes bb-offer {
+  from { transform: none; }
+  to { transform: translateY(-3px); }
+}
+
+@keyframes bb-peek {
+  0%, 62%, 100% { transform: none; }
+  70%, 86% { transform: translate(-7px, 5px) rotate(-6deg); }
+}
+
+@keyframes bb-scratch {
+  0%, 32%, 100% { transform: none; }
+  6%, 22% { transform: rotate(-5deg); }
+  14%, 30% { transform: rotate(4deg); }
+}
+
+@keyframes bb-lean-in { from { transform: none; } }
+
+@keyframes bb-pop {
+  0% { opacity: 0; transform: scale(0); }
+  70% { opacity: 1; transform: scale(1.15); }
+  100% { opacity: 1; transform: none; }
+}
+
+@keyframes bb-squint { from { opacity: 0; transform: translateY(-7px); } }
+
+@keyframes bb-peer {
+  0%, 100% { transform: none; }
+  50% { transform: translateY(-3px) scale(1.04); }
+}
+
+@keyframes bb-push {
+  from { transform: none; }
+  to { transform: scale(1.06); }
+}

@@ -162,6 +162,11 @@ function stepRun(id) {
   return stepInfo(id).step || id;
 }
 
+// The system may ask the user something during this step (OS.asks: the step it comes with, the words).
+function systemAsks(id) {
+  return OS.asks[0] === 'root' ? ROOT_STEPS.includes(stepRun(id)) : stepRun(id) === OS.asks[0];
+}
+
 // "8", "2,3", "182": a decimal only when it says something.
 function gb(n) {
   const v = Number(n) || 0;
@@ -833,10 +838,7 @@ function renderInstall(name = 'install') {
   }
   view.bar = h('span', { class: 'bar-fill' });
   ui.screen.append(h('div', { class: 'bar', 'aria-hidden': 'true' }, view.bar), list);
-  // What the system may ask during these steps (OS.asks: the step it comes with, the words).
-  const [askStep, askNote] = OS.asks;
-  const asking = askStep === 'root' ? (id) => ROOT_STEPS.includes(stepRun(id)) : (id) => stepRun(id) === askStep;
-  if (state.plan.some(asking)) ui.screen.append(h('p', { class: 'note' }, askNote));
+  if (state.plan.some(systemAsks)) ui.screen.append(h('p', { class: 'note' }, OS.asks[1]));
   ui.screen.append(logPanel());
   paintProgress();
   every(tickElapsed, 10000);
@@ -859,6 +861,8 @@ async function runInstall(from, result = '') {
     // The Apple step's second line is an instruction: no step count in front of it.
     const where = plan.length > 1 && id !== 'clt' ? `Étape ${i + 1} sur ${plan.length}. ` : '';
     say('working', info.say[0], where + info.say[1]);
+    // Bibo raises a hand: a window of the system may show up (bibo.js, absent from dev/screens.mjs).
+    if (id === 'clt' || systemAsks(id)) window.biboCue?.('demande');
 
     const key = run === 'brain' && state.key ? state.key : null;
     let r;
@@ -1323,8 +1327,12 @@ function showProposal(index, plan) {
     return;
   }
 
-  if (plan.confiance === 'basse') say('idle', `${a.name} n’est pas sûr de lui.`, `Il pense que : ${lowerFirst(cause)}`);
-  else say('idle', `${a.name} a trouvé ce qui coince.`, cause);
+  if (plan.confiance === 'basse') {
+    say('idle', `${a.name} n’est pas sûr de lui.`, `Il pense que : ${lowerFirst(cause)}`);
+    window.biboCue?.('doute');
+  } else {
+    say('idle', `${a.name} a trouvé ce qui coince.`, cause);
+  }
   if (explained) ui.screen.append(said(explained, a));
   // The user's part comes first: « Réparer » relaunches the step straight away.
   if (actions.length) {
@@ -2324,6 +2332,7 @@ function showImportError(e) {
     ui.actions.append(back(), connect);
   } else if (code === 'quota') {
     say('worried', `${a.forfait} est à sa limite pour le moment.`, 'Il se recharge tout seul en quelques heures : reviens alors sur « Importer ma mémoire ». Rien n’a été écrit.');
+    window.biboCue?.('dodo');
     ui.actions.append(button('Terminé', showDone, { act: 'next' }));
   } else if (['timeout', 'api', 'invalid', 'start', 'unsupported'].includes(code)) {
     // The AI, not the file: the plan is still there, trying again sends nothing more than agreed.

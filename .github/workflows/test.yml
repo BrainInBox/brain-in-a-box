@@ -409,6 +409,7 @@ jobs:
           node --check ../src/ui.js
           node --check ../src/app.js
           node --check ../src/guide.js
+          node --check ../src/bibo.js
       # Every screen of the mock's scenarios with Claude alone, word for word as screens-claude.txt
       # holds them (master's, before Codex), the checks of Codex's screens where the mock opens it, and
       # the guide's screens in paste mode as screens-guide.txt holds them.

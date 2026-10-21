@@ -24,9 +24,9 @@ const BIBO_SVG = `
   <ellipse class="b-shadow" cx="120" cy="211" rx="76" ry="7" fill="#3b2418" opacity=".16"/>
   <g class="b-hop">
     <g class="b-body" stroke="#4b2e2b" stroke-width="3" stroke-linejoin="round" stroke-linecap="round">
-      <path d="M46 138 L60 124 L180 124 L194 138 Z" fill="#9c6136"/>
-      <path d="M46 138 L60 124 L36 104 L20 119 Z" fill="#d8955a"/>
-      <path d="M194 138 L180 124 L204 104 L220 119 Z" fill="#d8955a"/>
+      <path class="b-inside" d="M46 138 L60 124 L180 124 L194 138 Z" fill="#9c6136"/>
+      <path class="b-flap-l" d="M46 138 L60 124 L36 104 L20 119 Z" fill="#d8955a"/>
+      <path class="b-flap-r" d="M194 138 L180 124 L204 104 L220 119 Z" fill="#d8955a"/>
       <g class="b-brain">
         <path d="M70 142 C62 128 58 110 66 96 C62 78 72 64 88 62 C92 46 112 40 120 48 C128 40 148 46 152 62 C168 64 178 78 174 96 C182 110 178 128 170 142 Z" fill="#f7a9c4"/>
         <g fill="none" stroke="#da6f98">
@@ -37,7 +37,7 @@ const BIBO_SVG = `
           <path d="M170 90 C170 80 163 74 155 74"/>
         </g>
         <ellipse cx="97" cy="51" rx="6" ry="3" transform="rotate(-24 97 51)" fill="#fff" opacity=".7" stroke="none"/>
-        <g fill="#ff7fa6" opacity=".55" stroke="none">
+        <g class="b-cheeks" fill="#ff7fa6" opacity=".55" stroke="none">
           <ellipse cx="79" cy="119" rx="8" ry="5"/>
           <ellipse cx="161" cy="119" rx="8" ry="5"/>
         </g>
@@ -73,9 +73,9 @@ const BIBO_SVG = `
         <ellipse class="m-o" cx="120" cy="125" rx="3.5" ry="4.5" fill="#4b2e2b" stroke="none"/>
         <path class="m-wobble" d="M111 126 Q115.5 122 120 126 Q124.5 130 129 126" fill="none"/>
       </g>
-      <rect x="46" y="138" width="148" height="66" rx="7" fill="#e7a96b"/>
+      <rect class="b-front" x="46" y="138" width="148" height="66" rx="7" fill="#e7a96b"/>
       <rect x="50" y="141.5" width="140" height="5" rx="2.5" fill="#f2c08a" stroke="none"/>
-      <path d="M120 188 C105 178 107 164 115.5 165 C118 165.4 119.5 167 120 169.5 C120.5 167 122 165.4 124.5 165 C133 164 135 178 120 188 Z" fill="#f7a9c4" stroke-width="2.5"/>
+      <path class="b-heart" d="M120 188 C105 178 107 164 115.5 165 C118 165.4 119.5 167 120 169.5 C120.5 167 122 165.4 124.5 165 C133 164 135 178 120 188 Z" fill="#f7a9c4" stroke-width="2.5"/>
     </g>
     <path class="b-drop" d="M172 60 C172 60 164 70 164 75 A8 8 0 0 0 180 75 C180 70 172 60 172 60 Z" fill="#8fd3ff" stroke="#4b2e2b" stroke-width="2.5" stroke-linejoin="round"/>
     <g class="b-bubbles" fill="#fff" stroke="#4b2e2b" stroke-width="2.5">

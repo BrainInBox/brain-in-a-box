@@ -956,6 +956,8 @@ async function showError(e) {
   }
   screen('erreur');
   say(kind === 'annule' ? 'idle' : 'worried', w.title, w.text);
+  // Bibo sleeps until the hour the subscription comes back (bibo.js, absent from dev/screens.mjs).
+  if (kind === 'quota') window.biboCue?.('dodo', { reprise: e.reprise });
   const retry = (label = 'Réessayer') => button(label, () => send(G.envoi), { act: 'next' });
   if (['delai', 'image_non_vue', 'invalide', 'api', 'hors_ligne'].includes(kind) && G.envoi) {
     gui.actions.append(stopButton(), retry());
