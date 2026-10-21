@@ -48,6 +48,7 @@
   // as the tests open it): repair.rs names who is asked and who answered, the screens say Codex where they said Claude,
   // Claude in Terminal only when Claude is listed; &secours=1 has the preferred one hit its limit, the other one answers;
   // &repair=agents is a choice the kit cannot read (no AI asked),
+  // ?s=installe and ?s=motscles: the welcome is « Content de te revoir ! » and leads to the guide (guide-mock.html).
   // &porte=1 (implied by &agents= with Codex): the kit lets Codex be chosen here: the welcome names no
   // AI and the choice screen comes first, preselecting &agents= (else Claude); &choix=claude|codex|both picks
   // there, &resume=claude|codex picks who writes the evening summary when both; the steps, the checks, the
@@ -554,6 +555,9 @@
       async start_onboarding() { await wait(100); },
       async open_vault() { await wait(100); },
       async open_link({ url }) { console.log('open_link', url); },
+      // The guide (guide-mock.html has its window): offered once the brain and Claude Code are there.
+      async guide_offert() { await wait(50); return scenario === 'installe' || scenario === 'motscles'; },
+      async guide_open() { console.log('guide_open'); await wait(100); },
     };
 
     // « Importer ma mémoire »: what importer-memoire answers through import.rs (no agreement code here).
@@ -736,6 +740,8 @@
           return;
         }
         if (s === 'voyage' && !key) { q('[data-act=skip]')?.click(); return; }
+        // Back with everything installed: the main button opens the guide, the drive goes on with the check.
+        if (s === 'welcome' && q('[data-act=check]')) { q('[data-act=check]').click(); return; }
         const next = q('[data-act=next]:not(:disabled)');
         // A repair scenario goes through Claude: « Réessayer » would only run the step again.
         if (REPAIR && next && next.textContent === 'Réessayer') return;

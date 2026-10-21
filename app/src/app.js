@@ -104,6 +104,8 @@ const state = {
   // agents_offer: whether the window asks who the brain works with (only where the kit lets Codex be
   // chosen), and what it preselects, the preferred one first.
   offer: { open: false, agents: [] },
+  // guide_offert: the brain and Claude Code are there, the welcome leads to the guide (G0).
+  guide: false,
   // The agents picked on the choice screen, the preferred one first. null: nothing was asked, Claude
   // alone, every screen as before Codex.
   agents: null,
@@ -416,6 +418,15 @@ function onPoke() {
 
 function showWelcome() {
   screen('welcome', { big: true });
+  if (state.guide) {
+    // Back with everything installed: the guide first, the check of the machine still there.
+    say('idle', 'Content de te revoir !', 'Ton second cerveau est installé. Je peux aussi te guider pas à pas dans un logiciel : tu me montres ta fenêtre, je te dis où cliquer.');
+    const check = state.offer.open ? button('Choisir mon IA', showChoice, { kind: 'secondary', act: 'check' })
+      : button(`Vérifier mon ${OS.machine}`, runDiagnosis, { kind: 'secondary', act: 'check' });
+    const guide = button('Guide-moi dans un logiciel', () => openGuide(guide), { act: 'next' });
+    ui.actions.append(check, guide);
+    return;
+  }
   if (state.offer.open) {
     // Codex can be chosen here: the AI is not named yet.
     say('idle', 'Salut, moi c’est Bibo !', 'Je vais installer ton second cerveau pour ton IA, Claude ou Codex. 10 à 20 minutes, tu n’as aucune commande à taper.');
@@ -1809,6 +1820,12 @@ function showDone() {
   ui.screen.append(h('div', { class: 'upgrade' },
     h('p', { class: 'note' }, 'Tu utilisais ChatGPT ou Claude ? Apporte ce qu’ils savent de toi.'),
     button('Importer ma mémoire', showImport, { kind: 'secondary', small: true, act: 'import' })));
+  // The guide works with Claude (docs/proposals/guide.md): Codex is not shown images yet.
+  if (chose('claude')) {
+    const guide = button('Essayer le guide', () => openGuide(guide), { kind: 'secondary', small: true, act: 'guide' });
+    ui.screen.append(h('div', { class: 'upgrade' },
+      h('p', { class: 'note' }, 'Nouveau : je peux te guider pas à pas dans n’importe quel logiciel.'), guide));
+  }
   // The preferred one does the onboarding. Codex only on the login the kit uses (§4.3): logged in
   // another way it would bill a key, or offer one on its first screen, so its login comes first.
   const codexOff = chose('codex') && state.codexLogin !== 'chatgpt';
@@ -1848,6 +1865,18 @@ function showDone() {
     ui.actions.append(onboard);
   }
   focusMain();
+}
+
+// The guide's own window, above the program it guides in; this one goes to the Dock or the taskbar.
+async function openGuide(btn) {
+  const gen = view.gen;
+  btn.disabled = true;
+  try {
+    await invoke('guide_open');
+  } catch (e) {
+    if (gen === view.gen) say('worried', 'Le guide ne s’est pas ouvert.', errText(e));
+  }
+  later(() => { btn.disabled = false; }, 3000);
 }
 
 // Why Codex is not used yet, under the end's message.
@@ -2351,7 +2380,16 @@ function start() {
   window.__TAURI__.event.listen('step-log', onLog).catch(() => {});
   window.__TAURI__.event.listen('repair-progress', onRepairProgress).catch(() => {});
   window.__TAURI__.event.listen('import-progress', onImportProgress).catch(() => {});
-  readOffer().then(showWelcome);
+  Promise.all([readOffer(), readGuide()]).then(showWelcome);
+}
+
+// Nothing to run: whether the brain and Claude Code are on the disk.
+async function readGuide() {
+  try {
+    state.guide = (await invoke('guide_offert')) === true;
+  } catch {
+    state.guide = false;
+  }
 }
 
 // Closed (as shipped), or unreadable: nothing is asked, every screen as before Codex.

@@ -52,6 +52,10 @@ def neuf(installe):
         "bienvenue": {"titre": "Salut, moi c’est Bibo" + NB + "!",
                       "texte": "Je vais installer ton second cerveau pour Claude. 10 à 20 minutes, tu n’as aucune commande à taper.",
                       "boutons": {"Vérifier mon Mac": "diag-en-cours"}},
+        # Opened again with the brain and Claude Code there.
+        "retour": {"titre": "Content de te revoir" + NB + "!",
+                   "texte": "Ton second cerveau est installé. Je peux aussi te guider pas à pas dans un logiciel : tu me montres ta fenêtre, je te dis où cliquer.",
+                   "boutons": {"Vérifier mon Mac": "diag-en-cours", "Guide-moi dans un logiciel": None}},
         "diag-en-cours": {"titre": "Je regarde ton Mac…", "texte": "Ça prend quelques secondes.",
                           "apres": (3, lambda: "deja" if installe() else "diag")},
         "diag": {"titre": "J’ai fait le tour.", "texte": "Il manque Claude Code, Bun, Obsidian et ton cerveau. Je m’en occupe.",
@@ -187,7 +191,8 @@ class FauxPilote(ta.Pilote):
         line = re.search(r"^CODEX_OUVERT = .*$", gate.read_text(encoding="utf-8"), re.M) if gate.is_file() else None
         self.portes.append(line.group(0) if line else None)
         self.marqueurs.append((gate.parents[2] / ta.MARQUEUR).is_file())
-        self.aller("bienvenue")
+        # Claude Code and the brain installed: the guide's welcome (Codex alone has no Claude Code).
+        self.aller("retour" if self.fait and not self.codex else "bienvenue")
 
     def vivante(self):
         return self.etat is not None
@@ -588,9 +593,27 @@ class Walk(Base):
         del p.clics[:]
         vus = pa.relance({})
         self.assertIn("deja-installe", vus)
-        self.assertEqual(p.clics, ["Vérifier mon Mac", "Continuer", "Plus tard"])
+        self.assertIn("bienvenue-retour", vus)
+        self.assertEqual(p.clics, ["Vérifier mon Mac", "Continuer", "Plus tard"], "the guide is offered, not opened")
         self.assertIn("app-relance-deja-installe", self.t.vus)
         self.assertTrue(any(s.endswith("-relance-deja-installe.png") for s in p.captures))
+
+    def test_opened_again_the_welcome_must_offer_the_guide(self):
+        for retour, said in (({"titre": "Content de te revoir" + NB + "!", "boutons": {"Vérifier mon Mac": "diag-en-cours"}},
+                              "l'accueil ne propose pas « Guide-moi dans un logiciel »"),
+                             (None, "l'app ne dit pas « Content de te revoir »")):
+            self.setUp()
+            p = FauxPilote(self.h)
+            pa = self.parcours(p)
+            pa.premier_lancement({})
+            p.fermer()
+            if retour:
+                p.ecrans["retour"] = retour
+            else:
+                p.ecrans["retour"] = p.ecrans["bienvenue"]
+            with self.assertRaises(terrain.Echec) as cm:
+                pa.relance({})
+            self.assertIn(said, str(cm.exception))
 
     def test_opened_again_and_installing_again_fails(self):
         p = FauxPilote(self.h)
