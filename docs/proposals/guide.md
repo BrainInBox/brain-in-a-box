@@ -8,6 +8,8 @@ Rédigée le 2026-10-21 sur `origin/master` fa1ed66, d'après le code et les ess
 
 **Phase 0 faite le 2026-10-21** : résultats et corrections en §15 (« Phase 0 — résultats »), qui prime sur le corps. En bref : modèle **Opus**, seuils inchangés, `--effort low` gardé ; sélecteur macOS **GO** avec un `SCStream` d'une image (pas `SCScreenshotManager`) ; Codex : `-i` relatif ; alphabet du code sans U ; aucun refus « cyber » mesuré.
 
+**Phase 3 faite le 2026-10-21** (§17) : `guide.rs`, `shot.rs` (avancé de 2a), les commandes et la fenêtre « guide », `--guide-ask`, `consignes.md` et le skill `guide-moi` ; mode collage seulement, sans entrée dans l'interface (phase 4).
+
 **Phase 1 faite le 2026-10-21** (§16) : `claude.rs` sorti de `repair.rs` sans changement, puis l'image sur stdin, les nouvelles règles de `Watch` (refus du modèle, `modelUsage`, limites d'usage), le côté Python et le test de contrat. Écarts : `--guide-ask` en phase 3, six fichiers de code au lieu de cinq.
 
 ## 0. En une phrase
@@ -817,3 +819,99 @@ Même appel (s1, Opus, low) avec et sans : ligne d'init identique champ par cham
 8. Là où Rust différait du lanceur, il garde les mots du repair : pas de ligne d'init donne `Init` (le lanceur dit `start`), pas de résultat donne `Invalid` (le lanceur dit `api`).
 
 **Vérifié** : en local (macOS) `cargo clippy --all-targets -D warnings` (aussi pour la cible Windows, sans édition de liens), `cargo test` (249 + 1), `python3 -I -m unittest discover -s engine/tests` (750), `test-hooks.sh` (229/229), `screens.mjs` (66 scénarios), `actionlint`. Aucun appel réel à `claude -p` dans cette phase. CI de la PR verte sur les 3 OS (run https://github.com/BrainInBox/brain-in-a-box/actions/runs/39530309426, tête `f98e739`), dont le contrat sous Windows et Linux. `terrain.yml` lancé à la main sur la branche (https://github.com/BrainInBox/brain-in-a-box/actions/runs/39530358561) : tous les jobs verts, dont Bibo cliqué dans sa vraie fenêtre sur les 3 OS.
+
+## 17. Phase 3 — fait et écarts (2026-10-21)
+
+**Prime sur le corps, sur §15 et sur §16 là où elle les contredit.** Branche `feat/bibo-guide`, PR brouillon #59. Aucun appel réel à `claude -p`, aucune capture d'écran : le faux Claude des tests lit des images synthétiques.
+
+**Livré**
+1. **`guide.rs`** :
+   - la séance, en mémoire seulement ;
+   - les consignes, par `include_str!` de `skills/guide-moi/consignes.md` : le texte exact mesuré en phase 0, plus J en Rust ;
+   - le schéma §4.5, en une seule copie, que le test de contrat de `claude.rs` reprend ;
+   - le texte §4.3 ;
+   - la validation et les deux listes de §4.6 ;
+   - le contexte du cerveau §4.7, sans gbq ;
+   - l'identité de fenêtre (R22), pour les phases 2a et 2b ;
+   - les plafonds §6 ;
+   - le journal de compteurs ;
+   - la place de la fenêtre (§1).
+2. **`shot.rs`** (avancé de la phase 2a) : le PNG collé, ses dimensions lues dans l'en-tête avant tout décodage (20 Mo et 8 000 px au plus), les zones cachées peintes sur la capture, la réduction par moyenne de zone (≤ 1 280), la bande et son code (police 5×7, alphabet sans U), la part de noir, l'encodage. Tout en mémoire.
+3. **Commandes Tauri** :
+   - `guide_open`, `guide_epingler`, `guide_taille`, `guide_status`, `guide_compris` ;
+   - `guide_commencer`, `guide_coller` (octets bruts, pas de tableau JSON), `guide_cacher`, `guide_envoi_texte` ;
+   - `guide_envoyer`, dont les évènements `guide-progress` ne vont qu'à la fenêtre « guide » ;
+   - `guide_trancher`, `guide_annuler`, `guide_fin`.
+4. **La fenêtre « guide »** : 400 px de large, hauteur min(640, 70 % de la zone utile), au moins 420, en bas à droite, toujours au-dessus, sur tous les bureaux. Sa fermeture appelle `guide_fin`. La fenêtre d'installation se réduit quand le guide s'ouvre. `capabilities/guide.json` : `core:default` seul.
+5. **`--guide-ask <png> --objectif "…" [--logiciel "…"]`** : un regard sans fenêtre, un document JSON par étape, l'image jamais imprimée. `--guide-ask --print-consignes` rend les consignes embarquées, octet pour octet.
+
+**Écarts (priment sur le corps)**
+1. **`shot.rs` arrive dès la phase 3**, et non en 2a : le collage en a besoin. La capture Windows reste en 2a.
+2. **Pas de `guide_attendre_clic`, `guide_fenetres`, `guide_choisir` ni `guide_regarder`** : sans capture automatique, ils n'auraient rien à faire. Ils viendront en 2a et 2b. `guide_status` rend `capture: {mode: "collage", raison: "a_venir"}`. La règle R8 (l'aperçu revient quand le titre change) attend aussi 2a : en collage, l'aperçu est toujours montré.
+3. **Fichiers** :
+   - code : `guide.rs`, `shot.rs`, `lib.rs` et `Cargo.toml` ;
+   - `png = "=0.18.1"`, déjà dans le lock (menus de Tauri sous macOS) : une seule ligne change dans `Cargo.lock`. Sous Windows et Linux, seule la crate `png` entre dans le build, ses dépendances y sont déjà ;
+   - `claude.rs` : trois `allow(dead_code)` retirés, `base64` passe en `pub(crate)`, le test de contrat prend `guide::SCHEMA` ;
+   - plus `consignes.md`, `SKILL.md` et `capabilities/guide.json`.
+4. **`skills/guide-moi/SKILL.md` arrive dès maintenant**, et non en phase 5 : `test-hooks.sh` exige un `SKILL.md` dans chaque dossier de `skills/`. Le texte est celui de §8, avec deux corrections. La procédure va dans `Guides/` (décision 4), pas dans `Skills/`. Le raccourci Mac est celui de G2 (Cmd+Ctrl+Maj+4 : presse-papiers, sans fichier sur le bureau). Le kit installe donc ce skill dès cette PR.
+5. **Procédures (décision 4)** :
+   - un fichier par procédure, `Guides/<logiciel>-<objectif>.md`, lu seulement si son en-tête porte `source: "bibo-guide"` et le bon `logiciel` ;
+   - les mots communs sont comptés sur `description`, `name` et le titre (4 lettres au moins, sans mots vides) ;
+   - la date « déjà appris le » est celle de la modification du fichier ;
+   - aucun lien symbolique n'est suivi, pas même pour `stack.md` : un coffre d'équipe tiré par git pourrait en contenir un vers n'importe quel fichier ;
+   - format à confirmer en phase 5, qui écrit ces notes.
+6. **Pas de `core:window:allow-set-always-on-top`** : l'épingle (`guide_epingler`) et la taille (`guide_taille` : normal, réduit 360×220, large 900 px) passent par Rust. La page n'a aucune permission de fenêtre.
+7. **Le filtre va au-delà de la liste de §4.6**, qui est un plancher :
+   - outils détournables : `wget`, `msiexec`, `rundll32`, `regsvr32`, `certutil`, `bitsadmin`, `wscript`, `cscript`, `regedit`, `pwsh`, `zsh` ;
+   - « ligne de commande », Win+X ;
+   - assistance à distance : Quick Assist, UltraViewer, ScreenConnect, LogMeIn, Supremo, « prise de main à distance », « remote access/desktop » ; « gift card » ;
+   - quelques extensions de domaine en plus ;
+   - avant les listes, le texte est ramené en minuscules, sans accents et sans lettres pleine chasse (« ＷＩＮ＋Ｒ »). Les homoglyphes (cyrillique) passent : limite connue ;
+   - la liste « sensible » prend aussi les libellés anglais (Delete, Remove, Pay, Transfer, Password, Download, Permissions), puisque `libelle` est le texte de l'écran.
+8. **Un seul texte refusé suffit** (consigne, libellé, question, un choix ou `resume_etape`) : toute la réponse est remplacée. Bibo met sa phrase, `suspect`, `etat = bloque`, sans cible ni choix.
+9. **Une cible seulement pour `etape`** : `question` et `bloque` n'en ont pas non plus, comme `termine` et `pas_ici`. C'est le critère de la phase 0 (aucune ellipse hors étape).
+10. **Séance** :
+    - « C'est fait » et « Je suis bloqué » exigent une capture à laquelle Claude n'a pas encore répondu (sinon `sans_capture`) ;
+    - un choix renvoie l'image de la question avec une nouvelle bande, et seulement un des choix proposés ou « Aucun » ;
+    - l'aperçu porte le code du prochain envoi : l'image montrée est exactement celle qui part. Chaque nouvel essai tire un nouveau code ;
+    - un nouvel objectif garde la capture et ses zones cachées.
+11. **`precedente = pas_faite` après « C'est fait »** : la réponse est gardée et l'étape porte `a_confirmer`. `guide_trancher(true)` note l'étape « faite selon la personne » et continue avec la réponse gardée. `guide_trancher(false)` réaffiche l'étape, sans appel.
+12. **Numérotation** : une étape prend son numéro quand elle arrive. Une réponse à « Je suis bloqué » ou à un choix remplace l'étape en cours au lieu d'en ajouter une.
+13. **Regards** :
+    - `REGARDS_PAR_ETAPE` compte aussi le regard qui a amené l'étape ;
+    - le regard est rendu si Claude n'a pas été lancé, ou si le service a refusé sans rien coûter (quota, connexion, API, hors ligne à 0 $). Un quota qui a coûté reste un quota, et il est compté ;
+    - une réponse arrivée après « Fermer le guide » ne va nulle part (`annule`), mais elle figure dans le journal ;
+    - un collage pendant un envoi est refusé (`occupe`) : l'image ne change pas sous une question.
+14. **Journal** : une ligne par lancement de Claude, avec la date (le jour), la version de l'app, le moteur, la version de Claude Code, le modèle, la demande, l'issue, la durée, les tours, les jetons, le coût, la taille de l'image en Ko et les regards du lancement. Aucun texte. Pas de rotation : environ 300 octets par regard, 120 regards par lancement au plus.
+15. **La fenêtre pointe déjà vers `guide.html`**, qui arrive en phase 4 : aucune entrée de l'interface n'y mène encore. Un fichier déposé sur la fenêtre est lu en Rust (20 Mo au plus), et le résultat part dans l'évènement `guide-depose` : la page ne renvoie jamais de chemin.
+16. **Zones cachées** : `guide_cacher` reçoit toutes les zones, en pixels de l'image envoyée ; « Annuler le dernier » renvoie la liste moins la dernière. Rust les convertit en pixels de la capture, en couvrant tout pixel touché.
+17. **Part de noir** : un pixel compte comme noir quand ses trois canaux sont à 6 au plus, ou quand il est transparent. Avant la réduction, le transparent est posé sur du blanc : c'est l'ombre des captures de fenêtre de macOS.
+18. **Capture de moins de 84 px de large** : la bande s'élargit vers la droite pour que le code tienne. L'image ne bouge pas.
+19. **Historique** : une étape par ligne (`1. consigne (faite)`), et non séparées par « / ». Les plus anciennes sautent au-delà de 8 étapes ou de 1 200 caractères.
+20. **Test de §4.1** : « ni balise de bloc » se lit comme « aucune balise fermante, ni `<capture` ». La règle 3 doit nommer les blocs du guide.
+
+**Vérifié** : en local (macOS), `cargo clippy --all-targets -D warnings` (aussi pour la cible Windows, sans édition de liens), `cargo test` (291 + 4 + 1), `python3 -I -m unittest discover -s engine/tests` (750), `test-hooks.sh` (229/229), `screens.mjs` (66 scénarios, inchangés), `actionlint`.
+
+**Tests**
+- **`tests/guide_cli.rs`** (Unix) : un faux `claude` en Python (`tests/fixtures/guide/fake_claude.py`) décode le PNG reçu avec son propre décodeur et sa propre police. Il lit le code de la bande et trouve le bouton vert.
+  - 3 scénarios : réponse juste, mauvais code, consigne ClickFix ;
+  - plus `--print-consignes`, comparé octet pour octet à `consignes.md` ;
+  - après chaque passage, rien de neuf sous HOME ni sous TMPDIR, dossiers compris, à part `.brain-in-a-box/guide/journal.jsonl`. Le dossier de Claude a disparu ;
+  - des fragments du base64 et des octets de l'image envoyée sont cherchés sur tout le disque du test : introuvables.
+- **Unitaires** : `guide` (31) et `shot` (11). Dont une séance entière avec un faux Claude qui lit la bande, le filtre (ClickFix sous plusieurs graphies, domaines, numéros, accès à distance ; montant, référence et `facture.pdf` acceptés), les niveaux aux bornes, les plafonds, le regard rendu, la séance fermée en cours d'appel, les masques et le PNG piégé.
+- **Mutations** : 34 protections ont été retirées une à une. Chacune fait rougir au moins un test :
+  - le code de la bande, chaque famille du filtre, les balises du guide ;
+  - le masquage de `stack.md`, le filtre des procédures, les liens symboliques ;
+  - `DISABLE_ERROR_REPORTING`, l'environnement court, le dossier de Claude, `--input-format` ;
+  - l'aire maximale, la cible hors étape, la cible d'une réponse suspecte, le libellé exigé pour l'ellipse pleine, le filtre sur chaque texte, la liste « sensible » ;
+  - `precedente` au début, la capture neuve, le coût qui décide du regard rendu, la séance fermée, `occupe` ;
+  - le code de l'aperçu, le code neuf à chaque appel, le nom du logiciel ;
+  - les zones oubliées ou repeintes, le plafond par étape ;
+  - la taille et le poids maximaux, le fond blanc, la place de la bande.
+
+  Deux mutations restaient d'abord vertes : une autre séance ouverte pendant l'appel, et la bande décalée d'un pixel. Les deux tests ont été renforcés.
+
+**Reste ouvert** :
+- le cas « forfait sans Opus » (phase 0 g) n'a toujours pas d'erreur dédiée ;
+- l'accueil, les textes de G1 à G10, la page `claude.ai/settings/data-privacy-controls` dans la liste des liens connus, et Cmd+V sur Mac (menu Édition) : phase 4 ;
+- le contrôle de `consignes.md` dans `test-hooks.sh` (section 11) : phase 5. Côté app, `print_consignes_is_the_rules_file_byte_for_byte` le fait déjà.
