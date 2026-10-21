@@ -434,8 +434,6 @@
 
   // Screen and mood to scene. The first that matches wins: [screen or '*', mood or '*', scene].
   const RULES = [
-    // The guide's login: the key, held up with a smile though the invitation is worded as a worry.
-    ['connexion', 'worried', 'cle'],
     ['connexion', 'thinking', 'attend'],
     ...FAILED.map((s) => [s, 'worried', 'triste']),
     ['diag', 'thinking', 'loupe'],
@@ -474,6 +472,7 @@
     blinkTimer: 0,
     longTimer: 0,
     nudgeTimer: 0,
+    words: 0,
     done: 0,
     cheered: false,
   };
@@ -488,6 +487,9 @@
     // « Careful » only for a screen Bibo filtered or one that gives orders (their banner is an alert);
     // a plain « Ça coince » is a scratch of the head.
     if (screen === 'bloque') return document.querySelector('.banner[role="alert"]') ? 'stop' : 'gratte';
+    // The guide's login: the key, held up with a smile though the invitation is worded as a worry.
+    // A worried word after it (the window would not open) is no smile: the key goes.
+    if (screen === 'connexion' && mood === 'worried') return now.words > 1 ? '' : 'cle';
     // The install screen holds the login card for a while: the key, then waiting for the login.
     if (screen === 'install' && document.querySelector('.login-card')) return mood === 'thinking' ? 'attend' : mood === 'idle' ? 'cle' : '';
     if (screen === 'etape' && lowConfidence()) return 'plisse';
@@ -522,7 +524,10 @@
     const turned = mood !== was.mood;
     now.screen = screen;
     now.mood = mood;
-    if (shown) now.pinned = pin;
+    if (shown) {
+      now.pinned = pin;
+      now.words = 0;
+    }
     bibo.scene(sceneFor(screen, mood), { ...(now.pinned ? now.pinOpts : {}), progress: barProgress() });
 
     if (mood === 'happy' && (turned || shown)) {
@@ -560,12 +565,13 @@
   }
 
   // A new word from Bibo: the raised hand of the step before is over (the install screen stays from
-  // one step to the next, so no new screen says it), and the wait starts over.
+  // one step to the next, so no new screen says it), the guide's login may have failed, and the wait
+  // starts over.
   function said() {
-    if (now.pinned === 'demande') {
-      now.pinned = '';
-      update();
-    }
+    now.words += 1;
+    const unpin = now.pinned === 'demande';
+    if (unpin) now.pinned = '';
+    if (unpin || now.screen === 'connexion') update();
     waitLater();
   }
 
