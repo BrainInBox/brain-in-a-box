@@ -890,3 +890,251 @@ body.big .plan { justify-content: center; text-align: left; }
 
   .spinner { animation-duration: 2.4s; }
 }
+
+/* ── The guide's window (guide.html): 400 wide, above the program it guides in ── */
+
+body.guide { font-size: 14.5px; }
+
+body.guide .app { padding: 12px 14px 0; }
+
+body.guide .hero { gap: 10px; align-items: flex-start; }
+
+body.guide .hero .bibo { width: 56px; height: 56px; }
+
+body.guide .say-title { font-size: 17px; }
+
+body.guide .screen { padding: 10px 2px; }
+
+body.guide .screen > * + * { margin-top: 10px; }
+
+body.guide .actions { gap: 8px; padding: 10px 0 12px; }
+
+body.guide .actions .btn { padding: 8px 13px; font-size: 14px; }
+
+/* « Arrêter le guide » on its own, on the left: the way on stays on the right. */
+body.guide .actions .btn-ghost { margin-right: auto; padding-left: 2px; padding-right: 2px; }
+
+body.guide .input { width: 100%; font-family: inherit; }
+
+body.guide .key-msg:not(:empty) { color: var(--error); }
+
+.tools { flex: none; display: flex; gap: 2px; margin-left: auto; }
+
+.tool {
+  appearance: none;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1.5px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+.tool svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+
+.tool:hover { color: var(--ink); border-color: var(--line-strong); }
+
+.tool[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); }
+
+.tool:focus-visible,
+.chip:focus-visible,
+.paste-zone:focus-visible,
+.shot.zoomable:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+.form { padding: 12px 14px; }
+
+.field + .field { margin-top: 12px; }
+
+.field label { display: block; font-weight: 650; margin-bottom: 5px; }
+
+.field .note { margin-top: 5px; font-size: 13px; }
+
+.input.goal,
+.steps-edit { display: block; resize: vertical; line-height: 1.45; }
+
+.steps-edit { min-height: 110px; font-size: 13.5px; }
+
+.remind { font-size: 13px; }
+
+.remind .btn { padding: 0 2px; font-size: 13px; }
+
+.how li .btn { margin-top: 6px; }
+
+/* The capture comes here: Cmd+V, Ctrl+V, or the context menu's « Coller ». */
+.paste-zone {
+  display: block;
+  width: 100%;
+  min-height: 84px;
+  padding: 28px 12px;
+  resize: none;
+  border: 2px dashed var(--line-strong);
+  border-radius: 14px;
+  background: var(--card);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 650;
+  text-align: center;
+  caret-color: transparent;
+  cursor: pointer;
+}
+
+.paste-zone::placeholder { color: var(--ink-2); opacity: 1; }
+
+.paste-zone:focus { border-color: var(--accent); background: var(--accent-soft); outline: none; }
+
+body.guide .plan { gap: 6px; font-size: 14px; }
+
+.learned {
+  padding: 8px 12px;
+  border-left: 3px solid var(--ok);
+  border-radius: 0 10px 10px 0;
+  background: var(--card);
+  font-size: 14px;
+}
+
+/* The image Claude saw, its band included, and the ellipse drawn in its own pixels. */
+.shot {
+  position: relative;
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+  line-height: 0;
+  background: var(--card);
+}
+
+.shot-img { display: block; width: 100%; height: auto; -webkit-user-drag: none; }
+
+.shot.zoomable { cursor: zoom-in; }
+
+body.large .shot.zoomable { cursor: zoom-out; }
+
+.ring { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+
+.ring ellipse { fill: none; stroke: #e5262b; stroke-width: 3; vector-effect: non-scaling-stroke; }
+
+.ring ellipse.halo { stroke: rgba(255, 255, 255, 0.85); stroke-width: 7; }
+
+.ring-pointille ellipse:not(.halo) { stroke-dasharray: 7 5; }
+
+/* The target, closer: the same image at its own size, its middle on the target. */
+.zoom {
+  position: relative;
+  height: 110px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background-color: #ffffff;
+  background-repeat: no-repeat;
+  background-size: calc(var(--iw) * 1px) calc(var(--ih) * 1px);
+  background-position: calc(50% - (var(--zx) - var(--iw) / 2) * 1px) calc(50% - (var(--zy) - var(--ih) / 2) * 1px);
+  overflow: hidden;
+}
+
+.zoom-ring {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: calc(var(--zw) * 1.414px + 10px);
+  height: calc(var(--zh) * 1.414px + 10px);
+  transform: translate(-50%, -50%);
+  border: 3px solid #e5262b;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.85);
+}
+
+.zoom-pointille .zoom-ring { border-style: dashed; }
+
+.consigne {
+  font-size: 18px;
+  font-weight: 650;
+  line-height: 1.35;
+  text-wrap: pretty;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.banner {
+  padding: 8px 12px;
+  border-radius: 10px;
+  border-left: 4px solid currentColor;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.banner-sensible { color: var(--warn); background: rgba(163, 95, 9, 0.1); }
+
+.banner-suspect { color: var(--error); background: rgba(192, 57, 43, 0.1); }
+
+.note.small { font-size: 12.5px; }
+
+/* « Cacher une zone »: rectangles drawn on the image, painted black in Rust. */
+.draw { position: absolute; inset: 0; cursor: crosshair; touch-action: none; }
+
+.draw-box { position: absolute; background: rgba(0, 0, 0, 0.85); outline: 2px solid var(--accent); }
+
+.choices-row,
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.chip {
+  appearance: none;
+  padding: 6px 12px;
+  border: 1.5px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.chip[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); font-weight: 650; }
+
+.recap { margin: 0; padding-left: 22px; display: grid; gap: 6px; }
+
+.recap li::marker { color: var(--accent); font-weight: 700; }
+
+/* Wide (the capture, 900 wide): the image takes the room. */
+body.guide.large .app { max-width: none; }
+
+/* Reduced (360×220, R3): the step, the target closer and « C'est fait », nothing else. */
+body.guide.reduit .app { padding: 6px 10px 0; }
+
+body.guide.reduit .hero { position: absolute; top: 4px; right: 8px; z-index: 2; }
+
+body.guide.reduit .hero .bibo,
+body.guide.reduit .message { display: none; }
+
+body.guide.reduit .screen {
+  display: grid;
+  grid-template-columns: 128px 1fr;
+  grid-auto-rows: min-content;
+  column-gap: 10px;
+  row-gap: 6px;
+  padding: 4px 0;
+}
+
+body.guide.reduit .screen > * { margin: 0; }
+
+body.guide.reduit .screen > :not(.consigne, .zoom, .banner) { display: none; }
+
+body.guide.reduit .zoom { grid-column: 1; grid-row: 1 / span 2; height: 96px; }
+
+body.guide.reduit .consigne,
+body.guide.reduit .banner { grid-column: 2; }
+
+body.guide.reduit .consigne { font-size: 14.5px; padding-right: 64px; }
+
+body.guide.reduit .screen:not(:has(.zoom)) { grid-template-columns: 1fr; }
+
+body.guide.reduit .screen:not(:has(.zoom)) .consigne,
+body.guide.reduit .screen:not(:has(.zoom)) .banner { grid-column: 1; }
+
+body.guide.reduit .banner { padding: 4px 8px; font-size: 12px; }
+
+body.guide.reduit .actions { padding: 6px 0 8px; }
+
+body.guide.reduit .actions > :not([data-act="next"]) { display: none; }
