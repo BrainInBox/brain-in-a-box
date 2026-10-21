@@ -72,6 +72,8 @@ REROUTE_VARS = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "AWS_BEARER_TOKEN_B
                 "ANTHROPIC_FOUNDRY_API_KEY", "ANTHROPIC_FOUNDRY_AUTH_TOKEN", "ANTHROPIC_AWS_API_KEY")
 # Where an administrator's settings live (None: this OS's folder; tests point it elsewhere).
 MANAGED_DIR = None
+# Where Homebrew puts claude, which launchd's bare PATH lacks.
+EXTRA_DIRS = ("/opt/homebrew/bin", "/usr/local/bin")
 PROXY_VARS = ("HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "NO_PROXY",
               "https_proxy", "http_proxy", "all_proxy", "no_proxy", "NODE_EXTRA_CA_CERTS")
 WINDOWS_VARS = ("USERPROFILE", "HOMEDRIVE", "HOMEPATH", "APPDATA", "LOCALAPPDATA", "SystemRoot",
@@ -109,6 +111,21 @@ class HeadlessError(Exception):
         return self.kind in ("timeout", "api")
 
 
+def which(name, dirs=None):
+    """The first `name` that can run in `dirs` (the PATH's by default), from absolute folders only. Not
+    shutil.which: on Windows it looks in the current folder first, even with path=; and an empty or
+    relative entry is a folder of wherever the night's task or a session runs from."""
+    if dirs is None:
+        dirs = os.environ.get("PATH", "").split(os.pathsep)
+    for d in dirs:
+        if not d or not os.path.isabs(d):
+            continue
+        p = os.path.join(d, name)
+        if os.path.exists(p) and not os.path.isdir(p) and (WINDOWS or os.access(p, os.X_OK)):
+            return p
+    return None
+
+
 def find_claude():
     """argv of the user's claude (~/.local/bin first, where the official installer puts it), or None."""
     exe = "claude.exe" if WINDOWS else "claude"
@@ -116,9 +133,8 @@ def find_claude():
     if local.is_file() and os.access(str(local), os.X_OK):
         return [str(local)]
     # launchd and the Task Scheduler start with a bare PATH.
-    dirs = os.environ.get("PATH", "").split(os.pathsep) + [str(Path.home() / ".claude" / "local"), "/opt/homebrew/bin", "/usr/local/bin"]
-    # An empty entry would mean the current folder.
-    found = shutil.which(exe, path=os.pathsep.join(d for d in dirs if d))
+    found = which(exe, os.environ.get("PATH", "").split(os.pathsep) + [str(Path.home() / ".claude" / "local")]
+                  + list(EXTRA_DIRS))
     # On Windows only an .exe: a claude.cmd would put our arguments through cmd.exe.
     return [found] if found and (not WINDOWS or found.lower().endswith(".exe")) else None
 
@@ -164,7 +180,7 @@ def child_path(program, git=None):
         root = os.environ.get("SystemRoot") or r"C:\Windows"
         dirs += [os.path.join(root, "System32"), root, os.path.join(root, "System32", "Wbem")]
         # Claude Code finds Git Bash from git.exe, and does not start without it.
-        git = git or shutil.which("git")
+        git = git or which("git.exe")
         if git:
             dirs.append(os.path.dirname(git))
     else:

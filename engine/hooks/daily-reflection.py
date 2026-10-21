@@ -57,8 +57,9 @@ except ImportError:
     redact = clean_item = write_atomic = None
 try:
     import _headless as headless
+    from _headless_claude import which
 except ImportError:
-    headless = None
+    headless = which = None
 
 HOME = Path.home()
 BRAIN = MEMORY = LOGS = STATE = PROJECTS = None
@@ -334,8 +335,13 @@ def hermes_sessions(day):
 
 
 def _git(*args, cwd=None):
+    # By its full path: a bare name is looked for in the current folder first on Windows, and in the
+    # repository scanned (cwd) through a relative entry of the PATH.
+    git = which("git.exe" if os.name == "nt" else "git")
+    if not git:
+        return ""
     try:
-        r = subprocess.run(["git", *args], cwd=cwd, capture_output=True, timeout=20, stdin=subprocess.DEVNULL,
+        r = subprocess.run([git, *args], cwd=cwd, capture_output=True, timeout=20, stdin=subprocess.DEVNULL,
                            encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
         return r.stdout.strip() if r.returncode == 0 else ""
     except Exception:
@@ -1043,7 +1049,7 @@ def notify(msg):
         return
     # The message goes in argv: nothing is interpolated into the AppleScript source.
     try:
-        subprocess.run(["osascript", "-e", "on run argv", "-e",
+        subprocess.run(["/usr/bin/osascript", "-e", "on run argv", "-e",
                         'display notification (item 1 of argv) with title "Brain: daily reflection failed"',
                         "-e", "end run", msg], capture_output=True, timeout=10)
     except Exception:
