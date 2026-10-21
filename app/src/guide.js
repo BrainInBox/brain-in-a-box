@@ -422,6 +422,8 @@ async function onPaste(e) {
     return;
   }
   const back = G.next;
+  // The preview or « Cacher une zone »: no image there either, and the user stays where they were.
+  const from = document.body.dataset.screen;
   const read = reading();
   let a;
   try {
@@ -429,7 +431,9 @@ async function onPaste(e) {
   } catch (err) {
     if (read !== G.gen) return;
     if (err && err.kind === 'sans_image') {
-      askCapture(back);
+      if (from === 'cacher') showHide();
+      else if (from === 'apercu') showPreview(G.apercu);
+      else askCapture(back);
       say('worried', 'Je ne trouve pas d’image dans ce que tu as collé.', SLIP);
       return;
     }

@@ -37,7 +37,8 @@
   //   are not painted on it); &meme=1 the second capture is the first one again; &vide=1 the first paste holds no
   //   image; &reprise=<s> the limit ends that many seconds from now (quota); &lache=1 a file is dropped on the
   //   first step, where nothing waits for it; &gtk=1 WebKitGTK's paste (no image in the event: Rust reads the
-  //   system's clipboard), &gtk=vide that clipboard empty too.
+  //   system's clipboard), &gtk=vide that clipboard empty too; &recolle=<screen> once there, a Ctrl+V of text (no
+  //   image in the event nor, from then on, in the system's clipboard).
   // Driving, for screenshots and app/dev/screens.mjs: &go=<screen> clicks through to that screen
   // (objectif, coller, apercu, cacher, regarde, etape, question, pas-ici, bloque, confirmer, coince, abandon,
   // fin, enregistrer, enregistre, erreur, connexion…), &nth=<n> its n-th arrival, &click=<act>[,<act>…] those
@@ -172,6 +173,7 @@
     let cancel = null;
     let small = g === 'petit';
     let unpasted = Boolean(P.get('vide'));
+    let repasted = false;
     // The zones of the window's size, kept while a capture of another size shows none (R7).
     let kept = [];
     // guide.rs numbers each image that may leave: a look names the one it was shown, else no look.
@@ -240,7 +242,7 @@
       // WebKitGTK gave the page no image: lib.rs reads GTK's clipboard.
       async guide_coller_presse_papiers() {
         await wait(T(200));
-        if (P.get('gtk') === 'vide') throw { kind: 'sans_image' };
+        if (P.get('gtk') === 'vide' || repasted) throw { kind: 'sans_image' };
         return handlers.guide_coller(new Uint8Array(PNG));
       },
       // A dropped file waits in guide.rs until the window takes it.
@@ -345,7 +347,7 @@
         return;
       }
       // &vide=1: what was pasted holds text, no image; the image comes a moment later.
-      const items = unpasted || P.get('gtk') ? [] : null;
+      const items = unpasted || repasted || P.get('gtk') ? [] : null;
       if (unpasted) setTimeout(paste, 600);
       unpasted = false;
       if (typeof DataTransfer === 'function' && typeof ClipboardEvent === 'function') {
@@ -384,6 +386,7 @@
         q(`[data-act=${clicks.shift()}]`).click();
         return;
       }
+      if (s === P.get('recolle') && !repasted && !clicks.length) { repasted = true; paste(); return; }
       if (s === go && arrivals >= nth && !clicks.length) return;
       if (acted === s) return;
       if (s === 'objectif') {

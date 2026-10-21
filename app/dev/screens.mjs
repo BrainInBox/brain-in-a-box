@@ -163,6 +163,9 @@ const GUIDE_SCENARIOS = [
   // Linux: WebKitGTK hands the page no image of the clipboard; Rust reads it (phase 5's terrain found it).
   'g=ok&go=apercu&os=linux&gtk=1',
   'g=ok&go=coller&nth=2&os=linux&gtk=vide',
+  // Linux: a Ctrl+V of text on the preview or « Cacher une zone » leaves the user there, as on the other systems.
+  'g=ok&go=apercu&os=linux&gtk=1&recolle=apercu',
+  'g=ok&go=cacher&click=cacher&os=linux&gtk=1&recolle=cacher',
 ];
 
 // The guide's window sizes, as the page asks Rust for them, in turn: the image made wide to hide a zone

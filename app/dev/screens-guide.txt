@@ -172,6 +172,12 @@
 ### g=ok&go=coller&nth=2&os=linux&gtk=vide
 21 4 5 6 24 8 88
 
+### g=ok&go=apercu&os=linux&gtk=1&recolle=apercu
+21 4 5 6 24 8 9 89
+
+### g=ok&go=cacher&click=cacher&os=linux&gtk=1&recolle=cacher
+21 4 5 6 24 8 9 27 90
+
 #1
 == charge
 Je prépare le guide…
@@ -1123,3 +1129,23 @@ L’outil de capture en garde aussi une copie dans Images › Captures d’écra
 Sur ce PC, je ne sais pas encore voir tes fenêtres tout seul : la capture, c’est toi qui la fais.
 [Arrêter le guide]
 [Retour]
+
+#89
+== apercu
+Je ne trouve pas d’image dans ce que tu as collé.
+Refais la capture avec la touche Impr. écran, en mode « Fenêtre », puis colle-la ici.
+[Toujours au-dessus]
+Voir exactement ce que j’envoie
+Elle part chez Anthropic avec ton abonnement Claude. Bibo n’en garde rien.
+[Autre capture]
+[Cacher une zone]
+[Envoyer à Claude]
+
+#90
+== cacher (large)
+Je ne trouve pas d’image dans ce que tu as collé.
+Refais la capture avec la touche Impr. écran, en mode « Fenêtre », puis colle-la ici.
+[Toujours au-dessus]
+Aucune zone cachée pour l’instant.
+[Annuler la dernière (inactif)]
+[J’ai fini]
