@@ -408,7 +408,9 @@ impl From<ClaudeError> for RepairError {
             ClaudeError::Timeout => RepairError::Timeout,
             ClaudeError::Quota => RepairError::Quota,
             ClaudeError::Auth => RepairError::Auth,
-            // The repair says it as it said it before the guide told these apart: an error of the service.
+            // An error of the service, both. Before the guide told them apart, the 404 was Api already, and
+            // the Pro plan's refusal of Opus, which tells « /logout and /login », was Auth: no login would
+            // fix it. The repair asks Sonnet, which neither concerns.
             ClaudeError::Api | ClaudeError::NoModel => RepairError::Api,
             ClaudeError::Init => RepairError::InitInvalid,
             ClaudeError::Invalid => RepairError::InvalidVerdict,

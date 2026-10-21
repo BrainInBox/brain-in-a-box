@@ -1156,7 +1156,7 @@ Même appel (s1, Opus, low) avec et sans : ligne d'init identique champ par cham
      - un 400 `invalid_request` : « Claude Opus is not available with the Claude Pro plan… ». Texte du binaire et de la doc, non capturé ;
      - un repli automatique sur un autre modèle (`system/model_fallback`, motif `model_not_found` ou `permission_denied`) quand le service refuse le modèle au compte. Forme lue dans le code de Claude Code.
      - Depuis Claude Code 2.1.280, un forfait Pro démarre sur Opus 5.5 (doc `model-config`) : la décision 8 et la phase 0 ne se contredisent plus. Le cas sert aux forfaits qui n'ont pas Opus (jeton d'avant un changement de forfait, organisation qui le restreint, retour de la restriction).
-   - **`claude.rs`** : `ClaudeError::NoModel` pour le 404 et la phrase du forfait Pro. Avec une image, l'évènement `model_fallback` arrête l'appel : `NoModel` pour ces deux motifs, mauvais lancement pour tout autre. Le repair dit ces erreurs comme avant (`Api`) et ignore l'évènement (contrôle par famille, §16.5).
+   - **`claude.rs`** : `ClaudeError::NoModel` pour le 404 et la phrase du forfait Pro. Avec une image, l'évènement `model_fallback` arrête l'appel : `NoModel` pour ces deux motifs, mauvais lancement pour tout autre. Le repair dit les deux `Api` : le 404 l'était déjà ; la phrase du forfait Pro était `Auth` (elle contient « /login »), alors qu'aucune connexion ne la règle. Le repair demande Sonnet, qu'aucune des deux ne concerne. Il ignore l'évènement (contrôle par famille, §16.5).
    - **`guide.rs`** :
      - Opus refusé : le même regard repart aussitôt vers Sonnet, sur la même image avec une nouvelle bande (R10) ;
      - ensuite, tous les regards vont à Sonnet jusqu'au prochain lancement de l'app ;
