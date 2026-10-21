@@ -8,6 +8,8 @@ Rédigée le 2026-10-21 sur `origin/master` fa1ed66, d'après le code et les ess
 
 **Phase 0 faite le 2026-10-21** : résultats et corrections en §15 (« Phase 0 — résultats »), qui prime sur le corps. En bref : modèle **Opus**, seuils inchangés, `--effort low` gardé ; sélecteur macOS **GO** avec un `SCStream` d'une image (pas `SCScreenshotManager`) ; Codex : `-i` relatif ; alphabet du code sans U ; aucun refus « cyber » mesuré.
 
+**Phase 1 faite le 2026-10-21** (§16) : `claude.rs` sorti de `repair.rs` sans changement, puis l'image sur stdin, les nouvelles règles de `Watch` (refus du modèle, `modelUsage`, limites d'usage), le côté Python et le test de contrat. Écarts : `--guide-ask` en phase 3, six fichiers de code au lieu de cinq.
+
 ## 0. En une phrase
 
 Une petite fenêtre Bibo, toujours au-dessus, demande l'objectif, capture **la fenêtre choisie** quand la personne clique, envoie l'image réduite à **son** Claude (`claude -p`, sans outil, abonnement), affiche **une étape à la fois** avec la capture annotée (ellipse rouge), vérifie à « C'est fait », et propose à la fin d'enregistrer la procédure dans le cerveau.
@@ -785,3 +787,31 @@ Même appel (s1, Opus, low) avec et sans : ligne d'init identique champ par cham
 8. Ligne d'init d'Opus et de Sonnet 5.5 : les mêmes champs que le repair accepte (`tools: ["StructuredOutput"]`, `mcp_servers: []`, `apiKeySource: none`, plugins `@builtin`), plus `per_turn_effort_active: true`.
 9. Le dépôt a bougé (56e4d25, import de mémoire, #58) : numéros de ligne décalés, sans changement de fond pour la spec : `showWelcome` `app.js:561`, `showDone` `app.js:1938`, `_headless_claude.py` `Watch` l. 509 et `run` l. 602, `sys.rs` `stdin` l. 383, `steps.rs` `open_in_terminal` l. 1064. Numéros cités inchangés dans `repair.rs` (l. 82, 557, 2317-2532), `codex.rs`, `redact.rs`, `agents.rs:32` et `_agents.py:41`.
 10. Restent ouverts : la phase 0 (g) (forfait du premier utilisateur, type de forfait dans `auth status`), le comportement de Claude Code quand le forfait n'a pas Opus (§2), le coût d'un regard sur un forfait Pro, et l'acceptation du schéma strict par le vrai service de Codex.
+
+## 16. Phase 1 — fait et écarts (2026-10-21)
+
+**Prime sur le corps et sur §15 là où elle les contredit.** Branche `feat/bibo-guide`, PR brouillon #59, trois commits :
+
+1. **Déplacement pur** : `app/src-tauri/src/claude.rs`, le côté app de `_headless_claude.py` (comme `codex.rs` l'est de `_headless_codex.py`) : `MIN_CLAUDE`, `REQUIRED_FLAGS`, `Question`, `argv`, `child_env`, `login_name`, `Watch`, `check_init`, `parse_result`, et `ask`, qui passe chaque ligne à un puits (le repair garde son `stream.jsonl` masqué). Ses erreurs (`ClaudeError`) sont les genres du lanceur ; le repair les traduit une pour une. `argv_is_exactly_the_reviewed_command` et toutes les fixtures `tests/fixtures/repair/*` passent sans modification ; les tests de ce qui a bougé ont suivi. `test_judge.py` lit `MIN_CLAUDE` et `REQUIRED_FLAGS` dans `claude.rs`, et la commande dans le test du repair, qui l'écrit mot pour mot.
+2. **`Watch`**, pour le repair comme pour le lanceur, règle pour règle :
+   - `system/model_refusal_fallback` arrête l'appel : nouvelle erreur `refused` (détail : la catégorie, « cyber »). Jamais réessayée, jamais couverte par l'autre moteur (`_headless.py`, `falls_back` du repair) ;
+   - `result.modelUsage` : un modèle autre que celui demandé donne un mauvais lancement (`init`). Sans modèle demandé, rien n'est contrôlé, comme pour la ligne d'init ;
+   - `rate_limit_event` : statut et fenêtres de 5 h et 7 jours (`utilization`, `resetsAt`) gardés (`Watch.rate_limit`, `Answer.rate_limit`) ;
+   - côté Rust, ce que le lanceur faisait déjà : une deuxième ligne d'init contrôlée, le résultat d'un outil serveur qui arrête l'appel, un nom d'outil réduit à une étiquette dans les messages.
+
+   Repair : `RepairError::Refused`, compté (le modèle a travaillé), Claude pas écarté pour la séance. Texte de la fenêtre : « Claude n'a pas voulu analyser ce dossier. » / « Rien n'a été modifié. » Fixture `refusal-fallback.jsonl` : l'appel 5 de l'essai 1, anonymisé, avec la réponse de `plan-ok` après le refus.
+3. **Image sur stdin** : `Question.images` (PNG, en mémoire) ; `--input-format stream-json` en dernier ; stdin = une ligne JSON compacte, les images puis le texte (`claude::stdin`, `_headless_claude.stdin_text`). Base64 écrit à la main, sans crate. Python : `run(images=)`, `base_argv(with_images=)`, `IMAGE_FLAGS` (un claude dont `--help` ne liste pas `--input-format` ne reçoit pas d'image) ; `_headless.run(images=)` : les images vont à Claude seul, Codex répond « Codex is not given images yet » (`unsupported`), et Claude prend le relais s'il est listé. Sans image (`None` ou `[]`), l'appel est exactement celui d'avant (testé).
+
+**Contrat Rust ↔ Python** : `the_app_and_the_launcher_send_alike` (`claude.rs`) pose 4 questions à `engine/tests/claude_contract.py`, qui les fait passer par `_headless_claude.run` jusqu'à `fake_claude.py` : celle du repair, celle du guide (schéma §4.5, Opus, `low`, une image de 400 Ko), deux images, aucun réglage optionnel. Le texte contient accents, guillemets, `\`, tabulation, caractère de contrôle, U+2028 et émoji. Comparés : argv à l'identique, stdin octet pour octet (sha256 et taille), texte et images tels que le faux les a lus, issue de l'appel. `ask_sends_claude_the_command_and_the_line_it_says` vérifie qu'`ask` envoie bien ces argv et cette ligne (Unix, 700 Ko). Sans Python, le test échoue (pas de saut). `fake_claude.py` lit le `stream-json`, et note `stdin.json` (sha256, taille) et `images.json` (type, sha256, taille) ; aucune image n'est écrite.
+
+**Tests non creux** : 15 protections retirées une à une (séparateurs, `ensure_ascii`, ordre des clés, `--input-format` côté Python ; alphabet base64, échappement du texte, `ask` sans la ligne côté Rust ; refus, `modelUsage`, `rate_limit`, deuxième init des deux côtés ; drapeaux exigés avec image ; Codex sans image) : chacune fait rougir au moins un test.
+
+**Écarts (priment sur le corps) :**
+1. **`--guide-ask` arrive en phase 3**, avec `guide.rs` : il a besoin des consignes, du schéma et de la validation (§4.6), faute de quoi il afficherait une réponse non validée. La preuve de bout en bout avec un faux claude est, en phase 1, `ask_sends_claude_…` (Rust) et les tests du chemin entier de `test_headless.py` (Python).
+2. **Six fichiers de code au lieu de cinq** : `claude.rs`, `repair.rs`, `lib.rs` (une ligne : `mod claude;`), `_headless_claude.py`, `_headless.py`, et `app.js` (une ligne : le texte du repair pour `refused`, demandé par [R14]).
+3. **`screens-claude.txt`** : un scénario ajouté à la fin (`s=repair-ok&go=done&error=refused`) ; les 65 autres sont inchangés.
+4. **Le schéma passe en texte** (`Question.schema: &str`) : `serde_json` trie les clés (pas de `preserve_order` dans le build), alors que la phase 0 a mesuré le schéma dans son ordre. Le guide le gardera en texte compact et ASCII, ce que le `json.dumps` du lanceur réécrit à l'identique (le contrat le vérifie sur le schéma §4.5).
+5. **`modelUsage`** : contrôle par famille, comme le dit §3. Une bascule dans la même famille (Opus 5.5 vers Opus 4.8, essai 1) n'est arrêtée que par l'évènement `model_refusal_fallback`, qui arrive avant le résultat.
+6. **Pas ici (phase 3)** : la liste de drapeaux du guide côté Rust (`--input-format`), `check_cli` en cache, `DISABLE_ERROR_REPORTING=1` dans l'environnement du guide. Le lanceur Python exige déjà `--input-format` quand il y a des images.
+7. Le juge du soir range un refus sous « erreur », l'import sous « l'IA a répondu autre chose » : inchangés, puisqu'ils ne passent pas d'image et n'ont pas eu de refus.
+8. Là où Rust différait du lanceur, il garde les mots du repair : pas de ligne d'init donne `Init` (le lanceur dit `start`), pas de résultat donne `Invalid` (le lanceur dit `api`).
