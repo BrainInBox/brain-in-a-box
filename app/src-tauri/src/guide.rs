@@ -4,8 +4,10 @@
 //! The user pastes the capture (§G2, « Colle une capture »), or, on Windows, Bibo captures the window
 //! they clicked in (capture/, phase 2a): that window alone, checked to be still theirs before each look.
 //! Claude runs as the repair's does (claude.rs: no tool, checked line by line), with the capture on
-//! stdin and Opus (phase 0, §15). Its answer is trusted for nothing: the band's code proves it read
-//! this very image, its zone must fit the image, and every sentence goes through a filter that no
+//! stdin and Opus (phase 0, §15), or Sonnet in a cautious mode when the account cannot use Opus
+//! (decision 8, §22: never a full ellipse, a question when in doubt). Its answer is trusted for
+//! nothing: the band's code proves it read this very image, its zone must fit the image, and every
+//! sentence goes through a filter that no
 //! instruction to open a link, call a number, type a command or let someone in from afar gets past
 //! (§4.6). The session lives in memory only: no image, no answer, no objective is ever written. On
 //! disk, two files: an empty flag once the user read how the guide looks (`vu`), and one line of
@@ -304,6 +306,8 @@ pub enum GuideError {
     ImageIllisible,
     /// Not a PNG (a dropped JPEG: only a paste is redrawn as one, in the window).
     PasPng,
+    /// Ctrl+V with no image in the clipboard (Linux, where Rust reads it).
+    SansImage,
     ObjectifVide,
     Annule,
     Delai,

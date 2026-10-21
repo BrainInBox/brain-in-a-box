@@ -166,6 +166,12 @@
 ### g=sans-modele&go=erreur
 1 4 5 6 7 8 9 10 11 87
 
+### g=ok&go=apercu&os=linux&gtk=1
+21 4 5 6 24 8 9
+
+### g=ok&go=coller&nth=2&os=linux&gtk=vide
+21 4 5 6 24 8 88
+
 #1
 == charge
 Je prépare le guide…
@@ -1103,3 +1109,17 @@ Ton forfait Claude ne donne pas accès au modèle du guide.
 Le guide a besoin de Claude Opus ou de Claude Sonnet dans Claude Code : regarde ton abonnement sur claude.ai.
 [Toujours au-dessus]
 [Fermer le guide]
+
+#88
+== coller
+Je ne trouve pas d’image dans ce que tu as collé.
+Refais la capture avec la touche Impr. écran, en mode « Fenêtre », puis colle-la ici.
+[Toujours au-dessus]
+Appuie sur la touche Impr. écran, puis choisis « Fenêtre ».
+Clique sur la fenêtre de ton logiciel, puis sur le rond de capture : l’image va dans le presse-papiers.
+Reviens ici et appuie sur Ctrl + V.
+Tu peux aussi glisser le fichier de ta capture sur cette fenêtre.
+L’outil de capture en garde aussi une copie dans Images › Captures d’écran : tu peux l’effacer ensuite.
+Sur ce PC, je ne sais pas encore voir tes fenêtres tout seul : la capture, c’est toi qui la fais.
+[Arrêter le guide]
+[Retour]

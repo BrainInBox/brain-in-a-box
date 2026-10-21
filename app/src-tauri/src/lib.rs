@@ -417,6 +417,33 @@ async fn guide_coller(request: tauri::ipc::Request<'_>) -> Result<guide::Apercu,
     guiding(move || guide::coller(&bytes)).await
 }
 
+/// A capture pasted where the page got no image (Linux: WebKitGTK hands a page only files, never an
+/// image of the clipboard): GTK's clipboard read on the main thread, the image as a PNG, its preview.
+/// Asked by the page on Ctrl+V only, while it waits for a capture.
+#[tauri::command]
+async fn guide_coller_presse_papiers(app: tauri::AppHandle) -> Result<guide::Apercu, guide::GuideError> {
+    let png = clipboard_png(&app).await?;
+    guiding(move || guide::coller(&png)).await
+}
+
+#[cfg(target_os = "linux")]
+async fn clipboard_png(app: &tauri::AppHandle) -> Result<Vec<u8>, guide::GuideError> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.run_on_main_thread(move || {
+        let image = gtk::Clipboard::get(&gtk::gdk::SELECTION_CLIPBOARD).wait_for_image();
+        let _ = tx.send(image.and_then(|p| p.save_to_bufferv("png", &[]).ok()));
+    })
+    .map_err(|e| guide::GuideError::Interne { message: e.to_string() })?;
+    let got = tauri::async_runtime::spawn_blocking(move || rx.recv_timeout(std::time::Duration::from_secs(15)).ok().flatten()).await;
+    got.ok().flatten().ok_or(guide::GuideError::SansImage)
+}
+
+/// Elsewhere the page's paste event holds the image: never asked.
+#[cfg(not(target_os = "linux"))]
+async fn clipboard_png(_: &tauri::AppHandle) -> Result<Vec<u8>, guide::GuideError> {
+    Err(guide::GuideError::SansImage)
+}
+
 /// The file dropped on the window, now that it waits for a capture: its preview.
 #[tauri::command]
 async fn guide_prendre_depot() -> Result<guide::Apercu, guide::GuideError> {
@@ -677,6 +704,7 @@ pub fn run() {
             guide_compris,
             guide_commencer,
             guide_coller,
+            guide_coller_presse_papiers,
             guide_prendre_depot,
             guide_fenetres,
             guide_attendre_clic,
@@ -749,4 +777,5 @@ mod tests {
         let nobodys: Vec<&String> = commands.iter().filter(|c| !main.contains(*c) && !guide.contains(*c)).collect();
         assert!(nobodys.is_empty(), "no window may call {nobodys:?}");
     }
+
 }

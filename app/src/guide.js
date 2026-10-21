@@ -415,16 +415,24 @@ async function onPaste(e) {
     bytes = null;
   }
   if (gen !== G.gen) return;
-  if (!bytes) {
+  // WebKitGTK hands a page no image of the clipboard, only files: on Linux, Rust reads GTK's clipboard.
+  const fromSystem = !bytes && SYSTEM === 'linux';
+  if (!bytes && !fromSystem) {
     say('worried', 'Je ne trouve pas d’image dans ce que tu as collé.', SLIP);
     return;
   }
+  const back = G.next;
   const read = reading();
   let a;
   try {
-    a = await invoke('guide_coller', bytes);
+    a = fromSystem ? await invoke('guide_coller_presse_papiers') : await invoke('guide_coller', bytes);
   } catch (err) {
     if (read !== G.gen) return;
+    if (err && err.kind === 'sans_image') {
+      askCapture(back);
+      say('worried', 'Je ne trouve pas d’image dans ce que tu as collé.', SLIP);
+      return;
+    }
     return showError(err);
   }
   if (read !== G.gen) return;

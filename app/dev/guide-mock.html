@@ -36,7 +36,8 @@
   //   (&depose=jpeg, a JPEG); &taille=1 every capture after the first is of another, small size (the hidden zones
   //   are not painted on it); &meme=1 the second capture is the first one again; &vide=1 the first paste holds no
   //   image; &reprise=<s> the limit ends that many seconds from now (quota); &lache=1 a file is dropped on the
-  //   first step, where nothing waits for it.
+  //   first step, where nothing waits for it; &gtk=1 WebKitGTK's paste (no image in the event: Rust reads the
+  //   system's clipboard), &gtk=vide that clipboard empty too.
   // Driving, for screenshots and app/dev/screens.mjs: &go=<screen> clicks through to that screen
   // (objectif, coller, apercu, cacher, regarde, etape, question, pas-ici, bloque, confirmer, coince, abandon,
   // fin, enregistrer, enregistre, erreur, connexion…), &nth=<n> its n-th arrival, &click=<act>[,<act>…] those
@@ -236,6 +237,12 @@
         }
         return preview();
       },
+      // WebKitGTK gave the page no image: lib.rs reads GTK's clipboard.
+      async guide_coller_presse_papiers() {
+        await wait(T(200));
+        if (P.get('gtk') === 'vide') throw { kind: 'sans_image' };
+        return handlers.guide_coller(new Uint8Array(PNG));
+      },
       // A dropped file waits in guide.rs until the window takes it.
       async guide_prendre_depot() {
         await wait(T(100));
@@ -338,7 +345,7 @@
         return;
       }
       // &vide=1: what was pasted holds text, no image; the image comes a moment later.
-      const items = unpasted ? [] : null;
+      const items = unpasted || P.get('gtk') ? [] : null;
       if (unpasted) setTimeout(paste, 600);
       unpasted = false;
       if (typeof DataTransfer === 'function' && typeof ClipboardEvent === 'function') {

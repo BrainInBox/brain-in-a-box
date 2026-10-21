@@ -61,6 +61,9 @@ windows = { version = "=0.61.3", features = [
 # window under X11 (capture/x11.rs), with a compositing manager only. No crate more, no -dev package.
 [target.'cfg(target_os = "linux")'.dependencies]
 x11-dl = "=2.21.0"
+# Already in the build through tao and wry: GTK's clipboard, where a capture pasted in the guide is
+# read when WebKitGTK gives the page no image (it hands a page only files).
+gtk = "=0.18.2"
 
 # Already in the build through tauri (macOS): a configuration profile that would pass over the
 # settings the app gives Codex (com.openai.codex), read as the kit's launcher reads it.

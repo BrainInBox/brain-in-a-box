@@ -160,6 +160,9 @@ const GUIDE_SCENARIOS = [
   'g=prudent&go=etape',
   'g=prudent&go=etape&nth=2',
   'g=sans-modele&go=erreur',
+  // Linux: WebKitGTK hands the page no image of the clipboard; Rust reads it (phase 5's terrain found it).
+  'g=ok&go=apercu&os=linux&gtk=1',
+  'g=ok&go=coller&nth=2&os=linux&gtk=vide',
 ];
 
 // The guide's window sizes, as the page asks Rust for them, in turn: the image made wide to hide a zone

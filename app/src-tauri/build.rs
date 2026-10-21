@@ -43,6 +43,7 @@ const COMMANDS: &[&str] = &[
     "guide_compris",
     "guide_commencer",
     "guide_coller",
+    "guide_coller_presse_papiers",
     "guide_prendre_depot",
     "guide_fenetres",
     "guide_attendre_clic",
