@@ -778,9 +778,11 @@ mod tests {
         assert!(nobodys.is_empty(), "no window may call {nobodys:?}");
     }
 
+    #[cfg(not(windows))]
     type Mock = tauri::test::MockRuntime;
 
     /// What Tauri answers a window's page that asks `cmd` with no argument.
+    #[cfg(not(windows))]
     fn ask(window: &tauri::WebviewWindow<Mock>, cmd: &str) -> Result<tauri::ipc::InvokeResponseBody, serde_json::Value> {
         tauri::test::get_ipc_response(
             window,
@@ -800,6 +802,7 @@ mod tests {
     /// Tauri's own check, with the app's manifest and capabilities as the app is built (the code the app
     /// runs, on a mock runtime): the guide's page asking the installer's commands is refused, and the
     /// installer's page the guide's; each its own passes. No command of the app runs here.
+    #[cfg(not(windows))]
     #[test]
     fn tauri_refuses_each_window_the_other_ones_commands() {
         // Every command answers "ok" here: what Tauri refuses never reaches its handler, what it lets through does.
