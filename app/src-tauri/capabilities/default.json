@@ -1,7 +1,45 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "The installer window: core APIs only, the app's own commands do the work",
-  "windows": ["main"],
-  "permissions": ["core:default"]
+  "description": "The installer window: core APIs, and the installer's commands and the guide's door (never the guide's own)",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "allow-diagnose-machine",
+    "allow-run-step",
+    "allow-check-voyage-key",
+    "allow-claude-logged-in",
+    "allow-agents-offer",
+    "allow-choose-agents",
+    "allow-codex-login",
+    "allow-repair-status",
+    "allow-repair-preview",
+    "allow-repair-analyze",
+    "allow-repair-cancel",
+    "allow-repair-apply",
+    "allow-repair-undo",
+    "allow-repair-report",
+    "allow-open-claude-login",
+    "allow-open-codex-login",
+    "allow-start-onboarding",
+    "allow-open-vault",
+    "allow-open-link",
+    "allow-open-settings",
+    "allow-open-repair-terminal",
+    "allow-machine-advice",
+    "allow-import-check",
+    "allow-import-phrase",
+    "allow-import-pick",
+    "allow-import-paste",
+    "allow-import-preview",
+    "allow-import-run",
+    "allow-import-cancel",
+    "allow-import-forget",
+    "allow-import-open-note",
+    "allow-open-claude-update",
+    "allow-guide-open",
+    "allow-guide-offert"
+  ]
 }

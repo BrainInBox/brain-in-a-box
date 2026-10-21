@@ -654,3 +654,59 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("error while running Brain in a Box");
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    fn read(path: &str) -> String {
+        std::fs::read_to_string(format!("{}/{path}", env!("CARGO_MANIFEST_DIR"))).unwrap()
+    }
+
+    /// The names between `start` and the next `]`, as Rust writes a list of them.
+    fn names(text: &str, start: &str) -> BTreeSet<String> {
+        let from = text.find(start).unwrap_or_else(|| panic!("{start}")) + start.len();
+        let list = &text[from..from + text[from..].find(']').unwrap()];
+        list.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).filter(|w| !w.is_empty()).map(String::from).collect()
+    }
+
+    /// The app's commands a window's capability allows, `core:default` alone besides them.
+    fn allowed(file: &str, window: &str) -> BTreeSet<String> {
+        let cap: serde_json::Value = serde_json::from_str(&read(file)).unwrap();
+        assert_eq!(cap["windows"], serde_json::json!([window]), "{file}");
+        let perms: Vec<&str> = cap["permissions"].as_array().unwrap().iter().map(|p| p.as_str().unwrap()).collect();
+        assert_eq!(perms.iter().filter(|p| !p.starts_with("allow-")).collect::<Vec<_>>(), [&"core:default"], "{file}");
+        // Tauri names the permission of `run_step` allow-run-step.
+        perms.iter().filter_map(|p| p.strip_prefix("allow-")).map(|c| c.replace('-', "_")).collect()
+    }
+
+    /// Every string of a page that names a command (`invoke('run_step')`, a table of them).
+    fn named_in(page: &str, commands: &BTreeSet<String>) -> BTreeSet<String> {
+        let text = read(page);
+        commands.iter().filter(|c| text.contains(&format!("'{c}'"))).cloned().collect()
+    }
+
+    /// The guide's window shows Claude's words: it may call the guide's commands and four others, never
+    /// the installer's (a step to run, a repair to apply, a terminal to open). Each window gets what its
+    /// page calls, and every command is in the app's manifest, without which Tauri checks nothing.
+    #[test]
+    fn each_window_calls_its_own_commands_only() {
+        let commands = names(&read("src/lib.rs"), "generate_handler![");
+        assert_eq!(names(&read("build.rs"), "const COMMANDS: &[&str] = &["), commands, "build.rs's manifest is the app's commands");
+        let main = allowed("capabilities/default.json", "main");
+        let guide = allowed("capabilities/guide.json", "guide");
+        let shared: BTreeSet<String> = ["open_link", "open_claude_login", "claude_logged_in", "open_claude_update"].map(String::from).into();
+        let guides: BTreeSet<String> = commands.iter().filter(|c| c.starts_with("guide_") && !["guide_open", "guide_offert"].contains(&c.as_str())).cloned().collect();
+        assert_eq!(guide, guides.union(&shared).cloned().collect(), "the guide's window");
+        assert!(main.iter().all(|c| commands.contains(c)) && guide.iter().all(|c| commands.contains(c)));
+        assert!(main.is_disjoint(&guides), "the installer's window has none of the guide's but its door: {:?}", main.intersection(&guides).collect::<Vec<_>>());
+        for c in named_in("../src/app.js", &commands) {
+            assert!(main.contains(&c), "app.js calls {c}");
+        }
+        for c in named_in("../src/guide.js", &commands) {
+            assert!(guide.contains(&c), "guide.js calls {c}");
+        }
+        let nobodys: Vec<&String> = commands.iter().filter(|c| !main.contains(*c) && !guide.contains(*c)).collect();
+        assert!(nobodys.is_empty(), "no window may call {nobodys:?}");
+    }
+}
