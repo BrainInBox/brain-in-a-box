@@ -645,7 +645,9 @@ mod tests {
         assert_ne!(pid_of(popup), win.window.pid);
         // Clicked once, it is the chosen window's last active popup.
         let r = frame(popup).unwrap();
-        click(((r.left + r.right) / 2, (r.top + r.bottom) / 2));
+        let middle = ((r.left + r.right) / 2, (r.top + r.bottom) / 2);
+        until("the other program's window over the chosen one", || on_top(middle) == id_of(popup));
+        click(middle);
         // SAFETY: any value is accepted.
         until("its last active popup", || unsafe { GetLastActivePopup(h) } == popup);
         // SAFETY: a window of the test's program, enabled again below.

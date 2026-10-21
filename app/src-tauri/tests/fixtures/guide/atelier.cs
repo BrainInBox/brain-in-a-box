@@ -59,13 +59,14 @@ static class Atelier
         f.Bounds = new Rectangle(int.Parse(a[2]), int.Parse(a[3]), int.Parse(a[4]), int.Parse(a[5]));
         f.BackColor = Couleur(a[6]);
         f.TopMost = mode == "dessus";
+        if (mode == "intrus")
+        {
+            // GWLP_HWNDPARENT: the owner of a top-level window, here another program's, before it shows
+            // (an owned window lies over its owner).
+            SetWindowLongPtr(f.Handle, -8, new IntPtr(long.Parse(a[7])));
+        }
         f.Shown += delegate
         {
-            if (mode == "intrus")
-            {
-                // GWLP_HWNDPARENT: the owner of a top-level window, here another program's.
-                SetWindowLongPtr(f.Handle, -8, new IntPtr(long.Parse(a[7])));
-            }
             if (mode == "protege")
             {
                 SetWindowDisplayAffinity(f.Handle, WDA_MONITOR);
