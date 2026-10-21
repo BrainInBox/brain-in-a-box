@@ -42,9 +42,10 @@ use crate::{perms, sys, voyage};
 use crate::root::{self, OBSIDIAN_DEB_SHA256};
 
 /// Claude Code first: its installer needs none of Apple's tools, and once the user is
-/// logged in, Claude can help repair the steps that follow. Hermes last: the brain works without it.
+/// logged in, Claude can help repair the steps that follow. Hermes last, then its connection to the
+/// user's AI: the brain works without them.
 #[cfg(target_os = "macos")]
-const ORDER: &[&str] = &["claude", "clt", "bun", "obsidian", "brain", "hermes"];
+const ORDER: &[&str] = &["claude", "clt", "bun", "obsidian", "brain", "hermes", "hermes_ia"];
 /// The system's tools first: everything after downloads with curl (a fresh Ubuntu desktop
 /// has none), Bun's installer unzips, install.sh needs git and python3.
 #[cfg(target_os = "linux")]
@@ -166,6 +167,8 @@ pub(crate) fn run_held(_g: &MutexGuard<'static, ()>, id: &str, voyage_key: Optio
         "codex" => codex(log),
         #[cfg(target_os = "macos")]
         "hermes" => hermes(log),
+        // Planned only where the Hermes step runs (diagnose.rs): on a Mac with Apple's chip.
+        "hermes_ia" => crate::hermes_connect::step(log),
         #[cfg(target_os = "macos")]
         "obsidian" => obsidian(log),
         #[cfg(target_os = "linux")]
@@ -2199,7 +2202,7 @@ mod tests {
         assert_eq!(order(&with(vec![Engine::Claude, Engine::Codex])), expected(&["claude", "codex"]));
         assert_eq!(order(&Agents::none("ferme")), expected(&[]));
         #[cfg(target_os = "macos")]
-        assert_eq!(order(&with(vec![Engine::Codex, Engine::Claude])), ["codex", "claude", "clt", "bun", "obsidian", "brain", "hermes"]);
+        assert_eq!(order(&with(vec![Engine::Codex, Engine::Claude])), ["codex", "claude", "clt", "bun", "obsidian", "brain", "hermes", "hermes_ia"]);
         #[cfg(target_os = "linux")]
         assert_eq!(order(&with(vec![Engine::Codex])), ["paquets", "codex", "bun", "obsidian", "brain"]);
         #[cfg(windows)]

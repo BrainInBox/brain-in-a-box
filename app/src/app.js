@@ -102,10 +102,18 @@ const STEPS = {
     what: 'Ton IA au quotidien, dans son app.',
     say: ['J’installe Hermes, ton IA au quotidien.', 'Gros téléchargement : quelques minutes.'],
   },
+  // After it: Hermes on the subscription the user already pays for, no key to buy. The step ends on
+  // Hermes's first answer; ChatGPT's login shows its code here, in big (watchHermesDevice).
+  hermes_ia: {
+    name: 'Connexion d’Hermes',
+    short: 'la connexion d’Hermes à ton IA',
+    what: 'Il passe par ton abonnement : aucune clé à acheter.',
+    say: ['Je branche Hermes sur ton IA.', 'Il passe par ton abonnement : aucune clé à acheter.'],
+  },
 };
 
 const CHECK_STATUS = { ok: 'OK', missing: 'À installer', warn: 'À noter', error: 'Bloquant' };
-const STEP_STATUS = { pending: 'En attente', running: 'En cours…', done: 'Fait', failed: 'Échec' };
+const STEP_STATUS = { pending: 'En attente', running: 'En cours…', done: 'Fait', failed: 'Échec', later: 'Plus tard' };
 
 const state = {
   // agents_offer: whether the window asks who the brain works with (only where the kit lets Codex be
@@ -137,6 +145,10 @@ const state = {
   codexLoginSkipped: false,
   // How Codex was last seen logged in (codex_login): only "chatgpt" is a login the kit uses.
   codexLogin: '',
+  // Hermes's first answer and whose subscription it counts on, once the install connected it.
+  hermes: '',
+  // The Hermes step put off (« Plus tard »): the end says so, and that the next opening takes it up.
+  hermesLater: '',
   repair: {
     // Plans that set something aside, per step id: « Remettre comme avant » puts it back.
     aside: {},
@@ -789,7 +801,7 @@ function showVoyage(back = null) {
 
 function stepIcon(s) {
   if (s === 'running') return h('span', { class: 'spinner', 'aria-hidden': 'true' });
-  return icon({ pending: 'pending', done: 'ok', failed: 'error' }[s]);
+  return icon({ pending: 'pending', done: 'ok', failed: 'error', later: 'pending' }[s]);
 }
 
 function paintStep(id, s, since) {
@@ -855,17 +867,29 @@ async function runInstall(from, result = '') {
   const gen = renderInstall();
   const { plan } = state;
   for (let i = from; i < plan.length; i++) {
-    if (!state.loginAsked && !state.loginSkipped && chose('claude') && claudeInstalled()) {
-      await askLoginInline(gen);
-      if (gen !== view.gen) return;
-    }
     const id = plan[i];
+    // Hermes's connection needs Claude's login when Claude is the only AI: asked right before it,
+    // for that reason, even after a « Plus tard » given for the repairs.
+    const forHermes = id === 'hermes_ia' && !chose('codex') && !state.loginSkipped;
+    if ((forHermes || (!state.loginAsked && !state.loginSkipped)) && chose('claude') && claudeInstalled()) {
+      const logged = await askLoginInline(gen, id === 'hermes_ia' ? HERMES_NEEDS_CLAUDE : undefined);
+      if (gen !== view.gen) return;
+      // « Plus tard »: Claude's login waits, for this session; Hermes's connection, for the next
+      // time. The last screen says both.
+      if (forHermes && !logged) {
+        state.loginSkipped = true;
+        state.hermesLater = id;
+        paintStep(id, 'later');
+        continue;
+      }
+    }
     const info = stepInfo(id);
     const run = stepRun(id);
     paintStep(id, 'running', Date.now());
     // The Apple step's second line is an instruction: no step count in front of it.
     const where = plan.length > 1 && id !== 'clt' ? `Étape ${i + 1} sur ${plan.length}. ` : '';
     say('working', info.say[0], where + info.say[1]);
+    const device = run === 'hermes_ia' ? watchHermesDevice(gen, () => say('working', info.say[0], where + info.say[1])) : null;
 
     const key = run === 'brain' && state.key ? state.key : null;
     let r;
@@ -874,6 +898,7 @@ async function runInstall(from, result = '') {
     } catch (e) {
       r = { id: run, ok: false, message: `Erreur inattendue : ${errText(e)}` };
     }
+    if (device) device.stop();
     // On failure the key stays in memory for « Réessayer ».
     if (!r || !r.ok) {
       paintStep(id, 'failed');
@@ -885,6 +910,7 @@ async function runInstall(from, result = '') {
     if (key) state.keyUsed = true;
     delete state.repair.aside[run];
     result = String(r.message || '');
+    if (run === 'hermes_ia') state.hermes = result;
     paintStep(id, 'done');
     paintProgress();
   }
@@ -908,8 +934,9 @@ function claudeInstalled() {
 }
 
 // E1. Connected now, Claude can help repair a step that fails later. Inside the
-// install screen, without screen(): the steps stay in view.
-async function askLoginInline(gen) {
+// install screen, without screen(): the steps stay in view. `why`: another reason, when
+// the step that follows needs Claude's login itself. True once Claude is connected.
+async function askLoginInline(gen, why = 'Comme ça, si une étape coince, Claude pourra m’aider à la réparer.') {
   state.loginAsked = true;
   say('thinking', 'Je vérifie ton compte Claude…');
   let logged = false;
@@ -918,9 +945,9 @@ async function askLoginInline(gen) {
   } catch {
     logged = false;
   }
-  if (logged || gen !== view.gen) return;
+  if (logged || gen !== view.gen) return logged;
 
-  await new Promise((resolve) => {
+  return new Promise((resolve) => {
     const waiting = h('p', { class: 'loading', hidden: true }, h('span', { class: 'spinner', 'aria-hidden': 'true' }), 'J’attends ta connexion…');
     const connect = button('Connecter mon compte Claude', open, { act: 'next' });
     const card = h('div', { class: 'login-card card' },
@@ -934,12 +961,12 @@ async function askLoginInline(gen) {
     // « Plus tard » may come while the Terminal opens: nothing must follow it.
     let over = false;
 
-    function finish() {
+    function finish(connected = false) {
       over = true;
       stopPolling();
       card.remove();
       ui.actions.replaceChildren();
-      resolve();
+      resolve(connected);
     }
 
     async function open() {
@@ -962,16 +989,78 @@ async function askLoginInline(gen) {
         say('happy', 'C’est connecté !', 'Claude est prêt à m’aider. Je continue.');
         waiting.hidden = true;
         ui.actions.replaceChildren();
-        later(finish, 2000);
+        later(() => finish(true), 2000);
       });
     }
 
-    say('idle', 'Connecte ton compte Claude maintenant', 'Comme ça, si une étape coince, Claude pourra m’aider à la réparer.');
+    say('idle', 'Connecte ton compte Claude maintenant', why);
     ui.screen.querySelector('.steps').after(card);
-    ui.actions.append(button('Plus tard', finish, { kind: 'ghost', act: 'skip' }), connect);
+    ui.actions.append(button('Plus tard', () => finish(false), { kind: 'ghost', act: 'skip' }), connect);
     card.scrollIntoView({ block: 'nearest' });
     focusMain();
   });
+}
+
+// Why the connection of Hermes asks for Claude's login (hermes_connect.rs: Claude's Pro or Max).
+const HERMES_NEEDS_CLAUDE = 'Hermes passera par ton abonnement Claude : aucune clé à acheter.';
+
+// The ChatGPT code Hermes waits for (hermes_device), in big under the steps while its connection
+// runs: Rust opened the page already, « Rouvrir la page » opens it again. `back`: the step's own
+// words again once the code is gone (the login went through, or the step ended).
+function watchHermesDevice(gen, back) {
+  let card = null;
+  let shown = '';
+  let over = false;
+  const tick = async () => {
+    let d = null;
+    try {
+      d = await invoke('hermes_device');
+    } catch {
+      d = null;
+    }
+    if (over || gen !== view.gen) return;
+    const code = d && typeof d.code === 'string' ? d.code : '';
+    if (code !== shown) {
+      if (card) card.remove();
+      card = code ? deviceCard(code) : null;
+      shown = code;
+      if (card) {
+        say('idle', 'Connecte Hermes à ton compte ChatGPT', 'Hermes passera par ton abonnement ChatGPT : aucune clé à acheter.');
+        ui.screen.querySelector('.steps').after(card);
+        card.scrollIntoView({ block: 'nearest' });
+      } else {
+        back();
+      }
+    }
+    later(tick, 1000);
+  };
+  later(tick, 1000);
+  return {
+    stop() {
+      over = true;
+      if (card) card.remove();
+    },
+  };
+}
+
+function deviceCard(code) {
+  const reopen = button('Rouvrir la page', async () => {
+    reopen.disabled = true;
+    try {
+      await invoke('open_hermes_device_page');
+    } catch (e) {
+      say('worried', 'La page ne s’est pas ouverte.', errText(e));
+    }
+    later(() => { reopen.disabled = false; }, 3000);
+  }, { kind: 'secondary', small: true, act: 'device' });
+  return h('div', { class: 'login-card card' },
+    h('ol', { class: 'plan' },
+      h('li', {}, 'Dans la page qui s’est ouverte, connecte-toi à ChatGPT.'),
+      h('li', {}, 'Tape le code ci-dessous.'),
+      h('li', {}, 'Reviens ici : je continue tout seul.')),
+    h('p', { class: 'device-code' }, code),
+    h('p', { class: 'note' }, 'Tu te connectes directement chez OpenAI : je ne vois jamais ton mot de passe.'),
+    reopen);
 }
 
 // ── 4b. Repair with Claude (or Codex) ─────────────────────────────────────
@@ -1075,9 +1164,13 @@ async function showFailure(index, intro = null) {
   ui.actions.replaceChildren();
   clearRepairNotes();
   // Search by meaning is a bonus: the brain keeps working by keywords without it. Hermes, the
-  // last step, too: the brain works without it.
-  if (state.plan.includes('voyage') || id === 'hermes') {
-    ui.actions.append(button('Plus tard', () => { state.key = ''; checkLogin(); }, { kind: 'ghost', act: 'skip' }));
+  // last step, too, and its connection: the brain works without them.
+  if (state.plan.includes('voyage') || id === 'hermes' || id === 'hermes_ia') {
+    ui.actions.append(button('Plus tard', () => {
+      state.key = '';
+      if (id === 'hermes' || id === 'hermes_ia') state.hermesLater = id;
+      checkLogin();
+    }, { kind: 'ghost', act: 'skip' }));
   }
   const retry = button('Réessayer', () => runInstall(index), { act: 'next' });
   ui.actions.append(copyButton(), retry);
@@ -1088,6 +1181,11 @@ async function showFailure(index, intro = null) {
   // The answer takes a few seconds (network, claude auth status): the buttons work meanwhile.
   const ask = {};
   view.failure = ask;
+  // Not one Claude repairs: Hermes's connection needs Claude's login, when Hermes goes through it.
+  if (id === 'hermes_ia') {
+    offerClaudeForHermes(index, retry, ask);
+    return;
+  }
   let status = null;
   try {
     status = await invoke('repair_status', { step });
@@ -1122,6 +1220,29 @@ async function showFailure(index, intro = null) {
   } else if (terminal) {
     retry.before(terminalButton(index));
   }
+  if (refocus) focusMain();
+}
+
+// Hermes goes through Claude's subscription unless Codex was chosen (hermes_connect.rs): with
+// Claude logged out, « Connecter mon compte Claude » asks Claude's login (E1), then the step again.
+async function offerClaudeForHermes(index, retry, ask) {
+  if (chose('codex') || !claudeInstalled()) return;
+  let logged = true;
+  try {
+    logged = await invoke('claude_logged_in');
+  } catch {
+    logged = true;
+  }
+  if (logged || view.failure !== ask) return;
+  const refocus = document.activeElement === retry || document.activeElement === document.body;
+  demote(retry);
+  ui.actions.append(button('Connecter mon compte Claude', () => {
+    state.loginAsked = false;
+    state.loginSkipped = false;
+    // Waiting for the login now, not failed: the step runs again once Claude is connected.
+    state.steps.hermes_ia = 'pending';
+    runInstall(index);
+  }, { act: 'next' }));
   if (refocus) focusMain();
 }
 
@@ -1818,6 +1939,13 @@ function showDone() {
   say('happy', 'Ton second cerveau est prêt !', names.length > 1
     ? `${listFr(names)} retiennent maintenant ce que tu leur apprends.`
     : `${first} retient maintenant ce que tu lui apprends.`);
+  // The proof Hermes works, on the user's own subscription: its first answer.
+  if (state.hermes) ui.screen.append(h('p', { class: 'note' }, state.hermes));
+  // Put off: the diagnosis finds it missing next time, and the install picks it up there.
+  if (!state.hermes && state.hermesLater) {
+    const what = state.hermesLater === 'hermes' ? 'installé' : 'branché sur ton IA';
+    ui.screen.append(h('p', { class: 'note' }, `Hermes n’est pas encore ${what}. Rouvre-moi quand tu veux : je reprendrai là où on s’est arrêtés.`));
+  }
   // In the screen rather than with the buttons: three of them would not fit on one
   // line. Above « Dernière chose », which leads to the main button.
   if (canAddMeaning()) {

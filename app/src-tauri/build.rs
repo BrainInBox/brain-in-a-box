@@ -34,6 +34,8 @@ const COMMANDS: &[&str] = &[
     "import_forget",
     "import_open_note",
     "open_claude_update",
+    "hermes_device",
+    "open_hermes_device_page",
     "guide_open",
     "guide_offert",
     "guide_fermer",

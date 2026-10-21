@@ -199,6 +199,24 @@
 ### s=repair-ok&go=done&error=refused
 1 2 94 4 95 96 97 98 99 100 273 274 101 102 103 104 105 106 18 19
 
+### s=manque&hermes_etape=installer&go=done
+1 2 275 4 276 277 278 279 280 281 282 283 284 285 286 287 288 289 290 291 18 292
+
+### s=installe&hermes_etape=brancher&agents=codex&go=done
+293 294 295 296 2 297 298 299 300 301 302
+
+### s=installe&hermes_etape=brancher&deconnecte=1&go=done
+56 2 303 304 305 306 307 308 309 310 298 300 18 311
+
+### s=installe&hermes_etape=brancher&deconnecte=1&click=skip&go=done
+56 2 303 304 305 312 18 313
+
+### s=installe&hermes_etape=brancher&fail=hermes_ia&go=done
+56 2 314 304 298 315 316 300 18 311
+
+### s=installe&hermes_etape=brancher&fail=hermes_ia&click=skip&go=done
+56 2 314 304 298 315 18 317
+
 #1
 == welcome
 Salut, moi c’est Bibo !
@@ -3635,3 +3653,619 @@ Détails
 [Copier le rapport]
 [Réessayer]
 [Demander à Claude de réparer]
+
+#275
+== diag
+J’ai fait le tour.
+Il manque Claude Code, les outils Apple, Bun, Obsidian, ton cerveau, Hermes et la connexion d’Hermes à ton IA. Je m’en occupe.
+macOS 15.4 · Puce Apple · 16 Go de mémoire · 182 Go libres
+Mon conseil : Ton cerveau marche avec Claude : il te faudra un abonnement Claude Pro ou Max.
+Version de macOS : OKmacOS 15.4
+Espace disque : OK182 Go libres
+Connexion internet : OKgithub.com et claude.ai répondent.
+Outils Apple (git, python3) : À installerPas encore installés. Apple s’en charge, il suffit de cliquer.
+Bun (le moteur de la mémoire) : À installerPas encore installé.
+Claude Code : À installerPas encore installé.
+Connexion à Claude : À noterTu te connecteras une fois Claude Code installé.
+Obsidian (pour lire tes notes) : À installerPas encore installé.
+Ton dossier Brain : À installerPas encore créé.
+Les automatismes de Claude : À installerPas encore branchés.
+Les compétences de Claude : À installerPas encore installées.
+La mémoire de recherche : À installerPas encore créée.
+Recherche par le sens : À noterRecherche par mots-clés seulement. Une clé Voyage permet de chercher par le sens.
+Hermes (ton IA au quotidien) : À installerPas encore installé.
+Connexion d’Hermes : À installerJe le brancherai sur ton IA juste après.
+[Revérifier]
+[Tout installer]
+
+#276
+== install
+J’installe Claude Code.
+Étape 1 sur 7. L’outil officiel d’Anthropic.
+Claude CodeClaude, directement sur ton Mac.En cours…
+Outils AppleLes outils de base fournis par Apple.En attente
+BunLe moteur de ta mémoire.En attente
+ObsidianPour feuilleter ton cerveau.En attente
+Ton cerveauTes notes, ta mémoire et tes automatismes.En attente
+HermesTon IA au quotidien, dans son app.En attente
+Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.En attente
+macOS va peut-être demander l’accès à ton dossier Documents : clique sur « Autoriser ».
+Détails
+
+#277
+== install
+Je vérifie ton compte Claude…
+Claude CodeClaude, directement sur ton Mac.Fait
+Outils AppleLes outils de base fournis par Apple.En attente
+BunLe moteur de ta mémoire.En attente
+ObsidianPour feuilleter ton cerveau.En attente
+Ton cerveauTes notes, ta mémoire et tes automatismes.En attente
+HermesTon IA au quotidien, dans son app.En attente
+Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.En attente
+macOS va peut-être demander l’accès à ton dossier Documents : clique sur « Autoriser ».
+Détails
+
+#278
+== install
+Connecte ton compte Claude maintenant
+Comme ça, si une étape coince, Claude pourra m’aider à la réparer.
+Claude CodeClaude, directement sur ton Mac.Fait
+Outils AppleLes outils de base fournis par Apple.En attente
+BunLe moteur de ta mémoire.En attente
+ObsidianPour feuilleter ton cerveau.En attente
+Ton cerveauTes notes, ta mémoire et tes automatismes.En attente
+HermesTon IA au quotidien, dans son app.En attente
+Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.En attente
+Clique sur le bouton : une fenêtre Terminal s’ouvre.
+Ton navigateur te demande de te connecter à Claude.
+Reviens ici : je continue tout seul.
+Tu te connectes directement chez Anthropic : je ne vois jamais ton mot de passe.
+J’attends ta connexion…
+macOS va peut-être demander l’accès à ton dossier Documents : clique sur « Autoriser ».
+Détails
+[Plus tard]
+[Connecter mon compte Claude]
+
+#279
+== install
+Connecte ton compte Claude maintenant
+Comme ça, si une étape coince, Claude pourra m’aider à la réparer.
+Claude CodeClaude, directement sur ton Mac.Fait
+Outils AppleLes outils de base fournis par Apple.En attente
+BunLe moteur de ta mémoire.En attente
+ObsidianPour feuilleter ton cerveau.En attente
+Ton cerveauTes notes, ta mémoire et tes automatismes.En attente
+HermesTon IA au quotidien, dans son app.En attente
+Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.En attente
+Clique sur le bouton : une fenêtre Terminal s’ouvre.
+Ton navigateur te demande de te connecter à Claude.
+Reviens ici : je continue tout seul.
+Tu te connectes directement chez Anthropic : je ne vois jamais ton mot de passe.
+J’attends ta connexion…
+macOS va peut-être demander l’accès à ton dossier Documents : clique sur « Autoriser ».
+Détails
+[Plus tard]
+[Connecter mon compte Claude (inactif)]
+
+#280
+== install
+J’attends que tu te connectes…
+Suis les étapes dans le Terminal.
+Claude CodeClaude, directement sur ton Mac.Fait
+Outils AppleLes outils de base fournis par Apple.En attente
+BunLe moteur de ta mémoire.En attente
+ObsidianPour feuilleter ton cerveau.En attente
+Ton cerveauTes notes, ta mémoire et tes automatismes.En attente
+HermesTon IA au quotidien, dans son app.En attente
+Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.En attente
+Clique sur le bouton : une fenêtre Terminal s’ouvre.
+Ton navigateur te demande de te connecter à Claude.
+Reviens ici : je continue tout seul.
+Tu te connectes directement chez Anthropic : je ne vois jamais ton mot de passe.
+J’attends ta connexion…
+macOS va peut-être demander l’accès à ton dossier Documents : clique sur « Autoriser ».
+Détails
+[Plus tard]
+[Rouvrir la fenêtre]
+
+#281
+== install
+J’attends que tu te connectes…
+Suis les étapes dans le Terminal.
+Claude CodeClaude, directement sur ton Mac.Fait
+Outils AppleLes outils de base fournis par Apple.En attente
+BunLe moteur de ta mémoire.En attente
+ObsidianPour feuilleter ton cerveau.En attente
+Ton cerveauTes notes, ta mémoire et tes automatismes.En attente
+HermesTon IA au quotidien, dans son app.En attente
+Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.En attente
+Clique sur le bouton : une fenêtre Terminal s’ouvre.
+Ton navigateur te demande de te connecter à Claude.
+Reviens ici : je continue tout seul.
+Tu te connectes directement chez Anthropic : je ne vois jamais ton mot de passe.
+J’attends ta connexion…
+macOS va peut-être demander l’accès à ton dossier Documents : clique sur « Autoriser ».
+Détails
+[Plus tard]
+[Rouvrir la fenêtre (inactif)]
+
+#282
+== install
+C’est connecté !
+Claude est prêt à m’aider. Je continue.
+Claude CodeClaude, directement sur ton Mac.Fait
+Outils AppleLes outils de base fournis par Apple.En attente
+BunLe moteur de ta mémoire.En attente
+ObsidianPour feuilleter ton cerveau.En attente
+Ton cerveauTes notes, ta mémoire et tes automatismes.En attente
+HermesTon IA au quotidien, dans son app.En attente
+Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.En attente
+Clique sur le bouton : une fenêtre Terminal s’ouvre.
+Ton navigateur te demande de te connecter à Claude.
+Reviens ici : je continue tout seul.
+Tu te connectes directement chez Anthropic : je ne vois jamais ton mot de passe.
+macOS va peut-être demander l’accès à ton dossier Documents : clique sur « Autoriser ».
+Détails
+
+#283
+== install
+J’attends que tu te connectes…
+Suis les étapes dans le Terminal.
+Claude CodeClaude, directement sur ton Mac.Fait
+Outils AppleLes outils de base fournis par Apple.En attente
+BunLe moteur de ta mémoire.En attente
+ObsidianPour feuilleter ton cerveau.En attente
+Ton cerveauTes notes, ta mémoire et tes automatismes.En attente
+HermesTon IA au quotidien, dans son app.En attente
+Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.En attente
+Clique sur le bouton : une fenêtre Terminal s’ouvre.
+Ton navigateur te demande de te connecter à Claude.
+Reviens ici : je continue tout seul.
+Tu te connectes directement chez Anthropic : je ne vois jamais ton mot de passe.
+J’attends ta connexion…
+macOS va peut-être demander l’accès à ton dossier Documents : clique sur « Autoriser ».
+Détails
+
+#284
+== install
+Une fenêtre Apple va s’ouvrir : clique sur Installer.
+Je t’attends. Tu ne la vois pas ? Regarde dans le Dock.
+Claude CodeClaude, directement sur ton Mac.Fait
+Outils AppleClique sur « Installer » dans la fenêtre d’Apple.En cours…
+BunLe moteur de ta mémoire.En attente
+ObsidianPour feuilleter ton cerveau.En attente
+Ton cerveauTes notes, ta mémoire et tes automatismes.En attente
+HermesTon IA au quotidien, dans son app.En attente
+Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.En attente
+macOS va peut-être demander l’accès à ton dossier Documents : clique sur « Autoriser ».
+Détails
+
+#285
+== install
+J’installe Bun.
+Étape 3 sur 7. C’est le moteur de ta mémoire.
+Claude CodeClaude, directement sur ton Mac.Fait
+Outils AppleLes outils de base fournis par Apple.Fait
+BunLe moteur de ta mémoire.En cours…
+ObsidianPour feuilleter ton cerveau.En attente
+Ton cerveauTes notes, ta mémoire et tes automatismes.En attente
+HermesTon IA au quotidien, dans son app.En attente
+Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.En attente
+macOS va peut-être demander l’accès à ton dossier Documents : clique sur « Autoriser ».
+Détails
+
+#286
+== install
+J’installe Obsidian.
+Étape 4 sur 7. Gros téléchargement (230 Mo) : un peu de patience.
+Claude CodeClaude, directement sur ton Mac.Fait
+Outils AppleLes outils de base fournis par Apple.Fait
+BunLe moteur de ta mémoire.Fait
+ObsidianPour feuilleter ton cerveau.En cours…
+Ton cerveauTes notes, ta mémoire et tes automatismes.En attente
+HermesTon IA au quotidien, dans son app.En attente
+Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.En attente
+macOS va peut-être demander l’accès à ton dossier Documents : clique sur « Autoriser ».
+Détails
+
+#287
+== install
+Je prépare ton cerveau.
+Étape 5 sur 7. C’est l’étape la plus longue.
+Claude CodeClaude, directement sur ton Mac.Fait
+Outils AppleLes outils de base fournis par Apple.Fait
+BunLe moteur de ta mémoire.Fait
+ObsidianPour feuilleter ton cerveau.Fait
+Ton cerveauTes notes, ta mémoire et tes automatismes.En cours…
+HermesTon IA au quotidien, dans son app.En attente
+Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.En attente
+macOS va peut-être demander l’accès à ton dossier Documents : clique sur « Autoriser ».
+Détails
+
+#288
+== install
+J’installe Hermes, ton IA au quotidien.
+Étape 6 sur 7. Gros téléchargement : quelques minutes.
+Claude CodeClaude, directement sur ton Mac.Fait
+Outils AppleLes outils de base fournis par Apple.Fait
+BunLe moteur de ta mémoire.Fait
+ObsidianPour feuilleter ton cerveau.Fait
+Ton cerveauTes notes, ta mémoire et tes automatismes.Fait
+HermesTon IA au quotidien, dans son app.En cours…
+Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.En attente
+macOS va peut-être demander l’accès à ton dossier Documents : clique sur « Autoriser ».
+Détails
+
+#289
+== install
+Je vérifie ton compte Claude…
+Claude CodeClaude, directement sur ton Mac.Fait
+Outils AppleLes outils de base fournis par Apple.Fait
+BunLe moteur de ta mémoire.Fait
+ObsidianPour feuilleter ton cerveau.Fait
+Ton cerveauTes notes, ta mémoire et tes automatismes.Fait
+HermesTon IA au quotidien, dans son app.Fait
+Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.En attente
+macOS va peut-être demander l’accès à ton dossier Documents : clique sur « Autoriser ».
+Détails
+
+#290
+== install
+Je branche Hermes sur ton IA.
+Étape 7 sur 7. Il passe par ton abonnement : aucune clé à acheter.
+Claude CodeClaude, directement sur ton Mac.Fait
+Outils AppleLes outils de base fournis par Apple.Fait
+BunLe moteur de ta mémoire.Fait
+ObsidianPour feuilleter ton cerveau.Fait
+Ton cerveauTes notes, ta mémoire et tes automatismes.Fait
+HermesTon IA au quotidien, dans son app.Fait
+Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.En cours…
+macOS va peut-être demander l’accès à ton dossier Documents : clique sur « Autoriser ».
+Détails
+
+#291
+== install
+C’est installé !
+Plus qu’une petite étape.
+Claude CodeClaude, directement sur ton Mac.Fait
+Outils AppleLes outils de base fournis par Apple.Fait
+BunLe moteur de ta mémoire.Fait
+ObsidianPour feuilleter ton cerveau.Fait
+Ton cerveauTes notes, ta mémoire et tes automatismes.Fait
+HermesTon IA au quotidien, dans son app.Fait
+Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.Fait
+macOS va peut-être demander l’accès à ton dossier Documents : clique sur « Autoriser ».
+Détails
+
+#292
+== done
+Ton second cerveau est prêt !
+Claude retient maintenant ce que tu lui apprends.
+Hermes t’a répondu : « Bonjour, je suis prêt. » Il passe par ton abonnement Claude : ce que tu lui demandes compte sur ton forfait, comme avec Claude.
+Ton cerveau retrouve tes notes par mots-clés. Il peut aussi les retrouver par le sens.
+[Activer la recherche par le sens]
+Tu utilisais ChatGPT ou Claude ? Apporte ce qu’ils savent de toi.
+[Importer ma mémoire]
+Nouveau : je peux te guider pas à pas dans n’importe quel logiciel.
+[Essayer le guide]
+Dernière chose : présente-toi à lui. Il te pose quelques questions pour te connaître.
+[Ouvrir mon cerveau dans Obsidian]
+[Personnaliser mon cerveau (15 min)]
+
+#293
+== welcome
+Content de te revoir !
+Ton second cerveau est installé. Je peux aussi te guider pas à pas dans un logiciel : tu me montres ta fenêtre, je te dis où cliquer.
+[Choisir mon IA]
+[Guide-moi dans un logiciel]
+
+#294
+== choice
+Avec quelle IA veux-tu travailler ?
+Ton cerveau marche avec Claude, avec Codex, ou avec les deux.
+Claude
+Avec ton abonnement Claude (Pro ou Max). Claude Code, l’outil d’Anthropic.
+Codex
+Avec un abonnement ChatGPT personnel (pas un compte d’entreprise). Codex, l’outil d’OpenAI : ton résumé de chaque soir est écrit chez OpenAI.
+Les deux
+L’un écrit le résumé de chaque soir, l’autre prend le relais s’il ne répond pas. Il te faut les deux comptes.
+Tu pourras changer d’avis : rouvre l’app et refais ce choix.
+[Claude]
+[Codex]
+[Les deux]
+
+#295
+== choice
+Avec quelle IA veux-tu travailler ?
+Ton cerveau marche avec Claude, avec Codex, ou avec les deux.
+Mon conseil : Tu as déjà Claude Code, connecté à ton abonnement : ton cerveau travaillera avec lui.
+Claude
+Avec ton abonnement Claude (Pro ou Max). Claude Code, l’outil d’Anthropic.
+Codex
+Avec un abonnement ChatGPT personnel (pas un compte d’entreprise). Codex, l’outil d’OpenAI : ton résumé de chaque soir est écrit chez OpenAI.
+Les deux
+L’un écrit le résumé de chaque soir, l’autre prend le relais s’il ne répond pas. Il te faut les deux comptes.
+Tu pourras changer d’avis : rouvre l’app et refais ce choix.
+[Claude]
+[Codex]
+[Les deux]
+
+#296
+== choice
+Avec quelle IA veux-tu travailler ?
+Ton cerveau marche avec Claude, avec Codex, ou avec les deux.
+Mon conseil : Tu as déjà Claude Code, connecté à ton abonnement : ton cerveau travaillera avec lui.
+Claude
+Avec ton abonnement Claude (Pro ou Max). Claude Code, l’outil d’Anthropic.
+Codex
+Avec un abonnement ChatGPT personnel (pas un compte d’entreprise). Codex, l’outil d’OpenAI : ton résumé de chaque soir est écrit chez OpenAI.
+Les deux
+L’un écrit le résumé de chaque soir, l’autre prend le relais s’il ne répond pas. Il te faut les deux comptes.
+Tu pourras changer d’avis : rouvre l’app et refais ce choix.
+[Claude (inactif)]
+[Codex (inactif)]
+[Les deux (inactif)]
+
+#297
+== diag
+J’ai fait le tour.
+Il manque la connexion d’Hermes à ton IA. Je m’en occupe.
+macOS 15.4 · Puce Apple · 16 Go de mémoire · 182 Go libres
+Version de macOS : OKmacOS 15.4
+Espace disque : OK182 Go libres
+Connexion internet : OKgithub.com et chatgpt.com répondent.
+Outils Apple (git, python3) : OKgit et python3 sont là.
+Bun (le moteur de la mémoire) : OKBun 1.4.2
+Codex : OKCodex 0.162.1
+Connexion à Codex : OKTu es connecté avec ton compte ChatGPT.
+Obsidian (pour lire tes notes) : OKObsidian 1.14.4
+Ton dossier Brain : OKIl est dans Documents/Brain.
+Les automatismes de Codex : OKCodex note tes corrections et tes séances.
+Tes consignes pour Codex : OKCodex les lit à chaque séance.
+Les compétences de Codex : OKInstallées.
+La mémoire de recherche : OKPrête.
+Recherche par le sens : OKActivée (Voyage AI)
+Hermes (ton IA au quotidien) : OKHermes 0.22.3
+Connexion d’Hermes : À installerPas encore branché sur ton IA.
+[Changer d’IA]
+[Revérifier]
+[Tout installer]
+
+#298
+== install
+Je branche Hermes sur ton IA.
+Il passe par ton abonnement : aucune clé à acheter.
+Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.En cours…
+Détails
+
+#299
+== install
+Connecte Hermes à ton compte ChatGPT
+Hermes passera par ton abonnement ChatGPT : aucune clé à acheter.
+Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.En cours…
+Dans la page qui s’est ouverte, connecte-toi à ChatGPT.
+Tape le code ci-dessous.
+Reviens ici : je continue tout seul.
+K7QF-93HT
+Tu te connectes directement chez OpenAI : je ne vois jamais ton mot de passe.
+[Rouvrir la page]
+Détails
+
+#300
+== install
+C’est installé !
+Plus qu’une petite étape.
+Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.Fait
+Détails
+
+#301
+== login
+Je vérifie la connexion de Codex…
+Un instant
+
+#302
+== done
+Ton second cerveau est prêt !
+Codex retient maintenant ce que tu lui apprends.
+Hermes t’a répondu : « Bonjour, je suis prêt. » Il passe par ton compte ChatGPT : ce que tu lui demandes compte sur ton forfait, comme avec ChatGPT.
+Tu utilisais ChatGPT ou Claude ? Apporte ce qu’ils savent de toi.
+[Importer ma mémoire]
+Dernière chose : présente-toi à lui. Il te pose quelques questions pour te connaître.
+[Ouvrir mon cerveau dans Obsidian]
+[Personnaliser mon cerveau (15 min)]
+
+#303
+== diag
+J’ai fait le tour.
+Il manque la connexion d’Hermes à ton IA. Je m’en occupe.
+macOS 15.4 · Puce Apple · 16 Go de mémoire · 182 Go libres
+Mon conseil : Tu utilises déjà Claude : ton cerveau travaillera avec lui (il te faudra un abonnement Pro ou Max pour Claude Code).
+Version de macOS : OKmacOS 15.4
+Espace disque : OK182 Go libres
+Connexion internet : OKgithub.com et claude.ai répondent.
+Outils Apple (git, python3) : OKgit et python3 sont là.
+Bun (le moteur de la mémoire) : OKBun 1.4.2
+Claude Code : OKClaude Code 2.1.296
+Connexion à Claude : À noterPas encore connecté. Tu le feras en un clic.
+Obsidian (pour lire tes notes) : OKObsidian 1.14.4
+Ton dossier Brain : OKIl est dans Documents/Brain.
+Les automatismes de Claude : OKClaude note tes corrections et tes séances.
+Les compétences de Claude : OKInstallées.
+La mémoire de recherche : OKPrête.
+Recherche par le sens : OKActivée (Voyage AI)
+Hermes (ton IA au quotidien) : OKHermes 0.22.3
+Connexion d’Hermes : À installerPas encore branché sur ton IA.
+[Revérifier]
+[Tout installer]
+
+#304
+== install
+Je vérifie ton compte Claude…
+Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.En attente
+Détails
+
+#305
+== install
+Connecte ton compte Claude maintenant
+Hermes passera par ton abonnement Claude : aucune clé à acheter.
+Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.En attente
+Clique sur le bouton : une fenêtre Terminal s’ouvre.
+Ton navigateur te demande de te connecter à Claude.
+Reviens ici : je continue tout seul.
+Tu te connectes directement chez Anthropic : je ne vois jamais ton mot de passe.
+J’attends ta connexion…
+Détails
+[Plus tard]
+[Connecter mon compte Claude]
+
+#306
+== install
+Connecte ton compte Claude maintenant
+Hermes passera par ton abonnement Claude : aucune clé à acheter.
+Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.En attente
+Clique sur le bouton : une fenêtre Terminal s’ouvre.
+Ton navigateur te demande de te connecter à Claude.
+Reviens ici : je continue tout seul.
+Tu te connectes directement chez Anthropic : je ne vois jamais ton mot de passe.
+J’attends ta connexion…
+Détails
+[Plus tard]
+[Connecter mon compte Claude (inactif)]
+
+#307
+== install
+J’attends que tu te connectes…
+Suis les étapes dans le Terminal.
+Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.En attente
+Clique sur le bouton : une fenêtre Terminal s’ouvre.
+Ton navigateur te demande de te connecter à Claude.
+Reviens ici : je continue tout seul.
+Tu te connectes directement chez Anthropic : je ne vois jamais ton mot de passe.
+J’attends ta connexion…
+Détails
+[Plus tard]
+[Rouvrir la fenêtre]
+
+#308
+== install
+J’attends que tu te connectes…
+Suis les étapes dans le Terminal.
+Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.En attente
+Clique sur le bouton : une fenêtre Terminal s’ouvre.
+Ton navigateur te demande de te connecter à Claude.
+Reviens ici : je continue tout seul.
+Tu te connectes directement chez Anthropic : je ne vois jamais ton mot de passe.
+J’attends ta connexion…
+Détails
+[Plus tard]
+[Rouvrir la fenêtre (inactif)]
+
+#309
+== install
+C’est connecté !
+Claude est prêt à m’aider. Je continue.
+Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.En attente
+Clique sur le bouton : une fenêtre Terminal s’ouvre.
+Ton navigateur te demande de te connecter à Claude.
+Reviens ici : je continue tout seul.
+Tu te connectes directement chez Anthropic : je ne vois jamais ton mot de passe.
+Détails
+
+#310
+== install
+J’attends que tu te connectes…
+Suis les étapes dans le Terminal.
+Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.En attente
+Clique sur le bouton : une fenêtre Terminal s’ouvre.
+Ton navigateur te demande de te connecter à Claude.
+Reviens ici : je continue tout seul.
+Tu te connectes directement chez Anthropic : je ne vois jamais ton mot de passe.
+J’attends ta connexion…
+Détails
+
+#311
+== done
+Ton second cerveau est prêt !
+Claude retient maintenant ce que tu lui apprends.
+Hermes t’a répondu : « Bonjour, je suis prêt. » Il passe par ton abonnement Claude : ce que tu lui demandes compte sur ton forfait, comme avec Claude.
+Tu utilisais ChatGPT ou Claude ? Apporte ce qu’ils savent de toi.
+[Importer ma mémoire]
+Nouveau : je peux te guider pas à pas dans n’importe quel logiciel.
+[Essayer le guide]
+Dernière chose : présente-toi à lui. Il te pose quelques questions pour te connaître.
+[Ouvrir mon cerveau dans Obsidian]
+[Personnaliser mon cerveau (15 min)]
+
+#312
+== install
+C’est installé !
+Plus qu’une petite étape.
+Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.Plus tard
+Détails
+
+#313
+== done
+Ton second cerveau est prêt !
+Claude retient maintenant ce que tu lui apprends.
+Hermes n’est pas encore branché sur ton IA. Rouvre-moi quand tu veux : je reprendrai là où on s’est arrêtés.
+Tu utilisais ChatGPT ou Claude ? Apporte ce qu’ils savent de toi.
+[Importer ma mémoire]
+Nouveau : je peux te guider pas à pas dans n’importe quel logiciel.
+[Essayer le guide]
+Dernière chose : présente-toi à lui. Il te pose quelques questions pour te connaître.
+Pense à connecter ton compte Claude : il te le demandera au premier lancement.
+[Ouvrir mon cerveau dans Obsidian]
+[Personnaliser mon cerveau (15 min)]
+
+#314
+== diag
+J’ai fait le tour.
+Il manque la connexion d’Hermes à ton IA. Je m’en occupe.
+macOS 15.4 · Puce Apple · 16 Go de mémoire · 182 Go libres
+Mon conseil : Tu as déjà Claude Code, connecté à ton abonnement : ton cerveau travaillera avec lui.
+Version de macOS : OKmacOS 15.4
+Espace disque : OK182 Go libres
+Connexion internet : OKgithub.com et claude.ai répondent.
+Outils Apple (git, python3) : OKgit et python3 sont là.
+Bun (le moteur de la mémoire) : OKBun 1.4.2
+Claude Code : OKClaude Code 2.1.296
+Connexion à Claude : OKTu es connecté.
+Obsidian (pour lire tes notes) : OKObsidian 1.14.4
+Ton dossier Brain : OKIl est dans Documents/Brain.
+Les automatismes de Claude : OKClaude note tes corrections et tes séances.
+Les compétences de Claude : OKInstallées.
+La mémoire de recherche : OKPrête.
+Recherche par le sens : OKActivée (Voyage AI)
+Hermes (ton IA au quotidien) : OKHermes 0.22.3
+Connexion d’Hermes : À installerPas encore branché sur ton IA.
+[Revérifier]
+[Tout installer]
+
+#315
+== install
+Oups, ça a coincé.
+Ton abonnement a atteint sa limite pour le moment. Réessaie plus tard : elle se renouvelle toute seule.
+Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.Échec
+Détails
+[Plus tard]
+[Copier le rapport]
+[Réessayer]
+
+#316
+== install
+Je vérifie ton compte Claude…
+Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.Échec
+Détails
+
+#317
+== done
+Ton second cerveau est prêt !
+Claude retient maintenant ce que tu lui apprends.
+Hermes n’est pas encore branché sur ton IA. Rouvre-moi quand tu veux : je reprendrai là où on s’est arrêtés.
+Tu utilisais ChatGPT ou Claude ? Apporte ce qu’ils savent de toi.
+[Importer ma mémoire]
+Nouveau : je peux te guider pas à pas dans n’importe quel logiciel.
+[Essayer le guide]
+Dernière chose : présente-toi à lui. Il te pose quelques questions pour te connaître.
+[Ouvrir mon cerveau dans Obsidian]
+[Personnaliser mon cerveau (15 min)]

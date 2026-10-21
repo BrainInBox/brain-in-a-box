@@ -71,6 +71,10 @@
   // Python and Git instead of Apple's tools, install.ps1's sections under the brain step.
   // Linux: &os=linux shows the words and checks of an Ubuntu (manque, installe, motscles, echec):
   // the system's tools (git, curl) instead of Apple's, first, and the password note.
+  // Hermes, on a Mac (diagnose.rs's check_hermes, hermes_connect.rs): &hermes_etape=installer has it to install, then
+  // to connect, &hermes_etape=brancher installed and to connect; through ChatGPT where Codex is preferred, its code in
+  // big while the step runs (hermes_device); &deconnecte=1 has Claude logged out until its login (&fail=hermes_ia: the
+  // subscription's limit, once).
   (() => {
     const P = new URLSearchParams(location.search);
     if (P.get('sleep')) window.BIBO_SLEEP_MS = Number(P.get('sleep')) * 1000;
@@ -95,10 +99,11 @@
       brain_skills: 'Les compétences de Claude', brain_memory: 'La mémoire de recherche', voyage: 'Recherche par le sens',
       codex: 'Codex', codex_auth: 'Connexion à Codex', agents: 'Ton choix d’IA', brain_codex_hooks: 'Les automatismes de Codex',
       brain_codex_instructions: 'Tes consignes pour Codex', brain_codex_skills: 'Les compétences de Codex',
+      hermes: 'Hermes (ton IA au quotidien)', hermes_ia: 'Connexion d’Hermes',
     };
     const FIX = {
       clt: 'clt', paquets: 'paquets', bun: 'bun', claude: 'claude', codex: 'codex', obsidian: 'obsidian', agents: 'brain', brain_vault: 'brain', brain_hooks: 'brain', brain_skills: 'brain', brain_memory: 'brain',
-      brain_codex_hooks: 'brain', brain_codex_instructions: 'brain', brain_codex_skills: 'brain',
+      brain_codex_hooks: 'brain', brain_codex_instructions: 'brain', brain_codex_skills: 'brain', hermes: 'hermes', hermes_ia: 'hermes_ia',
     };
     // install.ps1 brings all of them with the brain.
     if (WIN) Object.assign(FIX, { python: 'brain', git: 'brain', bun: 'brain', obsidian: 'brain' });
@@ -214,6 +219,7 @@
     // Claude Code connected where the scenario has it, seen where it is not connected, else nothing.
     function advice() {
       const which = Object.hasOwn(PHRASES, P.get('conseil') || '') ? P.get('conseil')
+        : DECONNECTE ? 'claude_vu'
         : scenario === 'installe' || scenario === 'motscles' || REPAIR ? 'claude_connecte' : Object.hasOwn(CLAUDE_ONLY, scenario) ? 'claude_vu' : 'rien';
       const hermes = { 1: PHRASES.hermes, lu: PHRASES.hermes_lu }[P.get('hermes')] || null;
       return { conseil: { codex: 'codex', les_deux: 'les_deux' }[which] || 'claude', text: PHRASES[which], hermes };
@@ -221,12 +227,24 @@
 
     function diagnosis() {
       const d = { ...diagnosisOfClaude(), advice: advice() };
-      if (!chosen) return d;
+      if (!chosen) return withHermes(d);
       // What the agents chosen change: their checks, a choice still to record, their steps.
       const installed = scenario === 'installe' || scenario === 'motscles';
       const checks = forAgents(d.checks, () => installed && FILE_AGENTS.includes('codex'));
       const todo = forSteps(ALL_STEPS).filter((s) => checks.some((c) => c.status === 'missing' && c.fix === s));
-      return { ...d, checks, todo };
+      return withHermes({ ...d, checks, todo });
+    }
+
+    // &hermes_etape= (a Mac): Hermes's lines last, as check_hermes says them, and its steps at the end of `todo`.
+    const HERMES_LINES = WIN || LIN ? null : {
+      installer: [C('hermes', 'missing', 'Pas encore installé.'), C('hermes_ia', 'missing', 'Je le brancherai sur ton IA juste après.')],
+      brancher: [C('hermes', 'ok', 'Hermes 0.22.3'), C('hermes_ia', 'missing', 'Pas encore branché sur ton IA.')],
+    }[P.get('hermes_etape')];
+    const DECONNECTE = P.get('deconnecte') === '1';
+    function withHermes(d) {
+      const checks = DECONNECTE ? d.checks.map((c) => (c.id === 'claude_auth' ? C('claude_auth', 'warn', 'Pas encore connecté. Tu le feras en un clic.') : c)) : d.checks;
+      if (!HERMES_LINES) return { ...d, checks };
+      return { ...d, checks: [...checks, ...HERMES_LINES], todo: [...d.todo, ...HERMES_LINES.filter((c) => c.status === 'missing').map((c) => c.fix)] };
     }
 
     function diagnosisOfClaude() {
@@ -283,7 +301,29 @@
         '▸ J’installe Obsidian (12 sur 13)…', '=== Claude Code + Obsidian ===', '  ... Obsidian : installation (winget)',
         '▸ Je vérifie que tout répond (13 sur 13)…', '=== Verification ===', '  [OK] memoire : recherche par mots-cles (gbrain)',
       ] : ['Téléchargement de brain-in-a-box', 'Extraction dans ~/.brain-in-a-box/src', '▸ Dependencies', '  ✓ deps OK', '▸ Search by meaning (Voyage AI key, optional)', '  ✓ key taken from VOYAGE_API_KEY', '▸ GBrain', '  ✓ cloned', '  ✓ deps + link', '▸ Vault', '  ✓ ~/Documents/Brain created', '▸ Hooks', '  ✓ 5 hooks installed', '▸ GBrain init + import', '  ✓ brain initialized (Voyage: search by meaning)', '  ✓ vault imported', '  ✓ embedded', 'Done.'],
+      hermes: ['Téléchargement de l’installeur officiel d’Hermes', 'Hermes Agent v0.22.3', 'Téléchargement de l’app Hermes', 'Copie dans /Applications/Hermes.app', 'Signature vérifiée (T2F6S8MF7C)'],
     };
+    // The connection of Hermes, as hermes_connect.rs logs it and says it, per route.
+    const HERMES_LOGS = {
+      claude: ['Hermes va passer par ton abonnement Claude.', '$ hermes config set auth.adopt_external_logins false', '$ hermes plugins install claude-subscription-directsdk --enable --yes-deps',
+        'claude-subscription-directsdk [official] pinned @ 9b074e16', '✓ Plugin claude-subscription-directsdk-experimental enabled.',
+        '$ hermes config set model.provider claude-subscription-directsdk-experimental', '$ hermes config set model.default sonnet',
+        '$ hermes config set model.base_url process://claude-subscription-directsdk-experimental', '$ hermes config set model.api_mode chat_completions',
+        'Je dis bonjour à Hermes.', 'Hermes : Bonjour, je suis prêt.'],
+      chatgpt: ['Hermes va passer par ton compte ChatGPT.', '$ hermes config set auth.adopt_external_logins false', '$ hermes auth add openai-codex --type oauth --no-browser',
+        'Signing in to OpenAI Codex...', '  1. Open this URL in your browser:', '     https://auth.openai.com/codex/device', '  2. Enter this code:',
+        '  (le code est affiché en grand dans la fenêtre)', 'Waiting for sign-in... (press Ctrl+C to cancel)',
+        '$ hermes config set model.provider openai-codex', '$ hermes config set model.default gpt-6-sol', '$ hermes config set model.base_url https://chatgpt.com/backend-api/codex',
+        'Je dis bonjour à Hermes.', 'Hermes : Bonjour, je suis prêt.'],
+    };
+    const HERMES_SAID = {
+      claude: 'Hermes t\'a répondu : « Bonjour, je suis prêt. » Il passe par ton abonnement Claude : ce que tu lui demandes compte sur ton forfait, comme avec Claude.',
+      chatgpt: 'Hermes t\'a répondu : « Bonjour, je suis prêt. » Il passe par ton compte ChatGPT : ce que tu lui demandes compte sur ton forfait, comme avec ChatGPT.',
+      logged_out: 'Claude n\'est pas encore connecté. Connecte ton compte Claude Pro ou Max, puis réessaie : Hermes passera par lui.',
+    };
+    // A code like the ones auth.openai.com gives, and its page (DEVICE_PAGE), shown until the login goes through.
+    const HERMES_CODE = { url: 'https://auth.openai.com/codex/device', code: 'K7QF-93HT' };
+    let hermesDevice = null;
     const FAILS = {
       obsidian: {
         logs: ['Téléchargement d’Obsidian 1.14.4 (233 Mo)', '  12 %', 'curl: (28) Operation timed out after 300000 milliseconds with 29360128 out of 233704463 bytes received', 'Nettoyage de /var/folders/xy/T/biab-obsidian'],
@@ -296,6 +336,13 @@
       brain: {
         logs: [...LOGS.brain.slice(0, 14), '  ✗ embedding failed: Voyage answered 503'],
         message: "L'installation du cerveau s'est arrêtée (code 1) sur : « ✗ embedding failed: Voyage answered 503 ». Relance l'étape ; si ça recommence, envoie le journal à l'équipe.",
+      },
+      hermes_ia: {
+        // The chat refused: hermes_connect.rs logs Hermes's own words and, Hermes found with no
+        // provider, takes its settings back. The user reads read_answer's words.
+        logs: [...HERMES_LOGS.claude.slice(0, -1), 'Error: rate limit reached for this subscription',
+          ...['model.provider', 'model.default', 'model.base_url', 'model.api_mode'].map((k) => `$ hermes config unset ${k}`)],
+        message: 'Ton abonnement a atteint sa limite pour le moment. Réessaie plus tard : elle se renouvelle toute seule.',
       },
     };
     // Same sentences as steps.rs at the end of the brain step.
@@ -415,7 +462,7 @@
     // Connected two checks after the login window opened, like someone quick in the browser.
     let loginOpened = false;
     let loginPolls = 0;
-    const loggedIn = () => scenario === 'installe' || scenario === 'motscles' || Boolean(REPAIR) || (loginOpened && loginPolls >= 2);
+    const loggedIn = () => (!DECONNECTE && (scenario === 'installe' || scenario === 'motscles' || Boolean(REPAIR))) || (loginOpened && loginPolls >= 2);
     // Codex: logged out (or &codex=), with ChatGPT two checks after its login window opened.
     let codexOpened = false;
     let codexPolls = 0;
@@ -439,10 +486,34 @@
       cancelAnalysis = () => { clearTimeout(t); reject({ kind: 'cancelled' }); };
     });
     const never = () => new Promise(() => {});
+    // hermes_connect.rs's step: the first engine that can serve (Claude only logged in), its lines, its last word.
+    async function connectHermes() {
+      const id = 'hermes_ia';
+      const engine = agentsNow().find((a) => a === 'codex' || loggedIn());
+      if (!engine) return { id, ok: false, message: HERMES_SAID.logged_out };
+      const route = engine === 'codex' ? 'chatgpt' : 'claude';
+      const fail = id === failing && !failedOnce.has(id) && FAILS[id];
+      for (const line of fail ? fail.logs : HERMES_LOGS[route]) {
+        await wait(LINE_MS);
+        emit('step-log', { step: id, line });
+        // The user reads the code, opens the page, logs in: three of the window's checks.
+        if (line.startsWith('  (le code')) {
+          hermesDevice = HERMES_CODE;
+          await wait(3500);
+          hermesDevice = null;
+        }
+      }
+      if (fail) {
+        failedOnce.add(id);
+        return { id, ok: false, message: fail.message };
+      }
+      return { id, ok: true, message: HERMES_SAID[route] };
+    }
     const handlers = {
       async diagnose_machine() { await wait(P.get('go') ? 50 : 500); return diagnosis(); },
       async run_step({ id, voyageKey }) {
         console.log('run_step', id, voyageKey ? '(avec clé)' : '(sans clé)');
+        if (id === 'hermes_ia' && P.get('pause') !== id) return connectHermes();
         const fail = id === failing && !failedOnce.has(id) && failureOf(id);
         for (const line of fail ? fail.logs : LOGS[id] || ['…']) { await wait(LINE_MS); emit('step-log', { step: id, line }); }
         if (P.get('pause') === id) return new Promise(() => {});
@@ -454,8 +525,11 @@
           brainDone = true;
           return { id, ok: true, message: voyageKey ? BRAIN_OK.meaning : BRAIN_OK.keywords };
         }
+        if (id === 'hermes') return { id, ok: true, message: 'Hermes 0.22.3 est installé.' };
         return { id, ok: true, message: 'Fait.' };
       },
+      async hermes_device() { await wait(20); return hermesDevice; },
+      async open_hermes_device_page() { await wait(50); if (!hermesDevice) throw 'Il n\'y a pas de code à saisir pour l\'instant.'; },
       async check_voyage_key({ key }) {
         await wait(400);
         const k = String(key).trim();
@@ -743,8 +817,9 @@
         // Back with everything installed: the main button opens the guide, the drive goes on with the check.
         if (s === 'welcome' && q('[data-act=check]')) { q('[data-act=check]').click(); return; }
         const next = q('[data-act=next]:not(:disabled)');
-        // A repair scenario goes through Claude: « Réessayer » would only run the step again.
-        if (REPAIR && next && next.textContent === 'Réessayer') return;
+        // A repair scenario goes through Claude: « Réessayer » would only run the step again. Hermes's
+        // connection with Claude logged out, too: its offer to connect Claude comes a moment later.
+        if ((REPAIR || DECONNECTE) && next && next.textContent === 'Réessayer') return;
         next?.click();
       }, 120);
     } else {

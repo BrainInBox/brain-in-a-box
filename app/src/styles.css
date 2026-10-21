@@ -451,6 +451,15 @@ body.big .plan { justify-content: center; text-align: left; }
 
 .login-card > * + * { margin-top: 12px; }
 
+/* Hermes's ChatGPT code, read here and typed in the browser. */
+.device-code {
+  font: 650 26px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.12em;
+  text-align: center;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
 .step {
   display: grid;
   grid-template-columns: 20px 1fr auto;
@@ -470,7 +479,7 @@ body.big .plan { justify-content: center; text-align: left; }
 
 .step-status { color: var(--ink-2); font-size: 13.5px; white-space: nowrap; }
 
-.step.is-pending .step-name { color: var(--ink-2); }
+.step.is-pending .step-name, .step.is-later .step-name { color: var(--ink-2); }
 .step.is-running { background: var(--accent-soft); }
 .step.is-running .step-status { color: var(--ink); font-weight: 600; }
 .step.is-done .step-status { color: var(--ok); }

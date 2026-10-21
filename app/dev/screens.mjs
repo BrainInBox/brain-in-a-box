@@ -96,6 +96,15 @@ const SCENARIOS = [
   's=installe&go=import&nth=2&click=import,next,next,stop&pause=import',
   // The model refused to answer (Claude Code would have had another one answer instead).
   's=repair-ok&go=done&error=refused',
+  // Hermes on a Mac (point 2, then point 3): installed then connected through Claude, its first answer at
+  // the end; through ChatGPT, its code in big while the step runs; Claude logged out, its login asked first
+  // and why, or put off then offered where the step stops; the subscription's limit once, then put off.
+  's=manque&hermes_etape=installer&go=done',
+  's=installe&hermes_etape=brancher&agents=codex&go=done',
+  's=installe&hermes_etape=brancher&deconnecte=1&go=done',
+  's=installe&hermes_etape=brancher&deconnecte=1&click=skip&go=done',
+  's=installe&hermes_etape=brancher&fail=hermes_ia&go=done',
+  's=installe&hermes_etape=brancher&fail=hermes_ia&click=skip&go=done',
 ];
 
 // The guide in paste mode (guide-mock.html): a whole session to its end and the procedure saved, on each

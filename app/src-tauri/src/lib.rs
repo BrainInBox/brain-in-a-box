@@ -7,6 +7,7 @@ mod detect;
 mod diagnose;
 mod guide;
 mod hermes;
+mod hermes_connect;
 mod import;
 mod model;
 mod perms;
@@ -169,6 +170,18 @@ async fn open_claude_update() -> Result<(), String> {
 #[tauri::command]
 async fn open_codex_login() -> Result<(), String> {
     off_main(steps::open_codex_login).await
+}
+
+/// The ChatGPT code Hermes waits for while its connection step runs, and its page.
+#[tauri::command]
+async fn hermes_device() -> Option<hermes_connect::Device> {
+    hermes_connect::device()
+}
+
+/// Hermes's ChatGPT page again, if the user closed it.
+#[tauri::command]
+async fn open_hermes_device_page() -> Result<(), String> {
+    off_main(hermes_connect::open_device_page).await
 }
 
 #[tauri::command]
@@ -633,6 +646,8 @@ pub fn run() {
             import_forget,
             import_open_note,
             open_claude_update,
+            hermes_device,
+            open_hermes_device_page,
             guide_open,
             guide_offert,
             guide_fermer,

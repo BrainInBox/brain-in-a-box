@@ -87,7 +87,9 @@ const VOYAGE: Item = Item("voyage", "Recherche par le sens", None);
 const HERMES: Item = Item("hermes", "Hermes (ton IA au quotidien)", None);
 /// On a Mac it runs on, the Hermes step installs it, repairs it, updates it and puts its app in place.
 const HERMES_TO_INSTALL: Item = Item("hermes", "Hermes (ton IA au quotidien)", Some("hermes"));
-const HERMES_AI: Item = Item("hermes_ia", "Connexion de Hermes", None);
+const HERMES_AI: Item = Item("hermes_ia", "Connexion d'Hermes", None);
+/// Where the Hermes step runs, the connection step follows it: Hermes's first answer ends it.
+const HERMES_AI_TO_CONNECT: Item = Item("hermes_ia", "Connexion d'Hermes", Some("hermes_ia"));
 const INTERNAL: Item = Item("internal", "Erreur interne", None);
 
 impl Item {
@@ -918,11 +920,15 @@ fn check_hermes(h: &hermes::Facts, free_gb: Option<f64>) -> Vec<Check> {
         _ if !h.app && mine => to_fix(format!("{} est là, mais pas son app.", h.found.label("Hermes")), " Je la range dans Applications."),
         _ => HERMES.is(Status::Ok, h.found.label("Hermes")),
     };
-    if !h.found.answers() {
+    // Installed or repaired by its step first, then connected by the next one.
+    let installing = mine && found.status == Status::Missing;
+    if !h.found.answers() && !installing {
         return vec![found];
     }
     let ai = match &h.provider {
         Some(p) => HERMES_AI.is(Status::Ok, hermes::provider_said(p)),
+        None if mine && !h.found.answers() => HERMES_AI_TO_CONNECT.is(Status::Missing, "Je le brancherai sur ton IA juste après."),
+        None if mine => HERMES_AI_TO_CONNECT.is(Status::Missing, "Pas encore branché sur ton IA."),
         None => HERMES_AI.is(Status::Warn, "Pas encore branché sur ton IA."),
     };
     vec![found, ai]
@@ -1029,8 +1035,8 @@ mod tests {
             let h = hermes::Facts { supported, found, app: true, provider: provider.map(String::from) };
             decide(tmp.path(), &Facts { hermes: h, ..healthy_facts() })
         };
-        // On a Mac the Hermes step settles it, last; elsewhere nothing installs it yet.
-        let (to_fix, step): (Status, &[&str]) = if cfg!(target_os = "macos") { (Status::Missing, &["hermes"]) } else { (Status::Warn, &[]) };
+        // On a Mac the Hermes step settles it, last, and the next one connects it; elsewhere nothing installs it yet.
+        let (to_fix, step): (Status, &[&str]) = if cfg!(target_os = "macos") { (Status::Missing, &["hermes", "hermes_ia"]) } else { (Status::Warn, &[]) };
         let then = |said: &str| if cfg!(target_os = "macos") { said.to_string() } else { String::new() };
         for (found, detail) in [
             (Found::Absent, "Pas encore installé.".to_string()),
@@ -1038,7 +1044,12 @@ mod tests {
         ] {
             let d = hermes_with(found, None, true);
             assert_eq!((by_id(&d, "hermes").status, by_id(&d, "hermes").detail.as_str()), (to_fix, detail.as_str()));
-            assert!(d.checks.iter().all(|c| c.id != "hermes_ia"), "no connection without Hermes");
+            if cfg!(target_os = "macos") {
+                let ai = by_id(&d, "hermes_ia");
+                assert_eq!((ai.status, ai.detail.as_str(), ai.fix.as_deref()), (Status::Missing, "Je le brancherai sur ton IA juste après.", Some("hermes_ia")));
+            } else {
+                assert!(d.checks.iter().all(|c| c.id != "hermes_ia"), "no connection without Hermes");
+            }
             assert!(d.can_install);
             assert_eq!(d.todo, [decide(tmp.path(), &healthy).todo, step.iter().map(|s| s.to_string()).collect()].concat());
         }
@@ -1051,7 +1062,9 @@ mod tests {
         assert_eq!(by_id(&old, "hermes_ia").detail, "Il passe par Claude.");
         let unplugged = hermes_with(healthy.hermes.found.clone(), None, true);
         let ai = by_id(&unplugged, "hermes_ia");
-        assert_eq!((ai.status, ai.detail.as_str()), (Status::Warn, "Pas encore branché sur ton IA."));
+        assert_eq!((ai.status, ai.detail.as_str()), (to_fix, "Pas encore branché sur ton IA."));
+        assert_eq!(unplugged.todo.last().map(String::as_str) == Some("hermes_ia"), cfg!(target_os = "macos"), "{:?}", unplugged.todo);
+        assert!(!decide(tmp.path(), &healthy).todo.contains(&"hermes_ia".to_string()), "connected already");
 
         let intel = hermes_with(Found::Absent, None, false);
         assert_eq!(by_id(&intel, "hermes").status, Status::Warn);
@@ -1091,6 +1104,7 @@ mod tests {
             );
         }
         assert!(d.can_install && !d.todo.contains(&"hermes".to_string()));
+        assert!(d.checks.iter().all(|c| c.id != "hermes_ia"), "nothing to connect while there is no room for Hermes");
         let roomy = Facts { hermes: absent, disk_free_kb: Some(5_900_000), ..healthy_facts() };
         let d = decide(tmp.path(), &roomy);
         assert_eq!(by_id(&d, "hermes").detail, "Pas encore installé.");

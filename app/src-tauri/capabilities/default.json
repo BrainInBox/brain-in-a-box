@@ -39,6 +39,8 @@
     "allow-import-forget",
     "allow-import-open-note",
     "allow-open-claude-update",
+    "allow-hermes-device",
+    "allow-open-hermes-device-page",
     "allow-guide-open",
     "allow-guide-offert"
   ]

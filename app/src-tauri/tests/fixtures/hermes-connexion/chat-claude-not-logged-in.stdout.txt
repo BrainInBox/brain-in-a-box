@@ -1,0 +1,3 @@
+Claude Subscription DirectSDK (Experimental) rejected your sign-in, so the model can't be reached. Sign in again: `hermes auth add claude-subscription-directsdk-experimental --type oauth`.
+
+Provider said: HTTP 401: Claude Code is installed but has no usable login in the environment Hermes runs it in. Run `claude auth login` as the user Hermes runs as, set CLAUDE_CODE_OAUTH_TOKEN (from `claude setup-token`) in Hermes' environment, or point the claude_config_dir plugin setting (or CLAUDE_SUBSCRIPTION_DIRECTSDK_CONFIG_DIR) at a logged-in config directory, then try again. (native: Not logged in · Please run /login)
