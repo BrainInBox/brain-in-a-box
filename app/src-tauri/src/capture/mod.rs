@@ -2,8 +2,11 @@
 //! Bibo to look, never the screen. On Windows (phase 2a) by PrintWindow alone: the window draws
 //! itself into Bibo's memory, so another program's window over it never gets into the image. When it
 //! cannot (a DirectX surface, a program run as administrator, a protected window), the capture is
-//! black and the user pastes one instead: never a copy of the screen in its place (R20). macOS (the
-//! system's picker) and X11 come in phase 2b; until then, as on Wayland, the guide is in paste mode.
+//! black and the user pastes one instead: never a copy of the screen in its place (R20). Under X11
+//! (phase 2b) by XGetImage, and only while a compositing manager keeps each window's pixels apart
+//! (R21). On macOS 14 and later (phase 2b), the user picks the window in the system's own picker,
+//! then one image of it is streamed, without the screen recording permission. On Wayland and macOS
+//! 13, the guide is in paste mode.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -12,8 +15,12 @@ use serde::Serialize;
 
 use crate::shot::Rgba;
 
+#[cfg(target_os = "macos")]
+mod mac;
 #[cfg(windows)]
 mod win;
+#[cfg(target_os = "linux")]
+mod x11;
 
 /// How long Bibo waits for the click in the user's window (R4).
 const CLIC: Duration = Duration::from_secs(15);
@@ -27,7 +34,9 @@ const TITRE_MAX: usize = 60;
 pub struct Window {
     pub id: u64,
     pub pid: u32,
-    /// The executable's path (Windows), or WM_CLASS (X11).
+    /// The executable's path (Windows), WM_CLASS, its instance and class (X11), or the bundle id the
+    /// picker says (macOS 15.2 and later; empty before, and the pid 0: the system's filter is the
+    /// window there, Bibo's id only its number for the session).
     pub app: String,
 }
 
@@ -68,22 +77,44 @@ impl From<&Found> for Fenetre {
 
 /// Why there is no capture.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(not(windows), allow(dead_code))] // until macOS and X11 capture too (phase 2b)
 pub enum Rate {
-    /// Not on this system yet (macOS and Linux until phase 2b): paste mode.
+    /// Not on this system (Wayland, X11 without a compositing manager, macOS 13, macOS refusing): paste
+    /// mode.
     #[cfg_attr(windows, allow(dead_code))]
     Indisponible,
     /// Closed, or its id now another program's window (R22).
     Introuvable,
     /// Minimized or hidden: there is nothing to draw.
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
     Reduite,
     /// The window would not draw itself: black, never the screen instead (R20).
     Noire,
 }
 
+/// What came of the system's own picker (macOS).
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub enum Pick {
+    Choisie(Found),
+    /// The user closed it: « Tu as fermé la fenêtre de choix ».
+    Fermee,
+    /// macOS would not show it, for this reason (its own words).
+    Refus(String),
+    /// Bibo stopped waiting (« Arrêter », the guide closed), or nobody chose for too long.
+    Arrete,
+}
+
 /// The system's windows, as the guide asks for them: this computer's, or a test's.
 pub trait Screen {
     fn available(&self) -> bool;
+    /// The window is chosen in the system's own picker (macOS), not in Bibo's list nor by a click.
+    fn picker(&self) -> bool {
+        false
+    }
+    /// The system's picker, until the user chooses a window or closes it, or `cancel` is set.
+    fn pick(&self, _cancel: &AtomicBool) -> Pick {
+        Pick::Arrete
+    }
     /// Other programs' windows, the top one first (G2's list).
     fn windows(&self) -> Vec<Found>;
     /// The window that comes to the front within 15 s, Bibo's left out (R4); None if none came or
@@ -94,6 +125,9 @@ pub trait Screen {
     /// The window, if it is still the one chosen (R22), as it draws itself, with the dialog it waits
     /// on drawn at its place (R11).
     fn grab(&self, chosen: &Window) -> Result<Rgba, Rate>;
+    /// The guide closed: the window it was given forgotten, the system's picker put away (macOS: its
+    /// sharing indicator goes off).
+    fn forget(&self) {}
 }
 
 /// This computer's windows.
@@ -101,7 +135,22 @@ pub struct System;
 
 impl Screen for System {
     fn available(&self) -> bool {
-        cfg!(windows)
+        os::available()
+    }
+
+    #[cfg(target_os = "macos")]
+    fn picker(&self) -> bool {
+        os::available()
+    }
+
+    #[cfg(target_os = "macos")]
+    fn pick(&self, cancel: &AtomicBool) -> Pick {
+        os::pick(cancel)
+    }
+
+    #[cfg(target_os = "macos")]
+    fn forget(&self) {
+        os::forget()
     }
 
     fn windows(&self) -> Vec<Found> {
@@ -121,13 +170,21 @@ impl Screen for System {
     }
 }
 
+#[cfg(target_os = "macos")]
+use mac as os;
 #[cfg(windows)]
 use win as os;
+#[cfg(target_os = "linux")]
+use x11 as os;
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 mod os {
     use super::{Found, Rate, Window};
     use crate::shot::Rgba;
+
+    pub fn available() -> bool {
+        false
+    }
 
     pub fn list() -> Vec<Found> {
         Vec::new()
@@ -157,13 +214,46 @@ fn short(titre: &str) -> String {
     cut
 }
 
-/// R6: a terminal, by its program (its executable's name, or WM_CLASS) or its window's class.
-#[cfg_attr(not(windows), allow(dead_code))] // X11 (phase 2b) reads it too
+/// R6: a terminal, by its program (its executable's name, a part of WM_CLASS, or its bundle id) or its
+/// window's class.
 fn is_terminal(app: &str, class: &str) -> bool {
     const PROGRAMS: &[&str] = &[
-        "cmd", "conhost", "openconsole", "windowsterminal", "powershell", "powershell_ise", "pwsh", "wsl", "bash", "mintty",
-        "conemu", "conemu64", "putty", "kitty", "alacritty", "wezterm-gui", "tabby", "hyper", "gnome-terminal-server",
-        "gnome-terminal", "konsole", "xterm", "uxterm", "xfce4-terminal", "tilix", "terminator", "lxterminal",
+        "cmd",
+        "conhost",
+        "openconsole",
+        "windowsterminal",
+        "powershell",
+        "powershell_ise",
+        "pwsh",
+        "wsl",
+        "bash",
+        "mintty",
+        "conemu",
+        "conemu64",
+        "putty",
+        "kitty",
+        "alacritty",
+        "wezterm-gui",
+        "tabby",
+        "hyper",
+        "gnome-terminal-server",
+        "gnome-terminal",
+        "konsole",
+        "xterm",
+        "uxterm",
+        "xfce4-terminal",
+        "tilix",
+        "terminator",
+        "lxterminal",
+        "com.apple.terminal",
+        "com.googlecode.iterm2",
+        "dev.warp.warp-stable",
+        "net.kovidgoyal.kitty",
+        "io.alacritty",
+        "com.github.wez.wezterm",
+        "co.zeit.hyper",
+        "com.mitchellh.ghostty",
+        "org.tabby",
     ];
     const CLASSES: &[&str] = &["consolewindowclass", "cascadia_hosting_window_class", "virtualconsoleclass", "mintty", "putty"];
     let file = app.rsplit(['\\', '/']).next().unwrap_or(app).to_lowercase();
@@ -212,7 +302,7 @@ fn from_bgra(raw: &[u8], w: u32, h: u32, keep: (i32, i32, i32, i32)) -> Rgba {
 
 /// The dialog drawn over its window at its place (`dx`, `dy` from the window's corner), cut to the
 /// window: the image keeps the window's size.
-#[cfg_attr(not(windows), allow(dead_code))]
+#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
 fn lay(base: &mut Rgba, dialog: &Rgba, dx: i64, dy: i64) {
     let span = |d: i64, size: u32, room: u32| (d.max(0), (d + i64::from(size)).min(i64::from(room)));
     let ((x0, x1), (y0, y1)) = (span(dx, dialog.w, base.w), span(dy, dialog.h, base.h));
@@ -224,6 +314,162 @@ fn lay(base: &mut Rgba, dialog: &Rgba, dx: i64, dy: i64) {
         let from = (((y - dy) * i64::from(dialog.w) + (x0 - dx)) * 4) as usize;
         let len = ((x1 - x0) * 4) as usize;
         base.px[to..to + len].copy_from_slice(&dialog.px[from..from + len]);
+    }
+}
+
+/// A frame as ScreenCaptureKit gives it (blue, green, red, alpha; `stride` bytes a row, padded) into
+/// RGBA, its alpha kept: a window's rounded corners are transparent, put on white before it is sent.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn from_bgra_rows(raw: &[u8], w: u32, h: u32, stride: usize) -> Option<Rgba> {
+    let row = w as usize * 4;
+    if w == 0 || h == 0 || stride < row || raw.len() < stride * (h as usize - 1) + row {
+        return None;
+    }
+    let mut px = Vec::with_capacity(row * h as usize);
+    for y in 0..h as usize {
+        for p in raw[y * stride..][..row].chunks_exact(4) {
+            px.extend_from_slice(&[p[2], p[1], p[0], p[3]]);
+        }
+    }
+    Some(Rgba { w, h, px })
+}
+
+/// Wayland: its session, or its socket in the environment. No program's window can be captured there
+/// without the desktop's portal (after the v1), even through XWayland: the guide is in paste mode.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn wayland(session: Option<&str>, socket: Option<&str>) -> bool {
+    session.is_some_and(|s| s.eq_ignore_ascii_case("wayland")) || socket.is_some_and(|s| !s.is_empty())
+}
+
+/// An image as Xlib reads it from a window (ZPixmap).
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+struct XPixels<'a> {
+    data: &'a [u8],
+    w: u32,
+    h: u32,
+    /// Bytes from one row to the next.
+    stride: usize,
+    bits: u32,
+    lsb_first: bool,
+    /// Red, green, blue.
+    masks: [u64; 3],
+}
+
+/// Into opaque RGBA: 24 or 32 bits a pixel, each colour 8 bits in a row of its mask. Any other layout
+/// gives None, and the capture is black: never guessed.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn from_ximage(x: &XPixels) -> Option<Rgba> {
+    let bytes = match x.bits {
+        24 => 3,
+        32 => 4,
+        _ => return None,
+    };
+    let shift = |m: u64| {
+        let s = m.trailing_zeros();
+        (m != 0 && m >> s == 0xff && s + 8 <= bytes * 8).then_some(s)
+    };
+    let shifts = [shift(x.masks[0])?, shift(x.masks[1])?, shift(x.masks[2])?];
+    let (w, h, row) = (x.w as usize, x.h as usize, x.w as usize * bytes as usize);
+    if w == 0 || h == 0 || x.stride < row || x.data.len() < x.stride * (h - 1) + row {
+        return None;
+    }
+    let mut px = Vec::with_capacity(w * h * 4);
+    for y in 0..h {
+        for p in x.data[y * x.stride..][..row].chunks_exact(bytes as usize) {
+            let v = p.iter().enumerate().fold(0u32, |v, (i, &b)| v | (u32::from(b) << (8 * if x.lsb_first { i } else { p.len() - 1 - i })));
+            px.extend_from_slice(&[(v >> shifts[0]) as u8, (v >> shifts[1]) as u8, (v >> shifts[2]) as u8, 255]);
+        }
+    }
+    Some(Rgba { w: x.w, h: x.h, px })
+}
+
+/// The part of a window on the screen, in the window's own pixels (left, top, right, bottom): X reads
+/// none of a window off the screen. None when none of it is there.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn on_screen((x, y): (i32, i32), (w, h): (i32, i32), (sw, sh): (i32, i32)) -> Option<(i32, i32, i32, i32)> {
+    let (x0, y0) = (x.saturating_neg().max(0), y.saturating_neg().max(0));
+    let (x1, y1) = (w.min(sw.saturating_sub(x)), h.min(sh.saturating_sub(y)));
+    (x0 < x1 && y0 < y1).then_some((x0, y0, x1, y1))
+}
+
+/// WM_CLASS: its instance and its class, each ended by a NUL, in Latin-1.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn wm_class(raw: &[u8]) -> (String, String) {
+    let mut parts = raw.split(|&b| b == 0).map(latin1);
+    (parts.next().unwrap_or_default(), parts.next().unwrap_or_default())
+}
+
+/// A property of type STRING: Latin-1, a character a byte.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn latin1(raw: &[u8]) -> String {
+    raw.iter().map(|&b| char::from(b)).collect()
+}
+
+/// What the desktop tests of Windows and X11 share (`bureau_*`, on a VM): programs of known colours,
+/// waits, and pixels counted in memory.
+#[cfg(all(test, any(windows, target_os = "linux")))]
+pub(crate) mod bureau {
+    use super::{Found, Screen, System};
+    use crate::shot::Rgba;
+    use std::process::Child;
+    use std::time::{Duration, Instant};
+
+    pub const BLUE: [u8; 3] = [0x1e, 0x88, 0xe5];
+    pub const MAGENTA: [u8; 3] = [0xff, 0x00, 0xff];
+    pub const ORANGE: [u8; 3] = [0xff, 0x98, 0x00];
+    pub const GREY: [u8; 3] = [0x78, 0x78, 0x78];
+    pub const GREEN: [u8; 3] = [0x2e, 0x7d, 0x32];
+    pub const WAIT: Duration = Duration::from_secs(30);
+
+    /// A program the test started, closed with it.
+    pub struct Program(pub Child);
+
+    impl Drop for Program {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    /// The window as the list shows it, once it is there.
+    pub fn listed_as(which: impl Fn(&Found) -> bool) -> Found {
+        let start = Instant::now();
+        loop {
+            if let Some(f) = System.windows().into_iter().find(&which) {
+                return f;
+            }
+            assert!(start.elapsed() < WAIT, "never in the list: {:?}", System.windows().iter().map(|f| f.titre.clone()).collect::<Vec<_>>());
+            std::thread::sleep(Duration::from_millis(200));
+        }
+    }
+
+    pub fn until(what: &str, done: impl Fn() -> bool) {
+        let start = Instant::now();
+        while !done() {
+            assert!(start.elapsed() < WAIT, "{what}: still not, after {WAIT:?}");
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+
+    /// Pixels of that colour, give or take 3 on each channel.
+    pub fn count(img: &Rgba, c: [u8; 3]) -> usize {
+        img.px.chunks_exact(4).filter(|p| (0..3).all(|i| p[i].abs_diff(c[i]) <= 3)).count()
+    }
+
+    pub fn pixels(img: &Rgba) -> usize {
+        img.px.len() / 4
+    }
+
+    /// The smallest box around the pixels of that colour: (left, top, right, bottom), right and bottom out.
+    pub fn bounds(img: &Rgba, c: [u8; 3]) -> Option<(i32, i32, i32, i32)> {
+        let mut b: Option<(i32, i32, i32, i32)> = None;
+        for (i, p) in img.px.chunks_exact(4).enumerate() {
+            if (0..3).all(|k| p[k].abs_diff(c[k]) <= 3) {
+                let (x, y) = ((i as u32 % img.w) as i32, (i as u32 / img.w) as i32);
+                b = Some(b.map_or((x, y, x + 1, y + 1), |(l, t, r, bt)| (l.min(x), t.min(y), r.max(x + 1), bt.max(y + 1))));
+            }
+        }
+        b
     }
 }
 
@@ -356,7 +602,8 @@ mod tests {
         let mut base = crate::shot::tests::rgba(8, 6, [0, 0, 255, 255]);
         let dialog = crate::shot::tests::rgba(3, 2, [255, 128, 0, 255]);
         lay(&mut base, &dialog, 2, 3);
-        let orange = |img: &Rgba| (0..img.h).flat_map(|y| (0..img.w).map(move |x| (x, y))).filter(|&(x, y)| at(img, x, y) == [255, 128, 0, 255]).collect::<Vec<_>>();
+        let orange =
+            |img: &Rgba| (0..img.h).flat_map(|y| (0..img.w).map(move |x| (x, y))).filter(|&(x, y)| at(img, x, y) == [255, 128, 0, 255]).collect::<Vec<_>>();
         assert_eq!(orange(&base), vec![(2, 3), (3, 3), (4, 3), (2, 4), (3, 4), (4, 4)]);
 
         // Past the right and bottom edges, or the top and left ones: what lies outside is dropped.
@@ -369,5 +616,107 @@ mod tests {
         let mut base = crate::shot::tests::rgba(8, 6, [0, 0, 255, 255]);
         lay(&mut base, &dialog, 50, -50);
         assert_eq!((orange(&base), base.w, base.h), (vec![], 8, 6));
+    }
+
+    #[test]
+    fn a_macos_frame_becomes_rgba_its_rows_unpadded_its_alpha_kept() {
+        // 2×2 pixels, rows of 12 bytes (4 of padding), each (b, g, r, a).
+        let raw = [1, 2, 3, 255, 4, 5, 6, 128, 9, 9, 9, 9, 7, 8, 9, 0, 10, 11, 12, 255, 9, 9, 9, 9];
+        let img = from_bgra_rows(&raw, 2, 2, 12).unwrap();
+        assert_eq!((img.w, img.h), (2, 2));
+        assert_eq!(img.px, [3, 2, 1, 255, 6, 5, 4, 128, 9, 8, 7, 0, 12, 11, 10, 255]);
+        assert!(from_bgra_rows(&raw, 2, 2, 7).is_none(), "rows shorter than a row");
+        assert!(from_bgra_rows(&raw[..19], 2, 2, 12).is_none(), "fewer bytes than its size says");
+        assert!(from_bgra_rows(&raw, 0, 2, 12).is_none());
+        // The last row needs no padding.
+        assert!(from_bgra_rows(&raw[..20], 2, 2, 12).is_some());
+    }
+
+    #[test]
+    fn macos_terminals_by_their_bundle_id() {
+        for app in ["com.apple.Terminal", "com.googlecode.iterm2", "dev.warp.Warp-Stable", "com.mitchellh.ghostty"] {
+            assert!(is_terminal(app, ""), "{app}");
+        }
+        for app in ["com.google.Chrome", "com.apple.Safari", "com.microsoft.Excel", ""] {
+            assert!(!is_terminal(app, ""), "{app}");
+        }
+    }
+
+    #[test]
+    fn wayland_by_its_session_or_its_socket() {
+        assert!(wayland(Some("wayland"), None));
+        assert!(wayland(Some("Wayland"), Some("")));
+        assert!(wayland(Some("x11"), Some("wayland-0")), "XWayland: still Wayland");
+        assert!(wayland(None, Some("wayland-0")));
+        assert!(!wayland(Some("x11"), None));
+        assert!(!wayland(Some("x11"), Some("")));
+        assert!(!wayland(None, None));
+        assert!(!wayland(Some("tty"), None));
+    }
+
+    /// An X image of 3×2 pixels, each (r, g, b) known, laid out as the server says.
+    fn ximage(bits: u32, lsb_first: bool, masks: [u64; 3], stride: usize) -> (Vec<u8>, XPixels<'static>) {
+        let colors = [[10u8, 20, 30], [40, 50, 60], [70, 80, 90], [100, 110, 120], [130, 140, 150], [250, 1, 128]];
+        let bytes = bits as usize / 8;
+        let mut data = vec![0xAAu8; stride * 2];
+        for (i, c) in colors.iter().enumerate() {
+            let shift = |m: u64| m.trailing_zeros();
+            let v = (u32::from(c[0]) << shift(masks[0])) | (u32::from(c[1]) << shift(masks[1])) | (u32::from(c[2]) << shift(masks[2]));
+            let at = (i / 3) * stride + (i % 3) * bytes;
+            for k in 0..bytes {
+                data[at + k] = (v >> (8 * if lsb_first { k } else { bytes - 1 - k })) as u8;
+            }
+        }
+        let x = XPixels { data: &[], w: 3, h: 2, stride, bits, lsb_first, masks };
+        (data, x)
+    }
+
+    #[test]
+    fn an_x_image_becomes_opaque_rgba_whatever_its_layout() {
+        let want = [10u8, 20, 30, 255, 40, 50, 60, 255, 70, 80, 90, 255, 100, 110, 120, 255, 130, 140, 150, 255, 250, 1, 128, 255];
+        let rgb = [0xff0000, 0xff00, 0xff];
+        for (bits, lsb, masks, stride) in [
+            (32, true, rgb, 12),
+            (32, true, rgb, 16),
+            (32, false, rgb, 12),
+            (24, true, rgb, 9),
+            (24, false, rgb, 12),
+            (32, true, [0xff, 0xff00, 0xff0000], 12),
+            (32, true, [0xff00_0000, 0xff_0000, 0xff00], 12),
+        ] {
+            let (data, x) = ximage(bits, lsb, masks, stride);
+            let img = from_ximage(&XPixels { data: &data, ..x }).unwrap();
+            assert_eq!((img.w, img.h, img.px.as_slice()), (3, 2, want.as_slice()), "{bits} bits, lsb {lsb}, masks {masks:x?}, stride {stride}");
+        }
+        // A layout it does not know is no image, never a guess.
+        for (bits, masks) in [(16, [0xf800, 0x7e0, 0x1f]), (32, [0x3ff0_0000, 0xffc00, 0x3ff]), (32, [0, 0xff00, 0xff]), (8, rgb)] {
+            let (data, x) = ximage(32, true, [0xff0000, 0xff00, 0xff], 12);
+            assert!(from_ximage(&XPixels { data: &data, bits, masks, ..x }).is_none(), "{bits} {masks:x?}");
+        }
+        let (data, x) = ximage(32, true, rgb, 12);
+        assert!(from_ximage(&XPixels { data: &data[..20], ..x }).is_none(), "fewer bytes than its size says");
+        assert!(from_ximage(&XPixels { data: &data, stride: 8, ..x }).is_none(), "rows shorter than a row");
+        assert!(from_ximage(&XPixels { data: &data, w: 0, ..x }).is_none());
+    }
+
+    #[test]
+    fn only_the_part_of_a_window_on_the_screen_is_read() {
+        let screen = (1280, 800);
+        assert_eq!(on_screen((100, 50), (640, 480), screen), Some((0, 0, 640, 480)));
+        assert_eq!(on_screen((-40, -10), (640, 480), screen), Some((40, 10, 640, 480)), "past the top left corner");
+        assert_eq!(on_screen((1000, 600), (640, 480), screen), Some((0, 0, 280, 200)), "past the bottom right one");
+        assert_eq!(on_screen((1280, 0), (640, 480), screen), None, "beside the screen");
+        assert_eq!(on_screen((-640, 0), (640, 480), screen), None);
+        assert_eq!(on_screen((i32::MIN, i32::MAX), (640, 480), screen), None);
+    }
+
+    #[test]
+    fn wm_class_and_latin1() {
+        assert_eq!(wm_class(b"gnome-terminal-server\0Gnome-terminal\0"), ("gnome-terminal-server".into(), "Gnome-terminal".into()));
+        assert_eq!(wm_class(b"soffice\0libreoffice-calc"), ("soffice".into(), "libreoffice-calc".into()));
+        assert_eq!(wm_class(b""), (String::new(), String::new()));
+        assert_eq!(latin1(b"Caf\xe9 cr\xe8me"), "Café crème");
+        let (instance, class) = wm_class(b"xterm\0XTerm\0");
+        assert!(is_terminal(&instance, "") && is_terminal(&class, ""));
     }
 }

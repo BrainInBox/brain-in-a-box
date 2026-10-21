@@ -435,10 +435,21 @@ async fn guide_attendre_clic() -> Result<capture::Fenetre, guide::GuideError> {
     guiding(guide::attendre_clic).await
 }
 
-/// The window from the list or the click, kept with its process and program (R22).
+/// The window from the list or the click, kept with its process and program (R22). On macOS (no id),
+/// the system's picker: the guide's window leaves « always on top » while it is out, or it would lie
+/// over the picker's « Share This Window » button (phase 0, macOS 15 and 26), and comes back after.
 #[tauri::command]
-async fn guide_choisir(id: Option<u64>) -> Result<capture::Fenetre, guide::GuideError> {
-    guiding(move || guide::choisir(id)).await
+async fn guide_choisir(app: tauri::AppHandle, id: Option<u64>) -> Result<capture::Fenetre, guide::GuideError> {
+    let picker = id.is_none() && tauri::async_runtime::spawn_blocking(guide::selecteur).await.unwrap_or(false);
+    let lowered = app.get_webview_window("guide").filter(|w| picker && w.is_always_on_top().unwrap_or(false));
+    if let Some(w) = &lowered {
+        let _ = w.set_always_on_top(false);
+    }
+    let chosen = guiding(move || guide::choisir(id)).await;
+    if let Some(w) = &lowered {
+        let _ = w.set_always_on_top(true);
+    }
+    chosen
 }
 
 /// « Regarde mon écran »: the chosen window captured now, its preview as a pasted capture's.

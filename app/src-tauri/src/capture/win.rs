@@ -21,8 +21,8 @@ use windows::Win32::System::Threading::{OpenProcess, QueryFullProcessImageNameW,
 use windows::Win32::UI::HiDpi::{SetThreadDpiAwarenessContext, DPI_AWARENESS_CONTEXT, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2};
 use windows::Win32::UI::Input::KeyboardAndMouse::IsWindowEnabled;
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetClassNameW, GetForegroundWindow, GetLastActivePopup, GetWindow, GetWindowLongW, GetWindowRect, GetWindowTextW, GetWindowThreadProcessId, IsIconic,
-    IsWindow, IsWindowVisible, GWL_EXSTYLE, GW_OWNER, PW_RENDERFULLCONTENT, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
+    EnumWindows, GetClassNameW, GetForegroundWindow, GetLastActivePopup, GetWindow, GetWindowLongW, GetWindowRect, GetWindowTextW, GetWindowThreadProcessId,
+    IsIconic, IsWindow, IsWindowVisible, GWL_EXSTYLE, GW_OWNER, PW_RENDERFULLCONTENT, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
 };
 
 use super::{from_bgra, is_terminal, lay, same_window, Found, Rate, Window};
@@ -158,6 +158,10 @@ fn description(path: &str) -> Option<String> {
 
 fn name(path: &str) -> String {
     description(path).unwrap_or_else(|| Path::new(path).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default())
+}
+
+pub fn available() -> bool {
+    true
 }
 
 /// The window under this id, if it is another program's the guide may capture.
@@ -325,9 +329,11 @@ fn modal(h: HWND, pid: u32) -> Option<HWND> {
         return None;
     }
     let up = owner(h);
-    [Some(h), up].into_iter().flatten().map(|o| unsafe { GetLastActivePopup(o) }).find(|&p| {
-        !p.is_invalid() && p != h && Some(p) != up && visible(p) && !minimized(p) && pid_of(p) == pid
-    })
+    [Some(h), up]
+        .into_iter()
+        .flatten()
+        .map(|o| unsafe { GetLastActivePopup(o) })
+        .find(|&p| !p.is_invalid() && p != h && Some(p) != up && visible(p) && !minimized(p) && pid_of(p) == pid)
 }
 
 /// The window, if it is still the one chosen, as it draws itself, with the dialog it waits on
@@ -360,38 +366,22 @@ pub fn grab(chosen: &Window) -> Result<Rgba, Rate> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::capture::bureau::*;
     use crate::capture::{Screen, System};
     use crate::guide::{self, GuideError};
     use std::path::PathBuf;
-    use std::process::{Child, Command};
+    use std::process::Command;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
     use windows::core::w;
     use windows::Win32::Foundation::POINT;
     use windows::Win32::UI::Input::KeyboardAndMouse::{
         EnableWindow, SendInput, INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEINPUT, MOUSE_EVENT_FLAGS,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
-        CreateWindowExW, DestroyWindow, GetAncestor, GetWindowDisplayAffinity, SetCursorPos, ShowWindowAsync, WindowFromPoint, GA_ROOT, SW_MINIMIZE, SW_RESTORE,
-        WINDOW_EX_STYLE, WS_OVERLAPPEDWINDOW, WS_VISIBLE,
+        CreateWindowExW, DestroyWindow, GetAncestor, GetWindowDisplayAffinity, SetCursorPos, ShowWindowAsync, WindowFromPoint, GA_ROOT, SW_MINIMIZE,
+        SW_RESTORE, WINDOW_EX_STYLE, WS_OVERLAPPEDWINDOW, WS_VISIBLE,
     };
-
-    const BLUE: [u8; 3] = [0x1e, 0x88, 0xe5];
-    const MAGENTA: [u8; 3] = [0xff, 0x00, 0xff];
-    const ORANGE: [u8; 3] = [0xff, 0x98, 0x00];
-    const GREY: [u8; 3] = [0x78, 0x78, 0x78];
-    const GREEN: [u8; 3] = [0x2e, 0x7d, 0x32];
-    const WAIT: Duration = Duration::from_secs(30);
-
-    /// A program the test started, closed with it.
-    struct Program(Child);
-
-    impl Drop for Program {
-        fn drop(&mut self) {
-            let _ = self.0.kill();
-            let _ = self.0.wait();
-        }
-    }
 
     /// The test's folder, with the program of known colours compiled in it.
     struct Desk {
@@ -429,47 +419,6 @@ mod tests {
             assert_eq!(found.window.pid, program.0.id(), "{titre}");
             (program, found)
         }
-    }
-
-    /// The window as the list shows it, once it is there.
-    fn listed_as(which: impl Fn(&Found) -> bool) -> Found {
-        let start = Instant::now();
-        loop {
-            if let Some(f) = System.windows().into_iter().find(&which) {
-                return f;
-            }
-            assert!(start.elapsed() < WAIT, "never in the list: {:?}", System.windows().iter().map(|f| f.titre.clone()).collect::<Vec<_>>());
-            std::thread::sleep(Duration::from_millis(200));
-        }
-    }
-
-    fn until(what: &str, done: impl Fn() -> bool) {
-        let start = Instant::now();
-        while !done() {
-            assert!(start.elapsed() < WAIT, "{what}: still not, after {WAIT:?}");
-            std::thread::sleep(Duration::from_millis(100));
-        }
-    }
-
-    /// Pixels of that colour, give or take 3 on each channel.
-    fn count(img: &Rgba, c: [u8; 3]) -> usize {
-        img.px.chunks_exact(4).filter(|p| (0..3).all(|i| p[i].abs_diff(c[i]) <= 3)).count()
-    }
-
-    fn pixels(img: &Rgba) -> usize {
-        img.px.len() / 4
-    }
-
-    /// The smallest box around the pixels of that colour: (left, top, right, bottom), right and bottom out.
-    fn bounds(img: &Rgba, c: [u8; 3]) -> Option<(i32, i32, i32, i32)> {
-        let mut b: Option<(i32, i32, i32, i32)> = None;
-        for (i, p) in img.px.chunks_exact(4).enumerate() {
-            if (0..3).all(|k| p[k].abs_diff(c[k]) <= 3) {
-                let (x, y) = ((i as u32 % img.w) as i32, (i as u32 / img.w) as i32);
-                b = Some(b.map_or((x, y, x + 1, y + 1), |(l, t, r, bt)| (l.min(x), t.min(y), r.max(x + 1), bt.max(y + 1))));
-            }
-        }
-        b
     }
 
     /// How many lines are mostly black from each side (left, right, top, bottom): the invisible
@@ -607,10 +556,7 @@ mod tests {
         let its = frame(dialog).unwrap();
         let place = (its.left - at.left, its.top - at.top, its.right - at.left, its.bottom - at.top);
         let orange = bounds(&img, ORANGE).expect("the dialog's colour in the capture");
-        assert!(
-            orange.0 >= place.0 && orange.1 >= place.1 && orange.2 <= place.2 && orange.3 <= place.3,
-            "at its place: {orange:?} within {place:?}"
-        );
+        assert!(orange.0 >= place.0 && orange.1 >= place.1 && orange.2 <= place.2 && orange.3 <= place.3, "at its place: {orange:?} within {place:?}");
         let area = (place.2 - place.0) * (place.3 - place.1);
         assert!(count(&img, ORANGE) as i32 > area * 6 / 10, "its colour over most of it: {} of {area}", count(&img, ORANGE));
         assert!(count(&img, BLUE) > pixels(&img) / 3, "and the window around it");
@@ -751,7 +697,20 @@ mod tests {
         // A window of this process, as Bibo's are: never in the list, never described.
         // SAFETY: a plain window of a system class, destroyed below.
         let own = unsafe {
-            CreateWindowExW(WINDOW_EX_STYLE(0), w!("STATIC"), w!("Bibo, ton guide"), WS_OVERLAPPEDWINDOW | WS_VISIBLE, 300, 300, 300, 200, None, None, None, None)
+            CreateWindowExW(
+                WINDOW_EX_STYLE(0),
+                w!("STATIC"),
+                w!("Bibo, ton guide"),
+                WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+                300,
+                300,
+                300,
+                200,
+                None,
+                None,
+                None,
+                None,
+            )
         }
         .unwrap();
         assert!(visible(own));

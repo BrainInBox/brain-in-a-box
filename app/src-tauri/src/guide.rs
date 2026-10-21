@@ -24,7 +24,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::capture::{self, Fenetre, Rate, Screen, Window};
+use crate::capture::{self, Fenetre, Pick, Rate, Screen, Window};
 use crate::claude::{self, ClaudeError, RateLimit, MIN_CLAUDE, REQUIRED_FLAGS};
 use crate::detect::{self, parse_version};
 use crate::shot::{self, Rgb, Rgba, Zone};
@@ -326,8 +326,14 @@ pub enum GuideError {
     /// The window drew nothing Bibo can see (DirectX, a program run as administrator, a protected
     /// window): no image leaves, the user pastes a capture instead.
     CaptureNoire,
-    /// No click in a window within 15 s.
+    /// No click in a window within 15 s, or no choice in the system's picker for too long.
     AucunClic,
+    /// The system's picker closed without a window (macOS): « Tu as fermé la fenêtre de choix ».
+    SelecteurFerme,
+    /// macOS would not show its picker, for this reason (macOS's own words).
+    SelecteurRefuse {
+        raison: String,
+    },
     /// « Je ne guide pas dans un terminal » (R6).
     Terminal,
     Interne { message: String },
@@ -1406,11 +1412,19 @@ impl Guide {
         lock(&self.offered).clear();
     }
 
+    /// « Fermer le guide »: the session gone, and the window the system gave with it (macOS: the
+    /// picker put away, its sharing indicator off).
+    fn close(&self, screen: &dyn Screen) {
+        self.end();
+        screen.forget();
+    }
+
     // ── The automatic capture (G2, R4, R22) ──
 
-    /// G2's list: the windows of other programs, which become the ones that may be chosen.
+    /// G2's list: the windows of other programs, which become the ones that may be chosen. None on
+    /// macOS, where only the system's picker may show them.
     fn list(&self, screen: &dyn Screen) -> Result<Vec<Fenetre>, GuideError> {
-        if !screen.available() {
+        if !screen.available() || screen.picker() {
             return Err(GuideError::CaptureIndisponible);
         }
         let found = screen.windows();
@@ -1421,7 +1435,7 @@ impl Guide {
     /// « Clique dans la fenêtre de ton logiciel »: the window that comes to the front within 15 s,
     /// which becomes the only one that may be chosen.
     fn wait_click(&self, screen: &dyn Screen) -> Result<Fenetre, GuideError> {
-        if !screen.available() {
+        if !screen.available() || screen.picker() {
             return Err(GuideError::CaptureIndisponible);
         }
         self.stop_waiting.store(false, Ordering::SeqCst);
@@ -1437,21 +1451,43 @@ impl Guide {
     }
 
     /// « Oui » (or a line of the list): the window kept for the session, if it is still the one
-    /// offered, and not a terminal.
+    /// offered, and not a terminal. On macOS, no id: the window the user picks in the system's picker.
     fn choose(&self, screen: &dyn Screen, id: Option<u64>) -> Result<Fenetre, GuideError> {
         if !screen.available() {
             return Err(GuideError::CaptureIndisponible);
         }
-        // A window of the list or the click (the system's picker, on macOS, comes in phase 2b).
-        let id = id.ok_or(GuideError::FenetreIntrouvable)?;
-        let offered = lock(&self.offered).iter().find(|w| w.id == id).cloned().ok_or(GuideError::FenetreIntrouvable)?;
-        let now = screen.find(id).filter(|f| capture::same_window(&offered, Some(&f.window))).ok_or(GuideError::FenetreIntrouvable)?;
+        let offered = match id {
+            None if screen.picker() => self.picked(screen)?,
+            // A window of the list or the click; on macOS, of the picker only.
+            Some(id) if !screen.picker() => lock(&self.offered).iter().find(|w| w.id == id).cloned().ok_or(GuideError::FenetreIntrouvable)?,
+            _ => return Err(GuideError::FenetreIntrouvable),
+        };
+        let now = screen.find(offered.id).filter(|f| capture::same_window(&offered, Some(&f.window))).ok_or(GuideError::FenetreIntrouvable)?;
         if now.terminal {
             return Err(GuideError::Terminal);
         }
         let _busy = Busy::take(&self.busy)?;
         lock(&self.session).get_or_insert_with(|| self.new_session()).fenetre = Some(offered);
         Ok(Fenetre::from(&now))
+    }
+
+    /// The system's picker: the window the user picks there becomes the one offered. « Arrêter », or
+    /// the guide closed meanwhile: nothing is kept.
+    fn picked(&self, screen: &dyn Screen) -> Result<Window, GuideError> {
+        self.stop_waiting.store(false, Ordering::SeqCst);
+        let picked = screen.pick(&self.stop_waiting);
+        let stopped = self.stop_waiting.load(Ordering::SeqCst);
+        match picked {
+            Pick::Choisie(f) if !stopped => {
+                *lock(&self.offered) = vec![f.window.clone()];
+                Ok(f.window)
+            }
+            Pick::Choisie(_) => Err(GuideError::Annule),
+            Pick::Arrete if stopped => Err(GuideError::Annule),
+            Pick::Arrete => Err(GuideError::AucunClic),
+            Pick::Fermee => Err(GuideError::SelecteurFerme),
+            Pick::Refus(raison) => Err(GuideError::SelecteurRefuse { raison }),
+        }
     }
 
     /// « Regarde mon écran », and each look after: the chosen window captured anew, if it is still
@@ -1961,7 +1997,8 @@ pub fn attendre_clic() -> Result<Fenetre, GuideError> {
     GUIDE.wait_click(&capture::System)
 }
 
-/// The window chosen, from the list or the click: kept with its process and program (R22).
+/// The window chosen, from the list or the click: kept with its process and program (R22). On macOS,
+/// no id: the system's picker.
 pub fn choisir(id: Option<u64>) -> Result<Fenetre, GuideError> {
     GUIDE.choose(&capture::System, id)
 }
@@ -2026,7 +2063,12 @@ pub fn enregistrer(note: &NoteGuide) -> Result<Enregistre, GuideError> {
 /// « Fermer le guide », or its window closed: everything of the session forgotten, images included.
 pub fn fin() {
     CANCEL.store(true, Ordering::SeqCst);
-    GUIDE.end();
+    GUIDE.close(&capture::System);
+}
+
+/// The window is chosen in the system's own picker (macOS 14 and later).
+pub fn selecteur() -> bool {
+    capture::System.available() && capture::System.picker()
 }
 
 // ── The window's place (§1) ─────────────────────────────────────────────────
@@ -2829,11 +2871,27 @@ mod tests {
         stopped_meanwhile: bool,
         images: Mutex<HashMap<u64, Drawn>>,
         grabs: AtomicUsize,
+        /// macOS: the system's picker, and what the user does in it.
+        picker: bool,
+        picked: Mutex<Option<Pick>>,
+        forgotten: AtomicUsize,
     }
 
     impl Screen for FakeScreen {
         fn available(&self) -> bool {
             !self.off
+        }
+        fn picker(&self) -> bool {
+            self.picker
+        }
+        fn pick(&self, cancel: &AtomicBool) -> Pick {
+            if self.stopped_meanwhile {
+                cancel.store(true, Ordering::SeqCst);
+            }
+            lock(&self.picked).take().unwrap_or(Pick::Arrete)
+        }
+        fn forget(&self) {
+            self.forgotten.fetch_add(1, Ordering::SeqCst);
         }
         fn windows(&self) -> Vec<capture::Found> {
             lock(&self.windows).clone()
@@ -2966,6 +3024,67 @@ mod tests {
         assert_eq!(b.guide.wait_click(&screen).unwrap().id, 11);
         let stopped = FakeScreen { stopped_meanwhile: true, ..FakeScreen { clicked: Mutex::new(Some(odoo.clone())), ..screen_with(vec![odoo]) } };
         assert_eq!(b.guide.wait_click(&stopped), Err(GuideError::Annule));
+    }
+
+    /// macOS: the window is the one the user picks in the system's picker; there is no list nor
+    /// click, and no id of Bibo's may stand for a window.
+    #[test]
+    fn on_macos_the_window_is_picked_in_the_systems_picker() {
+        let b = Bench::new();
+        let picked = capture::Found {
+            window: Window { id: 1, pid: 812, app: "com.google.Chrome".into() },
+            nom: "Google Chrome".into(),
+            titre: "Odoo".into(),
+            reduite: false,
+            terminal: false,
+        };
+        let screen = FakeScreen { picker: true, picked: Mutex::new(Some(Pick::Choisie(picked.clone()))), ..screen_with(vec![picked.clone()]) };
+        assert_eq!(b.guide.list(&screen), Err(GuideError::CaptureIndisponible), "no list");
+        assert_eq!(b.guide.wait_click(&screen), Err(GuideError::CaptureIndisponible), "no click");
+        assert_eq!(b.guide.choose(&screen, Some(1)), Err(GuideError::FenetreIntrouvable), "an id is no choice");
+        let f = b.guide.choose(&screen, None).unwrap();
+        assert_eq!((f.id, f.app.as_str(), f.titre.as_str()), (1, "Google Chrome", "Odoo"));
+        assert_eq!(lock(&b.guide.session).as_ref().unwrap().fenetre, Some(picked.window.clone()));
+        assert_eq!(b.guide.look(&screen).unwrap().largeur, 900);
+
+        // Closed, refused, nobody chose: the window picked before stays the one captured.
+        for (then, said) in [
+            (Pick::Fermee, GuideError::SelecteurFerme),
+            (Pick::Refus("Le service a refusé.".into()), GuideError::SelecteurRefuse { raison: "Le service a refusé.".into() }),
+            (Pick::Arrete, GuideError::AucunClic),
+        ] {
+            *lock(&screen.picked) = Some(then);
+            assert_eq!(b.guide.choose(&screen, None), Err(said));
+            assert_eq!(lock(&b.guide.session).as_ref().unwrap().fenetre, Some(picked.window.clone()));
+        }
+        assert!(b.guide.look(&screen).is_ok());
+
+        // A terminal picked is refused (R6); the guide closed puts the picker away.
+        let term = capture::Found { window: Window { id: 2, pid: 9, app: "com.apple.Terminal".into() }, terminal: true, ..picked.clone() };
+        let screen = FakeScreen { picker: true, picked: Mutex::new(Some(Pick::Choisie(term.clone()))), ..screen_with(vec![term]) };
+        assert_eq!(b.guide.choose(&screen, None), Err(GuideError::Terminal));
+        b.guide.close(&screen);
+        assert_eq!(screen.forgotten.load(Ordering::SeqCst), 1);
+        assert!(lock(&b.guide.session).is_none());
+    }
+
+    /// « Arrêter » while the picker is out: a window picked then is not kept.
+    #[test]
+    fn a_window_picked_after_stop_is_not_kept() {
+        let b = Bench::new();
+        let picked = capture::Found {
+            window: Window { id: 1, pid: 812, app: "com.google.Chrome".into() },
+            nom: "Google Chrome".into(),
+            titre: "Odoo".into(),
+            reduite: false,
+            terminal: false,
+        };
+        let screen = FakeScreen { picker: true, stopped_meanwhile: true, picked: Mutex::new(Some(Pick::Choisie(picked.clone()))), ..screen_with(vec![picked]) };
+        assert_eq!(b.guide.choose(&screen, None), Err(GuideError::Annule));
+        assert!(lock(&b.guide.session).as_ref().is_none_or(|s| s.fenetre.is_none()));
+        assert_eq!(b.guide.look(&screen), Err(GuideError::SansFenetre));
+        *lock(&screen.picked) = Some(Pick::Arrete);
+        assert_eq!(b.guide.choose(&screen, None), Err(GuideError::Annule));
     }
 
     #[test]
