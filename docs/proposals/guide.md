@@ -8,6 +8,8 @@ Rédigée le 2026-10-21 sur `origin/master` fa1ed66, d'après le code et les ess
 
 **Phase 0 faite le 2026-10-21** : résultats et corrections en §15 (« Phase 0 — résultats »), qui prime sur le corps. En bref : modèle **Opus**, seuils inchangés, `--effort low` gardé ; sélecteur macOS **GO** avec un `SCStream` d'une image (pas `SCScreenshotManager`) ; Codex : `-i` relatif ; alphabet du code sans U ; aucun refus « cyber » mesuré.
 
+**Phase 2a faite le 2026-10-21** (§20) : la capture Windows maison (`capture/`), par `PrintWindow` seul, la liste des fenêtres, le choix au clic, l'identité vérifiée avant et après chaque capture, le dialogue du même processus, l'image noire refusée ; prouvée sur des VM Windows (Server 2022 et 2025). Une fenêtre lancée en administrateur sort noire : mode collage. La fenêtre du guide ne s'en sert pas encore (§20, écart 2).
+
 **Revue de la v1 en mode collage faite le 2026-10-21** (§19) : 26 constats (sécurité, non-régression, débutant), tous corrigés, deux autrement que proposé. En bref : filtre §4.6 élargi et lisant le texte tel qu'il s'affiche ; aucun accès de `stack.md` envoyé ; un regard part avec l'image vue, un fichier déposé attend la fenêtre ; zones cachées par taille ; « même capture » dite avant l'envoi ; accueil seulement avec un cerveau complet ; modèle exact avec une image, lanceur sans image comme avant le guide ; manifeste d'app (chaque fenêtre ses commandes).
 
 **Phase 4 faite le 2026-10-21** (§18) : la fenêtre du guide en mode collage (G1 à G10), `ui.js`, les entrées de l'accueil et de la fin, l'enregistrement de la procédure dans `Guides/` (avancé de la phase 5), la maquette et `screens-guide.txt`. Le guide marche de bout en bout en collant une capture, sur les 3 OS.
@@ -1018,3 +1020,60 @@ Même appel (s1, Opus, low) avec et sans : ligne d'init identique champ par cham
 - **Décision 8 contre phase 0** : le guide doit marcher avec Claude Pro, et la phase 0 a retenu Opus, Sonnet ayant manqué un cas négatif. Il faut vérifier qu'un forfait Pro donne Opus dans Claude Code (phase 0 g) ; sinon, l'erreur dédiée de §2 et le choix du modèle sont à revoir.
 - Homoglyphes hors cyrillique et grec, et un mot entièrement fait de lettres qui ressemblent à d'autres : non couverts. Un filtre reste un plancher (§4.6).
 - Le refus effectif d'une commande de l'installation depuis la fenêtre du guide repose sur Tauri ; les jambes `app-*` de `terrain.yml` exercent la fenêtre principale avec le manifeste. La fenêtre du guide dans une vraie app est l'affaire du parcours terrain de la phase 5.
+
+## 20. Phase 2a — fait et écarts (2026-10-21)
+
+**Prime sur le corps et sur §15 à §19 là où elle les contredit.** Branche `feat/guide-capture`, partie de master 12474f3 (#59), PR brouillon. Aucun appel à `claude -p`. Aucune capture d'un vrai poste : seulement des VM de CI, des fenêtres aux couleurs connues et une page fictive, dont les pixels sont comptés en mémoire.
+
+**Livré**
+1. **`capture/mod.rs`** : la face commune.
+   - le trait `Screen` (le système, ou un faux dans les tests de `guide.rs`) ;
+   - `Window {id, pid, app}` et `same_window`, déplacés de `guide.rs` ;
+   - `Fenetre {id, app, titre, reduite, terminal}`, ce que la page recevra ; le titre tient sur une ligne de 60 caractères ;
+   - `Rate` : `Indisponible`, `Introuvable`, `Reduite`, `Noire` ;
+   - des fonctions pures, testées sur les 3 OS : pixels de Windows vers RGBA opaque coupé au cadre, dialogue posé à sa place, terminal reconnu, attente du clic.
+
+   Hors Windows : `Indisponible`, en attendant la phase 2b.
+2. **`capture/win.rs`**, environ 350 lignes hors tests, sur `windows` 0.61.3 déjà dans le build. Deux fonctionnalités manquaient : `Win32_Storage_Xps` (`PrintWindow`) et `Win32_Storage_FileSystem` (le nom du programme). Aucune crate en plus : `Cargo.lock` gagne une seule ligne, la dépendance directe.
+   - **Liste** : `EnumWindows`. Bibo garde les fenêtres visibles, non masquées (`DWMWA_CLOAKED`), sans `WS_EX_TOOLWINDOW`, et sans propriétaire visible (un propriétaire caché, à la Delphi, est accepté ; `WS_EX_APPWINDOW` passe toujours). Il écarte le Bureau, la barre des tâches et les titres vides. Les fenêtres du processus de Bibo sont écartées **avant** la lecture du titre. Le nom affiché vient de la ressource de version (`FileDescription`, « Microsoft Edge »), sinon de l'exécutable. Une fenêtre réduite (`IsIconic`) est marquée, un terminal aussi (par sa classe ou son exécutable, R6).
+   - **Clic** (R4) : `GetForegroundWindow` toutes les 100 ms pendant 15 s, en remontant les propriétaires visibles : un clic dans un dialogue désigne sa fenêtre. La fenêtre au premier plan au départ ne compte pas. « Arrêter » coupe l'attente.
+   - **Capture** :
+     - le fil passe en pixels physiques (Per-Monitor v2) le temps de la capture ;
+     - `PrintWindow(PW_RENDERFULLCONTENT)` dessine dans une DIB à Bibo, coupée au cadre DWM (`DWMWA_EXTENDED_FRAME_BOUNDS`, sans les bordures invisibles) ; tout pixel est opaque ;
+     - **jamais `BitBlt`** (R20) : un échec donne `Noire` ;
+     - si la fenêtre est désactivée, son dernier popup actif (`GetLastActivePopup`, sur elle ou sur son propriétaire caché) est posé à sa place, coupé au cadre, s'il est **du même processus**, visible et non réduit (R11) ;
+     - l'identité (identifiant, processus, chemin de l'exécutable) est vérifiée **avant et après** la capture (R22) ; une fenêtre réduite ou cachée donne `Reduite`.
+3. **`guide.rs`** : `fenetres`, `attendre_clic`, `choisir(id)`, `regarder`.
+   - Seule une fenêtre que la dernière liste ou le dernier clic a montrée peut être choisie, et seulement si le même processus et le même programme sont encore sous son identifiant. Un terminal est refusé (`terminal`).
+   - Chaque regard revérifie la fenêtre avant la capture. Réduite : `fenetre_reduite`, sans capture. Au-delà de 60 % de noir : `capture_noire`, et l'image ne va nulle part, ni dans l'aperçu ni dans un envoi.
+   - Un nouvel objectif garde la fenêtre ; la fin du guide l'oublie, avec la liste.
+4. **Commandes** `guide_fenetres`, `guide_attendre_clic`, `guide_choisir`, `guide_regarder`, déclarées dans le manifeste d'app (`build.rs`) et dans `capabilities/guide.json` seulement (§19.6).
+
+**Preuve sur VM Windows** (job jetable sur la branche `spike/guide-capture-2a`, Windows Server 2022 et 2025, écran 1024×768 à 100 %). Les 10 scénarios `bureau_*` de `capture/win.rs` se lancent par `cargo test -- --ignored bureau --test-threads=1`. Ils utilisent le programme factice `tests/fixtures/guide/atelier.cs`, compilé sur la VM par le `csc` de Windows, et une page fictive ouverte dans Edge.
+- **Fenêtre cachée par une autre** : une fenêtre magenta toujours au-dessus la couvre (vérifié par `WindowFromPoint`). La capture n'a **aucun** pixel magenta, et les mêmes pixels qu'à découvert (à 1 % près). Même chose pour la page dans Edge, dessinée par le compositeur (à 2 % près, moins de 10 % de noir).
+- **Dialogue modal** (WinForms) : il est posé à sa place, dans son cadre, sur plus de 60 % de sa surface ; il n'apparaît pas dans la liste. Un clic dans le dialogue désigne sa fenêtre.
+- **Boîte de message du système** (`#32770`) : elle est dans la capture. Sa propre image n'est pas décalée (0 ligne noire en bord sous 2022, 1 sous 2025) : le recadrage particulier que `xcap` fait pour `#32770` n'est pas nécessaire ici.
+- **Fenêtre d'un autre programme** que celui-ci rattache à la fenêtre choisie (`GWLP_HWNDPARENT`), activée, pendant que la fenêtre choisie attend : elle n'est **jamais** dessinée.
+- **Réduite** : marquée dans la liste, `Reduite`, `fenetre_reduite` ; une fois rouverte, elle est capturée.
+- **Protégée** (`WDA_MONITOR`) : `PrintWindow` la rend entièrement noire, d'où `capture_noire`.
+- **Fermée** : `Introuvable`, `fenetre_introuvable`.
+- **Clic** : la fenêtre cliquée (`SendInput`) est rendue, choisie et capturée. Une fenêtre du processus de test, comme celles de Bibo, n'est jamais proposée.
+- **Terminal** : `cmd` sous conhost (2022, `ConsoleWindowClass`) et sous Windows Terminal (2025, `CASCADIA_HOSTING_WINDOW_CLASS`) est marqué et refusé.
+- **Fenêtre lancée en administrateur** (risque 7, « à vérifier en phase 2a ») : le processus qui capture est abaissé au niveau Medium (son jeton dupliqué), et la fenêtre reste au niveau High. `PrintWindow` échoue alors (`Noire`, puis `capture_noire`), sous 2022 comme sous 2025. La liste et l'identité marchent quand même (`PROCESS_QUERY_LIMITED_INFORMATION`). **Un logiciel lancé en administrateur passe donc en mode collage.** Les runners ne permettent pas d'abaisser le niveau par `runas /trustlevel` ni par une tâche `LIMITED`, qui restent en High (compte administrateur sans filtrage). La sonde, propre au job jetable, n'est pas dans la PR.
+- **Mutations** sur la VM : 10 protections ont été retirées une à une. Chacune fait rougir au moins un scénario `bureau_*` : `BitBlt` depuis l'écran au lieu de `PrintWindow`, le dialogue non posé, un popup de n'importe quel processus, l'identité non vérifiée avant, une fenêtre réduite capturée, les fenêtres de Bibo proposées, les bordures invisibles gardées, le dialogue au premier plan pris pour la fenêtre, les terminaux non marqués, une capture noire envoyée. Résultat, sous Server 2025 (job `mutations`, https://github.com/BrainInBox/brain-in-a-box/actions/runs/39602765747) : les 10 scénarios d'abord verts, puis 10 mutations sur 10 rouges, aucune survivante. Le code essayé est celui de la PR, plus la seule sonde de niveau (un test ignoré).
+- Le code du job jetable (workflow, mutations, sonde de niveau Medium) est gardé dans la ref locale `refs/keep/spike-guide-capture-2a` du clone du mainteneur. La branche est supprimée.
+
+**Écarts (priment sur le corps)**
+1. **Fichiers** : 5 fichiers de code (`capture/mod.rs`, `capture/win.rs`, `Cargo.toml` avec sa ligne de `Cargo.lock`, `guide.rs`, `lib.rs`), plus `build.rs` et `capabilities/guide.json` (une ligne par commande, exigées par le manifeste d'app). `shot.rs` ne change pas : il est fait depuis la phase 3.
+2. **Pas encore d'interface.** `guide.js` n'appelle pas ces commandes, et `guide_status` dit toujours `collage` / `a_venir`, sur tous les OS. Annoncer la capture automatique sous Windows sans l'écran qui va avec aurait retiré la phrase « je ne sais pas encore voir tes fenêtres » sans rien offrir à la place. La fenêtre du guide (G2 au clic, liste en secours, « Regarde » qui capture, « C'est fait » qui recapture, `capture_noire` qui mène au collage, maquette et écrans de référence) fait l'objet d'une phase à part, avant ou avec la phase 2b.
+3. **Faits par l'interface, donc pas ici** :
+   - le préremplissage du logiciel (R5) : la liste des noms connus vit dans `guide.js`, l'app rend `{app, titre}` ;
+   - la case « Ne plus me montrer l'aperçu » (R8) ;
+   - Bibo qui change de coin quand la cible tombe dessous (R3, cadre de la fenêtre).
+4. `guide_choisir(id?)` : sans identifiant, `fenetre_introuvable` en attendant le sélecteur du Mac (2b).
+5. Le dialogue n'est posé que si la fenêtre est désactivée, comme le dit G7. Une fenêtre à part non modale reste à choisir à part.
+6. Windows 11 (Server 2025) trace lui-même un liseré d'un pixel autour de chaque fenêtre. `PrintWindow` ne le dessine pas : il sort noir sur trois côtés. Il est gardé, car sans effet ni sur la part de noir ni sur Claude.
+7. **Non mesuré** : une mise à l'échelle autre que 100 % (les VM sont à 100 % ; le fil passe en Per-Monitor v2), les applications du Store (la fenêtre appartient à `ApplicationFrameHost`, dont le nom serait affiché), le même identifiant repris par un autre programme (impossible à provoquer). Ce dernier cas est couvert par les tests de `guide.rs` avec un faux écran, et par la vérification après la capture.
+8. Une fenêtre de plus de 8 000 px de côté donne `Noire`, comme une capture collée trop grande.
+
+**Vérifié** : en local (macOS), `cargo clippy --all-targets -D warnings` (aussi pour la cible Windows, sans édition de liens), `cargo test` (318 + 4 + 1 ; les scénarios `bureau_*` ne se compilent que sous Windows), `python3 -I -m unittest discover -s engine/tests` (753, sous Python 3.9 et 3.13), `test-hooks.sh` (229/229), `screens.mjs` (66 scénarios de l'installation, 11 vérifications de Codex, 52 du guide, inchangés), `actionlint`. Sur VM Windows : https://github.com/BrainInBox/brain-in-a-box/actions/runs/39602765747 (`bureau` sous Server 2022 et 2025 : 10 scénarios sur 10, et la sonde de niveau ; `mutations` sous Server 2025). CI de la PR sur `4e56212` : tests https://github.com/BrainInBox/brain-in-a-box/actions/runs/39606489630 (tous les jobs verts sur les 3 OS) et app-release https://github.com/BrainInBox/brain-in-a-box/actions/runs/39606489602 verts ; `terrain.yml` lancé sur la branche : https://github.com/BrainInBox/brain-in-a-box/actions/runs/39609083316, les 17 jobs verts, dont les six jambes `app-*` (la vraie app cliquée sur les 3 OS, avec les quatre commandes de plus dans le manifeste d'app). La suite n'ajoute que la doc.
