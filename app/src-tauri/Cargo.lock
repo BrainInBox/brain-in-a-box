@@ -162,6 +162,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tempfile",
+ "windows",
  "winreg",
 ]
 

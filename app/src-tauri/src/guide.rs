@@ -1,7 +1,8 @@
 //! The guide (docs/proposals/guide.md): the user shows Bibo a window of a program, says what they
 //! want to do in it, and their own Claude says the next action, one at a time, pointed on the image.
 //!
-//! In v1 the user pastes the capture (§G2, « Colle une capture »); the automatic capture comes later.
+//! The user pastes the capture (§G2, « Colle une capture »), or, on Windows, Bibo captures the window
+//! they clicked in (capture/, phase 2a): that window alone, checked to be still theirs before each look.
 //! Claude runs as the repair's does (claude.rs: no tool, checked line by line), with the capture on
 //! stdin and Opus (phase 0, §15). Its answer is trusted for nothing: the band's code proves it read
 //! this very image, its zone must fit the image, and every sentence goes through a filter that no
@@ -23,6 +24,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use crate::capture::{self, Fenetre, Rate, Screen, Window};
 use crate::claude::{self, ClaudeError, RateLimit, MIN_CLAUDE, REQUIRED_FLAGS};
 use crate::detect::{self, parse_version};
 use crate::shot::{self, Rgb, Rgba, Zone};
@@ -313,6 +315,21 @@ pub enum GuideError {
     ProcedureVide,
     /// The title (None) or that step holds a link, a number to call, a command or remote access.
     ProcedureRefusee { etape: Option<usize> },
+    /// No automatic capture on this system (yet): the user pastes one.
+    CaptureIndisponible,
+    /// « Regarde » before a window was chosen.
+    SansFenetre,
+    /// Closed, or its id now another program's window (R22): « Je ne trouve plus ta fenêtre ».
+    FenetreIntrouvable,
+    /// Minimized or hidden: « ouvre ta fenêtre en grand ».
+    FenetreReduite,
+    /// The window drew nothing Bibo can see (DirectX, a program run as administrator, a protected
+    /// window): no image leaves, the user pastes a capture instead.
+    CaptureNoire,
+    /// No click in a window within 15 s.
+    AucunClic,
+    /// « Je ne guide pas dans un terminal » (R6).
+    Terminal,
     Interne { message: String },
 }
 
@@ -820,25 +837,6 @@ fn context(vault: Option<&Path>, logiciel: &str, objectif: &str) -> Context {
     }
 }
 
-// ── A window, kept for the session (§G2, R22) ───────────────────────────────
-
-/// A window as the automatic capture finds it (phases 2a and 2b): an id may be given to another
-/// program's window, so the process and the program are kept with it and checked before each look.
-#[cfg_attr(not(test), allow(dead_code))] // the automatic capture checks it before each look (phases 2a, 2b)
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Window {
-    pub id: u64,
-    pub pid: u32,
-    /// The executable, or WM_CLASS.
-    pub app: String,
-}
-
-/// « Je ne trouve plus ta fenêtre » unless the window found under the id is the one chosen.
-#[cfg_attr(not(test), allow(dead_code))]
-pub fn same_window(chosen: &Window, found: Option<&Window>) -> bool {
-    found.is_some_and(|w| w == chosen)
-}
-
 // ── The session ─────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -900,6 +898,8 @@ struct Session {
     logiciel: String,
     objectif: String,
     context: Context,
+    /// The window Bibo captures (Windows): its id, process and program, checked before each look (R22).
+    fenetre: Option<Window>,
     shot: Option<Shot>,
     /// The hidden zones of each size of capture (R7): a dialog of another size does not lose those
     /// of the window, which come back with it.
@@ -938,6 +938,11 @@ struct Guide {
     next_id: AtomicU64,
     /// A file dropped on the window, until the window takes it (it does when it waits for a capture).
     staged: Mutex<Option<Rgba>>,
+    /// The windows last shown in the list, or the one clicked: the only ones that may be chosen, as
+    /// they were then (an id seen once is not enough).
+    offered: Mutex<Vec<Window>>,
+    /// « Arrêter » while Bibo waits for the click.
+    stop_waiting: AtomicBool,
 }
 
 /// Each image that may leave has its number, never given twice.
@@ -1346,7 +1351,7 @@ impl Guide {
         if let Some(sh) = shot.as_mut() {
             sh.answered = false;
         }
-        *guard = Some(Session { started: true, logiciel: logiciel.clone(), objectif, context, shot, zones: old.zones, ..self.new_session() });
+        *guard = Some(Session { started: true, logiciel: logiciel.clone(), objectif, context, fenetre: old.fenetre, shot, zones: old.zones, ..self.new_session() });
         Ok(Debut { logiciel, deja_appris })
     }
 
@@ -1395,8 +1400,85 @@ impl Guide {
     }
 
     fn end(&self) {
+        self.stop_waiting.store(true, Ordering::SeqCst);
         *lock(&self.session) = None;
         *lock(&self.staged) = None;
+        lock(&self.offered).clear();
+    }
+
+    // ── The automatic capture (G2, R4, R22) ──
+
+    /// G2's list: the windows of other programs, which become the ones that may be chosen.
+    fn list(&self, screen: &dyn Screen) -> Result<Vec<Fenetre>, GuideError> {
+        if !screen.available() {
+            return Err(GuideError::CaptureIndisponible);
+        }
+        let found = screen.windows();
+        *lock(&self.offered) = found.iter().map(|f| f.window.clone()).collect();
+        Ok(found.iter().map(Fenetre::from).collect())
+    }
+
+    /// « Clique dans la fenêtre de ton logiciel »: the window that comes to the front within 15 s,
+    /// which becomes the only one that may be chosen.
+    fn wait_click(&self, screen: &dyn Screen) -> Result<Fenetre, GuideError> {
+        if !screen.available() {
+            return Err(GuideError::CaptureIndisponible);
+        }
+        self.stop_waiting.store(false, Ordering::SeqCst);
+        let clicked = screen.clicked(&self.stop_waiting);
+        let stopped = self.stop_waiting.load(Ordering::SeqCst);
+        let clicked = clicked.filter(|_| !stopped);
+        *lock(&self.offered) = clicked.iter().map(|f| f.window.clone()).collect();
+        match clicked {
+            Some(f) => Ok(Fenetre::from(&f)),
+            None if stopped => Err(GuideError::Annule),
+            None => Err(GuideError::AucunClic),
+        }
+    }
+
+    /// « Oui » (or a line of the list): the window kept for the session, if it is still the one
+    /// offered, and not a terminal.
+    fn choose(&self, screen: &dyn Screen, id: Option<u64>) -> Result<Fenetre, GuideError> {
+        if !screen.available() {
+            return Err(GuideError::CaptureIndisponible);
+        }
+        // A window of the list or the click (the system's picker, on macOS, comes in phase 2b).
+        let id = id.ok_or(GuideError::FenetreIntrouvable)?;
+        let offered = lock(&self.offered).iter().find(|w| w.id == id).cloned().ok_or(GuideError::FenetreIntrouvable)?;
+        let now = screen.find(id).filter(|f| capture::same_window(&offered, Some(&f.window))).ok_or(GuideError::FenetreIntrouvable)?;
+        if now.terminal {
+            return Err(GuideError::Terminal);
+        }
+        let _busy = Busy::take(&self.busy)?;
+        lock(&self.session).get_or_insert_with(|| self.new_session()).fenetre = Some(offered);
+        Ok(Fenetre::from(&now))
+    }
+
+    /// « Regarde mon écran », and each look after: the chosen window captured anew, if it is still
+    /// the one chosen. A black capture never leaves: the user pastes one instead.
+    fn look(&self, screen: &dyn Screen) -> Result<Apercu, GuideError> {
+        if !screen.available() {
+            return Err(GuideError::CaptureIndisponible);
+        }
+        let chosen = lock(&self.session).as_ref().and_then(|s| s.fenetre.clone()).ok_or(GuideError::SansFenetre)?;
+        let now = screen.find(chosen.id).filter(|f| capture::same_window(&chosen, Some(&f.window))).ok_or(GuideError::FenetreIntrouvable)?;
+        if now.reduite {
+            return Err(GuideError::FenetreReduite);
+        }
+        let capture = screen.grab(&chosen).map_err(|r| match r {
+            Rate::Indisponible => GuideError::CaptureIndisponible,
+            Rate::Introuvable => GuideError::FenetreIntrouvable,
+            Rate::Reduite => GuideError::FenetreReduite,
+            Rate::Noire => GuideError::CaptureNoire,
+        })?;
+        if shot::black_share(&capture) > NOIR {
+            return Err(GuideError::CaptureNoire);
+        }
+        let _busy = Busy::take(&self.busy)?;
+        let mut guard = lock(&self.session);
+        // « Fermer le guide », or another window chosen meanwhile: this capture goes nowhere.
+        let s = guard.as_mut().filter(|s| s.fenetre.as_ref() == Some(&chosen)).ok_or(GuideError::SansFenetre)?;
+        Ok(s.take_capture(capture))
     }
 
     /// One question: the limits, the check once a session, Claude, its answer checked and applied.
@@ -1869,6 +1951,26 @@ pub fn prendre_depot() -> Result<Apercu, GuideError> {
     GUIDE.take_staged()
 }
 
+/// G2's list (Windows): other programs' windows, Bibo's left out, the minimized ones marked.
+pub fn fenetres() -> Result<Vec<Fenetre>, GuideError> {
+    GUIDE.list(&capture::System)
+}
+
+/// « Clique dans la fenêtre de ton logiciel » (Windows): the window clicked within 15 s.
+pub fn attendre_clic() -> Result<Fenetre, GuideError> {
+    GUIDE.wait_click(&capture::System)
+}
+
+/// The window chosen, from the list or the click: kept with its process and program (R22).
+pub fn choisir(id: Option<u64>) -> Result<Fenetre, GuideError> {
+    GUIDE.choose(&capture::System, id)
+}
+
+/// The chosen window, captured now: its preview, as a pasted capture's.
+pub fn regarder() -> Result<Apercu, GuideError> {
+    GUIDE.look(&capture::System)
+}
+
 pub fn cacher(zones: &[Zone]) -> Result<Apercu, GuideError> {
     GUIDE.hide(zones)
 }
@@ -1907,6 +2009,7 @@ pub fn trancher(faite: bool) -> Result<Etape, GuideError> {
 
 pub fn annuler() {
     CANCEL.store(true, Ordering::SeqCst);
+    GUIDE.stop_waiting.store(true, Ordering::SeqCst);
 }
 
 /// G10: the procedure drafted from the session's steps, for the user to read before anything is written.
@@ -2349,17 +2452,6 @@ mod tests {
         assert_eq!(context(Some(v.path()), "Odoo", "Faire une facture"), Context::default());
     }
 
-    // ── Windows (phases 2a, 2b) ──
-
-    #[test]
-    fn the_same_id_under_another_process_is_not_the_window() {
-        let chosen = Window { id: 42, pid: 100, app: "chrome.exe".into() };
-        assert!(same_window(&chosen, Some(&chosen.clone())));
-        assert!(!same_window(&chosen, Some(&Window { pid: 101, ..chosen.clone() })));
-        assert!(!same_window(&chosen, Some(&Window { app: "evil.exe".into(), ..chosen.clone() })));
-        assert!(!same_window(&chosen, None));
-    }
-
     // ── The session, with a fake Claude ──
 
     const INIT: &str = r#"{"type":"system","subtype":"init","cwd":"/tmp/x","session_id":"s","tools":["StructuredOutput"],"mcp_servers":[],"model":"claude-opus-5-5","permissionMode":"dontAsk","slash_commands":[],"apiKeySource":"none","claude_code_version":"2.1.305","output_style":"default","skills":[],"plugins":[{"name":"cc-plugin-telemetry","path":"builtin","source":"cc-plugin-telemetry@builtin"}]}"#;
@@ -2720,6 +2812,202 @@ mod tests {
         let new = png_of(800, 600, png::ColorType::Rgb, png::BitDepth::Eight, &[201; 3].repeat(800 * 600));
         assert!(!b.guide.paste(&new).unwrap().meme);
         assert_eq!(lock(&b.guide.session).as_ref().unwrap().regards, 1, "nothing sent meanwhile");
+    }
+
+    // ── The automatic capture (Windows), with a fake screen ──
+
+    /// What a capture of a window gives: a plain image of that size and colour, or why not.
+    type Drawn = Result<(u32, u32, [u8; 4]), Rate>;
+
+    /// The windows a test puts on its screen. `grab` checks nothing: the guide must.
+    #[derive(Default)]
+    struct FakeScreen {
+        off: bool,
+        windows: Mutex<Vec<capture::Found>>,
+        clicked: Mutex<Option<capture::Found>>,
+        /// « Arrêter » pressed while Bibo waits.
+        stopped_meanwhile: bool,
+        images: Mutex<HashMap<u64, Drawn>>,
+        grabs: AtomicUsize,
+    }
+
+    impl Screen for FakeScreen {
+        fn available(&self) -> bool {
+            !self.off
+        }
+        fn windows(&self) -> Vec<capture::Found> {
+            lock(&self.windows).clone()
+        }
+        fn clicked(&self, cancel: &AtomicBool) -> Option<capture::Found> {
+            if self.stopped_meanwhile {
+                cancel.store(true, Ordering::SeqCst);
+            }
+            if cancel.load(Ordering::SeqCst) {
+                return None;
+            }
+            lock(&self.clicked).clone()
+        }
+        fn find(&self, id: u64) -> Option<capture::Found> {
+            lock(&self.windows).iter().find(|f| f.window.id == id).cloned()
+        }
+        fn grab(&self, chosen: &Window) -> Result<Rgba, Rate> {
+            self.grabs.fetch_add(1, Ordering::SeqCst);
+            let (w, h, color) = lock(&self.images).get(&chosen.id).cloned().unwrap_or(Ok((900, 700, [210, 220, 230, 255])))?;
+            Ok(crate::shot::tests::rgba(w, h, color))
+        }
+    }
+
+    fn window(id: u64, pid: u32, exe: &str, titre: &str) -> capture::Found {
+        capture::Found { window: Window { id, pid, app: format!("C:\\Apps\\{exe}") }, nom: exe.trim_end_matches(".exe").into(), titre: titre.into(), reduite: false, terminal: false }
+    }
+
+    fn screen_with(windows: Vec<capture::Found>) -> FakeScreen {
+        FakeScreen { windows: Mutex::new(windows), ..FakeScreen::default() }
+    }
+
+    #[test]
+    fn the_list_says_which_windows_may_be_chosen() {
+        let b = Bench::new();
+        let long = format!("Boulangerie Martin - {}", "facture ".repeat(20));
+        let screen = screen_with(vec![window(11, 100, "odoo.exe", &long), capture::Found { reduite: true, ..window(12, 200, "excel.exe", "Budget.xlsx") }]);
+        let list = b.guide.list(&screen).unwrap();
+        assert_eq!(list.iter().map(|f| (f.id, f.app.as_str(), f.reduite)).collect::<Vec<_>>(), [(11, "odoo", false), (12, "excel", true)]);
+        assert_eq!(list[0].titre.chars().count(), 60, "the title cut");
+        // A window never shown is not chosen, whatever its id.
+        assert_eq!(b.guide.choose(&screen, Some(13)), Err(GuideError::FenetreIntrouvable));
+        assert_eq!(b.guide.choose(&screen, None), Err(GuideError::FenetreIntrouvable));
+        assert_eq!(b.guide.choose(&screen, Some(11)).unwrap().id, 11);
+        assert_eq!(lock(&b.guide.session).as_ref().unwrap().fenetre.as_ref().map(|w| w.pid), Some(100));
+    }
+
+    /// R22: an id can go to another program's window. Between the list and the choice, and before
+    /// each look, the window under it must be the one offered: same process, same program.
+    #[test]
+    fn the_window_is_checked_before_it_is_chosen_and_before_each_look() {
+        let b = Bench::new();
+        let screen = screen_with(vec![window(11, 100, "odoo.exe", "Odoo")]);
+        b.guide.list(&screen).unwrap();
+        *lock(&screen.windows) = vec![window(11, 666, "odoo.exe", "Odoo")];
+        assert_eq!(b.guide.choose(&screen, Some(11)), Err(GuideError::FenetreIntrouvable), "another process under the id");
+        *lock(&screen.windows) = vec![window(11, 100, "piege.exe", "Odoo")];
+        assert_eq!(b.guide.choose(&screen, Some(11)), Err(GuideError::FenetreIntrouvable), "another program");
+        assert!(lock(&b.guide.session).as_ref().is_none_or(|s| s.fenetre.is_none()));
+
+        *lock(&screen.windows) = vec![window(11, 100, "odoo.exe", "Odoo")];
+        b.guide.choose(&screen, Some(11)).unwrap();
+        assert_eq!(b.guide.look(&screen).unwrap().largeur, 900);
+        for now in [vec![], vec![window(11, 101, "odoo.exe", "Odoo")], vec![window(11, 100, "autre.exe", "Odoo")]] {
+            *lock(&screen.windows) = now;
+            let grabs = screen.grabs.load(Ordering::SeqCst);
+            assert_eq!(b.guide.look(&screen), Err(GuideError::FenetreIntrouvable));
+            assert_eq!(screen.grabs.load(Ordering::SeqCst), grabs, "nothing captured");
+        }
+        // The system's own check, after the capture too, says the same.
+        *lock(&screen.windows) = vec![window(11, 100, "odoo.exe", "Odoo")];
+        lock(&screen.images).insert(11, Err(Rate::Introuvable));
+        assert_eq!(b.guide.look(&screen), Err(GuideError::FenetreIntrouvable));
+    }
+
+    #[test]
+    fn a_minimized_window_or_a_black_capture_never_leaves() {
+        let b = Bench::new();
+        let screen = screen_with(vec![window(11, 100, "odoo.exe", "Odoo")]);
+        b.guide.list(&screen).unwrap();
+        b.guide.choose(&screen, Some(11)).unwrap();
+        let first = b.guide.look(&screen).unwrap();
+
+        *lock(&screen.windows) = vec![capture::Found { reduite: true, ..window(11, 100, "odoo.exe", "Odoo") }];
+        let grabs = screen.grabs.load(Ordering::SeqCst);
+        assert_eq!(b.guide.look(&screen), Err(GuideError::FenetreReduite));
+        assert_eq!(screen.grabs.load(Ordering::SeqCst), grabs, "a minimized window is not captured");
+
+        *lock(&screen.windows) = vec![window(11, 100, "odoo.exe", "Odoo")];
+        for (got, said) in [
+            (Err(Rate::Reduite), GuideError::FenetreReduite),
+            (Err(Rate::Noire), GuideError::CaptureNoire),
+            (Err(Rate::Indisponible), GuideError::CaptureIndisponible),
+            // Drawn, but black: DirectX, a program run as administrator, a protected window.
+            (Ok((900, 700, [0, 0, 0, 255])), GuideError::CaptureNoire),
+            (Ok((900, 700, [3, 5, 2, 255])), GuideError::CaptureNoire),
+        ] {
+            lock(&screen.images).insert(11, got);
+            assert_eq!(b.guide.look(&screen), Err(said));
+            assert_eq!(b.shown(), Some(first.capture), "the capture before stays the one shown");
+        }
+        // A dark theme is not black.
+        lock(&screen.images).insert(11, Ok((900, 700, [30, 30, 30, 255])));
+        assert!(!b.guide.look(&screen).unwrap().noir);
+    }
+
+    #[test]
+    fn a_terminal_is_not_guided() {
+        let b = Bench::new();
+        let screen = screen_with(vec![capture::Found { terminal: true, ..window(5, 9, "cmd.exe", "Invite de commandes") }]);
+        assert!(b.guide.list(&screen).unwrap()[0].terminal);
+        assert_eq!(b.guide.choose(&screen, Some(5)), Err(GuideError::Terminal));
+        assert_eq!(b.guide.look(&screen), Err(GuideError::SansFenetre));
+    }
+
+    #[test]
+    fn the_click_waits_for_a_window_and_stops_on_demand() {
+        let b = Bench::new();
+        let odoo = window(11, 100, "odoo.exe", "Odoo");
+        let screen = FakeScreen { clicked: Mutex::new(Some(odoo.clone())), ..screen_with(vec![odoo.clone()]) };
+        assert_eq!(b.guide.wait_click(&screen).unwrap().id, 11);
+        assert_eq!(b.guide.choose(&screen, Some(11)).unwrap().app, "odoo");
+
+        *lock(&screen.clicked) = None;
+        assert_eq!(b.guide.wait_click(&screen), Err(GuideError::AucunClic));
+        assert_eq!(b.guide.choose(&screen, Some(11)), Err(GuideError::FenetreIntrouvable), "only the window clicked last may be chosen");
+
+        // « Arrêter » before a click: set again at each wait, whatever stopped the last one.
+        b.guide.stop_waiting.store(true, Ordering::SeqCst);
+        *lock(&screen.clicked) = Some(odoo.clone());
+        assert_eq!(b.guide.wait_click(&screen).unwrap().id, 11);
+        let stopped = FakeScreen { stopped_meanwhile: true, ..FakeScreen { clicked: Mutex::new(Some(odoo.clone())), ..screen_with(vec![odoo]) } };
+        assert_eq!(b.guide.wait_click(&stopped), Err(GuideError::Annule));
+    }
+
+    #[test]
+    fn no_automatic_capture_here_means_paste_mode() {
+        let b = Bench::new();
+        let screen = FakeScreen { off: true, ..screen_with(vec![window(11, 100, "odoo.exe", "Odoo")]) };
+        assert_eq!(b.guide.list(&screen), Err(GuideError::CaptureIndisponible));
+        assert_eq!(b.guide.wait_click(&screen), Err(GuideError::CaptureIndisponible));
+        assert_eq!(b.guide.choose(&screen, Some(11)), Err(GuideError::CaptureIndisponible));
+        assert_eq!(b.guide.look(&screen), Err(GuideError::CaptureIndisponible));
+        assert_eq!(b.paste(800, 600).largeur, 800, "the paste still works");
+    }
+
+    /// The window chosen, looked at for each question: the image Claude gets is that capture, a new
+    /// one for « C'est fait ». A new objective keeps the window; the end of the guide forgets it.
+    #[test]
+    fn a_session_with_the_window_captured() {
+        let b = Bench::new();
+        let screen = screen_with(vec![window(11, 100, "odoo.exe", "Odoo")]);
+        assert_eq!(b.guide.look(&screen), Err(GuideError::SansFenetre));
+        b.guide.list(&screen).unwrap();
+        b.guide.choose(&screen, Some(11)).unwrap();
+        b.guide.start(None, "Odoo", "Faire une facture").unwrap();
+        let a = b.guide.look(&screen).unwrap();
+        assert_eq!((a.largeur, a.hauteur, a.noir, a.meme), (900, 700, false, false));
+        b.answers(json!({}));
+        b.send(Demande::Debut).unwrap();
+        assert_eq!(&lock(&b.seen).images[0].px[..3], [210, 220, 230], "the window's pixels");
+
+        // « C'est fait »: the window again, a new capture.
+        lock(&screen.images).insert(11, Ok((900, 700, [10, 200, 30, 255])));
+        let again = b.guide.look(&screen).unwrap();
+        assert_ne!(again.capture, a.capture);
+        b.answers(json!({"precedente": "faite"}));
+        assert_eq!(b.send(Demande::Fait).unwrap().numero, 2);
+        assert_eq!(&lock(&b.seen).images[1].px[..3], [10, 200, 30]);
+
+        b.guide.start(None, "Odoo", "Changer mon logo").unwrap();
+        assert!(b.guide.look(&screen).is_ok(), "a new objective keeps the window");
+        b.guide.end();
+        assert_eq!(b.guide.look(&screen), Err(GuideError::SansFenetre));
+        assert_eq!(b.guide.choose(&screen, Some(11)), Err(GuideError::FenetreIntrouvable), "the list is forgotten too");
     }
 
     #[test]

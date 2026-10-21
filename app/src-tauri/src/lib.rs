@@ -1,5 +1,6 @@
 mod advice;
 mod agents;
+mod capture;
 mod claude;
 mod codex;
 mod config_guard;
@@ -422,6 +423,30 @@ async fn guide_prendre_depot() -> Result<guide::Apercu, guide::GuideError> {
     guiding(guide::prendre_depot).await
 }
 
+/// G2's list (Windows): other programs' windows, Bibo's left out, the minimized ones marked.
+#[tauri::command]
+async fn guide_fenetres() -> Result<Vec<capture::Fenetre>, guide::GuideError> {
+    guiding(guide::fenetres).await
+}
+
+/// « Clique dans la fenêtre de ton logiciel » (Windows): the window clicked within 15 s (R4).
+#[tauri::command]
+async fn guide_attendre_clic() -> Result<capture::Fenetre, guide::GuideError> {
+    guiding(guide::attendre_clic).await
+}
+
+/// The window from the list or the click, kept with its process and program (R22).
+#[tauri::command]
+async fn guide_choisir(id: Option<u64>) -> Result<capture::Fenetre, guide::GuideError> {
+    guiding(move || guide::choisir(id)).await
+}
+
+/// « Regarde mon écran »: the chosen window captured now, its preview as a pasted capture's.
+#[tauri::command]
+async fn guide_regarder() -> Result<guide::Apercu, guide::GuideError> {
+    guiding(guide::regarder).await
+}
+
 /// Every zone to hide, drawn on the preview: the new preview.
 #[tauri::command]
 async fn guide_cacher(zones: Vec<shot::Zone>) -> Result<guide::Apercu, guide::GuideError> {
@@ -642,6 +667,10 @@ pub fn run() {
             guide_commencer,
             guide_coller,
             guide_prendre_depot,
+            guide_fenetres,
+            guide_attendre_clic,
+            guide_choisir,
+            guide_regarder,
             guide_cacher,
             guide_envoi_texte,
             guide_envoyer,
