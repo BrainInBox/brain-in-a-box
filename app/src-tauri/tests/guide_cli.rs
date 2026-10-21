@@ -103,14 +103,14 @@ fn run(scenario: &str) -> Ran {
     }
     fs::set_permissions(&scratch, fs::Permissions::from_mode(0o700)).unwrap();
 
-    // A brain: the program's line of stack.md holds an address, a login and numbers; a saved
+    // A brain: the program's lines of stack.md, one with an address and numbers, one with a login; a saved
     // procedure holds a line the filter blocks.
     let vault = home.join("Documents/Brain");
     fs::create_dir_all(vault.join("Profile")).unwrap();
     fs::create_dir_all(vault.join("Guides")).unwrap();
     fs::write(
         vault.join("Profile/stack.md"),
-        "# Stack\n## My tools / access\n- Odoo : https://boulangerie.odoo.com, login jo@boulangerie.fr, client 123456\n- Sage : compta\n",
+        "# Stack\n## My tools / access\n- Odoo : https://boulangerie.odoo.com, contact jo@boulangerie.fr, client 123456\n- Odoo : login comptable, mot de passe Tournesol\n- Sage : compta\n",
     )
     .unwrap();
     fs::write(
@@ -213,8 +213,8 @@ fn a_look_is_answered_on_the_image_sent_and_only_counters_stay() {
     let text = seen["text"].as_str().unwrap();
     assert!(text.starts_with(&format!("<capture largeur=\"1280\" hauteur=\"800\" logiciel=\"Odoo\"/>\n<demande>debut</demande>\n<objectif>{OBJECTIF}</objectif>")), "{text}");
     assert!(text.contains("<procedure_connue>1. Clique sur « Facturation ».\n3. Clique sur « Nouveau ».</procedure_connue>"), "{text}");
-    assert!(text.contains("<cerveau>- Odoo : *** login *** client ***</cerveau>"), "{text}");
-    for leak in ["boulangerie.odoo.com", "jo@", "123456", "Win+R", "Sage"] {
+    assert!(text.contains("<cerveau>- Odoo : *** contact *** client ***</cerveau>"), "{text}");
+    for leak in ["boulangerie.odoo.com", "jo@", "123456", "Win+R", "Sage", "Tournesol", "comptable"] {
         assert!(!text.contains(leak), "{leak}: {text}");
     }
 

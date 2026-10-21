@@ -665,6 +665,13 @@ struct Procedure {
 static URL: LazyLock<Option<Regex>> = LazyLock::new(|| Regex::new(r"(?i)\b[a-z][a-z0-9+.-]*://\S*|\bwww\.\S*").ok());
 static AT: LazyLock<Option<Regex>> = LazyLock::new(|| Regex::new(r"\S*@\S*").ok());
 static DOMAIN: LazyLock<Option<Regex>> = LazyLock::new(|| Regex::new(&format!(r"(?i)[\p{{L}}\p{{N}}_.-]+\.(?:{DOMAINS})\b\S*")).ok());
+/// A line of « My tools / access » that names an access: it stays home, whatever else it says.
+static ACCESS: LazyLock<Option<Regex>> = LazyLock::new(|| {
+    Regex::new(r"\b(?:identifiants?|logins?|users?|username|utilisateurs?|comptes?|mots? de passe|mdp|pass|passe|passwords?|pwd|codes?|pin|cles?|keys?|tokens?|jetons?|secrets?|api)\b").ok()
+});
+/// Any dotted name (an internal host, whatever its ending), and what follows an `=`.
+static HOST: LazyLock<Option<Regex>> = LazyLock::new(|| Regex::new(r"[\p{L}\p{N}_-]+(?:\.[\p{L}\p{N}_-]+)+").ok());
+static SETTING: LazyLock<Option<Regex>> = LazyLock::new(|| Regex::new(r"=\s*\S+").ok());
 static NUMBERS: LazyLock<Option<Regex>> = LazyLock::new(|| Regex::new(r"\d(?:[\s./:-]?\d){2,}").ok());
 static STEP_LINE: LazyLock<Option<Regex>> = LazyLock::new(|| Regex::new(r"^\s*(\d{1,2})[.)]\s+(.+)$").ok());
 
@@ -677,8 +684,9 @@ fn read_note(path: &Path) -> Option<String> {
     fs::read_to_string(path).ok()
 }
 
-/// Profile/stack.md's « My tools / access » lines that name the program: links, addresses and
-/// runs of digits masked (that section may hold accesses), 400 characters at most.
+/// Profile/stack.md's « My tools / access » lines that name the program, but none that names an
+/// access (a login, a password, a code, a key: §4.7, nothing of it goes to Anthropic); links,
+/// addresses, hosts, settings and runs of digits masked; 400 characters at most.
 fn stack_lines(stack: &str, logiciel: &str) -> String {
     let name = folded(logiciel);
     if name.chars().count() < 2 {
@@ -691,10 +699,14 @@ fn stack_lines(stack: &str, logiciel: &str) -> String {
             inside = folded(line.trim_start_matches('#')).starts_with("my tools");
             continue;
         }
-        if inside && folded(line).contains(&name) {
+        let f = folded(line);
+        if inside && f.contains(&name) && !found(&ACCESS, &f) {
             let mut l = line.trim().to_string();
-            for re in [&*URL, &*AT, &*DOMAIN, &*NUMBERS].into_iter().flatten() {
+            for re in [&*URL, &*AT, &*HOST, &*NUMBERS].into_iter().flatten() {
                 l = re.replace_all(&l, "***").into_owned();
+            }
+            if let Some(re) = &*SETTING {
+                l = re.replace_all(&l, "=***").into_owned();
             }
             kept.push(one_line(&l));
         }
@@ -2146,7 +2158,7 @@ mod tests {
     // ── The brain's context ──
 
     const STACK: &str = "# Stack\n## Machine\n- Odoo sur mon Mac\n## My tools / access\n\
-        - Odoo : https://boulangerie.odoo.com, login jo@boulangerie.fr, client 123456, serveur 10.0.0.12\n\
+        - Odoo : https://boulangerie.odoo.com, contact jo@boulangerie.fr, client 123456, serveur 10.0.0.12\n\
         - Sage : compta, licence 4412\n- odoo.sh pour la préprod\n## Secrets rules\n- Odoo jamais en clair\n";
 
     #[test]
@@ -2159,6 +2171,24 @@ mod tests {
         assert!(s.contains("Odoo") && s.contains("***"));
         assert_eq!(stack_lines(STACK, ""), "");
         assert!(stack_lines(&format!("## My tools\n{}", "- Odoo une ligne longue\n".repeat(40)), "Odoo").chars().count() <= STACK_MAX);
+    }
+
+    /// « My tools / access » holds accesses: a line that names one never leaves, whatever the words,
+    /// and an internal host is masked whatever its ending (§4.7).
+    #[test]
+    fn no_access_of_my_tools_goes_to_claude() {
+        let stack = "## My tools / access\n\
+            - Odoo : serveur odoo.interne.lan, identifiant jdupont, mot de passe Hibou-Rouge\n\
+            - Odoo admin: login comptable / mdp: Tournesol!\n\
+            - Odoo : user=compta pwd=Soleil\n\
+            - Odoo : compte jo, code PIN 4421\n\
+            - Odoo : jeton d'API dans le trousseau\n\
+            - Odoo : la compta, sur odoo.interne.lan et intranet.boulangerie.local, config=prod\n";
+        let s = stack_lines(stack, "Odoo");
+        for leak in ["jdupont", "Hibou", "Tournesol", "comptable", "Soleil", "PIN", "jeton", "odoo.interne", "intranet", "boulangerie", "prod"] {
+            assert!(!s.contains(leak), "{leak} in {s}");
+        }
+        assert_eq!(s, "- Odoo : la compta, sur *** et ***, config=***");
     }
 
     fn vault_with(notes: &[(&str, &str)]) -> tempfile::TempDir {
