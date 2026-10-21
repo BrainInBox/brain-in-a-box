@@ -1,5 +1,6 @@
 mod advice;
 mod agents;
+mod claude;
 mod codex;
 mod config_guard;
 mod detect;
