@@ -153,6 +153,7 @@ name = "brain-in-a-box"
 version = "0.1.0"
 dependencies = [
  "plist",
+ "png 0.18.1",
  "regex",
  "rfd",
  "serde",

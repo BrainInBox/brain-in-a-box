@@ -1,3 +1,60 @@
+// The app's commands, in an app manifest: without one, Tauri checks no capability for them, and any
+// window could call any command. With it, each window gets only what its capability allows
+// (capabilities/*.json): the guide's window, which shows Claude's words, none of the installer's.
+const COMMANDS: &[&str] = &[
+    "diagnose_machine",
+    "run_step",
+    "check_voyage_key",
+    "claude_logged_in",
+    "agents_offer",
+    "choose_agents",
+    "codex_login",
+    "repair_status",
+    "repair_preview",
+    "repair_analyze",
+    "repair_cancel",
+    "repair_apply",
+    "repair_undo",
+    "repair_report",
+    "open_claude_login",
+    "open_codex_login",
+    "start_onboarding",
+    "open_vault",
+    "open_link",
+    "open_settings",
+    "open_repair_terminal",
+    "machine_advice",
+    "import_check",
+    "import_phrase",
+    "import_pick",
+    "import_paste",
+    "import_preview",
+    "import_run",
+    "import_cancel",
+    "import_forget",
+    "import_open_note",
+    "open_claude_update",
+    "guide_open",
+    "guide_offert",
+    "guide_fermer",
+    "guide_epingler",
+    "guide_taille",
+    "guide_status",
+    "guide_compris",
+    "guide_commencer",
+    "guide_coller",
+    "guide_prendre_depot",
+    "guide_cacher",
+    "guide_envoi_texte",
+    "guide_envoyer",
+    "guide_trancher",
+    "guide_annuler",
+    "guide_fin",
+    "guide_brouillon",
+    "guide_enregistrer",
+];
+
 fn main() {
-    tauri_build::build()
+    let manifest = tauri_build::AppManifest::new().commands(COMMANDS);
+    tauri_build::try_build(tauri_build::Attributes::new().app_manifest(manifest)).expect("tauri-build");
 }

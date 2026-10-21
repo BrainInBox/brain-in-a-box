@@ -4,23 +4,28 @@
 skill, no CLAUDE.md, none of the user's settings files, in a fresh private
 folder, with a short allow-list for environment: whatever the text it reads
 says, all it can do is answer. Its stream is checked line by line against that
-(fail closed: no valid start-up line, no answer), and a claude logged in any
+(fail closed: no valid start-up line, no answer; with images, a model other than the
+one that started, or a refusal of the model, which Claude Code would have another
+model answer in its place, ends the run), and a claude logged in any
 other way than a claude.ai subscription, or whose settings send it to a gateway
 or a cloud provider, is never started, since an API key would be billed. A subscription reaches it two ways: the login `claude auth
 login` stores, or on a machine without a browser the token `claude setup-token`
 prints, in CLAUDE_CODE_OAUTH_TOKEN or, for the scheduled jobs, in
 ~/.brain-in-a-box/claude-oauth-token (mode 600), read only when Claude is asked:
 the one credential the child is given, never in the jobs' own environment, its
-value never written anywhere. Same contract as the Mac app's repair
-(app/src-tauri/src/repair.rs), which knows only the first.
+value never written anywhere. Same contract as the app's copy (app/src-tauri/src/claude.rs, which
+the repair asks through), which knows only the first; the test the_app_and_the_launcher_send_alike
+checks both send the same argv and stdin.
 
     answer = run(prompt, schema, system_prompt, budget_usd=1.0, timeout=600)
     answer.output  # the JSON object Claude returned, already parsed
+    run(prompt, ..., images=[png])   # PNG images it sees first (Bibo's guide's nightly check)
     check()        # the same checks of this claude, without asking it anything
 
 Used by daily-reflection.py and by the night check's review (_controle_judge.py).
 Not a hook: installed next to them, never registered in settings.json.
 """
+import base64
 import json
 import os
 import queue
@@ -42,6 +47,8 @@ WINDOWS = os.name == "nt"
 MIN_CLAUDE = (2, 1, 296)
 REQUIRED_FLAGS = ("--restricted", "--safe-mode", "--tools", "--permission-prompts", "--json-schema",
                   "--max-budget-usd", "--no-session-persistence", "--strict-mcp-config")
+# A question with images is read as stream-json.
+IMAGE_FLAGS = REQUIRED_FLAGS + ("--input-format",)
 PROBE_TIMEOUT = 60
 # One stream line, and the whole stream: a result line carries the full answer.
 LINE_CAP = 4_000_000
@@ -72,7 +79,8 @@ WINDOWS_VARS = ("USERPROFILE", "HOMEDRIVE", "HOMEPATH", "APPDATA", "LOCALAPPDATA
                 # Where Claude Code looks for Git Bash, which it needs to start on Windows.
                 "CLAUDE_CODE_GIT_BASH_PATH", "ProgramFiles", "ProgramW6432")
 
-Answer = namedtuple("Answer", "output version cost_usd num_turns")
+# rate_limit: what Claude Code said of the subscription's limits (status, five_hour, seven_day), or None.
+Answer = namedtuple("Answer", "output version cost_usd num_turns rate_limit", defaults=(None,))
 
 
 def _brief(value, cap=200):
@@ -86,7 +94,8 @@ def _label(value):
 
 
 class HeadlessError(Exception):
-    """kind: start, unsupported, auth, init, timeout, quota, api, invalid.
+    """kind: start, unsupported, auth, init, timeout, quota, api, invalid, refused (the model's
+    safeguards; its detail, their category).
     reason, for the checks of the CLI only: version or flags (unsupported),
     logged_out or billed (auth)."""
 
@@ -114,9 +123,11 @@ def find_claude():
     return [found] if found and (not WINDOWS or found.lower().endswith(".exe")) else None
 
 
-def base_argv(schema, system_prompt, *, budget_usd, max_turns=3, model=None, effort=None):
+def base_argv(schema, system_prompt, *, budget_usd, max_turns=3, model=None, effort=None, with_images=False):
     """claude's options, without the program itself. The prompt goes through stdin, after every
-    option: --disallowedTools takes several values and would swallow a prompt placed last."""
+    option: --disallowedTools takes several values and would swallow a prompt placed last.
+    with_images: the question is a line of stream-json (stdin_text), said last. The same argv as the
+    app's (claude.rs, argv), byte for byte: the schema compact, as json.dumps writes it."""
     a = ["-p", "--restricted", "--safe-mode", "--tools", "",
          "--disallowedTools", "Bash", "Edit", "Write", "NotebookEdit", "WebFetch", "WebSearch", "Agent", "Task", "Skill",
          "--strict-mcp-config", "--disable-slash-commands", "--no-chrome",
@@ -127,8 +138,22 @@ def base_argv(schema, system_prompt, *, budget_usd, max_turns=3, model=None, eff
         a += ["--model", model]
     if effort:
         a += ["--effort", effort]
-    return a + ["--json-schema", json.dumps(schema, separators=(",", ":")), "--append-system-prompt", system_prompt,
-                "--output-format", "stream-json", "--verbose"]
+    a += ["--json-schema", json.dumps(schema, separators=(",", ":")), "--append-system-prompt", system_prompt,
+          "--output-format", "stream-json", "--verbose"]
+    return a + (["--input-format", "stream-json"] if with_images else [])
+
+
+def stdin_text(prompt, images=None):
+    """What claude reads on stdin: the prompt as is or, with images (PNG, bytes), one line of
+    stream-json, one user message: each image, then the prompt. Compact, the text unescaped but for
+    what JSON requires: the same bytes as the app's (claude.rs, stdin)."""
+    if not images:
+        return prompt
+    content = [{"type": "image", "source": {"type": "base64", "media_type": "image/png",
+                                            "data": base64.b64encode(png).decode("ascii")}} for png in images]
+    content.append({"type": "text", "text": prompt})
+    return json.dumps({"type": "user", "message": {"role": "user", "content": content}},
+                      ensure_ascii=False, separators=(",", ":")) + "\n"
 
 
 def child_path(program, git=None):
@@ -349,10 +374,10 @@ def parse_version(text):
     return tuple(int(x) for x in m.groups()) if m else None
 
 
-def missing_flags(help_text):
-    """The REQUIRED_FLAGS that `claude --help` does not list."""
+def missing_flags(help_text, flags=REQUIRED_FLAGS):
+    """The flags (REQUIRED_FLAGS) that `claude --help` does not list."""
     words = set(re.split(r"[^A-Za-z0-9-]+", help_text or ""))
-    return [f for f in REQUIRED_FLAGS if f not in words]
+    return [f for f in flags if f not in words]
 
 
 def auth_method(status):
@@ -407,9 +432,9 @@ def rerouted():
     return sorted(found)
 
 
-def check_cli(argv0, env, cwd):
-    """Version, flags and login of this claude, checked before any question is asked.
-    Returns the version; raises HeadlessError (unsupported, auth, start)."""
+def check_cli(argv0, env, cwd, flags=REQUIRED_FLAGS):
+    """Version, flags (REQUIRED_FLAGS, IMAGE_FLAGS) and login of this claude, checked before any
+    question is asked. Returns the version; raises HeadlessError (unsupported, auth, start)."""
     _, out, err = _capture(argv0 + ["--version"], env, cwd)
     version = parse_version(out)
     if version is None:
@@ -418,7 +443,7 @@ def check_cli(argv0, env, cwd):
         raise HeadlessError("unsupported", f"Claude Code {'.'.join(map(str, version))} is older than "
                                            f"{'.'.join(map(str, MIN_CLAUDE))}: run `claude update`", "version")
     _, out, _ = _capture(argv0 + ["--help"], env, cwd)
-    missing = missing_flags(out)
+    missing = missing_flags(out, flags)
     if missing:
         raise HeadlessError("unsupported", "this claude lacks " + ", ".join(missing), "flags")
     elsewhere = rerouted()
@@ -506,11 +531,43 @@ def parse_result(result, api_errors):
     raise HeadlessError("invalid", _label(subtype))
 
 
-class Watch:
-    """Claude's stream, line by line: the start-up check first, then errors and the result."""
+def rate_limit(info):
+    """The status and the 5-hour and 7-day windows of a rate_limit_event, when they have the shape
+    Claude Code gives them; None otherwise."""
+    if not isinstance(info, dict) or not isinstance(info.get("status"), str):
+        return None
+    windows = info.get("unifiedWindows") if isinstance(info.get("unifiedWindows"), dict) else {}
 
-    def __init__(self, model=None):
+    def window(w):
+        if not isinstance(w, dict):
+            return None
+        used, resets = w.get("utilization"), w.get("resetsAt")
+        if isinstance(used, bool) or not isinstance(used, (int, float)) or isinstance(resets, bool) \
+                or not isinstance(resets, int) or resets < 0:
+            return None
+        return {"utilization": float(used), "resetsAt": resets}
+    return {"status": _label(info["status"]), "five_hour": window(windows.get("five_hour")),
+            "seven_day": window(windows.get("seven_day"))}
+
+
+def _same_model(model_id):
+    """A model's id without what may vary for the same model: a context's suffix ([1m]), a date."""
+    base = str(model_id).split("[")[0]
+    head, _, date = base.rpartition("-")
+    return head if head and len(date) == 8 and date.isdigit() else base
+
+
+class Watch:
+    """Claude's stream, line by line: the start-up check first, then errors and the result.
+
+    strict, for a question with images (Bibo's guide and its nightly check): a refusal of the model
+    ends the run, and the model that answers and counts must be the very one the start-up line named.
+    Without, what Claude Code does on a refusal stays as it was before the guide: the reflection, the
+    import of a memory and the judge take the answer (docs/proposals/guide.md, §19)."""
+
+    def __init__(self, model=None, strict=False):
         self.model, self.init, self.version, self.result, self.api_errors = model, None, None, None, []
+        self.refused, self.rate_limit, self.strict, self.started_as = None, None, strict, None
 
     def line(self, line):
         """False once the run must stop: Claude did not start, or did not behave, as required."""
@@ -521,6 +578,10 @@ class Watch:
         if not isinstance(v, dict):
             return self.ok()
         kind = v.get("type")
+        if self.strict and kind == "system" and v.get("subtype") == "model_refusal_fallback":
+            # The model refused; Claude Code would have another one answer in its place, unasked.
+            self.refused = HeadlessError("refused", _label(v.get("api_refusal_category") or "?"))
+            return False
         if self.init is None:
             if kind != "system":
                 self.init = HeadlessError("init", f"{kind!r} before the start-up line")
@@ -528,6 +589,7 @@ class Watch:
                 try:
                     self.version = check_init(v, self.model)
                     self.init = True
+                    self.started_as = v.get("model") if isinstance(v.get("model"), str) else None
                 except HeadlessError as e:
                     self.init = e
             # Other system events may come first (ui_invalidate when logged out).
@@ -536,6 +598,8 @@ class Watch:
             # A second start-up line must be as clean as the first.
             try:
                 check_init(v, self.model)
+                if self.other_model(v.get("model")):
+                    self.init = HeadlessError("init", f"model {self.other_model(v.get('model'))}")
             except HeadlessError as e:
                 self.init = e
         elif kind == "assistant":
@@ -545,15 +609,41 @@ class Watch:
             name = foreign_tool(v)
             if name:
                 self.init = HeadlessError("init", f"tool used: {name}")
+            message = v.get("message") if isinstance(v.get("message"), dict) else {}
+            other = self.other_model(message.get("model"))
+            if other:
+                self.init = HeadlessError("init", f"model used: {other}")
         elif kind == "result":
+            name = self.foreign_model(v)
+            if name:
+                self.init = HeadlessError("init", f"model used: {name}")
             self.result = v
+        elif kind == "rate_limit_event":
+            self.rate_limit = rate_limit(v.get("rate_limit_info"))
         return self.ok()
 
+    def foreign_model(self, result):
+        """With images, a model the usage counts that is not the one that started (another one
+        answered, or part of it), as a label; None otherwise, as before the guide."""
+        usage = result.get("modelUsage")
+        if not self.strict or not isinstance(usage, dict):
+            return None
+        return next((self.other_model(k) for k in usage if self.other_model(k)), None)
+
+    def other_model(self, model):
+        """With images, a model other than the one that started, as a label (Claude Code's own
+        messages, <synthetic>, aside); None otherwise."""
+        if not self.strict or not self.started_as or not isinstance(model, str) or model == "<synthetic>":
+            return None
+        return _label(model) if _same_model(model) != _same_model(self.started_as) else None
+
     def ok(self):
-        return not isinstance(self.init, HeadlessError)
+        return self.refused is None and not isinstance(self.init, HeadlessError)
 
     def conclude(self, timed_out, stderr_tail=()):
         """The answer, or HeadlessError. Fail closed: no valid start-up line, no answer."""
+        if self.refused is not None:
+            raise self.refused
         if isinstance(self.init, HeadlessError):
             raise self.init
         if timed_out:
@@ -563,7 +653,8 @@ class Watch:
         if self.result is None:  # started, then died: the connection, most of the time
             raise HeadlessError("api", "no result" + (f" ({_brief(stderr_tail[-1])})" if stderr_tail else ""))
         out = parse_result(self.result, self.api_errors)
-        return Answer(out, self.version, self.result.get("total_cost_usd"), self.result.get("num_turns"))
+        return Answer(out, self.version, self.result.get("total_cost_usd"), self.result.get("num_turns"),
+                      self.rate_limit)
 
 
 def _claude(command):
@@ -600,14 +691,16 @@ def check(command=None, *, work_root=None, git=None):
 
 
 def run(prompt, schema, system_prompt, *, budget_usd, timeout, max_turns=3, model=None, effort=None, command=None,
-        work_root=None, git=None):
+        work_root=None, git=None, images=None):
     """One isolated question to Claude Code. Returns an Answer, or raises HeadlessError.
-    command: argv that stands for claude (tests); default, the user's claude."""
+    command: argv that stands for claude (tests); default, the user's claude.
+    images: PNG images (bytes) Claude sees before the prompt, in memory only (stdin_text); then
+    this claude must read stream-json. None or empty: the question as it always was."""
     argv0 = _claude(command)
     with _cage(argv0, work_root, git) as (work, env):
-        check_cli(argv0, env, work)
-        watch = Watch(model)
+        check_cli(argv0, env, work, IMAGE_FLAGS if images else REQUIRED_FLAGS)
+        watch = Watch(model, strict=bool(images))
         args = argv0 + base_argv(schema, system_prompt, budget_usd=budget_usd, max_turns=max_turns,
-                                 model=model, effort=effort)
-        _, timed_out, err = supervise(args, env, work, prompt, timeout, watch.line)
+                                 model=model, effort=effort, with_images=bool(images))
+        _, timed_out, err = supervise(args, env, work, stdin_text(prompt, images), timeout, watch.line)
         return watch.conclude(timed_out, err)

@@ -9,9 +9,14 @@ reflection passes on):
     answers/<n>.json, scenarios/<n>   the same for the n-th `-p` run only (the import's requests)
     auth         authMethod `claude auth status` reports (default claude.ai)
     version      what `claude --version` prints (default 2.1.296 (Claude Code))
-Each `-p` run appends to calls and records argv.json, env.json, cwd.json and prompt.txt
-(and prompts/<n>.txt).
+    flags        the options `claude --help` lists (default FLAGS)
+Each `-p` run appends to calls and records argv.json, env.json, cwd.json, prompt.txt (and
+prompts/<n>.txt) and stdin.json (sha256 and size of what it read). With --input-format
+stream-json, stdin is user messages, one per line: prompt.txt is their text, images.json says
+each image (media_type, sha256, size). No image is ever written.
 """
+import base64
+import hashlib
 import json
 import os
 import stat
@@ -20,7 +25,8 @@ import sys
 import time
 
 FLAGS = ("--restricted --safe-mode --tools --permission-prompts --json-schema --max-budget-usd "
-         "--no-session-persistence --strict-mcp-config --disallowedTools --settings --append-system-prompt")
+         "--no-session-persistence --strict-mcp-config --disallowedTools --settings --append-system-prompt "
+         "--input-format")
 FAKE = os.path.join(os.environ.get("HOME", ""), ".claude", "fake")
 
 
@@ -48,19 +54,42 @@ def emit(event):
     out(json.dumps(event, ensure_ascii=False))
 
 
+def read_messages(stream):
+    """The user messages of stream-json input, one per line (split on newlines only): their text,
+    and what images.json says of their images. Anything else stops the fake, as Claude Code would refuse it."""
+    texts, images = [], []
+    for line in stream.split("\n"):
+        if not line:
+            continue
+        message = json.loads(line)
+        if message["type"] != "user" or message["message"]["role"] != "user":
+            raise ValueError("not a user message: %r" % message["type"])
+        for block in message["message"]["content"]:
+            if block["type"] == "image":
+                data = base64.b64decode(block["source"]["data"], validate=True)
+                images.append({"media_type": block["source"]["media_type"],
+                               "sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data)})
+            elif block["type"] == "text":
+                texts.append(block["text"])
+            else:
+                raise ValueError("a block of type %r" % block["type"])
+    return "\n".join(texts), images
+
+
 def main(args):
     if args == ["--version"]:
         print(setting("version", "2.1.296 (Claude Code)"))
         return 0
     if args == ["--help"]:
-        print("Usage: claude [options]\n" + FLAGS)
+        print("Usage: claude [options]\n" + setting("flags", FLAGS))
         return 0
     if args[:2] == ["auth", "status"]:
         print(json.dumps({"loggedIn": True, "authMethod": setting("auth", "claude.ai")}))
         return 0
     if "-p" not in args:
         return 2
-    prompt = sys.stdin.buffer.read().decode("utf-8")   # what the launcher writes, whatever the locale
+    raw = sys.stdin.buffer.read()
+    prompt = raw.decode("utf-8")   # what the launcher writes, whatever the locale
     with open(os.path.join(FAKE, "calls"), "a") as f:
         f.write("-p\n")
     with open(os.path.join(FAKE, "calls")) as f:
@@ -69,6 +98,11 @@ def main(args):
     record("env.json", json.dumps(dict(os.environ)))
     cwd = os.getcwd()
     record("cwd.json", json.dumps({"cwd": cwd, "mode": oct(stat.S_IMODE(os.stat(cwd).st_mode))}))
+    record("stdin.json", json.dumps({"sha256": hashlib.sha256(raw).hexdigest(), "bytes": len(raw)}))
+    images = []
+    if "--input-format" in args and args[args.index("--input-format") + 1:][:1] == ["stream-json"]:
+        prompt, images = read_messages(prompt)
+    record("images.json", json.dumps(images))
     record("prompt.txt", prompt)
     os.makedirs(os.path.join(FAKE, "prompts"), exist_ok=True)
     record(os.path.join("prompts", "%d.txt" % n), prompt)

@@ -1,21 +1,26 @@
 // Every screen the window shows, as text, for the mock's scenarios with Claude alone (Codex closed,
 // as the app ships): the window's words for Claude-only users stay those of screens-claude.txt.
-// Then a few checks of Codex's screens, Codex open in the mock as the tests open it.
+// Then a few checks of Codex's screens, Codex open in the mock as the tests open it. Then the guide's
+// window (guide.html, guide-mock.html's scenarios), as screens-guide.txt holds it.
 //
-//   node app/dev/screens.mjs           compares with screens-claude.txt, prints what differs, exit 1
-//   node app/dev/screens.mjs --write   writes screens-claude.txt (a change of these words is on purpose)
-//   node app/dev/screens.mjs --app <app.js> --mock <mock.html>   another copy of the window (master's)
+//   node app/dev/screens.mjs           compares with screens-claude.txt and screens-guide.txt, prints what differs, exit 1
+//   node app/dev/screens.mjs --write   writes them (a change of these words is on purpose)
+//   node app/dev/screens.mjs --app <app.js> --mock <mock.html>   another copy of the window (master's), without the guide
 //
-// app.js and mock.html's fake backend run in a small DOM, on a clock of their own: each timer fires in
-// order, nothing waits for real, and a run gives the same screens every time. The mock's own driver
+// The window's scripts and the mock's fake backend run in a small DOM, on a clock of their own: each timer
+// fires in order, nothing waits for real, and a run gives the same screens every time. The mock's own driver
 // (&go=, &click=) does the clicking. A screen is its title, text, notes and buttons, as the user reads them.
 import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 
+// The guide says the time the subscription comes back: the same hour on every machine.
+process.env.TZ = 'Europe/Paris';
+
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const GOLDEN = path.join(HERE, 'screens-claude.txt');
+const GUIDE_GOLDEN = path.join(HERE, 'screens-guide.txt');
 const RUN_MS = 120_000;
 
 // Claude alone: a fresh install on each system, a Voyage key, already installed (and the end's two
@@ -89,7 +94,76 @@ const SCENARIOS = [
   's=installe&go=import-paste&nth=2&click=import,paste&colle=1&imp=phrase',
   's=installe&go=import&nth=2&click=import,next,back',
   's=installe&go=import&nth=2&click=import,next,next,stop&pause=import',
+  // The model refused to answer (Claude Code would have had another one answer instead).
+  's=repair-ok&go=done&error=refused',
 ];
+
+// The guide in paste mode (guide-mock.html): a whole session to its end and the procedure saved, on each
+// system, then each step's variant, each error of §2 and each state that keeps Claude from being asked.
+const GUIDE_SCENARIOS = [
+  'g=ok&vu=0&go=enregistre',
+  'g=ok&go=enregistre&os=windows',
+  'g=ok&go=enregistre&os=linux',
+  'g=ok&go=apercu&sent=1',
+  'g=ok&go=apercu&nth=2&click=cacher&cache=1',
+  'g=ok&go=apercu&nth=3&click=cacher,autre&cache=1&taille=1',
+  'g=ok&go=apercu&depose=1',
+  'g=ok&go=apercu&nth=2&pause=1&click=arreter',
+  'g=ok&go=objectif&nth=2&click=comment',
+  'g=ok&go=abandon&click=bloque,next,bloque,next,bloque',
+  'g=pointille&go=etape',
+  'g=bas&go=etape',
+  'g=ambigu&go=etape&nth=2',
+  'g=pas-ici&go=etape',
+  'g=bloque&go=etape',
+  'g=pas-fait&go=etape&nth=2',
+  'g=pas-fait&go=etape&nth=2&click=reessaie',
+  'g=sensible&go=etape&nth=4',
+  'g=suspect&go=bloque',
+  'g=clickfix&go=bloque',
+  'g=refus&go=apercu&nth=2&cache=1',
+  'g=quota&go=erreur',
+  'g=presque-limite&go=etape',
+  'g=hors-ligne&go=etape',
+  'g=delai&go=etape',
+  'g=init&go=erreur',
+  'g=image-non-vue&go=etape',
+  'g=noire&go=apercu',
+  'g=petit&go=apercu&os=windows',
+  'g=budget&go=erreur',
+  'g=budget-etape&go=abandon',
+  'g=colle&go=apercu',
+  'g=deja&go=coller',
+  'g=remote&go=enregistre',
+  'g=refusee&go=enregistre',
+  'g=auth&go=objectif',
+  'g=billed&go=facture',
+  'g=vieux&go=vieux',
+  'g=arrete&go=arrete',
+  'g=installer&go=installer',
+  // The review's (a beginner's stops): the capture of before pasted again, the filter alone, the limit
+  // today or tomorrow, a client's name in a step to save, back from the first capture, the reduced
+  // mode kept from a step to the next and its note, no image in what was pasted, a JPEG dropped.
+  'g=ok&go=apercu&nth=2&meme=1',
+  'g=filtre&go=bloque',
+  'g=quota&go=erreur&reprise=7200',
+  'g=quota&go=erreur&reprise=86400',
+  'g=ambigu&go=enregistrer',
+  'g=ok&go=objectif&nth=2&click=back',
+  'g=pointille&go=etape&click=reduire',
+  'g=ok&go=etape&nth=2&click=reduire',
+  'g=ok&go=apercu&vide=1',
+  'g=ok&go=apercu&vide=1&os=windows',
+  'g=ok&go=erreur&depose=jpeg',
+  'g=ok&go=etape&nth=2&lache=1',
+];
+
+// The guide's window sizes, as the page asks Rust for them, in turn: the image made wide to hide a zone
+// and kept so while zones are drawn, the reduced mode kept from a step to the next.
+const GUIDE_SIZES = {
+  'g=ok&go=apercu&nth=2&click=cacher&cache=1': 'large',
+  'g=ok&go=etape&nth=2&click=reduire': 'reduit normal reduit',
+};
 
 // Where Codex can be chosen (&porte=1, as the tests open it): what some screens must say, or not.
 const has = (shots, start, text) => shots.some((s) => s.startsWith(`== ${start}`) && s.includes(text));
@@ -265,6 +339,8 @@ class El extends Node_ {
     return out;
   }
   querySelector(sel) { return this.querySelectorAll(sel)[0] || null; }
+  // The guide's image, 370 wide: where a zone drawn on it lands.
+  getBoundingClientRect() { return { left: 0, top: 0, width: 370, height: 239, right: 370, bottom: 239 }; }
 }
 
 // Tag, .class, #id, [attr] and [attr=value], :not(…) and :disabled: the selectors in use.
@@ -330,15 +406,39 @@ function seeded() {
 
 // ── One run ────────────────────────────────────────────────────────────────
 
+// The guide's reduced mode hides what styles.css says it hides: its own rules, applied here as written.
+const STYLES = fs.readFileSync(path.join(HERE, '..', 'src', 'styles.css'), 'utf8');
+// A selector list split on its commas, those inside :not(…) aside.
+const selectors = (list) => list.split(/,(?![^(]*\))/).map((sel) => sel.trim()).filter(Boolean);
+const REDUCED = [...STYLES.matchAll(/^(body\.guide\.reduit [^{}]+)\{\s*display: none;\s*\}/gm)]
+  .flatMap((m) => selectors(m[1])).filter((sel) => sel.startsWith('body.guide.reduit ')).map((sel) => sel.replace(/^body\.guide\.reduit /, ''));
+function hiddenWhenReduced(n) {
+  if (!n.doc || !n.doc.body || !n.doc.body.classList.contains('reduit')) return false;
+  return REDUCED.some((sel) => {
+    const child = sel.match(/^(\S+) > :not\((.*)\)$/);
+    if (child) return n.parent instanceof El && n.parent.matches(child[1]) && !child[2].split(',').some((k) => matchOne(n, k.trim()));
+    const parts = sel.split(/\s+/);
+    if (!matchOne(n, parts[parts.length - 1])) return false;
+    let at = n.parent;
+    for (const up of parts.slice(0, -1).reverse()) {
+      while (at instanceof El && !matchOne(at, up)) at = at.parent;
+      if (!(at instanceof El)) return false;
+      at = at.parent;
+    }
+    return true;
+  });
+}
+
 function visible(n) {
   if (n instanceof Text_) return n.t;
-  if (n.hidden || ['SVG', 'PRE'].includes(n.tagName) || n.classList.contains('chrono-time')) return '';
+  if (n.hidden || ['SVG', 'PRE'].includes(n.tagName) || n.classList.contains('chrono-time') || hiddenWhenReduced(n)) return '';
   const inner = n.childNodes.map(visible).join('');
   if (n.tagName === 'BUTTON') return `\n[${inner}${n.disabled ? ' (inactif)' : ''}]`;
   return ['P', 'LI', 'SUMMARY', 'H1', 'H2', 'BLOCKQUOTE', 'DIV'].includes(n.tagName) ? `\n${inner}` : inner;
 }
 
-async function screens(appText, mockText, query) {
+// The mock's fake backend, then the window's scripts in order, as their page loads them.
+async function screens(mockText, scripts, query) {
   const t = clock();
   const doc = new El('#document');
   doc.doc = doc;
@@ -348,6 +448,7 @@ async function screens(appText, mockText, query) {
   doc.append(doc.documentElement);
   doc.activeElement = doc.body;
   doc.createElement = (tag) => new El(tag, doc);
+  doc.createElementNS = (_, tag) => new El(tag, doc);
   doc.execCommand = () => true;
   const START = Date.UTC(2026, 9, 13, 13, 30);
   class FakeDate extends Date {
@@ -367,14 +468,16 @@ async function screens(appText, mockText, query) {
   ctx.window = ctx;
   vm.createContext(ctx);
   vm.runInContext(mockText.match(/<script>\n([\s\S]*?)<\/script>/)[1], ctx, { filename: 'mock.html' });
-  vm.runInContext(appText, ctx, { filename: 'app.js' });
+  for (const [name, text] of scripts) vm.runInContext(text, ctx, { filename: name });
 
   // Each screen once, in the order it first shows: a login polled ten times is one screen.
   const shots = [];
   const snap = () => {
     const name = doc.body.dataset.screen;
     if (!name) return;
-    const text = `== ${name}${visible(doc.body).replace(/\n\s*\n/g, '\n')}`;
+    // The guide's window made wide or reduced: said next to the screen's name.
+    const size = ['large', 'reduit'].find((c) => doc.body.classList.contains(c));
+    const text = `== ${name}${size ? ` (${size})` : ''}${visible(doc.body).replace(/\n\s*\n/g, '\n')}`;
     if (!shots.includes(text)) shots.push(text);
   };
   // Promises settle between two timers, as in the window.
@@ -385,13 +488,18 @@ async function screens(appText, mockText, query) {
     await settle();
     snap();
   }
+  // Where the run stopped, though its screen may have been seen before; the guide's window sizes asked,
+  // and its looks refused for their capture.
+  shots.last = doc.body.dataset.screen;
+  shots.sizes = (ctx.__tailles || []).join(' ');
+  shots.refused = ctx.__refused || 0;
   return shots;
 }
 
 // screens-claude.txt: each scenario as the numbers of its screens, then every screen once.
-function render(got) {
+function render(got, whose = "The window's screens with Claude alone") {
   const all = [];
-  const lines = ["# The window's screens with Claude alone (app/dev/screens.mjs --write): each scenario, the numbers", '# of the screens it shows in their order, then the screens.', ''];
+  const lines = [`# ${whose} (app/dev/screens.mjs --write): each scenario, the numbers`, '# of the screens it shows in their order, then the screens.', ''];
   for (const [q, shots] of got) {
     const nums = shots.map((s) => (all.includes(s) ? all.indexOf(s) : all.push(s) - 1) + 1);
     lines.push(`### ${q}`, nums.join(' '), '');
@@ -411,16 +519,48 @@ function parse(text) {
   return scenarios;
 }
 
+// Each scenario as its golden file has it: what differs, a scenario missing on either side.
+function compare(file, want, got) {
+  let differ = 0;
+  for (const [q, shots] of got) {
+    const w = want.get(q) || [`(scenario missing from ${path.basename(file)})`];
+    const i = shots.findIndex((s, k) => s !== w[k]);
+    if (i < 0 && shots.length === w.length) continue;
+    differ += 1;
+    const at = i < 0 ? shots.length : i;
+    console.log(`DIFF ${q}, screen ${at + 1}:\n--- expected\n${w[at] ?? '(none)'}\n--- shown\n${shots[at] ?? '(none)'}\n`);
+  }
+  if (want.size !== got.size) {
+    differ += 1;
+    console.log(`${path.basename(file)} has ${want.size} scenarios, this script runs ${got.size}`);
+  }
+  return differ;
+}
+
 const args = process.argv.slice(2);
 const opt = (name, fallback) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : fallback; };
 const appText = fs.readFileSync(opt('--app', path.join(HERE, '..', 'src', 'app.js')), 'utf8');
 const mockText = fs.readFileSync(opt('--mock', path.join(HERE, 'mock.html')), 'utf8');
+const uiText = fs.readFileSync(path.join(HERE, '..', 'src', 'ui.js'), 'utf8');
+// An app.js of before ui.js (master's) has the helpers itself.
+const appScripts = /^function h\(/m.test(appText) ? [['app.js', appText]] : [['ui.js', uiText], ['app.js', appText]];
 const got = new Map();
-for (const q of SCENARIOS) got.set(q, await screens(appText, mockText, q));
+for (const q of SCENARIOS) got.set(q, await screens(mockText, appScripts, q));
+// The guide's window, on this copy only (master's has none).
+const guide = new Map();
+if (!args.includes('--app')) {
+  const guideMock = fs.readFileSync(path.join(HERE, 'guide-mock.html'), 'utf8');
+  const guideScripts = [['ui.js', uiText], ['guide.js', fs.readFileSync(path.join(HERE, '..', 'src', 'guide.js'), 'utf8')]];
+  for (const q of GUIDE_SCENARIOS) guide.set(q, await screens(guideMock, guideScripts, q));
+}
 
 if (args.includes('--write')) {
   fs.writeFileSync(GOLDEN, render(got));
   console.log(`${got.size} scenarios written to ${path.relative(process.cwd(), GOLDEN)}`);
+  if (guide.size) {
+    fs.writeFileSync(GUIDE_GOLDEN, render(guide, "The guide's screens, paste mode"));
+    console.log(`${guide.size} scenarios written to ${path.relative(process.cwd(), GUIDE_GOLDEN)}`);
+  }
   process.exit(0);
 }
 const want = parse(fs.readFileSync(GOLDEN, 'utf8'));
@@ -428,23 +568,30 @@ let differ = 0;
 // The Codex screens' checks, on this copy of the window only (another app.js is master's).
 if (!args.includes('--app')) {
   for (const c of CODEX_CHECKS) {
-    const shots = await screens(appText, mockText, c.query);
+    const shots = await screens(mockText, appScripts, c.query);
     if (c.ok(shots, want)) continue;
     differ += 1;
     console.log(`FAIL ${c.name}\n  ${c.query}\n${shots.slice(-3).join('\n\n')}\n`);
   }
 }
-for (const [q, shots] of got) {
-  const w = want.get(q) || ['(scenario missing from screens-claude.txt)'];
-  const i = shots.findIndex((s, k) => s !== w[k]);
-  if (i < 0 && shots.length === w.length) continue;
-  differ += 1;
-  const at = i < 0 ? shots.length : i;
-  console.log(`DIFF ${q}, screen ${at + 1}:\n--- expected\n${w[at] ?? '(none)'}\n--- shown\n${shots[at] ?? '(none)'}\n`);
+differ += compare(GOLDEN, want, got);
+if (guide.size) {
+  // A scenario that does not get to its screen is a failure, whatever the golden file says.
+  for (const [q, shots] of guide) {
+    const to = new URLSearchParams(q).get('go');
+    if (shots.refused) {
+      differ += 1;
+      console.log(`FAIL ${q}: ${shots.refused} look(s) sent with another capture than the one shown`);
+    }
+    if (q in GUIDE_SIZES && shots.sizes !== GUIDE_SIZES[q]) {
+      differ += 1;
+      console.log(`FAIL ${q}: the window's sizes « ${shots.sizes} », not « ${GUIDE_SIZES[q]} »`);
+    }
+    if (shots.last === to) continue;
+    differ += 1;
+    console.log(`FAIL ${q} does not end on « ${to} »:\n${shots.slice(-2).join('\n\n')}\n`);
+  }
+  differ += compare(GUIDE_GOLDEN, fs.existsSync(GUIDE_GOLDEN) ? parse(fs.readFileSync(GUIDE_GOLDEN, 'utf8')) : new Map(), guide);
 }
-if (want.size !== got.size) {
-  differ += 1;
-  console.log(`screens-claude.txt has ${want.size} scenarios, this script runs ${got.size}`);
-}
-console.log(differ ? `${differ} differ or fail` : `${got.size} scenarios, the same screens; ${args.includes('--app') ? 0 : CODEX_CHECKS.length} checks of Codex's screens pass`);
+console.log(differ ? `${differ} differ or fail` : `${got.size} scenarios, the same screens; ${args.includes('--app') ? 0 : CODEX_CHECKS.length} checks of Codex's screens pass; ${guide.size} scenarios of the guide, the same screens`);
 process.exit(differ ? 1 : 0);

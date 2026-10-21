@@ -1064,6 +1064,15 @@ pub fn open_claude_login() -> Result<(), String> {
     open_in_terminal("claude-login", &login_script(&sys::tool_path(), &claude))
 }
 
+/// The guide's « Mettre à jour », for a Claude Code too old for it: `claude update`, in a window the
+/// user sees.
+pub fn open_claude_update() -> Result<(), String> {
+    let Some(claude) = detect::claude_bin() else {
+        return Err("Claude Code n'est pas encore installé.".into());
+    };
+    open_in_terminal("claude-update", &claude_script(&sys::tool_path(), &claude, "update"))
+}
+
 /// Codex's login, with the user's ChatGPT account (§4.3): its own command, `codex login`, in Terminal
 /// (PowerShell on Windows), for the CODEX_HOME of the agents chosen. Never an API key: none reaches it,
 /// and its login goes to auth.json, the file the kit reads. The app never logs anyone out.
@@ -1169,10 +1178,15 @@ fn onboarding_prompt(guide: &Path) -> String {
     format!("Read {} and run it to personalize me.", guide.display())
 }
 
-#[cfg(not(windows))]
 fn login_script(path: &std::ffi::OsStr, claude: &Path) -> String {
+    claude_script(path, claude, "auth login")
+}
+
+/// Claude Code with one of the app's own fixed subcommands (`auth login`, `update`), never a word of the user's.
+#[cfg(not(windows))]
+fn claude_script(path: &std::ffi::OsStr, claude: &Path, subcommand: &str) -> String {
     format!(
-        "#!/bin/bash\nexport PATH={}\n{} auth login\necho\necho 'Tu peux fermer cette fenêtre.'\n",
+        "#!/bin/bash\nexport PATH={}\n{} {subcommand}\necho\necho 'Tu peux fermer cette fenêtre.'\n",
         sh_quote(&path.to_string_lossy()),
         sh_quote(&claude.to_string_lossy())
     )
@@ -1237,9 +1251,9 @@ fn sh_quote(s: &str) -> String {
 }
 
 #[cfg(windows)]
-fn login_script(path: &std::ffi::OsStr, claude: &Path) -> String {
+fn claude_script(path: &std::ffi::OsStr, claude: &Path, subcommand: &str) -> String {
     format!(
-        "$ErrorActionPreference = 'Stop'\r\n$env:Path = {}\r\n& {} auth login\r\nWrite-Host ''\r\nWrite-Host 'Tu peux fermer cette fenêtre.'\r\n",
+        "$ErrorActionPreference = 'Stop'\r\n$env:Path = {}\r\n& {} {subcommand}\r\nWrite-Host ''\r\nWrite-Host 'Tu peux fermer cette fenêtre.'\r\n",
         ps_quote(&path.to_string_lossy()),
         ps_quote(&claude.to_string_lossy())
     )
@@ -1885,6 +1899,12 @@ mod tests {
         assert!(bash(&script).ok());
         let seen = fs::read_to_string(&out).unwrap();
         assert_eq!(seen.lines().skip(1).collect::<Vec<_>>(), ["auth", "login"]);
+
+        let script = root.join("claude-update.command");
+        fs::write(&script, claude_script(&path, &bin.join("claude"), "update")).unwrap();
+        assert!(bash(&script).ok());
+        let seen = fs::read_to_string(&out).unwrap();
+        assert_eq!(seen.lines().skip(1).collect::<Vec<_>>(), ["update"]);
     }
 
     /// Codex's login and onboarding windows: its own commands, in the brain for the onboarding, its
@@ -2518,6 +2538,8 @@ mod tests {
         let login = login_script(&path, claude);
         assert!(login.contains(r"$env:Path = 'C:\Users\Jo O''Brien\.local\bin;C:\Windows'"), "{login}");
         assert!(login.contains(r"& 'C:\Users\Jo O''Brien\.local\bin\claude.exe' auth login"), "{login}");
+        let update = claude_script(&path, claude, "update");
+        assert!(update.contains(r"& 'C:\Users\Jo O''Brien\.local\bin\claude.exe' update"), "{update}");
         let vault = Path::new(r"C:\Users\Jo O'Brien\Documents\Brain");
         let guide = Path::new(r"C:\Users\Jo O'Brien\.brain-in-a-box\src\onboarding\ONBOARDING.md");
         let onboarding = onboarding_script(&path, vault, guide, claude);

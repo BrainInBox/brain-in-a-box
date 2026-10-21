@@ -686,7 +686,9 @@ mod tests {
     fn the_window_can_open_no_dialog() {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR"));
         let caps: Value = serde_json::from_str(&std::fs::read_to_string(dir.join("capabilities/default.json")).unwrap()).unwrap();
-        assert_eq!(caps["permissions"], serde_json::json!(["core:default"]));
+        // Besides the app's own commands (allow-…, build.rs's manifest), core's APIs only: no plugin's.
+        let others: Vec<&Value> = caps["permissions"].as_array().unwrap().iter().filter(|p| !p.as_str().unwrap().starts_with("allow-")).collect();
+        assert_eq!(others, [&serde_json::json!("core:default")]);
         let cargo = std::fs::read_to_string(dir.join("Cargo.toml")).unwrap();
         assert!(!cargo.contains("tauri-plugin"), "a Tauri plugin in Cargo.toml");
     }

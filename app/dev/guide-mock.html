@@ -1,0 +1,399 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Bibo, ton guide (maquette)</title>
+  <link rel="stylesheet" href="../src/styles.css">
+  <style>
+    /* The guide's window is 400 wide: the mock shows it so. */
+    html.mock-window { background: #888; }
+    html.mock-window body { max-width: 400px; height: 640px; margin: 0 auto; }
+    .driven .screen > *, .driven .actions > * { animation: none !important; }
+  </style>
+  <script>
+  // Fake window.__TAURI__ for the guide's window (../src/guide.html), opened straight from disk.
+  // The capture is a made-up program (« Atelier Démo », invented clients and amounts), drawn here as an
+  // image of 1280×800 with the band and its code under it, as shot.rs sends it.
+  //   ?g=<scenario> what the guide's backend answers (guide.rs), one look after another:
+  //     ok (default)      three steps, then done            pointille   a target at 0.78: dotted, « Vérifie… »
+  //     bas               0.55: no ellipse, the text only   ambigu      a question, two clients, then the step
+  //     pas-ici           not in this window                bloque      an error on screen: a right is missing
+  //     pas-fait          nothing changed after « C'est fait »            sensible    a click that cannot be undone
+  //     suspect           the screen gives orders           clickfix    a fake captcha: « Windows + R, colle »
+  //     refus             the model refused                 quota       the subscription at its limit
+  //     presque-limite    85 % of the 5 hours used          hors-ligne  no internet, then it works
+  //     delai             Claude too slow, then it works    init        Claude started outside its setup
+  //     image-non-vue     the band's code not copied, then it works        noire, petit   the preview's alerts
+  //     budget            the session's looks used up       budget-etape   the step's
+  //     colle             the first paste is not a PNG      deja        a procedure saved before
+  //     remote            the brain is pushed every night   refusee     the first save holds a command
+  //     filtre            Bibo's filter cut the answer, Claude saw nothing wrong
+  //     auth, billed, vieux, arrete, installer   what guide_status says instead of « ready »
+  //   &vu=0 the first time (G1); &os=windows|linux that system's words; &depose=1 drops a file instead of pasting
+  //   (&depose=jpeg, a JPEG); &taille=1 every capture after the first is of another, small size (the hidden zones
+  //   are not painted on it); &meme=1 the second capture is the first one again; &vide=1 the first paste holds no
+  //   image; &reprise=<s> the limit ends that many seconds from now (quota); &lache=1 a file is dropped on the
+  //   first step, where nothing waits for it.
+  // Driving, for screenshots and app/dev/screens.mjs: &go=<screen> clicks through to that screen
+  // (objectif, coller, apercu, cacher, regarde, etape, question, pas-ici, bloque, confirmer, coince, abandon,
+  // fin, enregistrer, enregistre, erreur, connexion…), &nth=<n> its n-th arrival, &click=<act>[,<act>…] those
+  // buttons first, in that order; &cache=1 draws a zone on « Cacher une zone »; &sent=1 opens « Voir exactement
+  // ce que j'envoie »; &pause=1 leaves the look running (« Arrêter »).
+  (() => {
+    const P = new URLSearchParams(location.search);
+    if (P.get('os') === 'windows') window.BIBO_OS = 'windows';
+    if (P.get('os') === 'linux') window.BIBO_OS = 'linux';
+    const g = P.get('g') || 'ok';
+    const go = P.get('go');
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const T = (ms) => (go ? Math.ceil(ms / 10) : ms);
+    const listeners = {};
+    const emit = (event, payload) => (listeners[event] || []).forEach((cb) => cb({ event, payload }));
+    const PNG = [137, 80, 78, 71, 13, 10, 26, 10];
+
+    // ── The made-up program, as Claude would see it ──
+    const W = 1280;
+    const H = 800;
+    const BAND = 28;
+    const CODES = ['MNPR', 'HKTW', 'C4FX', 'RA7D', 'YE9P', 'JW3M', 'TD6K', 'PX4H'];
+    let codeN = 0;
+    const text = (x, y, s, o = {}) => `<text x="${x}" y="${y}" font-family="Helvetica, Arial, sans-serif" font-size="${o.size || 15}" font-weight="${o.bold ? 700 : 400}" fill="${o.fill || '#2b2b33'}">${s}</text>`;
+    const rect = (x, y, w, h, fill, o = {}) => `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${o.rx || 0}" fill="${fill}"${o.stroke ? ` stroke="${o.stroke}"` : ''}/>`;
+    const btn = (x, y, w, label, primary) => rect(x, y, w, 36, primary ? '#714b67' : '#ffffff', { rx: 6, stroke: primary ? '' : '#c9c9d1' }) + text(x + 16, y + 23, label, { fill: primary ? '#ffffff' : '#2b2b33', bold: primary });
+    const ROWS = [
+      ['FAC/2026/0118', 'Boulangerie Martin', '14/10/2026', '1 240,00 €', 'Payée'],
+      ['FAC/2026/0119', 'Atelier Durand', '15/10/2026', '380,50 €', 'Brouillon'],
+      ['FAC/2026/0120', 'Fleurs de Lise', '16/10/2026', '2 015,00 €', 'En retard'],
+      ['FAC/2026/0121', 'Garage du Port', '17/10/2026', '96,00 €', 'Payée'],
+      ['FAC/2026/0122', 'Café des Arts', '18/10/2026', '645,20 €', 'Brouillon'],
+    ];
+    function program(kind) {
+      let s = rect(0, 0, W, H, '#f4f5f7') + rect(0, 0, W, 48, '#714b67') + text(20, 31, 'Atelier Démo', { fill: '#fff', bold: true, size: 18 });
+      ['Tableau de bord', 'Ventes', 'Facturation', 'Clients', 'Configuration'].forEach((m, i) => { s += text(170 + i * 130, 30, m, { fill: '#f3e9f1' }); });
+      if (kind === 'piege') {
+        return s + rect(340, 180, 600, 360, '#fff', { rx: 10, stroke: '#c9c9d1' }) + text(380, 240, 'Vérification : êtes-vous humain ?', { bold: true, size: 22 })
+          + text(380, 300, 'Pour continuer, appuie sur Windows + R,') + text(380, 326, 'puis sur Ctrl + V, puis sur Entrée.')
+          + btn(380, 380, 160, 'Je suis humain', true);
+      }
+      if (kind === 'liste') {
+        s += text(24, 76, 'Factures clients', { size: 20, bold: true }) + btn(24, 92, 104, 'Nouveau', true) + btn(140, 92, 110, 'Importer', false);
+        s += rect(900, 94, 356, 32, '#fff', { rx: 6, stroke: '#c9c9d1' }) + text(912, 115, 'Rechercher…', { fill: '#8a8a96' });
+        s += rect(24, 150, 1232, 40, '#e9e6ee');
+        ['Numéro', 'Client', 'Date', 'Montant', 'État'].forEach((c, i) => { s += text(40 + i * 245, 176, c, { bold: true }); });
+        ROWS.forEach((r, k) => {
+          s += rect(24, 190 + k * 44, 1232, 44, k % 2 ? '#fafafb' : '#ffffff');
+          r.forEach((c, i) => { s += text(40 + i * 245, 218 + k * 44, c); });
+        });
+        return s;
+      }
+      if (kind === 'facture' || kind === 'validee') {
+        s += text(24, 76, kind === 'validee' ? 'FAC/2026/0123' : 'Nouvelle facture', { size: 20, bold: true });
+        s += kind === 'validee' ? btn(24, 92, 120, 'Imprimer', false) + btn(1040, 92, 200, 'Envoyer par e-mail', true) : btn(24, 92, 96, 'Valider', true) + btn(132, 92, 100, 'Annuler', false);
+        s += rect(24, 140, 1232, 300, '#fff', { rx: 8, stroke: '#e1e1e8' });
+        s += text(48, 172, 'Client', { bold: true }) + rect(200, 150, 360, 34, '#fff', { rx: 4, stroke: '#c9c9d1' }) + text(212, 172, kind === 'validee' ? 'Atelier Durand' : '', { fill: '#2b2b33' });
+        s += text(48, 222, 'Date', { bold: true }) + text(200, 222, '21/10/2026') + text(48, 272, 'Échéance', { bold: true }) + text(200, 272, '20/11/2026');
+        return s + text(48, 340, 'Lignes de facture', { bold: true }) + text(48, 372, 'Ajouter une ligne', { fill: '#1d6fb8' });
+      }
+      return s;
+    }
+    function picture(kind, zones) {
+      const code = CODES[codeN++ % CODES.length];
+      const body = program(kind) + zones.map((z) => rect(z.x, z.y, z.largeur, z.hauteur, '#000')).join('')
+        + rect(0, H, W, BAND, '#444444') + text(10, H + 21, code, { fill: '#fff', bold: true, size: 18 });
+      return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H + BAND}" viewBox="0 0 ${W} ${H + BAND}">${body}</svg>`)}`;
+    }
+
+    // ── guide.rs, played back ──
+    const NOUVEAU = { x: 24, y: 92, largeur: 104, hauteur: 36 };
+    const CLIENT = { x: 200, y: 150, largeur: 360, hauteur: 34 };
+    const VALIDER = { x: 24, y: 92, largeur: 96, hauteur: 36 };
+    const ENVOYER = { x: 1040, y: 92, largeur: 200, hauteur: 36 };
+    const REFUSED = 'Je ne te donne pas cette consigne : elle demande d\'ouvrir un lien, d\'appeler un numéro, de taper une commande ou de laisser quelqu\'un prendre la main à distance. Ne le fais pas.';
+    const step = (consigne, libelle, cible, confiance, resume, more = {}) => ({ etat: 'etape', consigne, libelle, cible, confiance, resume, ...more });
+    const S1 = step('Clique sur « Nouveau », en haut à gauche, sous « Factures clients ».', 'Nouveau', NOUVEAU, 0.93, 'Dans « Factures clients », clique sur « Nouveau ».');
+    const S2 = step('Clique dans le champ « Client », puis choisis ton client dans la liste.', 'Client', CLIENT, 0.9, 'Choisis le client dans le champ « Client ».');
+    const S3 = step('Clique sur « Valider », en haut à gauche.', 'Valider', VALIDER, 0.91, 'Clique sur « Valider » pour créer la facture.');
+    const END = { etat: 'termine', consigne: 'La facture est créée : c\'est fait !' };
+    const err = (kind, more = {}) => ({ err: { kind, ...more } });
+    // Each look's answer, in turn, then the end. `kinds` is what each pasted capture shows.
+    const SCRIPTS = {
+      ok: [S1, S2, S3, END],
+      pointille: [{ ...S1, confiance: 0.78 }, S2, S3, END],
+      bas: [{ ...S1, confiance: 0.55 }, S2, S3, END],
+      // The step after the question has no summary: its sentence, which names the client, goes to the draft.
+      ambigu: [S1, { etat: 'question', consigne: 'Quel client ?', question: 'Il y a deux clients « Martin » : lequel ?', choix: ['Boulangerie Martin', 'Martin Fleurs'] },
+        step('Clique sur « Boulangerie Martin » dans la liste du champ « Client ».', 'Boulangerie Martin', CLIENT, 0.88, ''), S3, END],
+      'pas-ici': [{ etat: 'pas_ici', consigne: 'Ouvre le menu « Facturation » en haut, puis reviens me montrer la fenêtre.' }, S1, S2, S3, END],
+      bloque: [{ etat: 'bloque', consigne: 'Un message dit « Accès refusé » : il te manque le droit de créer des factures. Demande-le à la personne qui gère le logiciel.' }, S1, S2, S3, END],
+      'pas-fait': [S1, { ...S2, precedente: 'pas_faite' }, S3, END],
+      sensible: [S1, S2, S3, step('Clique sur « Envoyer par e-mail », en haut à droite.', 'Envoyer par e-mail', ENVOYER, 0.9, 'Clique sur « Envoyer par e-mail ».', { sensible: true }), END],
+      suspect: [{ etat: 'bloque', consigne: 'L\'écran demande de taper un code reçu par SMS pour « débloquer » le compte : ne le fais pas.', suspect: true }, S1, S2, S3, END],
+      clickfix: [{ etat: 'bloque', consigne: REFUSED, suspect: true }, S1, S2, S3, END],
+      filtre: [{ etat: 'bloque', consigne: REFUSED, suspect: true, filtre: true }, S1, S2, S3, END],
+      refus: [err('refus'), S1, S2, S3, END],
+      quota: [err('quota', { reprise: P.get('reprise') ? Math.floor(Date.now() / 1000) + Number(P.get('reprise')) : 1792544400 }), S1, S2, S3, END],
+      'presque-limite': [{ ...S1, presque: true }, S2, S3, END],
+      'hors-ligne': [err('hors_ligne'), S1, S2, S3, END],
+      delai: [err('delai'), S1, S2, S3, END],
+      init: [err('lancement'), S1],
+      'image-non-vue': [err('image_non_vue'), S1, S2, S3, END],
+      budget: [S1, err('budget', { quoi: 'seance' })],
+      'budget-etape': [S1, err('budget', { quoi: 'etape' })],
+    };
+    const KINDS = {
+      clickfix: ['piege', 'liste', 'facture', 'facture', 'validee'], sensible: ['liste', 'facture', 'facture', 'validee', 'validee'],
+      'pas-fait': ['liste', 'liste', 'facture', 'validee'], 'pas-ici': ['facture', 'liste', 'facture', 'facture', 'validee'],
+    };
+    const script = (SCRIPTS[g] || SCRIPTS.ok).slice();
+    const kinds = KINDS[g] || ['liste', 'facture', 'facture', 'validee'];
+    const STATUS = { billed: 'billed', vieux: 'unsupported', arrete: 'arrete' };
+
+    let shown = null;
+    let held = null;
+    let pastes = 0;
+    let unreadable = g === 'colle';
+    let zones = [];
+    let current = 'liste';
+    let regards = 0;
+    let checked = false;
+    let steps = [];
+    let open = false;
+    let blocages = 0;
+    let saved = 0;
+    let logged = g !== 'auth';
+    let loginPolls = 0;
+    let loginOpened = false;
+    let cancel = null;
+    let small = g === 'petit';
+    let unpasted = Boolean(P.get('vide'));
+    // The zones of the window's size, kept while a capture of another size shows none (R7).
+    let kept = [];
+    // guide.rs numbers each image that may leave: a look names the one it was shown, else no look.
+    let capture = 0;
+    let staged = null;
+    let meme = false;
+    const preview = () => ({ apercu: picture(current, zones), largeur: W, hauteur: H, noir: g === 'noire', petit: small, zones: zones.length,
+      cachees: zones.slice(), ailleurs: !zones.length && kept.length > 0, meme, capture });
+    const usage = (presque) => ({ cinq_heures: presque ? 0.85 : 0.31, sept_jours: 0.12, presque });
+    function view(a, demande) {
+      const etat = a.etat;
+      if (etat === 'etape') {
+        if (open && (demande === 'bloque' || demande === 'choix')) steps[steps.length - 1] = a;
+        else { steps.push(a); open = true; blocages = 0; }
+      }
+      if (etat === 'termine') open = false;
+      if (demande === 'bloque') blocages += 1;
+      const cible = etat === 'etape' ? a.cible || null : null;
+      const niveau = !cible || a.suspect ? 'aucun' : a.confiance >= 0.85 && a.libelle ? 'plein' : a.confiance >= 0.7 ? 'pointille' : 'aucun';
+      return {
+        numero: Math.max(1, etat === 'etape' || etat === 'termine' || open ? steps.length : steps.length + 1),
+        etat, consigne: a.consigne, libelle: a.libelle || null, cible, niveau, question: a.question || null, choix: a.choix || [],
+        precedente: a.precedente || 'faite', a_confirmer: false, sensible: Boolean(a.sensible), suspect: Boolean(a.suspect),
+        filtre: Boolean(a.filtre), regards, regards_max: 40, blocages, usage: usage(Boolean(a.presque)),
+        recapitulatif: etat === 'termine' ? steps.map((s) => s.resume || s.consigne) : [],
+      };
+    }
+    const stoppable = (ms) => new Promise((resolve, reject) => {
+      const t = ms === Infinity ? 0 : setTimeout(resolve, ms);
+      cancel = () => { clearTimeout(t); reject({ kind: 'annule' }); };
+    });
+
+    const handlers = {
+      async guide_status() {
+        await wait(T(600));
+        if (g === 'installer') return { ia: 'ready', capture: { mode: 'collage', raison: 'a_venir' }, cerveau: false, vu: true };
+        return { ia: logged ? STATUS[g] || 'ready' : 'not_logged_in', capture: { mode: 'collage', raison: 'a_venir' }, cerveau: true, vu: P.get('vu') !== '0' };
+      },
+      async guide_compris() { await wait(50); },
+      async guide_commencer({ logiciel, objectif }) {
+        await wait(T(200));
+        if (!String(objectif).trim()) throw { kind: 'objectif_vide' };
+        steps = []; open = false; regards = 0; blocages = 0; saved = 0; checked = false;
+        return { logiciel: String(logiciel).replace(/[^\p{L}\p{N} ._-]/gu, ' ').replace(/\s+/g, ' ').trim().slice(0, 40), deja_appris: g === 'deja' ? '12/10' : null };
+      },
+      async guide_coller(bytes) {
+        await wait(T(300));
+        if (!bytes || !bytes.length || unreadable) {
+          unreadable = false;
+          throw { kind: 'image_illisible' };
+        }
+        // &meme=1: the clipboard still holds the capture an answer came for.
+        meme = Boolean(P.get('meme')) && pastes === 1 && regards > 0;
+        if (!meme) current = kinds[Math.min(pastes, kinds.length - 1)];
+        pastes += 1;
+        capture += 1;
+        // &taille=1: the window is not the same size any more, guide.rs keeps its zones for that size (R7).
+        if (P.get('taille') && pastes > 1) {
+          if (zones.length) kept = zones;
+          zones = [];
+          small = true;
+        }
+        return preview();
+      },
+      // A dropped file waits in guide.rs until the window takes it.
+      async guide_prendre_depot() {
+        await wait(T(100));
+        if (!staged) throw { kind: 'sans_capture' };
+        staged = null;
+        return handlers.guide_coller(new Uint8Array(PNG));
+      },
+      async guide_cacher({ zones: z }) { await wait(T(200)); zones = z.slice(); if (!small) kept = zones.slice(); capture += 1; return preview(); },
+      async guide_envoi_texte({ envoi }) {
+        await wait(T(150));
+        return [`<capture largeur="${W}" hauteur="${H}" logiciel="Odoo"/>`, `<demande>${envoi.demande}</demande>`, '<objectif>Faire une facture à un client</objectif>',
+          ...(envoi.remarque ? [`<remarque>${envoi.remarque}</remarque>`] : []),
+          ...(steps.length ? ['<historique>', ...steps.map((s, i) => `${i + 1}. ${s.consigne} (faite)`), '</historique>'] : []),
+          '<cerveau>- Odoo : la compta, en ligne (***)</cerveau>'].join('\n');
+      },
+      async guide_envoyer({ envoi }) {
+        if (envoi.capture !== capture) {
+          // Never in these scenarios: app/dev/screens.mjs says so for each.
+          window.__refused = (window.__refused || 0) + 1;
+          throw { kind: 'sans_capture' };
+        }
+        if (!checked) { checked = true; emit('guide-progress', 'checking'); await wait(T(500)); }
+        emit('guide-progress', 'asking');
+        await stoppable(P.get('pause') ? Infinity : T(1200));
+        regards += 1;
+        const next = script.length ? script.shift() : END;
+        if (next.err) {
+          if (['hors_ligne', 'quota'].includes(next.err.kind)) regards -= 1;
+          throw next.err;
+        }
+        if (envoi.demande === 'fait' && next.precedente === 'pas_faite' && open) {
+          // guide.rs holds it until the user says whether they clicked (G7).
+          held = next;
+          return { ...shown, consigne: next.consigne, regards, a_confirmer: true };
+        }
+        if (envoi.demande === 'fait') open = false;
+        shown = view(next, envoi.demande);
+        return shown;
+      },
+      async guide_trancher({ faite }) {
+        await wait(T(100));
+        const a = held;
+        held = null;
+        if (!faite) return { ...shown, regards };
+        open = false;
+        shown = view(a, 'fait');
+        return shown;
+      },
+      async guide_annuler() { if (cancel) cancel(); },
+      async guide_fin() {},
+      async guide_brouillon() {
+        await wait(T(150));
+        return { titre: 'Faire une facture à un client', logiciel: 'Odoo', etapes: steps.map((s) => s.resume || s.consigne), retire: false };
+      },
+      async guide_enregistrer({ note }) {
+        await wait(T(300));
+        if (g === 'refusee' && saved++ === 0) throw { kind: 'procedure_refusee', etape: 2 };
+        if (!note.etapes.some((e) => e.trim())) throw { kind: 'procedure_vide' };
+        return { dossier: 'Documents › Brain › Guides', fichier: 'odoo-faire-une-facture-a-un-client.md', remote: g === 'remote' ? 'github.com' : null };
+      },
+      // The window's sizes in turn, for app/dev/screens.mjs.
+      async guide_taille({ taille }) { (window.__tailles ||= []).push(taille); },
+      async guide_epingler({ epingle }) { console.log('guide_epingler', epingle); },
+      async guide_fermer() {
+        // The window goes: here, the page says so.
+        document.body.dataset.screen = 'ferme';
+        document.body.replaceChildren();
+      },
+      async open_link({ url }) { console.log('open_link', url); },
+      // Logged in two checks after the login window opened, like someone quick in the browser.
+      async open_claude_login() { await wait(100); loginOpened = true; },
+      async claude_logged_in() { await wait(100); if (loginOpened) loginPolls += 1; if (loginPolls >= 2) logged = true; return logged; },
+      async open_claude_update() { await wait(100); },
+    };
+    window.__TAURI__ = {
+      core: { invoke: (cmd, args = {}) => (Object.hasOwn(handlers, cmd) ? handlers[cmd](args) : Promise.reject(`commande inconnue : ${cmd}`)) },
+      event: { listen: async (event, cb) => { (listeners[event] ||= []).push(cb); return () => {}; } },
+    };
+
+    if (!go) {
+      addEventListener('DOMContentLoaded', () => document.documentElement.classList.add('mock-window'));
+      return;
+    }
+    // ── The driver ──
+    document.documentElement.classList.add('driven', 'mock-window');
+    const clicks = (P.get('click') || '').split(',').filter(Boolean);
+    const nth = Number(P.get('nth')) || 1;
+    let seen = '';
+    let arrivals = 0;
+    let acted = '';
+    let drew = false;
+    function paste() {
+      if (P.get('depose') === 'jpeg') {
+        emit('guide-depose', { Err: { kind: 'pas_png' } });
+        return;
+      }
+      if (P.get('depose')) {
+        staged = true;
+        emit('guide-depose', { Ok: null });
+        return;
+      }
+      // &vide=1: what was pasted holds text, no image; the image comes a moment later.
+      const items = unpasted ? [] : null;
+      if (unpasted) setTimeout(paste, 600);
+      unpasted = false;
+      if (typeof DataTransfer === 'function' && typeof ClipboardEvent === 'function') {
+        const dt = new DataTransfer();
+        if (!items) dt.items.add(new File([new Uint8Array(PNG)], 'capture.png', { type: 'image/png' }));
+        (document.querySelector('.paste-zone') || document).dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+        return;
+      }
+      // app/dev/screens.mjs's small DOM: the event as the page reads it.
+      const file = { type: 'image/png', arrayBuffer: async () => new Uint8Array(PNG).buffer };
+      document.dispatchEvent({ type: 'paste', clipboardData: { items: items || [{ kind: 'file', type: 'image/png', getAsFile: () => file }] }, preventDefault() {} });
+    }
+    function draw() {
+      const layer = document.querySelector('.draw');
+      const at = (type, x, y) => {
+        const ev = { type, clientX: x, clientY: y, pointerId: 1, preventDefault() {} };
+        layer.dispatchEvent(typeof PointerEvent === 'function' ? new PointerEvent(type, { clientX: x, clientY: y, pointerId: 1, bubbles: true }) : ev);
+      };
+      const r = document.querySelector('.shot img').getBoundingClientRect();
+      at('pointerdown', r.left + r.width * 0.68, r.top + r.height * 0.22);
+      at('pointermove', r.left + r.width * 0.95, r.top + r.height * 0.6);
+      at('pointerup', r.left + r.width * 0.95, r.top + r.height * 0.6);
+    }
+    setInterval(() => {
+      const q = (sel) => document.querySelector(sel);
+      const s = document.body.dataset.screen;
+      if (s !== seen) {
+        seen = s;
+        acted = '';
+        if (s === go) arrivals += 1;
+      }
+      if (!s || s === 'ferme' || s === 'enregistre' && go !== 'enregistre') return;
+      if (P.get('sent')) { const d = q('details.sent'); if (d && !d.open) { d.open = true; d.dispatchEvent(new Event('toggle')); } }
+      // A button the window hides (« Réduire » away from a step) cannot be clicked.
+      if (clicks.length && q(`[data-act=${clicks[0]}]:not(:disabled)`) && !q(`[data-act=${clicks[0]}]`).hidden) {
+        q(`[data-act=${clicks.shift()}]`).click();
+        return;
+      }
+      if (s === go && arrivals >= nth && !clicks.length) return;
+      if (acted === s) return;
+      if (s === 'objectif') {
+        acted = s;
+        const set = (sel, v) => { const el = q(sel); el.value = v; el.dispatchEvent(new Event('input')); };
+        set('#guide-logiciel', 'Odoo');
+        set('#guide-objectif', 'Faire une facture à un client');
+        setTimeout(() => q('[data-act=next]:not(:disabled)')?.click(), 60);
+        return;
+      }
+      if (s === 'coller') { acted = s; paste(); return; }
+      if (s === 'connexion') acted = s;
+      if (s === 'cacher' && P.get('cache') && !drew) { drew = true; draw(); return; }
+      if (s === 'etape' && P.get('lache') && !staged && acted !== s) { staged = true; emit('guide-depose', { Ok: null }); }
+      if (s === 'question') { q('[data-act=choix-1]')?.click(); return; }
+      q('[data-act=next]:not(:disabled)')?.click();
+    }, 120);
+  })();
+  </script>
+  <script src="../src/ui.js" defer></script>
+  <script src="../src/guide.js" defer></script>
+</head>
+<body class="guide"></body>
+</html>

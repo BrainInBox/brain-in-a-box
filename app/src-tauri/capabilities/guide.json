@@ -1,0 +1,31 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "guide",
+  "description": "The guide's window, which shows Claude's words: core APIs, the guide's commands, a link, Claude's login and update; none of the installer's (no step to run, no repair, no terminal of its own). Its size, its place and its pin are set from Rust",
+  "windows": [
+    "guide"
+  ],
+  "permissions": [
+    "core:default",
+    "allow-guide-fermer",
+    "allow-guide-epingler",
+    "allow-guide-taille",
+    "allow-guide-status",
+    "allow-guide-compris",
+    "allow-guide-commencer",
+    "allow-guide-coller",
+    "allow-guide-prendre-depot",
+    "allow-guide-cacher",
+    "allow-guide-envoi-texte",
+    "allow-guide-envoyer",
+    "allow-guide-trancher",
+    "allow-guide-annuler",
+    "allow-guide-fin",
+    "allow-guide-brouillon",
+    "allow-guide-enregistrer",
+    "allow-open-link",
+    "allow-open-claude-login",
+    "allow-claude-logged-in",
+    "allow-open-claude-update"
+  ]
+}

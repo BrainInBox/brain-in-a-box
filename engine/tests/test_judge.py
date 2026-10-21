@@ -28,6 +28,7 @@ HOOKS = os.path.join(os.path.dirname(HERE), "hooks")
 REPO = os.path.dirname(os.path.dirname(HERE))
 FIXTURES = os.path.join(REPO, "app", "src-tauri", "tests", "fixtures", "repair")
 REPAIR_RS = os.path.join(REPO, "app", "src-tauri", "src", "repair.rs")
+CLAUDE_RS = os.path.join(REPO, "app", "src-tauri", "src", "claude.rs")
 HELP = os.path.join(FIXTURES, "claude-help-2.1.296.txt")
 FAKE_CODEX = os.path.join(HERE, "fake_codex.py")
 sys.path.insert(0, HOOKS)
@@ -220,22 +221,26 @@ class Command(unittest.TestCase):
         self.assertFalse(any("<extrait id=" in x for x in a), "the dossier goes through stdin")
 
     def test_argv_is_the_apps_command_but_budget_and_effort(self):
+        """The app's command as its own test spells it (repair.rs, argv_is_exactly_the_reviewed_command:
+        claude.rs builds it, that test holds it word for word), the judge's budget in place of the repair's."""
         with open(REPAIR_RS, encoding="utf-8") as f:
             src = f.read()
-        body = src[src.index("fn argv(step: &str, round: usize)"):]
-        body = body[body.index("let mut a"):body.index("\n}\n")]
+        body = src[src.index("fn argv_is_exactly_the_reviewed_command()"):]
+        head = body[body.index("let expected_head = ["):body.index("];")]
+        tail = body[body.index("assert_eq!(rest[1..], ["):]
+        tail = tail[:tail.index("]);")]
         tokens = []
-        for raw, plain, name in re.findall(r'r#"(.*?)"#|"((?:[^"\\]|\\.)*)"|\b(effort|SYSTEM_PROMPT|schema)\b',
-                                           body):
-            tokens.append(raw if raw else name if name else plain)
+        for part in (head, "schema", tail):
+            for raw, plain, name in re.findall(r'r#"(.*?)"#|"((?:[^"\\]|\\.)*)"|\b(SYSTEM_PROMPT|schema)\b', part):
+                tokens.append(raw if raw else name if name else plain)
         sch = judge.schema(["E01"], [])
-        mine = {"0.50": "0.40", "effort": "medium", "SYSTEM_PROMPT": judge.SYSTEM_PROMPT,
+        mine = {"0.50": "0.40", "SYSTEM_PROMPT": judge.SYSTEM_PROMPT,
                 "schema": json.dumps(sch, ensure_ascii=False, separators=(",", ":"))}
         self.assertIn("0.50", tokens)
         self.assertEqual([mine.get(t, t) for t in tokens], judge.argv(sch))
 
     def test_required_flags_and_version_are_the_apps(self):
-        with open(REPAIR_RS, encoding="utf-8") as f:
+        with open(CLAUDE_RS, encoding="utf-8") as f:
             src = f.read()
         flags = re.search(r"const REQUIRED_FLAGS: &\[&str\] = &\[(.*?)\];", src, re.S).group(1)
         self.assertEqual(list(judge.REQUIRED_FLAGS), re.findall(r'"([^"]+)"', flags))

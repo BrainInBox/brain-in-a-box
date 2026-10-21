@@ -87,6 +87,8 @@ CLIC_SOURIS = "clic souris"
 # Bibo's titles (app/src/app.js), after norm(): the screen they stand for.
 ECRANS = (
     ("bienvenue", "Salut, moi c'est Bibo"),
+    # Opened again with the brain and Claude Code there: the guide first (G0, docs/proposals/guide.md).
+    ("bienvenue-retour", "Content de te revoir"),
     ("choix", "Avec quelle IA veux-tu travailler"),
     ("choix-resume", "Lequel écrit le résumé de chaque soir"),
     ("diagnostic-en-cours", "Je regarde ton "),
@@ -133,6 +135,8 @@ PHRASE = "Je change d'outil"
 # The copy-paste screen asks the kit for its sentence when it shows: given this long to come.
 DELAI_PHRASE = 60
 DELAI_IMPORT = 3 * 60
+# The returning welcome's way to the guide: offered, not taken (no AI is asked on these VMs).
+GUIDE = "Guide-moi dans un logiciel"
 # Buttons that only come with a failure (the repair screens have many titles).
 BOUTONS_ECHEC = {"Réessayer", "Copier le rapport", "Revérifier"}
 # The screens each path must never see: Codex's on the path of Claude alone (the app users get keeps it
@@ -2556,7 +2560,7 @@ class Parcours:
         if cle in HORS_PARCOURS[self.codex]:
             self.echouer("écran « %s » : %s" % (cle, "Codex est choisi seul" if self.codex else
                                                  "l'app livrée garde Codex fermé, elle ne demande pas quelle IA"))
-        if cle == "bienvenue":
+        if cle in ("bienvenue", "bienvenue-retour"):
             return "Choisir mon IA" if self.codex else "Vérifier mon %s" % self.p.machine
         if cle == "choix":
             # The advice comes a moment after the screen (machine_advice): read before choosing.
@@ -2702,6 +2706,11 @@ class Parcours:
         self.t.check("deja-installe" in vus, "au deuxième lancement, l'app n'a pas dit « Tout est déjà installé »")
         if self.codex:
             self.t.check("choix" in vus, "au deuxième lancement, l'app n'a pas redemandé quelle IA")
+        else:
+            # Claude Code and the brain are there now: the welcome offers the guide.
+            retour = vus.get("bienvenue-retour")
+            self.t.check(retour is not None, "au deuxième lancement, l'app ne dit pas « Content de te revoir »")
+            self.t.check(retour is None or retour.bouton(GUIDE) is not None, "au deuxième lancement, l'accueil ne propose pas « %s »" % GUIDE)
         return vus
 
     def sur_echec(self):
