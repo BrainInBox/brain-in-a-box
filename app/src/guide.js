@@ -416,12 +416,22 @@ async function onPaste(e) {
   showPreview(a);
 }
 
-// A dropped file is read in Rust, which says what it found: the page never has a path.
-function onDropped(event) {
+// A dropped file is read in Rust and waits there: the page takes it only while it waits for a capture,
+// and never has a path. Dropped on a step or an error, it changes nothing.
+async function onDropped(event) {
   if (!waitingForCapture()) return;
   const r = event.payload || {};
-  if (r.Ok) showPreview(r.Ok);
-  else showError(r.Err);
+  if (!('Ok' in r)) return showError(r.Err);
+  const read = reading();
+  let a;
+  try {
+    a = await invoke('guide_prendre_depot');
+  } catch (err) {
+    if (read !== G.gen) return;
+    return showError(err);
+  }
+  if (read !== G.gen) return;
+  showPreview(a);
 }
 
 function reading() {
@@ -494,8 +504,9 @@ function showPreview(a, said = null) {
   focusMain();
 }
 
+// A look names the image the user saw: Rust sends it only if it is still the one.
 function envoiOf(next) {
-  return { demande: next.demande, remarque: next.remarque || null, choix: null };
+  return { demande: next.demande, remarque: next.remarque || null, choix: null, capture: G.apercu.capture };
 }
 
 // « Cacher une zone »: rectangles drawn on the image, painted black in Rust before anything leaves.
@@ -576,7 +587,7 @@ async function send(envoi) {
   gui.screen.append(h('div', { class: 'loading' }, h('span', { class: 'spinner', 'aria-hidden': 'true' }), 'Je lui montre ton image et ton objectif.'), gui.stage);
   gui.actions.append(button('Arrêter', () => invoke('guide_annuler').catch(() => {}), { kind: 'secondary', act: 'arreter' }));
   // A choice is asked on the image of the question; any other look on the preview's.
-  const look = envoi.demande === 'choix' ? G.look : { image: G.apercu.apercu, largeur: G.apercu.largeur, hauteur: G.apercu.hauteur };
+  const look = envoi.demande === 'choix' ? G.look : { image: G.apercu.apercu, largeur: G.apercu.largeur, hauteur: G.apercu.hauteur, capture: G.apercu.capture };
   let e;
   try {
     e = await invoke('guide_envoyer', { envoi });
@@ -650,7 +661,7 @@ function showQuestion(e, look) {
   say('idle', 'Une question avant de continuer', '');
   const choose = (choix) => {
     if (gen !== G.gen) return;
-    send({ demande: 'choix', remarque: null, choix });
+    send({ demande: 'choix', remarque: null, choix, capture: look.capture });
   };
   gui.screen.append(
     h('p', { class: 'consigne' }, e.question || e.consigne),

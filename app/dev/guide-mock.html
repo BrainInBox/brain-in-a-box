@@ -47,6 +47,7 @@
     const T = (ms) => (go ? Math.ceil(ms / 10) : ms);
     const listeners = {};
     const emit = (event, payload) => (listeners[event] || []).forEach((cb) => cb({ event, payload }));
+    const PNG = [137, 80, 78, 71, 13, 10, 26, 10];
 
     // ── The made-up program, as Claude would see it ──
     const W = 1280;
@@ -160,7 +161,11 @@
     let loginOpened = false;
     let cancel = null;
     let small = g === 'petit';
-    const preview = () => ({ apercu: picture(current, zones), largeur: W, hauteur: H, noir: g === 'noire', petit: small, zones: zones.length });
+    // guide.rs numbers each image that may leave: a look names the one it was shown, else no look.
+    let capture = 0;
+    let staged = null;
+    const preview = () => ({ apercu: picture(current, zones), largeur: W, hauteur: H, noir: g === 'noire', petit: small, zones: zones.length,
+      cachees: zones.slice(), ailleurs: false, meme: false, capture });
     const usage = (presque) => ({ cinq_heures: presque ? 0.85 : 0.31, sept_jours: 0.12, presque });
     function view(a, demande) {
       const etat = a.etat;
@@ -205,6 +210,7 @@
           throw { kind: 'image_illisible' };
         }
         current = kinds[Math.min(pastes++, kinds.length - 1)];
+        capture += 1;
         // &taille=1: the window is not the same size any more, guide.rs forgets the hidden zones (R7).
         if (P.get('taille') && pastes > 1) {
           zones = [];
@@ -212,7 +218,14 @@
         }
         return preview();
       },
-      async guide_cacher({ zones: z }) { await wait(T(200)); zones = z.slice(); return preview(); },
+      // A dropped file waits in guide.rs until the window takes it.
+      async guide_prendre_depot() {
+        await wait(T(100));
+        if (!staged) throw { kind: 'sans_capture' };
+        staged = null;
+        return handlers.guide_coller(new Uint8Array(PNG));
+      },
+      async guide_cacher({ zones: z }) { await wait(T(200)); zones = z.slice(); capture += 1; return preview(); },
       async guide_envoi_texte({ envoi }) {
         await wait(T(150));
         return [`<capture largeur="${W}" hauteur="${H}" logiciel="Odoo"/>`, `<demande>${envoi.demande}</demande>`, '<objectif>Faire une facture à un client</objectif>',
@@ -221,6 +234,7 @@
           '<cerveau>- Odoo : la compta, en ligne (***)</cerveau>'].join('\n');
       },
       async guide_envoyer({ envoi }) {
+        if (envoi.capture !== capture) throw { kind: 'sans_capture' };
         if (!checked) { checked = true; emit('guide-progress', 'checking'); await wait(T(500)); }
         emit('guide-progress', 'asking');
         await stoppable(P.get('pause') ? Infinity : T(1200));
@@ -290,10 +304,10 @@
     let arrivals = 0;
     let acted = '';
     let drew = false;
-    const PNG = [137, 80, 78, 71, 13, 10, 26, 10];
     function paste() {
       if (P.get('depose')) {
-        handlers.guide_coller(new Uint8Array(PNG)).then((Ok) => emit('guide-depose', { Ok }), (Err) => emit('guide-depose', { Err }));
+        staged = true;
+        emit('guide-depose', { Ok: null });
         return;
       }
       if (typeof DataTransfer === 'function' && typeof ClipboardEvent === 'function') {

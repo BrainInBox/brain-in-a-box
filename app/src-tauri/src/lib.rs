@@ -337,7 +337,7 @@ fn open_guide(app: &tauri::AppHandle) -> tauri::Result<()> {
             let Some(path) = paths.first().cloned() else { return };
             let handle = handle.clone();
             std::thread::spawn(move || {
-                let _ = handle.emit_to("guide", "guide-depose", guide::deposer(&path));
+                let _ = handle.emit_to("guide", "guide-depose", guide::deposer_en_attente(&path));
             });
         }
         _ => {}
@@ -414,6 +414,12 @@ async fn guide_coller(request: tauri::ipc::Request<'_>) -> Result<guide::Apercu,
     let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else { return Err(guide::GuideError::ImageIllisible) };
     let bytes = bytes.clone();
     guiding(move || guide::coller(&bytes)).await
+}
+
+/// The file dropped on the window, now that it waits for a capture: its preview.
+#[tauri::command]
+async fn guide_prendre_depot() -> Result<guide::Apercu, guide::GuideError> {
+    guiding(guide::prendre_depot).await
 }
 
 /// Every zone to hide, drawn on the preview: the new preview.
@@ -549,10 +555,9 @@ fn guide_ask(args: &[String]) -> i32 {
     out_json(&guide::status());
     let res = guide::deposer(Path::new(png))
         .inspect(|a| out_json(&serde_json::json!({ "largeur": a.largeur, "hauteur": a.hauteur, "noir": a.noir, "petit": a.petit })))
-        .and_then(|_| guide::commencer(&flag("--logiciel"), &flag("--objectif")))
-        .inspect(out_json)
-        .and_then(|_| {
-            let envoi = guide::Envoi { demande: guide::Demande::Debut, remarque: None, choix: None };
+        .and_then(|a| guide::commencer(&flag("--logiciel"), &flag("--objectif")).inspect(out_json).map(|_| a.capture))
+        .and_then(|capture| {
+            let envoi = guide::Envoi { demande: guide::Demande::Debut, remarque: None, choix: None, capture: Some(capture) };
             guide::envoyer(&envoi, &mut |stage| out_json(&stage))
         });
     guide::fin();
@@ -636,6 +641,7 @@ pub fn run() {
             guide_compris,
             guide_commencer,
             guide_coller,
+            guide_prendre_depot,
             guide_cacher,
             guide_envoi_texte,
             guide_envoyer,
