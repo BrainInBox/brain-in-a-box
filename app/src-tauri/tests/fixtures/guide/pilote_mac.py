@@ -18,8 +18,9 @@ import time
 APP, DIR = sys.argv[1], os.path.abspath(sys.argv[2])
 LOG = os.path.join(DIR, "bureau.log")
 CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-# Where the user's window is, and the other one over a part of it (top left corner, size, in points).
-CIBLE = (300, 80, 720, 540)
+# Where the user's window is, and the other one over a part of it (top left corner, size, in points). An
+# odd width: CoreVideo pads its rows, which an image read with the wrong row length would show.
+CIBLE = (300, 80, 723, 540)
 CACHE = (200, 250, 400, 300)
 
 SCENARIOS = [
@@ -175,9 +176,10 @@ def in_front(titre):
 
 
 def choose(target):
-    """Hover a part of the user's window that nothing covers, then click the picker's « Share This
-    Window » button: an unnamed AXButton of ControlCenter (macOS 15, 26), or, not in the tree (14), the
-    middle of the window hovered."""
+    """Hover a part of the user's window that nothing covers, then click the picker there. macOS 15
+    and 26 put a « Share This Window » button over the window hovered (an unnamed AXButton of
+    ControlCenter, small); macOS 14 lays an unnamed AXButton over each window, of its frame: the
+    target's own, never another window's."""
     time.sleep(3)
     f = frame(target)
     x, y, w, h = f["pos"][0], f["pos"][1], f["size"][0], f["size"][1]
@@ -185,11 +187,17 @@ def choose(target):
     time.sleep(2)
     buttons = jxa({"op": "boutons"})
     say("picker buttons", json.dumps(buttons))
-    if isinstance(buttons, list) and buttons:
-        b = buttons[0]
+    buttons = buttons if isinstance(buttons, list) else []
+    over = [b for b in buttons if b["pos"] == f["pos"] and b["size"] == f["size"]]
+    share = [b for b in buttons if b["size"][1] < 60]
+    if over:
+        bx, by = x + 0.5 * w, y + 0.12 * h
+    elif share:
+        b = share[0]
         bx, by = b["pos"][0] + b["size"][0] * 0.75, b["pos"][1] + b["size"][1] / 2
     else:
         bx, by = x + w / 2 + 40, y + h / 2
+    say("click", bx, by)
     jxa({"op": "souris", "x": bx, "y": by, "clic": True})
 
 
