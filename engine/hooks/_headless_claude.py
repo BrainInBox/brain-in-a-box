@@ -4,7 +4,9 @@
 skill, no CLAUDE.md, none of the user's settings files, in a fresh private
 folder, with a short allow-list for environment: whatever the text it reads
 says, all it can do is answer. Its stream is checked line by line against that
-(fail closed: no valid start-up line, no answer), and a claude logged in any
+(fail closed: no valid start-up line, no answer; a model other than the one asked
+for, or a refusal of the model, which Claude Code would have another model answer
+in its place, ends the run), and a claude logged in any
 other way than a claude.ai subscription, or whose settings send it to a gateway
 or a cloud provider, is never started, since an API key would be billed. A subscription reaches it two ways: the login `claude auth
 login` stores, or on a machine without a browser the token `claude setup-token`
@@ -72,7 +74,8 @@ WINDOWS_VARS = ("USERPROFILE", "HOMEDRIVE", "HOMEPATH", "APPDATA", "LOCALAPPDATA
                 # Where Claude Code looks for Git Bash, which it needs to start on Windows.
                 "CLAUDE_CODE_GIT_BASH_PATH", "ProgramFiles", "ProgramW6432")
 
-Answer = namedtuple("Answer", "output version cost_usd num_turns")
+# rate_limit: what Claude Code said of the subscription's limits (status, five_hour, seven_day), or None.
+Answer = namedtuple("Answer", "output version cost_usd num_turns rate_limit", defaults=(None,))
 
 
 def _brief(value, cap=200):
@@ -86,7 +89,8 @@ def _label(value):
 
 
 class HeadlessError(Exception):
-    """kind: start, unsupported, auth, init, timeout, quota, api, invalid.
+    """kind: start, unsupported, auth, init, timeout, quota, api, invalid, refused (the model's
+    safeguards; its detail, their category).
     reason, for the checks of the CLI only: version or flags (unsupported),
     logged_out or billed (auth)."""
 
@@ -506,11 +510,31 @@ def parse_result(result, api_errors):
     raise HeadlessError("invalid", _label(subtype))
 
 
+def rate_limit(info):
+    """The status and the 5-hour and 7-day windows of a rate_limit_event, when they have the shape
+    Claude Code gives them; None otherwise."""
+    if not isinstance(info, dict) or not isinstance(info.get("status"), str):
+        return None
+    windows = info.get("unifiedWindows") if isinstance(info.get("unifiedWindows"), dict) else {}
+
+    def window(w):
+        if not isinstance(w, dict):
+            return None
+        used, resets = w.get("utilization"), w.get("resetsAt")
+        if isinstance(used, bool) or not isinstance(used, (int, float)) or isinstance(resets, bool) \
+                or not isinstance(resets, int) or resets < 0:
+            return None
+        return {"utilization": float(used), "resetsAt": resets}
+    return {"status": _label(info["status"]), "five_hour": window(windows.get("five_hour")),
+            "seven_day": window(windows.get("seven_day"))}
+
+
 class Watch:
     """Claude's stream, line by line: the start-up check first, then errors and the result."""
 
     def __init__(self, model=None):
         self.model, self.init, self.version, self.result, self.api_errors = model, None, None, None, []
+        self.refused, self.rate_limit = None, None
 
     def line(self, line):
         """False once the run must stop: Claude did not start, or did not behave, as required."""
@@ -521,6 +545,10 @@ class Watch:
         if not isinstance(v, dict):
             return self.ok()
         kind = v.get("type")
+        if kind == "system" and v.get("subtype") == "model_refusal_fallback":
+            # The model refused; Claude Code would have another one answer in its place, unasked.
+            self.refused = HeadlessError("refused", _label(v.get("api_refusal_category") or "?"))
+            return False
         if self.init is None:
             if kind != "system":
                 self.init = HeadlessError("init", f"{kind!r} before the start-up line")
@@ -546,14 +574,29 @@ class Watch:
             if name:
                 self.init = HeadlessError("init", f"tool used: {name}")
         elif kind == "result":
+            name = self.foreign_model(v)
+            if name:
+                self.init = HeadlessError("init", f"model used: {name}")
             self.result = v
+        elif kind == "rate_limit_event":
+            self.rate_limit = rate_limit(v.get("rate_limit_info"))
         return self.ok()
 
+    def foreign_model(self, result):
+        """A model the usage counts that is not the one asked for (another one answered, or part
+        of it), as a label; None when the question asked for none."""
+        usage = result.get("modelUsage")
+        if not self.model or not isinstance(usage, dict):
+            return None
+        return next((_label(k) for k in usage if self.model not in str(k)), None)
+
     def ok(self):
-        return not isinstance(self.init, HeadlessError)
+        return self.refused is None and not isinstance(self.init, HeadlessError)
 
     def conclude(self, timed_out, stderr_tail=()):
         """The answer, or HeadlessError. Fail closed: no valid start-up line, no answer."""
+        if self.refused is not None:
+            raise self.refused
         if isinstance(self.init, HeadlessError):
             raise self.init
         if timed_out:
@@ -563,7 +606,8 @@ class Watch:
         if self.result is None:  # started, then died: the connection, most of the time
             raise HeadlessError("api", "no result" + (f" ({_brief(stderr_tail[-1])})" if stderr_tail else ""))
         out = parse_result(self.result, self.api_errors)
-        return Answer(out, self.version, self.result.get("total_cost_usd"), self.result.get("num_turns"))
+        return Answer(out, self.version, self.result.get("total_cost_usd"), self.result.get("num_turns"),
+                      self.rate_limit)
 
 
 def _claude(command):

@@ -42,7 +42,7 @@
   // &jump=showLogin|showDone opens that screen of app.js directly (the screenshot budget is only 3 s),
   // &repair=offline|exhausted|unsupported|disabled|not_logged_in is what repair_status answers under a failed step,
   // &pause=analyze|apply leaves Claude's analysis or the repair running,
-  // &error=timeout|init_invalid|invalid_verdict|api|busy ends the first analysis on that error (init_invalid
+  // &error=timeout|init_invalid|invalid_verdict|refused|api|busy ends the first analysis on that error (init_invalid
   // then rules the in-app repair out, as repair.rs does),
   // &agents=codex|codex,claude|claude,codex: agents.json lists Codex, the first one is preferred (Codex open in this copy,
   // as the tests open it): repair.rs names who is asked and who answered, the screens say Codex where they said Claude,

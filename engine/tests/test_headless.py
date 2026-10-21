@@ -413,6 +413,16 @@ class Whole(unittest.TestCase):
         self.assertEqual((a.moteur, self.claude_calls(), self.codex_calls()), ("codex", 0, 1))
         self.assertTrue(a.secours.startswith("claude: auth: Claude Code login is apiKey"), a.secours)
 
+    def test_a_refusal_of_claudes_model_is_shown_never_tried_again_nor_covered_by_codex(self):
+        write_agents(self.home, ["claude", "codex"], "claude", self.codex_home)
+        self.put(self.claude_fake, "scenario", "refusal-fallback")
+        claude, codex = self.settings()
+        claude["model"] = "opus"   # the capture's start-up line: the refusal is what stops it
+        with self.assertRaises(HeadlessError) as cm:
+            _headless.run("prompt", SCHEMA, "system", claude=claude, codex=codex, essais=2)
+        self.assertEqual(_headless.texte(cm.exception), "claude: refused: cyber")
+        self.assertEqual((self.claude_calls(), self.codex_calls()), (1, 0))
+
     def test_codex_running_a_tool_is_not_covered_by_claude(self):
         write_agents(self.home, ["claude", "codex"], "codex", self.codex_home)
         self.put(self.codex_fake, "scenario", "command")

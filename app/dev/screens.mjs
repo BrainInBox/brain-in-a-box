@@ -89,6 +89,8 @@ const SCENARIOS = [
   's=installe&go=import-paste&nth=2&click=import,paste&colle=1&imp=phrase',
   's=installe&go=import&nth=2&click=import,next,back',
   's=installe&go=import&nth=2&click=import,next,next,stop&pause=import',
+  // The model refused to answer (Claude Code would have had another one answer instead).
+  's=repair-ok&go=done&error=refused',
 ];
 
 // Where Codex can be chosen (&porte=1, as the tests open it): what some screens must say, or not.

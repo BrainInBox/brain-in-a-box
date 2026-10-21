@@ -144,6 +144,49 @@ class Stream(unittest.TestCase):
             empty.conclude(False)
         self.assertEqual(e.exception.kind, "start")
 
+    def test_a_refusal_stops_the_run_whatever_answers_in_its_place(self):
+        """Opus refused, and Claude Code had another model answer (essai 1, call 5): the app's rule too."""
+        w, stopped = replay("refusal-fallback")
+        self.assertEqual(stopped, 4, "stopped at the refusal itself")
+        with self.assertRaises(hc.HeadlessError) as e:
+            w.conclude(False)
+        self.assertEqual((e.exception.kind, e.exception.detail, e.exception.retryable), ("refused", "cyber", False))
+        self.assertIsNotNone(replay("refusal-fallback", model="opus")[1])
+        self.assertEqual(replay("refusal-fallback", model="sonnet")[1], 0, "the start-up line already says opus")
+        everything = hc.Watch("opus")
+        for line in (FIXTURES / "refusal-fallback.jsonl").read_text(encoding="utf-8").splitlines():
+            everything.line(line)
+        self.assertIsNotNone(everything.result, "the other model's answer was read...")
+        with self.assertRaises(hc.HeadlessError) as e:
+            everything.conclude(False)
+        self.assertEqual(e.exception.kind, "refused", "...and is not taken")
+
+    def test_a_model_the_question_did_not_ask_for_stops_the_run(self):
+        lines = (FIXTURES / "plan-ok.jsonl").read_text(encoding="utf-8").splitlines()
+        result = json.loads(lines[4])
+        result["modelUsage"]["claude-haiku-4-5"] = result["modelUsage"]["claude-sonnet-5-5"]
+        w = hc.Watch("sonnet")
+        self.assertEqual([w.line(l) for l in lines[:4] + [json.dumps(result)]], [True, True, True, True, False])
+        with self.assertRaises(hc.HeadlessError) as e:
+            w.conclude(False)
+        self.assertEqual((e.exception.kind, e.exception.detail), ("init", "model used: claude-haiku-4-5"))
+        self.assertIsNone(replay("plan-ok", model="sonnet")[1])
+        # No model asked: the usage is no more checked than the start-up line is.
+        anyone = hc.Watch()
+        self.assertTrue(all(anyone.line(l) for l in lines[:4] + [json.dumps(result)]))
+        self.assertEqual(anyone.conclude(False).output["cause_id"], "reseau")
+
+    def test_the_subscriptions_limits_are_kept(self):
+        a = replay("plan-ok")[0].conclude(False)
+        self.assertEqual(a.rate_limit, {"status": "allowed", "five_hour": {"utilization": 0.1, "resetsAt": 1791919800},
+                                        "seven_day": {"utilization": 0.1, "resetsAt": 1792440000}})
+        w = hc.Watch()
+        w.line((FIXTURES / "plan-ok.jsonl").read_text(encoding="utf-8").splitlines()[0])
+        w.line(json.dumps({"type": "rate_limit_event", "rate_limit_info": {
+            "status": "rejected <b>", "unifiedWindows": {"five_hour": {"utilization": "0.9", "resetsAt": 1}}}}))
+        self.assertEqual(w.rate_limit, {"status": "rejectedb", "five_hour": None, "seven_day": None})
+        self.assertIsNone(hc.Answer({}, "2.1.296", None, 1).rate_limit, "the callers that build one keep working")
+
     def test_failures_are_told_apart_and_only_transient_ones_retried(self):
         cases = {"quota": "quota", "not-logged-in": "auth", "auth-expired": "auth",
                  "budget-exceeded": "invalid", "max-turns": "invalid", "no-structured-output": "invalid",

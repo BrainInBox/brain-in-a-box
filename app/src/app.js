@@ -1161,6 +1161,7 @@ function repairError(kind, a) {
     timeout: [`${a.name} a mis trop de temps : je l’ai arrêté.`, 'Rien n’a été modifié.'],
     init_invalid: [`${a.name} ne s’est pas lancé comme prévu.`, 'Par prudence, je n’ai rien changé.'],
     invalid_verdict: [`${a.name} n’a pas répondu comme prévu.`, 'Par prudence, je n’ai rien changé.'],
+    refused: [`${a.name} n’a pas voulu analyser ce dossier.`, 'Rien n’a été modifié.'],
     api: [`Le service de ${a.name} a eu un souci.`, 'Rien n’a été modifié. Réessaie dans un moment.'],
     busy: ['Une autre étape est déjà en cours.', 'Attends qu’elle finisse, puis réessaie.'],
   };

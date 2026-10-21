@@ -374,6 +374,8 @@ pub enum RepairError {
     InitInvalid,
     /// No answer, or one outside the schema or the step's lists.
     InvalidVerdict,
+    /// Claude's model refused to answer: no other model answers in its place.
+    Refused,
     Internal { message: String },
 }
 
@@ -388,6 +390,7 @@ impl RepairError {
             RepairError::Api => "erreur du service Claude",
             RepairError::InitInvalid => "lancement non conforme",
             RepairError::InvalidVerdict => "réponse invalide",
+            RepairError::Refused => "refusée par le modèle",
             RepairError::Internal { .. } => "erreur interne",
         }
     }
@@ -408,6 +411,7 @@ impl From<ClaudeError> for RepairError {
             ClaudeError::Api => RepairError::Api,
             ClaudeError::Init => RepairError::InitInvalid,
             ClaudeError::Invalid => RepairError::InvalidVerdict,
+            ClaudeError::Refused => RepairError::Refused,
         }
     }
 }
@@ -1056,6 +1060,7 @@ fn claude_kind(e: &RepairError) -> &'static str {
         RepairError::Timeout => "timeout",
         RepairError::InitInvalid => "init",
         RepairError::InvalidVerdict => "invalid",
+        RepairError::Refused => "refused",
         RepairError::Cancelled => "cancelled",
         RepairError::Unavailable { state } => unready_kind(*state),
         _ => "internal",
@@ -3226,6 +3231,31 @@ pub(crate) mod tests {
         assert!(s.unsupported.load(Ordering::SeqCst));
         let journal = fs::read_to_string(fake.home.join(".brain-in-a-box/reparations/journal.jsonl")).unwrap();
         assert!(journal.contains("outil utilisé : web_search"), "{journal}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_refusal_of_the_model_ends_the_analysis_at_once() {
+        // The repair's start-up line (Sonnet), then the refusal as Claude Code 2.1.305 says it, and a
+        // claude that would go on: stopped at once, the other model's answer never read.
+        let refusal = fixture("refusal-fallback.jsonl");
+        let init = fixture("plan-ok.jsonl").lines().next().unwrap().to_string();
+        let rest: Vec<&str> = refusal.lines().skip(1).collect();
+        let fake = fake_claude(&format!("{init}\n{}\n", rest.join("\n")), "exec /bin/sleep 30");
+        let cancel = AtomicBool::new(false);
+        let s = failed_brain();
+        let t = Instant::now();
+        let res = s.analyze(&fake.ctx(&cancel, Duration::from_secs(20)), "brain", &mut |_| {});
+        assert_eq!(res.map(|_| ()), Err(RepairError::Refused));
+        assert!(t.elapsed() < Duration::from_secs(5), "{:?}", t.elapsed());
+        assert_eq!(s.used("brain").0, 1, "the model worked: the analysis counts");
+        assert!(!s.unsupported.load(Ordering::SeqCst), "Claude started as required: a next analysis may run");
+        let journal = fs::read_to_string(fake.home.join(".brain-in-a-box/reparations/journal.jsonl")).unwrap();
+        let entry: Value = serde_json::from_str(journal.trim()).unwrap();
+        assert_eq!(entry["erreur"], json!({ "kind": "refused" }));
+        assert!(s.report(&[]).contains("pas de diagnostic (refusée par le modèle)"), "{}", s.report(&[]));
+        assert_eq!(claude_kind(&RepairError::Refused), "refused");
+        assert!(!falls_back("refused", Engine::Codex), "a refusal is shown, never covered by the other engine");
     }
 
     #[cfg(unix)]
