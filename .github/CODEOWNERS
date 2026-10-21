@@ -20,5 +20,6 @@
 /engine/tests/pilote_windows.cs          @El-Kurdi-Chad
 /engine/tests/vault_piege.py             @El-Kurdi-Chad
 /engine/tests/ecrans_guide.py            @El-Kurdi-Chad
+/engine/tests/import_fixtures.py         @El-Kurdi-Chad
 /app/src-tauri/src/root.rs               @El-Kurdi-Chad
 /docs/terrain-agent.md                   @El-Kurdi-Chad

@@ -1078,6 +1078,28 @@ class RepairAgentLimits(unittest.TestCase):
             self.assertIn(must, owned)
 
 
+    def test_every_file_the_token_job_loads_beside_the_harness_has_an_owner(self):
+        # terrain.py runs with CLAUDE_CODE_OAUTH_TOKEN in the job `claude`: each module of engine/tests it loads
+        # (voisin, _voisin, spec_from_file_location), and each one these load, runs there too. A PR of the agent
+        # that only adds code to one of them keeps terrain-garde green: it must wait for the maintainer, as
+        # terrain.py's. (fake_claude.py is a program the app jobs run, without the token: not loaded.)
+        tests = os.path.join(self.ROOT, "engine", "tests")
+        owned, todo, seen = self.owned(), ["terrain.py"], set()
+        while todo:
+            name = todo.pop()
+            if name in seen:
+                continue
+            seen.add(name)
+            with open(os.path.join(tests, name), encoding="utf-8") as f:
+                text = f.read()
+            loaded = re.findall(r"\b_?voisin\(\"(\w+)\"\)|spec_from_file_location\(\"(\w+)\"", text)
+            todo += [m + ".py" for m in map("".join, loaded) if os.path.isfile(os.path.join(tests, m + ".py"))]
+        self.assertLessEqual({"terrain.py", "terrain_app.py", "vault_piege.py", "import_fixtures.py", "ecrans_guide.py"},
+                             seen)
+        for name in sorted(seen):
+            self.assertIn("engine/tests/" + name, owned, name + " runs in the job that holds the token")
+
+
 class Imports(unittest.TestCase):
     def test_no_file_beside_the_harness_stands_for_the_standard_library(self):
         # The job `claude` runs terrain.py with the token in its environment: a uuid.py or a
