@@ -238,7 +238,8 @@ Open the PR and leave a comment asking the maintainer to review it when the diff
   when the other one takes over: a mistake there sends the vault to an engine the user did not choose);
 - the Claude token: `engine/hooks/_headless_claude.py` (environment, login and start-up checks),
   anything that reads `CLAUDE_CODE_OAUTH_TOKEN`, and `engine/tests/terrain.py`,
-  `engine/tests/terrain_app.py`, `engine/tests/pilote_windows.cs` and `engine/tests/vault_piege.py`,
+  `engine/tests/terrain_app.py`, `engine/tests/pilote_windows.cs`, `engine/tests/vault_piege.py` and
+  `engine/tests/ecrans_guide.py` (the guide's made-up screens, drawn in the job that holds the token),
   which run with a token the next night and write the run's artifacts and captures (public, and
   not masked by GitHub);
 - this file, `docs/terrain-agent.md`;
