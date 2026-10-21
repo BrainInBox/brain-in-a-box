@@ -159,6 +159,12 @@ async fn open_claude_login() -> Result<(), String> {
     off_main(steps::open_claude_login).await
 }
 
+/// The guide's « Mettre à jour »: `claude update`, in Terminal (PowerShell on Windows).
+#[tauri::command]
+async fn open_claude_update() -> Result<(), String> {
+    off_main(steps::open_claude_update).await
+}
+
 #[tauri::command]
 async fn open_codex_login() -> Result<(), String> {
     off_main(steps::open_codex_login).await
@@ -320,7 +326,13 @@ fn open_guide(app: &tauri::AppHandle) -> tauri::Result<()> {
     let window = builder.build()?;
     let handle = app.clone();
     window.on_window_event(move |event| match event {
-        tauri::WindowEvent::Destroyed => guide::fin(),
+        // The installer's window comes back: an app with no window in sight looks gone.
+        tauri::WindowEvent::Destroyed => {
+            guide::fin();
+            if let Some(main) = handle.get_webview_window("main") {
+                let _ = main.unminimize();
+            }
+        }
         tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) => {
             let Some(path) = paths.first().cloned() else { return };
             let handle = handle.clone();
@@ -340,6 +352,21 @@ fn open_guide(app: &tauri::AppHandle) -> tauri::Result<()> {
 #[tauri::command]
 async fn guide_open(app: tauri::AppHandle) -> Result<(), String> {
     open_guide(&app).map_err(|e| e.to_string())
+}
+
+/// The installer's welcome offers the guide: the brain and Claude Code are there (nothing is run).
+#[tauri::command]
+async fn guide_offert() -> bool {
+    tauri::async_runtime::spawn_blocking(guide::offert).await.unwrap_or(false)
+}
+
+/// « Fermer le guide »: its window goes, the session with it (Destroyed), the installer's comes back.
+#[tauri::command]
+async fn guide_fermer(app: tauri::AppHandle) -> Result<(), String> {
+    match app.get_webview_window("guide") {
+        Some(w) => w.close().map_err(|e| e.to_string()),
+        None => Ok(()),
+    }
 }
 
 /// « Toujours au-dessus », the pin: set from Rust, the page has no window permission for it.
@@ -427,6 +454,18 @@ fn guide_annuler() {
 #[tauri::command]
 fn guide_fin() {
     guide::fin();
+}
+
+/// G10: the procedure drafted from the steps.
+#[tauri::command]
+async fn guide_brouillon() -> Result<guide::Brouillon, guide::GuideError> {
+    guiding(guide::brouillon).await
+}
+
+/// « Enregistrer dans mon cerveau »: what the user kept of the draft, read again before it is written.
+#[tauri::command]
+async fn guide_enregistrer(note: guide::NoteGuide) -> Result<guide::Enregistre, guide::GuideError> {
+    guiding(move || guide::enregistrer(&note)).await
 }
 
 /// The picker of the system, opened from Rust: the window opens no dialog itself and never gives a
@@ -587,7 +626,10 @@ pub fn run() {
             import_cancel,
             import_forget,
             import_open_note,
+            open_claude_update,
             guide_open,
+            guide_offert,
+            guide_fermer,
             guide_epingler,
             guide_taille,
             guide_status,
@@ -599,7 +641,9 @@ pub fn run() {
             guide_envoyer,
             guide_trancher,
             guide_annuler,
-            guide_fin
+            guide_fin,
+            guide_brouillon,
+            guide_enregistrer
         ])
         .run(tauri::generate_context!())
         .expect("error while running Brain in a Box");

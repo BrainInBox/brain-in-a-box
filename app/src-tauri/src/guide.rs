@@ -8,7 +8,8 @@
 //! instruction to open a link, call a number, type a command or let someone in from afar gets past
 //! (§4.6). The session lives in memory only: no image, no answer, no objective is ever written. On
 //! disk, two files: an empty flag once the user read how the guide looks (`vu`), and one line of
-//! counters per question (`journal.jsonl`).
+//! counters per question (`journal.jsonl`). And, when the user asks for it at the end, the procedure in
+//! the brain (G10): the steps in general words, which they read and may change first.
 
 use std::fs;
 use std::io::{self, Read, Write};
@@ -92,10 +93,12 @@ pub enum Ia {
     /// No Claude Code, or one that does not answer.
     Absent,
     NotLoggedIn,
-    /// Too old, missing a flag, or it once started outside the expected setup since the app started.
+    /// Too old, or missing a flag: « Mettre à jour ».
     Unsupported,
     /// Logged in with a key or a provider that would be billed: only a subscription is used.
     Billed,
+    /// It once started outside the expected setup since the app started: not asked again until then.
+    Arrete,
 }
 
 /// How the capture comes. v1: pasted, everywhere; the system's picker and the click come later.
@@ -215,6 +218,34 @@ pub struct Etape {
     pub recapitulatif: Vec<String>,
 }
 
+/// G10: the procedure as Bibo drafts it from the steps, without asking Claude, before the user reads it.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct Brouillon {
+    /// From the objective, which may name a client: shown, editable (R12).
+    pub titre: String,
+    pub logiciel: String,
+    /// One step a line, in general words.
+    pub etapes: Vec<String>,
+    /// Numbers, addresses or an IBAN were taken out: « J'ai retiré les nombres et les adresses. »
+    pub retire: bool,
+}
+
+/// What the user kept of the draft: read again by Bibo before anything is written.
+#[derive(Deserialize, Clone, Debug)]
+pub struct NoteGuide {
+    pub titre: String,
+    pub etapes: Vec<String>,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct Enregistre {
+    /// « Documents › Brain › Guides ».
+    pub dossier: String,
+    pub fichier: String,
+    /// The host the evening's backup pushes the brain to, when it has one.
+    pub remote: Option<String>,
+}
+
 #[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum Plafond {
@@ -260,6 +291,12 @@ pub enum GuideError {
     /// No answer, or one outside the schema or its rules.
     Invalide,
     Budget { quoi: Plafond },
+    /// No brain to save the procedure in.
+    SansCerveau,
+    /// No step left in what the user kept.
+    ProcedureVide,
+    /// The title (None) or that step holds a link, a number to call, a command or remote access.
+    ProcedureRefusee { etape: Option<usize> },
     Interne { message: String },
 }
 
@@ -714,6 +751,8 @@ struct Session {
     /// Claude Code's version, once checked this session.
     checked: Option<String>,
     rate_limit: Option<RateLimit>,
+    /// The procedure, once written: a second click writes nothing more.
+    saved: Option<Enregistre>,
 }
 
 /// Every session of this run of the app.
@@ -1077,7 +1116,7 @@ struct Run {
 impl Guide {
     fn status(&self, home: &Path, check: &dyn Fn() -> Result<String, Ia>) -> Status {
         let ia = match check() {
-            Ok(_) if self.launch.unsupported.load(Ordering::SeqCst) => Ia::Unsupported,
+            Ok(_) if self.launch.unsupported.load(Ordering::SeqCst) => Ia::Arrete,
             Ok(_) => Ia::Ready,
             Err(ia) => ia,
         };
@@ -1150,7 +1189,7 @@ impl Guide {
         let _busy = Busy::take(&self.busy)?;
         ctx.cancel.store(false, Ordering::SeqCst);
         if self.launch.unsupported.load(Ordering::SeqCst) {
-            return Err(GuideError::Indisponible { ia: Ia::Unsupported });
+            return Err(GuideError::Indisponible { ia: Ia::Arrete });
         }
         // Reserved under the lock: the session's limits, its image and text, one look taken.
         let (id, code, png, size, text, checked) = {
@@ -1338,7 +1377,222 @@ fn journal(store: &Path, entry: &Value) {
     let _ = write();
 }
 
+// ── The procedure (G10): drafted by Bibo, read by the user, written in the brain ──
+
+const TITRE_MAX: usize = 80;
+const ETAPE_MAX: usize = 160;
+const ETAPES_MAX: usize = 30;
+const TAKEN_OUT: &str = "…";
+
+static IBAN: LazyLock<Option<Regex>> = LazyLock::new(|| Regex::new(r"\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]{4}){3,7}(?: ?[A-Z0-9]{1,3})?\b").ok());
+/// What a line of a note may not start with: a list mark, a heading, a rule, a quote, however many.
+static LEAD: LazyLock<Option<Regex>> = LazyLock::new(|| Regex::new(r"^(?:[-*+]\s+|\d{1,3}[.)]\s+|#+(?:\s+|$)|-{3,}\s*|={3,}\s*|>+\s*)+").ok());
+static FENCE: LazyLock<Option<Regex>> = LazyLock::new(|| Regex::new(r"~{3,}").ok());
+static COMMENT: LazyLock<Option<Regex>> = LazyLock::new(|| Regex::new(r"%{2,}").ok());
+static EMBED: LazyLock<Option<Regex>> = LazyLock::new(|| Regex::new(r"!+\[").ok());
+
+/// Links, addresses, IBANs and runs of digits out of a text bound for the brain, and whether there were any.
+fn without_data(text: &str) -> (String, bool) {
+    let mut out = text.to_string();
+    for re in [&*IBAN, &*URL, &*AT, &*DOMAIN, &*NUMBERS].into_iter().flatten() {
+        out = re.replace_all(&out, TAKEN_OUT).into_owned();
+    }
+    let changed = out != text;
+    (out, changed)
+}
+
+/// One line of plain text that is safe in a note of the brain, after _vault_write.clean_item: no HTML
+/// or Templater code (`<`), no inline code (Dataview's `$=` runs on view), no fence, no Obsidian
+/// comment, no list mark or heading of its own, no image or embed (they load on view); secrets masked;
+/// `max` characters at most. A pattern that did not compile leaves nothing.
+fn note_line(text: &str, max: usize) -> String {
+    let (Some(lead), Some(fence), Some(comment), Some(embed)) = (&*LEAD, &*FENCE, &*COMMENT, &*EMBED) else { return String::new() };
+    let s = one_line(text).replace('<', "‹").replace('`', "'");
+    let s = comment.replace_all(&fence.replace_all(&s, "~~"), "%").into_owned();
+    let mut s = lead.replace(&s, "").into_owned();
+    if s.chars().count() > max {
+        s = format!("{}…", cut(&s, max - 1).trim_end());
+    }
+    embed.replace_all(&s, "[").into_owned()
+}
+
+/// `[a-z0-9-]`, from the words of `s`.
+fn slug(s: &str, max: usize) -> String {
+    let mut out = String::new();
+    for c in folded(s).chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c);
+        } else if !out.is_empty() && !out.ends_with('-') {
+            out.push('-');
+        }
+    }
+    cut(&out, max).trim_end_matches('-').to_string()
+}
+
+/// The note in Guides/, never over another file nor through a link: written aside, then linked to the
+/// first free name (`-2`, `-3`… after it), so the brain's readers see it whole or not at all.
+fn write_note(dir: &Path, stem: &str, text: &str) -> io::Result<PathBuf> {
+    match fs::symlink_metadata(dir) {
+        Ok(m) if m.is_dir() => {}
+        Ok(_) => return Err(io::Error::other("le dossier Guides de ton cerveau n'est pas un dossier")),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => fs::create_dir(dir)?,
+        Err(e) => return Err(e),
+    }
+    static N: AtomicU64 = AtomicU64::new(0);
+    let tmp = dir.join(format!(".{stem}.{}-{}.tmp", std::process::id(), N.fetch_add(1, Ordering::SeqCst)));
+    let mut f = perms::create_new(&tmp, 0o644)?;
+    let written = f.write_all(text.as_bytes()).and_then(|()| f.sync_all());
+    drop(f);
+    let placed = written.and_then(|()| place(&tmp, dir, stem, text));
+    let _ = fs::remove_file(&tmp);
+    placed
+}
+
+fn place(tmp: &Path, dir: &Path, stem: &str, text: &str) -> io::Result<PathBuf> {
+    for n in 1..100 {
+        let dest = dir.join(if n == 1 { format!("{stem}.md") } else { format!("{stem}-{n}.md") });
+        match fs::hard_link(tmp, &dest) {
+            Ok(()) => return Ok(dest),
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+            // A file system without links (FAT, some shares): a new file, never over another one.
+            Err(_) => {}
+        }
+        match perms::create_new(&dest, 0o644) {
+            Ok(mut f) => {
+                let res = f.write_all(text.as_bytes()).and_then(|()| f.sync_all());
+                if res.is_err() {
+                    let _ = fs::remove_file(&dest);
+                }
+                return res.map(|()| dest);
+            }
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    Err(io::Error::new(io::ErrorKind::AlreadyExists, "trop de procédures du même nom"))
+}
+
+/// « Documents › Brain › Guides »: where the note is, from the user's home.
+fn shown_dir(home: &Path, dir: &Path) -> String {
+    let name = |c: std::path::Component| c.as_os_str().to_string_lossy().into_owned();
+    let parts: Vec<String> = match dir.strip_prefix(home) {
+        Ok(rel) => rel.components().map(name).collect(),
+        Err(_) => {
+            let mut last: Vec<String> = dir.components().rev().take(2).map(name).collect();
+            last.reverse();
+            last
+        }
+    };
+    parts.join(" › ")
+}
+
+/// A remote's host, its user and password left out; None for a folder (a local path, file://).
+fn host_of(url: &str) -> Option<String> {
+    let rest = url.split_once("://").map_or(url, |(_, r)| r);
+    let authority = &rest[..rest.find('/').unwrap_or(rest.len())];
+    let host = authority.rsplit('@').next()?.split(':').next()?;
+    let plain = host.contains('.') && host.len() <= 253 && host.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-');
+    plain.then(|| host.to_ascii_lowercase())
+}
+
+/// Where the evening's backup pushes the brain (`git push origin`, gbrain-nightly.sh): origin's host.
+fn remote_host(vault: &Path) -> Option<String> {
+    let config = read_note(&vault.join(".git").join("config"))?;
+    let mut origin = false;
+    for line in config.lines().map(str::trim) {
+        if line.starts_with('[') {
+            origin = line.split_whitespace().collect::<String>() == "[remote\"origin\"]";
+        } else if let Some((key, value)) = line.split_once('=').filter(|_| origin) {
+            if key.trim() == "url" {
+                return host_of(value.trim());
+            }
+        }
+    }
+    None
+}
+
+impl Guide {
+    fn draft(&self) -> Result<Brouillon, GuideError> {
+        let guard = lock(&self.session);
+        let s = guard.as_ref().filter(|s| s.started && !s.steps.is_empty()).ok_or(GuideError::SansSeance)?;
+        let mut retire = false;
+        let mut clean = |text: &str, max: usize| {
+            let (text, out) = without_data(text);
+            retire |= out;
+            note_line(&text, max)
+        };
+        let titre = clean(&s.objectif, TITRE_MAX);
+        let etapes = s.steps.iter().map(|st| clean(if st.resume.is_empty() { &st.consigne } else { &st.resume }, ETAPE_MAX)).filter(|e| !e.is_empty()).collect();
+        Ok(Brouillon { titre, logiciel: s.logiciel.clone(), etapes, retire })
+    }
+
+    /// What the user kept, cleaned and filtered again (they may have typed anything), as a note of
+    /// Guides/ that `procedure` reads back: `source: "bibo-guide"`, no tool allowed.
+    fn save(&self, vault: Option<&Path>, home: &Path, note: &NoteGuide, (y, m, d): (i64, u64, u64)) -> Result<Enregistre, GuideError> {
+        let mut guard = lock(&self.session);
+        let s = guard.as_mut().filter(|s| s.started).ok_or(GuideError::SansSeance)?;
+        if let Some(done) = &s.saved {
+            return Ok(done.clone());
+        }
+        let vault = vault.ok_or(GuideError::SansCerveau)?;
+        let titre = note_line(&without_data(&note.titre).0, TITRE_MAX).replace('"', "'").replace('\\', "/");
+        if !allowed(&titre) {
+            return Err(GuideError::ProcedureRefusee { etape: None });
+        }
+        let mut etapes = Vec::new();
+        for raw in &note.etapes {
+            let line = note_line(&without_data(raw).0, ETAPE_MAX);
+            if line.is_empty() {
+                continue;
+            }
+            if !allowed(&line) {
+                return Err(GuideError::ProcedureRefusee { etape: Some(etapes.len() + 1) });
+            }
+            etapes.push(line);
+        }
+        if etapes.is_empty() {
+            return Err(GuideError::ProcedureVide);
+        }
+        etapes.truncate(ETAPES_MAX);
+
+        let logiciel = s.logiciel.clone();
+        let named = match slug(&titre, 60) {
+            t if t.is_empty() => "procedure".to_string(),
+            t => t,
+        };
+        let stem = match slug(&logiciel, 30) {
+            l if l.is_empty() => named,
+            l => format!("{l}-{named}"),
+        };
+        let (dans, tiret) = if logiciel.is_empty() { (String::new(), String::new()) } else { (format!(" dans {logiciel}"), format!(" — {logiciel}")) };
+        let date = format!("{d:02}/{m:02}/{y}");
+        let mut text = format!(
+            "---\nname: \"guide-{stem}\"\nversion: \"1.0.0\"\ndescription: \"{titre}{dans}, pas à pas (appris avec Bibo le {date}).\"\n\
+             allowed-tools: []\ntriggers: [\"{titre}{dans}\"]\nlogiciel: \"{logiciel}\"\nsource: \"bibo-guide\"\n---\n# {titre}{tiret}\n\n"
+        );
+        for (i, e) in etapes.iter().enumerate() {
+            text.push_str(&format!("{}. {e}\n", i + 1));
+        }
+        text.push_str(&format!("\n> Appris avec Bibo le {date}. Les boutons peuvent changer après une mise à jour du logiciel.\n"));
+        let dir = vault.join(GUIDES);
+        let path = write_note(&dir, &stem, &text).map_err(internal)?;
+        let done = Enregistre {
+            dossier: shown_dir(home, &dir),
+            fichier: path.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default(),
+            remote: remote_host(vault),
+        };
+        s.saved = Some(done.clone());
+        Ok(done)
+    }
+}
+
 // ── Entry points ────────────────────────────────────────────────────────────
+
+/// Whether the installer's welcome offers the guide (G0): the brain and Claude Code are there. Nothing
+/// is run, unlike `status`, whose three runs of Claude Code would hold the first screen up.
+pub fn offert() -> bool {
+    detect::vault(&sys::home()).is_some() && detect::claude_bin().is_some()
+}
 
 pub fn status() -> Status {
     let home = sys::home();
@@ -1414,6 +1668,17 @@ pub fn trancher(faite: bool) -> Result<Etape, GuideError> {
 
 pub fn annuler() {
     CANCEL.store(true, Ordering::SeqCst);
+}
+
+/// G10: the procedure drafted from the session's steps, for the user to read before anything is written.
+pub fn brouillon() -> Result<Brouillon, GuideError> {
+    GUIDE.draft()
+}
+
+/// « Enregistrer dans mon cerveau »: Guides/<logiciel>-<objectif>.md.
+pub fn enregistrer(note: &NoteGuide) -> Result<Enregistre, GuideError> {
+    let home = sys::home();
+    GUIDE.save(detect::vault(&home).as_deref(), &home, note, civil(now_secs()))
 }
 
 /// « Fermer le guide », or its window closed: everything of the session forgotten, images included.
@@ -2085,8 +2350,8 @@ mod tests {
         b.then(|code| stream(&answer(json!({"code_vu": code})), "claude-sonnet-5-5", 0.02, 0.1));
         assert_eq!(b.send(Demande::Debut), Err(GuideError::Lancement), "another model than Opus");
         // From now on, no question until the app starts again.
-        assert_eq!(b.send(Demande::Debut), Err(GuideError::Indisponible { ia: Ia::Unsupported }));
-        assert_eq!(b.guide.status(b.home.path(), &|| Ok("2.1.305".into())).ia, Ia::Unsupported);
+        assert_eq!(b.send(Demande::Debut), Err(GuideError::Indisponible { ia: Ia::Arrete }));
+        assert_eq!(b.guide.status(b.home.path(), &|| Ok("2.1.305".into())).ia, Ia::Arrete, "not « too old »: an update would not help");
         let issues: Vec<Value> = b.journal().iter().map(|e| e["issue"].clone()).collect();
         assert_eq!(issues, [json!("image_non_vue"), json!("refus"), json!("lancement")]);
     }
@@ -2189,6 +2454,165 @@ mod tests {
         b.send(Demande::Debut).unwrap();
         let rgb = Rgb { w: img.w, h: img.h, px: img.px.chunks(4).flat_map(|c| c[..3].to_vec()).collect() };
         assert_eq!(read_band(&rgb, 800), Some(lock(&b.seen).codes[0].clone()), "the code shown is the one Claude got");
+    }
+
+    // ── The procedure (G10) ──
+
+    /// A session that got to its end: one step a summary, the last one without.
+    fn finished(b: &Bench, objectif: &str, resumes: &[&str]) {
+        let steps = resumes.iter().map(|r| Step { consigne: format!("Consigne pour {r}"), resume: (*r).into(), statut: Statut::Faite }).collect();
+        *lock(&b.guide.session) = Some(Session { started: true, logiciel: "Odoo".into(), objectif: objectif.into(), steps, ..b.guide.new_session() });
+    }
+
+    fn brain(b: &Bench) -> PathBuf {
+        let vault = b.home.path().join("Documents").join("Brain");
+        fs::create_dir_all(&vault).unwrap();
+        vault
+    }
+
+    fn keep(titre: &str, etapes: &[&str]) -> NoteGuide {
+        NoteGuide { titre: titre.into(), etapes: etapes.iter().map(|e| (*e).to_string()).collect() }
+    }
+
+    const TODAY: (i64, u64, u64) = (2026, 10, 21);
+
+    #[test]
+    fn the_draft_is_bibos_own_with_no_number_nor_address() {
+        let b = Bench::new();
+        assert_eq!(b.guide.draft(), Err(GuideError::SansSeance));
+        finished(&b, "Faire la facture 2026-00042 de jo@boulangerie.fr", &["Clique sur « Facturation » dans le menu du haut.", "Saisis 3 120,00 puis l'IBAN FR76 3000 6000 0112 3456 7890 189.", ""]);
+        let d = b.guide.draft().unwrap();
+        assert_eq!(d.titre, "Faire la facture … de …");
+        assert_eq!(d.logiciel, "Odoo");
+        assert_eq!(d.etapes, ["Clique sur « Facturation » dans le menu du haut.", "Saisis …,00 puis l'IBAN ….", "Consigne pour"]);
+        assert!(d.retire);
+        finished(&b, "Faire une facture", &["Clique sur « Nouveau »."]);
+        assert!(!b.guide.draft().unwrap().retire, "nothing taken out, nothing said");
+    }
+
+    #[test]
+    fn a_saved_procedure_is_a_note_the_next_session_reads() {
+        let b = Bench::new();
+        let vault = brain(&b);
+        finished(&b, "Faire une facture", &["Clique sur « Facturation ».", "Clique sur « Nouveau », en haut à gauche."]);
+        let d = b.guide.draft().unwrap();
+        let saved = b.guide.save(Some(&vault), b.home.path(), &keep(&d.titre, &d.etapes.iter().map(String::as_str).collect::<Vec<_>>()), TODAY).unwrap();
+        assert_eq!(saved, Enregistre { dossier: "Documents › Brain › Guides".into(), fichier: "odoo-faire-une-facture.md".into(), remote: None });
+        let text = fs::read_to_string(vault.join(GUIDES).join("odoo-faire-une-facture.md")).unwrap();
+        assert_eq!(
+            text,
+            "---\nname: \"guide-odoo-faire-une-facture\"\nversion: \"1.0.0\"\n\
+             description: \"Faire une facture dans Odoo, pas à pas (appris avec Bibo le 21/10/2026).\"\n\
+             allowed-tools: []\ntriggers: [\"Faire une facture dans Odoo\"]\nlogiciel: \"Odoo\"\nsource: \"bibo-guide\"\n---\n\
+             # Faire une facture — Odoo\n\n1. Clique sur « Facturation ».\n2. Clique sur « Nouveau », en haut à gauche.\n\n\
+             > Appris avec Bibo le 21/10/2026. Les boutons peuvent changer après une mise à jour du logiciel.\n"
+        );
+        let p = procedure(&vault.join(GUIDES), "Odoo", "Faire une facture client").unwrap();
+        assert_eq!(p.steps, "1. Clique sur « Facturation ».\n2. Clique sur « Nouveau », en haut à gauche.");
+        // Once a session: a second click writes nothing more.
+        assert_eq!(b.guide.save(Some(&vault), b.home.path(), &keep("Autre", &["Clique."]), TODAY), Ok(saved));
+        assert_eq!(fs::read_dir(vault.join(GUIDES)).unwrap().count(), 1, "one note, no temporary file left");
+        assert_eq!(b.guide.save(None, b.home.path(), &keep("Autre", &["Clique."]), TODAY).map(|_| ()), Ok(()), "already saved");
+        finished(&b, "Faire une facture", &["Clique."]);
+        assert_eq!(b.guide.save(None, b.home.path(), &keep("Autre", &["Clique."]), TODAY), Err(GuideError::SansCerveau));
+    }
+
+    #[test]
+    fn the_notes_name_is_plain_and_never_takes_anothers_place() {
+        let b = Bench::new();
+        let vault = brain(&b);
+        let guides = vault.join(GUIDES);
+        fs::create_dir_all(&guides).unwrap();
+        fs::write(guides.join("odoo-etc-passwd.md"), "à moi").unwrap();
+        finished(&b, "x", &["Clique."]);
+        let s = b.guide.save(Some(&vault), b.home.path(), &keep("../../etc/passwd", &["Clique sur « Nouveau »."]), TODAY).unwrap();
+        assert_eq!(s.fichier, "odoo-etc-passwd-2.md");
+        assert_eq!(fs::read_to_string(guides.join("odoo-etc-passwd.md")).unwrap(), "à moi");
+        #[cfg(unix)]
+        {
+            let elsewhere = tempfile::tempdir().unwrap();
+            fs::write(elsewhere.path().join("cible.md"), "intact").unwrap();
+            std::os::unix::fs::symlink(elsewhere.path().join("cible.md"), guides.join("odoo-etc-passwd-3.md")).unwrap();
+            finished(&b, "x", &["Clique."]);
+            let s = b.guide.save(Some(&vault), b.home.path(), &keep("../../etc/passwd", &["Clique."]), TODAY).unwrap();
+            assert_eq!(s.fichier, "odoo-etc-passwd-4.md", "a link is never written through");
+            assert_eq!(fs::read_to_string(elsewhere.path().join("cible.md")).unwrap(), "intact");
+        }
+        finished(&b, "x", &["Clique."]);
+        assert_eq!(b.guide.save(Some(&vault), b.home.path(), &keep("« » !?", &["Clique."]), TODAY).unwrap().fichier, "odoo-procedure.md");
+        assert!(fs::read_dir(&guides).unwrap().filter_map(Result::ok).all(|e| !e.file_name().to_string_lossy().ends_with(".tmp")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_guides_folder_that_is_a_link_is_not_written_through() {
+        let b = Bench::new();
+        let vault = brain(&b);
+        let elsewhere = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink(elsewhere.path(), vault.join(GUIDES)).unwrap();
+        finished(&b, "Faire une facture", &["Clique."]);
+        assert!(matches!(b.guide.save(Some(&vault), b.home.path(), &keep("Facture", &["Clique."]), TODAY), Err(GuideError::Interne { .. })));
+        assert_eq!(fs::read_dir(elsewhere.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn what_the_user_kept_goes_through_the_filter_and_the_notes_rules_again() {
+        let b = Bench::new();
+        let vault = brain(&b);
+        finished(&b, "Faire une facture", &["Clique."]);
+        let save = |titre: &str, etapes: &[&str]| b.guide.save(Some(&vault), b.home.path(), &keep(titre, etapes), TODAY);
+        assert_eq!(save("Facture", &["Clique sur « Nouveau ».", "", "Appuie sur Win+R et colle."]), Err(GuideError::ProcedureRefusee { etape: Some(2) }));
+        assert_eq!(save("Installer AnyDesk", &["Clique."]), Err(GuideError::ProcedureRefusee { etape: None }));
+        assert_eq!(save("Facture", &["", " \n "]), Err(GuideError::ProcedureVide));
+        assert!(!vault.join(GUIDES).exists(), "nothing written on a refusal");
+        let s = save(
+            "Facture \"x\" \\ n°\n---",
+            &["# <img src=x onerror=alert(1)>", "`$= dv.view()` ![[secret.png]]", "- <% tp.system %>", "> Clique sur « Envoyer » pour jo@x.fr, réf. 2026-00042", "Clique\nsur « OK »."],
+        )
+        .unwrap();
+        let text = fs::read_to_string(vault.join(GUIDES).join(&s.fichier)).unwrap();
+        for bad in ["<", "`", "![", "jo@", "00042", "\\"] {
+            assert!(!text.contains(bad), "{bad} in {text}");
+        }
+        let body: Vec<&str> = text.lines().filter(|l| l.starts_with(|c: char| c.is_ascii_digit())).collect();
+        assert_eq!(body, ["1. ‹img src=x onerror=alert(1)>", "2. '$= dv.view()' [[secret.png]]", "3. ‹% tp.system %>", "4. Clique sur « Envoyer » pour … réf. …", "5. Clique sur « OK »."]);
+        let (fields, _) = frontmatter(&text);
+        let field = |k: &str| fields.iter().find(|(f, _)| f == k).map(|(_, v)| v.clone()).unwrap();
+        assert_eq!(field("description"), "Facture 'x' / n° --- dans Odoo, pas à pas (appris avec Bibo le 21/10/2026).");
+        assert_eq!((field("source").as_str(), field("logiciel").as_str(), field("allowed-tools").as_str()), ("bibo-guide", "Odoo", "[]"));
+        let long = "Clique sur « Nouveau » ".repeat(20);
+        finished(&b, "x", &["Clique."]);
+        let s = save("Facture", &vec![long.as_str(); 40]).unwrap();
+        let text = fs::read_to_string(vault.join(GUIDES).join(&s.fichier)).unwrap();
+        assert_eq!(text.lines().filter(|l| l.starts_with(|c: char| c.is_ascii_digit())).count(), ETAPES_MAX);
+        assert!(text.lines().all(|l| l.chars().count() <= ETAPE_MAX + 4), "every step cut");
+    }
+
+    #[test]
+    fn the_remote_is_said_by_its_host_alone() {
+        for (url, host) in [
+            ("https://jo:ghp_SECRET@github.com/jo/brain.git", Some("github.com")),
+            ("git@gitlab.com:jo/brain.git", Some("gitlab.com")),
+            ("ssh://git@git.example.org:2222/brain", Some("git.example.org")),
+            ("/Volumes/Cle/brain.git", None),
+            ("C:\\Users\\jo\\brain.git", None),
+            ("file:///srv/brain.git", None),
+            ("https://evil\"<x>.com/a", None),
+        ] {
+            assert_eq!(host_of(url).as_deref(), host, "{url}");
+        }
+        let v = tempfile::tempdir().unwrap();
+        fs::create_dir_all(v.path().join(".git")).unwrap();
+        fs::write(v.path().join(".git/config"), "[core]\n\tbare = false\n[remote \"upstream\"]\n\turl = https://a.example.com/x\n").unwrap();
+        assert_eq!(remote_host(v.path()), None, "only origin is pushed every night");
+        fs::write(v.path().join(".git/config"), "[core]\n\tbare = false\n[remote \"origin\"]\n\turl = git@github.com:jo/brain.git\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n").unwrap();
+        assert_eq!(remote_host(v.path()).as_deref(), Some("github.com"));
+        let b = Bench::new();
+        let vault = brain(&b);
+        fs::create_dir_all(vault.join(".git")).unwrap();
+        fs::copy(v.path().join(".git/config"), vault.join(".git/config")).unwrap();
+        finished(&b, "Faire une facture", &["Clique."]);
+        assert_eq!(b.guide.save(Some(&vault), b.home.path(), &keep("Facture", &["Clique."]), TODAY).unwrap().remote.as_deref(), Some("github.com"));
     }
 
     fn claude_png(data_url: &str) -> Vec<u8> {
