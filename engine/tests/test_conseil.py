@@ -120,12 +120,12 @@ class Conseil(unittest.TestCase):
         c = _conseil.conseil(claude=[], codex=[], applications=[str(self.apps)])
         self.assertEqual(c["conseil"], "claude")
 
-    def test_hermes_is_said_never_installed_nor_touched(self):
+    def test_hermes_is_said_when_it_is_there(self):
         self.assertIsNone(self.ask()["hermes"])
         (self.home / ".hermes").mkdir()
         (self.home / ".hermes" / "config.yaml").write_text("model: x\n", encoding="utf-8")
         h = self.ask()["hermes"]
-        self.assertIn("je ne l'installe pas", h)
+        self.assertTrue(h.startswith("J'ai vu Hermes, ton IA au quotidien."), h)
         shutil.rmtree(str(self.home / ".hermes"))
         os.environ["HERMES_HOME"] = str(self.root / "ailleurs")
         (self.root / "ailleurs").mkdir()

@@ -33,6 +33,8 @@ use crate::agents::{self, Agents, Engine};
 use crate::detect::{self, fmt_version, Found};
 use crate::model::StepResult;
 #[cfg(target_os = "macos")]
+use crate::hermes;
+#[cfg(target_os = "macos")]
 use crate::sys::minutes;
 use crate::{codex, config_guard};
 use crate::{perms, sys, voyage};
@@ -40,9 +42,9 @@ use crate::{perms, sys, voyage};
 use crate::root::{self, OBSIDIAN_DEB_SHA256};
 
 /// Claude Code first: its installer needs none of Apple's tools, and once the user is
-/// logged in, Claude can help repair the steps that follow.
+/// logged in, Claude can help repair the steps that follow. Hermes last: the brain works without it.
 #[cfg(target_os = "macos")]
-const ORDER: &[&str] = &["claude", "clt", "bun", "obsidian", "brain"];
+const ORDER: &[&str] = &["claude", "clt", "bun", "obsidian", "brain", "hermes"];
 /// The system's tools first: everything after downloads with curl (a fresh Ubuntu desktop
 /// has none), Bun's installer unzips, install.sh needs git and python3.
 #[cfg(target_os = "linux")]
@@ -96,6 +98,23 @@ const CLT_SETTLE: Duration = Duration::from_secs(90);
 const INSTALLER_LIMIT: Duration = Duration::from_secs(20 * 60);
 /// install.ps1 also fetches Python, Git and Obsidian through winget.
 const BRAIN_LIMIT: Duration = Duration::from_secs(if cfg!(windows) { 60 } else { 40 } * 60);
+/// Hermes's official installer, the one its site gives. Without a question, and with the desktop
+/// app, which it builds in ~/.hermes/hermes-agent (the command lands in ~/.local/bin).
+#[cfg(target_os = "macos")]
+const HERMES_INSTALLER: &str = "https://hermes-agent.nousresearch.com/install.sh";
+#[cfg(target_os = "macos")]
+const HERMES_ARGS: &[&str] = &["--non-interactive", "--include-desktop"];
+/// Hermes's official app, the one its site gives: it opens the desktop app install.sh built.
+/// The address is not versioned: its signature is checked, not its size or its digest.
+#[cfg(target_os = "macos")]
+const HERMES_DMG: &str = "https://hermes-assets.nousresearch.com/Hermes-Setup.dmg";
+/// Nous Research's Apple developer id: a copy signed by anyone else is thrown away.
+#[cfg(target_os = "macos")]
+const HERMES_TEAM: &str = "T2F6S8MF7C";
+/// install.sh fetches Python, Node and a browser, and builds the desktop app: 4.4 GB on the
+/// disk, 161 s on fiber (21/10/2026), far longer on a slow line.
+#[cfg(target_os = "macos")]
+const HERMES_LIMIT: Duration = Duration::from_secs(60 * 60);
 /// Our work folders (see TempDir): nothing else is ever named like them.
 const WORK_PREFIX: &str = ".biab-";
 const LINK_HOSTS: &[&str] = &["dashboard.voyageai.com", "docs.voyageai.com", "claude.com", "claude.ai", "obsidian.md", "chatgpt.com"];
@@ -145,6 +164,8 @@ pub(crate) fn run_held(_g: &MutexGuard<'static, ()>, id: &str, voyage_key: Optio
         "bun" => bun(log),
         "claude" => claude(log),
         "codex" => codex(log),
+        #[cfg(target_os = "macos")]
+        "hermes" => hermes(log),
         #[cfg(target_os = "macos")]
         "obsidian" => obsidian(log),
         #[cfg(target_os = "linux")]
@@ -348,7 +369,7 @@ fn bun(log: &mut dyn FnMut(String)) -> Step {
     if let Some(v) = found.version() {
         log(format!("Bun {} est trop ancien : je le mets à jour.", fmt_version(v)));
     }
-    run_installer("https://bun.sh/install", "Bun", &[BUN_PIN], log)?;
+    run_installer("https://bun.sh/install", "Bun", &[BUN_PIN], INSTALLER_LIMIT, log)?;
     let found = detect::bun(&home);
     match found.version() {
         _ if detect::bun_ok(&found) => Ok(format!("{} est installé.", found.label("Bun"))),
@@ -364,7 +385,7 @@ fn claude(log: &mut dyn FnMut(String)) -> Step {
     if found.answers() {
         return Ok(format!("{} est déjà installé.", found.label("Claude Code")));
     }
-    run_installer(CLAUDE_INSTALLER, "Claude Code", &[], log)?;
+    run_installer(CLAUDE_INSTALLER, "Claude Code", &[], INSTALLER_LIMIT, log)?;
     let found = detect::claude();
     if found.answers() {
         Ok(format!("{} est installé.", found.label("Claude Code")))
@@ -471,6 +492,50 @@ fn run_codex_installer(script: &Path, sha256: &str, env: &[(&str, Option<&str>)]
     }
 }
 
+// ── Hermes ──────────────────────────────────────────────────────────────────
+
+/// Hermes, the AI of every day, as its site installs it: install.sh, without a question and with
+/// the desktop app, then the official app in Applications, which opens that desktop app (and
+/// installs nothing more once install.sh is done). One that is missing, mute or too old goes
+/// through install.sh, which also repairs and updates (keeping a copy of the old checkout).
+#[cfg(target_os = "macos")]
+fn hermes(log: &mut dyn FnMut(String)) -> Step {
+    if !hermes::supported() {
+        return Err("Hermes ne fonctionne que sur les Mac à puce Apple : ton cerveau marche très bien sans lui.".into());
+    }
+    let home = sys::home();
+    let apps = home.join("Applications");
+    if let Ok(me) = fs::metadata(&home).map(|m| perms::owner(&m)) {
+        remove_stale_copies(&apps, me);
+    }
+    let before = hermes::found();
+    if hermes_ready(&before) && hermes::app().is_some() {
+        return Ok(format!("{} est déjà installé.", before.label("Hermes")));
+    }
+    if !hermes_ready(&before) {
+        run_installer(HERMES_INSTALLER, "Hermes", HERMES_ARGS, HERMES_LIMIT, log)?;
+    }
+    let found = hermes::found();
+    if !hermes_ready(&found) {
+        // install.sh went through: running it again changes nothing (a `hermes` command that is not
+        // Hermes's own stays, by design).
+        return Err("Hermes s'est installé mais ne répond pas : copie le rapport pour l'équipe. Ton cerveau marche très bien sans lui.".into());
+    }
+    if hermes::app().is_none() {
+        install_app_into(&apps, &Dmg { name: "Hermes", url: HERMES_DMG, size: None, team: HERMES_TEAM }, log)?;
+    }
+    match hermes::app() {
+        Some(_) => Ok(format!("{} est installé.", found.label("Hermes"))),
+        None => Err("Hermes n'apparaît pas dans Applications après l'installation. Réessaie.".into()),
+    }
+}
+
+/// Hermes answers with a version the kit knows works.
+#[cfg(target_os = "macos")]
+fn hermes_ready(found: &Found) -> bool {
+    found.version().is_some_and(|v| v >= hermes::MIN_HERMES)
+}
+
 // ── Obsidian ────────────────────────────────────────────────────────────────
 
 #[cfg(target_os = "macos")]
@@ -494,42 +559,56 @@ fn obsidian(log: &mut dyn FnMut(String)) -> Step {
 /// Downloads the pinned Obsidian, checks its signature and puts it in `apps`.
 #[cfg(target_os = "macos")]
 fn install_obsidian_into(apps: &Path, log: &mut dyn FnMut(String)) -> Result<PathBuf, String> {
-    let dest = apps.join("Obsidian.app");
-    // Not a working Obsidian (detect said so), but maybe the user's own files: never overwritten.
+    install_app_into(apps, &Dmg { name: "Obsidian", url: OBSIDIAN_URL, size: Some(OBSIDIAN_SIZE), team: OBSIDIAN_TEAM }, log)
+}
+
+/// An app's official disk image: where it is, its size when pinned, its signer.
+#[cfg(target_os = "macos")]
+struct Dmg {
+    name: &'static str,
+    url: &'static str,
+    size: Option<u64>,
+    team: &'static str,
+}
+
+/// Downloads `dmg`, checks the signature of the app in it and puts the app in `apps`. Its name
+/// takes « d' » (Obsidian, Hermes).
+#[cfg(target_os = "macos")]
+fn install_app_into(apps: &Path, dmg: &Dmg, log: &mut dyn FnMut(String)) -> Result<PathBuf, String> {
+    let name = dmg.name;
+    let app = format!("{name}.app");
+    let dest = apps.join(&app);
+    // Not a working app (detect said so), but maybe the user's own files: never overwritten.
     if fs::symlink_metadata(&dest).is_ok() {
-        return Err("Un Obsidian incomplet traîne dans le dossier Applications de ton dossier personnel. \
-                    Mets-le à la corbeille, puis relance l'étape."
-            .into());
+        return Err(format!(
+            "Un {name} incomplet traîne dans le dossier Applications de ton dossier personnel. \
+             Mets-le à la corbeille, puis relance l'étape."
+        ));
     }
     let tmp = TempDir::new_in(&std::env::temp_dir())?;
-    let dmg = tmp.path().join("Obsidian.dmg");
-    download(OBSIDIAN_URL, &dmg, "Obsidian", Some(OBSIDIAN_SIZE), Duration::from_secs(60 * 60), log)?;
-    if fs::metadata(&dmg).map(|m| m.len()).unwrap_or(0) != OBSIDIAN_SIZE {
-        return Err("Le téléchargement d'Obsidian est incomplet. Vérifie ta connexion internet, puis réessaie.".into());
+    let file = tmp.path().join(format!("{name}.dmg"));
+    download(dmg.url, &file, name, dmg.size, Duration::from_secs(60 * 60), log)?;
+    if dmg.size.is_some_and(|size| fs::metadata(&file).map(|m| m.len()).unwrap_or(0) != size) {
+        return Err(format!("Le téléchargement d'{name} est incomplet. Vérifie ta connexion internet, puis réessaie."));
     }
 
     fs::create_dir_all(apps).map_err(|e| format!("Je n'ai pas pu créer ton dossier Applications ({e})."))?;
     // Copied next to its final place, then moved in one go: a copy cut short never
-    // passes for an installed Obsidian. Removed with its content if anything fails.
+    // passes for an installed app. Removed with its content if anything fails.
     let staging = TempDir::new_in(apps)?;
-    let copy = staging.path().join("Obsidian.app");
+    let copy = staging.path().join(&app);
     {
-        let mnt = Mount::attach(&dmg, &tmp.path().join("mnt"))?;
-        log("Je copie Obsidian dans ton dossier Applications…".into());
-        let out = sys::run(
-            Path::new("/usr/bin/ditto"),
-            &[&mnt.app("Obsidian.app"), &copy.to_string_lossy()],
-            Duration::from_secs(10 * 60),
-        );
+        let mnt = Mount::attach(&file, &tmp.path().join("mnt"), name)?;
+        log(format!("Je copie {name} dans ton dossier Applications…"));
+        let out = sys::run(Path::new("/usr/bin/ditto"), &[&mnt.app(&app), &copy.to_string_lossy()], Duration::from_secs(10 * 60));
         if !out.ok() {
             log(out.stderr.trim().to_string());
-            return Err("La copie d'Obsidian a échoué. Vérifie qu'il reste de la place sur le disque, puis réessaie."
-                .into());
+            return Err(format!("La copie d'{name} a échoué. Vérifie qu'il reste de la place sur le disque, puis réessaie."));
         }
     }
-    log("Je vérifie la signature d'Obsidian…".into());
-    signed_by_obsidian(&copy)?;
-    fs::rename(&copy, &dest).map_err(|e| format!("Je n'ai pas pu ranger Obsidian dans Applications ({e})."))?;
+    log(format!("Je vérifie la signature d'{name}…"));
+    signed_by(&copy, name, dmg.team)?;
+    fs::rename(&copy, &dest).map_err(|e| format!("Je n'ai pas pu ranger {name} dans Applications ({e})."))?;
     Ok(dest)
 }
 
@@ -590,19 +669,26 @@ fn obsidian(pkexec: &Path, log: &mut dyn FnMut(String)) -> Step {
     }
 }
 
+/// `app` carries a valid signature of `team`, Apple's id of its developer. Its name takes « d' ».
 #[cfg(target_os = "macos")]
-fn signed_by_obsidian(app: &Path) -> Result<(), String> {
+fn signed_by(app: &Path, name: &str, team: &str) -> Result<(), String> {
     let codesign = Path::new("/usr/bin/codesign");
     let app = app.to_string_lossy();
     let valid = sys::run(codesign, &["--verify", "--deep", "--strict", &app], Duration::from_secs(5 * 60)).ok();
     let info = sys::run(codesign, &["-dv", &app], Duration::from_secs(30));
-    if valid && team_id(&info.stderr) == Some(OBSIDIAN_TEAM) {
+    if valid && team_id(&info.stderr) == Some(team) {
         Ok(())
     } else {
-        Err("Cette copie d'Obsidian n'a pas la signature officielle : je l'ai supprimée par sécurité. \
+        Err(format!(
+            "Cette copie d'{name} n'a pas la signature officielle : je l'ai supprimée par sécurité. \
              Réessaie plus tard."
-            .into())
+        ))
     }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+fn signed_by_obsidian(app: &Path) -> Result<(), String> {
+    signed_by(app, "Obsidian", OBSIDIAN_TEAM)
 }
 
 /// The signer's team, from `codesign -dv` (which writes on stderr).
@@ -617,8 +703,9 @@ struct Mount(PathBuf);
 
 #[cfg(target_os = "macos")]
 impl Mount {
-    fn attach(dmg: &Path, at: &Path) -> Result<Self, String> {
-        fs::create_dir(at).map_err(|e| format!("Je n'ai pas pu préparer l'ouverture d'Obsidian ({e})."))?;
+    /// `name`, the app in the image, takes « d' ».
+    fn attach(dmg: &Path, at: &Path, name: &str) -> Result<Self, String> {
+        fs::create_dir(at).map_err(|e| format!("Je n'ai pas pu préparer l'ouverture d'{name} ({e})."))?;
         // Guard first: if hdiutil mounts and then times out, the image is still detached.
         let mount = Mount(at.to_path_buf());
         let out = sys::run(
@@ -627,7 +714,7 @@ impl Mount {
             Duration::from_secs(3 * 60),
         );
         if !out.ok() {
-            return Err("Je n'ai pas pu ouvrir le fichier d'Obsidian téléchargé. Réessaie.".into());
+            return Err(format!("Je n'ai pas pu ouvrir le fichier d'{name} téléchargé. Réessaie."));
         }
         Ok(mount)
     }
@@ -1647,29 +1734,35 @@ fn progress(got: u64, size: Option<u64>) -> String {
     }
 }
 
+/// "de Bun", "de Claude Code", "d'Hermes".
+fn de(name: &str) -> String {
+    if name.starts_with(['A', 'E', 'H', 'I', 'O', 'U']) { format!("d'{name}") } else { format!("de {name}") }
+}
+
 /// Downloads an official installer script and runs it with bash (PowerShell on Windows).
-fn run_installer(url: &str, name: &str, args: &[&str], log: &mut dyn FnMut(String)) -> Result<(), String> {
+fn run_installer(url: &str, name: &str, args: &[&str], limit: Duration, log: &mut dyn FnMut(String)) -> Result<(), String> {
     let root = sys::work_root().map_err(|e| format!("Je n'ai pas pu créer mon dossier de travail ({e})."))?;
     let tmp = TempDir::new_in(&root)?;
     let script = tmp.path().join(if cfg!(windows) { "install.ps1" } else { "install.sh" });
-    download(url, &script, &format!("l'installeur de {name}"), None, Duration::from_secs(5 * 60), log)?;
+    download(url, &script, &format!("l'installeur {}", de(name)), None, Duration::from_secs(5 * 60), log)?;
     log(format!("J'installe {name}…"));
     #[cfg(not(windows))]
     let code = {
         let script = script.to_string_lossy();
         let argv: Vec<&str> = std::iter::once(script.as_ref()).chain(args.iter().copied()).collect();
-        sys::run_streaming(Path::new("/bin/bash"), &argv, &[], Some(tmp.path()), INSTALLER_LIMIT, log)
+        sys::run_streaming(Path::new("/bin/bash"), &argv, &[], Some(tmp.path()), limit, log)
     };
     // Its arguments are never needed on Windows (Bun comes with install.ps1).
     #[cfg(windows)]
     let code = {
         debug_assert!(args.is_empty());
-        run_ps1(&script, &[], tmp.path(), INSTALLER_LIMIT, log)
+        run_ps1(&script, &[], tmp.path(), limit, log)
     };
     match code {
         0 => Ok(()),
         code => Err(format!(
-            "L'installeur de {name} s'est arrêté (code {code}). Vérifie ta connexion internet, puis réessaie."
+            "L'installeur {} s'est arrêté (code {code}). Vérifie ta connexion internet, puis réessaie.",
+            de(name)
         )),
     }
 }
@@ -2051,13 +2144,14 @@ mod tests {
         let at = dir.path().join("mnt");
         let mounted = || sys::run(Path::new("/sbin/mount"), &[], Duration::from_secs(5)).stdout.contains(&*at.to_string_lossy());
         let attempt = || -> Result<(), String> {
-            let m = Mount::attach(&dmg, &at)?;
+            let m = Mount::attach(&dmg, &at, "Obsidian")?;
             assert!(Path::new(&m.app("Obsidian.app")).is_dir() && mounted());
             Err("copy failed".into())
         };
         assert!(attempt().is_err());
         assert!(!mounted());
-        assert!(Mount::attach(&dir.path().join("missing.dmg"), &dir.path().join("mnt2")).is_err());
+        let err = Mount::attach(&dir.path().join("missing.dmg"), &dir.path().join("mnt2"), "Hermes").err().expect("nothing to mount");
+        assert_eq!(err, "Je n'ai pas pu ouvrir le fichier d'Hermes téléchargé. Réessaie.");
     }
 
     #[cfg(target_os = "macos")]
@@ -2105,7 +2199,7 @@ mod tests {
         assert_eq!(order(&with(vec![Engine::Claude, Engine::Codex])), expected(&["claude", "codex"]));
         assert_eq!(order(&Agents::none("ferme")), expected(&[]));
         #[cfg(target_os = "macos")]
-        assert_eq!(order(&with(vec![Engine::Codex, Engine::Claude])), ["codex", "claude", "clt", "bun", "obsidian", "brain"]);
+        assert_eq!(order(&with(vec![Engine::Codex, Engine::Claude])), ["codex", "claude", "clt", "bun", "obsidian", "brain", "hermes"]);
         #[cfg(target_os = "linux")]
         assert_eq!(order(&with(vec![Engine::Codex])), ["paquets", "codex", "bun", "obsidian", "brain"]);
         #[cfg(windows)]
@@ -2371,6 +2465,13 @@ mod tests {
     }
 
     #[test]
+    fn installer_names_read_well() {
+        assert_eq!(de("Bun"), "de Bun");
+        assert_eq!(de("Claude Code"), "de Claude Code");
+        assert_eq!(de("Hermes"), "d'Hermes");
+    }
+
+    #[test]
     fn downloads_ignore_curlrc_and_stay_on_https() {
         let args = curl_download_args("https://bun.sh/install", Path::new("/t/install.sh"));
         assert_eq!(args[0], "-q", "curl only skips ~/.curlrc when -q comes first");
@@ -2440,6 +2541,27 @@ mod tests {
         assert!(signed_by_obsidian(&app).is_ok());
         let leftovers: Vec<_> = fs::read_dir(apps.path()).unwrap().filter_map(Result::ok).map(|e| e.file_name()).collect();
         assert_eq!(leftovers, vec![std::ffi::OsString::from("Obsidian.app")], "no staging folder left");
+    }
+
+    /// Hermes's official app, from its site's package: signed by Nous Research, nothing else left,
+    /// another signer refused. It downloads the real package: `cargo test -- --ignored hermes_real`.
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore]
+    fn hermes_real_download_lands_signed() {
+        let apps = tempfile::tempdir().unwrap();
+        let dmg = Dmg { name: "Hermes", url: HERMES_DMG, size: None, team: HERMES_TEAM };
+        let app = install_app_into(apps.path(), &dmg, &mut |l| println!("{l}")).unwrap();
+        assert_eq!(app, apps.path().join("Hermes.app"));
+        assert!(sys::is_executable(&app.join("Contents/MacOS/Hermes-Setup")));
+        assert_eq!(hermes::app_in(&[apps.path().to_path_buf()]), Some(app.clone()));
+        let leftovers: Vec<_> = fs::read_dir(apps.path()).unwrap().filter_map(Result::ok).map(|e| e.file_name()).collect();
+        assert_eq!(leftovers, vec![std::ffi::OsString::from("Hermes.app")], "no staging folder left");
+        assert_eq!(signed_by(&app, "Hermes", HERMES_TEAM), Ok(()));
+        assert!(signed_by(&app, "Hermes", OBSIDIAN_TEAM).is_err(), "another signer is refused");
+        // Never over the one already there.
+        let again = install_app_into(apps.path(), &dmg, &mut |_| {}).unwrap_err();
+        assert!(again.starts_with("Un Hermes incomplet traîne"), "{again}");
     }
 
     #[cfg(target_os = "linux")]

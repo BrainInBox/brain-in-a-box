@@ -4,7 +4,7 @@ apps, Hermes Agent). It reads no token and opens no login file: Codex's auth.jso
 are only looked for, never opened; of `claude auth status` only authMethod is kept.
 
 While Codex is closed on this system (_agents.py's CODEX_OUVERT, the one source), the advice never
-offers Codex: it may say it is coming. Brain in a Box does not install Hermes: when it is there, one
+offers Codex: it may say it is coming. On a Mac, Bibo's last step installs Hermes: when it is there, one
 more sentence says so, and that the evening reflection reads its conversations only where it does
 (daily-reflection.py reads $HERMES_DB, else ~/.hermes/state.db).
 
@@ -61,8 +61,8 @@ CONSEIL_JSON = r"""
     "rien": "Ton cerveau marche avec Claude : il te faudra un abonnement Claude Pro ou Max.",
     "codex": "Tu utilises ChatGPT : ton cerveau peut travailler avec Codex, l'IA de ChatGPT, sur ton abonnement ChatGPT. À la fin, tu pourras apporter à ton cerveau ce que ChatGPT sait de toi.",
     "les_deux": "Tu as Claude et ChatGPT : ton cerveau peut travailler avec les deux, Claude d'abord.",
-    "hermes": "J'ai vu Hermes : je ne l'installe pas et n'y touche pas. Ses meilleures compétences arrivent dans Claude avec ton cerveau.",
-    "hermes_lu": "J'ai vu Hermes : je ne l'installe pas et n'y touche pas. Ses meilleures compétences arrivent dans Claude avec ton cerveau, et chaque soir ton cerveau lit aussi ses conversations."
+    "hermes": "J'ai vu Hermes, ton IA au quotidien. Ses meilleures compétences arrivent dans Claude avec ton cerveau.",
+    "hermes_lu": "J'ai vu Hermes, ton IA au quotidien. Ses meilleures compétences arrivent dans Claude avec ton cerveau, et chaque soir ton cerveau lit aussi ses conversations."
   }
 }
 """

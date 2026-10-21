@@ -95,6 +95,13 @@ const STEPS = {
     say: ['J’active la recherche par le sens.', 'Ton cerveau relit tes notes : quelques minutes.'],
     step: 'brain',
   },
+  // Last, on a Mac: the brain works without it. Its official installer, then its app in Applications.
+  hermes: {
+    name: 'Hermes',
+    short: 'Hermes',
+    what: 'Ton IA au quotidien, dans son app.',
+    say: ['J’installe Hermes, ton IA au quotidien.', 'Gros téléchargement : quelques minutes.'],
+  },
 };
 
 const CHECK_STATUS = { ok: 'OK', missing: 'À installer', warn: 'À noter', error: 'Bloquant' };
@@ -1067,8 +1074,9 @@ async function showFailure(index, intro = null) {
   else say('worried', 'Oups, ça a coincé.', message);
   ui.actions.replaceChildren();
   clearRepairNotes();
-  // Search by meaning is a bonus: the brain keeps working by keywords without it.
-  if (state.plan.includes('voyage')) {
+  // Search by meaning is a bonus: the brain keeps working by keywords without it. Hermes, the
+  // last step, too: the brain works without it.
+  if (state.plan.includes('voyage') || id === 'hermes') {
     ui.actions.append(button('Plus tard', () => { state.key = ''; checkLogin(); }, { kind: 'ghost', act: 'skip' }));
   }
   const retry = button('Réessayer', () => runInstall(index), { act: 'next' });

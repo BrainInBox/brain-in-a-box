@@ -173,10 +173,11 @@ class FauxPilote(ta.Pilote):
         if not self.home:
             return
         home = Path(self.home)
-        for rel in (".local/bin/codex" if self.codex else ".local/bin/claude", ".bun/bin/bun"):
+        for rel in (".local/bin/codex" if self.codex else ".local/bin/claude", ".bun/bin/bun", ".local/bin/hermes"):
             (home / rel).parent.mkdir(parents=True, exist_ok=True)
             (home / rel).write_text("x")
-        (home / "Applications" / "Obsidian.app" / "Contents" / "MacOS").mkdir(parents=True)
+        for app in ("Obsidian.app", "Hermes.app"):
+            (home / "Applications" / app / "Contents" / "MacOS").mkdir(parents=True)
         archive = self.envs[-1].get("BIAB_ARCHIVE")
         if archive and self.sources:
             src = home / ".brain-in-a-box" / "src"
@@ -671,7 +672,7 @@ class Walk(Base):
         pa = self.parcours(p)
         with self.assertRaises(terrain.Echec) as cm:
             pa.premier_lancement({})
-        self.assertIn("toujours sur l'écran « etape-brain » après 75 min", str(cm.exception))
+        self.assertIn("toujours sur l'écran « etape-brain » après %d min" % (ta.DELAI_PREMIER // 60), str(cm.exception))
         waits = [s for s in p.captures if re.match(r"^\d\d-etape-brain-\d+min\.png$", s)]
         self.assertGreaterEqual(len(waits), 35)
         self.assertLessEqual(self.h.now, ta.DELAI_PREMIER + 600)

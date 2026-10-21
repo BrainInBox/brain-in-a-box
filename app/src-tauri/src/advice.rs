@@ -251,10 +251,10 @@ mod tests {
     }
 
     #[test]
-    fn hermes_gets_its_own_sentence_and_nothing_installs_it() {
+    fn hermes_gets_its_own_sentence() {
         let a = decide(&Facts { hermes: true, ..Facts::default() }).unwrap();
         let h = a.hermes.expect("a sentence when Hermes is there");
-        assert!(h.contains("je ne l'installe pas"), "{h}");
+        assert!(h.starts_with("J'ai vu Hermes, ton IA au quotidien."), "{h}");
         // The evening reading only where the reflection reads it.
         assert!(!h.contains("soir"), "{h}");
         let read = decide(&Facts { hermes: true, hermes_lu: true, ..Facts::default() }).unwrap().hermes.unwrap();

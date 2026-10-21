@@ -78,7 +78,7 @@ CLIC_RELANCE = 20           # a click that changed nothing is tried again after 
 CLIC_ESSAIS = 3
 INCONNU_MAX = 180           # a screen the robot does not know, for this long: a failure
 DELAI_FENETRE = 120
-DELAI_PREMIER = 75 * 60     # Bienvenue to the final screen (Apple's tools up to 45 min, the brain step 40)
+DELAI_PREMIER = 85 * 60     # Bienvenue to the final screen (Apple's tools up to 45 min, the brain step 40, Hermes 10)
 DELAI_RELANCE = 5 * 60
 # How every click is done: the mouse on the button, as a user clicks. Anything else (AXPress,
 # Invoke) proves no user could have clicked there: the scenario fails, once the walk is over.
@@ -124,6 +124,7 @@ ETAPES = {
     "J'installe Bun.": "bun",
     "J'installe Obsidian.": "obsidian",
     "Je prépare ton cerveau.": "brain",
+    "J'installe Hermes, ton IA au quotidien.": "hermes",
     "J'active la recherche par le sens.": "voyage",
 }
 # Screens that end the run, whatever the robot was doing.
@@ -912,7 +913,10 @@ class PiloteMac(Pilote):
     def outils(self, home):
         home = Path(home)
         return [("Claude Code", [home / ".local" / "bin" / "claude"]), ("Bun", [home / ".bun" / "bin" / "bun"]),
-                ("Obsidian", [Path(d) / "Obsidian.app" / "Contents" / "MacOS" for d in ("/Applications", home / "Applications")])]
+                ("Obsidian", [Path(d) / "Obsidian.app" / "Contents" / "MacOS" for d in ("/Applications", home / "Applications")]),
+                # The last step on a Mac with Apple's chip, which macos-latest is: the command and its app.
+                ("Hermes", [home / ".local" / "bin" / "hermes"]),
+                ("Hermes.app", [Path(d) / "Hermes.app" / "Contents" / "MacOS" for d in ("/Applications", home / "Applications")])]
 
     def ouvrir(self, env):
         rc, out = self._run(["/usr/bin/open", self.app], timeout=120, env=env)

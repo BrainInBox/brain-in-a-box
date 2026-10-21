@@ -32,13 +32,16 @@ pub struct Facts {
     pub supported: bool,
     /// The first line of `hermes --version`, e.g. "Hermes Agent v0.22.2 (2026.9.24) · stable".
     pub found: Found,
+    /// On a Mac, Hermes.app is in Applications, where the user opens Hermes. Elsewhere always
+    /// true: nothing installs an app there.
+    pub app: bool,
     /// The provider of Hermes's model, e.g. "openai-codex"; None until one is chosen.
     pub provider: Option<String>,
 }
 
 impl Default for Facts {
     fn default() -> Self {
-        Facts { supported: true, found: Found::Absent, provider: None }
+        Facts { supported: true, found: Found::Absent, app: false, provider: None }
     }
 }
 
@@ -46,26 +49,60 @@ impl Default for Facts {
 /// the provider's id is kept). Hermes reads its own $HERMES_HOME.
 pub fn probe() -> Facts {
     let supported = supported();
-    let Some(bin) = bin() else { return Facts { supported, ..Facts::default() } };
-    let version = sys::run(&bin, &["--version"], TIMEOUT);
-    let found = match version.stdout.lines().map(str::trim).find(|l| !l.is_empty()) {
-        Some(line) if version.ok() => Found::Version(line.to_string()),
-        _ => Found::NoVersion,
-    };
+    let app = has_app();
+    let Some(bin) = bin() else { return Facts { supported, app, ..Facts::default() } };
+    let found = version_of(&bin);
     let model = found.answers().then(|| sys::run(&bin, &["config", "get", "model", "--json"], TIMEOUT));
     let provider = model.filter(sys::Output::ok).and_then(|o| parse_provider(&o.stdout));
-    Facts { supported, found, provider }
+    Facts { supported, found, app, provider }
+}
+
+/// `hermes --version`, Absent without the command. Only the Mac's Hermes step asks it again.
+#[cfg(target_os = "macos")]
+pub fn found() -> Found {
+    bin().map_or(Found::Absent, |bin| version_of(&bin))
+}
+
+fn version_of(bin: &std::path::Path) -> Found {
+    let version = sys::run(bin, &["--version"], TIMEOUT);
+    match version.stdout.lines().map(str::trim).find(|l| !l.is_empty()) {
+        Some(line) if version.ok() => Found::Version(line.to_string()),
+        _ => Found::NoVersion,
+    }
 }
 
 /// Apple Silicon: under Rosetta `uname -m` says x86_64 there too, this flag is the hardware's.
 #[cfg(target_os = "macos")]
-fn supported() -> bool {
+pub fn supported() -> bool {
     let out = sys::run(std::path::Path::new("/usr/sbin/sysctl"), &["-n", "hw.optional.arm64"], Duration::from_secs(5));
     out.stdout.trim() == "1"
 }
 
 #[cfg(not(target_os = "macos"))]
-fn supported() -> bool {
+pub fn supported() -> bool {
+    true
+}
+
+/// Hermes.app, Hermes's official app, in /Applications (where its site's package goes) or in
+/// ~/Applications (where the app puts it).
+#[cfg(target_os = "macos")]
+pub fn app() -> Option<PathBuf> {
+    app_in(&[PathBuf::from("/Applications"), sys::home().join("Applications")])
+}
+
+/// The first `Hermes.app` in `dirs` that is a whole app, not an empty folder left behind.
+#[cfg(target_os = "macos")]
+pub(crate) fn app_in(dirs: &[PathBuf]) -> Option<PathBuf> {
+    dirs.iter().map(|d| d.join("Hermes.app")).find(|a| a.join("Contents/Info.plist").is_file())
+}
+
+#[cfg(target_os = "macos")]
+fn has_app() -> bool {
+    app().is_some()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn has_app() -> bool {
     true
 }
 
@@ -141,5 +178,22 @@ mod tests {
         assert!(provider_said("claude-subscription-directsdk-experimental").contains("abonnement Claude"));
         assert!(provider_said("openai-codex").contains("ChatGPT"));
         assert!(provider_said("openrouter").contains("que tu lui as choisie"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_app_is_a_whole_hermes_app_in_either_applications_folder() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (system, mine) = (tmp.path().join("Applications"), tmp.path().join("home/Applications"));
+        let dirs = [system.clone(), mine.clone()];
+        assert_eq!(app_in(&dirs), None);
+        // An empty folder left by a copy cut short is no app.
+        std::fs::create_dir_all(mine.join("Hermes.app/Contents")).unwrap();
+        assert_eq!(app_in(&dirs), None);
+        std::fs::write(mine.join("Hermes.app/Contents/Info.plist"), "<plist/>").unwrap();
+        assert_eq!(app_in(&dirs), Some(mine.join("Hermes.app")));
+        std::fs::create_dir_all(system.join("Hermes.app/Contents")).unwrap();
+        std::fs::write(system.join("Hermes.app/Contents/Info.plist"), "<plist/>").unwrap();
+        assert_eq!(app_in(&dirs), Some(system.join("Hermes.app")), "the one from Hermes's site first");
     }
 }

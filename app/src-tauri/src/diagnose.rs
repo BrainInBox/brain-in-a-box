@@ -37,6 +37,8 @@ const WINDOWS_11_BUILD: u32 = 22000;
 const CHATGPT: &str = "https://chatgpt.com";
 const DISK_BLOCKING_GB: f64 = 3.0;
 const DISK_TIGHT_GB: f64 = 10.0;
+/// install.sh's Hermes takes 4.4 GB (21/10/2026): below this, it waits for room, the brain does not.
+const HERMES_DISK_GB: f64 = 6.0;
 const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// One line of the checklist: id, what the user reads, and the install step that fixes it.
@@ -81,8 +83,10 @@ const BRAIN_CODEX_INSTRUCTIONS: Item = Item("brain_codex_instructions", "Tes con
 const BRAIN_CODEX_SKILLS: Item = Item("brain_codex_skills", "Les compétences de Codex", Some("brain"));
 const BRAIN_MEMORY: Item = Item("brain_memory", "La mémoire de recherche", Some("brain"));
 const VOYAGE: Item = Item("voyage", "Recherche par le sens", None);
-/// No fix step yet: the app does not install Hermes so far.
+/// Hermes's line where nothing installs it: an Intel Mac, where it does not run, Windows and Linux.
 const HERMES: Item = Item("hermes", "Hermes (ton IA au quotidien)", None);
+/// On a Mac it runs on, the Hermes step installs it, repairs it, updates it and puts its app in place.
+const HERMES_TO_INSTALL: Item = Item("hermes", "Hermes (ton IA au quotidien)", Some("hermes"));
 const HERMES_AI: Item = Item("hermes_ia", "Connexion de Hermes", None);
 const INTERNAL: Item = Item("internal", "Erreur interne", None);
 
@@ -506,7 +510,7 @@ fn decide(home: &Path, f: &Facts) -> Diagnosis {
     let muets = f.codex.as_ref().is_some_and(|c| c.hooks_muets);
     checks.extend(check_brain(detect::brain(home, &f.agents), &detect::brain_dir_shown(home), muets));
     checks.push(check_voyage(detect::embedding_model(home).as_deref()));
-    checks.extend(check_hermes(&f.hermes));
+    checks.extend(check_hermes(&f.hermes, disk_free_gb));
 
     let missing = |step: &str| {
         checks
@@ -881,19 +885,37 @@ fn check_voyage(model: Option<&str>) -> Check {
     }
 }
 
-/// Hermes as hermes::probe found it: never blocks, nothing installs it yet. Its connection only
-/// once it answers; on an Intel Mac, where it does not run, one line says so.
-fn check_hermes(h: &hermes::Facts) -> Vec<Check> {
+/// Hermes as hermes::probe found it: never blocks. On a Mac it runs on, the Hermes step (the last
+/// one: the brain works without it) settles what is missing; elsewhere nothing installs it yet. Its
+/// connection only once it answers; on an Intel Mac, where it does not run, one line says so.
+fn check_hermes(h: &hermes::Facts, free_gb: Option<f64>) -> Vec<Check> {
     if !h.supported && !h.found.answers() {
         return vec![HERMES.is(Status::Warn, "Hermes ne fonctionne que sur les Mac à puce Apple : ton cerveau marche très bien sans lui.")];
     }
+    let mine = cfg!(target_os = "macos") && h.supported;
+    let to_fix = |what: String, then: &str| {
+        if mine {
+            HERMES_TO_INSTALL.is(Status::Missing, format!("{what}{then}"))
+        } else {
+            HERMES.is(Status::Warn, what)
+        }
+    };
     let found = match (&h.found, h.found.version()) {
-        (Found::Absent, _) => HERMES.is(Status::Warn, "Pas encore installé."),
-        (Found::NoVersion, _) => HERMES.is(Status::Warn, "Hermes est là mais ne répond pas."),
-        (_, Some(v)) if v < hermes::MIN_HERMES => HERMES.is(
+        (Found::Absent, _) if mine && free_gb.is_some_and(|gb| gb < HERMES_DISK_GB) => HERMES.is(
             Status::Warn,
-            format!("Hermes {} est trop ancien (il faut {} ou plus).", fmt_version(v), fmt_version(hermes::MIN_HERMES)),
+            format!(
+                "Il faut {} Go libres pour l'installer, il en reste {} : fais un peu de place, puis relance.",
+                HERMES_DISK_GB,
+                fmt_gb(free_gb.unwrap_or_default())
+            ),
         ),
+        (Found::Absent, _) => to_fix("Pas encore installé.".into(), ""),
+        (Found::NoVersion, _) => to_fix("Hermes est là mais ne répond pas.".into(), " Je vais le réparer."),
+        (_, Some(v)) if v < hermes::MIN_HERMES => to_fix(
+            format!("Hermes {} est trop ancien (il faut {} ou plus).", fmt_version(v), fmt_version(hermes::MIN_HERMES)),
+            " Je vais le mettre à jour.",
+        ),
+        _ if !h.app && mine => to_fix(format!("{} est là, mais pas son app.", h.found.label("Hermes")), " Je la range dans Applications."),
         _ => HERMES.is(Status::Ok, h.found.label("Hermes")),
     };
     if !h.found.answers() {
@@ -986,6 +1008,7 @@ mod tests {
             hermes: hermes::Facts {
                 supported: true,
                 found: Found::Version("Hermes Agent v0.22.2 (2026.9.24) · stable".into()),
+                app: true,
                 provider: Some("claude-subscription-directsdk-experimental".into()),
             },
         }
@@ -1003,19 +1026,28 @@ mod tests {
         assert_eq!(d.checks.iter().rev().take(2).map(|c| c.id.as_str()).collect::<Vec<_>>(), ["hermes_ia", "hermes"]);
 
         let hermes_with = |found: Found, provider: Option<&str>, supported: bool| {
-            let h = hermes::Facts { supported, found, provider: provider.map(String::from) };
+            let h = hermes::Facts { supported, found, app: true, provider: provider.map(String::from) };
             decide(tmp.path(), &Facts { hermes: h, ..healthy_facts() })
         };
-        for (found, detail) in [(Found::Absent, "Pas encore installé."), (Found::NoVersion, "Hermes est là mais ne répond pas.")] {
+        // On a Mac the Hermes step settles it, last; elsewhere nothing installs it yet.
+        let (to_fix, step): (Status, &[&str]) = if cfg!(target_os = "macos") { (Status::Missing, &["hermes"]) } else { (Status::Warn, &[]) };
+        let then = |said: &str| if cfg!(target_os = "macos") { said.to_string() } else { String::new() };
+        for (found, detail) in [
+            (Found::Absent, "Pas encore installé.".to_string()),
+            (Found::NoVersion, format!("Hermes est là mais ne répond pas.{}", then(" Je vais le réparer."))),
+        ] {
             let d = hermes_with(found, None, true);
-            assert_eq!((by_id(&d, "hermes").status, by_id(&d, "hermes").detail.as_str()), (Status::Warn, detail));
+            assert_eq!((by_id(&d, "hermes").status, by_id(&d, "hermes").detail.as_str()), (to_fix, detail.as_str()));
             assert!(d.checks.iter().all(|c| c.id != "hermes_ia"), "no connection without Hermes");
             assert!(d.can_install);
-            assert_eq!(d.todo, decide(tmp.path(), &healthy).todo, "nothing installs Hermes yet");
+            assert_eq!(d.todo, [decide(tmp.path(), &healthy).todo, step.iter().map(|s| s.to_string()).collect()].concat());
         }
         let old = hermes_with(Found::Version("Hermes Agent v0.21.3 (2026.8.30) · stable".into()), Some("anthropic"), true);
-        assert_eq!(by_id(&old, "hermes").status, Status::Warn);
-        assert_eq!(by_id(&old, "hermes").detail, "Hermes 0.21.3 est trop ancien (il faut 0.21.4 ou plus).");
+        assert_eq!(by_id(&old, "hermes").status, to_fix);
+        assert_eq!(
+            by_id(&old, "hermes").detail,
+            format!("Hermes 0.21.3 est trop ancien (il faut 0.21.4 ou plus).{}", then(" Je vais le mettre à jour."))
+        );
         assert_eq!(by_id(&old, "hermes_ia").detail, "Il passe par Claude.");
         let unplugged = hermes_with(healthy.hermes.found.clone(), None, true);
         let ai = by_id(&unplugged, "hermes_ia");
@@ -1025,10 +1057,43 @@ mod tests {
         assert_eq!(by_id(&intel, "hermes").status, Status::Warn);
         assert!(by_id(&intel, "hermes").detail.contains("puce Apple"), "{}", by_id(&intel, "hermes").detail);
         assert!(intel.checks.iter().all(|c| c.id != "hermes_ia"));
-        // One that runs anyway is taken as it is.
+        assert_eq!(intel.todo, decide(tmp.path(), &healthy).todo, "the Hermes step does not run there");
+        // One that runs anyway is taken as it is, app or not.
         let ran = hermes_with(healthy.hermes.found.clone(), Some("openai-codex"), false);
         assert_eq!(by_id(&ran, "hermes_ia").detail, "Il passe par ton compte ChatGPT.");
         assert!(by_id(&ran, "hermes").fix.is_none() && by_id(&ran, "hermes_ia").fix.is_none());
+        let ran_bare = Facts { hermes: hermes::Facts { supported: false, app: false, ..healthy.hermes.clone() }, ..healthy_facts() };
+        assert_eq!(by_id(&decide(tmp.path(), &ran_bare), "hermes").status, Status::Ok);
+    }
+
+    #[test]
+    fn hermes_without_its_app_or_room() {
+        let tmp = tempfile::tempdir().unwrap();
+        let healthy = healthy_facts();
+        let bare = Facts { hermes: hermes::Facts { app: false, ..healthy.hermes.clone() }, ..healthy_facts() };
+        let d = decide(tmp.path(), &bare);
+        let h = by_id(&d, "hermes");
+        if cfg!(target_os = "macos") {
+            assert_eq!((h.status, h.detail.as_str()), (Status::Missing, "Hermes 0.22.2 est là, mais pas son app. Je la range dans Applications."));
+            assert_eq!(d.todo.last().map(String::as_str), Some("hermes"));
+        } else {
+            assert_eq!(h.status, Status::Ok, "app is always true there");
+        }
+        // install.sh's 4.4 GB wait for room; the brain does not.
+        let absent = hermes::Facts { found: Found::Absent, provider: None, ..healthy.hermes.clone() };
+        let tight = Facts { hermes: absent.clone(), disk_free_kb: Some(4_200_000), ..healthy_facts() };
+        let d = decide(tmp.path(), &tight);
+        let h = by_id(&d, "hermes");
+        if cfg!(target_os = "macos") {
+            assert_eq!(
+                (h.status, h.detail.as_str(), h.fix.as_deref()),
+                (Status::Warn, "Il faut 6 Go libres pour l'installer, il en reste 4,3 : fais un peu de place, puis relance.", None)
+            );
+        }
+        assert!(d.can_install && !d.todo.contains(&"hermes".to_string()));
+        let roomy = Facts { hermes: absent, disk_free_kb: Some(5_900_000), ..healthy_facts() };
+        let d = decide(tmp.path(), &roomy);
+        assert_eq!(by_id(&d, "hermes").detail, "Pas encore installé.");
     }
 
     #[test]
