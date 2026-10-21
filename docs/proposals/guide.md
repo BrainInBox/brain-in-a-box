@@ -8,7 +8,7 @@ Rédigée le 2026-10-21 sur `origin/master` fa1ed66, d'après le code et les ess
 
 **Phase 0 faite le 2026-10-21** : résultats et corrections en §15 (« Phase 0 — résultats »), qui prime sur le corps. En bref : modèle **Opus**, seuils inchangés, `--effort low` gardé ; sélecteur macOS **GO** avec un `SCStream` d'une image (pas `SCScreenshotManager`) ; Codex : `-i` relatif ; alphabet du code sans U ; aucun refus « cyber » mesuré.
 
-**Revue de la v1 en mode collage faite le 2026-10-21** (§19) : 27 constats (sécurité, non-régression, débutant), tous corrigés, deux autrement que proposé. En bref : filtre §4.6 élargi et lisant le texte tel qu'il s'affiche ; aucun accès de `stack.md` envoyé ; un regard part avec l'image vue, un fichier déposé attend la fenêtre ; zones cachées par taille ; « même capture » dite avant l'envoi ; accueil seulement avec un cerveau complet ; modèle exact avec une image, lanceur sans image comme avant le guide ; manifeste d'app (chaque fenêtre ses commandes).
+**Revue de la v1 en mode collage faite le 2026-10-21** (§19) : 26 constats (sécurité, non-régression, débutant), tous corrigés, deux autrement que proposé. En bref : filtre §4.6 élargi et lisant le texte tel qu'il s'affiche ; aucun accès de `stack.md` envoyé ; un regard part avec l'image vue, un fichier déposé attend la fenêtre ; zones cachées par taille ; « même capture » dite avant l'envoi ; accueil seulement avec un cerveau complet ; modèle exact avec une image, lanceur sans image comme avant le guide ; manifeste d'app (chaque fenêtre ses commandes).
 
 **Phase 4 faite le 2026-10-21** (§18) : la fenêtre du guide en mode collage (G1 à G10), `ui.js`, les entrées de l'accueil et de la fin, l'enregistrement de la procédure dans `Guides/` (avancé de la phase 5), la maquette et `screens-guide.txt`. Le guide marche de bout en bout en collant une capture, sur les 3 OS.
 
@@ -972,7 +972,7 @@ Même appel (s1, Opus, low) avec et sans : ligne d'init identique champ par cham
 
 ## 19. Revue de la v1 en mode collage — corrections (2026-10-21)
 
-**Prime sur le corps et sur §15 à §18 là où elle les contredit.** Branche `feat/bibo-guide`, PR brouillon #59. Revue adverse sur trois axes (sécurité, non-régression, débutant) : 27 constats. Chacun a été vérifié, puis corrigé avec un test rouge d'abord ; deux l'ont été autrement que la revue le proposait, avec leur raison (point 2, et « la même capture » au point 12). Aucun appel réel à `claude -p`, aucune capture d'écran.
+**Prime sur le corps et sur §15 à §18 là où elle les contredit.** Branche `feat/bibo-guide`, PR brouillon #59. Revue adverse sur trois axes (sécurité, non-régression, débutant) : 26 constats (8, 5 et 13). Chacun a été vérifié, puis corrigé avec un test rouge d'abord ; deux l'ont été autrement que la revue le proposait, avec leur raison (point 2, et « la même capture » au point 12). Aucun appel réel à `claude -p`, aucune capture d'écran.
 
 **Commits** : `2d57f4e` (filtre), `f26e7fe` (`stack.md`), `2263bcc` (l'image vue, le dépôt), `d0df9ef` (accueil), `ec03262` (modèle exact, lanceur), `0cb91cd` (manifeste d'app), `1b14cbf` (front).
 
