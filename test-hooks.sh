@@ -885,6 +885,25 @@ print("  bad: %s" % ", ".join(bad)) if bad else None
 sys.exit(1 if bad else 0)
 PY
   ! grep -rqi --exclude=LICENSE 'hermes' "$REPO/skills" && ok "skills: no Hermes leftovers in the bundled skills (attributions aside)" || no "skills: Hermes references remain"
+  # guide-moi reads the rules Bibo's guide embeds (guide.rs, include_str!; byte for byte: guide_cli.rs): one file.
+  python3 - "$REPO" <<'PY' && ok "skills: guide-moi's rules are the very file the app's guide embeds" || no "skills: guide-moi and the app's guide read different rules (see above)"
+import re, sys
+from pathlib import Path
+repo = Path(sys.argv[1])
+rs = (repo / "app/src-tauri/src/guide.rs").read_text(encoding="utf-8")
+m = re.search(r'include_str!\("([^"]+)"\)', rs)
+embedded = (repo / "app/src-tauri/src" / m.group(1)).resolve() if m else None
+rules = (repo / "skills/guide-moi/consignes.md").resolve()
+text = rules.read_text(encoding="utf-8")
+skill = (repo / "skills/guide-moi/SKILL.md").read_text(encoding="utf-8")
+bad = [why for why, ok in (("guide.rs embeds %s" % embedded, embedded == rules), ("{{ in the rules", "{{" not in text),
+                           ("a block's tag in the rules", not re.search(r"</[a-z_]+>|<capture", text)),
+                           ("the rules over 4000 characters", len(text) < 4000),
+                           ("SKILL.md does not send to consignes.md", "consignes.md" in skill),
+                           ("SKILL.md's note is not the one Bibo reads back", 'source: "bibo-guide"' in skill and "Guides/" in skill)) if not ok]
+print("  " + "; ".join(bad)) if bad else None
+sys.exit(1 if bad else 0)
+PY
 fi
 
 echo "════ 12) install.sh keeps what it replaces ════"
