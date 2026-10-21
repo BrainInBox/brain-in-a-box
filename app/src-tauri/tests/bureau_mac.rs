@@ -259,12 +259,11 @@ mod desk {
         let changed = grab_until(&found.window, GREEN);
         r.scenario("la_fenetre_telle_quelle_est", changed.as_ref().is_ok_and(|img| its_own(img, GREEN)), outcome(&changed));
 
-        // Minimized: what macOS gives, measured; never another window's pixels.
+        // Minimized: the stream says it has nothing to show, no image.
         r.ask("reduire", true);
         std::thread::sleep(Duration::from_secs(2));
         let minimized = System.grab(&found.window);
-        let clean = minimized.as_ref().map_or(true, |img| count(img, MAGENTA) == 0 && count(img, ORANGE) == 0);
-        r.scenario("reduite_mesuree", clean, outcome(&minimized));
+        r.scenario("reduite", minimized.as_ref().err() == Some(&Rate::Reduite), outcome(&minimized));
         r.ask("rouvrir", true);
         let back = grab_until(&found.window, GREEN);
         r.scenario("rouverte", back.as_ref().is_ok_and(|img| its_own(img, GREEN)), outcome(&back));
@@ -305,7 +304,7 @@ mod desk {
         r.ask("fermer_la_fenetre", true);
         std::thread::sleep(Duration::from_secs(2));
         let gone = System.grab(&found.window);
-        r.scenario("fenetre_fermee", gone.is_err(), outcome(&gone));
+        r.scenario("fenetre_fermee", gone.as_ref().err() == Some(&Rate::Introuvable), outcome(&gone));
 
         // The guide closed: the window forgotten.
         System.forget();

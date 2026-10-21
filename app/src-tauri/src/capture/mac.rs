@@ -282,10 +282,11 @@ fn rate_of(error: &NSError) -> Rate {
     }
 }
 
-/// What a stream gave: its first complete image, and whether it said, before any, that it had nothing
-/// to show (a blank frame, or suspended: the window minimized or hidden).
+/// What a stream gave: its first complete image; before any, whether it gave a frame at all, and
+/// whether it said it had nothing to show (a blank frame, or suspended: the window minimized).
 struct Frames {
     image: Arc<Slot<Result<Rgba, Rate>>>,
+    some: AtomicBool,
     nothing: AtomicBool,
 }
 
@@ -303,6 +304,7 @@ define_class!(
             if kind != SCStreamOutputType::Screen {
                 return;
             }
+            self.ivars().some.store(true, Ordering::SeqCst);
             match status(sample) {
                 Some(SCFrameStatus::Complete) => {
                     // SAFETY: the stream's buffer, read during its callback.
@@ -370,7 +372,7 @@ fn one_image(filter: &SCContentFilter) -> Result<Rgba, Rate> {
     if !(w >= 1.0 && h >= 1.0 && w <= f64::from(MAX_SIDE) && h <= f64::from(MAX_SIDE)) {
         return Err(Rate::Noire);
     }
-    let frames = Arc::new(Frames { image: Slot::new(), nothing: AtomicBool::new(false) });
+    let frames = Arc::new(Frames { image: Slot::new(), some: AtomicBool::new(false), nothing: AtomicBool::new(false) });
     let slot = frames.image.clone();
     let output = Output::new(frames.clone());
     let queue = DispatchQueue::new("com.braininbox.guide.image", None);
@@ -398,8 +400,13 @@ fn one_image(filter: &SCContentFilter) -> Result<Rgba, Rate> {
     });
     // SAFETY: our stream; the block is copied by the call.
     unsafe { stream.startCaptureWithCompletionHandler(Some(&on_start)) };
-    // No image in time: a stream that said it had nothing to show is a window minimized or hidden.
-    let nothing = || if frames.nothing.load(Ordering::SeqCst) { Rate::Reduite } else { Rate::Noire };
+    // No image in time. A stream that said it had nothing to show: a window minimized (macOS 26). One
+    // that gave no frame at all: a window closed (macOS 15, 26).
+    let nothing = || match (frames.some.load(Ordering::SeqCst), frames.nothing.load(Ordering::SeqCst)) {
+        (_, true) => Rate::Reduite,
+        (false, false) => Rate::Introuvable,
+        (true, false) => Rate::Noire,
+    };
     let image = slot.wait(IMAGE, &|| false).unwrap_or_else(|| Err(nothing()));
     // Stopped before its output and queue go: no frame comes to them after.
     let stopped: Arc<Slot<()>> = Slot::new();

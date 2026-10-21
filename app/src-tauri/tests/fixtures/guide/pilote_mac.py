@@ -25,7 +25,7 @@ CACHE = (200, 250, 400, 300)
 
 SCENARIOS = [
     "sans_permission_au_depart", "le_selecteur_donne_la_fenetre", "une_image_sans_permission", "cest_fait_le_meme_filtre",
-    "la_fenetre_telle_quelle_est", "reduite_mesuree", "rouverte", "arreter_pendant_le_choix", "apres_arreter_la_fenetre_oubliee",
+    "la_fenetre_telle_quelle_est", "reduite", "rouverte", "arreter_pendant_le_choix", "apres_arreter_la_fenetre_oubliee",
     "selecteur_ferme", "choisie_de_nouveau", "fenetre_fermee", "oubliee_a_la_fin", "sans_permission_a_la_fin",
 ]
 
@@ -178,18 +178,23 @@ def in_front(titre):
 def choose(target):
     """Hover a part of the user's window that nothing covers, then click the picker there. macOS 15
     and 26 put a « Share This Window » button over the window hovered (an unnamed AXButton of
-    ControlCenter, small); macOS 14 lays an unnamed AXButton over each window, of its frame: the
-    target's own, never another window's."""
+    ControlCenter, small); macOS 14 lays an unnamed AXButton of its frame over the window hovered, once
+    the pointer moves on it: the target's own is waited for, never another window's clicked."""
     time.sleep(3)
     f = frame(target)
     x, y, w, h = f["pos"][0], f["pos"][1], f["size"][0], f["size"][1]
-    jxa({"op": "souris", "x": x + 0.5 * w, "y": y + 0.12 * h, "clic": False})
-    time.sleep(2)
-    buttons = jxa({"op": "boutons"})
+    over, share = [], []
+    for i in range(12):
+        jxa({"op": "souris", "x": x + 0.5 * w + 7 * (i % 3), "y": y + 0.12 * h + 5 * (i % 2), "clic": False})
+        time.sleep(1)
+        buttons = jxa({"op": "boutons"})
+        buttons = buttons if isinstance(buttons, list) else []
+        over = [b for b in buttons if b["pos"] == f["pos"] and b["size"] == f["size"]]
+        # macOS 15, 26: one small button, no window's overlay; 14: overlays, the target's awaited.
+        share = [b for b in buttons if b["size"][1] < 60] if all(b["size"][1] < 60 for b in buttons) else []
+        if over or share:
+            break
     say("picker buttons", json.dumps(buttons))
-    buttons = buttons if isinstance(buttons, list) else []
-    over = [b for b in buttons if b["pos"] == f["pos"] and b["size"] == f["size"]]
-    share = [b for b in buttons if b["size"][1] < 60]
     if over:
         bx, by = x + 0.5 * w, y + 0.12 * h
     elif share:
