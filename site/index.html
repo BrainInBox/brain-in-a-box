@@ -47,7 +47,8 @@
 
 <section class="hero" aria-labelledby="titre">
   <div class="wrap hero-in">
-    <!-- img/bibo.svg, inline so style.css can bring Bibo out of his box (no script: the CSP allows none here). -->
+    <!-- img/bibo.svg, inline so style.css can bring Bibo out of his box (no inline style or script: the CSP allows
+         none). app.js only sets --gx and --gy, where his eyes look; without it, he looks ahead. -->
     <svg class="hero-bibo" viewBox="14 26 212 212" width="128" height="128" role="img" aria-label="Bibo, la mascotte : un cerveau rose souriant qui sort d'un carton." focusable="false">
       <defs><clipPath id="hb-cut"><rect x="0" y="0" width="240" height="139"/></clipPath></defs>
       <ellipse cx="120" cy="211" rx="76" ry="7" fill="#3b2418" opacity=".16"/>
@@ -72,7 +73,7 @@
           <g class="hb-eyes">
             <ellipse cx="100" cy="102" rx="14" ry="16.5" fill="#fff"/>
             <ellipse cx="140" cy="102" rx="14" ry="16.5" fill="#fff"/>
-            <g stroke="none">
+            <g class="hb-pupils" stroke="none">
               <ellipse cx="101" cy="104" rx="8.5" ry="10.5" fill="#2b1a1e"/>
               <ellipse cx="141" cy="104" rx="8.5" ry="10.5" fill="#2b1a1e"/>
               <circle cx="104.5" cy="99" r="3.4" fill="#fff"/>

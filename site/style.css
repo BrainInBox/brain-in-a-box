@@ -332,6 +332,8 @@ code {
 .hero-bibo .hb-rise { transform-origin: 120px 140px; animation: hb-spring 0.62s 0.7s both; }
 .hero-bibo .hb-eyes { transform-box: fill-box; transform-origin: 50% 50%; animation: hb-blink 5.5s -4.03s infinite; }
 .hero-bibo .hb-arm { opacity: 0; transform-origin: 174px 128px; animation: hb-wave 1s 1.4s ease-in-out both; }
+/* His eyes follow the pointer, slowly (app.js sets --gx and --gy, in the drawing's units). */
+.hero-bibo .hb-pupils { transform: translate(var(--gx, 0px), var(--gy, 0px)); transition: transform 0.45s ease-out; }
 @keyframes hb-shake {
   20% { transform: rotate(-3deg); }
   45% { transform: rotate(2.5deg); }
@@ -968,4 +970,5 @@ pre.cmd code { padding: 0; background: none; border: 0; color: inherit; font: in
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
   *, *::before, *::after { animation: none !important; transition: none !important; }
+  .hero-bibo .hb-pupils { transform: none; }
 }

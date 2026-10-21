@@ -229,8 +229,47 @@ function addCopyButtons() {
   }
 }
 
+// ── The hero's Bibo looks at the pointer ───────────────────────────────────
+// As in the app (app/src/app.js, aim()): the pupils lean towards the pointer, all the way once it is two
+// Bibos away; style.css eases them there. Not on a touch screen, nor for a visitor who asks for less motion.
+
+function followPointer() {
+  const bibo = document.querySelector('.hero-bibo');
+  if (!bibo || !window.matchMedia('(hover: hover) and (pointer: fine)').matches) return;
+  const still = window.matchMedia('(prefers-reduced-motion: reduce)');
+  const look = (x, y) => {
+    bibo.style.setProperty('--gx', `${x.toFixed(2)}px`);
+    bibo.style.setProperty('--gy', `${y.toFixed(2)}px`);
+  };
+  let x = 0;
+  let y = 0;
+  let frame = 0;
+  const aim = () => {
+    frame = 0;
+    const r = bibo.getBoundingClientRect();
+    if (r.bottom < 0 || r.top > window.innerHeight) return;
+    // The eyes sit in the middle, at y 102 of the viewBox (14 26 212 212).
+    const dx = x - (r.left + r.width / 2);
+    const dy = y - (r.top + (r.height * 76) / 212);
+    const d = Math.hypot(dx, dy) || 1;
+    const k = Math.min(1, d / (2 * r.width));
+    look(k * ((3.5 * dx) / d - 1), k * ((4 * dy) / d - 2));
+  };
+  document.addEventListener('pointermove', (e) => {
+    if (still.matches || e.pointerType !== 'mouse') return;
+    x = e.clientX;
+    y = e.clientY;
+    if (!frame) frame = requestAnimationFrame(aim);
+  }, { passive: true });
+  // The pointer left the window: eyes back to the middle.
+  document.addEventListener('mouseout', (e) => {
+    if (!e.relatedTarget) look(0, 0);
+  });
+}
+
 async function start() {
   const system = detectSystem();
+  followPointer();
   for (const nav of document.querySelectorAll('[data-tabs]')) setupTabs(nav, MAIN[system] ? system : 'mac');
   addCopyButtons();
   openLinkedDetails();
