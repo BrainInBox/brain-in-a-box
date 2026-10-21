@@ -299,6 +299,21 @@ def codex_sessions(day, codex_home):
     return out, packed
 
 
+def _open_hermes_db():
+    """Read-only connection to HERMES_DB, which Hermes keeps in WAL mode. While Hermes runs,
+    a read-only open also sees what state.db-wal holds. Once Hermes has closed there is no
+    state.db-shm, and a read-only open may not create one: its first read fails ("unable to
+    open database file"). The file does not change while Hermes is closed, so it is then read
+    as immutable."""
+    con = sqlite3.connect(HERMES_DB.as_uri() + "?mode=ro", uri=True, timeout=10)
+    try:
+        con.execute("SELECT 1").fetchall()
+        return con
+    except sqlite3.OperationalError:
+        con.close()
+        return sqlite3.connect(HERMES_DB.as_uri() + "?mode=ro&immutable=1", uri=True, timeout=10)
+
+
 def hermes_sessions(day):
     """Hermes sessions of `day`, read-only from its SQLite store. Hermes writes
     nothing to the vault, so without this its work only shows through commits.
@@ -307,7 +322,7 @@ def hermes_sessions(day):
         return []
     start, end = _day_bounds(day)
     try:
-        con = sqlite3.connect(HERMES_DB.as_uri() + "?mode=ro", uri=True, timeout=10)
+        con = _open_hermes_db()
         try:
             rows = con.execute(
                 """SELECT m.session_id, coalesce(s.title, ''), coalesce(s.source, '?'),

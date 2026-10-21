@@ -8,6 +8,7 @@ mod diagnose;
 mod guide;
 mod hermes;
 mod hermes_connect;
+mod hermes_brain;
 mod import;
 mod model;
 mod perms;

@@ -37,16 +37,19 @@ pub struct Facts {
     pub app: bool,
     /// The provider of Hermes's model, e.g. "openai-codex"; None until one is chosen.
     pub provider: Option<String>,
+    /// Once connected, Hermes's memory says where the brain is (hermes_brain.rs).
+    pub brain: bool,
 }
 
 impl Default for Facts {
     fn default() -> Self {
-        Facts { supported: true, found: Found::Absent, app: false, provider: None }
+        Facts { supported: true, found: Found::Absent, app: false, provider: None, brain: false }
     }
 }
 
-/// `hermes --version` and the provider of its model (`config get` masks credentials, and only
-/// the provider's id is kept). Hermes reads its own $HERMES_HOME.
+/// `hermes --version`, the provider of its model (`config get` masks credentials, and only
+/// the provider's id is kept), then whether its memory says where the brain is. Hermes reads
+/// its own $HERMES_HOME.
 pub fn probe() -> Facts {
     let supported = supported();
     let app = has_app();
@@ -54,7 +57,8 @@ pub fn probe() -> Facts {
     let found = version_of(&bin);
     let model = found.answers().then(|| sys::run(&bin, &["config", "get", "model", "--json"], TIMEOUT));
     let provider = model.filter(sys::Output::ok).and_then(|o| parse_provider(&o.stdout));
-    Facts { supported, found, app, provider }
+    let brain = provider.is_some() && crate::hermes_brain::linked(&bin, &sys::home());
+    Facts { supported, found, app, provider, brain }
 }
 
 /// `hermes --version`, Absent without the command. Only the Mac's Hermes step asks it again.

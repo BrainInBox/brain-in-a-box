@@ -110,6 +110,14 @@ const STEPS = {
     what: 'Il passe par ton abonnement : aucune clé à acheter.',
     say: ['Je branche Hermes sur ton IA.', 'Il passe par ton abonnement : aucune clé à acheter.'],
   },
+  // Then Hermes's memory notes where the brain is, which every conversation reads: asked what it
+  // knows of the user, Hermes reads the brain (hermes_brain.rs). The step ends on what to ask it.
+  hermes_cerveau: {
+    name: 'Hermes et ton cerveau',
+    short: 'le lien entre Hermes et ton cerveau',
+    what: 'Il lit ce que ton cerveau sait de toi.',
+    say: ['Je relie Hermes à ton cerveau.', 'Il lira ce que ton cerveau sait de toi.'],
+  },
 };
 
 const CHECK_STATUS = { ok: 'OK', missing: 'À installer', warn: 'À noter', error: 'Bloquant' };
@@ -147,6 +155,8 @@ const state = {
   codexLogin: '',
   // Hermes's first answer and whose subscription it counts on, once the install connected it.
   hermes: '',
+  // Once it is linked to the brain: what to ask it (hermes_brain.rs).
+  hermesBrain: '',
   // The Hermes step put off (« Plus tard »): the end says so, and that the next opening takes it up.
   hermesLater: '',
   repair: {
@@ -868,6 +878,11 @@ async function runInstall(from, result = '') {
   const { plan } = state;
   for (let i = from; i < plan.length; i++) {
     const id = plan[i];
+    // Its link to the brain waits with its connection: asked, Hermes could not answer yet.
+    if (id === 'hermes_cerveau' && state.hermesLater === 'hermes_ia') {
+      paintStep(id, 'later');
+      continue;
+    }
     // Hermes's connection needs Claude's login when Claude is the only AI: asked right before it,
     // for that reason, even after a « Plus tard » given for the repairs.
     const forHermes = id === 'hermes_ia' && !chose('codex') && !state.loginSkipped;
@@ -911,6 +926,7 @@ async function runInstall(from, result = '') {
     delete state.repair.aside[run];
     result = String(r.message || '');
     if (run === 'hermes_ia') state.hermes = result;
+    if (run === 'hermes_cerveau') state.hermesBrain = result;
     paintStep(id, 'done');
     paintProgress();
   }
@@ -1164,11 +1180,12 @@ async function showFailure(index, intro = null) {
   ui.actions.replaceChildren();
   clearRepairNotes();
   // Search by meaning is a bonus: the brain keeps working by keywords without it. Hermes, the
-  // last step, too, and its connection: the brain works without them.
-  if (state.plan.includes('voyage') || id === 'hermes' || id === 'hermes_ia') {
+  // last step, too, and its connection and its link: the brain works without them.
+  const hermesStep = ['hermes', 'hermes_ia', 'hermes_cerveau'].includes(id);
+  if (state.plan.includes('voyage') || hermesStep) {
     ui.actions.append(button('Plus tard', () => {
       state.key = '';
-      if (id === 'hermes' || id === 'hermes_ia') state.hermesLater = id;
+      if (hermesStep) state.hermesLater = id;
       checkLogin();
     }, { kind: 'ghost', act: 'skip' }));
   }
@@ -1939,12 +1956,14 @@ function showDone() {
   say('happy', 'Ton second cerveau est prêt !', names.length > 1
     ? `${listFr(names)} retiennent maintenant ce que tu leur apprends.`
     : `${first} retient maintenant ce que tu lui apprends.`);
-  // The proof Hermes works, on the user's own subscription: its first answer.
+  // The proof Hermes works, on the user's own subscription: its first answer. Then what to ask it,
+  // once it knows where the brain is.
   if (state.hermes) ui.screen.append(h('p', { class: 'note' }, state.hermes));
+  if (state.hermesBrain) ui.screen.append(h('p', { class: 'note' }, state.hermesBrain));
   // Put off: the diagnosis finds it missing next time, and the install picks it up there.
-  if (!state.hermes && state.hermesLater) {
-    const what = state.hermesLater === 'hermes' ? 'installé' : 'branché sur ton IA';
-    ui.screen.append(h('p', { class: 'note' }, `Hermes n’est pas encore ${what}. Rouvre-moi quand tu veux : je reprendrai là où on s’est arrêtés.`));
+  const putOff = { hermes: 'installé', hermes_ia: 'branché sur ton IA', hermes_cerveau: 'relié à ton cerveau' }[state.hermesLater];
+  if (putOff && !state.hermesBrain) {
+    ui.screen.append(h('p', { class: 'note' }, `Hermes n’est pas encore ${putOff}. Rouvre-moi quand tu veux : je reprendrai là où on s’est arrêtés.`));
   }
   // In the screen rather than with the buttons: three of them would not fit on one
   // line. Above « Dernière chose », which leads to the main button.

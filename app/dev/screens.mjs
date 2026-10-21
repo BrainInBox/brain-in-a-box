@@ -105,6 +105,10 @@ const SCENARIOS = [
   's=installe&hermes_etape=brancher&deconnecte=1&click=skip&go=done',
   's=installe&hermes_etape=brancher&fail=hermes_ia&go=done',
   's=installe&hermes_etape=brancher&fail=hermes_ia&click=skip&go=done',
+  // Point 4: connected, then linked to the brain, what to ask it at the end; its memory full, once, then put off.
+  's=installe&hermes_etape=relier&go=done',
+  's=installe&hermes_etape=relier&fail=hermes_cerveau&go=done',
+  's=installe&hermes_etape=relier&fail=hermes_cerveau&click=skip&go=done',
 ];
 
 // The guide in paste mode (guide-mock.html): a whole session to its end and the procedure saved, on each

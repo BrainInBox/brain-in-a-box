@@ -90,6 +90,9 @@ const HERMES_TO_INSTALL: Item = Item("hermes", "Hermes (ton IA au quotidien)", S
 const HERMES_AI: Item = Item("hermes_ia", "Connexion d'Hermes", None);
 /// Where the Hermes step runs, the connection step follows it: Hermes's first answer ends it.
 const HERMES_AI_TO_CONNECT: Item = Item("hermes_ia", "Connexion d'Hermes", Some("hermes_ia"));
+const HERMES_BRAIN: Item = Item("hermes_cerveau", "Hermes et ton cerveau", None);
+/// Once connected, the link step notes in Hermes's memory where the brain is (hermes_brain.rs).
+const HERMES_BRAIN_TO_LINK: Item = Item("hermes_cerveau", "Hermes et ton cerveau", Some("hermes_cerveau"));
 const INTERNAL: Item = Item("internal", "Erreur interne", None);
 
 impl Item {
@@ -889,7 +892,8 @@ fn check_voyage(model: Option<&str>) -> Check {
 
 /// Hermes as hermes::probe found it: never blocks. On a Mac it runs on, the Hermes step (the last
 /// one: the brain works without it) settles what is missing; elsewhere nothing installs it yet. Its
-/// connection only once it answers; on an Intel Mac, where it does not run, one line says so.
+/// connection and its link to the brain only once it answers; on an Intel Mac, where it does not
+/// run, one line says so.
 fn check_hermes(h: &hermes::Facts, free_gb: Option<f64>) -> Vec<Check> {
     if !h.supported && !h.found.answers() {
         return vec![HERMES.is(Status::Warn, "Hermes ne fonctionne que sur les Mac à puce Apple : ton cerveau marche très bien sans lui.")];
@@ -931,7 +935,14 @@ fn check_hermes(h: &hermes::Facts, free_gb: Option<f64>) -> Vec<Check> {
         None if mine => HERMES_AI_TO_CONNECT.is(Status::Missing, "Pas encore branché sur ton IA."),
         None => HERMES_AI.is(Status::Warn, "Pas encore branché sur ton IA."),
     };
-    vec![found, ai]
+    // Then linked to the brain: once connected, its memory says where the brain is.
+    let brain = match &h.provider {
+        Some(_) if h.brain => HERMES_BRAIN.is(Status::Ok, "Il sait où lire ton cerveau."),
+        _ if mine && ai.status == Status::Missing => HERMES_BRAIN_TO_LINK.is(Status::Missing, "Je le relierai à ton cerveau juste après."),
+        _ if mine => HERMES_BRAIN_TO_LINK.is(Status::Missing, "Pas encore relié à ton cerveau."),
+        _ => HERMES_BRAIN.is(Status::Warn, "Pas encore relié à ton cerveau."),
+    };
+    vec![found, ai, brain]
 }
 
 /// "Available" column of `df -k`: the field just before the first "NN%", which
@@ -1016,6 +1027,7 @@ mod tests {
                 found: Found::Version("Hermes Agent v0.22.2 (2026.9.24) · stable".into()),
                 app: true,
                 provider: Some("claude-subscription-directsdk-experimental".into()),
+                brain: true,
             },
         }
     }
@@ -1025,18 +1037,21 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let healthy = healthy_facts();
         let d = decide(tmp.path(), &healthy);
-        let (h, ai) = (by_id(&d, "hermes"), by_id(&d, "hermes_ia"));
+        let (h, ai, brain) = (by_id(&d, "hermes"), by_id(&d, "hermes_ia"), by_id(&d, "hermes_cerveau"));
         assert_eq!((h.status, h.detail.as_str()), (Status::Ok, "Hermes 0.22.2"));
         assert_eq!((ai.status, ai.detail.as_str()), (Status::Ok, "Il passe par ton abonnement Claude."));
+        assert_eq!((brain.status, brain.detail.as_str()), (Status::Ok, "Il sait où lire ton cerveau."));
         // The last lines, after the brain's.
-        assert_eq!(d.checks.iter().rev().take(2).map(|c| c.id.as_str()).collect::<Vec<_>>(), ["hermes_ia", "hermes"]);
+        assert_eq!(d.checks.iter().rev().take(3).map(|c| c.id.as_str()).collect::<Vec<_>>(), ["hermes_cerveau", "hermes_ia", "hermes"]);
 
         let hermes_with = |found: Found, provider: Option<&str>, supported: bool| {
-            let h = hermes::Facts { supported, found, app: true, provider: provider.map(String::from) };
+            let h = hermes::Facts { supported, found, app: true, brain: provider.is_some(), provider: provider.map(String::from) };
             decide(tmp.path(), &Facts { hermes: h, ..healthy_facts() })
         };
-        // On a Mac the Hermes step settles it, last, and the next one connects it; elsewhere nothing installs it yet.
-        let (to_fix, step): (Status, &[&str]) = if cfg!(target_os = "macos") { (Status::Missing, &["hermes", "hermes_ia"]) } else { (Status::Warn, &[]) };
+        // On a Mac the Hermes step settles it, last, and the next ones connect it and link it to the
+        // brain; elsewhere nothing installs it yet.
+        let (to_fix, step): (Status, &[&str]) =
+            if cfg!(target_os = "macos") { (Status::Missing, &["hermes", "hermes_ia", "hermes_cerveau"]) } else { (Status::Warn, &[]) };
         let then = |said: &str| if cfg!(target_os = "macos") { said.to_string() } else { String::new() };
         for (found, detail) in [
             (Found::Absent, "Pas encore installé.".to_string()),
@@ -1047,8 +1062,13 @@ mod tests {
             if cfg!(target_os = "macos") {
                 let ai = by_id(&d, "hermes_ia");
                 assert_eq!((ai.status, ai.detail.as_str(), ai.fix.as_deref()), (Status::Missing, "Je le brancherai sur ton IA juste après.", Some("hermes_ia")));
+                let brain = by_id(&d, "hermes_cerveau");
+                assert_eq!(
+                    (brain.status, brain.detail.as_str(), brain.fix.as_deref()),
+                    (Status::Missing, "Je le relierai à ton cerveau juste après.", Some("hermes_cerveau"))
+                );
             } else {
-                assert!(d.checks.iter().all(|c| c.id != "hermes_ia"), "no connection without Hermes");
+                assert!(d.checks.iter().all(|c| c.id != "hermes_ia" && c.id != "hermes_cerveau"), "no connection without Hermes");
             }
             assert!(d.can_install);
             assert_eq!(d.todo, [decide(tmp.path(), &healthy).todo, step.iter().map(|s| s.to_string()).collect()].concat());
@@ -1063,18 +1083,28 @@ mod tests {
         let unplugged = hermes_with(healthy.hermes.found.clone(), None, true);
         let ai = by_id(&unplugged, "hermes_ia");
         assert_eq!((ai.status, ai.detail.as_str()), (to_fix, "Pas encore branché sur ton IA."));
-        assert_eq!(unplugged.todo.last().map(String::as_str) == Some("hermes_ia"), cfg!(target_os = "macos"), "{:?}", unplugged.todo);
+        let then_linked: &[&str] = if cfg!(target_os = "macos") { &["hermes_ia", "hermes_cerveau"] } else { &[] };
+        assert!(unplugged.todo.ends_with(&then_linked.iter().map(|s| s.to_string()).collect::<Vec<_>>()), "{:?}", unplugged.todo);
+        assert_eq!(unplugged.todo.contains(&"hermes_ia".to_string()), cfg!(target_os = "macos"), "{:?}", unplugged.todo);
         assert!(!decide(tmp.path(), &healthy).todo.contains(&"hermes_ia".to_string()), "connected already");
+        // Connected but its memory not yet saying where the brain is: on a Mac the link comes next,
+        // alone; elsewhere it is only reported.
+        let unlinked = decide(tmp.path(), &Facts { hermes: hermes::Facts { brain: false, ..healthy.hermes.clone() }, ..healthy_facts() });
+        let brain = by_id(&unlinked, "hermes_cerveau");
+        let link_step = if cfg!(target_os = "macos") { Some("hermes_cerveau") } else { None };
+        assert_eq!((brain.status, brain.detail.as_str(), brain.fix.as_deref()), (to_fix, "Pas encore relié à ton cerveau.", link_step));
+        assert_eq!(by_id(&unlinked, "hermes_ia").status, Status::Ok);
+        assert_eq!(unlinked.todo, [decide(tmp.path(), &healthy).todo, link_step.iter().map(|s| s.to_string()).collect()].concat());
 
         let intel = hermes_with(Found::Absent, None, false);
         assert_eq!(by_id(&intel, "hermes").status, Status::Warn);
         assert!(by_id(&intel, "hermes").detail.contains("puce Apple"), "{}", by_id(&intel, "hermes").detail);
-        assert!(intel.checks.iter().all(|c| c.id != "hermes_ia"));
+        assert!(intel.checks.iter().all(|c| c.id != "hermes_ia" && c.id != "hermes_cerveau"));
         assert_eq!(intel.todo, decide(tmp.path(), &healthy).todo, "the Hermes step does not run there");
         // One that runs anyway is taken as it is, app or not.
         let ran = hermes_with(healthy.hermes.found.clone(), Some("openai-codex"), false);
         assert_eq!(by_id(&ran, "hermes_ia").detail, "Il passe par ton compte ChatGPT.");
-        assert!(by_id(&ran, "hermes").fix.is_none() && by_id(&ran, "hermes_ia").fix.is_none());
+        assert!(by_id(&ran, "hermes").fix.is_none() && by_id(&ran, "hermes_ia").fix.is_none() && by_id(&ran, "hermes_cerveau").fix.is_none());
         let ran_bare = Facts { hermes: hermes::Facts { supported: false, app: false, ..healthy.hermes.clone() }, ..healthy_facts() };
         assert_eq!(by_id(&decide(tmp.path(), &ran_bare), "hermes").status, Status::Ok);
     }
@@ -1402,7 +1432,7 @@ mod tests {
         assert!(d.can_install && d.online);
         assert_eq!((d.os.as_str(), d.ram_gb, d.disk_free_gb), ("macOS 26.3.1", 24.0, 174.0));
         assert!(d.checks.iter().all(|c| c.status == Status::Ok), "{:?}", d.checks);
-        assert_eq!(d.checks.len(), 15);
+        assert_eq!(d.checks.len(), 16);
         assert_eq!(by_id(&d, "voyage").detail, "Activée (Voyage AI)");
         assert!(!format!("{d:?}").contains("SECRET"));
     }

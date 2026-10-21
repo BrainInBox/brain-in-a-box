@@ -74,7 +74,8 @@
   // Hermes, on a Mac (diagnose.rs's check_hermes, hermes_connect.rs): &hermes_etape=installer has it to install, then
   // to connect, &hermes_etape=brancher installed and to connect; through ChatGPT where Codex is preferred, its code in
   // big while the step runs (hermes_device); &deconnecte=1 has Claude logged out until its login (&fail=hermes_ia: the
-  // subscription's limit, once).
+  // subscription's limit, once). &hermes_etape=relier has it connected, to link to the brain (hermes_brain.rs;
+  // &fail=hermes_cerveau: its memory full, once).
   (() => {
     const P = new URLSearchParams(location.search);
     if (P.get('sleep')) window.BIBO_SLEEP_MS = Number(P.get('sleep')) * 1000;
@@ -99,11 +100,11 @@
       brain_skills: 'Les compétences de Claude', brain_memory: 'La mémoire de recherche', voyage: 'Recherche par le sens',
       codex: 'Codex', codex_auth: 'Connexion à Codex', agents: 'Ton choix d’IA', brain_codex_hooks: 'Les automatismes de Codex',
       brain_codex_instructions: 'Tes consignes pour Codex', brain_codex_skills: 'Les compétences de Codex',
-      hermes: 'Hermes (ton IA au quotidien)', hermes_ia: 'Connexion d’Hermes',
+      hermes: 'Hermes (ton IA au quotidien)', hermes_ia: 'Connexion d’Hermes', hermes_cerveau: 'Hermes et ton cerveau',
     };
     const FIX = {
       clt: 'clt', paquets: 'paquets', bun: 'bun', claude: 'claude', codex: 'codex', obsidian: 'obsidian', agents: 'brain', brain_vault: 'brain', brain_hooks: 'brain', brain_skills: 'brain', brain_memory: 'brain',
-      brain_codex_hooks: 'brain', brain_codex_instructions: 'brain', brain_codex_skills: 'brain', hermes: 'hermes', hermes_ia: 'hermes_ia',
+      brain_codex_hooks: 'brain', brain_codex_instructions: 'brain', brain_codex_skills: 'brain', hermes: 'hermes', hermes_ia: 'hermes_ia', hermes_cerveau: 'hermes_cerveau',
     };
     // install.ps1 brings all of them with the brain.
     if (WIN) Object.assign(FIX, { python: 'brain', git: 'brain', bun: 'brain', obsidian: 'brain' });
@@ -237,8 +238,12 @@
 
     // &hermes_etape= (a Mac): Hermes's lines last, as check_hermes says them, and its steps at the end of `todo`.
     const HERMES_LINES = WIN || LIN ? null : {
-      installer: [C('hermes', 'missing', 'Pas encore installé.'), C('hermes_ia', 'missing', 'Je le brancherai sur ton IA juste après.')],
-      brancher: [C('hermes', 'ok', 'Hermes 0.22.3'), C('hermes_ia', 'missing', 'Pas encore branché sur ton IA.')],
+      installer: [C('hermes', 'missing', 'Pas encore installé.'), C('hermes_ia', 'missing', 'Je le brancherai sur ton IA juste après.'),
+        C('hermes_cerveau', 'missing', 'Je le relierai à ton cerveau juste après.')],
+      brancher: [C('hermes', 'ok', 'Hermes 0.22.3'), C('hermes_ia', 'missing', 'Pas encore branché sur ton IA.'),
+        C('hermes_cerveau', 'missing', 'Je le relierai à ton cerveau juste après.')],
+      relier: [C('hermes', 'ok', 'Hermes 0.22.3'), C('hermes_ia', 'ok', 'Il passe par ton abonnement Claude.'),
+        C('hermes_cerveau', 'missing', 'Pas encore relié à ton cerveau.')],
     }[P.get('hermes_etape')];
     const DECONNECTE = P.get('deconnecte') === '1';
     function withHermes(d) {
@@ -286,6 +291,10 @@
       };
     }
 
+    // The link to the brain, as hermes_brain.rs logs it and says it.
+    const HERMES_BRAIN_LOGS = ['$ hermes config get memory --json', '$ hermes config path',
+      'Je note dans la mémoire d’Hermes où est ton cerveau : Documents/Brain.', 'C’est noté.'];
+    const HERMES_LINKED = 'Hermes sait maintenant où lire ton cerveau. Demande-lui : « Qu’est-ce que tu sais de moi ? »';
     const LOGS = {
       paquets: ['Il manque git et curl. Ton ordinateur va te demander ton mot de passe : c’est pour les installer.', 'Lecture des listes de paquets…', 'Les NOUVEAUX paquets suivants seront installés :', '  curl git git-man liberror-perl', 'Paramétrage de git (1:2.43.0-1ubuntu7) …'],
       clt: ['Je demande les outils Apple…', 'Toujours en attente de la fenêtre Apple (0 min 30 s)', 'Outils Apple installés dans /Library/Developer/CommandLineTools'],
@@ -302,6 +311,8 @@
         '▸ Je vérifie que tout répond (13 sur 13)…', '=== Verification ===', '  [OK] memoire : recherche par mots-cles (gbrain)',
       ] : ['Téléchargement de brain-in-a-box', 'Extraction dans ~/.brain-in-a-box/src', '▸ Dependencies', '  ✓ deps OK', '▸ Search by meaning (Voyage AI key, optional)', '  ✓ key taken from VOYAGE_API_KEY', '▸ GBrain', '  ✓ cloned', '  ✓ deps + link', '▸ Vault', '  ✓ ~/Documents/Brain created', '▸ Hooks', '  ✓ 5 hooks installed', '▸ GBrain init + import', '  ✓ brain initialized (Voyage: search by meaning)', '  ✓ vault imported', '  ✓ embedded', 'Done.'],
       hermes: ['Téléchargement de l’installeur officiel d’Hermes', 'Hermes Agent v0.22.3', 'Téléchargement de l’app Hermes', 'Copie dans /Applications/Hermes.app', 'Signature vérifiée (T2F6S8MF7C)'],
+      // hermes_brain.rs: Hermes's memory notes where the brain is.
+      hermes_cerveau: HERMES_BRAIN_LOGS,
     };
     // The connection of Hermes, as hermes_connect.rs logs it and says it, per route.
     const HERMES_LOGS = {
@@ -325,6 +336,11 @@
     const HERMES_CODE = { url: 'https://auth.openai.com/codex/device', code: 'K7QF-93HT' };
     let hermesDevice = null;
     const FAILS = {
+      hermes_cerveau: {
+        // Its memory full: nothing written, the user asked to have Hermes sort it.
+        logs: HERMES_BRAIN_LOGS.slice(0, -1),
+        message: 'La mémoire d’Hermes est pleine : il n’y a plus la place d’y noter où est ton cerveau. Demande à Hermes de faire le tri dans sa mémoire, puis réessaie.',
+      },
       obsidian: {
         logs: ['Téléchargement d’Obsidian 1.14.4 (233 Mo)', '  12 %', 'curl: (28) Operation timed out after 300000 milliseconds with 29360128 out of 233704463 bytes received', 'Nettoyage de /var/folders/xy/T/biab-obsidian'],
         message: 'Le téléchargement d’Obsidian a été coupé. Vérifie ta connexion, puis clique sur Réessayer.',
@@ -526,6 +542,7 @@
           return { id, ok: true, message: voyageKey ? BRAIN_OK.meaning : BRAIN_OK.keywords };
         }
         if (id === 'hermes') return { id, ok: true, message: 'Hermes 0.22.3 est installé.' };
+        if (id === 'hermes_cerveau') return { id, ok: true, message: HERMES_LINKED };
         return { id, ok: true, message: 'Fait.' };
       },
       async hermes_device() { await wait(20); return hermesDevice; },

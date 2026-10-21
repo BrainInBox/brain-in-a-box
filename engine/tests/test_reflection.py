@@ -15,6 +15,7 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -1401,6 +1402,51 @@ class CodexSessions(EngineRun):
         log = (self.root / "logs" / "daily-reflection-errors.log").read_text(encoding="utf-8")
         self.assertIn(f"{DAY} evening: 1 compressed Codex session(s) (.jsonl.zst) not read", log)
         self.assertNotIn(self.B, self.sent_to_codex())
+
+
+class HermesSessions(unittest.TestCase):
+    """hermes_sessions reads Hermes's state.db, which Hermes keeps in WAL mode."""
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp())
+        self.saved = dr.HERMES_DB
+        dr.HERMES_DB = self.root / "state.db"
+        dr.configure(brain=self.root / "Brain", logs=self.root / "logs", projects=self.root / "projects")
+        self.con = sqlite3.connect(dr.HERMES_DB)
+        self.con.execute("PRAGMA journal_mode=WAL").fetchone()
+        self.con.executescript(
+            "CREATE TABLE sessions (id TEXT PRIMARY KEY, source TEXT, title TEXT);"
+            "CREATE TABLE messages (id INTEGER PRIMARY KEY, session_id TEXT, role TEXT, content TEXT, timestamp REAL);")
+        noon = dr._day_bounds(DAY)[0] + 12 * 3600
+        self.con.execute("INSERT INTO sessions VALUES ('s1', 'cli', 'Bonjour')")
+        self.con.executemany("INSERT INTO messages (session_id, role, content, timestamp) VALUES (?, ?, ?, ?)",
+                             [("s1", "user", "Bonjour", noon), ("s1", "assistant", "Salut !", noon + 1)])
+        self.con.commit()
+
+    def tearDown(self):
+        self.con.close()
+        dr.HERMES_DB = self.saved
+        dr.configure()
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def test_reads_while_hermes_is_closed(self):
+        # Hermes's own SQLite checkpoints the WAL and removes state.db-wal and -shm when it
+        # closes (macOS's does not, so the test does it).
+        self.con.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+        self.con.close()
+        for leftover in ("state.db-wal", "state.db-shm"):
+            (self.root / leftover).unlink(missing_ok=True)
+        [(label, text, _)] = dr.hermes_sessions(DAY)
+        self.assertEqual("hermes s1 · cli · Bonjour", label)
+        self.assertIn("user: Bonjour", text)
+        self.assertIn("assistant: Salut !", text)
+        self.assertFalse((self.root / "logs" / "daily-reflection-errors.log").exists())
+
+    def test_reads_what_a_running_hermes_has_not_checkpointed(self):
+        # Hermes running: the rows are still in state.db-wal, which an immutable open would skip.
+        self.assertTrue((self.root / "state.db-wal").exists())
+        [(_, text, _)] = dr.hermes_sessions(DAY)
+        self.assertIn("assistant: Salut !", text)
 
 
 if __name__ == "__main__":
