@@ -303,12 +303,64 @@ code {
 .hero-in { position: relative; display: flex; flex-direction: column; align-items: center; }
 .hero-bibo {
   width: 112px;
+  height: 112px;
+  overflow: visible;
   margin-bottom: 28px;
   filter: drop-shadow(0 18px 30px rgba(247, 169, 196, 0.16));
   animation: float 6s ease-in-out infinite;
 }
 @keyframes float {
   50% { transform: translateY(-8px); }
+}
+/* Bibo comes out of his box (as in the app, app/src/bibo-anim.css): the taped box shakes, the lid
+   pops, he springs out, blinks and waves; then he floats, and blinks now and then. Without motion,
+   the drawing as it is: Bibo out of his box. */
+.hero-bibo .hb-box,
+.hero-bibo .hb-rise,
+.hero-bibo .hb-flap-l,
+.hero-bibo .hb-flap-r,
+.hero-bibo .hb-lid-l,
+.hero-bibo .hb-lid-r,
+.hero-bibo .hb-arm { transform-box: view-box; }
+.hero-bibo .hb-box { transform-origin: 120px 204px; animation: hb-shake 0.3s 0.35s ease-in-out; }
+.hero-bibo .hb-lid { opacity: 0; animation: hb-lid 0.82s linear both; }
+.hero-bibo .hb-lid-l { transform-origin: 46px 131px; animation: hb-lid-open 0.16s 0.66s ease-in both; }
+.hero-bibo .hb-lid-r { transform-origin: 194px 131px; animation: hb-lid-open 0.16s 0.66s ease-in both; }
+.hero-bibo .hb-tape { animation: hb-tape 0.18s 0.62s ease-out both; }
+.hero-bibo .hb-flap-l { transform-origin: 53px 131px; animation: hb-flap 0.3s 0.7s cubic-bezier(0.3, 1.5, 0.5, 1) both; }
+.hero-bibo .hb-flap-r { transform-origin: 187px 131px; animation: hb-flap 0.3s 0.7s cubic-bezier(0.3, 1.5, 0.5, 1) both; }
+.hero-bibo .hb-rise { transform-origin: 120px 140px; animation: hb-spring 0.62s 0.7s both; }
+.hero-bibo .hb-eyes { transform-box: fill-box; transform-origin: 50% 50%; animation: hb-blink 5.5s -4.03s infinite; }
+.hero-bibo .hb-arm { opacity: 0; transform-origin: 174px 128px; animation: hb-wave 1s 1.4s ease-in-out both; }
+@keyframes hb-shake {
+  20% { transform: rotate(-3deg); }
+  45% { transform: rotate(2.5deg); }
+  70% { transform: rotate(-2deg); }
+}
+@keyframes hb-lid {
+  0%, 97% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes hb-lid-open { to { transform: scaleX(0); } }
+@keyframes hb-tape { to { opacity: 0; transform: translateY(-8px); } }
+@keyframes hb-flap { from { transform: scale(0); } }
+@keyframes hb-spring {
+  0% { transform: translateY(100px) scale(0.92, 1.04); animation-timing-function: cubic-bezier(0.2, 0.8, 0.4, 1); }
+  55% { transform: translateY(-14px) scale(0.96, 1.06); animation-timing-function: ease-in; }
+  78% { transform: scale(1.07, 0.92); animation-timing-function: ease-out; }
+  100% { transform: none; }
+}
+@keyframes hb-blink {
+  0%, 97%, 100% { transform: none; }
+  98% { transform: scaleY(0.1); }
+}
+@keyframes hb-wave {
+  0% { opacity: 0; transform: scale(0.3) rotate(25deg); }
+  14% { opacity: 1; transform: none; }
+  32%, 68% { transform: rotate(-16deg); }
+  50% { transform: rotate(6deg); }
+  86% { opacity: 1; transform: none; }
+  100% { opacity: 0; transform: scale(0.3) rotate(25deg); }
 }
 .hero h1 { margin-top: 24px; max-width: 15em; }
 .h1-line { display: inline-block; }
@@ -889,7 +941,7 @@ pre.cmd code { padding: 0; background: none; border: 0; color: inherit; font: in
   .section { padding: 72px 0; }
   .section-how { padding-top: 8px; }
   .hero { padding: 48px 0 72px; }
-  .hero-bibo { width: 88px; margin-bottom: 20px; }
+  .hero-bibo { width: 88px; height: 88px; margin-bottom: 20px; }
   .lead { margin-top: 22px; }
   .section-lead { font-size: 17px; }
   .needs, .softs, .after, .ways { grid-template-columns: minmax(0, 1fr); }
