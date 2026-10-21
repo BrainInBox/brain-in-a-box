@@ -11,7 +11,7 @@ its block, in the same section, names Codex and holds the whole session id: Code
 whose first 8 characters are the minute, so two sessions of one minute would share a block.
 Claude's blocks are as before.
 """
-import json, sys, os, re, time, tempfile
+import json, sys, os, re, stat, time, tempfile
 from pathlib import Path
 from collections import Counter
 from datetime import datetime
@@ -33,6 +33,26 @@ try:
     from _vault_write import clean_item, write_atomic
 except ImportError:
     clean_item = write_atomic = None
+
+
+def own_folder(d):
+    """d, or else d-<the user's id> beside it: the first that is the user's alone to write in, made if
+    missing; None if neither is. A temporary folder all accounts share (Linux's /tmp) may hold a d another
+    account made, where a lock cannot be made, or can be removed. (session-logger, session-indexer and
+    session-recap have this same function.)"""
+    if os.name == "nt":  # %TEMP%: the user's own
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+    for f in (d, d.with_name("%s-%d" % (d.name, os.getuid()))):
+        try:
+            f.mkdir(mode=0o700, parents=True)
+        except FileExistsError:
+            pass
+        st = os.lstat(str(f))
+        if stat.S_ISDIR(st.st_mode) and st.st_uid == os.getuid() and not st.st_mode & 0o022 \
+                and os.access(str(f), os.W_OK | os.X_OK):
+            return f
+    return None
 
 
 SIGNAL_PATTERNS = [
@@ -315,8 +335,10 @@ def main():
     # Debounce: skip if the last recap for this sid was < DEBOUNCE_SECS ago.
     # A shared /tmp: never follow a link someone left under that name.
     DEBOUNCE_SECS = 30
-    LOCK_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
-    lock = LOCK_DIR / f"recap-{sid}.lock"
+    lock_dir = own_folder(LOCK_DIR)
+    if lock_dir is None:
+        sys.exit(0)
+    lock = lock_dir / f"recap-{sid}.lock"
     try:
         if time.time() - lock.lstat().st_mtime < DEBOUNCE_SECS:
             sys.exit(0)
