@@ -136,23 +136,23 @@ fn description(path: &str) -> Option<String> {
     let mut data = vec![0u32; size.div_ceil(4)];
     // SAFETY: a buffer of at least `size` bytes.
     unsafe { GetFileVersionInfoW(PCWSTR(file.as_ptr()), None, size as u32, data.as_mut_ptr().cast()) }.ok()?;
-    let base = data.as_ptr() as usize;
-    let query = |sub: &str| -> Option<(*const u16, usize)> {
+    let (base, end) = (data.as_ptr() as usize, data.as_ptr() as usize + size);
+    // What Windows points at in `data`, its length as it says, and the u16s left there.
+    let query = |sub: &str| -> Option<(*const u16, usize, usize)> {
         let sub = wide(sub);
         let (mut at, mut len) = (null_mut::<c_void>(), 0u32);
         // SAFETY: `data` holds the block GetFileVersionInfoW filled; Windows points into it.
         unsafe { VerQueryValueW(data.as_ptr().cast(), PCWSTR(sub.as_ptr()), &mut at, &mut len) }.as_bool().then_some(())?;
         let p = at as usize;
-        (p >= base && p % 2 == 0 && p < base + size).then_some((at as *const u16, len as usize))
+        (p >= base && p % 2 == 0 && p < end).then_some((at as *const u16, len as usize, (end - p) / 2))
     };
-    let (langs, bytes) = query("\\VarFileInfo\\Translation")?;
-    (bytes >= 4).then_some(())?;
+    let (langs, bytes, room) = query("\\VarFileInfo\\Translation")?;
+    (bytes >= 4 && room >= 2).then_some(())?;
     // SAFETY: two u16 inside `data` (checked above).
     let (lang, page) = unsafe { (*langs, *langs.add(1)) };
-    let (text, units) = query(&format!("\\StringFileInfo\\{lang:04x}{page:04x}\\FileDescription"))?;
-    let units = units.min((base + size - text as usize) / 2);
-    // SAFETY: `units` u16 inside `data`.
-    let text = String::from_utf16_lossy(unsafe { std::slice::from_raw_parts(text, units) });
+    let (text, units, room) = query(&format!("\\StringFileInfo\\{lang:04x}{page:04x}\\FileDescription"))?;
+    // SAFETY: at most the u16s left in `data`.
+    let text = String::from_utf16_lossy(unsafe { std::slice::from_raw_parts(text, units.min(room)) });
     Some(text.trim_end_matches('\0').trim().to_string()).filter(|t| !t.is_empty())
 }
 
@@ -163,9 +163,12 @@ fn name(path: &str) -> String {
 /// The window under this id, if it is another program's the guide may capture.
 pub fn describe(id: u64) -> Option<Found> {
     let h = handle(id);
+    if !listed(h) {
+        return None;
+    }
     let window = identity(h)?;
-    // Bibo's own windows first: their title is never asked for.
-    if window.pid == std::process::id() || !listed(h) {
+    // Bibo's own windows before their title is asked for: never a message to one of them.
+    if window.pid == std::process::id() {
         return None;
     }
     let (titre, class) = (title(h), class(h));
