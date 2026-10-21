@@ -901,9 +901,12 @@ def presse_papiers():
     if sys.platform == "darwin":
         cmds = [["/usr/bin/pbpaste", "-Prefer", "txt"]]
     else:
-        cmds = [[c] + a for c, a in (("wl-paste", ["--no-newline", "--type", "text/plain"]),
-                                      ("xclip", ["-selection", "clipboard", "-o"]),
-                                      ("xsel", ["--clipboard", "--output"])) if shutil.which(c)]
+        # By their full path, from the PATH's absolute folders: never the folder this runs from.
+        from _headless_claude import which
+        found = [(which(c), a) for c, a in (("wl-paste", ["--no-newline", "--type", "text/plain"]),
+                                            ("xclip", ["-selection", "clipboard", "-o"]),
+                                            ("xsel", ["--clipboard", "--output"]))]
+        cmds = [[c] + a for c, a in found if c]
     for cmd in cmds:
         try:
             p = subprocess.run(cmd, capture_output=True, timeout=15, stdin=subprocess.DEVNULL,

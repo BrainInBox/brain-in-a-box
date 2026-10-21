@@ -14,7 +14,6 @@ seconds (network gone mid-request, a stuck gbrain) is killed, tree included,
 and answered by keywords: Claude Code's Bash tool gives up at 120 s.
 """
 import os
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -25,6 +24,8 @@ ENGINE_FILE = HERE / "engine"
 READS = {"query", "search"}
 REINDEX = {"sync", "embed", "import"}
 READ_TIMEOUT = float(os.environ.get("GBQ_READ_TIMEOUT") or 60)
+WINDOWS = os.name == "nt"
+EXE = ".exe" if WINDOWS else ""
 
 for _s in (sys.stdout, sys.stderr):
     if hasattr(_s, "reconfigure"):
@@ -41,10 +42,16 @@ def bun_bin():
 
 
 def gbrain_exe():
-    p = bun_bin() / ("gbrain.exe" if os.name == "nt" else "gbrain")
+    p = bun_bin() / ("gbrain" + EXE)
     if p.is_file():
         return str(p)
-    return shutil.which("gbrain")
+    # Only the PATH's absolute folders: shutil.which would look in the current folder first, where
+    # `gbq` is run from (a repository, a download).
+    for d in os.environ.get("PATH", "").split(os.pathsep):
+        p = Path(d) / ("gbrain" + EXE)
+        if os.path.isabs(d) and p.is_file() and os.access(str(p), os.X_OK):
+            return str(p)
+    return None
 
 
 def engine():
@@ -88,8 +95,9 @@ def normalize_repo(args):
 
 def kill_tree(p):
     # gbrain.exe is a shim that starts bun.exe: killing the shim alone leaves bun running.
-    if os.name == "nt":
-        subprocess.run(["taskkill", "/F", "/T", "/PID", str(p.pid)],
+    if WINDOWS:
+        taskkill = os.path.join(os.environ.get("SystemRoot") or r"C:\Windows", "System32", "taskkill.exe")
+        subprocess.run([taskkill, "/F", "/T", "/PID", str(p.pid)],
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     else:
         p.kill()

@@ -34,6 +34,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _controle_rules as rules  # noqa: E402
 import _controle_judge as judge  # noqa: E402
 import _agents  # noqa: E402
+from _headless_claude import which  # noqa: E402
 
 ENV_HELP = """environment (all optional):
   BRAIN_DIR            the vault (default ~/Documents/Brain); --brain wins
@@ -355,7 +356,7 @@ class Git:
 
 
 def find_git(opts):
-    return opts.git or shutil.which("git")
+    return opts.git or which("git.exe" if os.name == "nt" else "git")
 
 
 def preflight(vault, git):

@@ -99,18 +99,24 @@ pub fn exe(name: &str) -> String {
 }
 
 /// The inherited PATH first (a test can put stubs in front), then our install locations.
-/// Never a folder of the AppImage the app runs from.
 pub fn tool_path() -> OsString {
-    let mut dirs: Vec<PathBuf> = std::env::var_os("PATH")
-        .map(|p| std::env::split_paths(&p).filter(|d| !d.as_os_str().is_empty() && !in_appimage(d)).collect())
-        .unwrap_or_default();
-    dirs.extend(install_dirs(&home()));
-    let mut seen = HashSet::new();
-    dirs.retain(|d| seen.insert(d.clone()));
+    let dirs = tool_dirs(std::env::var_os("PATH"), &home());
     // Only a folder holding the separator cannot be joined: such a one is left out.
     std::env::join_paths(&dirs)
         .or_else(|_| std::env::join_paths(dirs.iter().filter(|d| std::env::join_paths([d]).is_ok())))
         .unwrap_or_default()
+}
+
+/// Only the PATH's absolute folders: an empty or relative entry is the folder the app was started
+/// from, where a claude.exe or a git.exe could be anyone's. Never a folder of the AppImage the app
+/// runs from.
+fn tool_dirs(path: Option<OsString>, home: &Path) -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> =
+        path.map(|p| std::env::split_paths(&p).filter(|d| d.is_absolute() && !in_appimage(d)).collect()).unwrap_or_default();
+    dirs.extend(install_dirs(home));
+    let mut seen = HashSet::new();
+    dirs.retain(|d| seen.insert(d.clone()));
+    dirs
 }
 
 #[cfg(target_os = "macos")]
@@ -1231,6 +1237,19 @@ mod tests {
     fn durations_read_well() {
         assert_eq!(minutes(Duration::from_secs(30)), "30 s");
         assert_eq!(minutes(Duration::from_secs(150)), "2 min");
+    }
+
+    /// A relative or empty entry of the PATH is the folder the app was started from (a terminal's,
+    /// a download's): a claude.exe or a git.exe put there would be found, and run.
+    #[test]
+    fn only_the_absolute_folders_of_the_path() {
+        let tools = if cfg!(windows) { r"C:\Tools" } else { "/opt/tools" };
+        let home = if cfg!(windows) { r"C:\Users\jo" } else { "/home/jo" };
+        let path = std::env::join_paths([".", "bin", "", tools, r"..\x", "../x"]).unwrap();
+        let dirs = tool_dirs(Some(path), Path::new(home));
+        assert_eq!(dirs.first(), Some(&PathBuf::from(tools)), "{dirs:?}");
+        assert!(dirs.iter().all(|d| d.is_absolute()), "{dirs:?}");
+        assert!(dirs.contains(&Path::new(home).join(".local").join("bin")), "{dirs:?}");
     }
 
     #[test]

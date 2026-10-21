@@ -1091,7 +1091,10 @@ class EngineNights(Night):
         self.assertEqual((len(check.call_args_list), len(run.call_args_list)), (1, 1))
         probed = inspect.signature(real_check).bind(*check.call_args.args, **check.call_args.kwargs).arguments
         asked = inspect.signature(real_run).bind(*run.call_args.args, **run.call_args.kwargs).arguments
-        git_path, command = shutil.which("git"), probed["command"]
+        # The PATH's git as the night check finds it: from its absolute folders, git.exe on Windows (shutil.which
+        # would say git.EXE there, PATHEXT's case).
+        git_path, command = headless.which("git.exe" if os.name == "nt" else "git"), probed["command"]
+        self.assertTrue(git_path and os.path.isabs(git_path), git_path)
         self.assertEqual(command[2], self.stub)
         self.assertEqual(dict(probed), dict(command=command, work_root=None, git=git_path))
         self.assertEqual({k: v for k, v in asked.items() if k not in ("prompt", "schema")},

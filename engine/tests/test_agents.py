@@ -540,6 +540,38 @@ class CodexHook(Home):
         self.assertTrue(self.hook(self.payload(self.rollout(self.CLI))))
         self.assertEqual(ag.vus(self.home), {})
 
+    def test_hooks_run_together_each_keep_their_line(self):
+        # Codex runs one event's hooks at once, each in a process of its own: each reads the sign and
+        # writes it back with its own line. Here each one's read takes 0.15 s, while the others write.
+        go = os.path.join(self.home, "go")
+        code = ("import os, sys, time\nsys.path.insert(0, %r)\nimport _agents as ag\n"
+                "read = ag.vus\n"
+                "def slow(home=None):\n    d = read(home)\n    time.sleep(0.15)\n    return d\n"
+                "ag.vus = slow\n"
+                "while not os.path.exists(%r):\n    time.sleep(0.005)\n"
+                "ag.vu(sys.argv[1], %r)\n") % (str(HOOKS), go, self.home)
+        names = ["hook-%d" % i for i in range(5)]
+        procs = [subprocess.Popen([sys.executable, "-I", "-c", code, n], stderr=subprocess.PIPE) for n in names]
+        Path(go).touch()
+        for p in procs:
+            _, err = p.communicate(timeout=60)
+            self.assertEqual(p.returncode, 0, err)
+        self.assertEqual(sorted(ag.vus(self.home)), names)
+        self.assertNotIn(".lock", " ".join(ag.vus(self.home)))
+
+    @unittest.skipUnless(POSIX, "symlinks")
+    def test_the_signs_lock_is_never_taken_through_a_link(self):
+        target = Path(self.home) / "precious"
+        target.write_text("precious", encoding="utf-8")
+        self.vus.parent.mkdir(parents=True, exist_ok=True)
+        lock = self.vus.with_name("." + ag.VUS + ".lock")
+        lock.symlink_to(target)
+        with self.assertRaises(OSError):
+            ag.vu("session-logger", self.home)
+        self.assertEqual(target.read_text(encoding="utf-8"), "precious")
+        self.assertEqual(ag.vus(self.home), {})
+        self.assertTrue(self.hook(self.payload(self.rollout(self.CLI))), "the hook still does its work")
+
 
 class HooksMuets(Home):
     """hooks_muets(): Codex kept a session since install.sh wired the kit's hooks (pose_hooks()), and ran

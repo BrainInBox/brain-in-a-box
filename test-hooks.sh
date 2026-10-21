@@ -113,6 +113,22 @@ grep -q "$SID" "$H/.claude/logs/sessions.log" 2>/dev/null && ok "wrote sessions.
 echo "════ 3) session-indexer ════"
 echo "$PAYLOAD" | HOME="$H" python3 "$HB/session-indexer.py" 2>/dev/null
 grep -q "$SID" "$H/.claude/logs/sessions-$DAY.jsonl" 2>/dev/null && ok "wrote sessions-$DAY.jsonl" || no "did not write sessions-DAY.jsonl"
+# Their lock (once per session) is named after the session id: a plain id as before, any other id by
+# its hash, in the lock folder (never a path out of it); never written through a link left there.
+LD="$TMPDIR/claude-session-locks"
+for h in logger indexer; do
+  if [ "$h" = logger ]; then HL="$H/.claude/logs/sessions.log"; else HL="$H/.claude/logs/sessions-$DAY.jsonl"; fi
+  echo "$PAYLOAD" | HOME="$H" python3 "$HB/session-$h.py" 2>/dev/null
+  [ -f "$LD/$h-$SID.lock" ] && [ "$(grep -c "\"$SID\"" "$HL")" = 1 ] \
+    && ok "session-$h: a plain id names its lock as before ($h-<id>.lock), one line per session" || no "session-$h: a plain id's lock changed"
+  mkdir -p "$LD/$h-x"; ODD="x/../../../escaped-$h"
+  for _ in 1 2; do printf '{"session_id":"%s","cwd":"/w"}' "$ODD" | HOME="$H" python3 "$HB/session-$h.py" 2>/dev/null; done
+  [ ! -e "$H/escaped-$h.lock" ] && [ "$(grep -cF "\"$ODD\"" "$HL")" = 1 ] && [ "$(find "$LD" -maxdepth 1 -name "$h-h.*.lock" | wc -l | tr -d ' ')" = 1 ] \
+    && ok "session-$h: an id that is not a plain one locks by its hash, in the lock folder, once" || no "session-$h: an odd session id led out of the lock folder"
+  LSID="link$h$(date +%s)"; ln -s "$H/made-through-$h" "$LD/$h-$LSID.lock"
+  printf '{"session_id":"%s","cwd":"/w"}' "$LSID" | HOME="$H" python3 "$HB/session-$h.py" 2>/dev/null
+  [ ! -e "$H/made-through-$h" ] && ok "session-$h: a link left as the lock is not written through" || no "session-$h: the lock was written through a link"
+done
 
 echo "════ 4) session-recap ════"
 echo "$PAYLOAD" | HOME="$H" python3 "$HB/session-recap.py" 2>/dev/null
