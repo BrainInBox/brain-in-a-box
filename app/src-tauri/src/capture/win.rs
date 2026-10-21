@@ -636,8 +636,9 @@ mod tests {
         let titre = format!("Atelier Intrus {}", d.nonce);
         cmd.args(["intrus", &titre, "240", "200", "320", "220", "ff00ff", &win.window.id.to_string()]);
         let _intrus = Program(cmd.spawn().unwrap());
-        until("the other program's window, owned by the chosen one", || any_titled(&titre).is_some_and(|p| owner(p) == Some(h)));
+        until("the other program's window", || any_titled(&titre).is_some());
         let popup = any_titled(&titre).unwrap();
+        assert_eq!(owner(popup).map(id_of), Some(win.window.id), "owned by the chosen window");
         assert_ne!(pid_of(popup), win.window.pid);
         // Clicked once, it is the chosen window's last active popup.
         let r = frame(popup).unwrap();

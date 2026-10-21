@@ -22,24 +22,10 @@ static class Atelier
 {
     [DllImport("user32.dll")] static extern bool SetWindowDisplayAffinity(IntPtr h, uint affinity);
     [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")] static extern IntPtr SetWindowLongPtr(IntPtr h, int index, IntPtr value);
 
     const int WS_EX_NOACTIVATE = 0x08000000;
     const uint WDA_MONITOR = 1;
-
-    class Intrus : Form
-    {
-        public IntPtr Proprietaire;
-
-        protected override CreateParams CreateParams
-        {
-            get
-            {
-                CreateParams p = base.CreateParams;
-                p.Parent = Proprietaire;
-                return p;
-            }
-        }
-    }
 
     class Dessus : Form
     {
@@ -67,21 +53,7 @@ static class Atelier
     {
         SetProcessDPIAware();
         string mode = a[0];
-        Form f;
-        if (mode == "dessus")
-        {
-            f = new Dessus();
-        }
-        else if (mode == "intrus")
-        {
-            Intrus i = new Intrus();
-            i.Proprietaire = new IntPtr(long.Parse(a[7]));
-            f = i;
-        }
-        else
-        {
-            f = new Form();
-        }
+        Form f = mode == "dessus" ? new Dessus() : new Form();
         f.Text = a[1];
         f.StartPosition = FormStartPosition.Manual;
         f.Bounds = new Rectangle(int.Parse(a[2]), int.Parse(a[3]), int.Parse(a[4]), int.Parse(a[5]));
@@ -89,6 +61,11 @@ static class Atelier
         f.TopMost = mode == "dessus";
         f.Shown += delegate
         {
+            if (mode == "intrus")
+            {
+                // GWLP_HWNDPARENT: the owner of a top-level window, here another program's.
+                SetWindowLongPtr(f.Handle, -8, new IntPtr(long.Parse(a[7])));
+            }
             if (mode == "protege")
             {
                 SetWindowDisplayAffinity(f.Handle, WDA_MONITOR);
