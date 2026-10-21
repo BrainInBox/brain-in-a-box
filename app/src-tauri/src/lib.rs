@@ -5,6 +5,7 @@ mod codex;
 mod config_guard;
 mod detect;
 mod diagnose;
+mod guide;
 mod import;
 mod model;
 mod perms;
@@ -13,11 +14,12 @@ mod remedies;
 mod repair;
 #[cfg(target_os = "linux")]
 mod root;
+mod shot;
 mod steps;
 mod sys;
 mod voyage;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use tauri::{Emitter, Manager};
 
@@ -280,6 +282,153 @@ async fn import_open_note() -> Result<(), String> {
     .await
 }
 
+// ── The guide (guide.rs): its own window, always on top ─────────────────────
+
+/// The usable area of the screen the guide is on (else the installer's, else the main one), in
+/// logical pixels.
+fn guide_area(app: &tauri::AppHandle) -> Option<guide::Frame> {
+    let on = |label: &str| app.get_webview_window(label).and_then(|w| w.current_monitor().ok().flatten());
+    let monitor = on("guide").or_else(|| on("main")).or_else(|| app.primary_monitor().ok().flatten())?;
+    let (area, scale) = (monitor.work_area(), monitor.scale_factor());
+    Some(guide::Frame {
+        x: f64::from(area.position.x) / scale,
+        y: f64::from(area.position.y) / scale,
+        w: f64::from(area.size.width) / scale,
+        h: f64::from(area.size.height) / scale,
+    })
+}
+
+/// The guide's window, or brought to the front: small, in the bottom right corner, above the
+/// program it guides in. The installer's window goes to the Dock or the taskbar. A capture dropped
+/// on it is read in Rust: the page never gets a path to send back.
+fn open_guide(app: &tauri::AppHandle) -> tauri::Result<()> {
+    if let Some(w) = app.get_webview_window("guide") {
+        let _ = w.unminimize();
+        w.show()?;
+        return w.set_focus();
+    }
+    let frame = guide_area(app).map(|area| guide::frame(area, guide::Taille::Normal));
+    let mut builder = tauri::WebviewWindowBuilder::new(app, "guide", tauri::WebviewUrl::App("guide.html".into()))
+        .title("Bibo, ton guide")
+        .min_inner_size(360.0, 220.0)
+        .always_on_top(true)
+        .visible_on_all_workspaces(true);
+    builder = match frame {
+        Some(f) => builder.inner_size(f.w, f.h).position(f.x, f.y),
+        None => builder.inner_size(400.0, 600.0),
+    };
+    let window = builder.build()?;
+    let handle = app.clone();
+    window.on_window_event(move |event| match event {
+        tauri::WindowEvent::Destroyed => guide::fin(),
+        tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) => {
+            let Some(path) = paths.first().cloned() else { return };
+            let handle = handle.clone();
+            std::thread::spawn(move || {
+                let _ = handle.emit_to("guide", "guide-depose", guide::deposer(&path));
+            });
+        }
+        _ => {}
+    });
+    if let Some(main) = app.get_webview_window("main") {
+        let _ = main.minimize();
+    }
+    Ok(())
+}
+
+/// Creating a window from a command that is not async would block Windows' event loop.
+#[tauri::command]
+async fn guide_open(app: tauri::AppHandle) -> Result<(), String> {
+    open_guide(&app).map_err(|e| e.to_string())
+}
+
+/// « Toujours au-dessus », the pin: set from Rust, the page has no window permission for it.
+#[tauri::command]
+async fn guide_epingler(app: tauri::AppHandle, epingle: bool) -> Result<(), String> {
+    let w = app.get_webview_window("guide").ok_or("pas de fenêtre du guide")?;
+    w.set_always_on_top(epingle).map_err(|e| e.to_string())
+}
+
+/// The window's size and place: normal, reduced (the step and « C'est fait »), or wide (the capture).
+#[tauri::command]
+async fn guide_taille(app: tauri::AppHandle, taille: guide::Taille) -> Result<(), String> {
+    let w = app.get_webview_window("guide").ok_or("pas de fenêtre du guide")?;
+    let area = guide_area(&app).ok_or("pas d'écran")?;
+    let f = guide::frame(area, taille);
+    w.set_size(tauri::LogicalSize::new(f.w, f.h)).map_err(|e| e.to_string())?;
+    w.set_position(tauri::LogicalPosition::new(f.x, f.y)).map_err(|e| e.to_string())
+}
+
+async fn guiding<T: Send + 'static>(f: impl FnOnce() -> Result<T, guide::GuideError> + Send + 'static) -> Result<T, guide::GuideError> {
+    tauri::async_runtime::spawn_blocking(f).await.unwrap_or_else(|e| Err(guide::GuideError::Interne { message: e.to_string() }))
+}
+
+/// Whether the guide can run: Claude, the capture's mode, the brain, G1 read.
+#[tauri::command]
+async fn guide_status() -> Result<guide::Status, String> {
+    tauri::async_runtime::spawn_blocking(guide::status).await.map_err(|e| e.to_string())
+}
+
+/// « J'ai compris » (G1): an empty flag.
+#[tauri::command]
+async fn guide_compris() -> Result<(), String> {
+    off_main(|| guide::compris().map_err(|e| e.to_string())).await
+}
+
+/// The program and the objective: a new session.
+#[tauri::command]
+async fn guide_commencer(logiciel: String, objectif: String) -> Result<guide::Debut, guide::GuideError> {
+    guiding(move || guide::commencer(&logiciel, &objectif)).await
+}
+
+/// A pasted capture, as raw bytes (`invoke("guide_coller", bytes)`), never a JSON array of numbers.
+#[tauri::command]
+async fn guide_coller(request: tauri::ipc::Request<'_>) -> Result<guide::Apercu, guide::GuideError> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else { return Err(guide::GuideError::ImageIllisible) };
+    let bytes = bytes.clone();
+    guiding(move || guide::coller(&bytes)).await
+}
+
+/// Every zone to hide, drawn on the preview: the new preview.
+#[tauri::command]
+async fn guide_cacher(zones: Vec<shot::Zone>) -> Result<guide::Apercu, guide::GuideError> {
+    guiding(move || guide::cacher(&zones)).await
+}
+
+/// « Voir exactement ce que j'envoie ».
+#[tauri::command]
+async fn guide_envoi_texte(envoi: guide::Envoi) -> Result<String, guide::GuideError> {
+    guiding(move || guide::envoi_texte(&envoi)).await
+}
+
+/// One look; its stages arrive as "guide-progress" events.
+#[tauri::command]
+async fn guide_envoyer(app: tauri::AppHandle, envoi: guide::Envoi) -> Result<guide::Etape, guide::GuideError> {
+    guiding(move || {
+        guide::envoyer(&envoi, &mut |stage| {
+            let _ = app.emit_to("guide", "guide-progress", stage);
+        })
+    })
+    .await
+}
+
+/// « Oui, c'est fait » or « Je réessaie », after « On dirait que rien n'a changé ».
+#[tauri::command]
+async fn guide_trancher(faite: bool) -> Result<guide::Etape, guide::GuideError> {
+    guiding(move || guide::trancher(faite)).await
+}
+
+#[tauri::command]
+fn guide_annuler() {
+    guide::annuler();
+}
+
+/// « Fermer le guide »: the session forgotten, images included.
+#[tauri::command]
+fn guide_fin() {
+    guide::fin();
+}
+
 /// The picker of the system, opened from Rust: the window opens no dialog itself and never gives a
 /// path. Made on the main thread and awaited off it, as Tauri's dialog plugin does on every system.
 fn pick_export(app: &tauri::AppHandle) -> Option<Vec<PathBuf>> {
@@ -343,6 +492,43 @@ fn repair_step(id: &str, yes: bool) -> i32 {
     i32::from(outcome.outcome != repair::Ending::Fixed)
 }
 
+/// `--guide-ask <png> --objectif "…" [--logiciel "…"]`: one look of the guide without the window, the
+/// capture from a file, for end-to-end tests with a fake claude and for support. One JSON document
+/// per stage; the image itself is never printed. `--guide-ask --print-consignes`: the rules the app
+/// embeds, byte for byte (the terminal skill reads the same file).
+fn guide_ask(args: &[String]) -> i32 {
+    if args.first().is_some_and(|a| a == "--print-consignes") {
+        use std::io::Write;
+        let _ = std::io::stdout().write_all(guide::CONSIGNES.as_bytes());
+        return 0;
+    }
+    let flag = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned().unwrap_or_default();
+    let Some(png) = args.first().filter(|a| !a.starts_with("--")) else {
+        out("usage : --guide-ask <capture.png> --objectif \"…\" [--logiciel \"…\"]");
+        return 2;
+    };
+    out_json(&guide::status());
+    let res = guide::deposer(Path::new(png))
+        .inspect(|a| out_json(&serde_json::json!({ "largeur": a.largeur, "hauteur": a.hauteur, "noir": a.noir, "petit": a.petit })))
+        .and_then(|_| guide::commencer(&flag("--logiciel"), &flag("--objectif")))
+        .inspect(out_json)
+        .and_then(|_| {
+            let envoi = guide::Envoi { demande: guide::Demande::Debut, remarque: None, choix: None };
+            guide::envoyer(&envoi, &mut |stage| out_json(&stage))
+        });
+    guide::fin();
+    match res {
+        Ok(etape) => {
+            out_json(&etape);
+            0
+        }
+        Err(e) => {
+            out_json(&e);
+            1
+        }
+    }
+}
+
 pub fn run() {
     // Command-line mode, for tests and support: no window. The Voyage key comes
     // from VOYAGE_API_KEY, never from the command line.
@@ -357,6 +543,7 @@ pub fn run() {
             let yes = args.get(3).is_some_and(|a| a == "--yes");
             std::process::exit(repair_step(&id, yes));
         }
+        Some("--guide-ask") => std::process::exit(guide_ask(&args[2..])),
         Some("--run-step") => {
             let id = args.get(2).cloned().unwrap_or_default();
             let key = std::env::var("VOYAGE_API_KEY").ok().filter(|k| !k.is_empty());
@@ -399,7 +586,20 @@ pub fn run() {
             import_run,
             import_cancel,
             import_forget,
-            import_open_note
+            import_open_note,
+            guide_open,
+            guide_epingler,
+            guide_taille,
+            guide_status,
+            guide_compris,
+            guide_commencer,
+            guide_coller,
+            guide_cacher,
+            guide_envoi_texte,
+            guide_envoyer,
+            guide_trancher,
+            guide_annuler,
+            guide_fin
         ])
         .run(tauri::generate_context!())
         .expect("error while running Brain in a Box");

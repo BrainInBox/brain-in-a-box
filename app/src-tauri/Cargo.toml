@@ -29,6 +29,9 @@ regex = "1"
 # the same on a Mac and on Windows (which has no shasum).
 sha2 = "0.10"
 
+# Already in the lock (tauri's menus on macOS): the guide's captures, read and written in memory.
+png = "=0.18.1"
+
 # The system's own file picker for « Importer ma mémoire », used from Rust only (no plugin, no
 # permission for the window). Its own dependencies are all in the build already (tao and wry's
 # AppKit, windows-sys and GTK bindings, raw-window-handle): this crate is the one it adds.

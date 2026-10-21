@@ -70,7 +70,6 @@ pub enum ClaudeError {
 }
 
 /// What Claude Code says of the subscription's limits (its rate_limit_event).
-#[cfg_attr(not(test), allow(dead_code))] // the guide reads it from phase 3 on
 #[derive(Clone, Debug, PartialEq)]
 pub struct RateLimit {
     /// "allowed", "allowed_warning", "rejected"..., reduced to a label.
@@ -79,7 +78,6 @@ pub struct RateLimit {
     pub seven_day: Option<Window>,
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Window {
     /// 0 to 1.
@@ -135,7 +133,7 @@ pub fn stdin<'a>(q: &Question<'a>) -> Cow<'a, str> {
 }
 
 /// Standard base64, padded (RFC 4648, §4), as Python's base64.b64encode writes it.
-fn base64(bytes: &[u8]) -> String {
+pub(crate) fn base64(bytes: &[u8]) -> String {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for chunk in bytes.chunks(3) {
@@ -268,7 +266,6 @@ pub struct Watch {
     pub result: Option<Value>,
     /// The category of the model's refusal ("cyber"), once it refused.
     pub refused: Option<String>,
-    #[cfg_attr(not(test), allow(dead_code))] // the guide reads it from phase 3 on
     pub rate_limit: Option<RateLimit>,
 }
 
@@ -827,8 +824,8 @@ mod tests {
         String::from_utf8(out.stdout).unwrap().trim().to_string()
     }
 
-    /// The guide's schema (docs/proposals/guide.md §4.5), compact and in its own order, as guide.rs will hold it.
-    const GUIDE_SCHEMA: &str = r#"{"type":"object","additionalProperties":false,"required":["code_vu","etat","consigne","libelle","cible","confiance","question","choix","precedente","action_sensible","suspect","resume_etape"],"properties":{"code_vu":{"type":"string","maxLength":8},"etat":{"enum":["etape","question","pas_ici","termine","bloque"]},"consigne":{"type":"string","maxLength":240},"libelle":{"type":["string","null"],"maxLength":60},"cible":{"anyOf":[{"type":"null"},{"type":"object","additionalProperties":false,"required":["x","y","largeur","hauteur"],"properties":{"x":{"type":"integer","minimum":0},"y":{"type":"integer","minimum":0},"largeur":{"type":"integer","minimum":1},"hauteur":{"type":"integer","minimum":1}}}]},"confiance":{"type":"number","minimum":0,"maximum":1},"question":{"type":["string","null"],"maxLength":160},"choix":{"type":"array","maxItems":4,"items":{"type":"string","maxLength":60}},"precedente":{"enum":["faite","pas_faite","incertain","sans_objet"]},"action_sensible":{"type":"boolean"},"suspect":{"type":"boolean"},"resume_etape":{"type":"string","maxLength":120}}}"#;
+    /// The guide's schema, as guide.rs holds it.
+    const GUIDE_SCHEMA: &str = crate::guide::SCHEMA;
 
     /// The same questions through claude.rs and through the kit's launcher (_headless_claude.run,
     /// engine/tests/claude_contract.py, fake_claude.py for claude): the same argv and the same stdin,
