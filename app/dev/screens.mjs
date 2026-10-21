@@ -340,7 +340,8 @@ function visible(n) {
   return ['P', 'LI', 'SUMMARY', 'H1', 'H2', 'BLOCKQUOTE', 'DIV'].includes(n.tagName) ? `\n${inner}` : inner;
 }
 
-async function screens(appText, mockText, query) {
+// The mock's fake backend, then the window's scripts in order, as their page loads them.
+async function screens(mockText, scripts, query) {
   const t = clock();
   const doc = new El('#document');
   doc.doc = doc;
@@ -369,7 +370,7 @@ async function screens(appText, mockText, query) {
   ctx.window = ctx;
   vm.createContext(ctx);
   vm.runInContext(mockText.match(/<script>\n([\s\S]*?)<\/script>/)[1], ctx, { filename: 'mock.html' });
-  vm.runInContext(appText, ctx, { filename: 'app.js' });
+  for (const [name, text] of scripts) vm.runInContext(text, ctx, { filename: name });
 
   // Each screen once, in the order it first shows: a login polled ten times is one screen.
   const shots = [];
@@ -417,8 +418,11 @@ const args = process.argv.slice(2);
 const opt = (name, fallback) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : fallback; };
 const appText = fs.readFileSync(opt('--app', path.join(HERE, '..', 'src', 'app.js')), 'utf8');
 const mockText = fs.readFileSync(opt('--mock', path.join(HERE, 'mock.html')), 'utf8');
+const uiText = fs.readFileSync(path.join(HERE, '..', 'src', 'ui.js'), 'utf8');
+// An app.js of before ui.js (master's) has the helpers itself.
+const appScripts = /^function h\(/m.test(appText) ? [['app.js', appText]] : [['ui.js', uiText], ['app.js', appText]];
 const got = new Map();
-for (const q of SCENARIOS) got.set(q, await screens(appText, mockText, q));
+for (const q of SCENARIOS) got.set(q, await screens(mockText, appScripts, q));
 
 if (args.includes('--write')) {
   fs.writeFileSync(GOLDEN, render(got));
@@ -430,7 +434,7 @@ let differ = 0;
 // The Codex screens' checks, on this copy of the window only (another app.js is master's).
 if (!args.includes('--app')) {
   for (const c of CODEX_CHECKS) {
-    const shots = await screens(appText, mockText, c.query);
+    const shots = await screens(mockText, appScripts, c.query);
     if (c.ok(shots, want)) continue;
     differ += 1;
     console.log(`FAIL ${c.name}\n  ${c.query}\n${shots.slice(-3).join('\n\n')}\n`);
