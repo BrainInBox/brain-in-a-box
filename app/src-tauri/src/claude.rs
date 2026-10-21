@@ -239,7 +239,7 @@ pub fn ask(claude: &Path, q: &Question, place: &Place, sink: &mut dyn FnMut(&str
     let input = stdin(q);
     let iso = sys::Isolated { env: place.env, cwd: place.cwd, stdin: &input, limit: place.limit, cancel: place.cancel };
     let started = Instant::now();
-    let mut watch = Watch::new(q.model);
+    let mut watch = Watch::of(q);
     let code = sys::run_isolated(claude, &args, &iso, &mut |line| {
         sink(&line);
         if !watch.line(&line) {
@@ -260,6 +260,12 @@ pub struct Init {
 pub struct Watch {
     /// The model the question asked for ("sonnet", "opus"): the start-up line and the usage must name it.
     model: Option<String>,
+    /// A question with an image (the guide): the model that answers and counts must be the very one
+    /// the start-up line named, not only of its family (an older Opus took over once without a
+    /// refusal said: spec §19). The repair keeps the family check.
+    exact: bool,
+    /// The model the start-up line named.
+    started_as: Option<String>,
     pub init: Option<Result<Init, String>>,
     /// `error` and `api_error` of the assistant messages ("rate_limit", "authentication_failed"...).
     api_errors: Vec<String>,
@@ -271,7 +277,21 @@ pub struct Watch {
 
 impl Watch {
     pub fn new(model: Option<&str>) -> Self {
-        Watch { model: model.map(String::from), init: None, api_errors: Vec::new(), result: None, refused: None, rate_limit: None }
+        Watch { model: model.map(String::from), exact: false, started_as: None, init: None, api_errors: Vec::new(), result: None, refused: None, rate_limit: None }
+    }
+
+    /// The watch of a question with an image: the model checked exactly.
+    pub fn exact(model: Option<&str>) -> Self {
+        Watch { exact: true, ..Watch::new(model) }
+    }
+
+    /// The watch `ask` puts on a question.
+    pub fn of(q: &Question) -> Self {
+        if q.images.is_empty() {
+            Watch::new(q.model)
+        } else {
+            Watch::exact(q.model)
+        }
     }
 
     /// False once the run must stop: Claude did not start, or did not run, as required.
@@ -291,6 +311,7 @@ impl Watch {
                 self.init = Some(Err(format!("« {kind} » avant l'init")));
             } else if v["subtype"] == "init" {
                 self.init = Some(check_init(&v, self.model.as_deref()));
+                self.started_as = v["model"].as_str().map(String::from);
             }
             // Other system events may come first (ui_invalidate when logged out).
             return self.going_on();
@@ -300,6 +321,8 @@ impl Watch {
             "system" if v["subtype"] == "init" => {
                 if let Err(e) = check_init(&v, self.model.as_deref()) {
                     self.init = Some(Err(e));
+                } else if let Some(name) = v["model"].as_str().and_then(|m| self.other_model(m)) {
+                    self.init = Some(Err(format!("modèle {name}")));
                 }
             }
             "assistant" => {
@@ -312,6 +335,9 @@ impl Watch {
                 // MCP, one the init did not list) ends the run like a bad init.
                 if let Some(name) = foreign_tool(&v) {
                     self.init = Some(Err(format!("outil utilisé : {name}")));
+                }
+                if let Some(name) = v.pointer("/message/model").and_then(Value::as_str).and_then(|m| self.other_model(m)) {
+                    self.init = Some(Err(format!("modèle utilisé : {name}")));
                 }
             }
             "result" => {
@@ -332,8 +358,19 @@ impl Watch {
 
     /// A model the usage counts that is not the one asked for: another one answered, or part of it.
     fn foreign_model(&self, result: &Value) -> Option<String> {
+        let usage = result.get("modelUsage")?.as_object()?;
+        if self.exact {
+            return usage.keys().find_map(|k| self.other_model(k));
+        }
         let model = self.model.as_deref()?;
-        result.get("modelUsage")?.as_object()?.keys().find(|k| !k.contains(model)).map(|k| label(k))
+        usage.keys().find(|k| !k.contains(model)).map(|k| label(k))
+    }
+
+    /// With an image, a model other than the one that started, as a label (Claude Code's own messages,
+    /// `<synthetic>`, aside); None otherwise.
+    fn other_model(&self, model: &str) -> Option<String> {
+        let started = self.started_as.as_deref()?;
+        (self.exact && model != "<synthetic>" && same_model(model) != same_model(started)).then(|| label(model))
     }
 
     pub fn version(&self) -> Option<String> {
@@ -354,6 +391,15 @@ impl Watch {
         }
         let result = self.result.as_ref().ok_or(ClaudeError::Invalid)?;
         parse_result(result, &self.api_errors)
+    }
+}
+
+/// A model's id without what may vary for the same model: a context's suffix (`[1m]`), a date.
+fn same_model(id: &str) -> &str {
+    let id = id.split('[').next().unwrap_or(id);
+    match id.rsplit_once('-') {
+        Some((base, date)) if date.len() == 8 && date.bytes().all(|b| b.is_ascii_digit()) => base,
+        _ => id,
     }
 }
 
@@ -692,6 +738,47 @@ mod tests {
         let mut any = Watch::new(None);
         assert!(lines[..4].iter().copied().chain([result.as_str()]).all(|l| any.line(l)));
         assert!(any.conclude(false, false).is_ok());
+    }
+
+    /// With an image (the guide), the model must be the very one that started, not one of its family:
+    /// Claude Code may hand the question to an older Opus without saying it is a refusal (spec §19).
+    #[test]
+    fn with_an_image_the_model_is_the_one_that_started_exactly() {
+        let opus = fixture("plan-ok.jsonl").replace("claude-sonnet-5-5", "claude-opus-5-5");
+        let lines: Vec<String> = opus.lines().map(String::from).collect();
+        let run = |w: &mut Watch, lines: &[String]| lines.iter().position(|l| !w.line(l));
+        let mut ok = Watch::exact(Some("opus"));
+        assert_eq!(run(&mut ok, &lines), None);
+        assert!(ok.conclude(false, false).is_ok());
+        // Another Opus in the usage, no refusal said: stopped with an image, the family check alone without.
+        let usage: Vec<String> = lines.iter().map(|l| if l.contains("\"modelUsage\"") { l.replace("\"claude-opus-5-5\":", "\"claude-opus-4-8\":") } else { l.clone() }).collect();
+        let mut w = Watch::exact(Some("opus"));
+        assert_eq!(run(&mut w, &usage), Some(4));
+        assert_eq!(w.init.as_ref().unwrap().as_ref().err().map(String::as_str), Some("modèle utilisé : claude-opus-4-8"));
+        assert_eq!(w.conclude(false, false), Err(ClaudeError::Init));
+        assert_eq!(run(&mut Watch::new(Some("opus")), &usage), None, "the repair's watch: the family");
+        // Another Opus that answered, the usage the right one.
+        let answered: Vec<String> = lines.iter().map(|l| if l.starts_with("{\"type\":\"assistant\"") { l.replace("claude-opus-5-5", "claude-opus-4-8") } else { l.clone() }).collect();
+        let mut w = Watch::exact(Some("opus"));
+        assert_eq!(run(&mut w, &answered), Some(1));
+        assert_eq!(w.conclude(false, false), Err(ClaudeError::Init));
+        assert_eq!(run(&mut Watch::new(Some("opus")), &answered), None, "the repair's watch: as it was");
+        // The same model under another spelling (a context's suffix, a date), and Claude Code's own messages.
+        let spelled: Vec<String> = lines
+            .iter()
+            .map(|l| {
+                if l.contains("\"subtype\":\"init\"") {
+                    l.replace("claude-opus-5-5", "claude-opus-5-5[1m]")
+                } else if l.contains("\"modelUsage\"") {
+                    l.replace("\"claude-opus-5-5\":", "\"claude-opus-5-5-20261001\":")
+                } else {
+                    l.replace("\"model\":\"claude-opus-5-5\"", "\"model\":\"<synthetic>\"")
+                }
+            })
+            .collect();
+        let mut w = Watch::exact(Some("opus"));
+        assert_eq!(run(&mut w, &spelled), None);
+        assert!(w.conclude(false, false).is_ok());
     }
 
     #[test]

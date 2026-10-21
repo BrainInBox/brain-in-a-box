@@ -52,9 +52,9 @@ CANARIES = {"ANTHROPIC_API_KEY": "canary-anthropic", "VOYAGE_API_KEY": "canary-v
 SYSTEM_ADDED = {"__CF_USER_TEXT_ENCODING"}
 
 
-def replay(name, model=None):
+def replay(name, model=None, strict=False):
     """Watch fed with a capture, line by line, as the run would. (watch, stopped at line n or None)."""
-    w = hc.Watch(model)
+    w = hc.Watch(model, strict=strict)
     for n, line in enumerate((FIXTURES / f"{name}.jsonl").read_text(encoding="utf-8").splitlines()):
         if w.line(line) is False:
             return w, n
@@ -144,16 +144,17 @@ class Stream(unittest.TestCase):
             empty.conclude(False)
         self.assertEqual(e.exception.kind, "start")
 
-    def test_a_refusal_stops_the_run_whatever_answers_in_its_place(self):
-        """Opus refused, and Claude Code had another model answer (essai 1, call 5): the app's rule too."""
-        w, stopped = replay("refusal-fallback")
+    def test_with_images_a_refusal_stops_the_run_whatever_answers_in_its_place(self):
+        """Opus refused, and Claude Code had another model answer (essai 1, call 5): the app's rule for
+        the guide (a question with images)."""
+        w, stopped = replay("refusal-fallback", strict=True)
         self.assertEqual(stopped, 4, "stopped at the refusal itself")
         with self.assertRaises(hc.HeadlessError) as e:
             w.conclude(False)
         self.assertEqual((e.exception.kind, e.exception.detail, e.exception.retryable), ("refused", "cyber", False))
-        self.assertIsNotNone(replay("refusal-fallback", model="opus")[1])
-        self.assertEqual(replay("refusal-fallback", model="sonnet")[1], 0, "the start-up line already says opus")
-        everything = hc.Watch("opus")
+        self.assertIsNotNone(replay("refusal-fallback", model="opus", strict=True)[1])
+        self.assertEqual(replay("refusal-fallback", model="sonnet", strict=True)[1], 0, "the start-up line already says opus")
+        everything = hc.Watch("opus", strict=True)
         for line in (FIXTURES / "refusal-fallback.jsonl").read_text(encoding="utf-8").splitlines():
             everything.line(line)
         self.assertIsNotNone(everything.result, "the other model's answer was read...")
@@ -161,20 +162,48 @@ class Stream(unittest.TestCase):
             everything.conclude(False)
         self.assertEqual(e.exception.kind, "refused", "...and is not taken")
 
-    def test_a_model_the_question_did_not_ask_for_stops_the_run(self):
+    def test_without_images_a_refusal_is_as_it_was_the_answer_taken(self):
+        """The reflection, the import of a memory and the judge ask without images: what Claude Code
+        does on a refusal of the model stays as before the guide (spec §19), the answer is taken."""
+        w, stopped = replay("refusal-fallback", model="opus")
+        self.assertIsNone(stopped)
+        self.assertEqual(w.conclude(False).output["cause_id"], "reseau")
         lines = (FIXTURES / "plan-ok.jsonl").read_text(encoding="utf-8").splitlines()
         result = json.loads(lines[4])
         result["modelUsage"]["claude-haiku-4-5"] = result["modelUsage"]["claude-sonnet-5-5"]
         w = hc.Watch("sonnet")
+        self.assertTrue(all(w.line(l) for l in lines[:4] + [json.dumps(result)]))
+        self.assertEqual(w.conclude(False).output["cause_id"], "reseau")
+
+    def test_with_images_a_model_other_than_the_one_that_started_stops_the_run(self):
+        lines = (FIXTURES / "plan-ok.jsonl").read_text(encoding="utf-8").splitlines()
+        result = json.loads(lines[4])
+        result["modelUsage"]["claude-haiku-4-5"] = result["modelUsage"]["claude-sonnet-5-5"]
+        w = hc.Watch("sonnet", strict=True)
         self.assertEqual([w.line(l) for l in lines[:4] + [json.dumps(result)]], [True, True, True, True, False])
         with self.assertRaises(hc.HeadlessError) as e:
             w.conclude(False)
         self.assertEqual((e.exception.kind, e.exception.detail), ("init", "model used: claude-haiku-4-5"))
-        self.assertIsNone(replay("plan-ok", model="sonnet")[1])
-        # No model asked: the usage is no more checked than the start-up line is.
-        anyone = hc.Watch()
-        self.assertTrue(all(anyone.line(l) for l in lines[:4] + [json.dumps(result)]))
-        self.assertEqual(anyone.conclude(False).output["cause_id"], "reseau")
+        self.assertIsNone(replay("plan-ok", model="sonnet", strict=True)[1])
+        # Another model of the same family, without a refusal said (an older Opus took over once).
+        opus = [l.replace("claude-sonnet-5-5", "claude-opus-5-5") for l in lines]
+        usage = [l.replace('"claude-opus-5-5":', '"claude-opus-4-8":') if '"modelUsage"' in l else l for l in opus]
+        w = hc.Watch("opus", strict=True)
+        self.assertEqual([w.line(l) for l in usage][-1], False)
+        self.assertEqual(str(w.init), "init: model used: claude-opus-4-8")
+        answered = [l.replace("claude-opus-5-5", "claude-opus-4-8") if l.startswith('{"type":"assistant"') else l for l in opus]
+        w = hc.Watch("opus", strict=True)
+        self.assertEqual([w.line(l) for l in answered][:2], [True, False])
+        # The same model under another spelling (a context's suffix, a date), and Claude Code's own messages.
+        spelled = [l.replace("claude-opus-5-5", "claude-opus-5-5[1m]") if '"subtype":"init"' in l
+                   else l.replace('"claude-opus-5-5":', '"claude-opus-5-5-20261001":') if '"modelUsage"' in l
+                   else l.replace('"model":"claude-opus-5-5"', '"model":"<synthetic>"') for l in opus]
+        w = hc.Watch("opus", strict=True)
+        self.assertTrue(all(w.line(l) for l in spelled))
+        self.assertEqual(w.conclude(False).output["cause_id"], "reseau")
+        # No model asked: the start-up line's is the one.
+        anyone = hc.Watch(strict=True)
+        self.assertFalse(all(anyone.line(l) for l in lines[:4] + [json.dumps(result)]))
 
     def test_the_subscriptions_limits_are_kept(self):
         a = replay("plan-ok")[0].conclude(False)

@@ -435,14 +435,23 @@ class Whole(unittest.TestCase):
         self.assertTrue(a.secours.startswith("claude: auth: Claude Code login is apiKey"), a.secours)
 
     def test_a_refusal_of_claudes_model_is_shown_never_tried_again_nor_covered_by_codex(self):
+        """With images (the guide's nightly check): the refusal ends the call."""
         write_agents(self.home, ["claude", "codex"], "claude", self.codex_home)
         self.put(self.claude_fake, "scenario", "refusal-fallback")
         claude, codex = self.settings()
         claude["model"] = "opus"   # the capture's start-up line: the refusal is what stops it
         with self.assertRaises(HeadlessError) as cm:
-            _headless.run("prompt", SCHEMA, "system", claude=claude, codex=codex, essais=2)
+            _headless.run("prompt", SCHEMA, "system", claude=claude, codex=codex, essais=2, images=IMAGES)
         self.assertEqual(_headless.texte(cm.exception), "claude: refused: cyber")
         self.assertEqual((self.claude_calls(), self.codex_calls()), (1, 0))
+
+    def test_without_images_a_refusal_of_claudes_model_is_as_before_the_guide(self):
+        """The reflection, the import and the judge: the other model's answer is taken, as it was (§19)."""
+        self.put(self.claude_fake, "scenario", "refusal-fallback")
+        claude, _ = self.settings()
+        claude["model"] = "opus"
+        a = _headless_claude.run("prompt", SCHEMA, "system", **claude)
+        self.assertEqual(a.output, ANSWER)
 
     def sha(self, data):
         return hashlib.sha256(data).hexdigest()

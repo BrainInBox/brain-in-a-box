@@ -2375,8 +2375,8 @@ mod tests {
     }
 
     /// As claude::ask makes it: the stream read until the watch stops it.
-    fn asked(lines: &[String]) -> claude::Asked {
-        let mut watch = claude::Watch::new(Some(MODEL));
+    fn asked(q: &claude::Question, lines: &[String]) -> claude::Asked {
+        let mut watch = claude::Watch::of(q);
         let stopped = !lines.iter().all(|l| watch.line(l));
         let answer = watch.conclude(stopped, false);
         claude::Asked { watch, secs: 5.5, answer }
@@ -2480,7 +2480,7 @@ mod tests {
                     *lock(&self.guide.session) = Some(Session { started: true, objectif: "Autre chose".into(), ..self.guide.new_session() });
                 }
                 let next = lock(&self.script).remove(0);
-                asked(&next(&code))
+                asked(q, &next(&code))
             };
             let ctx = Ctx {
                 home: self.home.path().to_path_buf(),
@@ -2808,13 +2808,24 @@ mod tests {
             lines
         });
         assert_eq!(b.send(Demande::Debut), Err(GuideError::Refus));
-        b.then(|code| stream(&answer(json!({"code_vu": code})), "claude-sonnet-5-5", 0.02, 0.1));
-        assert_eq!(b.send(Demande::Debut), Err(GuideError::Lancement), "another model than Opus");
+        // Another Opus counted, no refusal said: not the model the guide was measured on.
+        b.then(|code| {
+            let mut lines = stream(&answer(json!({"code_vu": code})), "claude-opus-5-5", 0.02, 0.1);
+            lines[3] = lines[3].replace("\"claude-opus-5-5\":", "\"claude-opus-4-8\":");
+            lines
+        });
+        assert_eq!(b.send(Demande::Debut), Err(GuideError::Lancement), "an older Opus");
         // From now on, no question until the app starts again.
         assert_eq!(b.send(Demande::Debut), Err(GuideError::Indisponible { ia: Ia::Arrete }));
         assert_eq!(b.guide.status(b.home.path(), &|| Ok("2.1.305".into())).ia, Ia::Arrete, "not « too old »: an update would not help");
         let issues: Vec<Value> = b.journal().iter().map(|e| e["issue"].clone()).collect();
         assert_eq!(issues, [json!("image_non_vue"), json!("refus"), json!("lancement")]);
+        // Sonnet: the start-up line already says another model.
+        let b = Bench::new();
+        b.paste(800, 600);
+        b.guide.start(None, "Odoo", "Faire une facture").unwrap();
+        b.then(|code| stream(&answer(json!({"code_vu": code})), "claude-sonnet-5-5", 0.02, 0.1));
+        assert_eq!(b.send(Demande::Debut), Err(GuideError::Lancement), "another model than Opus");
     }
 
     #[test]

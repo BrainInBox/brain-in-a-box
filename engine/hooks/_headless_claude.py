@@ -4,9 +4,9 @@
 skill, no CLAUDE.md, none of the user's settings files, in a fresh private
 folder, with a short allow-list for environment: whatever the text it reads
 says, all it can do is answer. Its stream is checked line by line against that
-(fail closed: no valid start-up line, no answer; a model other than the one asked
-for, or a refusal of the model, which Claude Code would have another model answer
-in its place, ends the run), and a claude logged in any
+(fail closed: no valid start-up line, no answer; with images, a model other than the
+one that started, or a refusal of the model, which Claude Code would have another
+model answer in its place, ends the run), and a claude logged in any
 other way than a claude.ai subscription, or whose settings send it to a gateway
 or a cloud provider, is never started, since an API key would be billed. A subscription reaches it two ways: the login `claude auth
 login` stores, or on a machine without a browser the token `claude setup-token`
@@ -550,12 +550,24 @@ def rate_limit(info):
             "seven_day": window(windows.get("seven_day"))}
 
 
-class Watch:
-    """Claude's stream, line by line: the start-up check first, then errors and the result."""
+def _same_model(model_id):
+    """A model's id without what may vary for the same model: a context's suffix ([1m]), a date."""
+    base = str(model_id).split("[")[0]
+    head, _, date = base.rpartition("-")
+    return head if head and len(date) == 8 and date.isdigit() else base
 
-    def __init__(self, model=None):
+
+class Watch:
+    """Claude's stream, line by line: the start-up check first, then errors and the result.
+
+    strict, for a question with images (Bibo's guide and its nightly check): a refusal of the model
+    ends the run, and the model that answers and counts must be the very one the start-up line named.
+    Without, what Claude Code does on a refusal stays as it was before the guide: the reflection, the
+    import of a memory and the judge take the answer (docs/proposals/guide.md, §19)."""
+
+    def __init__(self, model=None, strict=False):
         self.model, self.init, self.version, self.result, self.api_errors = model, None, None, None, []
-        self.refused, self.rate_limit = None, None
+        self.refused, self.rate_limit, self.strict, self.started_as = None, None, strict, None
 
     def line(self, line):
         """False once the run must stop: Claude did not start, or did not behave, as required."""
@@ -566,7 +578,7 @@ class Watch:
         if not isinstance(v, dict):
             return self.ok()
         kind = v.get("type")
-        if kind == "system" and v.get("subtype") == "model_refusal_fallback":
+        if self.strict and kind == "system" and v.get("subtype") == "model_refusal_fallback":
             # The model refused; Claude Code would have another one answer in its place, unasked.
             self.refused = HeadlessError("refused", _label(v.get("api_refusal_category") or "?"))
             return False
@@ -577,6 +589,7 @@ class Watch:
                 try:
                     self.version = check_init(v, self.model)
                     self.init = True
+                    self.started_as = v.get("model") if isinstance(v.get("model"), str) else None
                 except HeadlessError as e:
                     self.init = e
             # Other system events may come first (ui_invalidate when logged out).
@@ -585,6 +598,8 @@ class Watch:
             # A second start-up line must be as clean as the first.
             try:
                 check_init(v, self.model)
+                if self.other_model(v.get("model")):
+                    self.init = HeadlessError("init", f"model {self.other_model(v.get('model'))}")
             except HeadlessError as e:
                 self.init = e
         elif kind == "assistant":
@@ -594,6 +609,10 @@ class Watch:
             name = foreign_tool(v)
             if name:
                 self.init = HeadlessError("init", f"tool used: {name}")
+            message = v.get("message") if isinstance(v.get("message"), dict) else {}
+            other = self.other_model(message.get("model"))
+            if other:
+                self.init = HeadlessError("init", f"model used: {other}")
         elif kind == "result":
             name = self.foreign_model(v)
             if name:
@@ -604,12 +623,19 @@ class Watch:
         return self.ok()
 
     def foreign_model(self, result):
-        """A model the usage counts that is not the one asked for (another one answered, or part
-        of it), as a label; None when the question asked for none."""
+        """With images, a model the usage counts that is not the one that started (another one
+        answered, or part of it), as a label; None otherwise, as before the guide."""
         usage = result.get("modelUsage")
-        if not self.model or not isinstance(usage, dict):
+        if not self.strict or not isinstance(usage, dict):
             return None
-        return next((_label(k) for k in usage if self.model not in str(k)), None)
+        return next((self.other_model(k) for k in usage if self.other_model(k)), None)
+
+    def other_model(self, model):
+        """With images, a model other than the one that started, as a label (Claude Code's own
+        messages, <synthetic>, aside); None otherwise."""
+        if not self.strict or not self.started_as or not isinstance(model, str) or model == "<synthetic>":
+            return None
+        return _label(model) if _same_model(model) != _same_model(self.started_as) else None
 
     def ok(self):
         return self.refused is None and not isinstance(self.init, HeadlessError)
@@ -673,7 +699,7 @@ def run(prompt, schema, system_prompt, *, budget_usd, timeout, max_turns=3, mode
     argv0 = _claude(command)
     with _cage(argv0, work_root, git) as (work, env):
         check_cli(argv0, env, work, IMAGE_FLAGS if images else REQUIRED_FLAGS)
-        watch = Watch(model)
+        watch = Watch(model, strict=bool(images))
         args = argv0 + base_argv(schema, system_prompt, budget_usd=budget_usd, max_turns=max_turns,
                                  model=model, effort=effort, with_images=bool(images))
         _, timed_out, err = supervise(args, env, work, stdin_text(prompt, images), timeout, watch.line)
