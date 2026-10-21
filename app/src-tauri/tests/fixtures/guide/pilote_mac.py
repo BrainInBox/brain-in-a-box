@@ -215,6 +215,9 @@ def main():
     chrome(page("cache", cover, "#ff00ff"), CACHE).wait(timeout=60)
     frame(cover)
     say("cover", jxa({"op": "placer", "titre": cover, "at": list(CACHE)}))
+    # The user's window in front to be picked (macOS 14's picker offers the window in front there); the
+    # other one is brought over it afterwards, for the captures.
+    say("target in front", in_front(target))
     open(LOG, "w").close()
     subprocess.run(["/usr/bin/open", "-n", APP, "--stdout", LOG, "--stderr", LOG, "--args", "--bureau", DIR], check=True)
 
