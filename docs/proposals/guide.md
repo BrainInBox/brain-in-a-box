@@ -890,7 +890,7 @@ Même appel (s1, Opus, low) avec et sans : ligne d'init identique champ par cham
 19. **Historique** : une étape par ligne (`1. consigne (faite)`), et non séparées par « / ». Les plus anciennes sautent au-delà de 8 étapes ou de 1 200 caractères.
 20. **Test de §4.1** : « ni balise de bloc » se lit comme « aucune balise fermante, ni `<capture` ». La règle 3 doit nommer les blocs du guide.
 
-**Vérifié** : en local (macOS), `cargo clippy --all-targets -D warnings` (aussi pour la cible Windows, sans édition de liens), `cargo test` (291 + 4 + 1), `python3 -I -m unittest discover -s engine/tests` (750), `test-hooks.sh` (229/229), `screens.mjs` (66 scénarios, inchangés), `actionlint`.
+**Vérifié** : en local (macOS), `cargo clippy --all-targets -D warnings` (aussi pour la cible Windows, sans édition de liens), `cargo test` (291 + 4 + 1), `python3 -I -m unittest discover -s engine/tests` (750), `test-hooks.sh` (229/229), `screens.mjs` (66 scénarios, inchangés), `actionlint`. CI de la PR verte sur les 3 OS (https://github.com/BrainInBox/brain-in-a-box/actions/runs/39539600584, tête `ba31f06`), dont `guide_cli` sous macOS et Linux. `terrain.yml` lancé à la main sur la branche (https://github.com/BrainInBox/brain-in-a-box/actions/runs/39539647395) : tous les jobs verts, dont l'installation, qui pose maintenant le skill `guide-moi`, et Bibo cliqué dans sa vraie fenêtre sur les 3 OS.
 
 **Tests**
 - **`tests/guide_cli.rs`** (Unix) : un faux `claude` en Python (`tests/fixtures/guide/fake_claude.py`) décode le PNG reçu avec son propre décodeur et sa propre police. Il lit le code de la bande et trouve le bouton vert.
@@ -899,6 +899,7 @@ Même appel (s1, Opus, low) avec et sans : ligne d'init identique champ par cham
   - après chaque passage, rien de neuf sous HOME ni sous TMPDIR, dossiers compris, à part `.brain-in-a-box/guide/journal.jsonl`. Le dossier de Claude a disparu ;
   - des fragments du base64 et des octets de l'image envoyée sont cherchés sur tout le disque du test : introuvables.
 - **Unitaires** : `guide` (31) et `shot` (11). Dont une séance entière avec un faux Claude qui lit la bande, le filtre (ClickFix sous plusieurs graphies, domaines, numéros, accès à distance ; montant, référence et `facture.pdf` acceptés), les niveaux aux bornes, les plafonds, le regard rendu, la séance fermée en cours d'appel, les masques et le PNG piégé.
+- **Réponses réelles** : la validation a été rejouée, hors du dépôt, sur les 21 réponses d'Opus et de Sonnet de la phase 0. Elle ne refuse aucune réponse à tort, et les niveaux sont ceux de la phase 0. s4 donne `image_non_vue` : « NRYV » y était lu « NRYU », d'où l'alphabet sans U. La réponse fausse de Sonnet (« Enregistrer » sous le dialogue bloquant) passe la validation avec une ellipse pleine : seul le choix d'Opus protège de ce cas.
 - **Mutations** : 34 protections ont été retirées une à une. Chacune fait rougir au moins un test :
   - le code de la bande, chaque famille du filtre, les balises du guide ;
   - le masquage de `stack.md`, le filtre des procédures, les liens symboliques ;
