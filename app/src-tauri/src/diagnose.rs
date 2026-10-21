@@ -23,7 +23,7 @@ use crate::detect::parse_version;
 use crate::detect::Version;
 use crate::detect::{self, fmt_version, Brain, Found};
 use crate::model::{Check, Diagnosis, Status};
-use crate::{advice, codex, steps, sys};
+use crate::{advice, codex, hermes, steps, sys};
 
 #[cfg(target_os = "macos")]
 const MIN_MACOS: Version = (13, 0, 0);
@@ -81,6 +81,9 @@ const BRAIN_CODEX_INSTRUCTIONS: Item = Item("brain_codex_instructions", "Tes con
 const BRAIN_CODEX_SKILLS: Item = Item("brain_codex_skills", "Les compétences de Codex", Some("brain"));
 const BRAIN_MEMORY: Item = Item("brain_memory", "La mémoire de recherche", Some("brain"));
 const VOYAGE: Item = Item("voyage", "Recherche par le sens", None);
+/// No fix step yet: the app does not install Hermes so far.
+const HERMES: Item = Item("hermes", "Hermes (ton IA au quotidien)", None);
+const HERMES_AI: Item = Item("hermes_ia", "Connexion de Hermes", None);
 const INTERNAL: Item = Item("internal", "Erreur interne", None);
 
 impl Item {
@@ -129,6 +132,7 @@ struct Facts {
     agents: Agents,
     chatgpt: bool,
     codex: Option<CodexFacts>,
+    hermes: hermes::Facts,
 }
 
 /// Codex, when agents.json lists it.
@@ -215,6 +219,7 @@ fn probe(home: &Path) -> Facts {
         });
         let chatgpt = s.spawn(move || codex && answers(CHATGPT));
         let codex = s.spawn(|| probe_codex(home, &agents));
+        let hermes = s.spawn(hermes::probe);
 
         let home_arg = home.to_string_lossy();
         // Fields are evaluated in this order: the threads are joined last.
@@ -233,6 +238,7 @@ fn probe(home: &Path) -> Facts {
             advice: advice::Facts::default(),
             chatgpt: chatgpt.join().unwrap_or(false),
             codex: codex.join().ok().flatten(),
+            hermes: hermes.join().unwrap_or_default(),
             agents: agents.clone(),
         };
         let (claude_logged_in, seen) = login.join().unwrap_or_default();
@@ -268,6 +274,7 @@ fn probe(home: &Path) -> Facts {
         });
         let chatgpt = s.spawn(move || codex && answers(CHATGPT));
         let codex = s.spawn(|| probe_codex(home, &agents));
+        let hermes = s.spawn(hermes::probe);
         // PowerShell takes a second or two to start: alongside the rest too.
         let system = s.spawn(|| {
             let out = sys::run(
@@ -300,6 +307,7 @@ fn probe(home: &Path) -> Facts {
             obsidian,
             chatgpt: chatgpt.join().unwrap_or(false),
             codex: codex.join().ok().flatten(),
+            hermes: hermes.join().unwrap_or_default(),
             agents: agents.clone(),
         };
         let (claude_logged_in, seen) = login.join().unwrap_or_default();
@@ -321,6 +329,7 @@ fn probe(home: &Path) -> Facts {
         });
         let chatgpt = s.spawn(move || codex && answers(CHATGPT));
         let codex = s.spawn(|| probe_codex(home, &agents));
+        let hermes = s.spawn(hermes::probe);
 
         let home_arg = home.to_string_lossy();
         let os = detect::os_release();
@@ -346,6 +355,7 @@ fn probe(home: &Path) -> Facts {
             advice: advice::Facts::default(),
             chatgpt: chatgpt.join().unwrap_or(false),
             codex: codex.join().ok().flatten(),
+            hermes: hermes.join().unwrap_or_default(),
             agents: agents.clone(),
         };
         let (claude_logged_in, seen) = login.join().unwrap_or_default();
@@ -496,6 +506,7 @@ fn decide(home: &Path, f: &Facts) -> Diagnosis {
     let muets = f.codex.as_ref().is_some_and(|c| c.hooks_muets);
     checks.extend(check_brain(detect::brain(home, &f.agents), &detect::brain_dir_shown(home), muets));
     checks.push(check_voyage(detect::embedding_model(home).as_deref()));
+    checks.extend(check_hermes(&f.hermes));
 
     let missing = |step: &str| {
         checks
@@ -870,6 +881,31 @@ fn check_voyage(model: Option<&str>) -> Check {
     }
 }
 
+/// Hermes as hermes::probe found it: never blocks, nothing installs it yet. Its connection only
+/// once it answers; on an Intel Mac, where it does not run, one line says so.
+fn check_hermes(h: &hermes::Facts) -> Vec<Check> {
+    if !h.supported && !h.found.answers() {
+        return vec![HERMES.is(Status::Warn, "Hermes ne fonctionne que sur les Mac à puce Apple : ton cerveau marche très bien sans lui.")];
+    }
+    let found = match (&h.found, h.found.version()) {
+        (Found::Absent, _) => HERMES.is(Status::Warn, "Pas encore installé."),
+        (Found::NoVersion, _) => HERMES.is(Status::Warn, "Hermes est là mais ne répond pas."),
+        (_, Some(v)) if v < hermes::MIN_HERMES => HERMES.is(
+            Status::Warn,
+            format!("Hermes {} est trop ancien (il faut {} ou plus).", fmt_version(v), fmt_version(hermes::MIN_HERMES)),
+        ),
+        _ => HERMES.is(Status::Ok, h.found.label("Hermes")),
+    };
+    if !h.found.answers() {
+        return vec![found];
+    }
+    let ai = match &h.provider {
+        Some(p) => HERMES_AI.is(Status::Ok, hermes::provider_said(p)),
+        None => HERMES_AI.is(Status::Warn, "Pas encore branché sur ton IA."),
+    };
+    vec![found, ai]
+}
+
 /// "Available" column of `df -k`: the field just before the first "NN%", which
 /// still holds when the filesystem name has spaces ("map auto_home").
 #[cfg(unix)]
@@ -947,7 +983,52 @@ mod tests {
             agents: Agents::claude_alone(),
             chatgpt: false,
             codex: None,
+            hermes: hermes::Facts {
+                supported: true,
+                found: Found::Version("Hermes Agent v0.22.2 (2026.9.24) · stable".into()),
+                provider: Some("claude-subscription-directsdk-experimental".into()),
+            },
         }
+    }
+
+    #[test]
+    fn hermes_is_reported_and_never_blocks() {
+        let tmp = tempfile::tempdir().unwrap();
+        let healthy = healthy_facts();
+        let d = decide(tmp.path(), &healthy);
+        let (h, ai) = (by_id(&d, "hermes"), by_id(&d, "hermes_ia"));
+        assert_eq!((h.status, h.detail.as_str()), (Status::Ok, "Hermes 0.22.2"));
+        assert_eq!((ai.status, ai.detail.as_str()), (Status::Ok, "Il passe par ton abonnement Claude."));
+        // The last lines, after the brain's.
+        assert_eq!(d.checks.iter().rev().take(2).map(|c| c.id.as_str()).collect::<Vec<_>>(), ["hermes_ia", "hermes"]);
+
+        let hermes_with = |found: Found, provider: Option<&str>, supported: bool| {
+            let h = hermes::Facts { supported, found, provider: provider.map(String::from) };
+            decide(tmp.path(), &Facts { hermes: h, ..healthy_facts() })
+        };
+        for (found, detail) in [(Found::Absent, "Pas encore installé."), (Found::NoVersion, "Hermes est là mais ne répond pas.")] {
+            let d = hermes_with(found, None, true);
+            assert_eq!((by_id(&d, "hermes").status, by_id(&d, "hermes").detail.as_str()), (Status::Warn, detail));
+            assert!(d.checks.iter().all(|c| c.id != "hermes_ia"), "no connection without Hermes");
+            assert!(d.can_install);
+            assert_eq!(d.todo, decide(tmp.path(), &healthy).todo, "nothing installs Hermes yet");
+        }
+        let old = hermes_with(Found::Version("Hermes Agent v0.21.3 (2026.8.30) · stable".into()), Some("anthropic"), true);
+        assert_eq!(by_id(&old, "hermes").status, Status::Warn);
+        assert_eq!(by_id(&old, "hermes").detail, "Hermes 0.21.3 est trop ancien (il faut 0.21.4 ou plus).");
+        assert_eq!(by_id(&old, "hermes_ia").detail, "Il passe par Claude.");
+        let unplugged = hermes_with(healthy.hermes.found.clone(), None, true);
+        let ai = by_id(&unplugged, "hermes_ia");
+        assert_eq!((ai.status, ai.detail.as_str()), (Status::Warn, "Pas encore branché sur ton IA."));
+
+        let intel = hermes_with(Found::Absent, None, false);
+        assert_eq!(by_id(&intel, "hermes").status, Status::Warn);
+        assert!(by_id(&intel, "hermes").detail.contains("puce Apple"), "{}", by_id(&intel, "hermes").detail);
+        assert!(intel.checks.iter().all(|c| c.id != "hermes_ia"));
+        // One that runs anyway is taken as it is.
+        let ran = hermes_with(healthy.hermes.found.clone(), Some("openai-codex"), false);
+        assert_eq!(by_id(&ran, "hermes_ia").detail, "Il passe par ton compte ChatGPT.");
+        assert!(by_id(&ran, "hermes").fix.is_none() && by_id(&ran, "hermes_ia").fix.is_none());
     }
 
     #[test]
@@ -1242,7 +1323,7 @@ mod tests {
         assert!(d.can_install && d.online);
         assert_eq!((d.os.as_str(), d.ram_gb, d.disk_free_gb), ("macOS 26.3.1", 24.0, 174.0));
         assert!(d.checks.iter().all(|c| c.status == Status::Ok), "{:?}", d.checks);
-        assert_eq!(d.checks.len(), 13);
+        assert_eq!(d.checks.len(), 15);
         assert_eq!(by_id(&d, "voyage").detail, "Activée (Voyage AI)");
         assert!(!format!("{d:?}").contains("SECRET"));
     }
