@@ -420,9 +420,15 @@
   const CALM = ['welcome', 'choice', 'diag', 'done', 'voyage', 'comment', 'objectif', 'apercu'];
   const POINT_AFTER_MS = 8000;
   const POINT_GAP_MS = 25000;
+  // Thinking this long with nothing new to say: he waits, patiently (Claude reading a capture, sooner).
+  const LONG_MS = 20000;
+  const LONG_LOOK_MS = 10000;
 
   // Screen and mood to scene. The first that matches wins: [screen or '*', mood or '*', scene].
   const RULES = [
+    // The guide's login: the key, then waiting for it (its invitation is worded as a worry).
+    ['connexion', 'worried', 'cle'],
+    ['connexion', 'thinking', 'attend'],
     ['*', 'worried', 'triste'],
     ['diag', 'thinking', 'loupe'],
     ['install', 'working', 'bricole'],
@@ -432,6 +438,13 @@
     ['import-run', 'working', 'memoire'],
     ['login', 'idle', 'cle'],
     ['login', 'thinking', 'attend'],
+    // Codex's login from the end, the login a repair or an import asks for: the same wait.
+    ['done', 'thinking', 'attend'],
+    ['repair-error', 'thinking', 'attend'],
+    ['import-error', 'thinking', 'attend'],
+    ['voyage', 'idle', 'cle'],
+    ['voyage', 'thinking', 'cle'],
+    ['import-paste', 'idle', 'mains'],
     ['coller', 'idle', 'mains'],
     ['lecture', 'thinking', 'loupe'],
     ['cacher', '*', 'cache'],
@@ -451,7 +464,9 @@
     pointedAt: 0,
     pointTimer: 0,
     blinkTimer: 0,
+    longTimer: 0,
     done: 0,
+    cheered: false,
   };
 
   function moodOf() {
@@ -486,36 +501,63 @@
     return more;
   }
 
-  // `shown`: a screen was shown since, which ends what biboCue pinned on the one before, and
-  // `pin` is what biboCue pins on this one.
+  // `shown`: a screen was shown since (screen() sets data-screen every time, even to the same name),
+  // which ends what biboCue pinned on the one before, and `pin` is what biboCue pins on this one.
   function update(shown = false, pin = '') {
     const screen = document.body.dataset.screen || '';
     const mood = moodOf();
     const was = { screen: now.screen, mood: now.mood, scene: hero.getAttribute('data-scene') || '' };
-    const fresh = screen !== was.screen;
     const turned = mood !== was.mood;
     now.screen = screen;
     now.mood = mood;
     if (shown) now.pinned = pin;
     bibo.scene(sceneFor(screen, mood), { ...(now.pinned ? now.pinOpts : {}), progress: barProgress() });
 
-    if (turned && mood === 'happy') {
-      if (screen === 'done' || screen === 'fin' || screen === 'import-done') bibo.cue('confettis');
-      else if (was.scene === 'attend' || was.scene === 'cle') bibo.cue('cadenas');
-      else if (screen === 'enregistre') bibo.cue('range');
-      else bibo.cue('pouce');
-    } else if (fresh && screen === 'proposal' && mood === 'idle' && now.pinned !== 'plisse') {
+    if (mood === 'happy' && (turned || shown)) {
+      cheer(screen, was.scene, turned);
+    } else if (shown && was.scene === 'attend' && was.screen === 'connexion' && mood !== 'worried') {
+      // The guide's login went through: it goes straight on, without a word of joy.
+      bibo.cue('cadenas');
+    } else if (shown && screen === 'proposal' && mood === 'idle' && now.pinned !== 'plisse') {
       bibo.cue('ampoule');
-    } else if (fresh && screen === 'comment') {
+    } else if (shown && (screen === 'comment' || screen === 'lecture')) {
+      // How he sees the screen, and the capture just pasted: a photo.
       bibo.cue('photo');
-    } else if (fresh && screen === 'pas-ici') {
+    } else if (shown && (screen === 'pas-ici' || (screen === 'import-done' && mood === 'idle'))) {
+      // Not on this window; nothing worth keeping in the import.
       bibo.cue('haussement');
-    } else if (fresh && screen === 'etape' && !lowConfidence()) {
+    } else if (turned && mood === 'worried' && screen === 'coller') {
+      // Pasted, but no image in it.
+      bibo.cue('haussement');
+    } else if (shown && screen === 'etape' && !lowConfidence()) {
       const target = document.querySelector('.zoom, .ring, .capture');
       bibo.cue('montre', { angle: target ? bibo.angleTo(target) : 70 });
     }
-    if (stepsDone() && !fresh && (screen === 'install' || screen === 'repairing')) bibo.stepDone();
-    if (fresh) pointLater();
+    if (stepsDone() && !shown && (screen === 'install' || screen === 'repairing')) bibo.stepDone();
+    if (shown || turned) waitLater();
+    if (shown) pointLater();
+  }
+
+  // Joy, by what it is about: ready, logged in, saved, or a step that went well.
+  function cheer(screen, scene, turned) {
+    // The end of the install once (coming back to it from an import is no news), each guide's end, each import.
+    if ((screen === 'done' && !now.cheered) || screen === 'fin' || screen === 'import-done') {
+      if (screen === 'done') now.cheered = true;
+      return bibo.cue('confettis');
+    }
+    if (scene === 'attend' || scene === 'cle') return bibo.cue('cadenas');
+    if (screen === 'enregistre') return bibo.cue('range');
+    return turned ? bibo.cue('pouce') : undefined;
+  }
+
+  // Each new word from Bibo starts the wait over; thinking long without one, he waits patiently.
+  function waitLater() {
+    clearTimeout(now.longTimer);
+    hero.classList.remove('b-long');
+    if (now.mood !== 'thinking') return;
+    now.longTimer = setTimeout(() => {
+      if (now.mood === 'thinking') hero.classList.add('b-long');
+    }, now.screen === 'regarde' ? LONG_LOOK_MS : LONG_MS);
   }
 
   // The user has not moved for a while on a screen that waits for a click: Bibo shows the button.
@@ -586,6 +628,16 @@
       if (stepsDone()) bibo.stepDone();
     }).observe(screenEl, { subtree: true, attributes: true, attributeFilter: ['style', 'class'] });
   }
+
+  // What Bibo says: each new message.
+  const message = document.querySelector('.hero .message');
+  if (message) new MutationObserver(waitLater).observe(message, { childList: true, characterData: true, subtree: true });
+
+  // « C'est fait » on a step (and « Oui, c'est fait »): a thumbs up while the next screen comes.
+  document.addEventListener('click', (e) => {
+    const btn = e.target instanceof Element ? e.target.closest('.actions [data-act="next"]') : null;
+    if (btn && !btn.disabled && (now.screen === 'etape' || now.screen === 'confirmer')) bibo.cue('pouce');
+  }, { capture: true });
 
   for (const type of ['pointermove', 'pointerdown', 'keydown', 'wheel']) document.addEventListener(type, stir, { capture: true, passive: true });
   update();

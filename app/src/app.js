@@ -1274,6 +1274,7 @@ function showRepairError(index, err) {
   }
   renderInstall('repair-error');
   say('worried', title, text);
+  if (kind === 'quota') window.biboCue?.('dodo');
   const retry = button('Réessayer', () => runInstall(index), { act: 'next' });
   ui.actions.append(copyButton(), retry);
   if (kind === 'auth') {
