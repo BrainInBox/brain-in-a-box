@@ -163,6 +163,17 @@ def frame(titre):
     raise SystemExit("no window titled %s" % titre)
 
 
+def in_front(titre):
+    """That window in front, tried again while System Events does not find it yet."""
+    r = None
+    for _ in range(10):
+        r = jxa({"op": "devant", "titre": titre})
+        if isinstance(r, dict) and r.get("ok"):
+            break
+        time.sleep(1)
+    return r
+
+
 def choose(target):
     """Hover a part of the user's window that nothing covers, then click the picker's « Share This
     Window » button: an unnamed AXButton of ControlCenter (macOS 15, 26), or, not in the tree (14), the
@@ -215,17 +226,17 @@ def main():
             if gesture == "choisir":
                 choose(target)
             elif gesture == "couvrir":
-                say("cover in front", jxa({"op": "devant", "titre": cover}))
+                say("cover in front", in_front(cover))
             elif gesture == "clic_page":
                 # In front first: a click on a window behind only brings it there.
-                say("target in front", jxa({"op": "devant", "titre": target}))
+                say("target in front", in_front(target))
                 time.sleep(1)
                 f = frame(target)
                 say("click in the page", jxa({"op": "souris", "x": f["pos"][0] + 0.5 * f["size"][0], "y": f["pos"][1] + 0.2 * f["size"][1], "clic": True}))
             elif gesture == "reduire":
                 say("minimize", jxa({"op": "reduire", "titre": target, "oui": True}))
             elif gesture == "rouvrir":
-                say("open again", jxa({"op": "reduire", "titre": target, "oui": False}), jxa({"op": "devant", "titre": target}))
+                say("open again", jxa({"op": "reduire", "titre": target, "oui": False}), in_front(target))
             elif gesture == "fermer_le_selecteur":
                 time.sleep(3)
                 say("escape", jxa({"op": "touche", "code": 53}))

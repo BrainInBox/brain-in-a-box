@@ -183,12 +183,20 @@ mod desk {
         picked
     }
 
-    /// The page's white square, its box: (left, top, right, bottom).
+    /// The page's white square, its box: (left, top, right, bottom). Rows mostly white (a light title
+    /// bar) are not the page's.
     fn square(img: &Rgba) -> Option<(u32, u32, u32, u32)> {
+        let white = |x: u32, y: u32| {
+            let p = &img.px[((y * img.w + x) * 4) as usize..][..4];
+            p[..3].iter().all(|&v| v >= 245) && p[3] > 200
+        };
         let mut b: Option<(u32, u32, u32, u32)> = None;
-        for (i, p) in img.px.chunks_exact(4).enumerate() {
-            if p[..3].iter().all(|&v| v >= 245) && p[3] > 200 {
-                let (x, y) = (i as u32 % img.w, i as u32 / img.w);
+        for y in 0..img.h {
+            let row: Vec<u32> = (0..img.w).filter(|&x| white(x, y)).collect();
+            if row.is_empty() || row.len() as u32 * 2 > img.w {
+                continue;
+            }
+            for x in row {
                 b = Some(b.map_or((x, y, x + 1, y + 1), |(l, t, r, bt)| (l.min(x), t.min(y), r.max(x + 1), bt.max(y + 1))));
             }
         }
@@ -198,8 +206,7 @@ mod desk {
     /// The user's window, only its own pixels: its page's colour over most of it, its white square
     /// square, not a pixel of the window over it nor of Bibo's.
     fn its_own(img: &Rgba, colour: [u8; 3]) -> bool {
-        let square = square(img)
-            .is_some_and(|(l, t, r, b)| (r - l).abs_diff(b - t) <= 2 && r - l >= 50 && count(img, [255, 255, 255]) as u32 >= (r - l) * (b - t) * 9 / 10);
+        let square = square(img).is_some_and(|(l, t, r, b)| (r - l).abs_diff(b - t) <= 2 && r - l >= 50);
         share(img, colour) > 0.7 && square && count(img, MAGENTA) == 0 && count(img, ORANGE) == 0 && crate::shot::black_share(img) < 0.1
     }
 
