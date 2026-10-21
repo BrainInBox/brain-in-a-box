@@ -156,6 +156,10 @@ const GUIDE_SCENARIOS = [
   'g=ok&go=apercu&vide=1&os=windows',
   'g=ok&go=erreur&depose=jpeg',
   'g=ok&go=etape&nth=2&lache=1',
+  // Phase 5, decision 8 (Claude Pro): no Opus for the account, Sonnet in the cautious mode; neither model.
+  'g=prudent&go=etape',
+  'g=prudent&go=etape&nth=2',
+  'g=sans-modele&go=erreur',
 ];
 
 // The guide's window sizes, as the page asks Rust for them, in turn: the image made wide to hide a zone

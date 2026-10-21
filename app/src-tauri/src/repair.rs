@@ -408,7 +408,8 @@ impl From<ClaudeError> for RepairError {
             ClaudeError::Timeout => RepairError::Timeout,
             ClaudeError::Quota => RepairError::Quota,
             ClaudeError::Auth => RepairError::Auth,
-            ClaudeError::Api => RepairError::Api,
+            // The repair says it as it said it before the guide told these apart: an error of the service.
+            ClaudeError::Api | ClaudeError::NoModel => RepairError::Api,
             ClaudeError::Init => RepairError::InitInvalid,
             ClaudeError::Invalid => RepairError::InvalidVerdict,
             ClaudeError::Refused => RepairError::Refused,

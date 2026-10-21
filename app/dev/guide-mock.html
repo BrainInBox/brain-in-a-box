@@ -30,6 +30,7 @@
   //     colle             the first paste is not a PNG      deja        a procedure saved before
   //     remote            the brain is pushed every night   refusee     the first save holds a command
   //     filtre            Bibo's filter cut the answer, Claude saw nothing wrong
+  //     prudent           no Opus for this account: Sonnet answers, cautious       sans-modele   neither model
   //     auth, billed, vieux, arrete, installer   what guide_status says instead of « ready »
   //   &vu=0 the first time (G1); &os=windows|linux that system's words; &depose=1 drops a file instead of pasting
   //   (&depose=jpeg, a JPEG); &taille=1 every capture after the first is of another, small size (the hidden zones
@@ -139,6 +140,8 @@
       delai: [err('delai'), S1, S2, S3, END],
       init: [err('lancement'), S1],
       'image-non-vue': [err('image_non_vue'), S1, S2, S3, END],
+      prudent: [S1, { ...S2, libelle: null }, S3, END].map((a) => ({ ...a, prudent: true })),
+      'sans-modele': [err('modele_absent'), S1, S2, S3, END],
       budget: [S1, err('budget', { quoi: 'seance' })],
       'budget-etape': [S1, err('budget', { quoi: 'etape' })],
     };
@@ -186,12 +189,13 @@
       if (etat === 'termine') open = false;
       if (demande === 'bloque') blocages += 1;
       const cible = etat === 'etape' ? a.cible || null : null;
-      const niveau = !cible || a.suspect ? 'aucun' : a.confiance >= 0.85 && a.libelle ? 'plein' : a.confiance >= 0.7 ? 'pointille' : 'aucun';
+      // guide.rs: Sonnet (prudent) never gets a full ellipse, nor any without a label to check.
+      const niveau = !cible || a.suspect || (a.prudent && !a.libelle) ? 'aucun' : a.confiance >= 0.85 && a.libelle && !a.prudent ? 'plein' : a.confiance >= 0.7 ? 'pointille' : 'aucun';
       return {
         numero: Math.max(1, etat === 'etape' || etat === 'termine' || open ? steps.length : steps.length + 1),
         etat, consigne: a.consigne, libelle: a.libelle || null, cible, niveau, question: a.question || null, choix: a.choix || [],
         precedente: a.precedente || 'faite', a_confirmer: false, sensible: Boolean(a.sensible), suspect: Boolean(a.suspect),
-        filtre: Boolean(a.filtre), regards, regards_max: 40, blocages, usage: usage(Boolean(a.presque)),
+        filtre: Boolean(a.filtre), regards, regards_max: 40, prudent: Boolean(a.prudent), blocages, usage: usage(Boolean(a.presque)),
         recapitulatif: etat === 'termine' ? steps.map((s) => s.resume || s.consigne) : [],
       };
     }
@@ -259,7 +263,7 @@
         regards += 1;
         const next = script.length ? script.shift() : END;
         if (next.err) {
-          if (['hors_ligne', 'quota'].includes(next.err.kind)) regards -= 1;
+          if (['hors_ligne', 'quota', 'modele_absent'].includes(next.err.kind)) regards -= 1;
           throw next.err;
         }
         if (envoi.demande === 'fait' && next.precedente === 'pas_faite' && open) {

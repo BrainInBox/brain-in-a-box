@@ -45,6 +45,14 @@ pub const SCHEMA: &str = r#"{"type":"object","additionalProperties":false,"requi
 
 /// Phase 0: Sonnet drew a full ellipse on a choice the user had not made; Opus did not.
 const MODEL: &str = "opus";
+/// When the account cannot use Opus (decision 8: the guide works from Claude Pro): Sonnet, in the
+/// cautious mode, for the rest of the app's run.
+const MODEL_PRUDENT: &str = "sonnet";
+/// What Sonnet is asked on top (its miss in phase 0: a step on a dialog that waited for the user).
+const PRUDENT_RULE: &str = "K. Prudence : au moindre doute, demande. Si plusieurs éléments peuvent convenir, ou si une boîte de
+   dialogue, un message ou une fenêtre par-dessus attend une réponse, etat = question, avec pour choix les
+   libellés exacts de l'écran. Ne donne une étape que si un seul élément correspond sans aucun doute, et
+   donne toujours son libellé exact.";
 const EFFORT: &str = "low";
 const BUDGET_USD: f64 = 0.25;
 const MAX_TURNS: u32 = 3;
@@ -119,6 +127,8 @@ pub struct Status {
     pub cerveau: bool,
     /// « Comment je regarde ton écran » was read once.
     pub vu: bool,
+    /// The account cannot use Opus: Sonnet answers, in the cautious mode (known once asked, this run).
+    pub prudent: bool,
 }
 
 /// The image exactly as it will leave, for « Voici ce que Claude va voir ».
@@ -227,6 +237,8 @@ pub struct Etape {
     pub filtre: bool,
     pub regards: usize,
     pub regards_max: usize,
+    /// Sonnet answered, the account having no Opus: never a full ellipse, and the window says why.
+    pub prudent: bool,
     /// « Je suis bloqué » on this step.
     pub blocages: usize,
     pub usage: Option<Usage>,
@@ -304,6 +316,8 @@ pub enum GuideError {
     Lancement,
     /// The model refused to look at it: no other model answers in its place.
     Refus,
+    /// The account can use neither Opus nor Sonnet in Claude Code.
+    ModeleAbsent,
     /// The band's code was not copied: Claude did not see this image.
     ImageNonVue,
     /// No answer, or one outside the schema or its rules.
@@ -342,7 +356,7 @@ pub enum GuideError {
 impl GuideError {
     /// Claude's service refused before any work: the look is given back.
     fn free(&self) -> bool {
-        matches!(self, GuideError::Quota { .. } | GuideError::Connexion | GuideError::Api | GuideError::HorsLigne)
+        matches!(self, GuideError::Quota { .. } | GuideError::Connexion | GuideError::Api | GuideError::HorsLigne | GuideError::ModeleAbsent)
     }
 
     /// For the counters: the kind alone.
@@ -595,11 +609,14 @@ struct Answer {
     filtre: bool,
     resume: String,
     niveau: Niveau,
+    /// Sonnet's answer, in the cautious mode.
+    prudent: bool,
 }
 
 /// Claude's answer against the band's code, the image's size (`w`×`h`, band left out) and the rules
-/// of §4.6. Never trusted for more than they allow.
-fn check_answer(out: &Value, code: &str, (w, h): (u32, u32), demande: Demande) -> Result<Answer, GuideError> {
+/// of §4.6. Never trusted for more than they allow. `prudent`: Sonnet's, which never gets a full
+/// ellipse, nor any without a label to check.
+fn check_answer(out: &Value, code: &str, (w, h): (u32, u32), demande: Demande, prudent: bool) -> Result<Answer, GuideError> {
     let bad = || GuideError::Invalide;
     let text = |key: &str, max: usize| -> Result<Option<String>, GuideError> {
         match out.get(key) {
@@ -663,7 +680,7 @@ fn check_answer(out: &Value, code: &str, (w, h): (u32, u32), demande: Demande) -
     });
     let (question, choix) = if etat == Etat::Question { (question, choix) } else { (None, Vec::new()) };
 
-    let mut a = Answer { etat, consigne, libelle, cible, confiance, question, choix, precedente, sensible: said_sensitive, suspect: said_suspect, filtre: false, resume, niveau: Niveau::Aucun };
+    let mut a = Answer { etat, consigne, libelle, cible, confiance, question, choix, precedente, sensible: said_sensitive, suspect: said_suspect, filtre: false, resume, niveau: Niveau::Aucun, prudent };
     let texts = || [Some(&a.consigne), a.libelle.as_ref(), a.question.as_ref(), Some(&a.resume)].into_iter().flatten().chain(&a.choix);
     if !texts().all(|t| allowed(t)) {
         // The filter: Bibo's sentence, nothing of Claude's, nothing to click.
@@ -672,7 +689,8 @@ fn check_answer(out: &Value, code: &str, (w, h): (u32, u32), demande: Demande) -
     a.sensible |= [Some(&a.consigne), a.libelle.as_ref()].into_iter().flatten().any(|t| sensitive(t));
     a.niveau = match (&a.cible, &a.libelle) {
         _ if a.suspect => Niveau::Aucun,
-        (Some(_), Some(_)) if a.confiance >= PLEIN => Niveau::Plein,
+        (Some(_), None) if prudent => Niveau::Aucun,
+        (Some(_), Some(_)) if a.confiance >= PLEIN && !prudent => Niveau::Plein,
         (Some(_), _) if a.confiance >= POINTILLE => Niveau::Pointille,
         _ => Niveau::Aucun,
     };
@@ -934,6 +952,8 @@ struct Launch {
     launches: AtomicUsize,
     /// Claude once started outside the expected setup: not asked again until the app restarts.
     unsupported: AtomicBool,
+    /// Claude Code said the account cannot use Opus: Sonnet, cautious, until the app restarts.
+    prudent: AtomicBool,
 }
 
 #[derive(Default)]
@@ -1151,6 +1171,7 @@ impl Session {
             filtre: a.filtre,
             regards: self.regards,
             regards_max: REGARDS_PAR_SEANCE,
+            prudent: a.prudent,
             blocages: self.blocages,
             usage: usage(self.rate_limit.as_ref()),
             recapitulatif: match a.etat {
@@ -1311,6 +1332,8 @@ struct Ctx<'a> {
 /// What one question leaves in the counters' journal: no word of the user's nor of Claude's.
 #[derive(Default)]
 struct Run {
+    /// The model asked for.
+    model: &'static str,
     version: Option<String>,
     secs: f64,
     num_turns: Option<u64>,
@@ -1333,6 +1356,7 @@ impl Guide {
             capture: Capture::Collage { raison: "a_venir" },
             cerveau: detect::vault(home).is_some(),
             vu: home.join(STORE).join("vu").is_file(),
+            prudent: self.launch.prudent.load(Ordering::SeqCst),
         }
     }
 
@@ -1548,11 +1572,31 @@ impl Guide {
             self.launch.regards.fetch_add(1, Ordering::SeqCst);
             (s.id, code, png, size, text, s.checked.clone())
         };
-        let mut run = Run { image_bytes: png.len(), ..Run::default() };
-        let res = self.ask(ctx, &text, &png, &code, size, envoi.demande, checked, &mut run, on_progress);
-        if run.launched {
-            let end = res.as_ref().map(|(a, _)| a.etat);
-            journal(&ctx.store, &entry(envoi.demande, &run, end, self.launch.regards.load(Ordering::SeqCst)));
+        let log = |run: &Run, res: &Result<(Answer, Option<RateLimit>), GuideError>| {
+            if run.launched {
+                let end = res.as_ref().map(|(a, _)| a.etat);
+                journal(&ctx.store, &entry(envoi.demande, run, end, self.launch.regards.load(Ordering::SeqCst)));
+            }
+        };
+        let model = if self.launch.prudent.load(Ordering::SeqCst) { MODEL_PRUDENT } else { MODEL };
+        let mut run = Run { model, image_bytes: png.len(), ..Run::default() };
+        let mut res = self.ask(ctx, &text, &png, &code, size, envoi.demande, checked, &mut run, on_progress);
+        log(&run, &res);
+        if model == MODEL && matches!(res, Err(GuideError::ModeleAbsent)) {
+            // No Opus for this account (decision 8): Sonnet, cautious, from now on; this very look at
+            // once, on the same image with a new band (R10), unless the session went meanwhile.
+            self.launch.prudent.store(true, Ordering::SeqCst);
+            let again = lock(&self.session).as_ref().filter(|s| s.id == id).and_then(|s| s.shot.as_ref()).map(|sh| banded(&sh.sent));
+            let checked = run.version.clone();
+            res = match again {
+                None => Err(GuideError::Annule),
+                Some((code, png)) => {
+                    run = Run { model: MODEL_PRUDENT, image_bytes: png.len(), ..Run::default() };
+                    let res = self.ask(ctx, &text, &png, &code, size, envoi.demande, checked, &mut run, on_progress);
+                    log(&run, &res);
+                    res
+                }
+            };
         }
         let mut guard = lock(&self.session);
         let session = guard.as_mut().filter(|s| s.id == id);
@@ -1616,9 +1660,11 @@ impl Guide {
         let env = child_env(&ctx.home, &ctx.user, &ctx.path, &work.0.join("tmp"));
         let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (*k, v.as_str())).collect();
         let place = claude::Place { env: &env, cwd: &work.0, limit: CALL_LIMIT, cancel: ctx.cancel };
+        let prudent = run.model == MODEL_PRUDENT;
         let system = format!("{}\n\n{JSON_RULE}", CONSIGNES.trim_end());
+        let system = if prudent { format!("{system}\n{PRUDENT_RULE}") } else { system };
         let images: [&[u8]; 1] = [png];
-        let q = claude::Question { text, images: &images, schema: SCHEMA, system: &system, model: Some(MODEL), effort: Some(EFFORT), budget_usd: BUDGET_USD, max_turns: MAX_TURNS };
+        let q = claude::Question { text, images: &images, schema: SCHEMA, system: &system, model: Some(run.model), effort: Some(EFFORT), budget_usd: BUDGET_USD, max_turns: MAX_TURNS };
 
         on_progress(Progress::Asking);
         self.launch.launches.fetch_add(1, Ordering::SeqCst);
@@ -1649,6 +1695,7 @@ impl Guide {
             ClaudeError::Auth => GuideError::Connexion,
             ClaudeError::Api if !(ctx.online)() => GuideError::HorsLigne,
             ClaudeError::Api => GuideError::Api,
+            ClaudeError::NoModel => GuideError::ModeleAbsent,
             ClaudeError::Init => {
                 self.launch.unsupported.store(true, Ordering::SeqCst);
                 GuideError::Lancement
@@ -1656,7 +1703,7 @@ impl Guide {
             ClaudeError::Invalid => GuideError::Invalide,
             ClaudeError::Refused => GuideError::Refus,
         });
-        let answer = check_answer(&out?, code, size, demande)?;
+        let answer = check_answer(&out?, code, size, demande, prudent)?;
         Ok((answer, rate_limit))
     }
 }
@@ -1693,7 +1740,7 @@ fn entry(demande: Demande, run: &Run, end: Result<Etat, &GuideError>, regards: u
         "app": env!("CARGO_PKG_VERSION"),
         "moteur": "claude",
         "claude_code_version": run.version,
-        "modele": MODEL,
+        "modele": run.model,
         "demande": demande,
         "issue": issue,
         "duree_s": (run.secs * 10.0).round() / 10.0,
@@ -2282,7 +2329,7 @@ mod tests {
     }
 
     fn check(over: Value) -> Result<Answer, GuideError> {
-        check_answer(&answer(over), "MNPR", (W, H), Demande::Fait)
+        check_answer(&answer(over), "MNPR", (W, H), Demande::Fait, false)
     }
 
     #[test]
@@ -2386,7 +2433,7 @@ mod tests {
 
     #[test]
     fn at_the_start_there_is_no_previous_step() {
-        let a = check_answer(&answer(json!({"precedente": "pas_faite"})), "MNPR", (W, H), Demande::Debut).unwrap();
+        let a = check_answer(&answer(json!({"precedente": "pas_faite"})), "MNPR", (W, H), Demande::Debut, false).unwrap();
         assert_eq!(a.precedente, Precedente::SansObjet);
     }
 
@@ -3200,6 +3247,91 @@ mod tests {
         b2.then(|_| vec![INIT.to_string(), json!({"type":"result","subtype":"success","is_error":true,"result":"API Error: Connection error.","total_cost_usd":0}).to_string()]);
         assert_eq!(b2.send(Demande::Debut), Err(GuideError::HorsLigne));
         assert_eq!(b2.journal()[0]["issue"], "hors_ligne");
+    }
+
+    /// Claude Code's own stream when the account cannot use the model asked for (tests/fixtures/repair).
+    fn refused_model(name: &str) -> Vec<String> {
+        fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/repair/").to_string() + name).unwrap().lines().map(String::from).collect()
+    }
+
+    fn sonnet(over: Value) -> impl Fn(&str) -> Vec<String> {
+        move |code: &str| {
+            let mut a = answer(over.clone());
+            a["code_vu"] = json!(code);
+            stream(&a, "claude-sonnet-5-5", 0.02, 0.3)
+        }
+    }
+
+    /// Decision 8: the guide works from Claude Pro. A plan or an organization without Opus: Claude Code
+    /// says so, the same look goes to Sonnet at once (a new band), and every look after it; Sonnet in the
+    /// cautious mode: never a full ellipse, a label to check or none, a question when in doubt.
+    #[test]
+    fn without_opus_the_guide_goes_on_with_sonnet_in_the_cautious_mode() {
+        for refusal in ["pro-sans-opus.jsonl", "model-not-found.jsonl", "model-fallback.jsonl"] {
+            let b = Bench::new();
+            b.paste(1600, 1000);
+            b.guide.start(None, "Odoo", "Faire une facture").unwrap();
+            b.then(move |_| refused_model(refusal));
+            b.then(sonnet(json!({})));
+            let e = b.send(Demande::Debut).unwrap();
+            assert_eq!((e.etat, e.niveau, e.prudent, e.regards), (Etat::Etape, Niveau::Pointille, true, 1), "{refusal}");
+            assert_eq!(b.guide.launch.launches.load(Ordering::SeqCst), 2, "{refusal}");
+            let seen = lock(&b.seen);
+            let model = |argv: &Vec<String>| argv.windows(2).find(|w| w[0] == "--model").map(|w| w[1].clone());
+            assert_eq!(seen.argv.iter().map(model).collect::<Vec<_>>(), [Some("opus".to_string()), Some("sonnet".to_string())]);
+            assert_ne!(seen.codes[0], seen.codes[1], "a new band for the new question");
+            let system = |argv: &Vec<String>| argv.windows(2).find(|w| w[0] == "--append-system-prompt").map(|w| w[1].clone()).unwrap();
+            assert!(!system(&seen.argv[0]).contains(PRUDENT_RULE) && system(&seen.argv[1]).ends_with(PRUDENT_RULE));
+            drop(seen);
+            let journal = b.journal();
+            assert_eq!(journal.len(), 2);
+            assert_eq!((journal[0]["issue"].as_str(), journal[0]["modele"].as_str()), (Some("modele_absent"), Some("opus")));
+            assert_eq!((journal[1]["issue"].as_str(), journal[1]["modele"].as_str()), (Some("etape"), Some("sonnet")));
+            assert!(b.guide.status(b.home.path(), &|| Ok("2.1.305".into())).prudent);
+        }
+
+        // From then on, Sonnet straight away; no label, no ellipse at all.
+        let b = Bench::new();
+        b.paste(1600, 1000);
+        b.guide.start(None, "Odoo", "Faire une facture").unwrap();
+        b.then(|_| refused_model("pro-sans-opus.jsonl"));
+        b.then(sonnet(json!({})));
+        b.send(Demande::Debut).unwrap();
+        b.paste(1600, 1000);
+        b.then(sonnet(json!({"precedente": "faite", "libelle": null, "confiance": 0.95})));
+        let e = b.send(Demande::Fait).unwrap();
+        assert_eq!((e.niveau, e.prudent, e.numero), (Niveau::Aucun, true, 2));
+        assert_eq!(lock(&b.seen).argv.len(), 3, "no Opus asked again");
+        // A new session of the same run of the app: Sonnet still.
+        b.guide.start(None, "Odoo", "Autre chose").unwrap();
+        b.paste(1600, 1000);
+        b.then(sonnet(json!({})));
+        b.send(Demande::Debut).unwrap();
+        assert_eq!(lock(&b.seen).argv.len(), 4);
+    }
+
+    #[test]
+    fn the_cautious_level_never_draws_a_full_ellipse() {
+        let level = |over: Value| check_answer(&answer(over), "MNPR", (W, H), Demande::Fait, true).unwrap().niveau;
+        assert_eq!(level(json!({"confiance": 1.0})), Niveau::Pointille);
+        assert_eq!(level(json!({"confiance": 0.70})), Niveau::Pointille);
+        assert_eq!(level(json!({"confiance": 0.699})), Niveau::Aucun);
+        assert_eq!(level(json!({"libelle": null})), Niveau::Aucun, "always a label to check");
+        assert_eq!(level(json!({"suspect": true})), Niveau::Aucun);
+        assert!(check_answer(&answer(json!({})), "MNPR", (W, H), Demande::Fait, true).unwrap().prudent);
+        assert!(!check(json!({})).unwrap().prudent);
+    }
+
+    #[test]
+    fn neither_opus_nor_sonnet_is_said_and_the_look_given_back() {
+        let b = Bench::new();
+        b.paste(800, 600);
+        b.guide.start(None, "Odoo", "Faire une facture").unwrap();
+        b.then(|_| refused_model("model-not-found.jsonl"));
+        b.then(|_| refused_model("model-not-found.jsonl").iter().map(|l| l.replace("claude-opus-0-1", "claude-sonnet-0-1")).collect());
+        assert_eq!(b.send(Demande::Debut), Err(GuideError::ModeleAbsent));
+        assert_eq!(lock(&b.guide.session).as_ref().unwrap().regards, 0, "nothing was looked at: given back");
+        assert_eq!(b.journal().iter().map(|j| j["modele"].as_str().unwrap().to_string()).collect::<Vec<_>>(), ["opus", "sonnet"]);
     }
 
     #[test]

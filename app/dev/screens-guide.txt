@@ -157,6 +157,15 @@
 ### g=ok&go=etape&nth=2&lache=1
 1 4 5 6 7 8 9 10 11 12 13 14
 
+### g=prudent&go=etape
+1 4 5 6 7 8 9 10 11 85
+
+### g=prudent&go=etape&nth=2
+1 4 5 6 7 8 9 10 11 85 13 86
+
+### g=sans-modele&go=erreur
+1 4 5 6 7 8 9 10 11 87
+
 #1
 == charge
 Je prépare le guide…
@@ -1058,3 +1067,39 @@ Ouvre ce fichier, copie l’image, puis colle-la ici.
 [Toujours au-dessus]
 [Arrêter le guide]
 [Réessayer]
+
+#85
+== etape
+Étape 1
+[Réduire]
+[Toujours au-dessus]
+Clique sur « Nouveau », en haut à gauche, sous « Factures clients ».
+Vérifie que le bouton s’appelle « Nouveau ».
+Le même endroit, en plus grand.
+Sur l’image, la zone à vérifier est entourée en pointillés.
+Clique dans ton logiciel, puis reviens ici cliquer « C’est fait ».
+Mode prudent : ton compte Claude ne me donne pas accès à Opus, son modèle le plus précis. Je passe par Sonnet : je n’entoure jamais rien en plein, vérifie chaque bouton avant de cliquer.
+1 capture envoyée à Claude, sur 40 pour cette fois.
+[Arrêter le guide]
+[Je suis bloqué]
+[C’est fait]
+
+#86
+== etape
+Étape 2
+[Réduire]
+[Toujours au-dessus]
+Clique dans le champ « Client », puis choisis ton client dans la liste.
+Je ne suis pas sûr de l’endroit exact, alors je ne l’entoure pas : cherche ce que dit la phrase ci-dessus sur ton écran.
+Mode prudent : ton compte Claude ne me donne pas accès à Opus, son modèle le plus précis. Je passe par Sonnet : je n’entoure jamais rien en plein, vérifie chaque bouton avant de cliquer.
+2 captures envoyées à Claude, sur 40 pour cette fois.
+[Arrêter le guide]
+[Je suis bloqué]
+[C’est fait]
+
+#87
+== erreur
+Ton forfait Claude ne donne pas accès au modèle du guide.
+Le guide a besoin de Claude Opus ou de Claude Sonnet dans Claude Code : regarde ton abonnement sur claude.ai.
+[Toujours au-dessus]
+[Fermer le guide]
