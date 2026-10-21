@@ -164,6 +164,22 @@ def _trim(text, budget):
     return text[:head].rsplit("\n", 1)[0] + "\n…[cut]…\n" + text[-tail:].split("\n", 1)[-1]
 
 
+def _entry(hhmm, who, text):
+    """One message, as the model reads it: only its first line starts with "HH:MM who:", the next ones
+    go on as "    | ", so that no text a model wrote (a page can steer it) poses as the user's."""
+    return f"{hhmm} {who}: " + "\n    | ".join(_trim(text.strip(), MSG_CAP).splitlines())
+
+
+def _tool_line(hhmm, name, summary):
+    """A tool call on one line: its name and summary with every line break (any whitespace) made a space."""
+    return f"{hhmm}   → " + " ".join(f"{name} {summary}".split())
+
+
+def _one_line(text):
+    """A session's label (a folder, a title) on one line."""
+    return " ".join(text.splitlines())
+
+
 def _tool_summary(name, inp):
     inp = inp if isinstance(inp, dict) else {}
     if name == "Bash":
@@ -192,16 +208,16 @@ def _render(d, hhmm):
     out = []
     if d.get("type") == "user":
         if isinstance(content, str):
-            out.append(f"{hhmm} user: {_trim(content.strip(), MSG_CAP)}")
+            out.append(_entry(hhmm, "user", content))
         elif isinstance(content, list):
-            out += [f"{hhmm} user: {_trim(c.get('text', '').strip(), MSG_CAP)}"
+            out += [_entry(hhmm, "user", c.get("text", ""))
                     for c in content if c.get("type") == "text" and c.get("text", "").strip()]
     elif d.get("type") == "assistant" and isinstance(content, list):
         for c in content:
             if c.get("type") == "text" and c.get("text", "").strip():
-                out.append(f"{hhmm} assistant: {_trim(c['text'].strip(), MSG_CAP)}")
+                out.append(_entry(hhmm, "assistant", c["text"]))
             elif c.get("type") == "tool_use":
-                out.append(f"{hhmm}   → {c.get('name', '?')} {_tool_summary(c.get('name'), c.get('input'))}")
+                out.append(_tool_line(hhmm, c.get("name", "?"), _tool_summary(c.get("name"), c.get("input"))))
     return out
 
 
@@ -258,7 +274,7 @@ def claude_sessions(day):
             continue
         text, cwd, n = day_session(tp, day)
         if n >= 3:  # shorter exchanges carry no signal worth a model's attention
-            out.append((f"claude {Path(tp).stem[:8]} · cwd={cwd or '?'}", text, cwd))
+            out.append((f"claude {Path(tp).stem[:8]} · cwd={_one_line(cwd or '?')}", text, cwd))
     return out
 
 
@@ -288,15 +304,14 @@ def codex_sessions(day, codex_home):
         for it in s.items:
             hhmm = rollout.local(it.ts).strftime("%H:%M")
             if it.kind == "tool":
-                lines.append(f"{hhmm}   → " + " ".join(f"{it.name} {it.text}".split()))
+                lines.append(_tool_line(hhmm, it.name, it.text))
             else:
-                lines.append(f"{hhmm} {it.kind}: " + "\n    | ".join(_trim(it.text.strip(), MSG_CAP).splitlines()))
+                lines.append(_entry(hhmm, it.kind, it.text))
                 n += 1
         if n >= 3:
             how = "" if s.source in SOURCES_TAPEES else " · " + (
                 s.source if re.fullmatch(r"[a-z_]{1,32}", s.source or "") else "?")
-            cwd = " ".join((s.cwd or "?").splitlines())
-            out.append((f"codex {s.id or '?'}{how} · cwd={cwd}", "\n".join(lines), s.cwd))
+            out.append((f"codex {s.id or '?'}{how} · cwd={_one_line(s.cwd or '?')}", "\n".join(lines), s.cwd))
     return out, packed
 
 
@@ -328,9 +343,9 @@ def hermes_sessions(day):
         return []
     sessions = {}
     for sid, title, source, role, ts, content in rows:
-        label = f"hermes {sid} · {source} · {title or 'untitled'}"
+        label = _one_line(f"hermes {sid} · {source} · {title or 'untitled'}")
         hhmm = datetime.fromtimestamp(ts).strftime("%H:%M")
-        sessions.setdefault(label, []).append(f"{hhmm} {role}: {_trim(content.strip(), MSG_CAP)}")
+        sessions.setdefault(label, []).append(_entry(hhmm, role, content))
     return [(label, "\n".join(lines), None) for label, lines in sessions.items()]
 
 
