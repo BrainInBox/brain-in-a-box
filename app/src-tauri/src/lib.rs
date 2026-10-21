@@ -778,4 +778,53 @@ mod tests {
         assert!(nobodys.is_empty(), "no window may call {nobodys:?}");
     }
 
+    type Mock = tauri::test::MockRuntime;
+
+    /// What Tauri answers a window's page that asks `cmd` with no argument.
+    fn ask(window: &tauri::WebviewWindow<Mock>, cmd: &str) -> Result<tauri::ipc::InvokeResponseBody, serde_json::Value> {
+        tauri::test::get_ipc_response(
+            window,
+            tauri::webview::InvokeRequest {
+                cmd: cmd.into(),
+                callback: tauri::ipc::CallbackFn(0),
+                error: tauri::ipc::CallbackFn(1),
+                // The pages of the app, as the mock runtime serves them (local, as on macOS and Linux).
+                url: "tauri://localhost".parse().unwrap(),
+                body: tauri::ipc::InvokeBody::default(),
+                headers: Default::default(),
+                invoke_key: tauri::test::INVOKE_KEY.into(),
+            },
+        )
+    }
+
+    /// Tauri's own check, with the app's manifest and capabilities as the app is built (the code the app
+    /// runs, on a mock runtime): the guide's page asking the installer's commands is refused, and the
+    /// installer's page the guide's; each its own passes. No command of the app runs here.
+    #[test]
+    fn tauri_refuses_each_window_the_other_ones_commands() {
+        // Every command answers "ok" here: what Tauri refuses never reaches its handler, what it lets through does.
+        let app = tauri::test::mock_builder()
+            .invoke_handler(|invoke| {
+                invoke.resolver.resolve("ok");
+                true
+            })
+            .build(tauri::generate_context!(test = true))
+            .unwrap();
+        let window = |label: &str, page: &str| tauri::WebviewWindowBuilder::new(&app, label, tauri::WebviewUrl::App(page.into())).build().unwrap();
+        let (main, guide) = (window("main", "index.html"), window("guide", "guide.html"));
+        let refused = |w: &tauri::WebviewWindow<Mock>, cmd: &str| match ask(w, cmd) {
+            Err(e) => e.to_string().contains("not allowed"),
+            Ok(_) => false,
+        };
+        for cmd in ["run_step", "repair_apply", "repair_analyze", "open_repair_terminal", "import_run", "start_onboarding", "guide_open"] {
+            assert!(refused(&guide, cmd), "the guide's window may call {cmd}: {:?}", ask(&guide, cmd));
+        }
+        for cmd in ["guide_envoyer", "guide_enregistrer", "guide_coller_presse_papiers", "guide_regarder", "guide_annuler"] {
+            assert!(refused(&main, cmd), "the installer's window may call {cmd}: {:?}", ask(&main, cmd));
+        }
+        // Each its own: the control, without which a refusal of everything would pass.
+        assert!(ask(&guide, "guide_annuler").is_ok(), "{:?}", ask(&guide, "guide_annuler"));
+        assert!(ask(&main, "guide_offert").is_ok(), "{:?}", ask(&main, "guide_offert"));
+        assert!(!refused(&guide, "open_link"), "a link the guide may open: {:?}", ask(&guide, "open_link"));
+    }
 }

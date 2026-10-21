@@ -95,6 +95,8 @@ objc2-screen-capture-kit = { version = "=0.3.2", default-features = false, featu
 
 [dev-dependencies]
 tempfile = "3"
+# Tauri's mock runtime, for the test of its own check of each window's commands (lib.rs): no crate more.
+tauri = { version = "2", features = ["test"] }
 
 # The desk test of the macOS capture (tests/bureau_mac.rs): AppKit's run loop and a window for Bibo, as
 # in the app. Already in the build through tao and wry.
