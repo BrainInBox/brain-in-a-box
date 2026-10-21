@@ -3168,6 +3168,14 @@ PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 TRACES_MAX = 64 * 1024 * 1024
 
 
+def montrer(p, home):
+    """A path as the report shows it, the same on the 3 OS: ~/… under home, with slashes."""
+    try:
+        return "~/" + Path(p).relative_to(home).as_posix()
+    except ValueError:
+        return Path(p).as_posix()
+
+
 def traces_du_guide(racines, depuis, exclus, fragments, dossiers_app):
     """[(file, why)] of the files written since `depuis` under `racines` (`exclus` left out, links not
     followed): one that holds a fragment of an image of the guide (the captures pasted, those sent to
@@ -3203,7 +3211,8 @@ def traces_du_guide(racines, depuis, exclus, fragments, dossiers_app):
 
 
 RELAIS_CS = r'''// claude.exe of the field test "app" (terrain_app.py): runs the fake Claude with the harness' Python,
-// its arguments quoted as Windows reads them back, its stdin, stdout and stderr passed through.
+// its arguments quoted as Windows reads them back, its stdin handed down as is (a stdin redirected by .NET
+// starts with the BOM of its writer's encoding), its stdout and stderr passed through.
 using System;
 using System.Diagnostics;
 using System.IO;
@@ -3231,12 +3240,11 @@ static class Relais
         return b.ToString();
     }
 
-    static void Copy(Stream from, Stream to, bool close)
+    static void Copy(Stream from, Stream to)
     {
         byte[] buf = new byte[65536];
         int n;
         while ((n = from.Read(buf, 0, buf.Length)) > 0) { to.Write(buf, 0, n); to.Flush(); }
-        if (close) to.Close();
     }
 
     static int Main(string[] args)
@@ -3246,17 +3254,15 @@ static class Relais
         ProcessStartInfo psi = new ProcessStartInfo(PYTHON, line.ToString());
         psi.UseShellExecute = false;
         psi.CreateNoWindow = true;
-        psi.RedirectStandardInput = true;
         psi.RedirectStandardOutput = true;
         psi.RedirectStandardError = true;
         using (Process p = Process.Start(psi))
         {
-            Stream o = Console.OpenStandardOutput(), e = Console.OpenStandardError(), i = Console.OpenStandardInput();
-            Thread to = new Thread(delegate () { Copy(p.StandardOutput.BaseStream, o, false); });
-            Thread te = new Thread(delegate () { Copy(p.StandardError.BaseStream, e, false); });
+            Stream o = Console.OpenStandardOutput(), e = Console.OpenStandardError();
+            Thread to = new Thread(delegate () { Copy(p.StandardOutput.BaseStream, o); });
+            Thread te = new Thread(delegate () { Copy(p.StandardError.BaseStream, e); });
             to.Start();
             te.Start();
-            Copy(i, p.StandardInput.BaseStream, true);
             p.WaitForExit();
             to.Join();
             te.Join();
@@ -3372,7 +3378,7 @@ def guide_terrain(t, parcours, pilote, home, env, captures, travail):
     # and the fake Claude's records.
     traces = traces_du_guide(racines, debut, [Path(travail).parent, captures, fake, Path(__file__).resolve().parents[2]],
                              fragments, ("com.braininbox.installer", ".brain-in-a-box", "biab-guide", "ebwebview"))
-    d["traces"] = [(str(p).replace(str(home), "~"), why) for p, why in traces][:20]
+    d["traces"] = [(montrer(p, home), why) for p, why in traces][:20]
     t.check(not traces, "des traces des images du guide sur le disque : %s" % "; ".join(
         "%s (%s)" % (p, why) for p, why in d["traces"][:5]))
     return d

@@ -360,7 +360,6 @@ class RealClaudeScenario(Sandbox):
         self.assertIn("annotation fausse : C1-", r["raison"])
 
 
-@unittest.skipIf(os.name == "nt" or not shutil.which("bash"), "the guard runs on the Linux runner, in bash")
 class GuideReel(unittest.TestCase):
     """The night's three looks of the guide, judged (terrain.juger_regard): on made-up answers here."""
     BOITE = {"x": 230, "y": 120, "largeur": 130, "hauteur": 40}
@@ -428,6 +427,7 @@ class GuideReel(unittest.TestCase):
                          '<objectif>Créer une facture</objectif>')
 
 
+@unittest.skipIf(os.name == "nt" or not shutil.which("bash"), "the guard runs on the Linux runner, in bash")
 class RefGuard(unittest.TestCase):
     """.github/ci/terrain-ref.sh: what a run started by hand may test."""
 
