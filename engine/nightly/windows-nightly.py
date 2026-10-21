@@ -22,7 +22,7 @@ import sys
 import tempfile
 import time
 import traceback
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 HOME = Path.home()
 HERE = Path(__file__).resolve().parent  # ~/.claude/hooks/brain once installed
@@ -30,7 +30,8 @@ GDATA = Path(os.environ.get("GBRAIN_HOME", "").strip() or HOME) / ".gbrain"
 BSDIR = HOME / ".brain-search"
 BUN_BIN = Path(os.environ.get("BUN_INSTALL") or HOME / ".bun") / "bin"
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-EXE = ".exe" if os.name == "nt" else ""   # Windows only, but its tests run everywhere
+WINDOWS = os.name == "nt"   # Windows only, but its tests run everywhere
+EXE = ".exe" if WINDOWS else ""
 LOG = GDATA / "nightly.log"
 
 
@@ -67,11 +68,17 @@ def kill_tree(pid):
                    stderr=subprocess.DEVNULL, creationflags=NO_WINDOW)
 
 
+def absolute_folder(d):
+    """Whether `d`, a folder of the PATH, is named in full: on Windows with its drive or a share, as
+    _headless_claude.absolute_folder says (Python 3.12's os.path.isabs also takes \\tools)."""
+    return bool(d) and (PureWindowsPath(d).is_absolute() if WINDOWS else os.path.isabs(d))
+
+
 def find_git():
     """git.exe in the PATH's absolute folders. Not shutil.which: it looks in the current folder first."""
     for d in os.environ.get("PATH", "").split(os.pathsep):
         p = os.path.join(d, "git" + EXE)
-        if os.path.isabs(d) and os.path.isfile(p) and os.access(p, os.X_OK):
+        if absolute_folder(d) and os.path.isfile(p) and os.access(p, os.X_OK):
             return p
     return None
 

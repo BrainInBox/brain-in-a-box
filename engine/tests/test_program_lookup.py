@@ -7,6 +7,7 @@ and on every system through such an entry. A folder named in full is searched as
     python3 -I -m unittest discover -s engine/tests -v
 """
 import importlib.util
+import ntpath
 import os
 import shutil
 import subprocess
@@ -126,6 +127,50 @@ class Planted(unittest.TestCase):
                 else:
                     module.kill_tree(4242)
                 self.assertEqual(run.call_args[0][0][0], os.path.join(system32, "taskkill.exe"))
+
+    @unittest.skipIf(WINDOWS, "a folder named \\tools there is the root of the current drive")
+    def test_on_windows_a_folder_is_named_in_full_with_its_drive(self):
+        # Windows' os.path.isabs up to Python 3.12 (install.ps1's): \tools and /opt/homebrew/bin are absolute,
+        # though they are folders of whatever drive is current, where a standard account may create C:\opt. Here,
+        # Windows as the lookups see it: that isabs, its PATH separator, \tools a folder of the current one, a
+        # Unix folder for Homebrew's; a folder with its drive (C:\tools) is searched.
+        def isabs_312(s):
+            s = os.fspath(s)[:3].replace("/", "\\")
+            return s.startswith("\\") or s[1:3] == ":\\"
+
+        unix = os.path.join(self.root, "opt", "bin")
+        for d in ("\\tools", unix, "C:\\tools"):
+            os.makedirs(d)
+            for name in ("claude.exe", "git", "gbrain"):
+                with open(os.path.join(d, name), "w", encoding="utf-8") as f:
+                    f.write("#!/bin/sh\n")
+                os.chmod(os.path.join(d, name), 0o755)
+        modules = (hc, gu, gbq, nightly)
+
+        def lookups(path):
+            os.environ["PATH"] = path
+            with mock.patch("os.path.isabs", isabs_312), mock.patch("os.pathsep", ";"), \
+                    mock.patch.object(hc, "EXTRA_DIRS", (unix,)):
+                patches = [mock.patch.object(m, "WINDOWS", True, create=True) for m in modules]
+                for p in patches:
+                    p.start()
+                try:
+                    return (hc.find_claude(), controle.find_git(SimpleNamespace(git=None)), gu.which("git"),
+                            nightly.find_git(), gbq.gbrain_exe())
+                finally:
+                    for p in patches:
+                        p.stop()
+
+        self.assertEqual(lookups("\\tools;" + unix), (None,) * 5)
+        tools = os.path.join("C:\\tools", "")
+        self.assertEqual(lookups("C:\\tools"), ([tools + "claude.exe"], tools + "git", tools + "git", tools + "git",
+                                                tools + "gbrain"))
+        for d in ("\\tools", "/opt/homebrew/bin", "C:tools", "", "bin"):
+            with mock.patch.object(hc, "WINDOWS", True):
+                self.assertFalse(hc.absolute_folder(d), d)
+        for d in ("C:\\tools", "c:/tools", "\\\\server\\share\\bin"):
+            with mock.patch.object(hc, "WINDOWS", True):
+                self.assertTrue(hc.absolute_folder(d), d)
 
     @unittest.skipIf(WINDOWS, "the planted programs are shell scripts")
     def test_nothing_planted_runs(self):
