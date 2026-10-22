@@ -171,8 +171,8 @@ function Winget-Install($id, $label) {
 }
 
 # Git et Python quand winget n'a pas pu (absent, ou sa source en panne) : leur installeur officiel, a la
-# version epinglee ici, compare a son empreinte SHA-256 avant de tourner, comme celui de Codex. Pour cet
-# utilisateur, sans fenetre ni question. x64, ou ARM64 natif sur un PC ARM (ce que winget prendrait).
+# version epinglee ici, compare a son empreinte SHA-256 avant de tourner, comme celui de Codex. Sans
+# fenetre ni question. x64, ou ARM64 natif sur un PC ARM (ce que winget prendrait).
 # Chaque empreinte est relevee a deux sources : pour Git for Windows, le digest de l'API GitHub et le
 # tableau de ses notes de version ; pour Python, sa page sur python.org et l'API de python.org.
 $OFFICIAL_INSTALLERS = @{
@@ -182,9 +182,11 @@ $OFFICIAL_INSTALLERS = @{
                 "52188f917b378f00c70ec136bcf090005f30d44fbc4eba0bce759cc6592d60f6")
         arm64 = @("https://github.com/git-for-windows/git/releases/download/v2.56.0.windows.2/Git-2.56.0.2-arm64.exe",
                   "b9ced78ce371577dc966f50ae571909d6731e36d31065d35c8efa21544c58bf0")
-        # Inno Setup, sans fenetre ni message. Il ne demande jamais les droits admin : sans eux, il va
-        # dans le profil (%LOCALAPPDATA%\Programs\Git, la ou Find-Git le cherche).
-        Args = @("/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/NOCANCEL", "/SP-", "/CURRENTUSER")
+        # Inno Setup, sans fenetre ni message. Il ne demande jamais les droits admin (PrivilegesRequired=none)
+        # et ignore /CURRENTUSER (aucun PrivilegesRequiredOverridesAllowed) : sans droits admin il va dans le
+        # profil (%LOCALAPPDATA%\Programs\Git), lance d'un PowerShell administrateur dans Program Files, pour
+        # tous les comptes. Find-Git regarde aux deux endroits.
+        Args = @("/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/NOCANCEL", "/SP-")
     }
     "Python" = @{
         Version = "3.14.8"
@@ -215,7 +217,7 @@ function Official-Install([string]$Label) {
     $arch = Get-WinArch
     if (-not $arch) { Note-Winget "> installeur officiel : $Label, aucun pour ce Windows 32 bits"; return $false }
     $url, $sha = $o[$arch]
-    Write-Host "  ... $Label $($o.Version) : installeur officiel (dans ton profil, sans droits admin), verifie avant de tourner"
+    Write-Host "  ... $Label $($o.Version) : installeur officiel (sans fenetre admin), verifie avant de tourner"
     $d = Join-Path $H (Join-Path ".brain-in-a-box" ("installeur-" + [guid]::NewGuid().ToString("N")))
     $tmp = Join-Path $d "tmp"
     $end = "interrompu"
