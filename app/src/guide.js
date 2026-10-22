@@ -415,16 +415,28 @@ async function onPaste(e) {
     bytes = null;
   }
   if (gen !== G.gen) return;
-  if (!bytes) {
+  // WebKitGTK hands a page no image of the clipboard, only files: on Linux, Rust reads GTK's clipboard.
+  const fromSystem = !bytes && SYSTEM === 'linux';
+  if (!bytes && !fromSystem) {
     say('worried', 'Je ne trouve pas d’image dans ce que tu as collé.', SLIP);
     return;
   }
+  const back = G.next;
+  // The preview or « Cacher une zone »: no image there either, and the user stays where they were.
+  const from = document.body.dataset.screen;
   const read = reading();
   let a;
   try {
-    a = await invoke('guide_coller', bytes);
+    a = fromSystem ? await invoke('guide_coller_presse_papiers') : await invoke('guide_coller', bytes);
   } catch (err) {
     if (read !== G.gen) return;
+    if (err && err.kind === 'sans_image') {
+      if (from === 'cacher') showHide();
+      else if (from === 'apercu') showPreview(G.apercu);
+      else askCapture(back);
+      say('worried', 'Je ne trouve pas d’image dans ce que tu as collé.', SLIP);
+      return;
+    }
     return showError(err);
   }
   if (read !== G.gen) return;
@@ -658,7 +670,10 @@ function banners(e) {
 
 function counters(e) {
   const many = e.regards > 1 ? 's' : '';
-  const out = [h('p', { class: 'note small' }, `${e.regards} capture${many} envoyée${many} à Claude, sur ${e.regards_max} pour cette fois.`)];
+  const out = [];
+  // No Opus for this account: Sonnet answers, and never gets a full ellipse (decision 8, Claude Pro).
+  if (e.prudent) out.push(note('Mode prudent : ton compte Claude ne me donne pas accès à Opus, son modèle le plus précis. Je passe par Sonnet : je n’entoure jamais rien en plein, vérifie chaque bouton avant de cliquer.', 'warn prudent'));
+  out.push(h('p', { class: 'note small' }, `${e.regards} capture${many} envoyée${many} à Claude, sur ${e.regards_max} pour cette fois.`));
   const u = e.usage;
   if (u && u.presque) {
     const five = u.cinq_heures != null && u.cinq_heures >= 0.8;
@@ -919,6 +934,7 @@ function errorWords(e) {
     case 'delai': return { title: 'Claude met trop de temps.', text: 'Tu peux réessayer : ça compte une capture de plus.' };
     case 'image_non_vue':
     case 'invalide': return { title: 'Claude n’a pas bien vu l’image.', text: 'Tu peux réessayer : ça compte une capture de plus.' };
+    case 'modele_absent': return { title: 'Ton forfait Claude ne donne pas accès au modèle du guide.', text: 'Le guide a besoin de Claude Opus ou de Claude Sonnet dans Claude Code : regarde ton abonnement sur claude.ai.' };
     case 'refus': return { title: 'Claude n’a pas voulu analyser cette capture.', text: 'Quelque chose sur cette capture l’a gêné (un code, un mot de passe, un message d’alerte ?). Cache-le, ou montre un autre écran.' };
     case 'lancement': return { title: 'Claude ne s’est pas lancé comme prévu : je préfère arrêter le guide.', text: 'Relance l’app pour réessayer.' };
     case 'image_illisible': return { title: 'Je n’arrive pas à lire cette image.', text: 'Refais une capture de la fenêtre seule, puis colle-la ici.' };
@@ -969,8 +985,10 @@ async function showError(e) {
   } else if (kind === 'occupe' && G.apercu) {
     gui.actions.append(button('Revenir à l’aperçu', () => showPreview(G.apercu), { act: 'next' }));
   } else {
-    gui.actions.append(button('Fermer le guide', closeGuide, { kind: kind === 'quota' || kind === 'lancement' ? 'primary' : 'ghost', act: kind === 'quota' || kind === 'lancement' ? 'next' : 'stop' }));
-    if (G.apercu && !['quota', 'lancement'].includes(kind)) gui.actions.append(button('Revenir à l’aperçu', () => showPreview(G.apercu), { act: 'next' }));
+    // Nothing to do here but close: the limit, a bad start, no model of the guide for this account.
+    const closing = ['quota', 'lancement', 'modele_absent'].includes(kind);
+    gui.actions.append(button('Fermer le guide', closeGuide, { kind: closing ? 'primary' : 'ghost', act: closing ? 'next' : 'stop' }));
+    if (G.apercu && !closing) gui.actions.append(button('Revenir à l’aperçu', () => showPreview(G.apercu), { act: 'next' }));
   }
   focusMain();
 }

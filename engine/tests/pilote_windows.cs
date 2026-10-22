@@ -18,6 +18,10 @@
 //   pilote-windows.exe fenetres                    the visible top-level windows, each with its program
 //   pilote-windows.exe arbre <hwnd>                one window, its program and its tree
 //   pilote-windows.exe raccourci <file.lnk>        where a shortcut points
+//   pilote-windows.exe taper <hwnd> <text>         the text typed in the window, as a keyboard types it
+//   pilote-windows.exe touche <hwnd> tab           Tab in the window
+//   pilote-windows.exe coller <hwnd>               the PNG whose base64 comes on stdin put in the clipboard,
+//                                                  as Windows' capture tool puts one, then Ctrl+V in the window
 //
 // Every answer is one line of JSON, ASCII only (\uXXXX escapes): the console's code page never
 // matters. This file stays ASCII too: csc reads a file without a byte order mark in the ANSI
@@ -28,6 +32,7 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.Globalization;
+using System.IO;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -77,6 +82,20 @@ static class PiloteWindows
     static extern bool QueryFullProcessImageName(IntPtr h, uint flags, StringBuilder s, ref uint size);
     [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
 
+    [StructLayout(LayoutKind.Sequential)]
+    struct KEYBDINPUT { public ushort wVk; public ushort wScan; public uint dwFlags; public uint time; public IntPtr dwExtraInfo; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct MOUSEINPUT { public int dx; public int dy; public uint mouseData; public uint dwFlags; public uint time; public IntPtr dwExtraInfo; }
+
+    [StructLayout(LayoutKind.Explicit)]
+    struct INPUTUNION { [FieldOffset(0)] public MOUSEINPUT mi; [FieldOffset(0)] public KEYBDINPUT ki; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct INPUT { public uint type; public INPUTUNION u; }
+
+    [DllImport("user32.dll", SetLastError = true)] static extern uint SendInput(uint n, INPUT[] inputs, int size);
+
     // aria-live: .NET 4.7.1 and later know it, older ones do not (read by reflection).
     static AutomationProperty Live = Propriete("LiveSettingProperty");
 
@@ -111,8 +130,12 @@ static class PiloteWindows
         if (op == "ranger" && a.Length == 1) return Ranger();
         if (op == "fenetres" && a.Length == 1) return Fenetres();
         if (op == "arbre" && a.Length == 2) return UneFenetre(Fenetre(a[1]));
+        if (op == "taper" && a.Length == 3) return Taper(Fenetre(a[1]), a[2]);
+        if (op == "touche" && a.Length == 3 && a[2] == "tab") return Touche(Fenetre(a[1]), 0x09);
+        if (op == "coller" && a.Length == 2) return Coller(Fenetre(a[1]), Console.In.ReadToEnd());
         return Echec("usage : lire <pid> | cliquer <hwnd> <libelle> | cocher <hwnd> <libelle> 0|1 | fermer <hwnd> | "
-                     + "devant <hwnd> | capturer <png> | raccourci <lnk> | ranger");
+                     + "devant <hwnd> | capturer <png> | raccourci <lnk> | ranger | taper <hwnd> <texte> | touche <hwnd> tab | "
+                     + "coller <hwnd> (base64 sur stdin)");
     }
 
     // ------------------------------------------------------------------ windows
@@ -617,6 +640,71 @@ static class PiloteWindows
         {
             Marshal.FinalReleaseComObject(shell);
         }
+    }
+
+    // ------------------------------------------------------------------ the keyboard
+
+    // Each character as the keyboard sends it (a Unicode key, down then up), the window in front first.
+    static Dictionary<string, object> Taper(IntPtr h, string texte)
+    {
+        if (!Activer(h)) return Echec("la fenetre ne vient pas devant");
+        foreach (char c in texte)
+        {
+            INPUT[] k = new INPUT[2];
+            k[0].type = 1;
+            k[0].u.ki.wScan = c;
+            k[0].u.ki.dwFlags = 0x0004;   // KEYEVENTF_UNICODE
+            k[1] = k[0];
+            k[1].u.ki.dwFlags = 0x0004 | 0x0002;   // KEYEVENTF_KEYUP
+            if (SendInput(2, k, Marshal.SizeOf(typeof(INPUT))) != 2) return Echec("SendInput : erreur " + Marshal.GetLastWin32Error());
+            Thread.Sleep(15);
+        }
+        return Ok();
+    }
+
+    static Dictionary<string, object> Touche(IntPtr h, byte vk)
+    {
+        if (!Activer(h)) return Echec("la fenetre ne vient pas devant");
+        keybd_event(vk, 0, 0, UIntPtr.Zero);
+        keybd_event(vk, 0, 2, UIntPtr.Zero);
+        Thread.Sleep(100);
+        return Ok();
+    }
+
+    // The clipboard as Win + Shift + S leaves it: the PNG ("PNG", what a browser reads first) and a bitmap.
+    // The clipboard wants a thread of its own kind (STA).
+    static Dictionary<string, object> Coller(IntPtr h, string b64)
+    {
+        byte[] png = Convert.FromBase64String(b64.Trim());
+        Exception err = null;
+        Thread t = new Thread(delegate ()
+        {
+            try
+            {
+                System.Windows.Forms.DataObject d = new System.Windows.Forms.DataObject();
+                d.SetData("PNG", false, new MemoryStream(png));
+                using (System.Drawing.Image img = System.Drawing.Image.FromStream(new MemoryStream(png)))
+                {
+                    d.SetData(System.Windows.Forms.DataFormats.Bitmap, true, new Bitmap(img));
+                }
+                System.Windows.Forms.Clipboard.SetDataObject(d, true, 10, 100);
+            }
+            catch (Exception e)
+            {
+                err = e;
+            }
+        });
+        t.SetApartmentState(ApartmentState.STA);
+        t.Start();
+        t.Join();
+        if (err != null) return Echec("presse-papiers : " + err.Message);
+        if (!Activer(h)) return Echec("la fenetre ne vient pas devant");
+        keybd_event(0x11, 0, 0, UIntPtr.Zero);   // Ctrl
+        keybd_event(0x56, 0, 0, UIntPtr.Zero);   // V
+        keybd_event(0x56, 0, 2, UIntPtr.Zero);
+        keybd_event(0x11, 0, 2, UIntPtr.Zero);
+        Thread.Sleep(150);
+        return Ok();
     }
 
     // ------------------------------------------------------------------ answers

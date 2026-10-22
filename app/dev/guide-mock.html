@@ -30,12 +30,15 @@
   //     colle             the first paste is not a PNG      deja        a procedure saved before
   //     remote            the brain is pushed every night   refusee     the first save holds a command
   //     filtre            Bibo's filter cut the answer, Claude saw nothing wrong
+  //     prudent           no Opus for this account: Sonnet answers, cautious       sans-modele   neither model
   //     auth, billed, vieux, arrete, installer   what guide_status says instead of « ready »
   //   &vu=0 the first time (G1); &os=windows|linux that system's words; &depose=1 drops a file instead of pasting
   //   (&depose=jpeg, a JPEG); &taille=1 every capture after the first is of another, small size (the hidden zones
   //   are not painted on it); &meme=1 the second capture is the first one again; &vide=1 the first paste holds no
   //   image; &reprise=<s> the limit ends that many seconds from now (quota); &lache=1 a file is dropped on the
-  //   first step, where nothing waits for it.
+  //   first step, where nothing waits for it; &gtk=1 WebKitGTK's paste (no image in the event: Rust reads the
+  //   system's clipboard), &gtk=vide that clipboard empty too; &recolle=<screen> once there, a Ctrl+V of text (no
+  //   image in the event nor, from then on, in the system's clipboard).
   // Driving, for screenshots and app/dev/screens.mjs: &go=<screen> clicks through to that screen
   // (objectif, coller, apercu, cacher, regarde, etape, question, pas-ici, bloque, confirmer, coince, abandon,
   // fin, enregistrer, enregistre, erreur, connexion…), &nth=<n> its n-th arrival, &click=<act>[,<act>…] those
@@ -139,6 +142,8 @@
       delai: [err('delai'), S1, S2, S3, END],
       init: [err('lancement'), S1],
       'image-non-vue': [err('image_non_vue'), S1, S2, S3, END],
+      prudent: [S1, { ...S2, libelle: null }, S3, END].map((a) => ({ ...a, prudent: true })),
+      'sans-modele': [err('modele_absent'), S1, S2, S3, END],
       budget: [S1, err('budget', { quoi: 'seance' })],
       'budget-etape': [S1, err('budget', { quoi: 'etape' })],
     };
@@ -168,6 +173,7 @@
     let cancel = null;
     let small = g === 'petit';
     let unpasted = Boolean(P.get('vide'));
+    let repasted = false;
     // The zones of the window's size, kept while a capture of another size shows none (R7).
     let kept = [];
     // guide.rs numbers each image that may leave: a look names the one it was shown, else no look.
@@ -186,12 +192,13 @@
       if (etat === 'termine') open = false;
       if (demande === 'bloque') blocages += 1;
       const cible = etat === 'etape' ? a.cible || null : null;
-      const niveau = !cible || a.suspect ? 'aucun' : a.confiance >= 0.85 && a.libelle ? 'plein' : a.confiance >= 0.7 ? 'pointille' : 'aucun';
+      // guide.rs: Sonnet (prudent) never gets a full ellipse, nor any without a label to check.
+      const niveau = !cible || a.suspect || (a.prudent && !a.libelle) ? 'aucun' : a.confiance >= 0.85 && a.libelle && !a.prudent ? 'plein' : a.confiance >= 0.7 ? 'pointille' : 'aucun';
       return {
         numero: Math.max(1, etat === 'etape' || etat === 'termine' || open ? steps.length : steps.length + 1),
         etat, consigne: a.consigne, libelle: a.libelle || null, cible, niveau, question: a.question || null, choix: a.choix || [],
         precedente: a.precedente || 'faite', a_confirmer: false, sensible: Boolean(a.sensible), suspect: Boolean(a.suspect),
-        filtre: Boolean(a.filtre), regards, regards_max: 40, blocages, usage: usage(Boolean(a.presque)),
+        filtre: Boolean(a.filtre), regards, regards_max: 40, prudent: Boolean(a.prudent), blocages, usage: usage(Boolean(a.presque)),
         recapitulatif: etat === 'termine' ? steps.map((s) => s.resume || s.consigne) : [],
       };
     }
@@ -232,6 +239,12 @@
         }
         return preview();
       },
+      // WebKitGTK gave the page no image: lib.rs reads GTK's clipboard.
+      async guide_coller_presse_papiers() {
+        await wait(T(200));
+        if (P.get('gtk') === 'vide' || repasted) throw { kind: 'sans_image' };
+        return handlers.guide_coller(new Uint8Array(PNG));
+      },
       // A dropped file waits in guide.rs until the window takes it.
       async guide_prendre_depot() {
         await wait(T(100));
@@ -259,7 +272,7 @@
         regards += 1;
         const next = script.length ? script.shift() : END;
         if (next.err) {
-          if (['hors_ligne', 'quota'].includes(next.err.kind)) regards -= 1;
+          if (['hors_ligne', 'quota', 'modele_absent'].includes(next.err.kind)) regards -= 1;
           throw next.err;
         }
         if (envoi.demande === 'fait' && next.precedente === 'pas_faite' && open) {
@@ -334,7 +347,7 @@
         return;
       }
       // &vide=1: what was pasted holds text, no image; the image comes a moment later.
-      const items = unpasted ? [] : null;
+      const items = unpasted || repasted || P.get('gtk') ? [] : null;
       if (unpasted) setTimeout(paste, 600);
       unpasted = false;
       if (typeof DataTransfer === 'function' && typeof ClipboardEvent === 'function') {
@@ -373,6 +386,7 @@
         q(`[data-act=${clicks.shift()}]`).click();
         return;
       }
+      if (s === P.get('recolle') && !repasted && !clicks.length) { repasted = true; paste(); return; }
       if (s === go && arrivals >= nth && !clicks.length) return;
       if (acted === s) return;
       if (s === 'objectif') {

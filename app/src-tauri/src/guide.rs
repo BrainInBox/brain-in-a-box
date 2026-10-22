@@ -1,10 +1,13 @@
 //! The guide (docs/proposals/guide.md): the user shows Bibo a window of a program, says what they
 //! want to do in it, and their own Claude says the next action, one at a time, pointed on the image.
 //!
-//! In v1 the user pastes the capture (§G2, « Colle une capture »); the automatic capture comes later.
+//! The user pastes the capture (§G2, « Colle une capture »), or, on Windows, Bibo captures the window
+//! they clicked in (capture/, phase 2a): that window alone, checked to be still theirs before each look.
 //! Claude runs as the repair's does (claude.rs: no tool, checked line by line), with the capture on
-//! stdin and Opus (phase 0, §15). Its answer is trusted for nothing: the band's code proves it read
-//! this very image, its zone must fit the image, and every sentence goes through a filter that no
+//! stdin and Opus (phase 0, §15), or Sonnet in a cautious mode when the account cannot use Opus
+//! (decision 8, §22: never a full ellipse, a question when in doubt). Its answer is trusted for
+//! nothing: the band's code proves it read this very image, its zone must fit the image, and every
+//! sentence goes through a filter that no
 //! instruction to open a link, call a number, type a command or let someone in from afar gets past
 //! (§4.6). The session lives in memory only: no image, no answer, no objective is ever written. On
 //! disk, two files: an empty flag once the user read how the guide looks (`vu`), and one line of
@@ -23,6 +26,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use crate::capture::{self, Fenetre, Pick, Rate, Screen, Window};
 use crate::claude::{self, ClaudeError, RateLimit, MIN_CLAUDE, REQUIRED_FLAGS};
 use crate::detect::{self, parse_version};
 use crate::shot::{self, Rgb, Rgba, Zone};
@@ -43,6 +47,14 @@ pub const SCHEMA: &str = r#"{"type":"object","additionalProperties":false,"requi
 
 /// Phase 0: Sonnet drew a full ellipse on a choice the user had not made; Opus did not.
 const MODEL: &str = "opus";
+/// When the account cannot use Opus (decision 8: the guide works from Claude Pro): Sonnet, in the
+/// cautious mode, for the rest of the app's run.
+const MODEL_PRUDENT: &str = "sonnet";
+/// What Sonnet is asked on top (its miss in phase 0: a step on a dialog that waited for the user).
+const PRUDENT_RULE: &str = "K. Prudence : au moindre doute, demande. Si plusieurs éléments peuvent convenir, ou si une boîte de
+   dialogue, un message ou une fenêtre par-dessus attend une réponse, etat = question, avec pour choix les
+   libellés exacts de l'écran. Ne donne une étape que si un seul élément correspond sans aucun doute, et
+   donne toujours son libellé exact.";
 const EFFORT: &str = "low";
 const BUDGET_USD: f64 = 0.25;
 const MAX_TURNS: u32 = 3;
@@ -117,6 +129,8 @@ pub struct Status {
     pub cerveau: bool,
     /// « Comment je regarde ton écran » was read once.
     pub vu: bool,
+    /// The account cannot use Opus: Sonnet answers, in the cautious mode (known once asked, this run).
+    pub prudent: bool,
 }
 
 /// The image exactly as it will leave, for « Voici ce que Claude va voir ».
@@ -225,6 +239,8 @@ pub struct Etape {
     pub filtre: bool,
     pub regards: usize,
     pub regards_max: usize,
+    /// Sonnet answered, the account having no Opus: never a full ellipse, and the window says why.
+    pub prudent: bool,
     /// « Je suis bloqué » on this step.
     pub blocages: usize,
     pub usage: Option<Usage>,
@@ -290,6 +306,8 @@ pub enum GuideError {
     ImageIllisible,
     /// Not a PNG (a dropped JPEG: only a paste is redrawn as one, in the window).
     PasPng,
+    /// Ctrl+V with no image in the clipboard (Linux, where Rust reads it).
+    SansImage,
     ObjectifVide,
     Annule,
     Delai,
@@ -302,6 +320,8 @@ pub enum GuideError {
     Lancement,
     /// The model refused to look at it: no other model answers in its place.
     Refus,
+    /// The account can use neither Opus nor Sonnet in Claude Code.
+    ModeleAbsent,
     /// The band's code was not copied: Claude did not see this image.
     ImageNonVue,
     /// No answer, or one outside the schema or its rules.
@@ -313,13 +333,34 @@ pub enum GuideError {
     ProcedureVide,
     /// The title (None) or that step holds a link, a number to call, a command or remote access.
     ProcedureRefusee { etape: Option<usize> },
+    /// No automatic capture on this system (yet): the user pastes one.
+    CaptureIndisponible,
+    /// « Regarde » before a window was chosen.
+    SansFenetre,
+    /// Closed, or its id now another program's window (R22): « Je ne trouve plus ta fenêtre ».
+    FenetreIntrouvable,
+    /// Minimized or hidden: « ouvre ta fenêtre en grand ».
+    FenetreReduite,
+    /// The window drew nothing Bibo can see (DirectX, a program run as administrator, a protected
+    /// window): no image leaves, the user pastes a capture instead.
+    CaptureNoire,
+    /// No click in a window within 15 s, or no choice in the system's picker for too long.
+    AucunClic,
+    /// The system's picker closed without a window (macOS): « Tu as fermé la fenêtre de choix ».
+    SelecteurFerme,
+    /// macOS would not show its picker, for this reason (macOS's own words).
+    SelecteurRefuse {
+        raison: String,
+    },
+    /// « Je ne guide pas dans un terminal » (R6).
+    Terminal,
     Interne { message: String },
 }
 
 impl GuideError {
     /// Claude's service refused before any work: the look is given back.
     fn free(&self) -> bool {
-        matches!(self, GuideError::Quota { .. } | GuideError::Connexion | GuideError::Api | GuideError::HorsLigne)
+        matches!(self, GuideError::Quota { .. } | GuideError::Connexion | GuideError::Api | GuideError::HorsLigne | GuideError::ModeleAbsent)
     }
 
     /// For the counters: the kind alone.
@@ -572,11 +613,14 @@ struct Answer {
     filtre: bool,
     resume: String,
     niveau: Niveau,
+    /// Sonnet's answer, in the cautious mode.
+    prudent: bool,
 }
 
 /// Claude's answer against the band's code, the image's size (`w`×`h`, band left out) and the rules
-/// of §4.6. Never trusted for more than they allow.
-fn check_answer(out: &Value, code: &str, (w, h): (u32, u32), demande: Demande) -> Result<Answer, GuideError> {
+/// of §4.6. Never trusted for more than they allow. `prudent`: Sonnet's, which never gets a full
+/// ellipse, nor any without a label to check.
+fn check_answer(out: &Value, code: &str, (w, h): (u32, u32), demande: Demande, prudent: bool) -> Result<Answer, GuideError> {
     let bad = || GuideError::Invalide;
     let text = |key: &str, max: usize| -> Result<Option<String>, GuideError> {
         match out.get(key) {
@@ -640,7 +684,7 @@ fn check_answer(out: &Value, code: &str, (w, h): (u32, u32), demande: Demande) -
     });
     let (question, choix) = if etat == Etat::Question { (question, choix) } else { (None, Vec::new()) };
 
-    let mut a = Answer { etat, consigne, libelle, cible, confiance, question, choix, precedente, sensible: said_sensitive, suspect: said_suspect, filtre: false, resume, niveau: Niveau::Aucun };
+    let mut a = Answer { etat, consigne, libelle, cible, confiance, question, choix, precedente, sensible: said_sensitive, suspect: said_suspect, filtre: false, resume, niveau: Niveau::Aucun, prudent };
     let texts = || [Some(&a.consigne), a.libelle.as_ref(), a.question.as_ref(), Some(&a.resume)].into_iter().flatten().chain(&a.choix);
     if !texts().all(|t| allowed(t)) {
         // The filter: Bibo's sentence, nothing of Claude's, nothing to click.
@@ -649,7 +693,8 @@ fn check_answer(out: &Value, code: &str, (w, h): (u32, u32), demande: Demande) -
     a.sensible |= [Some(&a.consigne), a.libelle.as_ref()].into_iter().flatten().any(|t| sensitive(t));
     a.niveau = match (&a.cible, &a.libelle) {
         _ if a.suspect => Niveau::Aucun,
-        (Some(_), Some(_)) if a.confiance >= PLEIN => Niveau::Plein,
+        (Some(_), None) if prudent => Niveau::Aucun,
+        (Some(_), Some(_)) if a.confiance >= PLEIN && !prudent => Niveau::Plein,
         (Some(_), _) if a.confiance >= POINTILLE => Niveau::Pointille,
         _ => Niveau::Aucun,
     };
@@ -820,25 +865,6 @@ fn context(vault: Option<&Path>, logiciel: &str, objectif: &str) -> Context {
     }
 }
 
-// ── A window, kept for the session (§G2, R22) ───────────────────────────────
-
-/// A window as the automatic capture finds it (phases 2a and 2b): an id may be given to another
-/// program's window, so the process and the program are kept with it and checked before each look.
-#[cfg_attr(not(test), allow(dead_code))] // the automatic capture checks it before each look (phases 2a, 2b)
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Window {
-    pub id: u64,
-    pub pid: u32,
-    /// The executable, or WM_CLASS.
-    pub app: String,
-}
-
-/// « Je ne trouve plus ta fenêtre » unless the window found under the id is the one chosen.
-#[cfg_attr(not(test), allow(dead_code))]
-pub fn same_window(chosen: &Window, found: Option<&Window>) -> bool {
-    found.is_some_and(|w| w == chosen)
-}
-
 // ── The session ─────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -900,6 +926,8 @@ struct Session {
     logiciel: String,
     objectif: String,
     context: Context,
+    /// The window Bibo captures (Windows): its id, process and program, checked before each look (R22).
+    fenetre: Option<Window>,
     shot: Option<Shot>,
     /// The hidden zones of each size of capture (R7): a dialog of another size does not lose those
     /// of the window, which come back with it.
@@ -928,6 +956,8 @@ struct Launch {
     launches: AtomicUsize,
     /// Claude once started outside the expected setup: not asked again until the app restarts.
     unsupported: AtomicBool,
+    /// Claude Code said the account cannot use Opus: Sonnet, cautious, until the app restarts.
+    prudent: AtomicBool,
 }
 
 #[derive(Default)]
@@ -938,6 +968,11 @@ struct Guide {
     next_id: AtomicU64,
     /// A file dropped on the window, until the window takes it (it does when it waits for a capture).
     staged: Mutex<Option<Rgba>>,
+    /// The windows last shown in the list, or the one clicked: the only ones that may be chosen, as
+    /// they were then (an id seen once is not enough).
+    offered: Mutex<Vec<Window>>,
+    /// « Arrêter » while Bibo waits for the click.
+    stop_waiting: AtomicBool,
 }
 
 /// Each image that may leave has its number, never given twice.
@@ -1140,6 +1175,7 @@ impl Session {
             filtre: a.filtre,
             regards: self.regards,
             regards_max: REGARDS_PAR_SEANCE,
+            prudent: a.prudent,
             blocages: self.blocages,
             usage: usage(self.rate_limit.as_ref()),
             recapitulatif: match a.etat {
@@ -1300,6 +1336,8 @@ struct Ctx<'a> {
 /// What one question leaves in the counters' journal: no word of the user's nor of Claude's.
 #[derive(Default)]
 struct Run {
+    /// The model asked for.
+    model: &'static str,
     version: Option<String>,
     secs: f64,
     num_turns: Option<u64>,
@@ -1322,6 +1360,7 @@ impl Guide {
             capture: Capture::Collage { raison: "a_venir" },
             cerveau: detect::vault(home).is_some(),
             vu: home.join(STORE).join("vu").is_file(),
+            prudent: self.launch.prudent.load(Ordering::SeqCst),
         }
     }
 
@@ -1346,7 +1385,7 @@ impl Guide {
         if let Some(sh) = shot.as_mut() {
             sh.answered = false;
         }
-        *guard = Some(Session { started: true, logiciel: logiciel.clone(), objectif, context, shot, zones: old.zones, ..self.new_session() });
+        *guard = Some(Session { started: true, logiciel: logiciel.clone(), objectif, context, fenetre: old.fenetre, shot, zones: old.zones, ..self.new_session() });
         Ok(Debut { logiciel, deja_appris })
     }
 
@@ -1395,8 +1434,115 @@ impl Guide {
     }
 
     fn end(&self) {
+        self.stop_waiting.store(true, Ordering::SeqCst);
         *lock(&self.session) = None;
         *lock(&self.staged) = None;
+        lock(&self.offered).clear();
+    }
+
+    /// « Fermer le guide »: the session gone, and the window the system gave with it (macOS: the
+    /// picker put away, its sharing indicator off).
+    fn close(&self, screen: &dyn Screen) {
+        self.end();
+        screen.forget();
+    }
+
+    // ── The automatic capture (G2, R4, R22) ──
+
+    /// G2's list: the windows of other programs, which become the ones that may be chosen. None on
+    /// macOS, where only the system's picker may show them.
+    fn list(&self, screen: &dyn Screen) -> Result<Vec<Fenetre>, GuideError> {
+        if !screen.available() || screen.picker() {
+            return Err(GuideError::CaptureIndisponible);
+        }
+        let found = screen.windows();
+        *lock(&self.offered) = found.iter().map(|f| f.window.clone()).collect();
+        Ok(found.iter().map(Fenetre::from).collect())
+    }
+
+    /// « Clique dans la fenêtre de ton logiciel »: the window that comes to the front within 15 s,
+    /// which becomes the only one that may be chosen.
+    fn wait_click(&self, screen: &dyn Screen) -> Result<Fenetre, GuideError> {
+        if !screen.available() || screen.picker() {
+            return Err(GuideError::CaptureIndisponible);
+        }
+        self.stop_waiting.store(false, Ordering::SeqCst);
+        let clicked = screen.clicked(&self.stop_waiting);
+        let stopped = self.stop_waiting.load(Ordering::SeqCst);
+        let clicked = clicked.filter(|_| !stopped);
+        *lock(&self.offered) = clicked.iter().map(|f| f.window.clone()).collect();
+        match clicked {
+            Some(f) => Ok(Fenetre::from(&f)),
+            None if stopped => Err(GuideError::Annule),
+            None => Err(GuideError::AucunClic),
+        }
+    }
+
+    /// « Oui » (or a line of the list): the window kept for the session, if it is still the one
+    /// offered, and not a terminal. On macOS, no id: the window the user picks in the system's picker.
+    fn choose(&self, screen: &dyn Screen, id: Option<u64>) -> Result<Fenetre, GuideError> {
+        if !screen.available() {
+            return Err(GuideError::CaptureIndisponible);
+        }
+        let offered = match id {
+            None if screen.picker() => self.picked(screen)?,
+            // A window of the list or the click; on macOS, of the picker only.
+            Some(id) if !screen.picker() => lock(&self.offered).iter().find(|w| w.id == id).cloned().ok_or(GuideError::FenetreIntrouvable)?,
+            _ => return Err(GuideError::FenetreIntrouvable),
+        };
+        let now = screen.find(offered.id).filter(|f| capture::same_window(&offered, Some(&f.window))).ok_or(GuideError::FenetreIntrouvable)?;
+        if now.terminal {
+            return Err(GuideError::Terminal);
+        }
+        let _busy = Busy::take(&self.busy)?;
+        lock(&self.session).get_or_insert_with(|| self.new_session()).fenetre = Some(offered);
+        Ok(Fenetre::from(&now))
+    }
+
+    /// The system's picker: the window the user picks there becomes the one offered. « Arrêter », or
+    /// the guide closed meanwhile: nothing is kept.
+    fn picked(&self, screen: &dyn Screen) -> Result<Window, GuideError> {
+        self.stop_waiting.store(false, Ordering::SeqCst);
+        let picked = screen.pick(&self.stop_waiting);
+        let stopped = self.stop_waiting.load(Ordering::SeqCst);
+        match picked {
+            Pick::Choisie(f) if !stopped => {
+                *lock(&self.offered) = vec![f.window.clone()];
+                Ok(f.window)
+            }
+            Pick::Choisie(_) => Err(GuideError::Annule),
+            Pick::Arrete if stopped => Err(GuideError::Annule),
+            Pick::Arrete => Err(GuideError::AucunClic),
+            Pick::Fermee => Err(GuideError::SelecteurFerme),
+            Pick::Refus(raison) => Err(GuideError::SelecteurRefuse { raison }),
+        }
+    }
+
+    /// « Regarde mon écran », and each look after: the chosen window captured anew, if it is still
+    /// the one chosen. A black capture never leaves: the user pastes one instead.
+    fn look(&self, screen: &dyn Screen) -> Result<Apercu, GuideError> {
+        if !screen.available() {
+            return Err(GuideError::CaptureIndisponible);
+        }
+        let chosen = lock(&self.session).as_ref().and_then(|s| s.fenetre.clone()).ok_or(GuideError::SansFenetre)?;
+        let now = screen.find(chosen.id).filter(|f| capture::same_window(&chosen, Some(&f.window))).ok_or(GuideError::FenetreIntrouvable)?;
+        if now.reduite {
+            return Err(GuideError::FenetreReduite);
+        }
+        let capture = screen.grab(&chosen).map_err(|r| match r {
+            Rate::Indisponible => GuideError::CaptureIndisponible,
+            Rate::Introuvable => GuideError::FenetreIntrouvable,
+            Rate::Reduite => GuideError::FenetreReduite,
+            Rate::Noire => GuideError::CaptureNoire,
+        })?;
+        if shot::black_share(&capture) > NOIR {
+            return Err(GuideError::CaptureNoire);
+        }
+        let _busy = Busy::take(&self.busy)?;
+        let mut guard = lock(&self.session);
+        // « Fermer le guide », or another window chosen meanwhile: this capture goes nowhere.
+        let s = guard.as_mut().filter(|s| s.fenetre.as_ref() == Some(&chosen)).ok_or(GuideError::SansFenetre)?;
+        Ok(s.take_capture(capture))
     }
 
     /// One question: the limits, the check once a session, Claude, its answer checked and applied.
@@ -1430,11 +1576,31 @@ impl Guide {
             self.launch.regards.fetch_add(1, Ordering::SeqCst);
             (s.id, code, png, size, text, s.checked.clone())
         };
-        let mut run = Run { image_bytes: png.len(), ..Run::default() };
-        let res = self.ask(ctx, &text, &png, &code, size, envoi.demande, checked, &mut run, on_progress);
-        if run.launched {
-            let end = res.as_ref().map(|(a, _)| a.etat);
-            journal(&ctx.store, &entry(envoi.demande, &run, end, self.launch.regards.load(Ordering::SeqCst)));
+        let log = |run: &Run, res: &Result<(Answer, Option<RateLimit>), GuideError>| {
+            if run.launched {
+                let end = res.as_ref().map(|(a, _)| a.etat);
+                journal(&ctx.store, &entry(envoi.demande, run, end, self.launch.regards.load(Ordering::SeqCst)));
+            }
+        };
+        let model = if self.launch.prudent.load(Ordering::SeqCst) { MODEL_PRUDENT } else { MODEL };
+        let mut run = Run { model, image_bytes: png.len(), ..Run::default() };
+        let mut res = self.ask(ctx, &text, &png, &code, size, envoi.demande, checked, &mut run, on_progress);
+        log(&run, &res);
+        if model == MODEL && matches!(res, Err(GuideError::ModeleAbsent)) {
+            // No Opus for this account (decision 8): Sonnet, cautious, from now on; this very look at
+            // once, on the same image with a new band (R10), unless the session went meanwhile.
+            self.launch.prudent.store(true, Ordering::SeqCst);
+            let again = lock(&self.session).as_ref().filter(|s| s.id == id).and_then(|s| s.shot.as_ref()).map(|sh| banded(&sh.sent));
+            let checked = run.version.clone();
+            res = match again {
+                None => Err(GuideError::Annule),
+                Some((code, png)) => {
+                    run = Run { model: MODEL_PRUDENT, image_bytes: png.len(), ..Run::default() };
+                    let res = self.ask(ctx, &text, &png, &code, size, envoi.demande, checked, &mut run, on_progress);
+                    log(&run, &res);
+                    res
+                }
+            };
         }
         let mut guard = lock(&self.session);
         let session = guard.as_mut().filter(|s| s.id == id);
@@ -1498,9 +1664,11 @@ impl Guide {
         let env = child_env(&ctx.home, &ctx.user, &ctx.path, &work.0.join("tmp"));
         let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (*k, v.as_str())).collect();
         let place = claude::Place { env: &env, cwd: &work.0, limit: CALL_LIMIT, cancel: ctx.cancel };
+        let prudent = run.model == MODEL_PRUDENT;
         let system = format!("{}\n\n{JSON_RULE}", CONSIGNES.trim_end());
+        let system = if prudent { format!("{system}\n{PRUDENT_RULE}") } else { system };
         let images: [&[u8]; 1] = [png];
-        let q = claude::Question { text, images: &images, schema: SCHEMA, system: &system, model: Some(MODEL), effort: Some(EFFORT), budget_usd: BUDGET_USD, max_turns: MAX_TURNS };
+        let q = claude::Question { text, images: &images, schema: SCHEMA, system: &system, model: Some(run.model), effort: Some(EFFORT), budget_usd: BUDGET_USD, max_turns: MAX_TURNS };
 
         on_progress(Progress::Asking);
         self.launch.launches.fetch_add(1, Ordering::SeqCst);
@@ -1531,6 +1699,7 @@ impl Guide {
             ClaudeError::Auth => GuideError::Connexion,
             ClaudeError::Api if !(ctx.online)() => GuideError::HorsLigne,
             ClaudeError::Api => GuideError::Api,
+            ClaudeError::NoModel => GuideError::ModeleAbsent,
             ClaudeError::Init => {
                 self.launch.unsupported.store(true, Ordering::SeqCst);
                 GuideError::Lancement
@@ -1538,7 +1707,7 @@ impl Guide {
             ClaudeError::Invalid => GuideError::Invalide,
             ClaudeError::Refused => GuideError::Refus,
         });
-        let answer = check_answer(&out?, code, size, demande)?;
+        let answer = check_answer(&out?, code, size, demande, prudent)?;
         Ok((answer, rate_limit))
     }
 }
@@ -1575,7 +1744,7 @@ fn entry(demande: Demande, run: &Run, end: Result<Etat, &GuideError>, regards: u
         "app": env!("CARGO_PKG_VERSION"),
         "moteur": "claude",
         "claude_code_version": run.version,
-        "modele": MODEL,
+        "modele": run.model,
         "demande": demande,
         "issue": issue,
         "duree_s": (run.secs * 10.0).round() / 10.0,
@@ -1869,6 +2038,27 @@ pub fn prendre_depot() -> Result<Apercu, GuideError> {
     GUIDE.take_staged()
 }
 
+/// G2's list (Windows): other programs' windows, Bibo's left out, the minimized ones marked.
+pub fn fenetres() -> Result<Vec<Fenetre>, GuideError> {
+    GUIDE.list(&capture::System)
+}
+
+/// « Clique dans la fenêtre de ton logiciel » (Windows): the window clicked within 15 s.
+pub fn attendre_clic() -> Result<Fenetre, GuideError> {
+    GUIDE.wait_click(&capture::System)
+}
+
+/// The window chosen, from the list or the click: kept with its process and program (R22). On macOS,
+/// no id: the system's picker.
+pub fn choisir(id: Option<u64>) -> Result<Fenetre, GuideError> {
+    GUIDE.choose(&capture::System, id)
+}
+
+/// The chosen window, captured now: its preview, as a pasted capture's.
+pub fn regarder() -> Result<Apercu, GuideError> {
+    GUIDE.look(&capture::System)
+}
+
 pub fn cacher(zones: &[Zone]) -> Result<Apercu, GuideError> {
     GUIDE.hide(zones)
 }
@@ -1907,6 +2097,7 @@ pub fn trancher(faite: bool) -> Result<Etape, GuideError> {
 
 pub fn annuler() {
     CANCEL.store(true, Ordering::SeqCst);
+    GUIDE.stop_waiting.store(true, Ordering::SeqCst);
 }
 
 /// G10: the procedure drafted from the session's steps, for the user to read before anything is written.
@@ -1923,7 +2114,12 @@ pub fn enregistrer(note: &NoteGuide) -> Result<Enregistre, GuideError> {
 /// « Fermer le guide », or its window closed: everything of the session forgotten, images included.
 pub fn fin() {
     CANCEL.store(true, Ordering::SeqCst);
-    GUIDE.end();
+    GUIDE.close(&capture::System);
+}
+
+/// The window is chosen in the system's own picker (macOS 14 and later).
+pub fn selecteur() -> bool {
+    capture::System.available() && capture::System.picker()
 }
 
 // ── The window's place (§1) ─────────────────────────────────────────────────
@@ -2137,7 +2333,7 @@ mod tests {
     }
 
     fn check(over: Value) -> Result<Answer, GuideError> {
-        check_answer(&answer(over), "MNPR", (W, H), Demande::Fait)
+        check_answer(&answer(over), "MNPR", (W, H), Demande::Fait, false)
     }
 
     #[test]
@@ -2241,7 +2437,7 @@ mod tests {
 
     #[test]
     fn at_the_start_there_is_no_previous_step() {
-        let a = check_answer(&answer(json!({"precedente": "pas_faite"})), "MNPR", (W, H), Demande::Debut).unwrap();
+        let a = check_answer(&answer(json!({"precedente": "pas_faite"})), "MNPR", (W, H), Demande::Debut, false).unwrap();
         assert_eq!(a.precedente, Precedente::SansObjet);
     }
 
@@ -2347,17 +2543,6 @@ mod tests {
         fs::remove_file(v.path().join("Profile/stack.md")).unwrap();
         std::os::unix::fs::symlink(secret.path().join("cle.md"), v.path().join("Profile/stack.md")).unwrap();
         assert_eq!(context(Some(v.path()), "Odoo", "Faire une facture"), Context::default());
-    }
-
-    // ── Windows (phases 2a, 2b) ──
-
-    #[test]
-    fn the_same_id_under_another_process_is_not_the_window() {
-        let chosen = Window { id: 42, pid: 100, app: "chrome.exe".into() };
-        assert!(same_window(&chosen, Some(&chosen.clone())));
-        assert!(!same_window(&chosen, Some(&Window { pid: 101, ..chosen.clone() })));
-        assert!(!same_window(&chosen, Some(&Window { app: "evil.exe".into(), ..chosen.clone() })));
-        assert!(!same_window(&chosen, None));
     }
 
     // ── The session, with a fake Claude ──
@@ -2722,6 +2907,280 @@ mod tests {
         assert_eq!(lock(&b.guide.session).as_ref().unwrap().regards, 1, "nothing sent meanwhile");
     }
 
+    // ── The automatic capture (Windows), with a fake screen ──
+
+    /// What a capture of a window gives: a plain image of that size and colour, or why not.
+    type Drawn = Result<(u32, u32, [u8; 4]), Rate>;
+
+    /// The windows a test puts on its screen. `grab` checks nothing: the guide must.
+    #[derive(Default)]
+    struct FakeScreen {
+        off: bool,
+        windows: Mutex<Vec<capture::Found>>,
+        clicked: Mutex<Option<capture::Found>>,
+        /// « Arrêter » pressed while Bibo waits.
+        stopped_meanwhile: bool,
+        images: Mutex<HashMap<u64, Drawn>>,
+        grabs: AtomicUsize,
+        /// macOS: the system's picker, and what the user does in it.
+        picker: bool,
+        picked: Mutex<Option<Pick>>,
+        forgotten: AtomicUsize,
+    }
+
+    impl Screen for FakeScreen {
+        fn available(&self) -> bool {
+            !self.off
+        }
+        fn picker(&self) -> bool {
+            self.picker
+        }
+        fn pick(&self, cancel: &AtomicBool) -> Pick {
+            if self.stopped_meanwhile {
+                cancel.store(true, Ordering::SeqCst);
+            }
+            lock(&self.picked).take().unwrap_or(Pick::Arrete)
+        }
+        fn forget(&self) {
+            self.forgotten.fetch_add(1, Ordering::SeqCst);
+        }
+        fn windows(&self) -> Vec<capture::Found> {
+            lock(&self.windows).clone()
+        }
+        fn clicked(&self, cancel: &AtomicBool) -> Option<capture::Found> {
+            if self.stopped_meanwhile {
+                cancel.store(true, Ordering::SeqCst);
+            }
+            if cancel.load(Ordering::SeqCst) {
+                return None;
+            }
+            lock(&self.clicked).clone()
+        }
+        fn find(&self, id: u64) -> Option<capture::Found> {
+            lock(&self.windows).iter().find(|f| f.window.id == id).cloned()
+        }
+        fn grab(&self, chosen: &Window) -> Result<Rgba, Rate> {
+            self.grabs.fetch_add(1, Ordering::SeqCst);
+            let (w, h, color) = lock(&self.images).get(&chosen.id).cloned().unwrap_or(Ok((900, 700, [210, 220, 230, 255])))?;
+            Ok(crate::shot::tests::rgba(w, h, color))
+        }
+    }
+
+    fn window(id: u64, pid: u32, exe: &str, titre: &str) -> capture::Found {
+        capture::Found { window: Window { id, pid, app: format!("C:\\Apps\\{exe}") }, nom: exe.trim_end_matches(".exe").into(), titre: titre.into(), reduite: false, terminal: false }
+    }
+
+    fn screen_with(windows: Vec<capture::Found>) -> FakeScreen {
+        FakeScreen { windows: Mutex::new(windows), ..FakeScreen::default() }
+    }
+
+    #[test]
+    fn the_list_says_which_windows_may_be_chosen() {
+        let b = Bench::new();
+        let long = format!("Boulangerie Martin - {}", "facture ".repeat(20));
+        let screen = screen_with(vec![window(11, 100, "odoo.exe", &long), capture::Found { reduite: true, ..window(12, 200, "excel.exe", "Budget.xlsx") }]);
+        let list = b.guide.list(&screen).unwrap();
+        assert_eq!(list.iter().map(|f| (f.id, f.app.as_str(), f.reduite)).collect::<Vec<_>>(), [(11, "odoo", false), (12, "excel", true)]);
+        assert_eq!(list[0].titre.chars().count(), 60, "the title cut");
+        // A window never shown is not chosen, whatever its id.
+        assert_eq!(b.guide.choose(&screen, Some(13)), Err(GuideError::FenetreIntrouvable));
+        assert_eq!(b.guide.choose(&screen, None), Err(GuideError::FenetreIntrouvable));
+        assert_eq!(b.guide.choose(&screen, Some(11)).unwrap().id, 11);
+        assert_eq!(lock(&b.guide.session).as_ref().unwrap().fenetre.as_ref().map(|w| w.pid), Some(100));
+    }
+
+    /// R22: an id can go to another program's window. Between the list and the choice, and before
+    /// each look, the window under it must be the one offered: same process, same program.
+    #[test]
+    fn the_window_is_checked_before_it_is_chosen_and_before_each_look() {
+        let b = Bench::new();
+        let screen = screen_with(vec![window(11, 100, "odoo.exe", "Odoo")]);
+        b.guide.list(&screen).unwrap();
+        *lock(&screen.windows) = vec![window(11, 666, "odoo.exe", "Odoo")];
+        assert_eq!(b.guide.choose(&screen, Some(11)), Err(GuideError::FenetreIntrouvable), "another process under the id");
+        *lock(&screen.windows) = vec![window(11, 100, "piege.exe", "Odoo")];
+        assert_eq!(b.guide.choose(&screen, Some(11)), Err(GuideError::FenetreIntrouvable), "another program");
+        assert!(lock(&b.guide.session).as_ref().is_none_or(|s| s.fenetre.is_none()));
+
+        *lock(&screen.windows) = vec![window(11, 100, "odoo.exe", "Odoo")];
+        b.guide.choose(&screen, Some(11)).unwrap();
+        assert_eq!(b.guide.look(&screen).unwrap().largeur, 900);
+        for now in [vec![], vec![window(11, 101, "odoo.exe", "Odoo")], vec![window(11, 100, "autre.exe", "Odoo")]] {
+            *lock(&screen.windows) = now;
+            let grabs = screen.grabs.load(Ordering::SeqCst);
+            assert_eq!(b.guide.look(&screen), Err(GuideError::FenetreIntrouvable));
+            assert_eq!(screen.grabs.load(Ordering::SeqCst), grabs, "nothing captured");
+        }
+        // The system's own check, after the capture too, says the same.
+        *lock(&screen.windows) = vec![window(11, 100, "odoo.exe", "Odoo")];
+        lock(&screen.images).insert(11, Err(Rate::Introuvable));
+        assert_eq!(b.guide.look(&screen), Err(GuideError::FenetreIntrouvable));
+    }
+
+    #[test]
+    fn a_minimized_window_or_a_black_capture_never_leaves() {
+        let b = Bench::new();
+        let screen = screen_with(vec![window(11, 100, "odoo.exe", "Odoo")]);
+        b.guide.list(&screen).unwrap();
+        b.guide.choose(&screen, Some(11)).unwrap();
+        let first = b.guide.look(&screen).unwrap();
+
+        *lock(&screen.windows) = vec![capture::Found { reduite: true, ..window(11, 100, "odoo.exe", "Odoo") }];
+        let grabs = screen.grabs.load(Ordering::SeqCst);
+        assert_eq!(b.guide.look(&screen), Err(GuideError::FenetreReduite));
+        assert_eq!(screen.grabs.load(Ordering::SeqCst), grabs, "a minimized window is not captured");
+
+        *lock(&screen.windows) = vec![window(11, 100, "odoo.exe", "Odoo")];
+        for (got, said) in [
+            (Err(Rate::Reduite), GuideError::FenetreReduite),
+            (Err(Rate::Noire), GuideError::CaptureNoire),
+            (Err(Rate::Indisponible), GuideError::CaptureIndisponible),
+            // Drawn, but black: DirectX, a program run as administrator, a protected window.
+            (Ok((900, 700, [0, 0, 0, 255])), GuideError::CaptureNoire),
+            (Ok((900, 700, [3, 5, 2, 255])), GuideError::CaptureNoire),
+        ] {
+            lock(&screen.images).insert(11, got);
+            assert_eq!(b.guide.look(&screen), Err(said));
+            assert_eq!(b.shown(), Some(first.capture), "the capture before stays the one shown");
+        }
+        // A dark theme is not black.
+        lock(&screen.images).insert(11, Ok((900, 700, [30, 30, 30, 255])));
+        assert!(!b.guide.look(&screen).unwrap().noir);
+    }
+
+    #[test]
+    fn a_terminal_is_not_guided() {
+        let b = Bench::new();
+        let screen = screen_with(vec![capture::Found { terminal: true, ..window(5, 9, "cmd.exe", "Invite de commandes") }]);
+        assert!(b.guide.list(&screen).unwrap()[0].terminal);
+        assert_eq!(b.guide.choose(&screen, Some(5)), Err(GuideError::Terminal));
+        assert_eq!(b.guide.look(&screen), Err(GuideError::SansFenetre));
+    }
+
+    #[test]
+    fn the_click_waits_for_a_window_and_stops_on_demand() {
+        let b = Bench::new();
+        let odoo = window(11, 100, "odoo.exe", "Odoo");
+        let screen = FakeScreen { clicked: Mutex::new(Some(odoo.clone())), ..screen_with(vec![odoo.clone()]) };
+        assert_eq!(b.guide.wait_click(&screen).unwrap().id, 11);
+        assert_eq!(b.guide.choose(&screen, Some(11)).unwrap().app, "odoo");
+
+        *lock(&screen.clicked) = None;
+        assert_eq!(b.guide.wait_click(&screen), Err(GuideError::AucunClic));
+        assert_eq!(b.guide.choose(&screen, Some(11)), Err(GuideError::FenetreIntrouvable), "only the window clicked last may be chosen");
+
+        // « Arrêter » before a click: set again at each wait, whatever stopped the last one.
+        b.guide.stop_waiting.store(true, Ordering::SeqCst);
+        *lock(&screen.clicked) = Some(odoo.clone());
+        assert_eq!(b.guide.wait_click(&screen).unwrap().id, 11);
+        let stopped = FakeScreen { stopped_meanwhile: true, ..FakeScreen { clicked: Mutex::new(Some(odoo.clone())), ..screen_with(vec![odoo]) } };
+        assert_eq!(b.guide.wait_click(&stopped), Err(GuideError::Annule));
+    }
+
+    /// macOS: the window is the one the user picks in the system's picker; there is no list nor
+    /// click, and no id of Bibo's may stand for a window.
+    #[test]
+    fn on_macos_the_window_is_picked_in_the_systems_picker() {
+        let b = Bench::new();
+        let picked = capture::Found {
+            window: Window { id: 1, pid: 812, app: "com.google.Chrome".into() },
+            nom: "Google Chrome".into(),
+            titre: "Odoo".into(),
+            reduite: false,
+            terminal: false,
+        };
+        let screen = FakeScreen { picker: true, picked: Mutex::new(Some(Pick::Choisie(picked.clone()))), ..screen_with(vec![picked.clone()]) };
+        assert_eq!(b.guide.list(&screen), Err(GuideError::CaptureIndisponible), "no list");
+        assert_eq!(b.guide.wait_click(&screen), Err(GuideError::CaptureIndisponible), "no click");
+        assert_eq!(b.guide.choose(&screen, Some(1)), Err(GuideError::FenetreIntrouvable), "an id is no choice");
+        let f = b.guide.choose(&screen, None).unwrap();
+        assert_eq!((f.id, f.app.as_str(), f.titre.as_str()), (1, "Google Chrome", "Odoo"));
+        assert_eq!(lock(&b.guide.session).as_ref().unwrap().fenetre, Some(picked.window.clone()));
+        assert_eq!(b.guide.look(&screen).unwrap().largeur, 900);
+        assert_eq!(b.guide.choose(&screen, Some(1)), Err(GuideError::FenetreIntrouvable), "the window picked, but by its id: no");
+
+        // Closed, refused, nobody chose: the window picked before stays the one captured.
+        for (then, said) in [
+            (Pick::Fermee, GuideError::SelecteurFerme),
+            (Pick::Refus("Le service a refusé.".into()), GuideError::SelecteurRefuse { raison: "Le service a refusé.".into() }),
+            (Pick::Arrete, GuideError::AucunClic),
+        ] {
+            *lock(&screen.picked) = Some(then);
+            assert_eq!(b.guide.choose(&screen, None), Err(said));
+            assert_eq!(lock(&b.guide.session).as_ref().unwrap().fenetre, Some(picked.window.clone()));
+        }
+        assert!(b.guide.look(&screen).is_ok());
+
+        // A terminal picked is refused (R6); the guide closed puts the picker away.
+        let term = capture::Found { window: Window { id: 2, pid: 9, app: "com.apple.Terminal".into() }, terminal: true, ..picked.clone() };
+        let screen = FakeScreen { picker: true, picked: Mutex::new(Some(Pick::Choisie(term.clone()))), ..screen_with(vec![term]) };
+        assert_eq!(b.guide.choose(&screen, None), Err(GuideError::Terminal));
+        b.guide.close(&screen);
+        assert_eq!(screen.forgotten.load(Ordering::SeqCst), 1);
+        assert!(lock(&b.guide.session).is_none());
+    }
+
+    /// « Arrêter » while the picker is out: a window picked then is not kept.
+    #[test]
+    fn a_window_picked_after_stop_is_not_kept() {
+        let b = Bench::new();
+        let picked = capture::Found {
+            window: Window { id: 1, pid: 812, app: "com.google.Chrome".into() },
+            nom: "Google Chrome".into(),
+            titre: "Odoo".into(),
+            reduite: false,
+            terminal: false,
+        };
+        let screen = FakeScreen { picker: true, stopped_meanwhile: true, picked: Mutex::new(Some(Pick::Choisie(picked.clone()))), ..screen_with(vec![picked]) };
+        assert_eq!(b.guide.choose(&screen, None), Err(GuideError::Annule));
+        assert!(lock(&b.guide.session).as_ref().is_none_or(|s| s.fenetre.is_none()));
+        assert_eq!(b.guide.look(&screen), Err(GuideError::SansFenetre));
+        *lock(&screen.picked) = Some(Pick::Arrete);
+        assert_eq!(b.guide.choose(&screen, None), Err(GuideError::Annule));
+    }
+
+    #[test]
+    fn no_automatic_capture_here_means_paste_mode() {
+        let b = Bench::new();
+        let screen = FakeScreen { off: true, ..screen_with(vec![window(11, 100, "odoo.exe", "Odoo")]) };
+        assert_eq!(b.guide.list(&screen), Err(GuideError::CaptureIndisponible));
+        assert_eq!(b.guide.wait_click(&screen), Err(GuideError::CaptureIndisponible));
+        assert_eq!(b.guide.choose(&screen, Some(11)), Err(GuideError::CaptureIndisponible));
+        assert_eq!(b.guide.look(&screen), Err(GuideError::CaptureIndisponible));
+        assert_eq!(b.paste(800, 600).largeur, 800, "the paste still works");
+    }
+
+    /// The window chosen, looked at for each question: the image Claude gets is that capture, a new
+    /// one for « C'est fait ». A new objective keeps the window; the end of the guide forgets it.
+    #[test]
+    fn a_session_with_the_window_captured() {
+        let b = Bench::new();
+        let screen = screen_with(vec![window(11, 100, "odoo.exe", "Odoo")]);
+        assert_eq!(b.guide.look(&screen), Err(GuideError::SansFenetre));
+        b.guide.list(&screen).unwrap();
+        b.guide.choose(&screen, Some(11)).unwrap();
+        b.guide.start(None, "Odoo", "Faire une facture").unwrap();
+        let a = b.guide.look(&screen).unwrap();
+        assert_eq!((a.largeur, a.hauteur, a.noir, a.meme), (900, 700, false, false));
+        b.answers(json!({}));
+        b.send(Demande::Debut).unwrap();
+        assert_eq!(&lock(&b.seen).images[0].px[..3], [210, 220, 230], "the window's pixels");
+
+        // « C'est fait »: the window again, a new capture.
+        lock(&screen.images).insert(11, Ok((900, 700, [10, 200, 30, 255])));
+        let again = b.guide.look(&screen).unwrap();
+        assert_ne!(again.capture, a.capture);
+        b.answers(json!({"precedente": "faite"}));
+        assert_eq!(b.send(Demande::Fait).unwrap().numero, 2);
+        assert_eq!(&lock(&b.seen).images[1].px[..3], [10, 200, 30]);
+
+        b.guide.start(None, "Odoo", "Changer mon logo").unwrap();
+        assert!(b.guide.look(&screen).is_ok(), "a new objective keeps the window");
+        b.guide.end();
+        assert_eq!(b.guide.look(&screen), Err(GuideError::SansFenetre));
+        assert_eq!(b.guide.choose(&screen, Some(11)), Err(GuideError::FenetreIntrouvable), "the list is forgotten too");
+    }
+
     #[test]
     fn the_black_and_small_alerts() {
         let b = Bench::new();
@@ -2792,6 +3251,91 @@ mod tests {
         b2.then(|_| vec![INIT.to_string(), json!({"type":"result","subtype":"success","is_error":true,"result":"API Error: Connection error.","total_cost_usd":0}).to_string()]);
         assert_eq!(b2.send(Demande::Debut), Err(GuideError::HorsLigne));
         assert_eq!(b2.journal()[0]["issue"], "hors_ligne");
+    }
+
+    /// Claude Code's own stream when the account cannot use the model asked for (tests/fixtures/repair).
+    fn refused_model(name: &str) -> Vec<String> {
+        fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/repair/").to_string() + name).unwrap().lines().map(String::from).collect()
+    }
+
+    fn sonnet(over: Value) -> impl Fn(&str) -> Vec<String> {
+        move |code: &str| {
+            let mut a = answer(over.clone());
+            a["code_vu"] = json!(code);
+            stream(&a, "claude-sonnet-5-5", 0.02, 0.3)
+        }
+    }
+
+    /// Decision 8: the guide works from Claude Pro. A plan or an organization without Opus: Claude Code
+    /// says so, the same look goes to Sonnet at once (a new band), and every look after it; Sonnet in the
+    /// cautious mode: never a full ellipse, a label to check or none, a question when in doubt.
+    #[test]
+    fn without_opus_the_guide_goes_on_with_sonnet_in_the_cautious_mode() {
+        for refusal in ["pro-sans-opus.jsonl", "model-not-found.jsonl", "model-fallback.jsonl"] {
+            let b = Bench::new();
+            b.paste(1600, 1000);
+            b.guide.start(None, "Odoo", "Faire une facture").unwrap();
+            b.then(move |_| refused_model(refusal));
+            b.then(sonnet(json!({})));
+            let e = b.send(Demande::Debut).unwrap();
+            assert_eq!((e.etat, e.niveau, e.prudent, e.regards), (Etat::Etape, Niveau::Pointille, true, 1), "{refusal}");
+            assert_eq!(b.guide.launch.launches.load(Ordering::SeqCst), 2, "{refusal}");
+            let seen = lock(&b.seen);
+            let model = |argv: &Vec<String>| argv.windows(2).find(|w| w[0] == "--model").map(|w| w[1].clone());
+            assert_eq!(seen.argv.iter().map(model).collect::<Vec<_>>(), [Some("opus".to_string()), Some("sonnet".to_string())]);
+            assert_ne!(seen.codes[0], seen.codes[1], "a new band for the new question");
+            let system = |argv: &Vec<String>| argv.windows(2).find(|w| w[0] == "--append-system-prompt").map(|w| w[1].clone()).unwrap();
+            assert!(!system(&seen.argv[0]).contains(PRUDENT_RULE) && system(&seen.argv[1]).ends_with(PRUDENT_RULE));
+            drop(seen);
+            let journal = b.journal();
+            assert_eq!(journal.len(), 2);
+            assert_eq!((journal[0]["issue"].as_str(), journal[0]["modele"].as_str()), (Some("modele_absent"), Some("opus")));
+            assert_eq!((journal[1]["issue"].as_str(), journal[1]["modele"].as_str()), (Some("etape"), Some("sonnet")));
+            assert!(b.guide.status(b.home.path(), &|| Ok("2.1.305".into())).prudent);
+        }
+
+        // From then on, Sonnet straight away; no label, no ellipse at all.
+        let b = Bench::new();
+        b.paste(1600, 1000);
+        b.guide.start(None, "Odoo", "Faire une facture").unwrap();
+        b.then(|_| refused_model("pro-sans-opus.jsonl"));
+        b.then(sonnet(json!({})));
+        b.send(Demande::Debut).unwrap();
+        b.paste(1600, 1000);
+        b.then(sonnet(json!({"precedente": "faite", "libelle": null, "confiance": 0.95})));
+        let e = b.send(Demande::Fait).unwrap();
+        assert_eq!((e.niveau, e.prudent, e.numero), (Niveau::Aucun, true, 2));
+        assert_eq!(lock(&b.seen).argv.len(), 3, "no Opus asked again");
+        // A new session of the same run of the app: Sonnet still.
+        b.guide.start(None, "Odoo", "Autre chose").unwrap();
+        b.paste(1600, 1000);
+        b.then(sonnet(json!({})));
+        b.send(Demande::Debut).unwrap();
+        assert_eq!(lock(&b.seen).argv.len(), 4);
+    }
+
+    #[test]
+    fn the_cautious_level_never_draws_a_full_ellipse() {
+        let level = |over: Value| check_answer(&answer(over), "MNPR", (W, H), Demande::Fait, true).unwrap().niveau;
+        assert_eq!(level(json!({"confiance": 1.0})), Niveau::Pointille);
+        assert_eq!(level(json!({"confiance": 0.70})), Niveau::Pointille);
+        assert_eq!(level(json!({"confiance": 0.699})), Niveau::Aucun);
+        assert_eq!(level(json!({"libelle": null})), Niveau::Aucun, "always a label to check");
+        assert_eq!(level(json!({"suspect": true})), Niveau::Aucun);
+        assert!(check_answer(&answer(json!({})), "MNPR", (W, H), Demande::Fait, true).unwrap().prudent);
+        assert!(!check(json!({})).unwrap().prudent);
+    }
+
+    #[test]
+    fn neither_opus_nor_sonnet_is_said_and_the_look_given_back() {
+        let b = Bench::new();
+        b.paste(800, 600);
+        b.guide.start(None, "Odoo", "Faire une facture").unwrap();
+        b.then(|_| refused_model("model-not-found.jsonl"));
+        b.then(|_| refused_model("model-not-found.jsonl").iter().map(|l| l.replace("claude-opus-0-1", "claude-sonnet-0-1")).collect());
+        assert_eq!(b.send(Demande::Debut), Err(GuideError::ModeleAbsent));
+        assert_eq!(lock(&b.guide.session).as_ref().unwrap().regards, 0, "nothing was looked at: given back");
+        assert_eq!(b.journal().iter().map(|j| j["modele"].as_str().unwrap().to_string()).collect::<Vec<_>>(), ["opus", "sonnet"]);
     }
 
     #[test]

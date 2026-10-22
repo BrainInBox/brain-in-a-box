@@ -42,11 +42,73 @@ rfd = { version = "=0.15.4", default-features = false, features = ["gtk3"] }
 # saved for the user (HKCU\Environment), read and written without a PowerShell.
 [target.'cfg(windows)'.dependencies]
 winreg = "0.56"
+# Already in the build through tauri, tao and wry (Cargo.lock): the guide's capture of a window
+# (capture/win.rs), by PrintWindow alone. Features only, no crate: PrintWindow (Win32_Storage_Xps) and
+# a program's name in its version resource (Win32_Storage_FileSystem) are the two the build lacked.
+windows = { version = "=0.61.3", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Dwm",
+  "Win32_Graphics_Gdi",
+  "Win32_Storage_FileSystem",
+  "Win32_Storage_Xps",
+  "Win32_System_Threading",
+  "Win32_UI_HiDpi",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_WindowsAndMessaging",
+] }
+
+# Already in the build through tao (Linux), which loads libX11 at run time: the guide's capture of a
+# window under X11 (capture/x11.rs), with a compositing manager only. No crate more, no -dev package.
+[target.'cfg(target_os = "linux")'.dependencies]
+x11-dl = "=2.21.0"
+# Already in the build through tao and wry: GTK's clipboard, where a capture pasted in the guide is
+# read when WebKitGTK gives the page no image (it hands a page only files).
+gtk = "=0.18.2"
 
 # Already in the build through tauri (macOS): a configuration profile that would pass over the
 # settings the app gives Codex (com.openai.codex), read as the kit's launcher reads it.
 [target.'cfg(target_os = "macos")'.dependencies]
 plist = "1"
+# The guide's capture on macOS 14 and later (capture/mac.rs): the system's picker, then one image of
+# the window picked from a stream (ScreenCaptureKit), its pixels read from CoreVideo. The bindings of
+# objc2 already build tao and wry; ScreenCaptureKit's, CoreMedia's and CoreVideo's are the three
+# crates this adds.
+objc2 = "=0.6.5"
+block2 = "=0.6.2"
+dispatch2 = "=0.3.1"
+objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSArray", "NSBundle", "NSDictionary", "NSError", "NSObject", "NSString", "NSValue"] }
+objc2-core-foundation = { version = "=0.3.2", default-features = false, features = ["std", "CFArray", "CFCGTypes"] }
+objc2-core-media = { version = "=0.3.2", default-features = false, features = ["std", "CMSampleBuffer", "objc2-core-video"] }
+objc2-core-video = { version = "=0.3.2", default-features = false, features = ["std", "CVBase", "CVBuffer", "CVImageBuffer", "CVPixelBuffer", "CVReturn"] }
+objc2-screen-capture-kit = { version = "=0.3.2", default-features = false, features = [
+  "std",
+  "SCContentSharingPicker",
+  "SCShareableContent",
+  "SCStream",
+  "bitflags",
+  "block2",
+  "dispatch2",
+  "libc",
+  "objc2-core-foundation",
+  "objc2-core-media",
+] }
 
 [dev-dependencies]
 tempfile = "3"
+
+# Tauri's mock runtime, for the test of its own check of each window's commands (lib.rs): no crate more.
+# Not on Windows, where a test program linked with it does not start (STATUS_ENTRYPOINT_NOT_FOUND: it lacks
+# the app's manifest of the common controls); the check does not depend on the system.
+[target.'cfg(not(windows))'.dev-dependencies]
+tauri = { version = "2", features = ["test"] }
+
+# The desk test of the macOS capture (tests/bureau_mac.rs): AppKit's run loop and a window for Bibo, as
+# in the app. Already in the build through tao and wry.
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSApplication", "NSColor", "NSGraphics", "NSResponder", "NSRunningApplication", "NSScreen", "NSWindow"] }
+
+# Built as a program of its own (AppKit wants the main thread, which libtest keeps), and run by the
+# macOS desk job only.
+[[test]]
+name = "bureau_mac"
+harness = false

@@ -1121,6 +1121,9 @@ body.guide.reduit .screen > * { margin: 0; }
 
 body.guide.reduit .screen > :not(.consigne, .zoom, .banner, .note.warn) { display: none; }
 
+/* The cautious mode is said in full on the normal window; reduced, the label to check is enough. */
+body.guide.reduit .screen > .note.prudent { display: none; }
+
 body.guide.reduit .zoom { grid-column: 1; grid-row: 1 / span 2; height: 96px; }
 
 body.guide.reduit .consigne,

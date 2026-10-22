@@ -131,6 +131,44 @@ def neuf_codex(installe):
     return e
 
 
+def guide_ecrans(etape_textes):
+    """The guide's window (app/src/guide.js), as Bibo words it, in paste mode: next screen per button, or
+    (seconds, next screen) by itself; a capture pasted on « coller-* » goes to « lecture »."""
+    return {
+        "charge": {"titre": "Je prépare le guide…", "texte": "Je vérifie Claude Code sur ton Mac.", "apres": (1, "comment")},
+        "comment": {"titre": "Comment je regarde ton écran", "texte": "Avant de commencer, quatre choses à savoir.",
+                    "boutons": {"Voir mon réglage": None, "Pas maintenant": None, "J’ai compris": "objectif"}},
+        "objectif": {"titre": "Qu’est-ce que tu veux faire" + NB + "?",
+                     "texte": "Dis-moi dans quel logiciel, et ce que tu veux y faire : je te guide une étape à la fois.",
+                     "boutons": {"Comment je regarde ton écran": None, "Arrêter le guide": None, "Continuer": "coller-debut"}},
+        "coller-debut": {"titre": "Montre-moi ta fenêtre.", "texte": "Fais une capture de la fenêtre d’Atelier Demo, puis colle-la ici.",
+                         "boutons": {"Arrêter le guide": None, "Retour": "objectif"}},
+        "lecture": {"titre": "Je lis ton image…", "apres": (1, "apercu")},
+        "apercu": {"titre": "Voici ce que Claude va voir.", "texte": "Vérifie qu’il n’y a rien que tu ne veux pas envoyer : tu peux cacher des zones.",
+                   "boutons": {"Autre capture": None, "Cacher une zone": None, "Envoyer à Claude": "regarde"}},
+        "regarde": {"titre": "Claude regarde ta fenêtre…", "texte": "5 secondes environ.", "apres": (3, "reponse")},
+        "etape": {"titre": "Étape 1", "textes": etape_textes,
+                  "boutons": {"Arrêter le guide": None, "Je suis bloqué": None, "C’est fait": "coller-fait"}},
+        "coller-fait": {"titre": "Montre-moi où tu en es.", "texte": "Fais une capture de la fenêtre d’Atelier Demo, puis colle-la ici.",
+                        "boutons": {"Arrêter le guide": None, "Retour": "etape"}},
+        "fin": {"titre": "Bravo, c’est fait" + NB + "!", "texte": "Voici ce qu’on a fait ensemble.",
+                "textes": ["Clique sur « Nouveau » en haut à gauche."],
+                "boutons": {"Fermer le guide": None, "Nouvel objectif": None, "Enregistrer cette procédure": "brouillon"}},
+        "brouillon": {"titre": "Je prépare la procédure…", "apres": (1, "enregistrer")},
+        "enregistrer": {"titre": "Je l’écris dans ton cerveau" + NB + "?",
+                        "texte": "Relis et corrige si tu veux : la prochaine fois, je m’en servirai.",
+                        "boutons": {"Retour": None, "Enregistrer dans mon cerveau": "enregistre"}},
+        "enregistre": {"titre": "Enregistré dans Documents › Brain › Guides.", "texte": "Je m’en servirai la prochaine fois.",
+                       "boutons": {"Fermer le guide": None, "Nouvel objectif": None}},
+    }
+
+
+NOTE_GUIDE = ('---\nname: "guide-atelier-demo-faire-une-facture"\nversion: "1.0.0"\ndescription: "Faire une facture dans Atelier '
+              'Demo, pas à pas (appris avec Bibo le 21/10/2026)."\nallowed-tools: []\ntriggers: ["Faire une facture dans Atelier Demo"]'
+              '\nlogiciel: "Atelier Demo"\nsource: "bibo-guide"\n---\n# Faire une facture — Atelier Demo\n\n'
+              '1. Clique sur « Nouveau » en haut à gauche.\n')
+
+
 class FauxPilote(ta.Pilote):
     """The app's window, played from a table of screens on a fake clock."""
 
@@ -160,6 +198,11 @@ class FauxPilote(ta.Pilote):
         self.comment = ta.CLIC_SOURIS   # how its clicks are done
         self.ecrans_vus = 0             # nouvel_ecran() calls
         self.nuit = []
+        # The guide's window: its screen (None: not open), the keyboard and the pastes, the fake Claude's
+        # calls (what the real one leaves in ~/.claude/fake), whether the step's capture shows the ring.
+        self.guide, self.guide_depuis, self.saisies, self.appels = None, 0.0, [], 0
+        self.anneau, self.trace, self.guide_prudent = True, None, False
+        self.anneau_apercu, self.modeles_faux = False, None
 
     def aller(self, etat):
         self.etat = etat() if callable(etat) else etat
@@ -235,9 +278,74 @@ class FauxPilote(ta.Pilote):
         spec = self.spec()
         return ta.norm(spec["titre"]), ta.norm(spec.get("texte", ""))
 
+    def guide_spec(self):
+        textes = ["Clique sur « Nouveau », en haut à gauche, sous le titre.",
+                  "Vérifie que le bouton s’appelle « Nouveau »." if self.guide_prudent else "",
+                  ta.ANNEAU_POINTILLE if self.guide_prudent else ta.ANNEAU_PLEIN,
+                  "Mode prudent : ton compte Claude ne me donne pas accès à Opus." if self.guide_prudent else "",
+                  "1 capture envoyée à Claude, sur 40 pour cette fois."]
+        ecrans = guide_ecrans([x for x in textes if x])
+        spec = ecrans[self.guide]
+        if "apres" in spec and self.h.now - self.guide_depuis >= spec["apres"][0]:
+            nxt = spec["apres"][1]
+            self.aller_guide(("etape" if self.appels == 1 else "fin") if nxt == "reponse" else nxt)
+            spec = ecrans[self.guide]
+        return spec
+
+    def aller_guide(self, etat):
+        self.guide, self.guide_depuis = etat, self.h.now
+
+    def lire_guide(self):
+        if self.guide is None:
+            return ta.Ecran()
+        spec = self.guide_spec()
+        tape = [x for k, x in self.saisies if k == "taper"]
+        boutons = [(b, not (self.guide == "objectif" and b == "Continuer" and tape != [ta.LOGICIEL_GUIDE, ta.OBJECTIF_GUIDE]))
+                   for b in spec.get("boutons", {})]
+        return ta.Ecran(fenetre=True, titre=spec["titre"], texte=spec.get("texte", ""), boutons=boutons, textes=spec.get("textes", []))
+
+    def taper(self, texte):
+        self.saisies.append(("taper", texte))
+
+    def tabulation(self):
+        self.saisies.append(("tab", None))
+
+    def coller_image(self, png):
+        self.saisies.append(("coller", hashlib.sha256(png).hexdigest()[:8]))
+        if self.guide in ("coller-debut", "coller-fait"):
+            self.aller_guide("lecture")
+
+    def cliquer_guide(self, libelle):
+        nxt = next((v for b, v in guide_ecrans([])[self.guide].get("boutons", {}).items() if ta.norm(b) == ta.norm(libelle)), None)
+        home = Path(self.home)
+        fake = home / ".claude" / "fake"
+        if libelle == "Envoyer à Claude":
+            # What the fake Claude leaves of each call: its model, a piece of the image it got.
+            self.appels += 1
+            (fake / "fragments").mkdir(parents=True, exist_ok=True)
+            modeles = (["opus", "sonnet"] if self.appels == 1 else ["sonnet"]) if self.guide_prudent else ["opus"]
+            modeles = self.modeles_faux or modeles
+            with open(fake / "models", "a") as f:
+                f.write("".join(m + "\n" for m in modeles))
+            for m in modeles:
+                n = len(list((fake / "fragments").glob("*.json"))) + 1
+                (fake / "fragments" / ("%d.json" % n)).write_text(json.dumps([{"raw": "ab%02d" % n * 8, "b64": "Zm9v%d" % n}]))
+            if self.trace:
+                self.trace.parent.mkdir(parents=True, exist_ok=True)
+                self.trace.write_bytes(b"\x89PNG\r\n\x1a\n" + b"x" * 40)
+        if libelle == "Enregistrer dans mon cerveau":
+            (home / "Documents" / "Brain" / "Guides").mkdir(parents=True, exist_ok=True)
+            (home / "Documents" / "Brain" / "Guides" / "atelier-demo-faire-une-facture.md").write_text(NOTE_GUIDE, encoding="utf-8")
+        if libelle == "Fermer le guide":
+            self.guide = None
+        elif nxt:
+            self.aller_guide(nxt)
+
     def lire(self):
         self.h.now += 0.5   # reading the window takes a moment
         self.pleines += 1
+        if self.fenetre_titre == ta.GUIDE_TITRE:
+            return self.lire_guide()
         if self.etat is None:
             return ta.Ecran()
         spec = self.spec()
@@ -250,6 +358,11 @@ class FauxPilote(ta.Pilote):
     def cliquer(self, libelle, processus=None):
         self.clics.append((processus, libelle) if processus else libelle)
         how = self.comment(libelle) if callable(self.comment) else self.comment
+        if self.fenetre_titre == ta.GUIDE_TITRE:
+            self.cliquer_guide(libelle)
+            return how
+        if libelle == ta.GUIDE and self.etat == "retour":
+            self.aller_guide("charge")
         if processus:
             if self.dialogue and libelle == self.dialogue.get("part_sur"):
                 self.dialogue = None
@@ -262,7 +375,11 @@ class FauxPilote(ta.Pilote):
         return how
 
     def capturer(self, chemin):
-        Path(chemin).write_bytes(b"\x89PNG")
+        # The guide's preview and step: the pasted capture's green button, and on the step its red ring.
+        if self.fenetre_titre == ta.GUIDE_TITRE and self.guide in ("apercu", "etape"):
+            Path(chemin).write_bytes(capture_guide(self.anneau if self.guide == "etape" else self.anneau_apercu))
+        else:
+            Path(chemin).write_bytes(b"\x89PNG")
         self.captures.append(Path(chemin).name)
 
     def marquer_telecharge(self, fichier):
@@ -274,8 +391,29 @@ class FauxPilote(ta.Pilote):
 
     outils = ta.PiloteMac.outils
 
+    def racines_traces(self, home):
+        return [Path(home)]
+
     def arbre(self):
         return {"app": [], "faux": True}
+
+
+def capture_guide(anneau, pointille=False):
+    """A capture of the screen with the guide's window: the pasted image's green button, shrunk, and,
+    when `anneau`, Bibo's red ellipse round it (here a frame, dotted when `pointille`)."""
+    e = ta.ecrans()
+    t = e.Toile(600, 400, (240, 240, 240))
+    t.rect(100, 100, 40, 14, ta.VERT)
+    if anneau:
+        for x in range(88, 152):
+            for y in (90, 91, 122, 123):
+                if not pointille or (x // 4) % 2 == 0:
+                    t.rect(x, y, 1, 1, ta.ROUGE)
+        for y in range(90, 124):
+            for x in (88, 89, 150, 151):
+                if not pointille or (y // 4) % 2 == 0:
+                    t.rect(x, y, 1, 1, ta.ROUGE)
+    return t.png()
 
 
 class FauxMac(ta.PiloteMac):
@@ -1845,7 +1983,7 @@ class Scenario(Base):
         self.assertEqual(row["statut"], "ok", row["raison"])
         self.assertIn("deuxième lancement : déjà installé", row["raison"])
         self.assertEqual(len(checked), 1)
-        self.assertEqual(p.fermetures, 2)
+        self.assertEqual(p.fermetures, 3, "the guide's launch closed too")
         for env in p.envs:
             self.assertFalse({"GH_TOKEN", "GITHUB_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"} & set(env), env)
             self.assertTrue(env["BIAB_ARCHIVE"].endswith(".zip"))
@@ -1897,8 +2035,8 @@ class Scenario(Base):
         self.h = p.h
         row, p, _, _, _, home = self.run_it(pilote=p, source="release", release=lambda t, pi, d, tok, det, sha=None: Path(d) / "app.dmg")
         self.assertEqual(row["statut"], "ok", row["raison"])
-        self.assertEqual([env.get("BIAB_ARCHIVE") for env in p.envs], [None, None])
-        self.assertEqual(p.portes, [None, None])
+        self.assertEqual([env.get("BIAB_ARCHIVE") for env in p.envs], [None, None, None], "the guide's launch too")
+        self.assertEqual(p.portes, [None, None, None])
 
     def test_codex_alone_wants_codex_and_no_claude_code(self):
         p = FauxPilote(self.h, home=Path(self.tmp) / "home", codex=True)
@@ -2047,6 +2185,180 @@ class Scenario(Base):
         row, _, _, _, _, _ = self.run_it(pilote=p)
         self.assertEqual((row["statut"], row["etape"]), ("echec", "app-sources"))
         self.assertIn("BIAB_ARCHIVE ignoré", row["raison"])
+
+class Guide(Scenario):
+    """The guide's walk on the third launch (Claude alone): the fake window of guide.js's words."""
+
+    def test_walked_to_the_procedure_its_ring_found_and_nothing_left(self):
+        p = FauxPilote(self.h, home=Path(self.tmp) / "home")
+        row, p, _, _, _, home = self.run_it(pilote=p)
+        self.assertEqual(row["statut"], "ok", row["raison"])
+        d = row["details"]["guide"]
+        # The screens Bibo passes by itself (a second or two) may come and go between two readings.
+        self.assertEqual([e for e in d["ecrans"] if e not in ta.ATTENTES_GUIDE],
+                         ["comment", "objectif", "coller-debut", "apercu", "etape", "coller-fait", "apercu", "fin", "enregistrer",
+                          "enregistre"])
+        self.assertEqual(d["collages"], ["debut", "fait"])
+        self.assertEqual([k for k, _ in p.saisies], ["taper", "tab", "taper", "coller", "coller"])
+        self.assertEqual([x for k, x in p.saisies if k == "taper"], [ta.LOGICIEL_GUIDE, ta.OBJECTIF_GUIDE])
+        self.assertEqual(len({x for k, x in p.saisies if k == "coller"}), 2, "two captures, not the same one twice")
+        self.assertEqual(d["modeles"], ["opus", "opus"])
+        self.assertEqual(d["note"], "atelier-demo-faire-une-facture.md")
+        self.assertEqual((d["temoin"]["boutons_verts"], d["temoin"]["entoures"]), (1, []))
+        self.assertEqual((d["etape"]["niveau"], len(d["etape"]["entoures"])), ("plein", 1))
+        self.assertIn(ta.GUIDE, p.clics)
+        for b in ("J'ai compris", "Continuer", "Envoyer à Claude", "C'est fait", "Enregistrer cette procédure",
+                  "Enregistrer dans mon cerveau", "Fermer le guide"):
+            self.assertIn(b, p.clics)
+        self.assertIn("guide : deux captures collées, l'étape entourée, la procédure dans Guides/, aucune image", row["raison"])
+        # The real Claude Code back, the fake gone.
+        self.assertEqual((home / ".local" / "bin" / "claude").read_text(), "x")
+        self.assertFalse((home / ".local" / "bin" / "claude.terrain-vrai").exists())
+
+    def test_without_opus_sonnet_and_its_dotted_ring(self):
+        p = FauxPilote(self.h, home=Path(self.tmp) / "home")
+        p.guide_prudent = True
+        row, p, _, _, _, home = self.run_it(pilote=p)
+        self.assertEqual(row["statut"], "ok", row["raison"])
+        d = row["details"]["guide"]
+        self.assertEqual((d["prudent"], d["modeles"], d["etape"]["niveau"]), (True, ["opus", "sonnet", "sonnet"], "pointille"))
+        self.assertIn("l'étape entourée en pointillés (Sonnet, mode prudent)", row["raison"])
+        self.assertTrue((home / ".claude" / "fake" / "refuse-opus").is_file())
+
+    def test_no_ring_on_the_step_fails(self):
+        p = FauxPilote(self.h, home=Path(self.tmp) / "home")
+        p.anneau = False
+        row, _, _, _, _, _ = self.run_it(pilote=p)
+        self.assertEqual((row["statut"], row["etape"]), ("echec", "app-guide-etape"))
+        self.assertIn("aucune ellipse rouge autour du bouton vert", row["raison"])
+
+    def test_an_image_the_app_left_on_the_disk_fails(self):
+        home = Path(self.tmp) / "home"
+        p = FauxPilote(self.h, home=home)
+        p.trace = home / "Library" / "Caches" / "com.braininbox.installer" / "WebKit" / "x.png"
+        row, _, _, _, _, _ = self.run_it(pilote=p)
+        self.assertEqual((row["statut"], row["etape"]), ("echec", "app-guide-disque"))
+        self.assertIn("une image PNG dans un dossier de l'app", row["raison"])
+        self.assertIn("~/Library/Caches/com.braininbox.installer/WebKit/x.png", row["raison"])
+
+    def test_a_ring_before_any_answer_fails(self):
+        p = FauxPilote(self.h, home=Path(self.tmp) / "home")
+        p.anneau_apercu = True
+        row, _, _, _, _, _ = self.run_it(pilote=p)
+        self.assertEqual((row["statut"], row["etape"]), ("echec", "app-guide-apercu"))
+        self.assertIn("une ellipse rouge sur l'aperçu, avant toute réponse de Claude", row["raison"])
+
+    def test_the_fake_claude_asked_another_model_fails(self):
+        p = FauxPilote(self.h, home=Path(self.tmp) / "home")
+        p.modeles_faux = ["sonnet"]
+        row, _, _, _, _, _ = self.run_it(pilote=p)
+        self.assertEqual((row["statut"], row["etape"]), ("echec", "app-guide-modeles"))
+        self.assertIn("le faux Claude a été lancé avec ['sonnet', 'sonnet'] (attendu : ['opus', 'opus'])", row["raison"])
+
+    def test_the_cautious_mode_said_where_opus_answers_fails(self):
+        p = FauxPilote(self.h, home=Path(self.tmp) / "home")
+        spec = p.guide_spec
+        said = lambda sp: dict(sp, textes=sp["textes"] + ["Mode prudent : ton compte Claude ne me donne pas accès à Opus."]) \
+            if p.guide == "etape" else sp
+        p.guide_spec = lambda: said(spec())
+        row, _, _, _, _, _ = self.run_it(pilote=p)
+        self.assertEqual((row["statut"], row["etape"]), ("echec", "app-guide-etape"))
+        self.assertIn("l'étape dit à tort le mode prudent", row["raison"])
+
+
+class GuideParts(unittest.TestCase):
+    def test_the_ring_is_found_round_the_green_button_only_when_drawn(self):
+        e = ta.ecrans()
+        for anneau, pointille, entoure in ((True, False, 1), (True, True, 1), (False, False, 0)):
+            w, h, px = e.lire_png(capture_guide(anneau, pointille))
+            trouves = ta.anneaux(w, h, px)
+            self.assertEqual((len(trouves), len(ta.entoures(trouves))), (1, entoure), (anneau, pointille, trouves))
+        # Red elsewhere on the screen, or on two sides of the button only, is no ring round it.
+        for rouge in ((300, 50, 80, 4), (80, 100, 6, 14), (80, 100, 6, 14, 150, 100, 6, 14)):
+            t = e.Toile(600, 400, (240, 240, 240))
+            t.rect(100, 100, 40, 14, ta.VERT)
+            for i in range(0, len(rouge), 4):
+                t.rect(*rouge[i:i + 4], ta.ROUGE)
+            w, h, px = e.lire_png(t.png())
+            self.assertEqual(ta.entoures(ta.anneaux(w, h, px)), [], rouge)
+
+    def test_the_screens_and_the_words_the_robot_reads_are_the_guides(self):
+        with open(os.path.join(REPO, "app", "src", "guide.js"), encoding="utf-8") as f:
+            js = ta.norm(f.read())
+        for _, start in ta.ECRANS_GUIDE:
+            self.assertIn(ta.norm(start), js, start)
+        for word in ("J'ai compris", "Continuer", "Envoyer à Claude", "C'est fait", "Enregistrer cette procédure",
+                     "Enregistrer dans mon cerveau", "Fermer le guide", "Refaire la capture", ta.PRUDENT,
+                     "Sur l'image, « ${e.libelle} » est entouré en rouge.", ta.ANNEAU_POINTILLE):
+            self.assertIn(ta.norm(word), js, word)
+        self.assertEqual(ta.ANNEAU_PLEIN, "Sur l'image, « Nouveau » est entouré en rouge.")
+        self.assertEqual(ta.REPONSES_GUIDE["debut"]["libelle"], "Nouveau")
+        with open(os.path.join(REPO, "app", "src-tauri", "src", "lib.rs"), encoding="utf-8") as f:
+            self.assertIn('.title("%s")' % ta.GUIDE_TITRE, f.read())
+        with open(os.path.join(REPO, "app", "src", "styles.css"), encoding="utf-8") as f:
+            css = f.read()
+        self.assertIn("stroke: #%02x%02x%02x;" % ta.ROUGE, css)
+        self.assertIn("border: 3px solid #%02x%02x%02x;" % ta.ROUGE, css)
+        self.assertEqual(ta.VERT, ta.ecrans().VERT)
+
+    def test_the_traces_are_the_guides_images_and_pngs_of_the_app(self):
+        tmp = Path(tempfile.mkdtemp(prefix="traces-"))
+        self.addCleanup(shutil.rmtree, str(tmp), True)
+        frag = b"\x01\x02morceau-de-capture\x03"
+        old = tmp / "home" / "Library" / "Caches" / "com.braininbox.installer" / "vieux.png"
+        old.parent.mkdir(parents=True)
+        old.write_bytes(ta.PNG_SIGNATURE + frag)
+        os.utime(old, (1000, 1000))
+        (tmp / "home" / "Documents").mkdir(parents=True)
+        (tmp / "home" / "Documents" / "note.md").write_bytes(b"rien")
+        (tmp / "home" / "Documents" / "autre.png").write_bytes(ta.PNG_SIGNATURE)
+        self.assertEqual(ta.traces_du_guide([tmp / "home"], 2000, [], [frag], ("com.braininbox.installer",)), [],
+                         "older than the walk, or a PNG elsewhere than the app's folders")
+        (tmp / "home" / "Documents" / "fuite.txt").write_bytes(b"avant " + frag + b" apres")
+        cache = tmp / "home" / "AppData" / "Local" / "com.braininbox.installer" / "EBWebView" / "Default" / "Cache" / "f_0001"
+        cache.parent.mkdir(parents=True)
+        cache.write_bytes(b"entete" + ta.PNG_SIGNATURE + b"donnees")
+        robot = tmp / "home" / "terrain-travail" / "copie.png"
+        robot.parent.mkdir(parents=True)
+        robot.write_bytes(ta.PNG_SIGNATURE + frag)
+        got = sorted((Path(p).name, why) for p, why in ta.traces_du_guide(
+            [tmp / "home", tmp / "home" / "Documents"], 2000, [tmp / "home" / "terrain-travail"], [frag], ("com.braininbox.installer",)))
+        self.assertEqual(got, [("f_0001", "une image PNG dans un dossier de l'app"), ("fuite.txt", "un morceau d'une image du guide")])
+
+    def test_the_note_must_be_the_guides_own(self):
+        tmp = Path(tempfile.mkdtemp(prefix="note-"))
+        self.addCleanup(shutil.rmtree, str(tmp), True)
+        self.assertIsNone(ta.note_du_guide(tmp, 0)[0])
+        (tmp / "Guides").mkdir()
+        (tmp / "Guides" / "atelier-demo-faire-une-facture.md").write_text(NOTE_GUIDE, encoding="utf-8")
+        self.assertEqual(ta.note_du_guide(tmp, 0)[0].name, "atelier-demo-faire-une-facture.md")
+        (tmp / "Guides" / "atelier-demo-faire-une-facture.md").write_text(NOTE_GUIDE.replace('source: "bibo-guide"', ""), encoding="utf-8")
+        note, why = ta.note_du_guide(tmp, 0)
+        self.assertIsNone(note)
+        self.assertIn('source: "bibo-guide"', why)
+
+    @unittest.skipUnless(os.name == "nt", "the relay is compiled by the .NET Framework's csc, on Windows")
+    def test_the_relay_hands_the_fake_claude_its_arguments_and_streams_as_they_are(self):
+        tmp = Path(tempfile.mkdtemp(prefix="relais-"))
+        self.addCleanup(shutil.rmtree, str(tmp), True)
+        home = tmp / "home"
+        exe = home / ".local" / "bin" / "claude.exe"
+        exe.parent.mkdir(parents=True)
+        exe.write_bytes(b"MZ vrai")
+        vrai = ta.poser_faux_claude(home, exe, tmp, False)
+        (home / ".claude" / "fake" / "scenario").write_text("plan-ok", encoding="utf-8")
+        (home / ".claude" / "fake" / "fixtures").write_text(os.path.join(REPO, "app", "src-tauri", "tests", "fixtures", "repair"), encoding="utf-8")
+        (home / ".claude" / "fake" / "answer.json").write_text("{}", encoding="utf-8")
+        args = ["-p", "--tools", "", "--append-system-prompt", 'Tu es « Bibo ».\n"guillemets" \\ fin\\', "--settings", '{"a":true}']
+        p = subprocess.run([str(exe)] + args, input="la question\n".encode("utf-8"), capture_output=True,
+                           env=dict(os.environ, USERPROFILE=str(home), HOME=""), timeout=120)
+        self.assertEqual(p.returncode, 0, p.stderr.decode("utf-8", "replace"))
+        self.assertIn(b'"subtype":"init"', p.stdout.replace(b" ", b""))
+        fake = home / ".claude" / "fake"
+        self.assertEqual(json.loads((fake / "argv.json").read_text(encoding="utf-8")), args)
+        self.assertEqual((fake / "prompt.txt").read_text(encoding="utf-8"), "la question\n")
+        ta.rendre_vrai_claude(exe, vrai)
+        self.assertEqual(exe.read_bytes(), b"MZ vrai")
 
 
 if __name__ == "__main__":

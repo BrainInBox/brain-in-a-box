@@ -261,6 +261,38 @@ fn an_instruction_to_open_the_run_box_is_never_shown() {
     assert_no_image(&r);
 }
 
+/// Decision 8, the guide from Claude Pro: Opus refused as Claude Code refuses it to a Pro plan, the look
+/// goes to Sonnet at once with a new band and the cautious rule, and the step says so, dotted.
+#[test]
+fn without_opus_sonnet_answers_in_the_cautious_mode() {
+    let r = run("sans-opus");
+    assert_eq!(r.code, Some(0), "{}", r.stdout);
+    let step = r.last();
+    assert_eq!((step["etat"].as_str(), step["niveau"].as_str(), step["prudent"].as_bool()), (Some("etape"), Some("pointille"), Some(true)), "{step}");
+    let file = |name: &str| -> Value { serde_json::from_str(&fs::read_to_string(r.out.join(name)).unwrap()).unwrap() };
+    let (first, second) = (file("argv-1.json"), file("argv-2.json"));
+    let arg = |argv: &Value, flag: &str| {
+        let a: Vec<String> = serde_json::from_value(argv.clone()).unwrap();
+        a.windows(2).find(|w| w[0] == flag).map(|w| w[1].clone()).unwrap()
+    };
+    assert_eq!((arg(&first, "--model"), arg(&second, "--model")), ("opus".to_string(), "sonnet".to_string()));
+    assert!(!arg(&first, "--append-system-prompt").contains("K. Prudence") && arg(&second, "--append-system-prompt").contains("K. Prudence"));
+    assert_ne!(file("seen-1.json")["code"], file("seen-2.json")["code"], "a new band for the new question");
+    let journal = r.journal();
+    assert_eq!(journal.iter().map(|j| (j["modele"].as_str().unwrap(), j["issue"].as_str().unwrap())).collect::<Vec<_>>(), [("opus", "modele_absent"), ("sonnet", "etape")]);
+    assert_eq!(r.new, counters_only(&r));
+    assert_no_image(&r);
+}
+
+#[test]
+fn with_neither_model_the_guide_says_the_plan_lacks_it() {
+    let r = run("sans-modele");
+    assert_eq!(r.code, Some(1), "{}", r.stdout);
+    assert_eq!(r.last()["kind"], "modele_absent", "{}", r.stdout);
+    assert_eq!(r.journal().len(), 2);
+    assert_eq!(r.new, counters_only(&r));
+}
+
 #[test]
 fn print_consignes_is_the_rules_file_byte_for_byte() {
     let out = Command::new(env!("CARGO_BIN_EXE_brain-in-a-box")).args(["--guide-ask", "--print-consignes"]).output().unwrap();

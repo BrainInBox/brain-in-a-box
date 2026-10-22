@@ -13,21 +13,36 @@ reflection passes on):
 Each `-p` run appends to calls and records argv.json, env.json, cwd.json, prompt.txt (and
 prompts/<n>.txt) and stdin.json (sha256 and size of what it read). With --input-format
 stream-json, stdin is user messages, one per line: prompt.txt is their text, images.json says
-each image (media_type, sha256, size). No image is ever written.
+each image (media_type, sha256, size), and fragments/<n>.json a piece of its bytes and of its
+base64, for a search of the disk. No image is ever written.
+
+The scenario "guide" answers Bibo's guide (the field test, terrain_app.py) as Claude Code would,
+on the image it was sent: the band's code read back and the green button found by the app tests'
+second reader (app/src-tauri/tests/fixtures/guide/fake_claude.py), the answer of guide/<demande>.json
+(debut, fait...) around them, the start-up line of the model asked for. With the file refuse-opus,
+Opus is refused as Claude Code refuses it to a Pro plan. models gets each run's --model. The base is
+HOME, else USERPROFILE (what the app gives Claude on Windows).
 """
-import base64
-import hashlib
-import json
-import os
-import stat
-import subprocess
 import sys
-import time
+
+# Run by the app on the field test's VM, it loads the app tests' reader from the repository: no
+# bytecode written there (the robot searches the disk for anything the guide left).
+sys.dont_write_bytecode = True
+
+import base64  # noqa: E402
+import hashlib  # noqa: E402
+import json  # noqa: E402
+import os  # noqa: E402
+import stat  # noqa: E402
+import subprocess  # noqa: E402
+import time  # noqa: E402
 
 FLAGS = ("--restricted --safe-mode --tools --permission-prompts --json-schema --max-budget-usd "
          "--no-session-persistence --strict-mcp-config --disallowedTools --settings --append-system-prompt "
          "--input-format")
-FAKE = os.path.join(os.environ.get("HOME", ""), ".claude", "fake")
+FAKE = os.path.join(os.environ.get("HOME") or os.environ.get("USERPROFILE", ""), ".claude", "fake")
+HERE = os.path.dirname(os.path.abspath(__file__))
+FIXTURES = os.path.join(HERE, "..", "..", "app", "src-tauri", "tests", "fixtures")
 
 
 def setting(name, default=""):
@@ -54,9 +69,10 @@ def emit(event):
     out(json.dumps(event, ensure_ascii=False))
 
 
-def read_messages(stream):
+def read_messages(stream, raw=None):
     """The user messages of stream-json input, one per line (split on newlines only): their text,
-    and what images.json says of their images. Anything else stops the fake, as Claude Code would refuse it."""
+    and what images.json says of their images (raw: their bytes, appended there). Anything else stops
+    the fake, as Claude Code would refuse it."""
     texts, images = [], []
     for line in stream.split("\n"):
         if not line:
@@ -67,6 +83,8 @@ def read_messages(stream):
         for block in message["message"]["content"]:
             if block["type"] == "image":
                 data = base64.b64decode(block["source"]["data"], validate=True)
+                if raw is not None:
+                    raw.append(data)
                 images.append({"media_type": block["source"]["media_type"],
                                "sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data)})
             elif block["type"] == "text":
@@ -99,14 +117,25 @@ def main(args):
     cwd = os.getcwd()
     record("cwd.json", json.dumps({"cwd": cwd, "mode": oct(stat.S_IMODE(os.stat(cwd).st_mode))}))
     record("stdin.json", json.dumps({"sha256": hashlib.sha256(raw).hexdigest(), "bytes": len(raw)}))
-    images = []
+    images, pngs = [], []
     if "--input-format" in args and args[args.index("--input-format") + 1:][:1] == ["stream-json"]:
-        prompt, images = read_messages(prompt)
+        prompt, images = read_messages(prompt, pngs)
     record("images.json", json.dumps(images))
+    if pngs:
+        os.makedirs(os.path.join(FAKE, "fragments"), exist_ok=True)
+        b64s = [base64.b64encode(png).decode("ascii") for png in pngs]
+        record(os.path.join("fragments", "%d.json" % n), json.dumps(
+            [{"b64": b[len(b) // 2:len(b) // 2 + 80], "raw": png[len(png) // 2:len(png) // 2 + 64].hex()}
+             for b, png in zip(b64s, pngs)]))
     record("prompt.txt", prompt)
     os.makedirs(os.path.join(FAKE, "prompts"), exist_ok=True)
     record(os.path.join("prompts", "%d.txt" % n), prompt)
+    model = args[args.index("--model") + 1] if "--model" in args else ""
+    with open(os.path.join(FAKE, "models"), "a") as f:
+        f.write(model + "\n")
     scenario = setting(os.path.join("scenarios", str(n)), "") or setting("scenario", "plan-ok")
+    if scenario == "guide":
+        return guide(prompt, pngs, model)
     if scenario == "hang":
         # A child of its own, as Claude Code's tools would start: the group kill must reach it.
         child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
@@ -147,6 +176,44 @@ def main(args):
             event["structured_output"] = answer
             event["result"] = json.dumps(answer, ensure_ascii=False)
         emit(event)
+    return 0
+
+
+def second_reader():
+    """The app tests' reader of the band and of the green button (a PNG decoder and a 5x7 font of its own)."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("lecteur_bande", os.path.join(FIXTURES, "guide", "fake_claude.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def guide(prompt, pngs, model):
+    """One look of Bibo's guide: the answer of guide/<demande>.json, with the band's code read on the image
+    and, for "cible": "vert", the green button's box."""
+    family = model if model in ("opus", "sonnet") else "opus"
+    if family == "opus" and os.path.exists(os.path.join(FAKE, "refuse-opus")):
+        with open(os.path.join(FIXTURES, "repair", "pro-sans-opus.jsonl"), encoding="utf-8") as f:
+            sys.stdout.buffer.write(f.read().encode("utf-8"))
+        return 0
+    lecteur = second_reader()
+    w, full_h, rows = lecteur.decode_png(pngs[0])
+    h = full_h - lecteur.BAND
+    demande = prompt.split("<demande>", 1)[1].split("</demande>", 1)[0] if "<demande>" in prompt else "debut"
+    with open(os.path.join(FAKE, "guide", demande + ".json"), encoding="utf-8") as f:
+        answer = json.load(f)
+    answer["code_vu"] = lecteur.read_code(rows, h)
+    if answer.get("cible") == "vert":
+        answer["cible"] = lecteur.green_box(rows, h)
+    name = "claude-%s-5-5" % family
+    emit(dict(lecteur.INIT, model=name, claude_code_version=setting("version", "2.1.306 (Claude Code)").split()[0]))
+    emit({"type": "rate_limit_event", "rate_limit_info": {"status": "allowed", "unifiedWindows": {
+        "five_hour": {"utilization": 0.2, "resetsAt": 1792544400}, "seven_day": {"utilization": 0.3, "resetsAt": 1793044800}}}})
+    emit({"type": "assistant", "message": {"model": name, "content": [
+        {"type": "tool_use", "id": "toolu_1", "name": "StructuredOutput", "input": answer}]}})
+    emit({"type": "result", "subtype": "success", "is_error": False, "num_turns": 2, "total_cost_usd": 0,
+          "usage": {"input_tokens": 3, "output_tokens": 420, "cache_read_input_tokens": 3730, "cache_creation_input_tokens": 2000},
+          "modelUsage": {name: {"inputTokens": 3}}, "structured_output": answer})
     return 0
 
 

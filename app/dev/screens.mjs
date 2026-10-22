@@ -156,6 +156,16 @@ const GUIDE_SCENARIOS = [
   'g=ok&go=apercu&vide=1&os=windows',
   'g=ok&go=erreur&depose=jpeg',
   'g=ok&go=etape&nth=2&lache=1',
+  // Phase 5, decision 8 (Claude Pro): no Opus for the account, Sonnet in the cautious mode; neither model.
+  'g=prudent&go=etape',
+  'g=prudent&go=etape&nth=2',
+  'g=sans-modele&go=erreur',
+  // Linux: WebKitGTK hands the page no image of the clipboard; Rust reads it (phase 5's terrain found it).
+  'g=ok&go=apercu&os=linux&gtk=1',
+  'g=ok&go=coller&nth=2&os=linux&gtk=vide',
+  // Linux: a Ctrl+V of text on the preview or « Cacher une zone » leaves the user there, as on the other systems.
+  'g=ok&go=apercu&os=linux&gtk=1&recolle=apercu',
+  'g=ok&go=cacher&click=cacher&os=linux&gtk=1&recolle=cacher',
 ];
 
 // The guide's window sizes, as the page asks Rust for them, in turn: the image made wide to hide a zone

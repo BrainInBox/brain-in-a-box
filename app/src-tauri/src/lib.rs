@@ -1,5 +1,6 @@
 mod advice;
 mod agents;
+mod capture;
 mod claude;
 mod codex;
 mod config_guard;
@@ -416,10 +417,72 @@ async fn guide_coller(request: tauri::ipc::Request<'_>) -> Result<guide::Apercu,
     guiding(move || guide::coller(&bytes)).await
 }
 
+/// A capture pasted where the page got no image (Linux: WebKitGTK hands a page only files, never an
+/// image of the clipboard): GTK's clipboard read on the main thread, the image as a PNG, its preview.
+/// Asked by the page on Ctrl+V only, while it waits for a capture.
+#[tauri::command]
+async fn guide_coller_presse_papiers(app: tauri::AppHandle) -> Result<guide::Apercu, guide::GuideError> {
+    let png = clipboard_png(&app).await?;
+    guiding(move || guide::coller(&png)).await
+}
+
+#[cfg(target_os = "linux")]
+async fn clipboard_png(app: &tauri::AppHandle) -> Result<Vec<u8>, guide::GuideError> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.run_on_main_thread(move || {
+        let image = gtk::Clipboard::get(&gtk::gdk::SELECTION_CLIPBOARD).wait_for_image();
+        let _ = tx.send(image.and_then(|p| p.save_to_bufferv("png", &[]).ok()));
+    })
+    .map_err(|e| guide::GuideError::Interne { message: e.to_string() })?;
+    let got = tauri::async_runtime::spawn_blocking(move || rx.recv_timeout(std::time::Duration::from_secs(15)).ok().flatten()).await;
+    got.ok().flatten().ok_or(guide::GuideError::SansImage)
+}
+
+/// Elsewhere the page's paste event holds the image: never asked.
+#[cfg(not(target_os = "linux"))]
+async fn clipboard_png(_: &tauri::AppHandle) -> Result<Vec<u8>, guide::GuideError> {
+    Err(guide::GuideError::SansImage)
+}
+
 /// The file dropped on the window, now that it waits for a capture: its preview.
 #[tauri::command]
 async fn guide_prendre_depot() -> Result<guide::Apercu, guide::GuideError> {
     guiding(guide::prendre_depot).await
+}
+
+/// G2's list (Windows): other programs' windows, Bibo's left out, the minimized ones marked.
+#[tauri::command]
+async fn guide_fenetres() -> Result<Vec<capture::Fenetre>, guide::GuideError> {
+    guiding(guide::fenetres).await
+}
+
+/// « Clique dans la fenêtre de ton logiciel » (Windows): the window clicked within 15 s (R4).
+#[tauri::command]
+async fn guide_attendre_clic() -> Result<capture::Fenetre, guide::GuideError> {
+    guiding(guide::attendre_clic).await
+}
+
+/// The window from the list or the click, kept with its process and program (R22). On macOS (no id),
+/// the system's picker: the guide's window leaves « always on top » while it is out, or it would lie
+/// over the picker's « Share This Window » button (phase 0, macOS 15 and 26), and comes back after.
+#[tauri::command]
+async fn guide_choisir(app: tauri::AppHandle, id: Option<u64>) -> Result<capture::Fenetre, guide::GuideError> {
+    let picker = id.is_none() && tauri::async_runtime::spawn_blocking(guide::selecteur).await.unwrap_or(false);
+    let lowered = app.get_webview_window("guide").filter(|w| picker && w.is_always_on_top().unwrap_or(false));
+    if let Some(w) = &lowered {
+        let _ = w.set_always_on_top(false);
+    }
+    let chosen = guiding(move || guide::choisir(id)).await;
+    if let Some(w) = &lowered {
+        let _ = w.set_always_on_top(true);
+    }
+    chosen
+}
+
+/// « Regarde mon écran »: the chosen window captured now, its preview as a pasted capture's.
+#[tauri::command]
+async fn guide_regarder() -> Result<guide::Apercu, guide::GuideError> {
+    guiding(guide::regarder).await
 }
 
 /// Every zone to hide, drawn on the preview: the new preview.
@@ -641,7 +704,12 @@ pub fn run() {
             guide_compris,
             guide_commencer,
             guide_coller,
+            guide_coller_presse_papiers,
             guide_prendre_depot,
+            guide_fenetres,
+            guide_attendre_clic,
+            guide_choisir,
+            guide_regarder,
             guide_cacher,
             guide_envoi_texte,
             guide_envoyer,
@@ -708,5 +776,58 @@ mod tests {
         }
         let nobodys: Vec<&String> = commands.iter().filter(|c| !main.contains(*c) && !guide.contains(*c)).collect();
         assert!(nobodys.is_empty(), "no window may call {nobodys:?}");
+    }
+
+    #[cfg(not(windows))]
+    type Mock = tauri::test::MockRuntime;
+
+    /// What Tauri answers a window's page that asks `cmd` with no argument.
+    #[cfg(not(windows))]
+    fn ask(window: &tauri::WebviewWindow<Mock>, cmd: &str) -> Result<tauri::ipc::InvokeResponseBody, serde_json::Value> {
+        tauri::test::get_ipc_response(
+            window,
+            tauri::webview::InvokeRequest {
+                cmd: cmd.into(),
+                callback: tauri::ipc::CallbackFn(0),
+                error: tauri::ipc::CallbackFn(1),
+                // The pages of the app, as the mock runtime serves them (local, as on macOS and Linux).
+                url: "tauri://localhost".parse().unwrap(),
+                body: tauri::ipc::InvokeBody::default(),
+                headers: Default::default(),
+                invoke_key: tauri::test::INVOKE_KEY.into(),
+            },
+        )
+    }
+
+    /// Tauri's own check, with the app's manifest and capabilities as the app is built (the code the app
+    /// runs, on a mock runtime): the guide's page asking the installer's commands is refused, and the
+    /// installer's page the guide's; each its own passes. No command of the app runs here.
+    #[cfg(not(windows))]
+    #[test]
+    fn tauri_refuses_each_window_the_other_ones_commands() {
+        // Every command answers "ok" here: what Tauri refuses never reaches its handler, what it lets through does.
+        let app = tauri::test::mock_builder()
+            .invoke_handler(|invoke| {
+                invoke.resolver.resolve("ok");
+                true
+            })
+            .build(tauri::generate_context!(test = true))
+            .unwrap();
+        let window = |label: &str, page: &str| tauri::WebviewWindowBuilder::new(&app, label, tauri::WebviewUrl::App(page.into())).build().unwrap();
+        let (main, guide) = (window("main", "index.html"), window("guide", "guide.html"));
+        let refused = |w: &tauri::WebviewWindow<Mock>, cmd: &str| match ask(w, cmd) {
+            Err(e) => e.to_string().contains("not allowed"),
+            Ok(_) => false,
+        };
+        for cmd in ["run_step", "repair_apply", "repair_analyze", "open_repair_terminal", "import_run", "start_onboarding", "guide_open"] {
+            assert!(refused(&guide, cmd), "the guide's window may call {cmd}: {:?}", ask(&guide, cmd));
+        }
+        for cmd in ["guide_envoyer", "guide_enregistrer", "guide_coller_presse_papiers", "guide_regarder", "guide_annuler"] {
+            assert!(refused(&main, cmd), "the installer's window may call {cmd}: {:?}", ask(&main, cmd));
+        }
+        // Each its own: the control, without which a refusal of everything would pass.
+        assert!(ask(&guide, "guide_annuler").is_ok(), "{:?}", ask(&guide, "guide_annuler"));
+        assert!(ask(&main, "guide_offert").is_ok(), "{:?}", ask(&main, "guide_offert"));
+        assert!(!refused(&guide, "open_link"), "a link the guide may open: {:?}", ask(&guide, "open_link"));
     }
 }

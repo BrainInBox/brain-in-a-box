@@ -13,7 +13,8 @@ permissions:
 jobs:
   hooks:
     runs-on: macos-latest
-    timeout-minutes: 10
+    # The hooks and the whole Python suite: 9 to 10 minutes on the runner since phase 5.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:

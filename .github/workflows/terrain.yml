@@ -541,7 +541,8 @@ jobs:
   # checks the attestation). The captures are public: the VM's screen only.
   # Two paths on each system: "app", Claude alone as users get it (the app's gate closed, no choice
   # asked), and "app-codex", Codex chosen alone, the gate open in the robot's copy of the kit only
-  # (terrain_app.py), as the other benches open it.
+  # (terrain_app.py), as the other benches open it. On "app", a third launch walks Bibo's guide with
+  # a fake Claude in Claude Code's place (engine/tests/fake_claude.py): no AI is asked here either.
   app-macos:
     name: The app, clicked through (macOS${{ matrix.parcours == 'app-codex' && ', Codex chosen' || '' }})
     needs: ref
@@ -1039,14 +1040,15 @@ jobs:
 
       # The desktop: an X server (Xvfb) and a window manager (openbox), the user's systemd and
       # session bus (the accessibility bus answers there, and install.sh finds systemd there), the
-      # robot's eyes and hands (AT-SPI's Python bindings, xdotool, xwininfo, ImageMagick), and
+      # robot's eyes and hands (AT-SPI's Python bindings, xdotool, xwininfo, ImageMagick, and xclip,
+      # which holds the capture it pastes in the guide as a capture tool does), and
       # pkexec with the rule that stands in for the password typed in the system's window; it logs
       # the window's text (pkexec's cmdline_short) under fenetre-mot-de-passe, which the results check.
       - name: A desktop for the app
         timeout-minutes: 5
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y -q xvfb openbox xdotool x11-utils imagemagick at-spi2-core python3-gi \
+          sudo apt-get install -y -q xvfb openbox xdotool x11-utils imagemagick xclip at-spi2-core python3-gi \
             gir1.2-atspi-2.0 dbus-user-session pkexec
           printf '%s\n' 'polkit.addRule(function (action, subject) {' \
             "  if (action.id == \"org.freedesktop.policykit.exec\" && subject.user == \"$USER\") {" \
