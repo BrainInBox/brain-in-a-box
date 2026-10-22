@@ -811,7 +811,7 @@ fn check_git(found: &Found, winget: bool) -> Check {
 }
 
 #[cfg(windows)]
-const NO_WINGET: &str = "Pas installé : il me faut l'outil d'installation de Microsoft pour l'installer (voir sa ligne).";
+const NO_WINGET: &str = "Pas installé : je ne peux pas l'installer sans l'outil d'installation de Microsoft (voir sa ligne).";
 
 #[cfg(windows)]
 fn not_yet_installed(winget: bool) -> &'static str {
