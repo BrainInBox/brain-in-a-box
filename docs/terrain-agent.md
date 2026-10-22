@@ -82,8 +82,12 @@ checks the app's own diagnosis said Git « À installer ». The checks of the in
 `git-absent-au-depart` (the proof, probe by probe, and the uninstaller's code: `details.git.avant`;
 « sa sortie est illisible » is the new process sans-git.ps1 starts answering nothing it could read:
 nothing was proved there),
-`git-winget` (install.ps1's lines in `~/.brain-in-a-box/install.log`, `> winget install -e --id
-Git.Git ...` then `winget : code N`, one per attempt: `details.git.winget`), `git-nouveau-processus`
+`git-installe` (install.ps1's lines in `~/.brain-in-a-box/install.log`: `> winget install -e --id
+Git.Git ...` then `winget : code N`, one per attempt, `details.git.winget`; when winget could not (absent,
+or its source broken: `winget source update` once, one more try), `> installeur officiel : Git <version>
+(<arch>) <url>` then how it ended, `details.git.officiel`; then `> Git : <git.exe> (winget|installeur
+officiel)`, or `absent`, `details.git.voie`; the reason says each way in order, winget's codes in words),
+`git-nouveau-processus`
 (`where git` and `git --version` through cmd.exe in the environment Windows builds from the
 registry, and the folder of that git.exe created after the proof), `git-coffre` (the vault's first
 commit is the installer's « brain init »), `git-bash` (Claude Code, without a token and its
@@ -96,7 +100,8 @@ it uses: the end of that log is in the reason; the fix is `CLAUDE_BASH_RE` in te
 maintainer reviews it), not the kit. The VM's user is an administrator without UAC: Git's installer
 puts Git in `C:\Program Files\Git` even when winget asks for the user's scope, so the question
 Windows may ask a user, a Git for one user (`%LOCALAPPDATA%\Programs\Git`) and Claude Code finding
-its bash through `git` on the PATH are not seen there.
+its bash through `git` on the PATH are not seen there. The nights start with the step `git`: without git on
+the harness's PATH, « git introuvable », followed by what install.log says of Git, as `git-installe` says it.
 
 ## Read a failure of the app scenario
 
