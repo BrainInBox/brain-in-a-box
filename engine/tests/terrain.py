@@ -295,24 +295,28 @@ def settings_hook(home, event, name):
 
 
 def session_line(t, argv, env, etat, outputs):
-    """The session's first line after a night: its JSON (when the night has something to say), and
-    never twice for one run. Returns what the first session got."""
+    """The session's first line after a night: its JSON, with the night's line when the night has
+    something to say, and that line never twice for one run (what the hook says of the brain comes
+    at every start). Returns what the first session got."""
     stdin = json.dumps({"source": "startup", "session_id": "terrain"})
     rc1, first = run(argv, env=env, stdin=stdin, timeout=60)
     rc2, second = run(argv, env=env, stdin=stdin, timeout=60)
     outputs += [first, second]
     t.check(rc1 == 0 and rc2 == 0, "le hook de démarrage de session a fini en erreur")
-    if first.strip():
+    told = []
+    for out in (first, second):
         try:
-            event = json.loads(first)["hookSpecificOutput"]["hookEventName"]
-        except (ValueError, KeyError, TypeError):
+            said = json.loads(out)["hookSpecificOutput"] if out.strip() else {"hookEventName": "SessionStart"}
+            told.append("Contrôle du cerveau" in str(said.get("additionalContext", "")))
+            event = said["hookEventName"]
+        except (ValueError, KeyError, TypeError, AttributeError):
+            told.append(False)
             event = None
         t.check(event == "SessionStart", "le hook de démarrage a écrit autre chose que son JSON")
-    else:
-        said = (etat.get("rapport_reecrit") and (etat.get("corrections") or etat.get("a_voir"))) \
-            or etat.get("secrets_a_changer")
-        t.check(not said, "rien au démarrage de session après une nuit qui a corrigé ou signalé")
-    t.check(not second.strip(), "la ligne de démarrage revient une deuxième fois pour la même nuit")
+    night = (etat.get("rapport_reecrit") and (etat.get("corrections") or etat.get("a_voir"))) \
+        or etat.get("secrets_a_changer")
+    t.check(told[0] or not night, "rien au démarrage de session après une nuit qui a corrigé ou signalé")
+    t.check(not told[1], "la ligne de démarrage revient une deuxième fois pour la même nuit")
     return first
 
 
