@@ -25,7 +25,7 @@ macos/02-gatekeeper.png            382 129 260 284  mac-bloquee
 windows/01-smartscreen.png         246  95 532 150  win-smartscreen-1
 windows/02-smartscreen.png         246  95 532 498  win-smartscreen-2
 windows/03-installeur-bienvenue.png 263 166 497 386 win-installeur
-windows/07-installeur-fin.png      263 166 497 386  win-installeur-fin
+windows/05-installeur-fin.png      263 166 497 386  win-installeur-fin
 # Bibo, screen by screen (the Mac window)
 macos/03-bienvenue.png             122  31 780 674  bibo-1-bienvenue
 macos/04-diagnostic.png            122  31 780 674  bibo-2-diagnostic
