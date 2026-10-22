@@ -487,8 +487,8 @@ Mon conseil : Ton cerveau marche avec Claude : il te faudra un abonnement Clau
 Version de Windows : OKWindows 11 (24H2)
 Espace disque : OK182 Go libres
 Connexion internet : OKgithub.com et claude.ai répondent.
-Python (pour les automatismes) : À installerPas encore installé. Je le prends chez Microsoft (winget).
-Git (l’historique de tes notes) : À installerPas encore installé. Je le prends chez Microsoft (winget).
+Python (pour les automatismes) : À installerPas encore installé. Je l’installe : par winget (Microsoft), sinon depuis son site officiel.
+Git (l’historique de tes notes) : À installerPas encore installé. Je l’installe : par winget (Microsoft), sinon depuis son site officiel.
 Bun (le moteur de la mémoire) : À installerPas encore installé.
 Claude Code : À installerPas encore installé.
 Connexion à Claude : À noterTu te connecteras une fois Claude Code installé.
@@ -2577,8 +2577,8 @@ Mon conseil : Tu as déjà Claude Code, connecté à ton abonnement : ton cerv
 Version de Windows : OKWindows 11 (24H2)
 Espace disque : OK182 Go libres
 Connexion internet : OKgithub.com et claude.ai répondent.
-Python (pour les automatismes) : À installerPas encore installé. Je le prends chez Microsoft (winget).
-Git (l’historique de tes notes) : À installerPas encore installé. Je le prends chez Microsoft (winget).
+Python (pour les automatismes) : À installerPas encore installé. Je l’installe : par winget (Microsoft), sinon depuis son site officiel.
+Git (l’historique de tes notes) : À installerPas encore installé. Je l’installe : par winget (Microsoft), sinon depuis son site officiel.
 Bun (le moteur de la mémoire) : À installerPas encore installé.
 Claude Code : OKClaude Code 2.1.296
 Connexion à Claude : OKTu es connecté.
