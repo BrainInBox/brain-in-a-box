@@ -521,6 +521,9 @@ class Pilote:
     # A second click on the app while it is open (a window slow to show): the second one must go by itself.
     # Windows only (lib.rs, already_open): macOS brings an open app back by itself, Linux is not checked.
     ouvrir_encore = None
+    # The driver gives each button's place and the screen's usable area (Windows): the main buttons must be
+    # measured, not skipped without a word when the tree stops giving them.
+    mesure_places = False
 
     def poste_neuf(self):
         """Makes the VM the machine users have, right before the app's first start (what its steps must
@@ -1433,6 +1436,7 @@ class PiloteWindows(Pilote):
 
     machine = "PC"
     suffixe = "_windows-x64-setup.exe"
+    mesure_places = True
     neufs = ("Python (pour les automatismes)", LIGNE_GIT)
     # In front, yet no dialog: the desktop, the taskbar, a console.
     IGNORER = ("Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd", "ConsoleWindowClass",
@@ -2926,6 +2930,10 @@ class Parcours:
         vus = self.avancer("fini", DELAI_PREMIER)
         for must in ("bienvenue", "choix", "diagnostic", "etape-codex", "connexion-chatgpt") if self.codex else ("bienvenue", "diagnostic"):
             self.t.check(must in vus, "le parcours n'est pas passé par l'écran « %s »" % must)
+        if self.p.mesure_places:
+            for cle in ("diagnostic",) if self.codex else ("bienvenue", "diagnostic"):
+                self.t.check(cle in self.principaux, "écran « %s » : le bouton principal n'a pas été mesuré (le pilote ne donne "
+                                                      "plus la place des boutons ou la zone utile de l'écran)" % cle)
         fini = vus["fini"]
         if self.codex:
             self.t.check("etape-claude" not in vus, "l'app a installé Claude Code alors que seul Codex est choisi")

@@ -857,6 +857,13 @@ class Walk(Base):
         pa = self.parcours(p)
         pa.premier_lancement({})
         self.assertEqual(pa.principaux, {})
+        # Windows' driver must measure them: a tree that stops giving the places fails, it does not pass unmeasured.
+        p, self.h.now = FauxPilote(self.h), 0.0
+        p.machine, p.mesure_places = "PC", True
+        p.ecrans["bienvenue"] = dict(p.ecrans["bienvenue"], boutons={"Vérifier mon PC": "diag-en-cours"})
+        with self.assertRaises(terrain.Echec) as cm:
+            self.parcours(p).premier_lancement({})
+        self.assertIn("écran « bienvenue » : le bouton principal n'a pas été mesuré", str(cm.exception))
 
     def test_opened_twice_the_second_one_goes_by_itself(self):
         p = FauxPilote(self.h)
@@ -2373,7 +2380,9 @@ class GuideParts(unittest.TestCase):
         self.assertEqual(ta.ANNEAU_PLEIN, "Sur l'image, « Nouveau » est entouré en rouge.")
         self.assertEqual(ta.REPONSES_GUIDE["debut"]["libelle"], "Nouveau")
         with open(os.path.join(REPO, "app", "src-tauri", "src", "lib.rs"), encoding="utf-8") as f:
-            self.assertIn('.title("%s")' % ta.GUIDE_TITRE, f.read())
+            rs = f.read()
+        self.assertIn('const GUIDE_TITLE: &str = "%s";' % ta.GUIDE_TITRE, rs)
+        self.assertIn(".title(GUIDE_TITLE)", rs)
         with open(os.path.join(REPO, "app", "src", "styles.css"), encoding="utf-8") as f:
             css = f.read()
         self.assertIn("stroke: #%02x%02x%02x;" % ta.ROUGE, css)
