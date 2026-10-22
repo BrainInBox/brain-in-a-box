@@ -14,6 +14,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
+import { GUIDE_SCENARIOS, GUIDE_SIZES } from './scenarios-guide.mjs';
 
 // The guide says the time the subscription comes back: the same hour on every machine.
 process.env.TZ = 'Europe/Paris';
@@ -97,83 +98,6 @@ const SCENARIOS = [
   // The model refused to answer (Claude Code would have had another one answer instead).
   's=repair-ok&go=done&error=refused',
 ];
-
-// The guide in paste mode (guide-mock.html): a whole session to its end and the procedure saved, on each
-// system, then each step's variant, each error of §2 and each state that keeps Claude from being asked.
-const GUIDE_SCENARIOS = [
-  'g=ok&vu=0&go=enregistre',
-  'g=ok&go=enregistre&os=windows',
-  'g=ok&go=enregistre&os=linux',
-  'g=ok&go=apercu&sent=1',
-  'g=ok&go=apercu&nth=2&click=cacher&cache=1',
-  'g=ok&go=apercu&nth=3&click=cacher,autre&cache=1&taille=1',
-  'g=ok&go=apercu&depose=1',
-  'g=ok&go=apercu&nth=2&pause=1&click=arreter',
-  'g=ok&go=objectif&nth=2&click=comment',
-  'g=ok&go=abandon&click=bloque,next,bloque,next,bloque',
-  'g=pointille&go=etape',
-  'g=bas&go=etape',
-  'g=ambigu&go=etape&nth=2',
-  'g=pas-ici&go=etape',
-  'g=bloque&go=etape',
-  'g=pas-fait&go=etape&nth=2',
-  'g=pas-fait&go=etape&nth=2&click=reessaie',
-  'g=sensible&go=etape&nth=4',
-  'g=suspect&go=bloque',
-  'g=clickfix&go=bloque',
-  'g=refus&go=apercu&nth=2&cache=1',
-  'g=quota&go=erreur',
-  'g=presque-limite&go=etape',
-  'g=hors-ligne&go=etape',
-  'g=delai&go=etape',
-  'g=init&go=erreur',
-  'g=image-non-vue&go=etape',
-  'g=noire&go=apercu',
-  'g=petit&go=apercu&os=windows',
-  'g=budget&go=erreur',
-  'g=budget-etape&go=abandon',
-  'g=colle&go=apercu',
-  'g=deja&go=coller',
-  'g=remote&go=enregistre',
-  'g=refusee&go=enregistre',
-  'g=auth&go=objectif',
-  'g=billed&go=facture',
-  'g=vieux&go=vieux',
-  'g=arrete&go=arrete',
-  'g=installer&go=installer',
-  // The review's (a beginner's stops): the capture of before pasted again, the filter alone, the limit
-  // today or tomorrow, a client's name in a step to save, back from the first capture, the reduced
-  // mode kept from a step to the next and its note, no image in what was pasted, a JPEG dropped.
-  'g=ok&go=apercu&nth=2&meme=1',
-  'g=filtre&go=bloque',
-  'g=quota&go=erreur&reprise=7200',
-  'g=quota&go=erreur&reprise=86400',
-  'g=ambigu&go=enregistrer',
-  'g=ok&go=objectif&nth=2&click=back',
-  'g=pointille&go=etape&click=reduire',
-  'g=ok&go=etape&nth=2&click=reduire',
-  'g=ok&go=apercu&vide=1',
-  'g=ok&go=apercu&vide=1&os=windows',
-  'g=ok&go=erreur&depose=jpeg',
-  'g=ok&go=etape&nth=2&lache=1',
-  // Phase 5, decision 8 (Claude Pro): no Opus for the account, Sonnet in the cautious mode; neither model.
-  'g=prudent&go=etape',
-  'g=prudent&go=etape&nth=2',
-  'g=sans-modele&go=erreur',
-  // Linux: WebKitGTK hands the page no image of the clipboard; Rust reads it (phase 5's terrain found it).
-  'g=ok&go=apercu&os=linux&gtk=1',
-  'g=ok&go=coller&nth=2&os=linux&gtk=vide',
-  // Linux: a Ctrl+V of text on the preview or « Cacher une zone » leaves the user there, as on the other systems.
-  'g=ok&go=apercu&os=linux&gtk=1&recolle=apercu',
-  'g=ok&go=cacher&click=cacher&os=linux&gtk=1&recolle=cacher',
-];
-
-// The guide's window sizes, as the page asks Rust for them, in turn: the image made wide to hide a zone
-// and kept so while zones are drawn, the reduced mode kept from a step to the next.
-const GUIDE_SIZES = {
-  'g=ok&go=apercu&nth=2&click=cacher&cache=1': 'large',
-  'g=ok&go=etape&nth=2&click=reduire': 'reduit normal reduit',
-};
 
 // Where Codex can be chosen (&porte=1, as the tests open it): what some screens must say, or not.
 const has = (shots, start, text) => shots.some((s) => s.startsWith(`== ${start}`) && s.includes(text));
@@ -568,7 +492,7 @@ if (args.includes('--write')) {
   fs.writeFileSync(GOLDEN, render(got));
   console.log(`${got.size} scenarios written to ${path.relative(process.cwd(), GOLDEN)}`);
   if (guide.size) {
-    fs.writeFileSync(GUIDE_GOLDEN, render(guide, "The guide's screens, paste mode"));
+    fs.writeFileSync(GUIDE_GOLDEN, render(guide, "The guide's screens"));
     console.log(`${guide.size} scenarios written to ${path.relative(process.cwd(), GUIDE_GOLDEN)}`);
   }
   process.exit(0);
