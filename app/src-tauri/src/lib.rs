@@ -323,7 +323,7 @@ fn open_guide(app: &tauri::AppHandle) -> tauri::Result<()> {
     }
     let frame = guide_area(app).map(|area| guide::frame(area, guide::Taille::Normal));
     let mut builder = tauri::WebviewWindowBuilder::new(app, "guide", tauri::WebviewUrl::App("guide.html".into()))
-        .title("Bibo, ton guide")
+        .title(GUIDE_TITLE)
         .min_inner_size(360.0, 220.0)
         .always_on_top(true)
         .visible_on_all_workspaces(true);
@@ -698,13 +698,20 @@ fn show_main(w: &tauri::Window) {
     }
 }
 
+/// The guide's window title (open_guide).
+const GUIDE_TITLE: &str = "Bibo, ton guide";
+/// The window a second launch brings to the front, the first one there: the guide's while it guides (the
+/// installer's is then down in the taskbar, and coming up it would cover the program guided in).
+#[cfg_attr(not(windows), allow(dead_code))]
+const FRONT_FIRST: [&str; 2] = [GUIDE_TITLE, "Brain in a Box"];
+
 /// Windows: one Bibo at a time. A second launch (a double click on a window slow to come) brings the first
 /// one to the front and goes: two installers over the same brain would collide. Nothing to find (the
 /// first still starting, or stuck without a window): this one opens. macOS brings an app already open
 /// back by itself.
 #[cfg(windows)]
 fn already_open() -> bool {
-    use windows::core::w;
+    use windows::core::{w, HSTRING};
     use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS};
     use windows::Win32::System::Threading::CreateMutexW;
     use windows::Win32::UI::WindowsAndMessaging::{FindWindowW, IsIconic, SetForegroundWindow, ShowWindow, SW_RESTORE};
@@ -717,12 +724,10 @@ fn already_open() -> bool {
         return false;
     }
     for _ in 0..30 {
-        // SAFETY: Tauri's window class and our windows' titles (tauri.conf.json, open_guide), and a handle
-        // FindWindowW just gave: never a folder named Brain in a Box. The installer's window first; the
-        // guide's when the installer's was closed.
-        let found = unsafe { FindWindowW(w!("Tauri Window"), w!("Brain in a Box")) }
-            .or_else(|_| unsafe { FindWindowW(w!("Tauri Window"), w!("Bibo, ton guide")) });
-        if let Ok(h) = found {
+        // SAFETY: Tauri's window class and our windows' titles, and a handle FindWindowW just gave: never a
+        // folder named Brain in a Box.
+        let found = FRONT_FIRST.iter().find_map(|title| unsafe { FindWindowW(w!("Tauri Window"), &HSTRING::from(*title)) }.ok());
+        if let Some(h) = found {
             unsafe {
                 if IsIconic(h).as_bool() {
                     let _ = ShowWindow(h, SW_RESTORE);
@@ -899,6 +904,15 @@ mod tests {
         }
         let nobodys: Vec<&String> = commands.iter().filter(|c| !main.contains(*c) && !guide.contains(*c)).collect();
         assert!(nobodys.is_empty(), "no window may call {nobodys:?}");
+    }
+
+    /// A second launch while the guide guides brings the guide back, not the installer over the program guided
+    /// in; the titles it looks for are the windows' own.
+    #[test]
+    fn a_second_launch_brings_the_guide_first() {
+        use super::{FRONT_FIRST, GUIDE_TITLE};
+        let conf: serde_json::Value = serde_json::from_str(&read("tauri.conf.json")).unwrap();
+        assert_eq!(FRONT_FIRST, [GUIDE_TITLE, conf["app"]["windows"][0]["title"].as_str().unwrap()]);
     }
 
     /// The installer's window on the night's VM and on the laptops of the people it is for: whole in the usable
