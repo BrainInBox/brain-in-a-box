@@ -4,6 +4,10 @@
 
 The governing loop for all work: **gather context → take action → verify work → repeat.**
 
+**The brain** is the person's notes folder: the one your session start names ("Brain: this person's notes are in …"), else `$BRAIN_DIR`, else `~/Documents/Brain`. Every `Profile/…` path below is in it.
+
+**Language**: speak to the person in the language `Profile/soul.md` names (your session start says it too); until it is filled, in the one they write in. Code, commits and file names keep their project's language.
+
 ---
 
 ## 0. Rule #1 ABSOLUTE — Capture corrections (BLOCKING)
@@ -11,18 +15,18 @@ The governing loop for all work: **gather context → take action → verify wor
 Applies in EVERY repo, EVERY session. The `~/.claude/hooks/brain/correction-detector.py` hook (UserPromptSubmit) detects correction signals (negation, "actually", "instead", "avoid", reproach, preference) and injects a `⚠️ CORRECTION DETECTED` reminder.
 
 When you see it, BEFORE anything else:
-1. **Append** a line to `~/Documents/Brain/Profile/lessons.md` under today's header (`## YYYY-MM-DD`).
+1. **Append** a line to the brain's `Profile/lessons.md` under today's header (`## YYYY-MM-DD`).
    Format: `- **[short context]** → rule: [what to do] (when: [trigger])`
-2. **Confirm** visibly: `✓ noted in lessons.md`
+2. **Confirm** visibly, in their language: `✓ noted in lessons.md` (French: `✓ noté dans lessons.md`)
 3. **Then** apply the correction and continue.
 
 Non-negotiable. If you can't write the file, say so explicitly.
 
 ## 0b. Before assuming a tool is missing
-Read `~/Documents/Brain/Profile/stack.md` — installed tools, GBrain memory (`gbq`), access. If it's listed, use it.
+Read the brain's `Profile/stack.md` — installed tools, GBrain memory (`gbq`), access. If it's listed, use it.
 
 ## 0c. Before diagnosing
-Read `~/Documents/Brain/Profile/memory.md` (recent context, active decisions) and `Projects/<project>.md`. The context is already captured — don't ask for it again.
+Read the brain's `Profile/memory.md` (recent context, active decisions) and `Projects/<project>.md`. The context is already captured — don't ask for it again.
 
 ---
 

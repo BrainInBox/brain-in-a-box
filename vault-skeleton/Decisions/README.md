@@ -1,4 +1,8 @@
-# Decisions — one file per meaningful decision
+# Decisions — tes décisions importantes
+
+Une note par décision qui compte (un fournisseur choisi, une règle de l'entreprise, un logiciel adopté) : ce qui a été décidé, pourquoi, et ce qui a été écarté. Dans six mois, Claude saura te dire pourquoi. Le nom de la note commence par la date, par exemple `2026-10-22-nouveau-fournisseur.md`.
+
+## In English
 
 > Architectural, product, business, process. Anything you'll want to answer "why did we choose X?" for, six months from now, in one query. Both humans and agents read this folder before proposing changes that overlap an existing decision.
 

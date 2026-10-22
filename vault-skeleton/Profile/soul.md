@@ -1,5 +1,7 @@
 # Soul — agent personality and style
 
+> Cette note dit comment Claude te parle : la langue, le ton, ce qu'il fait sans te demander. Claude l'adapte quand tu te présentes.
+>
 > The heart of the "same brain." This file defines HOW the agent works. Reusable as-is — just adjust language/tone if needed via the onboarding.
 
 ## Agent identity

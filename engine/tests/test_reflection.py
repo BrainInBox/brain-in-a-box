@@ -789,7 +789,10 @@ class Run(unittest.TestCase):
         ]) + "\n", encoding="utf-8")
         os.utime(proj / "s.jsonl", (time.time(), time.time()))
         self.saved_env, self.saved_tmp = dict(os.environ), tempfile.tempdir
-        os.environ.update(HOME=str(self.home), USERPROFILE=str(self.home), BRAIN_NO_NOTIFY="1")
+        # The computer's language, the same on every machine: English unless a test says otherwise.
+        for var in ("LC_ALL", "LC_MESSAGES"):
+            os.environ.pop(var, None)
+        os.environ.update(HOME=str(self.home), USERPROFILE=str(self.home), BRAIN_NO_NOTIFY="1", LANG="en_US.UTF-8")
         tempfile.tempdir = str(self.root)
         self.saved = (dr.HERMES_DB, dr.RETRY_DELAY, dr.QUIET)
         dr.HERMES_DB, dr.RETRY_DELAY, dr.QUIET = self.root / "no-hermes.db", 0, 0.2
@@ -1074,6 +1077,166 @@ class Reflect(Run):
 
 
 
+class Language(Run):
+    """The journal in the person's language: soul.md's, else the computer's (no longer English)."""
+
+    def fresh_day(self, soul):
+        (self.vault / "Profile" / "soul.md").write_text("# Soul\n\n## Language\n%s\n" % soul, encoding="utf-8")
+        self.journal.unlink()
+        self.memory.write_text("# Memory\n", encoding="utf-8")
+        self.age()
+
+    def test_soul_not_filled_and_a_french_computer_write_french(self):
+        self.fresh_day("{{LANGUAGE}} by default. Switch only when the code/repo requires it.")
+        os.environ["LANG"] = "fr_FR.UTF-8"
+        self.run_reflection()
+        self.assertIn("\nThe computer's language: French.\n", (self.fake / "prompt.txt").read_text(encoding="utf-8"))
+        self.assertIn("else the computer's language the prompt's first lines name", dr.SYSTEM)
+        j = self.journal.read_text(encoding="utf-8")
+        self.assertTrue(j.startswith(f"# {DAY} — Journal\n\n## Ce que j'ai fait\n- Shipped the login page\n"), j)
+        self.assertIn("## Projets sur lesquels j'ai travaillé\n", j)
+        self.assertIn("## À faire ensuite\n- write the tests\n", j)
+        self.assertNotIn("What I did", j)
+        self.assertIn("## Contexte récent\n\n### 2026-10-14\n- Login page shipped\n",
+                      self.memory.read_text(encoding="utf-8"))
+        # The next run finds its French sections and adds to them.
+        self.answer({**ANSWER, "what_i_did": ["Shipped the login page", "Wrote the tests"]})
+        self.run_reflection(slot="midday")
+        j = self.journal.read_text(encoding="utf-8")
+        self.assertEqual(j.count("## Ce que j'ai fait"), 1)
+        self.assertIn("- Shipped the login page\n- Wrote the tests\n", j)
+
+    def test_a_failing_day_is_said_in_french_too(self):
+        self.fresh_day("Français par défaut.")
+        os.environ["LANG"] = "en_US.UTF-8"   # soul.md wins over the computer
+        st = self.run_reflection(scenario="init-bash")
+        mem = self.memory.read_text(encoding="utf-8")
+        self.assertIn("> **⚠️ Le résumé du jour échoue** depuis le %s" % st["failing_since"], mem)
+        self.assertIn("Le prochain résumé qui marche rattrape les 3 derniers soirs.", mem)
+        self.answer({**ANSWER, "suspect": True})
+        self.run_reflection()
+        self.assertIn(f"## Ce que j'ai fait\n- {dr.FRENCH['suspect']}\n", self.journal.read_text(encoding="utf-8"))
+        self.assertIn(dr.FRENCH["memory_suspect"].format(day=DAY), self.memory.read_text(encoding="utf-8"))
+
+    def test_soul_in_english_keeps_english_titles_and_the_computer_is_still_named(self):
+        self.fresh_day("English by default.")
+        os.environ["LANG"] = "fr_FR.UTF-8"
+        self.run_reflection()
+        self.assertTrue(self.journal.read_text(encoding="utf-8").startswith(f"# {DAY} — Daily\n\n## What I did\n"))
+        self.assertIn("## Recent context\n", self.memory.read_text(encoding="utf-8"))
+        self.assertIn("\nThe computer's language: French.\n", (self.fake / "prompt.txt").read_text(encoding="utf-8"))
+
+    def test_what_soul_md_and_the_computer_say(self):
+        import _langue
+        cases = {"{{LANGUAGE}} by default.": None, "Français, sauf pour le code.": "fr",
+                 "English — and French with my family": "en", "Wolof": "?", "": None}
+        for value, code in cases.items():
+            with self.subTest(value):
+                (self.vault / "Profile" / "soul.md").write_text("## Language\n\n%s\n\n## Values\n- x\n" % value,
+                                                               encoding="utf-8")
+                self.assertEqual(_langue.de_soul(self.vault), code)
+        for soul, code in (("## Langue\nespañol\n", "es"), ("### Idioma\nPortuguês\n", "pt"), ("# Values\nFrench\n", None)):
+            (self.vault / "Profile" / "soul.md").write_text(soul, encoding="utf-8")
+            self.assertEqual(_langue.de_soul(self.vault), code, soul)
+        for env, code in (({"LANG": "fr_FR.UTF-8"}, "fr"), ({"LC_ALL": "de_DE.UTF-8", "LANG": "fr_FR"}, "de"),
+                          ({"LANG": "xx_YY.UTF-8"}, None), ({"LC_MESSAGES": "pt_BR", "LANG": "C.UTF-8"}, "pt")):
+            with self.subTest(env), mock.patch.dict(os.environ, env):
+                self.assertEqual(_langue.du_systeme(), code)
+
+
+class CatchUp(Run):
+    """A run without --day sums up the evenings it missed first: a computer off at 23:00."""
+    YESTERDAY = "2026-10-13"
+
+    def setUp(self):
+        Run.setUp(self)
+        ts = f"{self.YESTERDAY}T21:00:00+00:00"
+        (self.root / "projects" / "-w" / "evening.jsonl").write_text("\n".join(json.dumps(r) for r in [
+            {"type": "user", "timestamp": ts, "cwd": str(self.root), "message": {"content": "LATE-EVENING work"}},
+            {"type": "assistant", "timestamp": ts, "message": {"content": [{"type": "text", "text": "Done."}]}},
+            {"type": "assistant", "timestamp": ts, "message": {"content": [{"type": "text", "text": "Saved."}]}},
+        ]) + "\n", encoding="utf-8")
+
+    def state(self, last_ok):
+        (self.root / "logs").mkdir(exist_ok=True)
+        (self.root / "logs" / "daily-reflection.state.json").write_text(json.dumps({"last_ok": last_ok}),
+                                                                        encoding="utf-8")
+
+    def scheduled(self, slot="midday"):
+        (self.fake / "scenario").write_text("plan-ok", encoding="utf-8")
+        with contextlib.redirect_stdout(io.StringIO()):
+            dr.scheduled(DAY, slot, command=[sys.executable, str(FAKE)])
+        self.age()
+        return json.loads((self.root / "logs" / "daily-reflection.state.json").read_text(encoding="utf-8"))
+
+    def test_the_missed_evenings(self):
+        m = dr.missed_evenings
+        self.assertEqual(m(DAY, f"{self.YESTERDAY} evening"), [])
+        self.assertEqual(m(DAY, f"{self.YESTERDAY} backfill"), [])
+        self.assertEqual(m(DAY, f"{DAY} midday"), [])
+        self.assertEqual(m(DAY, f"{self.YESTERDAY} midday"), [self.YESTERDAY])
+        self.assertEqual(m(DAY, "2026-10-11 evening"), ["2026-10-12", self.YESTERDAY])
+        self.assertEqual(m(DAY, "2026-09-01 evening"), ["2026-10-11", "2026-10-12", self.YESTERDAY], "3 days at most")
+        for nothing in (None, "", "garbage", "2026-13-40 evening"):
+            self.assertEqual(m(DAY, nothing), [self.YESTERDAY])
+        self.assertEqual(m("2026-03-01", "2026-02-27 evening"), ["2026-02-28"])
+
+    def test_yesterdays_evening_missed_is_summed_up_first(self):
+        self.state(f"{self.YESTERDAY} midday")
+        st = self.scheduled()
+        self.assertEqual(self.calls(), 2)
+        first = (self.fake / "prompts" / "1.txt").read_text(encoding="utf-8")
+        self.assertIn(f"Activity of {self.YESTERDAY} (backfill run", first)
+        self.assertIn("LATE-EVENING", first)
+        self.assertIn(f"Activity of {DAY} (midday run", (self.fake / "prompts" / "2.txt").read_text(encoding="utf-8"))
+        self.assertIn("- Shipped the login page\n",
+                      (self.vault / "Journal" / f"{self.YESTERDAY}.md").read_text(encoding="utf-8"))
+        self.assertEqual(st["last_ok"], f"{DAY} midday")
+
+    def test_nothing_missed_nothing_more(self):
+        self.state(f"{self.YESTERDAY} evening")
+        self.scheduled()
+        self.assertEqual(self.calls(), 1)
+        self.assertFalse((self.vault / "Journal" / f"{self.YESTERDAY}.md").exists())
+
+    def test_a_failed_catch_up_stops_there_today_still_runs(self):
+        self.state("2026-10-11 evening")
+        (self.fake / "scenarios").mkdir()
+        (self.fake / "scenarios" / "1").write_text("init-bash", encoding="utf-8")
+        st = self.scheduled()
+        self.assertEqual(self.calls(), 2, "2026-10-12 has nothing; 2026-10-13 fails; today runs")
+        self.assertIn(f"Activity of {DAY} (midday", (self.fake / "prompts" / "2.txt").read_text(encoding="utf-8"))
+        self.assertIsNone(st["last_error"])
+        self.assertEqual(st["last_ok"], "2026-10-11 evening", "today's success does not skip the evening that failed")
+        (self.fake / "scenarios" / "1").unlink()
+        st = self.scheduled()
+        self.assertEqual(self.calls(), 1, "the failed evening again; today, done less than an hour ago, waits")
+        self.assertIn(f"Activity of {self.YESTERDAY} (backfill", (self.fake / "prompts" / "1.txt").read_text(encoding="utf-8"))
+        self.assertEqual(st["last_ok"], f"{self.YESTERDAY} backfill")
+
+    def test_the_last_good_run_only_moves_forward(self):
+        self.state(f"{DAY} evening")
+        st = self.run_reflection(slot="backfill", day=self.YESTERDAY)
+        self.assertEqual(st["last_ok"], f"{DAY} evening", "a day summed up again by hand")
+        st = self.run_reflection(slot="midday")
+        self.assertEqual(st["last_ok"], f"{DAY} evening", "the day's midday, after its evening")
+        for broken in ("garbage", "2026-13 evening", 7):
+            with self.subTest(broken):
+                self.state(broken)
+                self.assertEqual(self.run_reflection(slot="midday")["last_ok"], f"{DAY} midday")
+
+    def test_the_day_is_asked_of_sonnet(self):
+        self.run_reflection()
+        argv = json.loads((self.fake / "argv.json").read_text(encoding="utf-8"))
+        self.assertEqual(argv[argv.index("--model") + 1], "sonnet")
+
+    def test_only_a_run_without_day_catches_up(self):
+        for argv, catch_up in ((["daily-reflection.py"], True), (["daily-reflection.py", "--slot", "evening"], True),
+                               (["daily-reflection.py", "--day", DAY], False), (["daily-reflection.py", "--dry-run"], False)):
+            with self.subTest(argv), mock.patch.object(sys, "argv", argv):
+                self.assertEqual(dr.parse_args().catch_up, catch_up)
+
+
 class EngineRun(Run):
     """The AI agents.json names (_headless.py), fake_codex.py standing for codex. Codex is closed
     on every system (_agents.CODEX_OUVERT): opened here only, in this process."""
@@ -1177,9 +1340,9 @@ class Engines(EngineRun):
         # one handed to the launcher (fake_claude reads stdin in the locale's encoding: cp1252 on Windows).
         prompt = launcher.call_args.args[0]
         before = mock.call(prompt, dr.SCHEMA, dr.SYSTEM, budget_usd=dr.BUDGET_USD, timeout=dr.TIMEOUT,
-                           command=[sys.executable, str(FAKE)])
+                           model=dr.MODEL, command=[sys.executable, str(FAKE)])
         self.assertEqual(launcher.call_args_list, [before])
-        hc.run(prompt, dr.SCHEMA, dr.SYSTEM, budget_usd=dr.BUDGET_USD, timeout=dr.TIMEOUT,
+        hc.run(prompt, dr.SCHEMA, dr.SYSTEM, budget_usd=dr.BUDGET_USD, timeout=dr.TIMEOUT, model=dr.MODEL,
                command=[sys.executable, str(FAKE)])
         self.assertEqual(through, self.recorded())
         self.assertEqual(self.calls(), 2)
