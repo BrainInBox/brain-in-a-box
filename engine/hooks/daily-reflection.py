@@ -31,14 +31,17 @@ secrets masked. Nothing is ever removed from memory.md: archiving old entries is
 another program's job.
 
 A run without --day first sums up the days whose evening run was missed (the
-computer off or asleep at 23:00), CATCH_UP days back at most, then today. The
-journal is written in the person's language (_langue.py: the one
-Profile/soul.md names, else the computer's), its titles too in French. Claude
-answers with Sonnet: see MODEL.
+computer off or asleep at 23:00), CATCH_UP days back at most, then today. One
+that fails waits in the state ("pending") for the next runs, and the warning in
+memory.md stays while it waits; TRIES says when one is given up, which its day's
+entry in memory.md then says. The journal is written in the person's language
+(_langue.py: the one Profile/soul.md names, else the computer's), its titles and
+this program's warnings too in French. Claude answers with Sonnet: see MODEL.
 
 Environment: BRAIN_DIR (vault, default ~/Documents/Brain), BRAIN_GIT_ROOTS
 (extra repos to scan, os.pathsep-separated), HERMES_DB, CLAUDE_BIN, CODEX_BIN,
-BRAIN_CODEX_MODEL, BRAIN_NO_NOTIFY=1 (no desktop notification on failure).
+BRAIN_CODEX_MODEL, BRAIN_NO_NOTIFY=1 (no desktop notification when the reflection
+starts failing).
 For tests and trials: --projects DIR reads the transcripts from DIR instead of
 ~/.claude/projects, --logs DIR keeps the state, error log and run lock there
 instead of ~/.claude/logs.
@@ -93,6 +96,11 @@ BUDGET_USD = 4.00
 MODEL = "sonnet"
 # Evenings a run without --day catches up: a computer off for a long weekend is summed up.
 CATCH_UP = 3
+# A missed evening that fails is tried again at each run while it is within CATCH_UP days, and TRIES
+# times at most when its failure cost usage (the AI ran: an answer off the schema or over its cap, a
+# refusal, a timeout). A missing login or a usage limit costs nothing: it waits for the next run.
+TRIES = 2
+COSTLY = ("invalid", "refused", "timeout")
 # Codex has no spending cap (docs/proposals/codex.md, §2.3): a shorter wait, and no second try after it.
 CODEX_TIMEOUT = 600
 # Seconds: a file written this recently is being edited (Obsidian saves ~2 s after a keystroke).
@@ -113,12 +121,16 @@ FRENCH = {"what_i_did": "Ce que j'ai fait", "key_decisions": "Décisions clés",
           "suspect": "⚠️ Une partie du texte de cette journée s'adressait à une IA : vérifie ce résumé avec tes "
                      "sessions.",
           "memory_suspect": "⚠️ Du texte adressé à une IA est apparu le {day} : lis Journal/{day}.md avant de "
-                            "t'y fier."}
+                            "t'y fier.",
+          "lost": "⚠️ Cette journée n'a pas pu être résumée : ton journal ne la couvre pas. Pour réessayer, dis à "
+                  "Claude « résume ma journée du {jour} » (daily-reflection.py --day {day})."}
 MAX_ITEMS, MAX_ITEM, MAX_SECTION = 60, 500, 12_000
 MEMORY_ITEMS, MEMORY_ITEM = 12, 300
 SOUL_CAP, JOURNAL_CAP, MEMORY_CAP = 4_000, 40_000, 8_000
 SUSPECT_LINE = "⚠️ Some text of this day was addressed to an AI: check this summary against your sessions."
 MEMORY_SUSPECT = "⚠️ Text addressed to an AI showed up on {day}: read Journal/{day}.md before relying on it."
+LOST = "⚠️ This day could not be summed up: the journal does not cover it. To try again: daily-reflection.py --day {day}."
+DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
 def _strings(n):
@@ -1117,29 +1129,88 @@ def set_status_block(text):
         log_error(f"status block not written: {e}")
 
 
-def status_text(st, reason, lang=None):
-    """The warning at the top of memory.md while the reflection fails, in French in a French vault."""
+def _kind(reason):
+    """The kind of HeadlessError a run's cause starts with ("auth", "quota"...), after the engine's name
+    when it is named (_headless.texte); None for a cause of another sort."""
+    m = re.match(r"(?:(?:claude|codex): )?([a-z]+): ", str(reason or ""))
+    return m.group(1) if m else None
+
+
+def _jour(day):
+    """2026-10-13 → 13/10."""
+    return f"{day[8:10]}/{day[5:7]}"
+
+
+def what_to_do(reason):
+    """What the person does about a failure, in French: the two usual causes, then the rest."""
+    kind = _kind(reason)
+    codex = str(reason).startswith("codex: ")
+    if kind == "auth":
+        return ("ouvre Bibo et reconnecte Codex à ton compte ChatGPT." if codex
+                else "ouvre Bibo et reconnecte ton compte Claude.")
+    if kind == "quota":
+        return (f"rien, ta limite d'usage de {'Codex' if codex else 'Claude'} est atteinte : le prochain résumé "
+                f"rattrapera.")
+    return "dis à Claude « le résumé de ma journée échoue, regarde pourquoi »."
+
+
+def status_text(st, lang=None):
+    """The warning at the top of memory.md while the reflection fails or an evening waits, in French
+    in a French vault: what to do first, the error itself as a detail."""
+    reason = st.get("last_error") or "unknown"
+    waiting = sorted(_pending(st))
     if lang == "fr":
-        return (f"> **⚠️ Le résumé du jour échoue** depuis le {st['failing_since']} · dernier résumé réussi : "
-                f"{st.get('last_ok') or 'aucun'} · cause : {reason}. Ton journal et memory.md ne couvrent pas ces "
-                f"jours-là. Le prochain résumé qui marche rattrape les {CATCH_UP} derniers soirs. Pour un jour plus "
-                f"ancien, demande à Claude de lancer `daily-reflection.py --day AAAA-MM-JJ` (dans "
-                f"~/.claude/hooks/brain).")
+        since = str(st.get("failing_since") or "")
+        since = f"{_jour(since)} à {since[11:16]}" if DATE.match(since) else since
+        day, _, slot = str(st.get("last_ok") or "").partition(" ")
+        ok = _jour(day) + {"midday": ", midi", "evening": ", soir"}.get(slot, "") if DATE.fullmatch(day) else "aucun"
+        late = " ; pas encore résumé : " + ", ".join(map(_jour, waiting)) if waiting else ""
+        return (f"> **⚠️ Le résumé de ta journée échoue** depuis le {since} (dernier réussi : {ok}{late}). Que faire : "
+                f"{what_to_do(reason)} Le prochain résumé qui marche rattrape les {CATCH_UP} derniers soirs. "
+                f"Détail : {reason}")
+    late = f" · not summed up yet: {', '.join(waiting)}" if waiting else ""
     return (f"> **⚠️ Daily reflection failing** since {st['failing_since']} · last good run: "
-            f"{st.get('last_ok') or 'unknown'} · cause: {reason}. Journal and memory.md do not cover "
+            f"{st.get('last_ok') or 'unknown'}{late} · cause: {reason}. Journal and memory.md do not cover "
             f"the period since. Backfill: `python3 ~/.claude/hooks/brain/daily-reflection.py --day YYYY-MM-DD`.")
 
 
-def notify(msg):
+def notify(msg, title="Brain: daily reflection failed"):
     if os.environ.get("BRAIN_NO_NOTIFY") or sys.platform != "darwin":
         return
-    # The message goes in argv: nothing is interpolated into the AppleScript source.
+    # Both go in argv: nothing is interpolated into the AppleScript source.
     try:
         subprocess.run(["/usr/bin/osascript", "-e", "on run argv", "-e",
-                        'display notification (item 1 of argv) with title "Brain: daily reflection failed"',
-                        "-e", "end run", msg], capture_output=True, timeout=10)
+                        "display notification (item 1 of argv) with title (item 2 of argv)",
+                        "-e", "end run", msg, title], capture_output=True, timeout=10)
     except Exception:
         pass
+
+
+def _pending(st):
+    """The missed evenings the state says still wait, {day: {"failed": n, "costly": n}}: what of it reads."""
+    raw = st.get("pending")
+    if not isinstance(raw, dict):
+        return {}
+    count = lambda v: v if type(v) is int and v >= 0 else 0
+    return {d: {k: count(v.get(k)) for k in ("failed", "costly")}
+            for d, v in raw.items() if isinstance(d, str) and DATE.fullmatch(d) and isinstance(v, dict)}
+
+
+def _keep_pending(st, pending):
+    if pending:
+        st["pending"] = pending
+    else:
+        st.pop("pending", None)
+
+
+def give_up(day, lang, why):
+    """A missed evening no run will try again: logged, and said in its day's entry of memory.md."""
+    log_error(f"{day} backfill: given up ({why})")
+    line = (FRENCH["lost"] if lang == "fr" else LOST).format(day=day, jour=_jour(day))
+    try:
+        update(MEMORY, lambda n, b: merge_memory(n, b, day, {"suspect": False, "memory": [line]}, lang), None)
+    except (Refused, OSError) as e:
+        log_error(f"{day}: the line saying it was given up not written: {e}")
 
 
 def _rank(run):
@@ -1149,10 +1220,10 @@ def _rank(run):
     return (day, slot != "midday") if re.fullmatch(r"\d{4}-\d{2}-\d{2}", day) else ("", False)
 
 
-def reflect(day, slot, dry_run=False, command=None, codex_command=None, advance=True):
+def reflect(day, slot, dry_run=False, command=None, codex_command=None, missed=False):
     """The whole run: sources, the AI, the two files, the state and the warning in memory.md. Returns
-    why it failed, or None (done, or nothing to do). advance=False: a success leaves the last good
-    run as it is, so the evening missed before it is tried again next time."""
+    why it failed, or None (done, or nothing to do). missed: a missed evening the catch-up asks, which
+    a failure leaves pending (see TRIES)."""
     if redact is None or headless is None:
         # Never ship raw transcripts to a model, never run the AI outside its cage, never write unclean text.
         log_error("_redact.py, _vault_write.py, _agents.py, _headless.py or _headless_claude.py not found next to "
@@ -1202,6 +1273,11 @@ def reflect(day, slot, dry_run=False, command=None, codex_command=None, advance=
     if packed:
         log_error(f"{day} {slot}: {len(packed)} compressed Codex session(s) (.jsonl.zst) not read")
     if not masked and not gitlog and chosen:
+        if missed:   # nothing to sum up: that evening is done
+            LOGS.mkdir(parents=True, exist_ok=True)
+            with open(LOGS / "daily-reflection.run.lock", "a") as run_lock:
+                _hold(run_lock)
+                record(day, slot, None, None, (), lang, missed)
         return None
 
     # The scheduler may start the same slot twice (a Mac waking up): one run per slot and hour.
@@ -1237,24 +1313,49 @@ def reflect(day, slot, dry_run=False, command=None, codex_command=None, advance=
                 lock.unlink()  # a failed slot can be run again by hand right away
             except OSError:
                 pass
+        record(day, slot, reason, answer, chosen, lang, missed)
+    return reason
 
-        st = load_state()
-        if "codex" in chosen:
-            # Which engine wrote the day, and why the preferred one did not.
-            st.update(moteur=answer and answer.moteur, secours=answer and clean_item(answer.secours, 300) or None)
-        if reason is None:
-            # A day summed up again by hand never takes the last good run back: the missed evenings run from it.
-            if advance and _rank(f"{day} {slot}") >= _rank(st.get("last_ok")):
-                st["last_ok"] = f"{day} {slot}"
+
+def record(day, slot, reason, answer, chosen, lang, missed):
+    """A run's outcome in the state and in memory.md's warning, under the run lock."""
+    st = load_state()
+    if "codex" in chosen:
+        # Which engine wrote the day, and why the preferred one did not.
+        st.update(moteur=answer and answer.moteur, secours=answer and clean_item(answer.secours, 300) or None)
+    pending = _pending(st)
+    if reason is None:
+        # A day summed up again by hand never takes the last good run back: the missed evenings run from it.
+        if _rank(f"{day} {slot}") >= _rank(st.get("last_ok")):
+            st["last_ok"] = f"{day} {slot}"
+        pending.pop(day, None)
+        _keep_pending(st, pending)
+        if any(tries["failed"] for tries in pending.values()):   # still said: one that failed waits
+            set_status_block(status_text(st, lang))
+        else:
             st.update(failing_since=None, last_error=None)
             set_status_block(None)
-        else:
-            st["failing_since"] = st.get("failing_since") or time.strftime("%Y-%m-%d %H:%M")
-            st["last_error"] = reason
-            set_status_block(status_text(st, reason, lang))
-            notify(f"{day} {slot}: {reason}")
-        save_state(st)
-    return reason
+    else:
+        if missed:
+            tries = pending.setdefault(day, {"failed": 0, "costly": 0})
+            tries["failed"] += 1
+            tries["costly"] += _kind(reason) in COSTLY
+            if tries["costly"] >= TRIES:
+                del pending[day]
+                give_up(day, lang, f"{tries['costly']} costly failures, the last one: {reason}")
+            _keep_pending(st, pending)
+        # Said once when it starts failing, not at every run: memory.md says it as long as it lasts.
+        started = not st.get("failing_since")
+        st["failing_since"] = st.get("failing_since") or time.strftime("%Y-%m-%d %H:%M")
+        st["last_error"] = reason
+        set_status_block(status_text(st, lang))
+        if started:
+            if lang == "fr":
+                todo = what_to_do(reason)
+                notify(todo[0].upper() + todo[1:], "Ton cerveau : le résumé de ta journée a échoué")
+            else:
+                notify(f"{day} {slot}: {reason}")
+    save_state(st)
 
 
 def missed_evenings(today, last_ok):
@@ -1271,17 +1372,39 @@ def missed_evenings(today, last_ok):
     return [(start + timedelta(days=n)).strftime("%Y-%m-%d") for n in range((t - start).days)]
 
 
+def catch_up(today):
+    """The evenings to sum up before today, oldest first: those missed since the last good run and
+    those still pending, CATCH_UP days back at most. All of them are kept pending in the state first:
+    neither a catch-up stopped before one nor today's success can lose it. One out of reach is given
+    up (said on its day when it was tried)."""
+    LOGS.mkdir(parents=True, exist_ok=True)
+    first = (datetime.strptime(today, "%Y-%m-%d") - timedelta(days=CATCH_UP)).strftime("%Y-%m-%d")
+    with open(LOGS / "daily-reflection.run.lock", "a") as run_lock:
+        _hold(run_lock)
+        st = load_state()
+        pending = _pending(st)
+        for d in missed_evenings(today, st.get("last_ok")):
+            pending.setdefault(d, {"failed": 0, "costly": 0})
+        for d in sorted(pending):
+            if not first <= d < today:
+                if pending.pop(d)["failed"]:
+                    give_up(d, languages()[0], f"older than {CATCH_UP} days")
+                else:
+                    log_error(f"{d} backfill: older than {CATCH_UP} days, never tried")
+        _keep_pending(st, pending)
+        save_state(st)
+    return sorted(pending)
+
+
 def scheduled(day, slot, command=None, codex_command=None):
     """A run without --day: the missed evenings first (a computer off at 23:00), oldest first, then
-    today. One that fails stops the catch-up; today still runs, and the evening that failed is tried
-    again at the next run, while it is within CATCH_UP days."""
-    failed = False
+    today. One that fails stops the catch-up: the evenings left wait for the next run, and today
+    still runs."""
     if redact is not None and headless is not None:   # else reflect() says why, once
-        for missed in missed_evenings(day, load_state().get("last_ok")):
-            if reflect(missed, "backfill", command=command, codex_command=codex_command):
-                failed = True
+        for missed in catch_up(day):
+            if reflect(missed, "backfill", command=command, codex_command=codex_command, missed=True):
                 break
-    return reflect(day, slot, command=command, codex_command=codex_command, advance=not failed)
+    return reflect(day, slot, command=command, codex_command=codex_command)
 
 
 def parse_args():

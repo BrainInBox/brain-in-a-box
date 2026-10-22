@@ -1106,17 +1106,60 @@ class Language(Run):
         self.assertEqual(j.count("## Ce que j'ai fait"), 1)
         self.assertIn("- Shipped the login page\n- Wrote the tests\n", j)
 
+    def status(self):
+        mem = self.memory.read_text(encoding="utf-8")
+        return mem[mem.index(dr.STATUS_BEGIN):mem.index(dr.STATUS_END)] if dr.STATUS_BEGIN in mem else ""
+
     def test_a_failing_day_is_said_in_french_too(self):
         self.fresh_day("Français par défaut.")
         os.environ["LANG"] = "en_US.UTF-8"   # soul.md wins over the computer
         st = self.run_reflection(scenario="init-bash")
-        mem = self.memory.read_text(encoding="utf-8")
-        self.assertIn("> **⚠️ Le résumé du jour échoue** depuis le %s" % st["failing_since"], mem)
-        self.assertIn("Le prochain résumé qui marche rattrape les 3 derniers soirs.", mem)
+        since = st["failing_since"]
+        self.assertIn("> **⚠️ Le résumé de ta journée échoue** depuis le %s/%s à %s (dernier réussi : aucun). "
+                      % (since[8:10], since[5:7], since[11:16]), self.status())
+        self.assertIn(" Le prochain résumé qui marche rattrape les 3 derniers soirs. Détail : %s\n"
+                      % st["last_error"], self.status())
         self.answer({**ANSWER, "suspect": True})
         self.run_reflection()
         self.assertIn(f"## Ce que j'ai fait\n- {dr.FRENCH['suspect']}\n", self.journal.read_text(encoding="utf-8"))
         self.assertIn(dr.FRENCH["memory_suspect"].format(day=DAY), self.memory.read_text(encoding="utf-8"))
+
+    def test_what_to_do_is_said_in_plain_french(self):
+        # The two usual causes, and the rest: what to do first, the error itself only as a detail.
+        self.fresh_day("Français par défaut.")
+        self.state = self.root / "logs" / "daily-reflection.state.json"
+        self.state.parent.mkdir(exist_ok=True)
+        cases = {"not-logged-in": "ouvre Bibo et reconnecte ton compte Claude.",
+                 "quota": "rien, ta limite d'usage de Claude est atteinte : le prochain résumé rattrapera.",
+                 "budget-exceeded": "dis à Claude « le résumé de ma journée échoue, regarde pourquoi »."}
+        for scenario, todo in cases.items():
+            with self.subTest(scenario):
+                self.state.write_text(json.dumps({"last_ok": "2026-10-13 evening"}), encoding="utf-8")
+                st = self.run_reflection(scenario=scenario)
+                self.assertIn("(dernier réussi : 13/10, soir). Que faire : %s " % todo, self.status())
+                self.assertTrue(self.status().endswith("Détail : %s\n" % st["last_error"]))
+                self.assertNotIn("evening", self.status().replace(st["last_error"], ""))
+
+    def test_the_mac_notification_speaks_their_language_once_per_failure(self):
+        self.fresh_day("Français par défaut.")
+        with mock.patch.object(dr, "notify") as notify:
+            for _ in range(2):
+                self.run_reflection(scenario="not-logged-in")
+            self.run_reflection()
+            self.run_reflection(scenario="quota")
+        title = "Ton cerveau : le résumé de ta journée a échoué"
+        self.assertEqual(notify.call_args_list, [
+            mock.call("Ouvre Bibo et reconnecte ton compte Claude.", title),
+            mock.call("Rien, ta limite d'usage de Claude est atteinte : le prochain résumé rattrapera.", title)],
+            "once when it starts failing, again after a success")
+        os.environ.pop("BRAIN_NO_NOTIFY")
+        with mock.patch.object(dr.sys, "platform", "darwin"), mock.patch.object(dr.subprocess, "run") as run:
+            dr.notify("Ouvre Bibo.", "Ton cerveau : le résumé de ta journée a échoué")
+        argv = run.call_args.args[0]
+        self.assertEqual(argv[0], "/usr/bin/osascript")
+        self.assertIn("display notification (item 1 of argv) with title (item 2 of argv)", argv)
+        self.assertEqual(argv[-2:], ["Ouvre Bibo.", "Ton cerveau : le résumé de ta journée a échoué"],
+                         "both in argv, never in the script")
 
     def test_soul_in_english_keeps_english_titles_and_the_computer_is_still_named(self):
         self.fresh_day("English by default.")
@@ -1162,12 +1205,37 @@ class CatchUp(Run):
         (self.root / "logs" / "daily-reflection.state.json").write_text(json.dumps({"last_ok": last_ok}),
                                                                         encoding="utf-8")
 
-    def scheduled(self, slot="midday"):
+    def scheduled(self, slot="midday", day=DAY, fails=None):
+        """One run without --day; fails: the scenario of its first call to Claude, the others answer."""
         (self.fake / "scenario").write_text("plan-ok", encoding="utf-8")
+        (self.fake / "scenarios").mkdir(exist_ok=True)
+        first = self.fake / "scenarios" / "1"
+        if fails:
+            first.write_text(fails, encoding="utf-8")
+        elif first.exists():
+            first.unlink()
         with contextlib.redirect_stdout(io.StringIO()):
-            dr.scheduled(DAY, slot, command=[sys.executable, str(FAKE)])
+            dr.scheduled(day, slot, command=[sys.executable, str(FAKE)])
         self.age()
         return json.loads((self.root / "logs" / "daily-reflection.state.json").read_text(encoding="utf-8"))
+
+    def session(self, day, words):
+        ts = f"{day}T20:00:00+00:00"
+        (self.root / "projects" / "-w" / f"{day}.jsonl").write_text("\n".join(json.dumps(r) for r in [
+            {"type": "user", "timestamp": ts, "cwd": str(self.root), "message": {"content": words}},
+            {"type": "assistant", "timestamp": ts, "message": {"content": [{"type": "text", "text": "Done."}]}},
+            {"type": "assistant", "timestamp": ts, "message": {"content": [{"type": "text", "text": "Saved."}]}},
+        ]) + "\n", encoding="utf-8")
+
+    def asked(self):
+        """The days asked of Claude since the last look, in order, and how many calls."""
+        prompts = sorted((self.fake / "prompts").glob("*.txt"), key=lambda p: int(p.stem)) \
+            if (self.fake / "prompts").exists() else []
+        days = [re.search(r"Activity of (\S+) \((\w+) run", p.read_text(encoding="utf-8")).group(1, 2) for p in prompts]
+        for p in prompts:
+            p.unlink()
+        self.calls()
+        return days
 
     def test_the_missed_evenings(self):
         m = dr.missed_evenings
@@ -1193,6 +1261,15 @@ class CatchUp(Run):
                       (self.vault / "Journal" / f"{self.YESTERDAY}.md").read_text(encoding="utf-8"))
         self.assertEqual(st["last_ok"], f"{DAY} midday")
 
+    def test_evenings_caught_up_without_a_failure_never_raise_the_warning(self):
+        self.state("2026-10-11 evening")
+        self.session("2026-10-12", "TWELFTH")
+        with mock.patch.object(dr, "set_status_block", wraps=dr.set_status_block) as said:
+            st = self.scheduled()
+        self.assertEqual(self.asked(), [("2026-10-12", "backfill"), (self.YESTERDAY, "backfill"), (DAY, "midday")])
+        self.assertEqual({c.args[0] for c in said.call_args_list}, {None})
+        self.assertEqual(set(st), {"last_ok", "failing_since", "last_error"})
+
     def test_nothing_missed_nothing_more(self):
         self.state(f"{self.YESTERDAY} evening")
         self.scheduled()
@@ -1201,18 +1278,57 @@ class CatchUp(Run):
 
     def test_a_failed_catch_up_stops_there_today_still_runs(self):
         self.state("2026-10-11 evening")
-        (self.fake / "scenarios").mkdir()
-        (self.fake / "scenarios" / "1").write_text("init-bash", encoding="utf-8")
+        self.session("2026-10-12", "TWELFTH")
+        st = self.scheduled(fails="init-bash")
+        self.assertEqual(self.asked(), [("2026-10-12", "backfill"), (DAY, "midday")],
+                         "the 12th fails, the 13th waits its turn, today runs")
+        self.assertEqual(st["last_ok"], f"{DAY} midday", "today, done, is never asked again")
+        self.assertEqual(st["pending"], {"2026-10-12": {"failed": 1, "costly": 0}, self.YESTERDAY: {"failed": 0, "costly": 0}})
+        self.assertTrue(st["last_error"].startswith("init: tools"), "still said: an evening is not summed up")
+        self.assertIn("not summed up yet: 2026-10-12, 2026-10-13 · cause: init: tools",
+                      self.memory.read_text(encoding="utf-8"))
         st = self.scheduled()
-        self.assertEqual(self.calls(), 2, "2026-10-12 has nothing; 2026-10-13 fails; today runs")
-        self.assertIn(f"Activity of {DAY} (midday", (self.fake / "prompts" / "2.txt").read_text(encoding="utf-8"))
+        self.assertEqual(self.asked(), [("2026-10-12", "backfill"), (self.YESTERDAY, "backfill")],
+                         "the evenings again; today, done less than an hour ago, waits")
+        self.assertEqual(st["last_ok"], f"{DAY} midday")
+        self.assertNotIn("pending", st)
         self.assertIsNone(st["last_error"])
-        self.assertEqual(st["last_ok"], "2026-10-11 evening", "today's success does not skip the evening that failed")
-        (self.fake / "scenarios" / "1").unlink()
-        st = self.scheduled()
-        self.assertEqual(self.calls(), 1, "the failed evening again; today, done less than an hour ago, waits")
-        self.assertIn(f"Activity of {self.YESTERDAY} (backfill", (self.fake / "prompts" / "1.txt").read_text(encoding="utf-8"))
-        self.assertEqual(st["last_ok"], f"{self.YESTERDAY} backfill")
+        self.assertNotIn("REFLECTION-STATUS", self.memory.read_text(encoding="utf-8"))
+
+    def test_an_evening_that_fails_twice_at_a_cost_is_given_up_and_said_on_its_day(self):
+        self.state("2026-10-12 evening")
+        st = self.scheduled(fails="budget-exceeded")
+        self.assertEqual(self.asked(), [(self.YESTERDAY, "backfill"), (DAY, "midday")])
+        self.assertEqual(st["pending"], {self.YESTERDAY: {"failed": 1, "costly": 1}})
+        self.assertIn("REFLECTION-STATUS:BEGIN", self.memory.read_text(encoding="utf-8"),
+                      "today's success does not hide the evening that failed")
+        st = self.scheduled(slot="evening", fails="budget-exceeded")
+        self.assertEqual(self.asked(), [(self.YESTERDAY, "backfill"), (DAY, "evening")])
+        self.assertNotIn("pending", st)
+        self.assertIsNone(st["last_error"])
+        mem = self.memory.read_text(encoding="utf-8")
+        self.assertNotIn("REFLECTION-STATUS", mem)
+        self.assertIn("### 2026-10-13\n- %s\n" % dr.LOST.format(day=self.YESTERDAY, jour="13/10"), mem)
+        self.assertIn("given up", (self.root / "logs" / "daily-reflection-errors.log").read_text(encoding="utf-8"))
+        for lock in self.root.glob("brain-daily-reflection-*.lock"):
+            lock.unlink()
+        self.scheduled(slot="evening")
+        self.assertEqual(self.asked(), [(DAY, "evening")], "never asked again")
+
+    def test_the_days_done_meanwhile_are_never_summed_up_again(self):
+        # The 13th's evening fails at no cost (a usage limit) while the 14th is summed up by its own runs.
+        self.state("2026-10-12 evening")
+        self.scheduled(fails="quota")
+        self.assertEqual(self.asked(), [(self.YESTERDAY, "backfill"), (DAY, "midday")])
+        self.scheduled(slot="evening", fails="quota")
+        self.assertEqual(self.asked(), [(self.YESTERDAY, "backfill"), (DAY, "evening")])
+        st = self.scheduled(day="2026-10-17")
+        self.assertEqual(self.asked(), [], "the 14th is not asked again; the 13th, out of reach, is given up")
+        self.assertNotIn("pending", st)
+        self.assertEqual(st["last_ok"], "2026-10-16 backfill", "the 15th and 16th had nothing to sum up: done")
+        self.assertIsNone(st["last_error"])
+        self.assertNotIn("REFLECTION-STATUS", self.memory.read_text(encoding="utf-8"))
+        self.assertIn("- %s\n" % dr.LOST.format(day=self.YESTERDAY, jour="13/10"), self.memory.read_text(encoding="utf-8"))
 
     def test_the_last_good_run_only_moves_forward(self):
         self.state(f"{DAY} evening")

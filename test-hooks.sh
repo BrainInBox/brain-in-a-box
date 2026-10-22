@@ -105,6 +105,20 @@ rm -f "$GT/_paste_guard.py"
 rm -rf "$GT"
 out=$(printf '{"prompt": "no, actually do it the other way"}' | CLAUDE_CODE_ENTRYPOINT=sdk-cli HOME="$H" python3 "$HB/correction-detector.py")
 [ $? = 0 ] && [ -z "$out" ] && ok "headless run (claude -p, sdk-cli): silent, a correction included" || no "fired in a headless run: $out"
+# Outside the brain, the lesson goes to the brain the session start names (controle-sessionstart.py's
+# order): BRAIN_DIR, else Documents/Brain, else ~/Brain (install.ps1's when Windows guards Documents).
+lessons_to() {   # $1 HOME, then env assignments → the lessons.md the reminder names
+  printf '{"prompt": "no, actually do it the other way"}' | (cd "$H/tmp" && env -u CLAUDE_CODE_ENTRYPOINT \
+    -u CLAUDE_PROJECT_DIR -u BRAIN_DIR HOME="$1" "${@:2}" python3 "$HB/correction-detector.py") \
+    | python3 -c 'import json,re,sys; print(re.search(r"line to (.*?)/Profile/lessons\.md", json.load(sys.stdin)["hookSpecificOutput"]["additionalContext"]).group(1))' 2>/dev/null
+}
+LH="$H/lessonhome"; mkdir -p "$LH/Brain/Profile" "$H/elsewhere/Profile"
+: > "$LH/Brain/Profile/lessons.md"
+[ "$(lessons_to "$LH")" = "$LH/Brain" ] && [ "$(lessons_to "$LH" BRAIN_DIR="$H/elsewhere")" = "$H/elsewhere" ] \
+  && [ "$(lessons_to "$H")" = "$H/Documents/Brain" ] \
+  && ok "a correction outside the brain: the lesson goes to BRAIN_DIR, else Documents/Brain, else ~/Brain" \
+  || no "a correction outside the brain names $(lessons_to "$LH") (~/Brain), $(lessons_to "$LH" BRAIN_DIR="$H/elsewhere") (BRAIN_DIR)"
+rm -rf "$LH" "$H/elsewhere"
 
 echo "════ 2) session-logger ════"
 echo "$PAYLOAD" | HOME="$H" python3 "$HB/session-logger.py" 2>/dev/null
@@ -603,17 +617,21 @@ if command -v ruby >/dev/null 2>&1; then
 else
   printf "  \033[1;33m⚠\033[0m skipped (no ruby found) — install ruby to enable YAML validation\n"
 fi
-# The interview: nothing technical before "Tu es développeur ?" nor on the path of those who say no;
-# the developer's path as it was. The brain is the folder Claude starts in: no note of the skeleton
-# nor the interview names a fixed one (install.ps1 puts it in ~/Brain when Windows guards Documents).
-python3 - "$REPO" <<'PY' && ok "onboarding: nothing technical before « Tu es développeur ? » nor on the non-developer's path; no fixed brain folder" \
-  || no "onboarding or skeleton: jargon on the non-developer's path, or a fixed brain folder"
+# The interview: nothing technical before "Est-ce que tu écris du code ?" nor on the path of those who
+# say no; the developer's path as it was. The brain is the folder Claude starts in: no note of the
+# skeleton nor the interview names a fixed one (install.ps1 puts it in ~/Brain when Windows guards
+# Documents). Bibo starts it with a sentence in English: not the person's language. Claude Code asks
+# before each write: said before the first one; on the non-developer's path, nothing outside the brain
+# (it would ask again), and the brain's git called by its path, whatever folder Claude is in.
+python3 - "$REPO" <<'PY' && ok "onboarding: nothing technical before « Est-ce que tu écris du code ? » nor on the non-developer's path; no fixed brain folder; Bibo's English and the edit prompt said" \
+  || no "onboarding or skeleton: jargon on the non-developer's path, a fixed brain folder, or Bibo's English, the edit prompt or a write outside the brain"
 import pathlib, re, sys
 repo = pathlib.Path(sys.argv[1])
 text = (repo / "onboarding" / "ONBOARDING.md").read_text(encoding="utf-8")
-before, asked, after = text.partition("**« Tu es développeur ?")
+before, asked, after = text.partition("**« Est-ce que tu écris du code ?")
 path_a, _, path_b = after.partition("## Path B")
 assert asked and "## Path A" in path_a and path_b, "the question, then path A, then path B"
+assert "développeur ou développeuse" in after.split("\n", 1)[0], "the question, to her too"
 jargon = re.compile(r"GitHub|\bCLIs?\b|\bDB\b|database|base de données|gstack|Keychain|Hermes|\bcloud\b", re.I)
 for part in (before, path_a):
     assert not jargon.search(part), jargon.search(part).group(0)
@@ -621,6 +639,15 @@ for word in ("GitHub", "CLIs", "DB", "gstack", "Keychain"):
     assert word in path_b, word
 for f in [repo / "onboarding" / "ONBOARDING.md"] + sorted((repo / "vault-skeleton").rglob("*.md")):
     assert "Documents/Brain" not in f.read_text(encoding="utf-8"), f
+assert "may be Bibo's (the app), always in English: it says nothing of their language" in before
+assert before.index("Yes, allow all edits during this session") < before.index("## Files to fill")
+assert "- Path B only: your global instructions" in before and "On Path A, leave it" in before
+assert "~/.claude/CLAUDE.md" not in path_a
+assert 'git -C "<brain>" add -A && git -C "<brain>" commit' in text and "git add -A" not in text
+skeleton = (repo / "vault-skeleton" / "CLAUDE.md").read_text(encoding="utf-8")
+assert skeleton.startswith("> Cette note est pour Claude. Pour toi : ouvre « Commence ici ».\n"), "Obsidian lists CLAUDE first"
+start = (repo / "vault-skeleton" / "Commence ici.md").read_text(encoding="utf-8")
+assert "ne refait plus" not in start and "je ne referai pas" not in text, "a promise Claude cannot keep"
 PY
 
 echo "════ 9) gbrain-nightly — night check, then commit; waits for the network, retries the vault push ════"

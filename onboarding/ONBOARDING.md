@@ -6,7 +6,10 @@
 The brain is the **current folder** (it holds `CLAUDE.md` and `Profile/`): Bibo and the installer start you there. If it is not, use the folder your session start names ("Brain: this person's notes are in …") or the one the person's message names, else `$BRAIN_DIR`. Every path below is relative to the brain. Never create a second brain somewhere else.
 
 ## How to talk
-Speak the person's language: the one they write in, or the one your session start names. In French: « tu », short sentences, everyday words, French typography. Before each step, say in one sentence what you are doing. Any question can be skipped: « je ne sais pas » or « passe » is a fine answer.
+Speak the person's language: the one your session start names, else French. The message that started you may be Bibo's (the app), always in English: it says nothing of their language. Switch only when they themselves write in another one. In French: « tu », short sentences, everyday words, French typography. Before each step, say in one sentence what you are doing. Any question can be skipped: « je ne sais pas » or « passe » is a fine answer.
+
+## Before your first write
+Claude Code asks before each write (Codex does not). Before your first one, tell them, in their language: « Claude Code va me demander, en anglais, la permission d'écrire dans tes notes. Choisis « Yes, allow all edits during this session » (Oui, pour toute cette session) avec les flèches du clavier, puis appuie sur Entrée. » Then nothing more is asked in the brain folder. Write nowhere else on Path A.
 
 ## Files to fill
 Replace every `{{PLACEHOLDER}}` in:
@@ -14,15 +17,15 @@ Replace every `{{PLACEHOLDER}}` in:
 - `Profile/business.md` (their work)
 - `Profile/soul.md` (language, tone)
 - `Profile/stack.md` (their tools)
-- your global instructions, in the brain-in-a-box block (after `<!-- brain-in-a-box -->`): `~/.claude/CLAUDE.md` for Claude Code, `~/.codex/AGENTS.md` for Codex (`AGENTS.override.md` there when it has text; `$CODEX_HOME` instead of `~/.codex` when set). It holds {{NAME}}; the language goes in `soul.md`
+- Path B only: your global instructions, in the brain-in-a-box block (after `<!-- brain-in-a-box -->`): `~/.claude/CLAUDE.md` for Claude Code, `~/.codex/AGENTS.md` for Codex (`AGENTS.override.md` there when it has text; `$CODEX_HOME` instead of `~/.codex` when set). It holds {{NAME}}; the language goes in `soul.md`. On Path A, leave it: it is outside the brain, and Claude Code would ask again.
 
 Write these notes in the person's language, headings and explanations included. Keep the file and folder names as they are: programs look for them. Remove the sections that do not apply and the lines left empty. If they do not read French, rewrite `Commence ici.md` (their map of the brain) in their language too, under the same name.
 
 ## First question
 Greet them in two sentences: about fifteen minutes of simple questions, so that you know them from now on; any question can be skipped. Then ask:
 
-**« Tu es développeur ? Je veux dire : est-ce que tu écris du code ? »**
-(In English: "Are you a developer? I mean: do you write code?")
+**« Est-ce que tu écris du code ? Je veux dire : tu es développeur ou développeuse ? »**
+(In English: "Do you write code? I mean: are you a developer?")
 
 - No, or not sure → **Path A** (most people).
 - Yes → **Path B**.
@@ -68,17 +71,17 @@ Each of these folders ships a `README.md` (purpose) + `_template.md` (schema). C
 
 ## After the interview (both paths)
 1. **Edit** each Profile file, replacing the `{{...}}` with real answers. Remove irrelevant empty sections.
-2. **Verify**: no `{{` left in `Profile/` nor in your global instructions (`~/.claude/CLAUDE.md`; Codex: the `AGENTS.md` above). Read or search the files with your own tools, not a shell command: the person has nothing to approve.
-3. **Save + re-index** — Path A: skip this step and show no command; the night saves and indexes the notes. Path B, from the brain folder:
+2. **Verify**: no `{{` left in `Profile/` (Path B: nor in your global instructions, `~/.claude/CLAUDE.md`; Codex: the `AGENTS.md` above). Read or search the files with your own tools, not a shell command: reading asks nothing.
+3. **Save + re-index** — Path A: skip this step and show no command; the night saves and indexes the notes. Path B, with the brain's full path for `<brain>`:
    ```bash
-   git add -A && git commit -q -m "onboarding: profile filled"
-   ~/.local/bin/gbq sync --repo . --no-pull --no-embed   # import the profile
+   git -C "<brain>" add -A && git -C "<brain>" commit -q -m "onboarding: profile filled"
+   ~/.local/bin/gbq sync --repo "<brain>" --no-pull --no-embed   # import the profile
    ~/.local/bin/gbq embed --stale --max-usd 0.10         # embed it (kept separate, like the nightly; paid runs need a cap)
    ~/.local/bin/gbq query "who am I"                     # check recall
    ```
    One that fails is said in one sentence, then you go on: the notes are written, and the night indexes them.
 4. **Confirm**, in their language:
-   - Path A, in a few plain sentences, for example: « C'est fait : je te connais maintenant. Ce que je sais de toi est dans ton cerveau, dossier Profile ; la note « Commence ici » te dit où trouver quoi. Quand je me trompe, corrige-moi : je note la leçon et je ne referai pas l'erreur. Chaque jour, à midi et le soir, je résume ta journée dans ton journal. Pour être guidé pas à pas dans un logiciel, ouvre Bibo. »
+   - Path A, in a few plain sentences, for example: « C'est fait : je te connais maintenant. Ce que je sais de toi est dans tes notes, dossier Profile : pour les lire, ouvre Obsidian depuis Bibo, et commence par la note « Commence ici ». Quand je me trompe, corrige-moi : je note la leçon et j'évite de refaire l'erreur. Chaque jour où on se parle, je résume nos conversations dans ton journal (à midi et le soir, si ton ordinateur est allumé). Et Bibo peut te guider pas à pas dans un logiciel. »
    - Path B: profile filled, memory active, next step = just live (the hooks capture corrections + sessions, the nightly consolidates at 4am).
 
 ## Rules

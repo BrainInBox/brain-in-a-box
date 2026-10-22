@@ -1,3 +1,5 @@
+> Cette note est pour Claude. Pour toi : ouvre « Commence ici ».
+
 # Brain — personal second brain
 
 This folder is the person's second brain: their notes, which you read and write when started here.

@@ -6,10 +6,10 @@ Tu n'as rien à remplir : Claude s'en occupe quand tu lui parles. Tu peux tout l
 
 ## Où trouver quoi
 
-- **Ton journal** : dossier `Journal`. Une note par jour, écrite à midi et le soir : ce que tu as fait, ce qui reste à faire.
+- **Ton journal** : dossier `Journal`. Chaque jour où tu parles à Claude, il y résume vos conversations, à midi et le soir si ton ordinateur est allumé : ce que tu as fait, ce qui reste à faire. Il ne lit ni tes e-mails ni tes autres logiciels.
 - **Ce que Claude sait de toi** : dossier `Profile`.
   - `about` : qui tu es, ton travail, tes logiciels.
-  - `lessons` : ce que Claude a appris de tes corrections. Quand tu lui dis « non, plutôt comme ça », il le note ici et ne refait plus l'erreur.
+  - `lessons` : ce que Claude a appris de tes corrections. Quand tu lui dis « non, plutôt comme ça », il le note ici et évite de refaire l'erreur.
   - `memory` : ce qui s'est passé ces derniers jours.
 - **Tes procédures** : dossier `Guides`. Les marches à suivre que Bibo t'a montrées dans un logiciel, quand tu les enregistres (le dossier apparaît avec la première).
 - **Tes collègues, tes clients, tes projets** : dossiers `Team`, `Clients` et `Projects`.
@@ -18,7 +18,7 @@ Les noms des dossiers restent en anglais : des programmes les cherchent sous ces
 
 ## Pour commencer
 
-Si ce n'est pas déjà fait, présente-toi à Claude depuis Bibo. Il te pose une quinzaine de questions simples, puis il remplit ces notes pour toi.
+Si ce n'est pas déjà fait, ouvre Bibo et clique sur « Présente-toi à Claude (15 min) ». Claude te pose une quinzaine de questions simples, puis il remplit ces notes pour toi.
 
 ---
 
