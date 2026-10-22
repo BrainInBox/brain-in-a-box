@@ -152,6 +152,12 @@ jobs:
             if ($p.ExitCode) { Get-Content $l | Select-String -Pattern 'return value 3|Error ' | Select-Object -First 6 | ForEach-Object { "   $($_.Line)" } }
           }
           Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like 'Python 3.14*' -or $_.DisplayName -like 'Python Launcher*' } | ForEach-Object { "left: $($_.DisplayName)" }
+          # Windows Server refuses a per-user MSI to a standard user ("Non-assigned apps are disabled for
+          # non-admin users", 1625, run 39798613045); Windows 10 and 11 allow it: the client's default here.
+          $k = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Installer'
+          New-Item -Path $k -Force | Out-Null
+          Set-ItemProperty -Path $k -Name DisableMSI -Value 0 -Type DWord
+          "OS: $((Get-CimInstance Win32_OperatingSystem).Caption) ProductType=$((Get-CimInstance Win32_OperatingSystem).ProductType)"
           "UAC: EnableLUA=$((Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System').EnableLUA) ConsentPromptBehaviorUser=$((Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System').ConsentPromptBehaviorUser)"
 
       - name: The official installers as a standard user, each with its log and a time limit
