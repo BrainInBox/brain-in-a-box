@@ -1,0 +1,33 @@
+name: spike-relecture
+
+on:
+  push:
+    branches: ["spike/winget-relecture"]
+
+permissions:
+  contents: read
+
+jobs:
+  harnais:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: install-ps1-secours.ps1
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File .github/ci/install-ps1-secours.ps1
+          if ($LASTEXITCODE) { throw "install-ps1-secours.ps1 exited $LASTEXITCODE" }
+      - name: install-ps1-codex.ps1
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File .github/ci/install-ps1-codex.ps1
+          if ($LASTEXITCODE) { throw "install-ps1-codex.ps1 exited $LASTEXITCODE" }
