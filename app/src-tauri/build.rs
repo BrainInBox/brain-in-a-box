@@ -20,6 +20,7 @@ const COMMANDS: &[&str] = &[
     "open_codex_login",
     "start_onboarding",
     "open_vault",
+    "brain_folder",
     "open_link",
     "open_settings",
     "open_repair_terminal",

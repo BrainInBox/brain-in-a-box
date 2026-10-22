@@ -492,6 +492,8 @@
     if (screen === 'connexion' && mood === 'worried') return now.words > 1 ? '' : 'cle';
     // The install screen holds the login card for a while: the key, then waiting for the login.
     if (screen === 'install' && document.querySelector('.login-card')) return mood === 'thinking' ? 'attend' : mood === 'idle' ? 'cle' : '';
+    // The end asks for Claude's login when it was put off: the key, as on the login screen.
+    if (screen === 'done' && mood === 'idle' && document.querySelector('.login-steps')) return 'cle';
     if (screen === 'etape' && lowConfidence()) return 'plisse';
     for (const [s, m, scene] of RULES) if ((s === '*' || s === screen) && (m === '*' || m === mood)) return scene;
     return '';

@@ -277,6 +277,12 @@ body.big .plan { justify-content: center; text-align: left; }
 
 .note { color: var(--ink-2); font-size: 14px; }
 
+/* « Préversion 76 », at the bottom of the welcome: there to be read out when asking for help, no more. */
+.version { color: var(--ink-2); font-size: 12px; opacity: 0.8; }
+
+/* The end's other ways, as links on one line under the main buttons' story. */
+.links { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 6px; }
+
 .card {
   background: var(--card);
   border: 1px solid var(--line);
@@ -318,7 +324,13 @@ body.big .plan { justify-content: center; text-align: left; }
 
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* Diagnosis */
+/* Diagnosis: the lines folded under « Voir le détail », the button kept at the left. */
+
+.screen > .btn-ghost[data-act="detail"] { display: block; padding-left: 0; }
+
+.screen > .btn-ghost[data-act="detail"] + .detail { margin-top: 6px; }
+
+.detail > * + * { margin-top: 10px; }
 
 .sys { color: var(--ink-2); font-size: 13.5px; }
 
