@@ -3,13 +3,14 @@ param([Parameter(Mandatory = $true)][string]$Out, [string]$Kit = "")
 $ErrorActionPreference = "Stop"
 if (-not $Kit) { $Kit = Split-Path -Parent $MyInvocation.MyCommand.Path }
 $r = [ordered]@{}
+try {
 # Started with -Credential, this process got its parent's environment: the user's own, from its token and registry.
 $env:USERPROFILE = [Environment]::GetFolderPath('UserProfile')
 $env:LOCALAPPDATA = [Environment]::GetFolderPath('LocalApplicationData')
 $env:APPDATA = [Environment]::GetFolderPath('ApplicationData')
 $env:TEMP = Join-Path $env:LOCALAPPDATA 'Temp'; $env:TMP = $env:TEMP
 $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
-try {
+
     $errs = $null
     $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $Kit "install.ps1"), [ref]$null, [ref]$errs)
     foreach ($s in $ast.EndBlock.Statements) {

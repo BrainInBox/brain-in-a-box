@@ -141,9 +141,11 @@ jobs:
           icacls $work /grant 'biabstd:(OI)(CI)F' | Out-Null
           $cred = New-Object Management.Automation.PSCredential('biabstd', (ConvertTo-SecureString $pw -AsPlainText -Force))
           $p = Start-Process powershell.exe -Credential $cred -LoadUserProfile -Wait -PassThru -WorkingDirectory $work `
+            -RedirectStandardOutput "$work\stdout.txt" -RedirectStandardError "$work\stderr.txt" `
             -ArgumentList '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', "$work\spike-run.ps1", '-Out', "$work\out.json"
           "exit $($p.ExitCode)"
-          Get-Content "$work\out.json" -Raw
+          Get-Content "$work\stdout.txt", "$work\stderr.txt" -ErrorAction SilentlyContinue
+          Get-Content "$work\out.json" -Raw -ErrorAction SilentlyContinue
 
   arm64:
     if: ${{ false }}   # measured in run 39762193312
