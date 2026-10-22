@@ -11,6 +11,7 @@ permissions:
 
 jobs:
   harness:
+    if: ${{ false }}   # measured in run 39762193312
     strategy:
       fail-fast: false
       matrix:
@@ -44,6 +45,7 @@ jobs:
           if ($LASTEXITCODE) { throw "exit $LASTEXITCODE" }
 
   windows-winget-casse:
+    if: ${{ false }}   # measured in run 39762193312
     runs-on: windows-latest
     timeout-minutes: 45
     defaults:
@@ -144,6 +146,7 @@ jobs:
           Get-Content "$work\out.json" -Raw
 
   arm64:
+    if: ${{ false }}   # measured in run 39762193312
     runs-on: windows-11-arm
     timeout-minutes: 60
     defaults:
