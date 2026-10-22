@@ -52,10 +52,14 @@ def neuf(installe):
         "bienvenue": {"titre": "Salut, moi c’est Bibo" + NB + "!",
                       "texte": "Je vais installer ton second cerveau pour Claude. 10 à 20 minutes, tu n’as aucune commande à taper.",
                       "boutons": {"Vérifier mon Mac": "diag-en-cours"}},
-        # Opened again with the brain and Claude Code there.
+        # Opened again with the brain and Claude Code there, Claude logged in (the guide's fake Claude says so).
         "retour": {"titre": "Content de te revoir" + NB + "!",
                    "texte": "Je peux te guider pas à pas dans un logiciel : tu me montres ta fenêtre, je te dis où cliquer.",
                    "boutons": {"Vérifier mon Mac": "diag-en-cours", "Guide-moi dans un logiciel": None}},
+        # The same, the login put off: the welcome asks for it before the guide.
+        "retour-sans-compte": {"titre": "Content de te revoir" + NB + "!",
+                               "texte": "Il manque ton compte Claude" + NB + ": connecte-le, puis je pourrai te guider pas à pas dans un logiciel.",
+                               "boutons": {"Vérifier mon Mac": "diag-en-cours", "Connecter mon compte Claude": None}},
         "diag-en-cours": {"titre": "Je regarde ton Mac…", "texte": "Ça prend quelques secondes.",
                           "apres": (3, lambda: "deja" if installe() else "diag")},
         # The lines folded: the robot unfolds them, then installs.
@@ -241,8 +245,10 @@ class FauxPilote(ta.Pilote):
         line = re.search(r"^CODEX_OUVERT = .*$", gate.read_text(encoding="utf-8"), re.M) if gate.is_file() else None
         self.portes.append(line.group(0) if line else None)
         self.marqueurs.append((gate.parents[2] / ta.MARQUEUR).is_file())
-        # Claude Code and the brain installed: the guide's welcome (Codex alone has no Claude Code).
-        self.aller("retour" if self.fait and not self.codex else "bienvenue")
+        # Claude Code and the brain installed: the guide's welcome (Codex alone has no Claude Code), which asks
+        # for Claude's login first unless the guide's fake Claude is there (it says it is logged in).
+        connecte = self.home is not None and (Path(self.home) / ".claude" / "fake" / "scenario").is_file()
+        self.aller(("retour" if connecte else "retour-sans-compte") if self.fait and not self.codex else "bienvenue")
 
     def vivante(self):
         return self.etat is not None
@@ -753,19 +759,17 @@ class Walk(Base):
         self.assertIn("app-relance-deja-installe", self.t.vus)
         self.assertTrue(any(s.endswith("-relance-deja-installe.png") for s in p.captures))
 
-    def test_opened_again_the_welcome_must_offer_the_guide(self):
-        for retour, said in (({"titre": "Content de te revoir" + NB + "!", "boutons": {"Vérifier mon Mac": "diag-en-cours"}},
-                              "l'accueil ne propose pas « Guide-moi dans un logiciel »"),
+    def test_opened_again_without_claude_the_welcome_asks_for_it_before_the_guide(self):
+        # The welcome as it was: the guide first, though Claude is not logged in.
+        avant = dict(neuf(lambda: True)["retour"])
+        for retour, said in ((avant, "sans compte Claude, l'accueil ne demande pas « Connecter mon compte Claude » avant le guide"),
                              (None, "l'app ne dit pas « Content de te revoir »")):
             self.setUp()
             p = FauxPilote(self.h)
             pa = self.parcours(p)
             pa.premier_lancement({})
             p.fermer()
-            if retour:
-                p.ecrans["retour"] = retour
-            else:
-                p.ecrans["retour"] = p.ecrans["bienvenue"]
+            p.ecrans["retour-sans-compte"] = retour or p.ecrans["bienvenue"]
             with self.assertRaises(terrain.Echec) as cm:
                 pa.relance({})
             self.assertIn(said, str(cm.exception))

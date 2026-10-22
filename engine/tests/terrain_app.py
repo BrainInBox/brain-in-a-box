@@ -92,7 +92,8 @@ CLIC_SOURIS = "clic souris"
 # Bibo's titles (app/src/app.js), after norm(): the screen they stand for.
 ECRANS = (
     ("bienvenue", "Salut, moi c'est Bibo"),
-    # Opened again with the brain and Claude Code there: the guide first (G0, docs/proposals/guide.md).
+    # Opened again with the brain and Claude Code there: the guide first (G0, docs/proposals/guide.md), or
+    # Claude's login first when it was put off.
     ("bienvenue-retour", "Content de te revoir"),
     ("choix", "Avec quelle IA veux-tu travailler"),
     ("choix-resume", "Lequel écrit le résumé de chaque soir"),
@@ -145,6 +146,7 @@ DELAI_PHRASE = 60
 DELAI_IMPORT = 3 * 60
 # The returning welcome's way to the guide: offered, not taken (no AI is asked on these VMs).
 GUIDE = "Guide-moi dans un logiciel"
+CONNECTER = "Connecter mon compte Claude"
 # Buttons that only come with a failure (the repair screens have many titles).
 BOUTONS_ECHEC = {"Réessayer", "Copier le rapport", "Revérifier"}
 # The screens each path must never see: Codex's on the path of Claude alone (the app users get keeps it
@@ -295,7 +297,7 @@ def rect_valide(r):
 # old laptop: the window has to fit.
 PRINCIPAUX = {
     "bienvenue": ("Vérifier mon {machine}", "Choisir mon IA"),
-    "bienvenue-retour": ("Guide-moi dans un logiciel",),
+    "bienvenue-retour": ("Guide-moi dans un logiciel", "Connecter mon compte Claude"),
     "diagnostic": ("Tout installer",),
     "connexion-installation": ("Connecter mon compte Claude",),
     "connexion": ("Connecter mon compte Claude",),
@@ -2991,10 +2993,12 @@ class Parcours:
         if self.codex:
             self.t.check("choix" in vus, "au deuxième lancement, l'app n'a pas redemandé quelle IA")
         else:
-            # Claude Code and the brain are there now: the welcome offers the guide.
+            # Claude Code and the brain are there now, Claude's login still put off (no account on these VMs):
+            # the welcome asks for it, the guide needs it.
             retour = vus.get("bienvenue-retour")
             self.t.check(retour is not None, "au deuxième lancement, l'app ne dit pas « Content de te revoir »")
-            self.t.check(retour is None or retour.bouton(GUIDE) is not None, "au deuxième lancement, l'accueil ne propose pas « %s »" % GUIDE)
+            self.t.check(retour is None or (retour.bouton(CONNECTER) is not None and retour.bouton(GUIDE) is None),
+                         "au deuxième lancement, sans compte Claude, l'accueil ne demande pas « %s » avant le guide" % CONNECTER)
         return vus
 
     # ── The guide (§9): a third launch, its window walked to the procedure in the brain ──

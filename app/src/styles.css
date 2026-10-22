@@ -283,6 +283,9 @@ body.big .plan { justify-content: center; text-align: left; }
 /* The end's other ways, as links on one line under the main buttons' story. */
 .links { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 6px; }
 
+/* The brain's folder in full, under « Voir mes notes »: a long path wraps instead of widening the screen. */
+.folder { text-align: center; overflow-wrap: anywhere; }
+
 .card {
   background: var(--card);
   border: 1px solid var(--line);

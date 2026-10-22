@@ -68,9 +68,11 @@
   // pasted back), partiel, rien (no fact kept), suspect; &fichiers=3 reads
   // three files; &pause=import leaves the requests running (« Arrêter »); &colle=1 pastes an answer on the paste screen.
   // Bibo: &sleep=3 makes it doze off after 3 s without activity instead of 45.
-  // The login: &jamais=1 never logs in, &hint=20 says what to do after 20 s without a login instead of 3 min.
-  // &guide=1: the guide works once Claude Code is installed (guide_offert), under a failure too. &version=0.1.76: a
-  // preview's version.
+  // The login: &jamais=1 never logs in, &hint=20 says what to do after 20 s without a login instead of 3 min,
+  // &deco=1 (installe, motscles): Claude Code there but not logged in, until its login window opens.
+  // &guide=1: the guide works here (guide_offert) once Claude Code is installed and logged in, the brain's folder
+  // made (guide.rs, #70): under a failure too. &version=0.1.76: a preview's version.
+  // The diagnosis: &alerte=network|disk is a warning on that line (claude.ai silent, a disk nearly full).
   // Windows: &os=windows shows the PC's words and checks (manque, installe, motscles, echec with &fail=brain):
   // Python and Git instead of Apple's tools, install.ps1's sections under the brain step.
   // Linux: &os=linux shows the words and checks of an Ubuntu (manque, installe, motscles, echec):
@@ -143,7 +145,13 @@
     };
     const SYSTEM = WIN ? 'Windows 11 (24H2)' : LIN ? 'Ubuntu 24.04.1 LTS' : 'macOS 15.4';
     const ARCH = WIN || LIN ? 'x86_64' : 'arm64';
-    const ONLINE = [C(WIN ? 'windows' : LIN ? 'linux' : 'macos', 'ok', SYSTEM), C('disk', 'ok', '182 Go libres'), C('network', 'ok', 'github.com et claude.ai répondent.')];
+    // Same sentences as diagnose.rs for a warning (&alerte=).
+    const ALERTES = {
+      network: C('network', 'warn', 'claude.ai ne répond pas. Une étape risque d’échouer.'),
+      disk: C('disk', 'warn', 'Il reste 7 Go. Ça passe, mais c’est juste.'),
+    };
+    const ONLINE = [C(WIN ? 'windows' : LIN ? 'linux' : 'macos', 'ok', SYSTEM), C('disk', 'ok', '182 Go libres'), C('network', 'ok', 'github.com et claude.ai répondent.')]
+      .map((c) => (c.id === P.get('alerte') ? ALERTES[c.id] : c));
     // Codex's lines (diagnose.rs), missing and there.
     const CODEX_MISSING = {
       codex: C('codex', 'missing', 'Pas encore installé.'),
@@ -268,7 +276,7 @@
         };
       }
       return {
-        os: SYSTEM, arch: ARCH, ram_gb: 16, disk_free_gb: 182.4, online: true, todo: ALL_STEPS, can_install: true,
+        os: SYSTEM, arch: ARCH, ram_gb: 16, disk_free_gb: P.get('alerte') === 'disk' ? 7 : 182.4, online: true, todo: ALL_STEPS, can_install: true,
         checks: [...ONLINE, ...MISSING],
       };
     }
@@ -422,7 +430,8 @@
     let loginPolls = 0;
     const stepsRun = new Set();
     // &jamais=1: the login never comes (the command window shows an error, say).
-    const loggedIn = () => !P.get('jamais') && (scenario === 'installe' || scenario === 'motscles' || Boolean(REPAIR) || (loginOpened && loginPolls >= 2));
+    const loggedIn = () => !P.get('jamais') && ((!P.get('deco') && (scenario === 'installe' || scenario === 'motscles' || Boolean(REPAIR)))
+      || (loginOpened && loginPolls >= 2));
     // Codex: logged out (or &codex=), with ChatGPT two checks after its login window opened.
     let codexOpened = false;
     let codexPolls = 0;
@@ -563,10 +572,12 @@
       async start_onboarding() { await wait(100); },
       async open_vault() { await wait(100); },
       async brain_folder() { await wait(50); return WIN ? 'C:\\Users\\aminata\\Documents\\Brain' : 'Documents/Brain'; },
-      async open_link({ url }) { console.log('open_link', url); },
+      // The links opened, in turn (dev/screens.mjs reads them).
+      async open_link({ url }) { (window.__liens ||= []).push(url); console.log('open_link', url); },
       // The guide (guide-mock.html has its window): offered once the brain and Claude Code are there.
-      // &guide=1: once Claude Code is installed, the guide works here (D1), even if a later step fails.
-      async guide_offert() { await wait(50); return scenario === 'installe' || scenario === 'motscles' || (P.get('guide') === '1' && stepsRun.has('claude')); },
+      // &guide=1: Claude Code installed and logged in, the brain's folder made: the guide works here (D1, guide.rs
+      // in #70), even if a later step fails.
+      async guide_offert() { await wait(50); return scenario === 'installe' || scenario === 'motscles' || (P.get('guide') === '1' && stepsRun.has('claude') && loggedIn()); },
       async guide_open() { console.log('guide_open'); await wait(100); },
     };
 

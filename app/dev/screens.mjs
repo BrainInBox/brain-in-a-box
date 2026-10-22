@@ -103,6 +103,14 @@ const SCENARIOS = [
   's=manque&go=done&nth=2&click=skip,skip&jamais=1&hint=20',
   's=login-early&go=done&jamais=1&hint=20',
   's=echec&go=done&fail=brain&os=windows&guide=1',
+  // The reviews': back without Claude's login (asked first, then the guide), the subscription's page, a
+  // warning on the network at the diagnosis, the folder in full on Windows.
+  's=installe&go=welcome&deco=1&os=windows',
+  's=installe&go=welcome&deco=1&click=next&os=windows',
+  's=manque&go=welcome&click=plan',
+  's=manque&go=diag&alerte=network&os=windows',
+  's=manque&go=diag&alerte=disk',
+  's=installe&go=done&click=vault&os=windows',
 ];
 
 // The guide in paste mode (guide-mock.html): a whole session to its end and the procedure saved, on each
@@ -268,6 +276,68 @@ const CODEX_CHECKS = [
   },
 ];
 
+// Claude alone, the window as shipped: what the reviews of the beginner's screens asked, said where a
+// change of words in the golden file would not say it.
+const CLAUDE_CHECKS = [
+  {
+    name: 'Back without Claude\'s login: the welcome asks for it, the guide comes once it is there',
+    query: 's=installe&go=welcome&deco=1&click=next&os=windows',
+    ok: (shots) => shots[0].includes('Il manque ton compte Claude') && shots[0].includes('[Connecter mon compte Claude]')
+      && !shots[0].includes('[Guide-moi dans un logiciel]') && last(shots, 'welcome').includes('[Guide-moi dans un logiciel]'),
+  },
+  {
+    name: 'No subscription yet: the welcome opens its page, and says to come back',
+    query: 's=manque&go=welcome&click=plan',
+    ok: (shots) => shots.links.join() === 'https://claude.ai/upgrade' && has(shots, 'welcome', 'choisis Claude Pro, puis reviens ici'),
+  },
+  {
+    name: 'A warning on the network at the diagnosis: unfolded, not « prêt », « Revérifier » kept',
+    query: 's=manque&go=diag&alerte=network&os=windows',
+    ok: (shots) => {
+      const diag = last(shots, 'diag');
+      return diag.includes('un point à vérifier') && diag.includes('claude.ai ne répond pas') && diag.includes('[Masquer le détail]')
+        && diag.includes('[Revérifier]') && !diag.includes('est prêt');
+    },
+  },
+  {
+    name: 'Windows: « Voir mes notes » says the folder in full, never masked to « ~ »',
+    query: 's=installe&go=done&click=vault&os=windows',
+    ok: (shots) => last(shots, 'done').includes('Tes notes sont dans le dossier C:\\Users\\aminata\\Documents\\Brain.')
+      && !shots.some((s) => s.includes('~\\Documents')),
+  },
+  {
+    name: '« Presque prêt »: one button, the subscription\'s page, nothing that takes a bank card',
+    query: 's=manque&go=done&click=skip,skip&os=windows',
+    ok: (shots) => {
+      const done = last(shots, 'done');
+      return done.includes('[Connecter mon compte Claude]') && done.includes('[Je n’ai pas encore Claude Pro]') && !done.includes('[Recherche par le sens]')
+        && !done.includes('J’attends ta connexion');
+    },
+  },
+  {
+    name: 'Claude\'s login: its command window stays open, and the hint says what to do with a code',
+    query: 's=login-early&go=done&jamais=1&hint=20',
+    ok: (shots) => has(shots, 'install', 'laisse-la ouverte') && has(shots, 'install', 'Si ton navigateur affiche un code')
+      && has(shots, 'install', 'Cmd + V'),
+  },
+  {
+    name: 'Windows: the authorization is said in Python\'s section and in Obsidian\'s, not between',
+    query: 's=manque&go=done&os=windows',
+    ok: (shots) => has(shots, 'install', 'pour installer Git ou Python') && has(shots, 'install', 'pour installer Obsidian')
+      && !shots.some((s) => s.includes('(3 sur 13)') && s.includes('autorisation')),
+  },
+  {
+    name: 'The computer kept awake while a step runs, not said again under a failure',
+    query: 's=echec&go=done&fail=brain&os=windows&guide=1',
+    ok: (shots) => has(shots, 'install', 'sur le chargeur') && shots.filter((s) => s.includes('Oups, ça a coincé')).every((s) => !s.includes('jusqu’à la fin')),
+  },
+  {
+    name: 'The import says what is masked, and what may pass',
+    query: 's=installe&go=import-done&click=import&colle=1',
+    ok: (shots) => shots.some((s) => s.includes('Un code glissé dans une phrase peut passer')),
+  },
+];
+
 // ── The screens bibo.js names, and the ones the windows show ───────────────
 
 // In bibo.js: RULES' screens, the lists FAILED and CALM, OVERRIDES' keys, and each « screen === '…' ».
@@ -363,9 +433,10 @@ class El extends Node_ {
   get className() { return this.attrs.class || ''; }
   set className(v) { this.attrs.class = v; }
   get id() { return this.attrs.id || ''; }
-  setAttribute(k, v) { this.attrs[k] = String(v); if (k === 'disabled') this.disabled = true; }
+  // As the browser's: the attributes disabled and hidden are the properties too (h() sets them so).
+  setAttribute(k, v) { this.attrs[k] = String(v); if (k === 'disabled' || k === 'hidden') this[k] = true; }
   getAttribute(k) { return this.attrs[k] ?? null; }
-  removeAttribute(k) { delete this.attrs[k]; }
+  removeAttribute(k) { delete this.attrs[k]; if (k === 'disabled' || k === 'hidden') this[k] = false; }
   addEventListener(t, f) { (this.listeners[t] ||= []).push(f); }
   removeEventListener() {}
   dispatchEvent(e) { for (const f of this.listeners[e.type] || []) f(e); return true; }
@@ -543,6 +614,7 @@ async function screens(mockText, scripts, query) {
   shots.sizes = (ctx.__tailles || []).join(' ');
   shots.refused = ctx.__refused || 0;
   shots.bars = bars.map((w) => parseFloat(w));
+  shots.links = ctx.__liens || [];
   return shots;
 }
 
@@ -623,6 +695,12 @@ if (!args.includes('--app')) {
     differ += 1;
     console.log(`FAIL ${c.name}\n  ${c.query}\n${shots.slice(-3).join('\n\n')}\n`);
   }
+  for (const c of CLAUDE_CHECKS) {
+    const shots = got.get(c.query) || await screens(mockText, appScripts, c.query);
+    if (c.ok(shots)) continue;
+    differ += 1;
+    console.log(`FAIL ${c.name}\n  ${c.query}\n${shots.slice(-3).join('\n\n')}\n`);
+  }
 }
 differ += compare(GOLDEN, want, got);
 // Windows' install is Claude Code, then the brain for most of the time: the bar moves with each of
@@ -665,5 +743,5 @@ if (guide.size) {
   }
   differ += compare(GUIDE_GOLDEN, fs.existsSync(GUIDE_GOLDEN) ? parse(fs.readFileSync(GUIDE_GOLDEN, 'utf8')) : new Map(), guide);
 }
-console.log(differ ? `${differ} differ or fail` : `${got.size} scenarios, the same screens; ${args.includes('--app') ? 0 : CODEX_CHECKS.length} checks of Codex's screens pass; ${guide.size} scenarios of the guide, the same screens`);
+console.log(differ ? `${differ} differ or fail` : `${got.size} scenarios, the same screens; ${args.includes('--app') ? 0 : CLAUDE_CHECKS.length} checks of the beginner's screens and ${args.includes('--app') ? 0 : CODEX_CHECKS.length} of Codex's pass; ${guide.size} scenarios of the guide, the same screens`);
 process.exit(differ ? 1 : 0);
