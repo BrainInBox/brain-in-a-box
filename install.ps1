@@ -141,10 +141,16 @@ $WINGET_POLICY_CODES = @(-1978335174, -1978334961)
 $WingetRepaired = $false   # "winget source update" deja tente
 $WingetBroken = $false     # sa source toujours en panne apres : winget n'est plus essaye
 $WingetBlocked = $false    # bloque par l'entreprise : ni winget ni installeur officiel
+$WingetDown = $false       # il ne demarre pas : winget n'est plus essaye
 
+# Le code de sortie de winget, ou $null quand il n'a pas demarre (App Installer pas encore enregistre pour
+# ce compte) : pas le code du programme d'avant, reste dans $LASTEXITCODE.
 function Invoke-Winget([string[]]$a) {
-    Invoke-Native { & winget @a } | Out-Host
+    $global:LASTEXITCODE = $null
+    try { Invoke-Native { & winget @a } | Out-Host }
+    catch { Note-Winget "> winget $($a -join ' ')`r`nwinget : n'a pas demarre : $($_.Exception.Message)"; return $null }
     $code = $LASTEXITCODE
+    if ($null -eq $code) { Note-Winget "> winget $($a -join ' ')`r`nwinget : n'a pas demarre"; return $null }
     Note-Winget "> winget $($a -join ' ')`r`nwinget : code $code"
     return $code
 }
@@ -154,6 +160,7 @@ function Winget-Install($id, $label) {
     if (-not (Have winget)) { Note-Winget "> winget absent : $label non installe par winget"; return $false }
     if ($script:WingetBlocked) { Note-Winget "> winget : bloque par la politique de l'entreprise, $label non installe par winget"; return $false }
     if ($script:WingetBroken) { Note-Winget "> winget : sa source est en panne, $label non installe par winget"; return $false }
+    if ($script:WingetDown) { Note-Winget "> winget : il ne demarre pas, $label non installe par winget"; return $false }
     Write-Host "  ... $label : installation (winget)"
     $ok = $false
     # Portee utilisateur d'abord (pas de fenetre admin), sinon l'installeur par defaut du paquet.
@@ -168,6 +175,7 @@ function Winget-Install($id, $label) {
             $null = Invoke-Winget @("source", "update", "--name", "winget")
             $code = Invoke-Winget $a
         }
+        if ($null -eq $code) { $script:WingetDown = $true; Warn "winget ne demarre pas sur ce PC : je fais sans lui"; break }
         if ($code -eq 0) { $ok = $true; break }
         if ($WINGET_POLICY_CODES -contains $code) { $script:WingetBlocked = $true; break }
         if ($WINGET_SOURCE_CODES -contains $code) { $script:WingetBroken = $true; break }
@@ -176,10 +184,10 @@ function Winget-Install($id, $label) {
     return $ok
 }
 
-# Git et Python quand winget n'a pas pu (absent, ou sa source en panne ; jamais quand l'entreprise le
-# bloque) : leur installeur officiel, a la version epinglee ici, compare a son empreinte SHA-256 avant de
-# tourner, comme celui de Codex. Sans fenetre ni question. x64, ou ARM64 natif sur un PC ARM (ce que
-# winget prendrait).
+# Git et Python quand winget n'a pas pu (absent, sa source en panne, ou il ne demarre pas ; jamais quand
+# l'entreprise le bloque) : leur installeur officiel, a la version epinglee ici, compare a son empreinte
+# SHA-256 avant de tourner, comme celui de Codex. Sans fenetre ni question. x64, ou ARM64 natif sur un PC
+# ARM (ce que winget prendrait).
 # Chaque empreinte est relevee a deux sources : pour Git for Windows, le digest de l'API GitHub et le
 # tableau de ses notes de version ; pour Python, sa page sur python.org et l'API de python.org.
 $OFFICIAL_INSTALLERS = @{

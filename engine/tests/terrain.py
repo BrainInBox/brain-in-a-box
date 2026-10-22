@@ -1029,11 +1029,12 @@ def check_settings(t, home):
 SONDES_GIT = ("get_command", "where", "bash", "dossiers", "find_git", "app_paths", "desinstallation",
               "path_machine", "path_user")
 # install.ps1's lines in install.log (Winget-Install, Official-Install, Install-Missing): each winget attempt,
-# winget's source updated, winget left out (absent, or its source still broken), Git's official installer and
-# how it ended, then the way Git came (older installers wrote only the winget attempts).
+# winget's source updated, winget left out (absent, its source still broken, blocked by the company's policy,
+# or it does not start: « winget : n'a pas demarre » for its attempt), Git's official installer and how it
+# ended, then the way Git came (older installers wrote only the winget attempts).
 WINGET_GIT = re.compile(r"^> winget install -e --id Git\.Git (?P<args>.*?)\r?\nwinget : code (?P<code>-?\d+)\r?$", re.M)
 WINGET_SOURCE_MAJ = re.compile(r"^> winget source update --name winget\r?\nwinget : code (?P<code>-?\d+)\r?$", re.M)
-WINGET_SANS_GIT = re.compile(r"^> (?P<dit>winget(?: absent :| : sa source est en panne,| : bloque par la politique de l'entreprise,)"
+WINGET_SANS_GIT = re.compile(r"^> (?P<dit>winget(?: absent :| : sa source est en panne,| : bloque par la politique de l'entreprise,| : il ne demarre pas,)"
                              r" Git non installe par winget)\r?$", re.M)
 OFFICIEL_GIT = re.compile(r"^> installeur officiel : Git (?P<version>\S+) \((?P<arch>\w+)\) (?P<url>\S+)\r?\n"
                           r"installeur officiel : (?P<fin>[^\r\n]*?)\r?$", re.M)
