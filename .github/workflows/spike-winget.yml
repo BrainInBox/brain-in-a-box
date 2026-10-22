@@ -139,11 +139,17 @@ jobs:
             "code $($p.ExitCode)"
           }
           # The toolcache's Python is its MSI packages, without the bundle: each removed with msiexec.
-          # Its packages depend on one another (Burn's dependency providers): IGNOREDEPENDENCIES=ALL. The py launcher too.
-          foreach ($m in @(Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*', 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue |
-                           Where-Object { ($_.DisplayName -like 'Python 3.14.8 *' -or $_.DisplayName -like 'Python Launcher*') -and $_.PSChildName -like '{*}' })) {
-            $p = Start-Process msiexec.exe -ArgumentList '/x', $m.PSChildName, '/qn', '/norestart', 'IGNOREDEPENDENCIES=ALL' -Wait -PassThru
+          # Its packages depend on one another (Burn's dependency providers): IGNOREDEPENDENCIES=ALL, the
+          # packages that run Python to uninstall (pip) before the interpreter. The py launcher too.
+          $order = 'pip Bootstrap', 'Tcl/Tk Support', 'Test Suite', 'Development Libraries', 'Standard Library', 'Documentation', 'Executables', 'Core Interpreter', 'Add to Path'
+          $all = @(Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*', 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue |
+                   Where-Object { ($_.DisplayName -like 'Python 3.14.8 *' -or $_.DisplayName -like 'Python Launcher*') -and $_.PSChildName -like '{*}' })
+          $all = @($all | Sort-Object { $i = [array]::IndexOf($order, ($_.DisplayName -replace '^Python 3\.14\.8 (.+) \(64-bit\)$', '$1')); if ($i -lt 0) { 99 } else { $i } })
+          foreach ($m in $all) {
+            $l = "$env:RUNNER_TEMP\msi-$($m.PSChildName).log"
+            $p = Start-Process msiexec.exe -ArgumentList '/x', $m.PSChildName, '/qn', '/norestart', 'IGNOREDEPENDENCIES=ALL', '/l*v', "`"$l`"" -Wait -PassThru
             "msiexec /x $($m.DisplayName): $($p.ExitCode)"
+            if ($p.ExitCode) { Get-Content $l | Select-String -Pattern 'return value 3|Error ' | Select-Object -First 6 | ForEach-Object { "   $($_.Line)" } }
           }
           Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like 'Python 3.14*' -or $_.DisplayName -like 'Python Launcher*' } | ForEach-Object { "left: $($_.DisplayName)" }
           "UAC: EnableLUA=$((Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System').EnableLUA) ConsentPromptBehaviorUser=$((Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System').ConsentPromptBehaviorUser)"
