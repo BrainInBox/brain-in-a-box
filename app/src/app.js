@@ -137,6 +137,10 @@ const state = {
   advice: undefined,
   // « Importer ma mémoire »: the plan the importer made (what it read, the choices, no agreement code).
   importPlan: null,
+  // The guide offered, at the end of this run, to ask ChatGPT or Claude what they know: once.
+  importOffered: false,
+  // An import wrote its note in this run: the last screen offers the other one.
+  memoryImported: false,
   // The Voyage key lives only here, in memory, and only once Voyage accepted it.
   key: '',
   // A brain step went through with a key: search by meaning is no longer on offer.
@@ -1835,7 +1839,7 @@ async function checkLogin() {
 
 // The first account still to connect, then the next one, then the end.
 function nextLogin(left) {
-  if (!left.length) showDone();
+  if (!left.length) finishInstall();
   else showLogin(left[0].engine, left.slice(1), left[0].said);
 }
 
@@ -1973,7 +1977,9 @@ function showDone() {
       button('Activer la recherche par le sens', () => addMeaning(showDone), { kind: 'secondary', small: true, act: 'voyage' })));
   }
   ui.screen.append(h('div', { class: 'upgrade' },
-    h('p', { class: 'note' }, 'Tu utilisais ChatGPT ou Claude ? Apporte ce qu’ils savent de toi.'),
+    h('p', { class: 'note' }, state.memoryImported
+      ? 'Tu utilisais aussi l’autre, ChatGPT ou Claude ? Apporte ce qu’il sait de toi.'
+      : 'Tu utilisais ChatGPT ou Claude ? Apporte ce qu’ils savent de toi.'),
     button('Importer ma mémoire', showImport, { kind: 'secondary', small: true, act: 'import' })));
   // The guide works with Claude (docs/proposals/guide.md): Codex is not shown images yet.
   if (chose('claude')) {
@@ -2131,6 +2137,139 @@ async function showImport() {
     return;
   }
   if (gen === view.gen) showImportChoice();
+}
+
+// Where the guide asks for the user. The address writes the question in a new conversation:
+// neither of them promises it, so the question is also copied, to paste if it is not there.
+const MEMORY_SOURCES = {
+  chatgpt: { name: 'ChatGPT', url: CHATGPT_URL, ask: 'https://chatgpt.com/?q=' },
+  claude: { name: 'Claude', url: CLAUDE_URL, ask: 'https://claude.ai/new?q=' },
+};
+const PASTE_KEYS = SYSTEM === 'macos' ? 'Cmd-V' : 'Ctrl-V';
+
+// The guide's offer at the end of the install, before the last screen: ask ChatGPT or Claude what
+// they know of the user, so the brain knows who it is from the start. Once per run, only when the
+// brain's AI can sort (logged in) and nothing was imported yet; otherwise the end straight away.
+async function finishInstall() {
+  const gen = view.gen;
+  let offer = null;
+  if (!state.importOffered && importReady()) {
+    state.importOffered = true;
+    try {
+      await invoke('import_check');
+      offer = await invoke('import_offer');
+    } catch {
+      offer = null;
+    }
+  }
+  if (gen !== view.gen) return;
+  if (!offer || typeof offer !== 'object' || offer.deja) showDone();
+  else showMemoryOffer(Object.hasOwn(MEMORY_SOURCES, offer.source || '') ? offer.source : null);
+}
+
+// The importer sorts with the brain's preferred AI: it has to be logged in, Codex with ChatGPT.
+function importReady() {
+  const first = importAi();
+  if (first === AIS.claude) return !state.loginSkipped;
+  return first === AIS.codex && state.codexLogin === 'chatgpt';
+}
+
+// The one seen on this computer is asked first; seen neither, the user says (an account used only in
+// a browser leaves nothing here). Neither: the end, where the interview starts from nothing.
+function showMemoryOffer(source) {
+  screen('import-offer');
+  // Fetched now, so that the click copies it at once (a copy waits for no answer).
+  let text = '';
+  invoke('import_phrase').then((p) => { text = String(p || ''); }).catch(() => {});
+  const ask = (id) => () => askMemory(id, text);
+  const other = source === 'claude' ? 'chatgpt' : 'claude';
+  if (source) {
+    const s = MEMORY_SOURCES[source];
+    say('idle', `${s.name} te connaît déjà.`, `Je lui demande ce qu’il sait de toi ? Comme ça, je sais tout de suite qui tu es, et tu n’as rien à me réexpliquer.`);
+    ui.actions.append(
+      button('Plus tard', showDone, { kind: 'ghost', act: 'later' }),
+      button(`J’utilise plutôt ${MEMORY_SOURCES[other].name}`, ask(other), { kind: 'secondary', act: `ask-${other}` }),
+      button(`Oui, demande à ${s.name}`, ask(source), { act: 'next' }));
+  } else {
+    say('idle', 'Tu as déjà parlé à ChatGPT ou à Claude ?', 'S’il te connaît, je lui demande ce qu’il sait de toi : tu n’auras rien à me réexpliquer.');
+    ui.actions.append(
+      button('Ni l’un ni l’autre', showDone, { kind: 'ghost', act: 'later' }),
+      button('Claude', ask('claude'), { kind: 'secondary', act: 'ask-claude' }),
+      button('ChatGPT', ask('chatgpt'), { act: 'next' }));
+  }
+  ui.screen.append(h('p', { class: 'note' }, 'Je t’ouvre sa page et je lui prépare ma question. Ce qu’il répond, tu le relis avant que j’en garde quoi que ce soit.'));
+  focusMain();
+}
+
+// The question copied (still in the click), its page opened with it written, then the answer pasted
+// here, read as any pasted answer (readPaste).
+async function askMemory(source, ready) {
+  const s = MEMORY_SOURCES[source];
+  let text = ready;
+  const copied = text ? copyNow(text) : false;
+  const gen = screen('import-ask');
+  if (!text) {
+    try {
+      text = String(await invoke('import_phrase') || '');
+    } catch (e) {
+      if (gen === view.gen) showImportError(e);
+      return;
+    }
+    if (gen !== view.gen) return;
+  }
+  const page = text && s.ask.length + encodeQuery(text).length <= 2000 ? s.ask + encodeQuery(text) : s.url;
+  let opened = true;
+  try {
+    await invoke('open_link', { url: page });
+  } catch {
+    opened = false;
+  }
+  if (gen !== view.gen) return;
+  if (opened) say('idle', `J’ai ouvert ${s.name} avec ma question.`, 'Envoie-la, puis rapporte-moi sa réponse : je la range dans ton cerveau.');
+  else say('worried', `Je n’ai pas pu ouvrir ${s.name}.`, `Ouvre ${s.url.replace('https://', '')} dans ton navigateur, colle ma question, puis rapporte-moi sa réponse.`);
+  const question = h('details', { class: 'log' }, h('summary', {}, 'Voir ma question'), h('p', { class: 'phrase', tabindex: '0' }, text));
+  const copy = button(copied ? 'Question copiée' : 'Copier la question', () => {
+    const ok = copyNow(text);
+    copy.textContent = ok ? 'Question copiée' : 'Sélectionne-la et copie-la';
+    if (!ok) question.open = true;
+  }, { kind: 'secondary', small: true, act: 'copy-phrase' });
+  copy.disabled = !text;
+  const reopen = button(`${opened ? 'Rouvrir' : 'Ouvrir'} ${s.name}`, () => invoke('open_link', { url: page }).catch(() => {}), { kind: 'secondary', small: true, act: `open-${source}` });
+  const area = h('textarea', { class: 'paste', maxlength: 200000, 'aria-label': `La réponse de ${s.name}`, placeholder: `Colle sa réponse ici (${PASTE_KEYS})`, spellcheck: 'false' });
+  const next = button('Continuer', () => readPaste(area.value), { act: 'next' });
+  next.disabled = true;
+  area.addEventListener('input', () => { next.disabled = !area.value.trim(); });
+  ui.screen.append(
+    h('ol', { class: 'vsteps card' },
+      h('li', {},
+        h('p', {}, `Dans ${s.name}, envoie ma question, si elle n’est pas déjà partie.`),
+        // Copied only when the copy is sure: else the button, not a word that is not true.
+        h('p', { class: 'note' }, copied
+          ? `Elle n’est pas écrite ? Colle-la (${PASTE_KEYS}) : je l’ai copiée pour toi.`
+          : `Elle n’est pas écrite ? Clique sur « Copier la question », puis colle-la (${PASTE_KEYS}).`),
+        h('div', { class: 'row' }, copy, reopen),
+        question),
+      h('li', {}, h('p', {}, 'Quand il a fini, copie sa réponse avec le bouton Copier de son bloc de code.')),
+      h('li', {},
+        h('p', {}, 'Colle-la ici.'),
+        area,
+        h('p', { class: 'note' }, 'S’il dit qu’il en reste, écris-lui « Continue » et colle la suite à la fin.'))),
+    privacyNote(importAi()));
+  ui.actions.append(button('Retour', () => showMemoryOffer(source), { kind: 'ghost', act: 'back' }), next);
+  focusMain();
+}
+
+// Every character but letters, digits and - _ . ~ written %XX: nothing the system or a browser reads
+// as the end of the address (steps.rs opens it only so).
+function encodeQuery(text) {
+  return encodeURIComponent(text).replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+}
+
+// A copy in the click itself, where the system allows it; false when it did not.
+function copyNow(text) {
+  if (legacyCopy(text)) return true;
+  navigator.clipboard?.writeText(text).catch(() => {});
+  return false;
 }
 
 function showImportChoice(intro = null) {
@@ -2407,6 +2546,7 @@ function showImportResult(r) {
     return;
   }
   const name = String(r.note).replace(/^Imports\//, '').replace(/\.md$/, '');
+  state.memoryImported = true;
   say('happy', 'C’est rangé !', `${count(faits, 'fait')} dans Imports › ${name}.`);
   const par = r.par_categorie && typeof r.par_categorie === 'object' ? r.par_categorie : {};
   const jetes = Object.values(r.jetes && typeof r.jetes === 'object' ? r.jetes : {}).reduce((x, y) => x + (Number(y) || 0), 0);

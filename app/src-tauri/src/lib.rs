@@ -234,6 +234,20 @@ async fn import_check() -> Result<(), import::ImportError> {
     importing(|_| Ok(())).await
 }
 
+/// The guide's offer before the end: is an import already in the brain, and who to ask first.
+/// None without a brain: nothing is offered.
+#[tauri::command]
+async fn import_offer() -> Option<import::Offer> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let home = sys::home();
+        let brain = detect::vault(&home)?;
+        Some(import::Offer { deja: import::imported(&brain), source: advice::memory_source(&home) })
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
 /// The sentence to paste in ChatGPT or Claude.
 #[tauri::command]
 async fn import_phrase() -> Result<String, import::ImportError> {
@@ -638,6 +652,7 @@ pub fn run() {
             open_repair_terminal,
             machine_advice,
             import_check,
+            import_offer,
             import_phrase,
             import_pick,
             import_paste,

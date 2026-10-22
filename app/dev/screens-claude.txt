@@ -226,6 +226,48 @@
 ### s=installe&hermes_etape=relier&fail=hermes_cerveau&click=skip&go=done
 56 2 320 321 322 325 326 18 329
 
+### s=installe&memoire=chatgpt&go=import-offer
+56 2 57 18 330
+
+### s=installe&memoire=claude&go=import-offer&os=windows
+58 21 59 18 331
+
+### s=installe&memoire=aucun&go=import-offer&os=linux
+58 21 63 18 332
+
+### s=installe&memoire=chatgpt&go=import-ask
+56 2 57 18 330 333
+
+### s=installe&memoire=aucun&go=import-ask&click=ask-claude&os=windows
+58 21 59 18 332 334
+
+### s=installe&memoire=chatgpt&go=import-done&colle=1
+56 2 57 18 330 333 335 250 251 252 235 253
+
+### s=installe&memoire=chatgpt&go=done&colle=1&click=done
+56 2 57 18 330 333 335 250 251 252 235 253 336
+
+### s=installe&memoire=deja&go=done
+56 2 57 18 54
+
+### s=installe&memoire=claude&go=done&click=later
+56 2 57 18 331 54
+
+### s=installe&deconnecte=1&memoire=chatgpt&click=skip&go=done
+56 2 337 18 93 338
+
+### s=installe&agents=codex&memoire=chatgpt&go=import-ask
+294 295 296 297 2 339 303 330 340
+
+### s=installe&memoire=claude&lien=refuse&go=import-ask
+56 2 57 18 331 341
+
+### s=installe&memoire=chatgpt&copie=refuse&go=import-ask
+56 2 57 18 330 342
+
+### s=motscles&memoire=chatgpt&click=later&add=done&key=pa-abcdefghijklmnopqrstuvwxyz&go=done&nth=2
+56 2 67 18 330 19 68 343 344 345 346 347 54
+
 #1
 == welcome
 Salut, moi c’est Bibo !
@@ -4453,3 +4495,252 @@ Nouveau : je peux te guider pas à pas dans n’importe quel logiciel.
 Dernière chose : présente-toi à lui. Il te pose quelques questions pour te connaître.
 [Ouvrir mon cerveau dans Obsidian]
 [Personnaliser mon cerveau (15 min)]
+
+#330
+== import-offer
+ChatGPT te connaît déjà.
+Je lui demande ce qu’il sait de toi ? Comme ça, je sais tout de suite qui tu es, et tu n’as rien à me réexpliquer.
+Je t’ouvre sa page et je lui prépare ma question. Ce qu’il répond, tu le relis avant que j’en garde quoi que ce soit.
+[Plus tard]
+[J’utilise plutôt Claude]
+[Oui, demande à ChatGPT]
+
+#331
+== import-offer
+Claude te connaît déjà.
+Je lui demande ce qu’il sait de toi ? Comme ça, je sais tout de suite qui tu es, et tu n’as rien à me réexpliquer.
+Je t’ouvre sa page et je lui prépare ma question. Ce qu’il répond, tu le relis avant que j’en garde quoi que ce soit.
+[Plus tard]
+[J’utilise plutôt ChatGPT]
+[Oui, demande à Claude]
+
+#332
+== import-offer
+Tu as déjà parlé à ChatGPT ou à Claude ?
+S’il te connaît, je lui demande ce qu’il sait de toi : tu n’auras rien à me réexpliquer.
+Je t’ouvre sa page et je lui prépare ma question. Ce qu’il répond, tu le relis avant que j’en garde quoi que ce soit.
+[Ni l’un ni l’autre]
+[Claude]
+[ChatGPT]
+
+#333
+== import-ask
+J’ai ouvert ChatGPT avec ma question.
+Envoie-la, puis rapporte-moi sa réponse : je la range dans ton cerveau.
+Dans ChatGPT, envoie ma question, si elle n’est pas déjà partie.
+Elle n’est pas écrite ? Colle-la (Cmd-V) : je l’ai copiée pour toi.
+[Question copiée]
+[Rouvrir ChatGPT]
+Voir ma question
+Je change d’outil et j’ai besoin d’exporter mes données. Liste chaque souvenir que tu as enregistré sur moi, et tout ce que tu as appris de moi dans nos conversations passées. Mets tout dans un seul bloc de code, pour que je puisse le copier facilement. Une entrée par ligne, au format : [date d’enregistrement, si tu l’as] - le souvenir. Couvre tout ce qui suit, avec mes propres mots autant que possible : les consignes que je t’ai données sur ta façon de répondre (ton, format, style, « fais toujours… », « ne fais jamais… ») ; qui je suis : prénom, ville, métier, langues, centres d’intérêt ; mes projets, mes objectifs et les sujets qui reviennent ; les outils, logiciels et langages que j’utilise ; les personnes avec qui je travaille (prénom et rôle) ; mes préférences et les corrections que je t’ai faites ; tout autre contexte enregistré. Ne résume pas, ne regroupe pas, n’oublie rien, n’invente rien. N’écris aucun mot de passe, aucun numéro, aucun identifiant. Après le bloc de code, dis-moi si la liste est complète ou s’il en reste.
+Quand il a fini, copie sa réponse avec le bouton Copier de son bloc de code.
+Colle-la ici.
+S’il dit qu’il en reste, écris-lui « Continue » et colle la suite à la fin.
+Ce que tu importes est lu sur ton Mac et ses secrets masqués. Puis Claude le trie, chez Anthropic, avec ton abonnement Claude : rien ne part ailleurs. Le résultat est une nouvelle note de ton cerveau, que tu relis.
+[Retour]
+[Continuer (inactif)]
+
+#334
+== import-ask
+J’ai ouvert Claude avec ma question.
+Envoie-la, puis rapporte-moi sa réponse : je la range dans ton cerveau.
+Dans Claude, envoie ma question, si elle n’est pas déjà partie.
+Elle n’est pas écrite ? Colle-la (Ctrl-V) : je l’ai copiée pour toi.
+[Question copiée]
+[Rouvrir Claude]
+Voir ma question
+Je change d’outil et j’ai besoin d’exporter mes données. Liste chaque souvenir que tu as enregistré sur moi, et tout ce que tu as appris de moi dans nos conversations passées. Mets tout dans un seul bloc de code, pour que je puisse le copier facilement. Une entrée par ligne, au format : [date d’enregistrement, si tu l’as] - le souvenir. Couvre tout ce qui suit, avec mes propres mots autant que possible : les consignes que je t’ai données sur ta façon de répondre (ton, format, style, « fais toujours… », « ne fais jamais… ») ; qui je suis : prénom, ville, métier, langues, centres d’intérêt ; mes projets, mes objectifs et les sujets qui reviennent ; les outils, logiciels et langages que j’utilise ; les personnes avec qui je travaille (prénom et rôle) ; mes préférences et les corrections que je t’ai faites ; tout autre contexte enregistré. Ne résume pas, ne regroupe pas, n’oublie rien, n’invente rien. N’écris aucun mot de passe, aucun numéro, aucun identifiant. Après le bloc de code, dis-moi si la liste est complète ou s’il en reste.
+Quand il a fini, copie sa réponse avec le bouton Copier de son bloc de code.
+Colle-la ici.
+S’il dit qu’il en reste, écris-lui « Continue » et colle la suite à la fin.
+Ce que tu importes est lu sur ton PC et ses secrets masqués. Puis Claude le trie, chez Anthropic, avec ton abonnement Claude : rien ne part ailleurs. Le résultat est une nouvelle note de ton cerveau, que tu relis.
+[Retour]
+[Continuer (inactif)]
+
+#335
+== import-ask
+J’ai ouvert ChatGPT avec ma question.
+Envoie-la, puis rapporte-moi sa réponse : je la range dans ton cerveau.
+Dans ChatGPT, envoie ma question, si elle n’est pas déjà partie.
+Elle n’est pas écrite ? Colle-la (Cmd-V) : je l’ai copiée pour toi.
+[Question copiée]
+[Rouvrir ChatGPT]
+Voir ma question
+Je change d’outil et j’ai besoin d’exporter mes données. Liste chaque souvenir que tu as enregistré sur moi, et tout ce que tu as appris de moi dans nos conversations passées. Mets tout dans un seul bloc de code, pour que je puisse le copier facilement. Une entrée par ligne, au format : [date d’enregistrement, si tu l’as] - le souvenir. Couvre tout ce qui suit, avec mes propres mots autant que possible : les consignes que je t’ai données sur ta façon de répondre (ton, format, style, « fais toujours… », « ne fais jamais… ») ; qui je suis : prénom, ville, métier, langues, centres d’intérêt ; mes projets, mes objectifs et les sujets qui reviennent ; les outils, logiciels et langages que j’utilise ; les personnes avec qui je travaille (prénom et rôle) ; mes préférences et les corrections que je t’ai faites ; tout autre contexte enregistré. Ne résume pas, ne regroupe pas, n’oublie rien, n’invente rien. N’écris aucun mot de passe, aucun numéro, aucun identifiant. Après le bloc de code, dis-moi si la liste est complète ou s’il en reste.
+Quand il a fini, copie sa réponse avec le bouton Copier de son bloc de code.
+Colle-la ici.
+S’il dit qu’il en reste, écris-lui « Continue » et colle la suite à la fin.
+Ce que tu importes est lu sur ton Mac et ses secrets masqués. Puis Claude le trie, chez Anthropic, avec ton abonnement Claude : rien ne part ailleurs. Le résultat est une nouvelle note de ton cerveau, que tu relis.
+[Retour]
+[Continuer]
+
+#336
+== done
+Ton second cerveau est prêt !
+Claude retient maintenant ce que tu lui apprends.
+Tu utilisais aussi l’autre, ChatGPT ou Claude ? Apporte ce qu’il sait de toi.
+[Importer ma mémoire]
+Nouveau : je peux te guider pas à pas dans n’importe quel logiciel.
+[Essayer le guide]
+Dernière chose : présente-toi à lui. Il te pose quelques questions pour te connaître.
+[Ouvrir mon cerveau dans Obsidian]
+[Personnaliser mon cerveau (15 min)]
+
+#337
+== diag
+Tout est déjà installé !
+Ton Mac a tout ce qu’il faut.
+macOS 15.4 · Puce Apple · 16 Go de mémoire · 182 Go libres
+Mon conseil : Tu utilises déjà Claude : ton cerveau travaillera avec lui (il te faudra un abonnement Pro ou Max pour Claude Code).
+Version de macOS : OKmacOS 15.4
+Espace disque : OK182 Go libres
+Connexion internet : OKgithub.com et claude.ai répondent.
+Outils Apple (git, python3) : OKgit et python3 sont là.
+Bun (le moteur de la mémoire) : OKBun 1.4.2
+Claude Code : OKClaude Code 2.1.296
+Connexion à Claude : À noterPas encore connecté. Tu le feras en un clic.
+Obsidian (pour lire tes notes) : OKObsidian 1.14.4
+Ton dossier Brain : OKIl est dans Documents/Brain.
+Les automatismes de Claude : OKClaude note tes corrections et tes séances.
+Les compétences de Claude : OKInstallées.
+La mémoire de recherche : OKPrête.
+Recherche par le sens : OKActivée (Voyage AI)
+[Continuer]
+
+#338
+== done
+Ton second cerveau est prêt !
+Claude retient maintenant ce que tu lui apprends.
+Tu utilisais ChatGPT ou Claude ? Apporte ce qu’ils savent de toi.
+[Importer ma mémoire]
+Nouveau : je peux te guider pas à pas dans n’importe quel logiciel.
+[Essayer le guide]
+Dernière chose : présente-toi à lui. Il te pose quelques questions pour te connaître.
+Pense à connecter ton compte Claude : il te le demandera au premier lancement.
+[Ouvrir mon cerveau dans Obsidian]
+[Personnaliser mon cerveau (15 min)]
+
+#339
+== diag
+Tout est déjà installé !
+Ton Mac a tout ce qu’il faut.
+macOS 15.4 · Puce Apple · 16 Go de mémoire · 182 Go libres
+Version de macOS : OKmacOS 15.4
+Espace disque : OK182 Go libres
+Connexion internet : OKgithub.com et chatgpt.com répondent.
+Outils Apple (git, python3) : OKgit et python3 sont là.
+Bun (le moteur de la mémoire) : OKBun 1.4.2
+Codex : OKCodex 0.162.1
+Connexion à Codex : OKTu es connecté avec ton compte ChatGPT.
+Obsidian (pour lire tes notes) : OKObsidian 1.14.4
+Ton dossier Brain : OKIl est dans Documents/Brain.
+Les automatismes de Codex : OKCodex note tes corrections et tes séances.
+Tes consignes pour Codex : OKCodex les lit à chaque séance.
+Les compétences de Codex : OKInstallées.
+La mémoire de recherche : OKPrête.
+Recherche par le sens : OKActivée (Voyage AI)
+[Changer d’IA]
+[Continuer]
+
+#340
+== import-ask
+J’ai ouvert ChatGPT avec ma question.
+Envoie-la, puis rapporte-moi sa réponse : je la range dans ton cerveau.
+Dans ChatGPT, envoie ma question, si elle n’est pas déjà partie.
+Elle n’est pas écrite ? Colle-la (Cmd-V) : je l’ai copiée pour toi.
+[Question copiée]
+[Rouvrir ChatGPT]
+Voir ma question
+Je change d’outil et j’ai besoin d’exporter mes données. Liste chaque souvenir que tu as enregistré sur moi, et tout ce que tu as appris de moi dans nos conversations passées. Mets tout dans un seul bloc de code, pour que je puisse le copier facilement. Une entrée par ligne, au format : [date d’enregistrement, si tu l’as] - le souvenir. Couvre tout ce qui suit, avec mes propres mots autant que possible : les consignes que je t’ai données sur ta façon de répondre (ton, format, style, « fais toujours… », « ne fais jamais… ») ; qui je suis : prénom, ville, métier, langues, centres d’intérêt ; mes projets, mes objectifs et les sujets qui reviennent ; les outils, logiciels et langages que j’utilise ; les personnes avec qui je travaille (prénom et rôle) ; mes préférences et les corrections que je t’ai faites ; tout autre contexte enregistré. Ne résume pas, ne regroupe pas, n’oublie rien, n’invente rien. N’écris aucun mot de passe, aucun numéro, aucun identifiant. Après le bloc de code, dis-moi si la liste est complète ou s’il en reste.
+Quand il a fini, copie sa réponse avec le bouton Copier de son bloc de code.
+Colle-la ici.
+S’il dit qu’il en reste, écris-lui « Continue » et colle la suite à la fin.
+Ce que tu importes est lu sur ton Mac et ses secrets masqués. Puis Codex le trie, chez OpenAI, avec ton abonnement ChatGPT personnel : rien ne part ailleurs. Le résultat est une nouvelle note de ton cerveau, que tu relis.
+[Retour]
+[Continuer (inactif)]
+
+#341
+== import-ask
+Je n’ai pas pu ouvrir Claude.
+Ouvre claude.ai dans ton navigateur, colle ma question, puis rapporte-moi sa réponse.
+Dans Claude, envoie ma question, si elle n’est pas déjà partie.
+Elle n’est pas écrite ? Colle-la (Cmd-V) : je l’ai copiée pour toi.
+[Question copiée]
+[Ouvrir Claude]
+Voir ma question
+Je change d’outil et j’ai besoin d’exporter mes données. Liste chaque souvenir que tu as enregistré sur moi, et tout ce que tu as appris de moi dans nos conversations passées. Mets tout dans un seul bloc de code, pour que je puisse le copier facilement. Une entrée par ligne, au format : [date d’enregistrement, si tu l’as] - le souvenir. Couvre tout ce qui suit, avec mes propres mots autant que possible : les consignes que je t’ai données sur ta façon de répondre (ton, format, style, « fais toujours… », « ne fais jamais… ») ; qui je suis : prénom, ville, métier, langues, centres d’intérêt ; mes projets, mes objectifs et les sujets qui reviennent ; les outils, logiciels et langages que j’utilise ; les personnes avec qui je travaille (prénom et rôle) ; mes préférences et les corrections que je t’ai faites ; tout autre contexte enregistré. Ne résume pas, ne regroupe pas, n’oublie rien, n’invente rien. N’écris aucun mot de passe, aucun numéro, aucun identifiant. Après le bloc de code, dis-moi si la liste est complète ou s’il en reste.
+Quand il a fini, copie sa réponse avec le bouton Copier de son bloc de code.
+Colle-la ici.
+S’il dit qu’il en reste, écris-lui « Continue » et colle la suite à la fin.
+Ce que tu importes est lu sur ton Mac et ses secrets masqués. Puis Claude le trie, chez Anthropic, avec ton abonnement Claude : rien ne part ailleurs. Le résultat est une nouvelle note de ton cerveau, que tu relis.
+[Retour]
+[Continuer (inactif)]
+
+#342
+== import-ask
+J’ai ouvert ChatGPT avec ma question.
+Envoie-la, puis rapporte-moi sa réponse : je la range dans ton cerveau.
+Dans ChatGPT, envoie ma question, si elle n’est pas déjà partie.
+Elle n’est pas écrite ? Clique sur « Copier la question », puis colle-la (Cmd-V).
+[Copier la question]
+[Rouvrir ChatGPT]
+Voir ma question
+Je change d’outil et j’ai besoin d’exporter mes données. Liste chaque souvenir que tu as enregistré sur moi, et tout ce que tu as appris de moi dans nos conversations passées. Mets tout dans un seul bloc de code, pour que je puisse le copier facilement. Une entrée par ligne, au format : [date d’enregistrement, si tu l’as] - le souvenir. Couvre tout ce qui suit, avec mes propres mots autant que possible : les consignes que je t’ai données sur ta façon de répondre (ton, format, style, « fais toujours… », « ne fais jamais… ») ; qui je suis : prénom, ville, métier, langues, centres d’intérêt ; mes projets, mes objectifs et les sujets qui reviennent ; les outils, logiciels et langages que j’utilise ; les personnes avec qui je travaille (prénom et rôle) ; mes préférences et les corrections que je t’ai faites ; tout autre contexte enregistré. Ne résume pas, ne regroupe pas, n’oublie rien, n’invente rien. N’écris aucun mot de passe, aucun numéro, aucun identifiant. Après le bloc de code, dis-moi si la liste est complète ou s’il en reste.
+Quand il a fini, copie sa réponse avec le bouton Copier de son bloc de code.
+Colle-la ici.
+S’il dit qu’il en reste, écris-lui « Continue » et colle la suite à la fin.
+Ce que tu importes est lu sur ton Mac et ses secrets masqués. Puis Claude le trie, chez Anthropic, avec ton abonnement Claude : rien ne part ailleurs. Le résultat est une nouvelle note de ton cerveau, que tu relis.
+[Retour]
+[Continuer (inactif)]
+
+#343
+== voyage
+Je vérifie ta clé auprès de Voyage…
+Crée un compte sur Voyage AI.
+[Ouvrir Voyage AI]
+Ajoute une carte bancaire (menu Billing). Sans carte, Voyage te bride : ton cerveau serait trop lent.
+La part gratuite suffit : un cerveau perso en utilise moins de 1 %. Au-delà, Voyage facture au mois.
+Crée une clé (menu API Keys). Elle commence par pa-. Colle-la ici.
+Ta clé Voyage
+[Vérifier (inactif)]
+Je vérifie…
+[Retour]
+[Activer avec cette clé (inactif)]
+
+#344
+== voyage
+Clé acceptée !
+Ton cerveau trouvera tes notes par le sens.
+Crée un compte sur Voyage AI.
+[Ouvrir Voyage AI]
+Ajoute une carte bancaire (menu Billing). Sans carte, Voyage te bride : ton cerveau serait trop lent.
+La part gratuite suffit : un cerveau perso en utilise moins de 1 %. Au-delà, Voyage facture au mois.
+Crée une clé (menu API Keys). Elle commence par pa-. Colle-la ici.
+Ta clé Voyage
+[Vérifier]
+Clé valide
+[Retour]
+[Activer avec cette clé]
+
+#345
+== install
+Je vérifie ton compte Claude…
+Recherche par le sensTon cerveau apprend à retrouver tes notes par le sens.En attente
+macOS va peut-être demander l’accès à ton dossier Documents : clique sur « Autoriser ».
+Détails
+
+#346
+== install
+J’active la recherche par le sens.
+Ton cerveau relit tes notes : quelques minutes.
+Recherche par le sensTon cerveau apprend à retrouver tes notes par le sens.En cours…
+macOS va peut-être demander l’accès à ton dossier Documents : clique sur « Autoriser ».
+Détails
+
+#347
+== install
+C’est fait !
+Ton cerveau est installé dans Documents/Brain, avec la recherche par le sens.
+Recherche par le sensTon cerveau apprend à retrouver tes notes par le sens.Fait
+macOS va peut-être demander l’accès à ton dossier Documents : clique sur « Autoriser ».
+Détails

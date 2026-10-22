@@ -1671,7 +1671,7 @@ pub fn open_link(url: &str) -> Result<(), String> {
 
 /// https only, on a few known hosts, written plainly (no port, no user@, no spaces, no
 /// comma: Explorer, which opens it on Windows, reads one as the end of an argument).
-fn link_allowed(url: &str) -> bool {
+pub(crate) fn link_allowed(url: &str) -> bool {
     let Some(rest) = url.strip_prefix("https://") else { return false };
     let host = &rest[..rest.find(['/', '?', '#']).unwrap_or(rest.len())];
     LINK_HOSTS.contains(&host) && url.len() <= 2048 && url.bytes().all(|b| b.is_ascii_graphic() && b != b'\\' && b != b',')

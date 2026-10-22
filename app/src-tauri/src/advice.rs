@@ -117,6 +117,27 @@ pub fn now(home: &Path) -> Option<Advice> {
     decide(&probe(home, detect::claude_auth_method().as_deref()))
 }
 
+/// Who most likely knows the user already, asked first what they know (« Importer ma mémoire »):
+/// "chatgpt" when ChatGPT is seen here (its app, Codex's, Codex or its login), else "claude" when
+/// Claude's desktop app is (Claude Code says nothing: the kit installs it). None: neither is seen.
+pub fn memory_source(home: &Path) -> Option<&'static str> {
+    let env = |k: &str| std::env::var_os(k);
+    let place = Place { home, env: &env, applications: None, path: OsString::new() };
+    source_with(&place, probe(home, None).chatgpt)
+}
+
+/// ChatGPT first: most people have used it the longest.
+fn source_with(p: &Place, chatgpt: bool) -> Option<&'static str> {
+    let (claude_app, chatgpt_app) = apps(p);
+    if chatgpt || chatgpt_app {
+        Some("chatgpt")
+    } else if claude_app {
+        Some("claude")
+    } else {
+        None
+    }
+}
+
 /// What the probes look at: a home, an environment, and (tests) the folders holding macOS apps.
 struct Place<'a> {
     home: &'a Path,
@@ -294,6 +315,24 @@ mod tests {
 
     fn no_env(_: &str) -> Option<OsString> {
         None
+    }
+
+    #[test]
+    fn who_knows_the_user() {
+        let tmp = tempfile::tempdir().unwrap();
+        let apps = tmp.path().join("Applications");
+        let p = place(tmp.path(), &no_env, vec![apps.clone()]);
+        let app = |name: &str| {
+            fs::create_dir_all(apps.join(name).join("Contents")).unwrap();
+            fs::write(apps.join(name).join("Contents").join("Info.plist"), "").unwrap();
+        };
+        assert_eq!(source_with(&p, false), None);
+        app("Claude.app");
+        assert_eq!(source_with(&p, false), Some("claude"));
+        // Codex or its login: a ChatGPT account, asked first.
+        assert_eq!(source_with(&p, true), Some("chatgpt"));
+        app("ChatGPT.app");
+        assert_eq!(source_with(&p, false), Some("chatgpt"));
     }
 
     #[test]

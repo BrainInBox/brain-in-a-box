@@ -25,6 +25,7 @@ const COMMANDS: &[&str] = &[
     "open_repair_terminal",
     "machine_advice",
     "import_check",
+    "import_offer",
     "import_phrase",
     "import_pick",
     "import_paste",

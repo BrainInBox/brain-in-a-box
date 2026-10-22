@@ -109,6 +109,27 @@ const SCENARIOS = [
   's=installe&hermes_etape=relier&go=done',
   's=installe&hermes_etape=relier&fail=hermes_cerveau&go=done',
   's=installe&hermes_etape=relier&fail=hermes_cerveau&click=skip&go=done',
+  // Point 4, the guide asks for the user: ChatGPT seen here, asked first; Claude seen; neither seen, the
+  // user says; its page opened with the question, the answer pasted then sorted; already imported, or
+  // put off: the end at once.
+  's=installe&memoire=chatgpt&go=import-offer',
+  's=installe&memoire=claude&go=import-offer&os=windows',
+  's=installe&memoire=aucun&go=import-offer&os=linux',
+  's=installe&memoire=chatgpt&go=import-ask',
+  's=installe&memoire=aucun&go=import-ask&click=ask-claude&os=windows',
+  's=installe&memoire=chatgpt&go=import-done&colle=1',
+  's=installe&memoire=chatgpt&go=done&colle=1&click=done',
+  's=installe&memoire=deja&go=done',
+  's=installe&memoire=claude&go=done&click=later',
+  // Not offered while the brain's AI cannot sort: its login put off. Codex on ChatGPT sorts: offered.
+  's=installe&deconnecte=1&memoire=chatgpt&click=skip&go=done',
+  's=installe&agents=codex&memoire=chatgpt&go=import-ask',
+  // Its page would not open: the address to type, and the question to copy.
+  's=installe&memoire=claude&lien=refuse&go=import-ask',
+  // The clipboard refused: the button to click is named, the question is not said copied.
+  's=installe&memoire=chatgpt&copie=refuse&go=import-ask',
+  // Voyage, added from the last screen, ends the install again: the offer is not made twice.
+  's=motscles&memoire=chatgpt&click=later&add=done&key=pa-abcdefghijklmnopqrstuvwxyz&go=done&nth=2',
 ];
 
 // The guide in paste mode (guide-mock.html): a whole session to its end and the procedure saved, on each

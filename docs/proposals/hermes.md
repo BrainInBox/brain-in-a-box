@@ -28,6 +28,21 @@ Cette section remplace la recommandation du §3 et les décisions 1, 2 et 4 du �
   - `feat/hermes-5-messagerie` : WhatsApp et Telegram, et la passerelle en service ;
   - `feat/hermes-6-autorisations` : les autorisations.
 
+## Mise à jour du 22/10/2026 : le guide demande à ChatGPT ou à Claude ce qu'ils savent
+
+Le but du point 4 s'élargit : dès l'installation, le cerveau sait qui est la personne, à partir de ce que ChatGPT ou Claude sait déjà d'elle. Le lien Hermès et cerveau reste ; l'import vient le remplir.
+
+- **Le guide propose, la personne n'a rien à chercher.** À la fin de l'installation, une fois l'IA du cerveau connectée, Bibo propose de lui-même : « ChatGPT te connaît déjà. Je lui demande ce qu'il sait de toi ? ». Avant, c'était un petit bouton « Importer ma mémoire » sur le dernier écran, qui reste.
+- **Il devine à qui demander.** ChatGPT si l'ordinateur le montre (son app, celle de Codex, Codex ou sa connexion), sinon Claude si son app est là. Rien de visible (un compte utilisé seulement dans le navigateur ne laisse pas de trace) : la personne choisit, ou répond « Ni l'un ni l'autre », et l'entretien d'accueil part de zéro.
+- **Trois gestes pour la personne.** Bibo copie sa question et ouvre `chatgpt.com/?q=` ou `claude.ai/new?q=`, la question dans l'adresse. La personne l'envoie, copie la réponse et la colle. L'importeur existant lit, trie et range ; la personne voit le plan et relit avant que rien ne soit gardé.
+- **Une seule fois par lancement**, jamais quand un import est déjà dans le cerveau (`Imports/*-import-*.md`), ni quand l'IA du cerveau n'est pas connectée (c'est elle qui trie).
+- **Limites connues.**
+  - Aucune API ne donne cette mémoire : la connexion du point 3 ne la lit pas. Elle ne sort que par la fenêtre de ChatGPT ou de Claude.
+  - `?q=` n'est un engagement ni d'OpenAI ni d'Anthropic, et OpenAI a limité l'envoi automatique en 2025. L'écran promet donc seulement d'ouvrir la page et de préparer la question ; elle est aussi copiée, à coller si elle n'est pas écrite. Si le presse-papiers refuse la copie, l'écran ne dit pas « copiée » : il montre le bouton « Copier la question ».
+  - La vérification anti-robot de ChatGPT bloque un navigateur piloté : le pré-remplissage par `?q=` n'a pas pu être prouvé ici, seulement l'adresse et son ouverture.
+  - La phrase fait 1 045 caractères et l'adresse 1 676, sous la limite de 2 000 de l'app et de 2 048 d'`open_link` (test `the_question_fits_in_the_address_that_writes_it`).
+- **Avec le point 6** (écran, clavier et souris), le guide pourra faire ces trois gestes lui-même : ce sera le premier usage qui prouve l'autorisation.
+
 ---
 
 ## 0. En bref
@@ -127,6 +142,7 @@ Quand l'utilisateur n'a rien, proposer **ChatGPT par défaut** : un seul abonnem
 - **Recherche dans les notes** : déclarer GBrain comme serveur MCP de Hermès (`gbrain serve` en stdio). Hermès interroge alors la mémoire directement. À vérifier : le chemin du binaire, et la cohabitation avec la réindexation de 4 h.
 - **Résumé du soir** : la réflexion lit déjà les sessions Hermès quand Hermès est installé (CHANGELOG, `HERMES_DB`). À vérifier sur une installation neuve.
 - **Taille** : la mémoire de Hermès a un plafond de caractères. Vérifier que le bloc du kit y tient après l'import.
+  - **Écart constaté au point 4** : `hermes import-agent claude-code` apporte environ 3 000 caractères dans une mémoire plafonnée à 2 200 par défaut ; la vérification échoue. Bibo n'importe donc pas : il écrit une seule entrée courte dans `MEMORY.md` (où est le cerveau, les quatre notes Profil à lire d'abord, `gbq query` pour le reste), dans le plafond qu'Hermès annonce (`memory_char_limit`). Une mémoire pleine ne reçoit rien et l'étape dit quoi faire.
 
 ---
 

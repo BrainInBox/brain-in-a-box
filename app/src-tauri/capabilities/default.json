@@ -30,6 +30,7 @@
     "allow-open-repair-terminal",
     "allow-machine-advice",
     "allow-import-check",
+    "allow-import-offer",
     "allow-import-phrase",
     "allow-import-pick",
     "allow-import-paste",

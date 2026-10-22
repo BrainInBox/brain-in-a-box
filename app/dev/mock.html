@@ -79,6 +79,8 @@
   (() => {
     const P = new URLSearchParams(location.search);
     if (P.get('sleep')) window.BIBO_SLEEP_MS = Number(P.get('sleep')) * 1000;
+    // copie=refuse: the clipboard refused, as a browser may.
+    if (P.get('copie') === 'refuse') document.execCommand = () => false;
     const WIN = P.get('os') === 'windows';
     const LIN = P.get('os') === 'linux';
     if (WIN) window.BIBO_OS = 'windows';
@@ -645,7 +647,15 @@
       async open_repair_terminal({ step }) { console.log('open_repair_terminal', step); await wait(T(300)); },
       async start_onboarding() { await wait(100); },
       async open_vault() { await wait(100); },
-      async open_link({ url }) { console.log('open_link', url); },
+      async open_link({ url }) {
+        console.log('open_link', url);
+        // As steps.rs (link_allowed): the address the app builds must pass it.
+        const host = url.startsWith('https://') ? url.slice(8).split(/[/?#]/)[0] : '';
+        const ok = ['dashboard.voyageai.com', 'docs.voyageai.com', 'claude.com', 'claude.ai', 'obsidian.md', 'chatgpt.com'].includes(host)
+          && url.length <= 2048 && /^[!-~]*$/.test(url) && !/[\\,]/.test(url);
+        if (!ok || P.get('lien') === 'refuse') throw 'Je n’ai pas pu ouvrir ton navigateur.';
+        window.__opened = url;
+      },
       // The guide (guide-mock.html has its window): offered once the brain and Claude Code are there.
       async guide_offert() { await wait(50); return scenario === 'installe' || scenario === 'motscles'; },
       async guide_open() { console.log('guide_open'); await wait(100); },
@@ -701,6 +711,12 @@
     Object.assign(handlers, {
       async machine_advice() { await wait(T(300)); return advice(); },
       async import_check() { await wait(50); if (IMP === 'a_jour') throw IMP_ERRORS.a_jour; },
+      // What the end's offer finds (memoire=chatgpt, claude, aucun or deja); without it, no brain: the end at once.
+      async import_offer() {
+        await wait(T(100));
+        const m = P.get('memoire');
+        return m ? { deja: m === 'deja', source: ['chatgpt', 'claude'].includes(m) ? m : null } : null;
+      },
       async import_phrase() { await wait(T(200)); return PHRASE; },
       async import_pick() {
         // The system's picker, then the reading.
@@ -805,7 +821,7 @@
           if (input) { typed = true; input.value = key; input.dispatchEvent(new Event('input')); q('[data-act=verify]').click(); }
           return;
         }
-        if (s === 'import-paste' && P.get('colle') && !pasted && q('textarea.paste') && q('[data-act=copy-phrase]:not(:disabled)')) {
+        if ((s === 'import-paste' || s === 'import-ask') && P.get('colle') && !pasted && q('textarea.paste') && q('[data-act=copy-phrase]:not(:disabled)')) {
           pasted = true;
           const area = q('textarea.paste');
           area.value = '- [2026-03-02] Habite à Lyon, boulangère.\n- Préfère des réponses courtes, en français.\n- Travaille avec Malik (comptable).';

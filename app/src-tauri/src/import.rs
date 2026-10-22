@@ -404,6 +404,27 @@ fn annuler(kit: &Kit, id: &str) {
     let _ = kit.run(&["annuler", id], Input::Text(String::new()), SHORT_LIMIT, &mut |_| {});
 }
 
+/// The guide's offer at the end of the install: ask ChatGPT or Claude what they know of the user.
+#[derive(Serialize, Debug, PartialEq, Eq)]
+pub struct Offer {
+    /// An import already wrote its note in this brain: nothing to offer.
+    pub deja: bool,
+    /// Who to ask first, "chatgpt" or "claude", the one seen on this computer; None when neither is.
+    pub source: Option<&'static str>,
+}
+
+/// Whether an import already wrote its note here: Imports/<day>-import-<source>.md, as the
+/// importer names them.
+pub fn imported(brain: &Path) -> bool {
+    std::fs::read_dir(brain.join("Imports")).is_ok_and(|entries| {
+        entries.flatten().any(|e| {
+            let name = e.file_name();
+            let name = name.to_string_lossy();
+            name.ends_with(".md") && name.contains("-import-")
+        })
+    })
+}
+
 /// The note of the last import, in the brain, for « Voir la note ».
 pub fn note(brain: &Path) -> Option<PathBuf> {
     let rel = session().note.clone()?;
@@ -493,6 +514,22 @@ mod tests {
     }
 
     #[test]
+    fn an_import_already_in_the_brain() {
+        let tmp = tempfile::tempdir().unwrap();
+        let brain = tmp.path();
+        assert!(!imported(brain));
+        let imports = brain.join("Imports");
+        std::fs::create_dir_all(&imports).unwrap();
+        // The user's own note, the importer's file being written, a copy left half way: no import yet.
+        std::fs::write(imports.join("Mes imports.md"), "").unwrap();
+        std::fs::write(imports.join(".import-x1.tmp"), "").unwrap();
+        std::fs::write(imports.join("2026-10-21-import-chatgpt.md.part"), "").unwrap();
+        assert!(!imported(brain));
+        std::fs::write(imports.join("2026-10-22-import-collage.md"), "").unwrap();
+        assert!(imported(brain));
+    }
+
+    #[test]
     fn an_export_read_through_stdin_and_what_would_leave() {
         let _one = SERIAL.lock().unwrap_or_else(|p| p.into_inner());
         let b = bench();
@@ -572,6 +609,31 @@ mod tests {
         assert_eq!(read_paste(&b.kit, &"x".repeat(PASTE_MAX + 1)).unwrap_err().code, "collage_long");
         // The sentence to paste, the importer's.
         assert!(phrase(&b.kit).unwrap().starts_with("Je change d'outil"));
+    }
+
+    /// The question as the app writes it in an address (app.js, encodeQuery): every byte but
+    /// letters, digits and - _ . ~ written %XX.
+    fn in_address(text: &str) -> String {
+        text.bytes()
+            .map(|b| match b {
+                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => (b as char).to_string(),
+                _ => format!("%{b:02X}"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_question_fits_in_the_address_that_writes_it() {
+        let _one = SERIAL.lock().unwrap_or_else(|p| p.into_inner());
+        let b = bench();
+        let question = phrase(&b.kit).unwrap();
+        for ask in ["https://chatgpt.com/?q=", "https://claude.ai/new?q="] {
+            let url = format!("{ask}{}", in_address(&question));
+            // The app's own cap (app.js, askMemory), under what opens a link at all.
+            assert!(url.len() <= 2000, "{} characters: the page would open without the question", url.len());
+            assert!(crate::steps::link_allowed(&url), "{ask}: refused by open_link");
+        }
+        assert_eq!(in_address("é, l'a"), "%C3%A9%2C%20l%27a");
     }
 
     #[test]
