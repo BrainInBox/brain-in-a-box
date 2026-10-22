@@ -1033,7 +1033,8 @@ SONDES_GIT = ("get_command", "where", "bash", "dossiers", "find_git", "app_paths
 # how it ended, then the way Git came (older installers wrote only the winget attempts).
 WINGET_GIT = re.compile(r"^> winget install -e --id Git\.Git (?P<args>.*?)\r?\nwinget : code (?P<code>-?\d+)\r?$", re.M)
 WINGET_SOURCE_MAJ = re.compile(r"^> winget source update --name winget\r?\nwinget : code (?P<code>-?\d+)\r?$", re.M)
-WINGET_SANS_GIT = re.compile(r"^> (?P<dit>winget(?: absent :| : sa source est en panne,) Git non installe par winget)\r?$", re.M)
+WINGET_SANS_GIT = re.compile(r"^> (?P<dit>winget(?: absent :| : sa source est en panne,| : bloque par la politique de l'entreprise,)"
+                             r" Git non installe par winget)\r?$", re.M)
 OFFICIEL_GIT = re.compile(r"^> installeur officiel : Git (?P<version>\S+) \((?P<arch>\w+)\) (?P<url>\S+)\r?\n"
                           r"installeur officiel : (?P<fin>[^\r\n]*?)\r?$", re.M)
 VOIE_GIT = re.compile(r"^> Git : (?:(?P<absent>absent)|(?P<exe>.+?)(?: \((?P<via>winget|installeur officiel)\))?)\r?$", re.M)
@@ -1041,6 +1042,9 @@ VOIE_GIT = re.compile(r"^> Git : (?:(?P<absent>absent)|(?P<exe>.+?)(?: \((?P<via
 SOURCE_WINGET = {-1978335222: "index corrompu", -1978335221: "sources corrompues", -1978335217: "données de la source manquantes",
                  -1978335169: "source altérée", -1978335163: "source impossible à ouvrir",
                  -1978335157: "sources impossibles à ouvrir"}
+# winget blocked by the company's policy (install.ps1's $WINGET_POLICY_CODES): no other installer then.
+POLICY_WINGET = {-1978335174: "bloqué par la politique de l'entreprise",
+                 -1978334961: "installation bloquée par la politique de l'entreprise"}
 # Where Claude Code 2.1 looks for Git Bash on Windows: CLAUDE_CODE_GIT_BASH_PATH, these two, then
 # bin\bash.exe two folders above the git.exe on its PATH. None: no Bash tool, PowerShell instead.
 BASH_CLAUDE = (r"C:\Program Files\Git\bin\bash.exe", r"C:\Program Files (x86)\Git\bin\bash.exe")
@@ -1081,6 +1085,8 @@ def code_winget(code):
     code = int(code)
     if code in SOURCE_WINGET:
         return "%d (0x%08X, source de winget en panne : %s)" % (code, code & 0xFFFFFFFF, SOURCE_WINGET[code])
+    if code in POLICY_WINGET:
+        return "%d (0x%08X, %s)" % (code, code & 0xFFFFFFFF, POLICY_WINGET[code])
     return "%d (0x%08X)" % (code, code & 0xFFFFFFFF) if code < 0 else str(code)
 
 
