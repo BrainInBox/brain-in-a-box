@@ -1,10 +1,11 @@
 /* The guide's window (guide.html): its own pieces for the automatic capture; styles.css has the rest. */
 .tool.tool-labelled { width: auto; display: inline-flex; align-items: center; gap: 4px; padding: 0 8px 0 6px; font: inherit; font-size: 13px; }
 
-/* Reduced, the window has no room for the word: the icon alone, its word kept for screen readers. */
-body.guide.reduit .tool.tool-labelled { width: 30px; padding: 0; display: grid; }
+/* Reduced, the tools go to the footer's empty left, beside « C'est fait »: « Agrandir » keeps its word
+   (point 20), and the step the whole width. */
+body.guide.reduit .hero { top: auto; right: auto; bottom: 12px; left: 8px; }
 
-body.guide.reduit .tool-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+body.guide.reduit .consigne { padding-right: 0; }
 
 /* The time left to click in the program's window. */
 .countdown { font-size: 15px; font-weight: 650; }
@@ -42,6 +43,3 @@ body.guide.reduit .tool-label { position: absolute; width: 1px; height: 1px; ove
 .window-line:disabled { opacity: 0.6; cursor: default; }
 
 .window-why { color: var(--ink-2); }
-
-/* Next to the click or the picker, the paste stays a way: smaller. */
-.paste-zone.paste-small { min-height: 0; padding: 12px; font-weight: 500; }

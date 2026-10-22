@@ -144,8 +144,11 @@ impl Capture {
 pub struct Status {
     pub ia: Ia,
     pub capture: Capture,
-    /// The brain is installed.
+    /// The brain's folder is there: the guide can work (D1).
     pub cerveau: bool,
+    /// The whole install went through, the brain's summaries at noon and at night with it: they count
+    /// in the subscription's limit too.
+    pub complet: bool,
     /// « Comment je regarde ton écran » was read once.
     pub vu: bool,
     /// The account cannot use Opus: Sonnet answers, in the cautious mode (known once asked, this run).
@@ -1378,6 +1381,7 @@ impl Guide {
             ia,
             capture: Capture::of(screen),
             cerveau: detect::vault(home).is_some(),
+            complet: detect::brain(home, &agents::current(home)).complete(),
             vu: home.join(STORE).join("vu").is_file(),
             prudent: self.launch.prudent.load(Ordering::SeqCst),
         }
@@ -1480,21 +1484,19 @@ impl Guide {
     }
 
     /// « Clique dans la fenêtre de ton logiciel »: the window that comes to the front within 45 s,
-    /// which becomes the only one that may be chosen.
+    /// which becomes the only one that may be chosen. Stopped, it leaves the windows offered as they
+    /// are: the page stopped it for the list, asked for at the same time, and a line of it is chosen next.
     fn wait_click(&self, screen: &dyn Screen) -> Result<Fenetre, GuideError> {
         if !screen.available() || screen.picker() {
             return Err(GuideError::CaptureIndisponible);
         }
         self.stop_waiting.store(false, Ordering::SeqCst);
         let clicked = screen.clicked(&self.stop_waiting);
-        let stopped = self.stop_waiting.load(Ordering::SeqCst);
-        let clicked = clicked.filter(|_| !stopped);
-        *lock(&self.offered) = clicked.iter().map(|f| f.window.clone()).collect();
-        match clicked {
-            Some(f) => Ok(Fenetre::from(&f)),
-            None if stopped => Err(GuideError::Annule),
-            None => Err(GuideError::AucunClic),
+        if self.stop_waiting.load(Ordering::SeqCst) {
+            return Err(GuideError::Annule);
         }
+        *lock(&self.offered) = clicked.iter().map(|f| f.window.clone()).collect();
+        clicked.map(|f| Fenetre::from(&f)).ok_or(GuideError::AucunClic)
     }
 
     /// « Oui » (or a line of the list): the window kept for the session, if it is still the one
@@ -2000,10 +2002,25 @@ impl Guide {
 /// hooks, skills): a user whose install stopped on Git or Bun can already be guided. A whole brain, as
 /// the installer's own check says it, needs no question (as before D1: the guide's window asks for the
 /// login itself); else one run of Claude Code (`auth status`), never the three of `status`, and none
-/// on a first launch, which holds no folder yet.
+/// on a first launch, which holds no folder yet. The welcome waits for that run: past AUTH_WAIT, a
+/// Claude Code that hangs is no login, and the welcome shows the install as before D1.
 pub fn offert() -> bool {
     let home = sys::home();
-    offered(&home, detect::claude_bin().is_some(), &|| detect::brain(&home, &agents::current(&home)).complete(), &detect::claude_logged_in)
+    offered(&home, detect::claude_bin().is_some(), &|| detect::brain(&home, &agents::current(&home)).complete(), &|| {
+        within(AUTH_WAIT, detect::claude_logged_in)
+    })
+}
+
+/// How long the welcome waits for `claude auth status` (detect's own limit is 10 s).
+const AUTH_WAIT: Duration = Duration::from_secs(3);
+
+/// The answer if it comes within `limit`, else false: the run goes on alone and its answer is dropped.
+fn within(limit: Duration, ask: fn() -> bool) -> bool {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(ask());
+    });
+    rx.recv_timeout(limit).unwrap_or(false)
 }
 
 fn offered(home: &Path, claude: bool, whole: &dyn Fn() -> bool, logged_in: &dyn Fn() -> bool) -> bool {
@@ -3100,8 +3117,16 @@ mod tests {
         b.guide.stop_waiting.store(true, Ordering::SeqCst);
         *lock(&screen.clicked) = Some(odoo.clone());
         assert_eq!(b.guide.wait_click(&screen).unwrap().id, 11);
-        let stopped = FakeScreen { stopped_meanwhile: true, ..FakeScreen { clicked: Mutex::new(Some(odoo.clone())), ..screen_with(vec![odoo]) } };
+        let stopped = FakeScreen { stopped_meanwhile: true, ..FakeScreen { clicked: Mutex::new(Some(odoo.clone())), ..screen_with(vec![odoo.clone()]) } };
         assert_eq!(b.guide.wait_click(&stopped), Err(GuideError::Annule));
+
+        // « Choisir dans une liste » while Bibo waits: the page stops the wait and asks for the list at
+        // once. The wait ends after the list was made: a line of it is still chosen.
+        let excel = window(12, 200, "excel.exe", "Budget.xlsx");
+        let stopped = FakeScreen { stopped_meanwhile: true, ..screen_with(vec![odoo, excel]) };
+        assert_eq!(b.guide.list(&stopped).unwrap().len(), 2);
+        assert_eq!(b.guide.wait_click(&stopped), Err(GuideError::Annule));
+        assert_eq!(b.guide.choose(&stopped, Some(12)).unwrap().app, "excel");
     }
 
     /// macOS: the window is the one the user picks in the system's picker; there is no list nor
@@ -3462,6 +3487,21 @@ mod tests {
         assert!(!offered(h, true, &whole, &logged(false)), "no memory and no login");
     }
 
+    /// The welcome waits for `claude auth status` a few seconds, not detect's ten: a Claude Code that
+    /// hangs is no login.
+    #[test]
+    fn the_login_is_asked_within_a_few_seconds() {
+        assert!(within(Duration::from_secs(5), || true));
+        assert!(!within(Duration::from_secs(5), || false));
+        let start = std::time::Instant::now();
+        assert!(!within(Duration::from_millis(100), || {
+            std::thread::sleep(Duration::from_secs(3));
+            true
+        }));
+        assert!(start.elapsed() < Duration::from_secs(2), "{:?}", start.elapsed());
+        assert!(AUTH_WAIT <= Duration::from_secs(3));
+    }
+
     #[test]
     fn the_status_says_what_stops_the_guide() {
         let b = Bench::new();
@@ -3470,7 +3510,12 @@ mod tests {
             assert_eq!(b.guide.status(b.home.path(), &|| check.clone(), &screen).ia, ia);
         }
         let s = b.guide.status(b.home.path(), &|| Ok("x".into()), &screen);
-        assert!(!s.vu && !s.cerveau);
+        assert!(!s.vu && !s.cerveau && !s.complet);
+        fs::create_dir_all(b.home.path().join("Documents/Brain")).unwrap();
+        let s = b.guide.status(b.home.path(), &|| Ok("x".into()), &screen);
+        assert!(s.cerveau && !s.complet, "the folder alone: the guide works, no summary runs yet");
+        crate::detect::tests::fake_brain(b.home.path());
+        assert!(b.guide.status(b.home.path(), &|| Ok("x".into()), &screen).complet);
     }
 
     /// How the window gets the capture: a click (Windows, X11, with the time it waits), the system's

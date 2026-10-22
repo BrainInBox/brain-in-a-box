@@ -41,12 +41,15 @@
   //   first step, where it stands for « C'est fait » (&lache=<screen>: on that screen, where nothing waits for
   //   it); &gtk=1 WebKitGTK's paste (no image in the event: Rust reads the
   //   system's clipboard), &gtk=vide that clipboard empty too; &recolle=<screen> once there, a Ctrl+V of text (no
-  //   image in the event nor, from then on, in the system's clipboard); &compte=<n> looks already sent this session.
+  //   image in the event nor, from then on, in the system's clipboard); &compte=<n> looks already sent this session;
+  //   &complet=0 the install stopped once the brain's folder was there (D1: the guide works, no summary runs).
   // The automatic capture (capture/, guide_status's « capture »): &cap=clic (Windows, X11: a click in the window,
   // 45 s), &cap=selecteur (macOS 14+: the system's picker); paste mode, as guide.rs says why: &cap=macos_13,
   // wayland, sans_compositeur (default: paste mode, « indisponible »). Then what the user's windows do:
-  //   &clic=odoo (default: Odoo in Edge), sage (a program of its own), terminal, aucun (no click in 45 s), ferme
-  //   (the window clicked closes before « Oui »); &selecteur=ferme (the picker closed once), refuse (macOS
+  //   &clic=odoo (default: Odoo in Edge), sage (a program of its own), pdf (a PDF reader, « Sage » in its title),
+  //   terminal, aucun (no click in 45 s), ferme
+  //   (the window clicked closes before « Oui »); &selecteur=ferme (the picker closed once), introuvable (the window
+  //   picked closes before it is kept, once), refuse (macOS
   //   refuses it), vide (macOS 14: the picker gives no name); &rate=noire|reduite|fermee[:n] the n-th photo
   //   (default the first) black (and every one after: a protected program), of a minimized window, of a closed one.
   // Driving, for screenshots and app/dev/screens.mjs: &go=<screen> clicks through to that screen
@@ -190,6 +193,7 @@
       sage: window_(9, 'Sage 100 Comptabilité', 'Sage 100 Comptabilité - DEMO SARL'),
       terminal: window_(11, 'Windows PowerShell', 'Windows PowerShell', { terminal: true }),
       explorer: window_(12, 'Explorateur de fichiers', 'Documents'),
+      pdf: window_(13, 'Adobe Acrobat Reader', 'Facture Sage 2026-118.pdf'),
     };
     // The list: the top one first, a minimized one, a terminal.
     const LIST = [WINDOWS.odoo, { ...WINDOWS.sage, reduite: true }, WINDOWS.terminal, WINDOWS.explorer];
@@ -297,8 +301,9 @@
     const handlers = {
       async guide_status() {
         await wait(T(600));
-        if (g === 'installer') return { ia: 'ready', capture: CAPTURE, cerveau: false, vu: true };
-        return { ia: logged ? STATUS[g] || 'ready' : 'not_logged_in', capture: CAPTURE, cerveau: true, vu: P.get('vu') !== '0' };
+        if (g === 'installer') return { ia: 'ready', capture: CAPTURE, cerveau: false, complet: false, vu: true };
+        // &complet=0: the brain's folder only, the install stopped before the end (D1): no summary runs.
+        return { ia: logged ? STATUS[g] || 'ready' : 'not_logged_in', capture: CAPTURE, cerveau: true, complet: P.get('complet') !== '0', vu: P.get('vu') !== '0' };
       },
       async guide_compris() { await wait(50); },
       async guide_commencer({ logiciel, objectif }) {
@@ -363,6 +368,10 @@
           if (P.get('selecteur') === 'ferme' && !closedOnce) {
             closedOnce = true;
             throw { kind: 'selecteur_ferme' };
+          }
+          if (P.get('selecteur') === 'introuvable' && !closedOnce) {
+            closedOnce = true;
+            throw { kind: 'fenetre_introuvable' };
           }
           if (!gesture(2)) await stoppable(Infinity);
           chosenWindow = PICKED;

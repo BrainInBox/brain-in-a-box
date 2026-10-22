@@ -250,6 +250,18 @@
 ### g=ok&vu=0&go=comment&click=note-entreprise
 1 2 126
 
+### g=ok&cap=clic&os=windows&clic=pdf&go=objectif
+22 93 127 128 129
+
+### g=ok&cap=selecteur&selecteur=introuvable&go=objectif
+1 107 108 130 109
+
+### g=ok&cap=clic&os=windows&go=coller&click=deja-capture
+22 93 131
+
+### g=quota&go=erreur&complet=0
+1 4 5 6 7 8 9 10 11 132
+
 #1
 == charge
 Je prépare le guide…
@@ -329,12 +341,12 @@ Je ne vois que ce que tu colles ici. L’image part chez Anthropic, Bibo n’en 
 Montre-moi ta fenêtre.
 Fais une capture de la fenêtre d’Odoo, puis colle-la ici.
 [Toujours au-dessus]
+Sur ce Mac, c’est toi qui fais la capture : voici comment.
 Appuie en même temps sur ⌘ Cmd, ⌃ Ctrl, ⇧ Maj et 4, puis sur la barre d’espace : un petit appareil photo apparaît.
 Clique sur la fenêtre de ton logiciel : l’image est copiée, sans fichier.
 Reviens ici et appuie sur Cmd + V.
 Tu t’es trompé ? Appuie sur Échap (esc) et recommence.
 Tu peux aussi glisser le fichier de ta capture sur cette fenêtre.
-Sur ce Mac, je ne sais pas encore voir tes fenêtres tout seul : la capture, c’est toi qui la fais.
 [Arrêter le guide]
 [Retour]
 
@@ -504,14 +516,14 @@ Un instant.
 Montre-moi ta fenêtre.
 Fais une capture de la fenêtre d’Odoo, puis colle-la ici.
 [Toujours au-dessus]
+Sur ce PC, c’est toi qui fais la capture : voici comment.
 Appuie en même temps sur ⊞ Windows, ⇧ Maj (Shift) et S. L’écran devient plus sombre : c’est normal.
-Glisse la souris pour encadrer la fenêtre de ton logiciel, puis lâche : l’image est copiée.
+Garde le bouton gauche de la souris appuyé et encadre la fenêtre de ton logiciel, puis lâche : l’image est copiée.
 Reviens ici et appuie sur Ctrl + V.
 Tu t’es trompé ? Appuie sur Échap (Esc) et recommence.
 Tu peux aussi glisser le fichier de ta capture sur cette fenêtre.
 Autre façon : clique dans la fenêtre de ton logiciel, puis appuie en même temps sur Alt et Impr. écran (PrtSc).
 L’Outil Capture (Snipping Tool) en garde aussi une copie dans Images › Captures d’écran (Pictures › Screenshots) : tu peux l’effacer ensuite.
-Sur ce PC, je ne sais pas encore voir tes fenêtres tout seul : la capture, c’est toi qui la fais.
 [Arrêter le guide]
 [Retour]
 
@@ -535,7 +547,7 @@ Montre-moi où tu en es.
 Fais une capture de la fenêtre d’Odoo, puis colle-la ici.
 [Toujours au-dessus]
 Appuie en même temps sur ⊞ Windows, ⇧ Maj (Shift) et S. L’écran devient plus sombre : c’est normal.
-Glisse la souris pour encadrer la fenêtre de ton logiciel, puis lâche : l’image est copiée.
+Garde le bouton gauche de la souris appuyé et encadre la fenêtre de ton logiciel, puis lâche : l’image est copiée.
 Reviens ici et appuie sur Ctrl + V.
 Tu t’es trompé ? Appuie sur Échap (Esc) et recommence.
 Tu peux aussi glisser le fichier de ta capture sur cette fenêtre.
@@ -549,13 +561,13 @@ L’Outil Capture (Snipping Tool) en garde aussi une copie dans Images › Captu
 Montre-moi ta fenêtre.
 Fais une capture de la fenêtre d’Odoo, puis colle-la ici.
 [Toujours au-dessus]
+Sur ce PC, c’est toi qui fais la capture : voici comment.
 Appuie sur la touche Impr. écran (Print Screen), puis choisis « Fenêtre ».
 Clique sur la fenêtre de ton logiciel, puis sur le rond de capture : l’image va dans le presse-papiers.
 Reviens ici et appuie sur Ctrl + V.
 Tu t’es trompé ? Appuie sur Échap et recommence.
 Tu peux aussi glisser le fichier de ta capture sur cette fenêtre.
 L’outil de capture en garde aussi une copie dans Images › Captures d’écran : tu peux l’effacer ensuite.
-Sur ce PC, je ne sais pas encore voir tes fenêtres tout seul : la capture, c’est toi qui la fais.
 [Arrêter le guide]
 [Retour]
 
@@ -852,7 +864,7 @@ Quelque chose sur cette capture l’a gêné (un code, un mot de passe, un messa
 #52
 == erreur
 Ton abonnement est à sa limite jusqu’à mercredi 21 octobre 03:00.
-Reviens après cette heure et relance le guide. Le résumé de midi de ton cerveau compte aussi dans cette limite.
+Reviens après cette heure et relance le guide. Les résumés automatiques de ton cerveau, à midi et le soir, comptent aussi dans cette limite.
 [Toujours au-dessus]
 [Fermer le guide]
 
@@ -952,12 +964,12 @@ Montre-moi ta fenêtre.
 Fais une capture de la fenêtre d’Odoo, puis colle-la ici.
 [Toujours au-dessus]
 J’ai déjà appris ça avec toi le 12/10 : je m’en sers.
+Sur ce Mac, c’est toi qui fais la capture : voici comment.
 Appuie en même temps sur ⌘ Cmd, ⌃ Ctrl, ⇧ Maj et 4, puis sur la barre d’espace : un petit appareil photo apparaît.
 Clique sur la fenêtre de ton logiciel : l’image est copiée, sans fichier.
 Reviens ici et appuie sur Cmd + V.
 Tu t’es trompé ? Appuie sur Échap (esc) et recommence.
 Tu peux aussi glisser le fichier de ta capture sur cette fenêtre.
-Sur ce Mac, je ne sais pas encore voir tes fenêtres tout seul : la capture, c’est toi qui la fais.
 [Arrêter le guide]
 [Retour]
 
@@ -1076,14 +1088,14 @@ Si ton écran te le demande lui-même, ne le fais pas non plus : c’est souven
 #75
 == erreur
 Ton abonnement est à sa limite jusqu’à 17:30.
-Reviens après cette heure et relance le guide. Le résumé de midi de ton cerveau compte aussi dans cette limite.
+Reviens après cette heure et relance le guide. Les résumés automatiques de ton cerveau, à midi et le soir, comptent aussi dans cette limite.
 [Toujours au-dessus]
 [Fermer le guide]
 
 #76
 == erreur
 Ton abonnement est à sa limite jusqu’à demain 15:30.
-Reviens après cette heure et relance le guide. Le résumé de midi de ton cerveau compte aussi dans cette limite.
+Reviens après cette heure et relance le guide. Les résumés automatiques de ton cerveau, à midi et le soir, comptent aussi dans cette limite.
 [Toujours au-dessus]
 [Fermer le guide]
 
@@ -1142,12 +1154,12 @@ Le même endroit, en plus grand.
 Je ne trouve pas d’image dans ce que tu as collé.
 As-tu appuyé aussi sur ⌃ Ctrl ? Sans lui, la capture va sur le Bureau : glisse ce fichier ici, ou refais ⌘ Cmd + ⌃ Ctrl + ⇧ Maj + 4 puis Espace.
 [Toujours au-dessus]
+Sur ce Mac, c’est toi qui fais la capture : voici comment.
 Appuie en même temps sur ⌘ Cmd, ⌃ Ctrl, ⇧ Maj et 4, puis sur la barre d’espace : un petit appareil photo apparaît.
 Clique sur la fenêtre de ton logiciel : l’image est copiée, sans fichier.
 Reviens ici et appuie sur Cmd + V.
 Tu t’es trompé ? Appuie sur Échap (esc) et recommence.
 Tu peux aussi glisser le fichier de ta capture sur cette fenêtre.
-Sur ce Mac, je ne sais pas encore voir tes fenêtres tout seul : la capture, c’est toi qui la fais.
 [Arrêter le guide]
 [Retour]
 
@@ -1156,14 +1168,14 @@ Sur ce Mac, je ne sais pas encore voir tes fenêtres tout seul : la capture, c�
 Je ne trouve pas d’image dans ce que tu as collé.
 Refais ⊞ Windows + ⇧ Maj + S, encadre la fenêtre de ton logiciel, puis colle ici avec Ctrl + V.
 [Toujours au-dessus]
+Sur ce PC, c’est toi qui fais la capture : voici comment.
 Appuie en même temps sur ⊞ Windows, ⇧ Maj (Shift) et S. L’écran devient plus sombre : c’est normal.
-Glisse la souris pour encadrer la fenêtre de ton logiciel, puis lâche : l’image est copiée.
+Garde le bouton gauche de la souris appuyé et encadre la fenêtre de ton logiciel, puis lâche : l’image est copiée.
 Reviens ici et appuie sur Ctrl + V.
 Tu t’es trompé ? Appuie sur Échap (Esc) et recommence.
 Tu peux aussi glisser le fichier de ta capture sur cette fenêtre.
 Autre façon : clique dans la fenêtre de ton logiciel, puis appuie en même temps sur Alt et Impr. écran (PrtSc).
 L’Outil Capture (Snipping Tool) en garde aussi une copie dans Images › Captures d’écran (Pictures › Screenshots) : tu peux l’effacer ensuite.
-Sur ce PC, je ne sais pas encore voir tes fenêtres tout seul : la capture, c’est toi qui la fais.
 [Arrêter le guide]
 [Retour]
 
@@ -1216,13 +1228,13 @@ Le guide a besoin de Claude Opus ou de Claude Sonnet dans Claude Code : regarde
 Je ne trouve pas d’image dans ce que tu as collé.
 Refais la capture avec la touche Impr. écran, en mode « Fenêtre », puis colle-la ici.
 [Toujours au-dessus]
+Sur ce PC, c’est toi qui fais la capture : voici comment.
 Appuie sur la touche Impr. écran (Print Screen), puis choisis « Fenêtre ».
 Clique sur la fenêtre de ton logiciel, puis sur le rond de capture : l’image va dans le presse-papiers.
 Reviens ici et appuie sur Ctrl + V.
 Tu t’es trompé ? Appuie sur Échap et recommence.
 Tu peux aussi glisser le fichier de ta capture sur cette fenêtre.
 L’outil de capture en garde aussi une copie dans Images › Captures d’écran : tu peux l’effacer ensuite.
-Sur ce PC, je ne sais pas encore voir tes fenêtres tout seul : la capture, c’est toi qui la fais.
 [Arrêter le guide]
 [Retour]
 
@@ -1282,7 +1294,9 @@ Montre-moi ta fenêtre.
 Clique une fois dans la fenêtre de ton logiciel : je la reconnais tout seul.
 [Toujours au-dessus]
 Temps pour cliquer : 
-Ton logiciel est réduit ? Clique sur son icône dans la barre des tâches, puis dans sa fenêtre.
+Ton logiciel n’est pas ouvert ? Ouvre-le d’abord, puis clique dedans.
+Il est réduit ? Clique sur son icône dans la barre des tâches (taskbar), puis dans sa fenêtre.
+[J’ai déjà une capture]
 [Arrêter le guide]
 [Choisir dans une liste]
 
@@ -1454,7 +1468,9 @@ Quand tu cliques « C’est fait », je reprends moi-même la photo de ta fen�
 Montre-moi ta fenêtre.
 Clique sur « Choisir la fenêtre » : ton Mac te montre tes fenêtres. Clique sur celle de ton logiciel, puis sur le bouton qui apparaît au milieu.
 [Toujours au-dessus]
+Ton logiciel n’est pas ouvert ? Ouvre-le d’abord.
 Pendant le guide, une petite icône de partage reste en haut de ton écran : c’est normal.
+[J’ai déjà une capture]
 [Arrêter le guide]
 [Choisir la fenêtre]
 
@@ -1463,7 +1479,9 @@ Pendant le guide, une petite icône de partage reste en haut de ton écran : c�
 Choisis ta fenêtre.
 Clique sur la fenêtre de ton logiciel, puis sur le bouton qui apparaît au milieu.
 [Toujours au-dessus]
+Ton logiciel n’est pas ouvert ? Ouvre-le d’abord.
 Pendant le guide, une petite icône de partage reste en haut de ton écran : c’est normal.
+[J’ai déjà une capture]
 [Arrêter le guide]
 [Choisir la fenêtre (inactif)]
 
@@ -1540,7 +1558,9 @@ Les fenêtres ouvertes sur ton PC, la dernière utilisée en haut.
 Montre-moi ta fenêtre.
 Je n’ai pas vu de clic. Clique sur « Réessayer », puis une fois dans la fenêtre de ton logiciel.
 [Toujours au-dessus]
-Ton logiciel est réduit ? Clique sur son icône dans la barre des tâches, puis dans sa fenêtre.
+Ton logiciel n’est pas ouvert ? Ouvre-le d’abord, puis clique dedans.
+Il est réduit ? Clique sur son icône dans la barre des tâches (taskbar), puis dans sa fenêtre.
+[J’ai déjà une capture]
 [Arrêter le guide]
 [Choisir dans une liste]
 [Réessayer]
@@ -1548,7 +1568,7 @@ Ton logiciel est réduit ? Clique sur son icône dans la barre des tâches, pui
 #115
 == terminal
 Je ne guide pas dans un terminal.
-Pour ça, demande directement à Claude. Ici, montre-moi plutôt la fenêtre de ton logiciel.
+Montre-moi plutôt la fenêtre de ton logiciel.
 [Toujours au-dessus]
 [Arrêter le guide]
 [Choisir une autre fenêtre]
@@ -1559,17 +1579,19 @@ Montre-moi ta fenêtre.
 Je ne trouve plus cette fenêtre : elle s’est peut-être fermée. Clique dans la fenêtre de ton logiciel.
 [Toujours au-dessus]
 Temps pour cliquer : 
-Ton logiciel est réduit ? Clique sur son icône dans la barre des tâches, puis dans sa fenêtre.
+Ton logiciel n’est pas ouvert ? Ouvre-le d’abord, puis clique dedans.
+Il est réduit ? Clique sur son icône dans la barre des tâches (taskbar), puis dans sa fenêtre.
+[J’ai déjà une capture]
 [Arrêter le guide]
 [Choisir dans une liste]
 
 #117
 == coller
-Ta fenêtre sort toute noire.
-Ton logiciel se protège, ou il est lancé en mode administrateur : je ne peux pas le prendre en photo moi-même. Fais une capture et colle-la ici.
+Ton logiciel ne me laisse pas le prendre en photo.
+Fais une capture toi-même et colle-la ici : je te montre comment.
 [Toujours au-dessus]
 Appuie en même temps sur ⊞ Windows, ⇧ Maj (Shift) et S. L’écran devient plus sombre : c’est normal.
-Glisse la souris pour encadrer la fenêtre de ton logiciel, puis lâche : l’image est copiée.
+Garde le bouton gauche de la souris appuyé et encadre la fenêtre de ton logiciel, puis lâche : l’image est copiée.
 Reviens ici et appuie sur Ctrl + V.
 Tu t’es trompé ? Appuie sur Échap (Esc) et recommence.
 Tu peux aussi glisser le fichier de ta capture sur cette fenêtre.
@@ -1585,7 +1607,7 @@ Montre-moi où tu en es.
 Fais une capture de la fenêtre d’Odoo, puis colle-la ici.
 [Toujours au-dessus]
 Appuie en même temps sur ⊞ Windows, ⇧ Maj (Shift) et S. L’écran devient plus sombre : c’est normal.
-Glisse la souris pour encadrer la fenêtre de ton logiciel, puis lâche : l’image est copiée.
+Garde le bouton gauche de la souris appuyé et encadre la fenêtre de ton logiciel, puis lâche : l’image est copiée.
 Reviens ici et appuie sur Ctrl + V.
 Tu t’es trompé ? Appuie sur Échap (Esc) et recommence.
 Tu peux aussi glisser le fichier de ta capture sur cette fenêtre.
@@ -1598,7 +1620,7 @@ L’Outil Capture (Snipping Tool) en garde aussi une copie dans Images › Captu
 #119
 == reduite
 Ta fenêtre est réduite.
-Ouvre-la en grand : clique sur son icône dans la barre des tâches. Puis reviens ici.
+Ouvre-la en grand : clique sur son icône dans la barre des tâches (taskbar). Puis reviens ici.
 [Toujours au-dessus]
 [Arrêter le guide]
 [Coller une capture]
@@ -1618,7 +1640,9 @@ Elle est peut-être fermée. Rouvre ton logiciel, puis montre-moi sa fenêtre.
 Montre-moi ta fenêtre.
 Tu as fermé la fenêtre de choix. Clique sur « Choisir la fenêtre » pour recommencer.
 [Toujours au-dessus]
+Ton logiciel n’est pas ouvert ? Ouvre-le d’abord.
 Pendant le guide, une petite icône de partage reste en haut de ton écran : c’est normal.
+[J’ai déjà une capture]
 [Arrêter le guide]
 [Choisir la fenêtre]
 
@@ -1689,3 +1713,72 @@ Pour essayer sans risque, ouvre la société de démonstration de ton logiciel. 
 [Note copiée : colle-la dans un message]
 [Pas maintenant]
 [J’ai compris]
+
+#127
+== fenetre
+C’est bien celle-ci ?
+[Toujours au-dessus]
+Adobe Acrobat Reader
+Facture Sage 2026-118.pdf
+[Arrêter le guide]
+[Non, une autre]
+[Oui, c’est elle]
+
+#128
+== fenetre
+C’est bien celle-ci ?
+[Toujours au-dessus]
+Adobe Acrobat Reader
+Facture Sage 2026-118.pdf
+[Arrêter le guide]
+[Non, une autre]
+[Oui, c’est elle (inactif)]
+
+#129
+== objectif
+Qu’est-ce que tu veux faire ?
+Dis-moi ce que tu veux faire dans ton logiciel : je te guide une étape à la fois.
+[Toujours au-dessus]
+Ta fenêtre :
+Adobe Acrobat Reader — Facture Sage 2026-118.pdf
+[Autre fenêtre]
+Ton logiciel
+Qu’est-ce que tu veux faire dans Adobe Acrobat Reader ?
+Par exemple : « Faire une facture à un client », « Donner un accès à ma comptable ».
+Je ne regarde que cette fenêtre, et seulement quand tu me le demandes. L’image part chez Anthropic, Bibo n’en garde rien. 
+[Comment je regarde ton écran]
+[Arrêter le guide]
+[Continuer (inactif)]
+
+#130
+== choisir
+Montre-moi ta fenêtre.
+Je ne trouve plus cette fenêtre : elle s’est peut-être fermée. Clique sur « Choisir la fenêtre » pour la choisir à nouveau.
+[Toujours au-dessus]
+Ton logiciel n’est pas ouvert ? Ouvre-le d’abord.
+Pendant le guide, une petite icône de partage reste en haut de ton écran : c’est normal.
+[J’ai déjà une capture]
+[Arrêter le guide]
+[Choisir la fenêtre]
+
+#131
+== coller
+Montre-moi ta fenêtre.
+Fais une capture de la fenêtre de ton logiciel, puis colle-la ici.
+[Toujours au-dessus]
+Appuie en même temps sur ⊞ Windows, ⇧ Maj (Shift) et S. L’écran devient plus sombre : c’est normal.
+Garde le bouton gauche de la souris appuyé et encadre la fenêtre de ton logiciel, puis lâche : l’image est copiée.
+Reviens ici et appuie sur Ctrl + V.
+Tu t’es trompé ? Appuie sur Échap (Esc) et recommence.
+Tu peux aussi glisser le fichier de ta capture sur cette fenêtre.
+Autre façon : clique dans la fenêtre de ton logiciel, puis appuie en même temps sur Alt et Impr. écran (PrtSc).
+L’Outil Capture (Snipping Tool) en garde aussi une copie dans Images › Captures d’écran (Pictures › Screenshots) : tu peux l’effacer ensuite.
+[Arrêter le guide]
+[Choisir ma fenêtre]
+
+#132
+== erreur
+Ton abonnement est à sa limite jusqu’à mercredi 21 octobre 03:00.
+Reviens après cette heure et relance le guide.
+[Toujours au-dessus]
+[Fermer le guide]

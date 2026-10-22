@@ -39,7 +39,7 @@ const CAPTURE_HOW = {
     oops: 'Tu t’es trompé ? Appuie sur Échap (esc) et recommence.',
   },
   windows: {
-    steps: ['Appuie en même temps sur ⊞ Windows, ⇧ Maj (Shift) et S. L’écran devient plus sombre : c’est normal.', 'Glisse la souris pour encadrer la fenêtre de ton logiciel, puis lâche : l’image est copiée.'],
+    steps: ['Appuie en même temps sur ⊞ Windows, ⇧ Maj (Shift) et S. L’écran devient plus sombre : c’est normal.', 'Garde le bouton gauche de la souris appuyé et encadre la fenêtre de ton logiciel, puis lâche : l’image est copiée.'],
     other: 'Autre façon : clique dans la fenêtre de ton logiciel, puis appuie en même temps sur Alt et Impr. écran (PrtSc).',
     file: 'L’Outil Capture (Snipping Tool) en garde aussi une copie dans Images › Captures d’écran (Pictures › Screenshots) : tu peux l’effacer ensuite.',
     oops: 'Tu t’es trompé ? Appuie sur Échap (Esc) et recommence.',
@@ -57,15 +57,15 @@ const SLIP = {
   windows: 'Refais ⊞ Windows + ⇧ Maj + S, encadre la fenêtre de ton logiciel, puis colle ici avec Ctrl + V.',
   linux: 'Refais la capture avec la touche Impr. écran, en mode « Fenêtre », puis colle-la ici.',
 }[SYSTEM];
-// Where a window waits when it is minimized.
-const DOCK = SYSTEM === 'macos' ? 'dans le Dock' : 'dans la barre des tâches';
+// Where a window waits when it is minimized (Windows' own word too, D5).
+const DOCK = { macos: 'dans le Dock', windows: 'dans la barre des tâches (taskbar)', linux: 'dans la barre des tâches' }[SYSTEM];
 // What goes where, for whoever decides at work (point 19): the same facts as G1, in one block to paste.
 const COMPANY_NOTE = [
   'Le guide de Bibo (Brain in a Box) : ce qui part, et où',
   '',
   '- Quand je le lui demande, Bibo prend une image de la seule fenêtre de logiciel que j’ai choisie (ou de la capture que je colle) et l’envoie à Claude, l’IA de l’entreprise Anthropic, avec mon propre abonnement Claude, comme un message que j’enverrais à Claude.',
   '- Avant chaque envoi, je vois l’image exacte qui part, et je peux y cacher des zones (noms, montants).',
-  '- Anthropic garde ces échanges 30 jours, ou 5 ans si j’ai accepté que mes conversations servent à améliorer Claude. Le réglage : https://claude.ai/settings/data-privacy-controls',
+  '- Anthropic garde ces échanges 30 jours, ou 5 ans si j’ai accepté que mes conversations servent à améliorer Claude, et jusqu’à 2 ans un échange que ses contrôles de sécurité signalent. Le réglage : https://claude.ai/settings/data-privacy-controls. Le détail : https://privacy.claude.com/en/articles/10023548-how-long-do-you-store-my-data',
   '- Bibo n’enregistre rien sur l’ordinateur : ni l’image, ni la réponse de Claude. Si je le choisis, seule la procédure va dans mes notes, en texte, sans image.',
   '- Brain in a Box ne fournit pas Claude et ne reçoit aucune image. Son code est ouvert : https://github.com/BrainInBox/brain-in-a-box',
 ].join('\n');
@@ -432,47 +432,55 @@ function showHow(first) {
 
 // ── G2. The window: a click in it, the system's picker, or a line of the list ──
 
-// The program's name as the « Logiciel » field suggests it (R5): a known name in the window's title or
-// its program, else the program's own name; nothing for a browser, whose page is the program.
+// The program's name as the « Logiciel » field suggests it (R5): a known name in the program's own name,
+// else that name. A browser's page is the program: a known name in its title, else nothing. Another
+// program's title names a document (« Facture Sage.pdf » in a PDF reader), never the program.
 function guessProgram(f) {
   const app = (f && f.app) || '';
-  const words = ` ${(f && f.titre) || ''} ${app} `.toLowerCase();
+  const browser = BROWSER.test(app);
+  const words = ` ${browser ? (f && f.titre) || '' : app} `.toLowerCase();
   const known = KNOWN.find((k) => new RegExp(`[^\\p{L}\\p{N}]${k.toLowerCase()}[^\\p{L}\\p{N}]`, 'u').test(words));
   if (known) return known;
-  if (!app || BROWSER.test(app)) return '';
+  if (!app || browser) return '';
   return app.slice(0, LOGICIEL_MAX);
 }
 
-// A pasted capture is taken here too: someone who already has one goes on with it.
-function pasteZone(placeholder, rows = 2) {
-  const zone = h('textarea', { class: `paste-zone${rows < 3 ? ' paste-small' : ''}`, rows: String(rows), 'aria-label': 'Colle ta capture ici', spellcheck: 'false', placeholder });
+// Where a capture is pasted: a click in it, then the keys.
+function pasteZone(placeholder) {
+  const zone = h('textarea', { class: 'paste-zone', rows: '3', 'aria-label': 'Colle ta capture ici', spellcheck: 'false', placeholder });
   // Only an image is taken: whatever gets typed goes away.
   zone.addEventListener('input', () => { zone.value = ''; });
   return zone;
 }
 
 // « Montre-moi ta fenêtre » (G2). A click: Rust waits for the window that comes to the front, the
-// time counted down here. The picker (macOS 14+): it opens on the button. `said` replaces Bibo's words
-// after a miss; `wait` false waits for « Réessayer » first.
+// time counted down here. The picker (macOS 14+): it opens on the button. A capture pasted here is taken
+// too, but only a small link says so: the click is what to do. `said` replaces Bibo's words after a
+// miss; `wait` false waits for « Réessayer » first.
 function showChoose(next = G.next || { demande: 'debut' }, said = null, wait = true) {
   G.next = next;
   const gen = screen('choisir');
-  const zone = pasteZone(`Tu as déjà une capture ? Clique ici, puis ${PASTE_KEYS}`);
+  const pasted = h('p', { class: 'note' }, button('J’ai déjà une capture', () => turnToPaste(next), { kind: 'ghost', small: true, act: 'deja-capture' }));
   if (G.auto === 'selecteur') {
     say(said ? 'worried' : 'idle', 'Montre-moi ta fenêtre.', said || 'Clique sur « Choisir la fenêtre » : ton Mac te montre tes fenêtres. Clique sur celle de ton logiciel, puis sur le bouton qui apparaît au milieu.');
     const pick = button('Choisir la fenêtre', () => pickWindow(gen, pick), { act: 'next' });
-    gui.screen.append(note('Pendant le guide, une petite icône de partage reste en haut de ton écran : c’est normal.'), zone);
+    gui.screen.append(note('Ton logiciel n’est pas ouvert ? Ouvre-le d’abord.'),
+      note('Pendant le guide, une petite icône de partage reste en haut de ton écran : c’est normal.'), pasted);
     gui.actions.append(stopButton(), pick);
-    zone.focus();
+    focusMain();
     return;
   }
   say(said ? 'worried' : 'idle', 'Montre-moi ta fenêtre.', said || 'Clique une fois dans la fenêtre de ton logiciel : je la reconnais tout seul.');
   const left = h('span', { class: 'chrono-time' }, `${G.secondes} s`);
   if (wait) gui.screen.append(h('p', { class: 'countdown' }, 'Temps pour cliquer : ', left));
-  gui.screen.append(note(`Ton logiciel est réduit ? Clique sur son icône ${DOCK}, puis dans sa fenêtre.`), zone);
-  gui.actions.append(stopButton(), button('Choisir dans une liste', showList, { kind: 'secondary', act: 'liste' }));
+  gui.screen.append(note('Ton logiciel n’est pas ouvert ? Ouvre-le d’abord, puis clique dedans.'),
+    note(`Il est réduit ? Clique sur son icône ${DOCK}, puis dans sa fenêtre.`), pasted);
+  const list = button('Choisir dans une liste', showList, { kind: 'secondary', act: 'liste' });
+  gui.actions.append(stopButton(), list);
   if (!wait) gui.actions.append(button('Réessayer', () => showChoose(next), { act: 'next' }));
-  zone.focus();
+  // Without the mouse, the list (critique 11); after a miss, « Réessayer ».
+  if (wait) list.focus({ preventScroll: true });
+  else focusMain();
   if (wait) waitClick(gen, left);
 }
 
@@ -586,7 +594,7 @@ async function showList() {
 
 function showTerminal() {
   screen('terminal');
-  say('worried', 'Je ne guide pas dans un terminal.', 'Pour ça, demande directement à Claude. Ici, montre-moi plutôt la fenêtre de ton logiciel.');
+  say('worried', 'Je ne guide pas dans un terminal.', 'Montre-moi plutôt la fenêtre de ton logiciel.');
   gui.actions.append(stopButton(), button('Choisir une autre fenêtre', () => showChoose(G.next), { act: 'next' }));
   focusMain();
 }
@@ -603,7 +611,10 @@ function chooseFailed(e) {
       : 'Je n’ai pas vu de clic. Clique sur « Réessayer », puis une fois dans la fenêtre de ton logiciel.', false);
   }
   if (kind === 'selecteur_ferme') return showChoose(next, 'Tu as fermé la fenêtre de choix. Clique sur « Choisir la fenêtre » pour recommencer.');
-  if (kind === 'fenetre_introuvable') return showChoose(next, 'Je ne trouve plus cette fenêtre : elle s’est peut-être fermée. Clique dans la fenêtre de ton logiciel.');
+  if (kind === 'fenetre_introuvable') {
+    return showChoose(next, `Je ne trouve plus cette fenêtre : elle s’est peut-être fermée. ${G.auto === 'selecteur'
+      ? 'Clique sur « Choisir la fenêtre » pour la choisir à nouveau.' : 'Clique dans la fenêtre de ton logiciel.'}`);
+  }
   if (kind === 'selecteur_refuse' || kind === 'capture_indisponible') {
     // This run of the app, Bibo cannot see windows here (macOS refused, X11 lost its compositor): a paste.
     G.auto = null;
@@ -715,7 +726,7 @@ function shotFailed(e, next) {
   const kind = (e && e.kind) || '';
   if (kind === 'capture_noire') {
     G.collage = true;
-    return askCapture(next, { title: 'Ta fenêtre sort toute noire.', text: 'Ton logiciel se protège, ou il est lancé en mode administrateur : je ne peux pas le prendre en photo moi-même. Fais une capture et colle-la ici.' });
+    return askCapture(next, { title: 'Ton logiciel ne me laisse pas le prendre en photo.', text: 'Fais une capture toi-même et colle-la ici : je te montre comment.' });
   }
   if (kind === 'capture_indisponible') return chooseFailed(e);
   if (kind === 'sans_fenetre') return showChoose(next);
@@ -764,7 +775,11 @@ function askCapture(next, said = null) {
     G.learnedShown = true;
     gui.screen.append(h('p', { class: 'learned' }, G.learned));
   }
-  const zone = pasteZone(`Clique ici, puis ${PASTE_KEYS}`, 3);
+  // Where Bibo never sees windows (macOS 13, Wayland…): said once, without a promise of « later ».
+  if (next.demande === 'debut' && !said && G.status && G.status.capture && G.status.capture.mode === 'collage') {
+    gui.screen.append(note(`Sur ce ${MACHINE}, c’est toi qui fais la capture : voici comment.`));
+  }
+  const zone = pasteZone(`Clique ici, puis ${PASTE_KEYS}`);
   gui.screen.append(
     h('ol', { class: 'plan how-to' }, ...CAPTURE_HOW.steps.map((s) => h('li', {}, s)), h('li', {}, `Reviens ici et appuie sur ${PASTE_KEYS}.`)),
     zone,
@@ -772,9 +787,6 @@ function askCapture(next, said = null) {
     note('Tu peux aussi glisser le fichier de ta capture sur cette fenêtre.'));
   if (CAPTURE_HOW.other) gui.screen.append(note(CAPTURE_HOW.other));
   if (CAPTURE_HOW.file) gui.screen.append(note(CAPTURE_HOW.file));
-  if (next.demande === 'debut' && !said && G.status && G.status.capture && G.status.capture.mode === 'collage') {
-    gui.screen.append(note(`Sur ce ${MACHINE}, je ne sais pas encore voir tes fenêtres tout seul : la capture, c’est toi qui la fais.`));
-  }
   gui.actions.append(stopButton());
   if (G.step) gui.actions.append(button('Retour', () => showAnswer(G.step, G.stepLook), { kind: 'secondary', act: 'back' }));
   // The first capture: the objective or the program can still be put right.
@@ -1353,15 +1365,17 @@ function reprise(unix) {
   return `${d.toLocaleDateString('fr-FR', when)} ${hour}`;
 }
 
-// The brain's summary at noon runs on the same subscription (critique 10): a limit reached at
-// lunchtime is no mystery.
-const NOON = 'Le résumé de midi de ton cerveau compte aussi dans cette limite.';
+// The brain's summaries, at noon and at night, run on the same subscription (critique 10): a limit
+// reached at lunchtime is no mystery. Said only once the install went through: before, none runs.
+function summaries() {
+  return G.status && G.status.complet ? ' Les résumés automatiques de ton cerveau, à midi et le soir, comptent aussi dans cette limite.' : '';
+}
 
 // What Bibo says of an error, as words only.
 function errorWords(e) {
   const kind = (e && e.kind) || '';
   switch (kind) {
-    case 'quota': return { title: e.reprise ? `Ton abonnement est à sa limite jusqu’à ${reprise(e.reprise)}.` : 'Ton abonnement est à sa limite pour l’instant.', text: `${e.reprise ? 'Reviens après cette heure et relance le guide.' : 'Reviens plus tard et relance le guide.'} ${NOON}` };
+    case 'quota': return { title: e.reprise ? `Ton abonnement est à sa limite jusqu’à ${reprise(e.reprise)}.` : 'Ton abonnement est à sa limite pour l’instant.', text: `${e.reprise ? 'Reviens après cette heure et relance le guide.' : 'Reviens plus tard et relance le guide.'}${summaries()}` };
     case 'hors_ligne': return { title: 'Pas d’internet : je ne peux pas demander à Claude.', text: 'Vérifie ton Wi-Fi, puis réessaie.' };
     case 'api': return { title: 'Claude ne répond pas pour l’instant.', text: 'Réessaie dans un moment.' };
     case 'delai': return { title: 'Claude met trop de temps.', text: 'Tu peux réessayer : ça compte une capture de plus.' };

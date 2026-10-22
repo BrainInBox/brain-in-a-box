@@ -456,9 +456,13 @@ async fn guide_fenetres() -> Result<Vec<capture::Fenetre>, guide::GuideError> {
     guiding(guide::fenetres).await
 }
 
-/// « Clique dans la fenêtre de ton logiciel » (Windows): the window clicked within 15 s (R4).
+/// « Clique dans la fenêtre de ton logiciel » (Windows, X11): the window clicked within 45 s (R4). The
+/// guide's window takes the focus first, so a click in the user's window, in front already, counts.
 #[tauri::command]
-async fn guide_attendre_clic() -> Result<capture::Fenetre, guide::GuideError> {
+async fn guide_attendre_clic(app: tauri::AppHandle) -> Result<capture::Fenetre, guide::GuideError> {
+    if let Some(w) = app.get_webview_window("guide") {
+        let _ = w.set_focus();
+    }
     guiding(guide::attendre_clic).await
 }
 

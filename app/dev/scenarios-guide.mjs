@@ -111,6 +111,13 @@ export const GUIDE_SCENARIOS = [
   'g=ok&go=etape&arret=1',
   'g=ok&go=etape&compte=32',
   'g=ok&vu=0&go=comment&click=note-entreprise',
+  // The reviews of #70: a PDF reader whose title names Sage is no Sage; « J'ai déjà une capture » leads to the
+  // paste; the brain's summaries said at the limit only once the install went through; on a Mac, the window
+  // picked gone: the picker's words, not a click's.
+  'g=ok&cap=clic&os=windows&clic=pdf&go=objectif',
+  'g=ok&cap=selecteur&selecteur=introuvable&go=objectif',
+  'g=ok&cap=clic&os=windows&go=coller&click=deja-capture',
+  'g=quota&go=erreur&complet=0',
 ];
 
 // The guide's window sizes, as the page asks Rust for them, in turn: the image made wide to hide a zone
