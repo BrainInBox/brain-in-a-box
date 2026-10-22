@@ -129,6 +129,16 @@ $WingetNotes = @()
 function Note-Winget([string]$t) {
     if ($script:LogOpen) { Add-Content -LiteralPath $LOG -Value "`r`n$t" -Encoding utf8 } else { $script:WingetNotes += $t }
 }
+# Le journal s'ouvre une fois : apres le choix des agents, ou juste avant que l'echec de Python arrete
+# l'installation. Les notes d'avant y entrent avec lui.
+function Open-Log {
+    if ($script:LogOpen) { return }
+    New-Item -ItemType Directory -Path (Split-Path -Parent $LOG) -Force | Out-Null
+    Add-Content -LiteralPath $LOG -Value "`r`n===== $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') install =====" -Encoding utf8
+    $script:LogOpen = $true
+    foreach ($n in $script:WingetNotes) { Note-Winget $n }
+    $script:WingetNotes = @()
+}
 
 # Les codes de winget pour une source qui ne s'ouvre pas (winget-cli, AppInstallerErrors.h) : index
 # corrompu (0x8A15000A), sources corrompues (0x8A15000B), donnees manquantes (0x8A15000F), source
@@ -262,10 +272,12 @@ function Official-Install([string]$Label) {
         try { $p = Invoke-Native { Start-Process -FilePath $f -ArgumentList $o.Args -Wait -PassThru -ErrorAction Stop } }
         finally { $env:TEMP = $savedTemp; $env:TMP = $savedTmp }
         $end = "code $($p.ExitCode)"
-        return ($p.ExitCode -eq 0 -or $p.ExitCode -eq 3010)   # 3010 : fini, un redemarrage conseille
+        if ($p.ExitCode -eq 0 -or $p.ExitCode -eq 3010) { return $true }   # 3010 : fini, un redemarrage conseille
+        Warn "$Label : son installeur officiel a echoue (code $($p.ExitCode)), details : $LOG"
+        return $false
     } catch {
         $end = "erreur : $($_.Exception.Message)"
-        Warn "$Label : son installeur officiel n'a pas tourne (details : $LOG)"
+        Warn "$Label : son installeur officiel n'a pas tourne : $($_.Exception.Message)"
         return $false
     } finally {
         # Une ligne pour l'essai, comme pour winget : ce qui a ete lance, puis comment ca a fini.
@@ -689,7 +701,7 @@ $BUN_VERSION = [string]$pin.bun
 Say "Preflight"
 $Py = Find-Python
 if (-not $Py) { $Py = Install-Missing "Python" "Python.Python.3.12" { Find-Python } }
-if (-not $Py) { Fail "Python introuvable. Installe Python 3 depuis https://www.python.org/downloads/ puis relance la meme commande." }
+if (-not $Py) { Open-Log; Fail "Python introuvable. Installe Python 3 depuis https://www.python.org/downloads/ puis relance la meme commande." }
 Ok "python ($Py)"
 # >>> agents
 # L'IA que le kit branche : -Agents/-Prefere, sinon BIAB_AGENTS/BIAB_PREFERE (ce que passe l'app),
@@ -740,10 +752,7 @@ if ($WithCodex) {
 # <<< agents
 # Le journal s'ouvre une fois le choix des agents accepte (un choix refuse n'y laisse rien), avant
 # Git : winget y note ce qu'il installe.
-New-Item -ItemType Directory -Path (Split-Path -Parent $LOG) -Force | Out-Null
-Add-Content -LiteralPath $LOG -Value "`r`n===== $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') install =====" -Encoding utf8
-$LogOpen = $true
-foreach ($n in $WingetNotes) { Note-Winget $n }
+Open-Log
 $Git = Find-Git
 if (-not $Git) { $Git = Install-Missing "Git" "Git.Git" { Find-Git } }
 if ($Git) {
