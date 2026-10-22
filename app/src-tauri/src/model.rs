@@ -7,9 +7,10 @@ use serde::Serialize;
 pub enum Status {
     /// Present and working.
     Ok,
-    /// Not installed yet: an install step fixes it.
+    /// Not there yet, and nothing to worry about: an install step brings it (`fix`), or the user
+    /// adds it in a click later on (the login, the search by meaning).
     Missing,
-    /// Works, but something is off (old version, no key...). Never blocks.
+    /// Works, but something is off (old version, slow network...). Never blocks.
     Warn,
     /// Blocks the install and no step can fix it (old macOS, no disk space...).
     Error,
@@ -47,6 +48,13 @@ pub struct Diagnosis {
     pub todo: Vec<String>,
     /// No check in Status::Error.
     pub can_install: bool,
+    /// The sentence over the list, in French: what blocks, or that all is there, or what gets
+    /// installed with how long it takes and how much it downloads.
+    pub headline: String,
+    /// Roughly what the steps still to run download, in megabytes (0 when nothing is left).
+    pub download_mb: u32,
+    /// Roughly how long they take, downloads included, in minutes (0 when nothing is left).
+    pub minutes: u32,
     /// Which AI the brain should work with, from what is already on this computer (advice.rs).
     pub advice: Option<Advice>,
 }

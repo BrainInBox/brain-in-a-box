@@ -1,10 +1,11 @@
 """The advice Bibo gives at the start: which AI the brain should work with, from what is already on
 this computer (Claude Code and its login, Codex and its ChatGPT login, the ChatGPT and Claude desktop
 apps, Hermes Agent). It reads no token and opens no login file: Codex's auth.json and Hermes's .env
-are only looked for, never opened; of `claude auth status` only authMethod is kept.
+are only looked for, never opened; of `claude auth status` only authMethod and subscriptionType are
+read (connexion()).
 
 While Codex is closed on this system (_agents.py's CODEX_OUVERT, the one source), the advice never
-offers Codex: it may say it is coming. Brain in a Box does not install Hermes: when it is there, one
+offers Codex, nor promises it. Brain in a Box does not install Hermes: when it is there, one
 more sentence says so, and that the evening reflection reads its conversations only where it does
 (daily-reflection.py reads $HERMES_DB, else ~/.hermes/state.db).
 
@@ -32,8 +33,8 @@ CONSEIL_JSON = r"""
   "version": 1,
   "faits": {
     "porte": "Codex may be chosen on this system (_agents.py's CODEX_OUVERT)",
-    "claude": "Claude Code or the Claude desktop app is on this computer",
-    "claude_connecte": "Claude Code is logged in (authMethod claude.ai or oauth_token)",
+    "claude": "the Claude desktop app is on this computer, or Claude Code is logged in (installed alone, it says nothing of its user)",
+    "claude_connecte": "Claude Code is logged in with a subscription (connexion() says abonne)",
     "chatgpt": "the ChatGPT or Codex desktop app, Codex, or Codex's login is on this computer",
     "chatgpt_connecte": "Codex's auth.json exists (never opened)",
     "hermes": "Hermes Agent is on this computer",
@@ -42,7 +43,7 @@ CONSEIL_JSON = r"""
   "regles": [
     {"si": {"porte": false, "claude_connecte": true}, "conseil": "claude", "phrase": "claude_connecte"},
     {"si": {"porte": false, "claude": true}, "conseil": "claude", "phrase": "claude_vu"},
-    {"si": {"porte": false, "chatgpt": true}, "conseil": "claude", "phrase": "chatgpt_bientot"},
+    {"si": {"porte": false, "chatgpt": true}, "conseil": "claude", "phrase": "chatgpt"},
     {"si": {"porte": false}, "conseil": "claude", "phrase": "rien"},
     {"si": {"porte": true, "claude": true, "chatgpt": true}, "conseil": "les_deux", "phrase": "les_deux"},
     {"si": {"porte": true, "claude_connecte": true}, "conseil": "claude", "phrase": "claude_connecte"},
@@ -56,9 +57,9 @@ CONSEIL_JSON = r"""
   ],
   "phrases": {
     "claude_connecte": "Tu as déjà Claude Code, connecté à ton abonnement : ton cerveau travaillera avec lui.",
-    "claude_vu": "Tu utilises déjà Claude : ton cerveau travaillera avec lui (il te faudra un abonnement Pro ou Max pour Claude Code).",
-    "chatgpt_bientot": "Tu utilises ChatGPT : ton cerveau marche avec Claude, il te faudra un abonnement Claude Pro ou Max (ton abonnement ChatGPT ne suffit pas). Codex, l'IA de ChatGPT, arrive bientôt ici. À la fin, tu pourras apporter à ton cerveau ce que ChatGPT sait de toi.",
-    "rien": "Ton cerveau marche avec Claude : il te faudra un abonnement Claude Pro ou Max.",
+    "claude_vu": "Tu utilises déjà Claude : ton cerveau travaillera avec lui. Il lui faut un abonnement Claude Pro (environ 20 € par mois) ou Max.",
+    "chatgpt": "Tu utilises ChatGPT : ton cerveau marche avec Claude. Il te faut Claude Pro (environ 20 € par mois), en plus de ChatGPT ou à sa place. À la fin, tu pourras apporter à ton cerveau ce que ChatGPT sait de toi.",
+    "rien": "Ton cerveau marche avec Claude : il te faut un abonnement Claude Pro (environ 20 € par mois) ou Max.",
     "codex": "Tu utilises ChatGPT : ton cerveau peut travailler avec Codex, l'IA de ChatGPT, sur ton abonnement ChatGPT. À la fin, tu pourras apporter à ton cerveau ce que ChatGPT sait de toi.",
     "les_deux": "Tu as Claude et ChatGPT : ton cerveau peut travailler avec les deux, Claude d'abord.",
     "hermes": "J'ai vu Hermes : je ne l'installe pas et n'y touche pas. Ses meilleures compétences arrivent dans Claude avec ton cerveau.",
@@ -118,8 +119,30 @@ def _hermes_lu(home, env):
     return _existe((env.get("HERMES_DB") or "").strip() or os.path.join(home, ".hermes", "state.db"))
 
 
-def _methode(argv0):
-    """authMethod of `claude auth status`, run as the questions are (a private folder, an allow-list
+def connexion(status):
+    """How `claude auth status` says Claude Code is logged in: "abonne" (claude.ai with a Pro, Max, Team or
+    Enterprise plan, or a subscription's setup-token), "gratuit" (claude.ai with no plan: a free account),
+    "facture" (billed per use: an API key, a key helper's, Bedrock or Vertex), None (nobody). Only
+    authMethod and subscriptionType are read; a Claude Code that does not say the latter is taken at its
+    claude.ai login, as before. The app reads it alike (detect.rs, login_of)."""
+    i = (status or "").find("{")
+    try:
+        v = json.JSONDecoder().raw_decode(status[i:])[0] if i >= 0 else None
+    except ValueError:
+        return None
+    methode = v.get("authMethod") if isinstance(v, dict) else None
+    if not isinstance(methode, str) or methode == "none":
+        return None
+    if methode == "claude.ai":
+        if "subscriptionType" not in v:
+            return "abonne"
+        plan = v["subscriptionType"]
+        return "abonne" if isinstance(plan, str) and plan not in ("", "free") else "gratuit"
+    return "abonne" if methode == "oauth_token" else "facture"
+
+
+def _connexion(argv0):
+    """connexion() of `claude auth status`, run as the questions are (a private folder, an allow-list
     environment); None when it cannot tell."""
     import _headless_claude as hc
     try:
@@ -127,7 +150,7 @@ def _methode(argv0):
             _, out, _ = hc._capture(argv0 + ["auth", "status"], env, work)
     except (hc.HeadlessError, OSError):
         return None
-    return hc.auth_method(out)
+    return connexion(out)
 
 
 def sondes(home=None, env=None, claude=None, codex=None, applications=None, codex_ouvert=None):
@@ -144,9 +167,9 @@ def sondes(home=None, env=None, claude=None, codex=None, applications=None, code
     except _agents.Refus:
         auth = False
     apps = _apps(home, applications)
-    connecte = bool(claude) and _methode(list(claude)) in ("claude.ai", "oauth_token")
+    etat = _connexion(list(claude)) if claude else None
     return {"porte": _agents.ouvert("codex", codex_ouvert=codex_ouvert),
-            "claude": bool(claude) or apps["claude"], "claude_connecte": connecte,
+            "claude": apps["claude"] or etat is not None, "claude_connecte": etat == "abonne",
             "chatgpt": bool(codex) or auth or apps["chatgpt"], "chatgpt_connecte": auth,
             "hermes": _hermes(home, env), "hermes_lu": _hermes_lu(home, env)}
 

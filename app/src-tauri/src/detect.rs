@@ -245,6 +245,21 @@ pub fn git() -> Found {
     sys::find_tool("git").map_or(Found::Absent, |bin| version_of(&bin, TIMEOUT))
 }
 
+/// winget, which install.ps1 takes Python and Git from: on the PATH, as its `Have winget` finds it,
+/// else Windows' own alias in %LOCALAPPDATA%\Microsoft\WindowsApps. Installed when it answers
+/// `--version` ("v1.9.25200"): an alias left behind by an App Installer that is gone answers nothing.
+#[cfg(windows)]
+pub fn winget() -> Found {
+    let alias = std::env::var_os("LOCALAPPDATA").map(|l| Path::new(&l).join(r"Microsoft\WindowsApps"));
+    std::env::split_paths(&sys::tool_path())
+        .chain(alias.filter(|d| d.is_absolute()))
+        .map(|d| d.join("winget.exe"))
+        // An app alias is a link that cannot be read: it exists all the same, and runs.
+        .filter(|p| fs::symlink_metadata(p).is_ok())
+        .find_map(|p| sys::output_text(&p, &["--version"], TIMEOUT))
+        .map_or(Found::Absent, Found::Version)
+}
+
 // ── Bun ─────────────────────────────────────────────────────────────────────
 
 pub fn bun(home: &Path) -> Found {
@@ -268,28 +283,68 @@ pub fn claude() -> Found {
     claude_bin().map_or(Found::Absent, |bin| version_of(&bin, CLAUDE_TIMEOUT))
 }
 
-pub fn claude_logged_in() -> bool {
-    claude_auth_method().is_some_and(|m| m != "none")
+/// How Claude Code is logged in, as the kit uses it: only a subscription, never a login billed per use.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ClaudeLogin {
+    /// Nobody, or Claude Code does not say.
+    #[default]
+    LoggedOut,
+    /// claude.ai with a Pro, Max, Team or Enterprise plan, or a subscription's setup-token.
+    Subscribed,
+    /// claude.ai with no plan: a free account, which Claude Code cannot work with.
+    Free,
+    /// Billed per use: an API key (an Anthropic Console account's too), a key helper's, Bedrock or Vertex.
+    Billed,
 }
 
-/// How Claude Code is logged in: "claude.ai" for a Pro or Max subscription, "none"
+/// Logged in with a subscription: what the window waits for at the login step.
+pub fn claude_logged_in() -> bool {
+    claude_login() == ClaudeLogin::Subscribed
+}
+
+pub fn claude_login() -> ClaudeLogin {
+    claude_auth_status().map_or(ClaudeLogin::LoggedOut, |s| login_of(&s))
+}
+
+/// How Claude Code is logged in: "claude.ai" for a claude.ai account, "none"
 /// for nobody. Only this field is read: the rest of `claude auth status` (email,
 /// organization) never leaves this function.
 pub fn claude_auth_method() -> Option<String> {
+    claude_auth_status().and_then(|s| auth_method(&s))
+}
+
+/// `claude auth status` exits 1 when nobody is logged in.
+fn claude_auth_status() -> Option<String> {
     let claude = claude_bin()?;
     let out = sys::run(&claude, &["auth", "status"], TIMEOUT);
-    if out.ok() {
-        auth_method(&out.stdout)
-    } else {
-        None
-    }
+    out.ok().then_some(out.stdout)
 }
 
 /// `claude auth status` prints JSON, sometimes after a line of notes.
-fn auth_method(status: &str) -> Option<String> {
+fn auth_status_json(status: &str) -> Option<Value> {
     let json = status.find('{').map_or("", |i| &status[i..]);
-    let Some(Ok(v)) = serde_json::Deserializer::from_str(json).into_iter::<Value>().next() else { return None };
-    v.get("authMethod").and_then(Value::as_str).map(String::from)
+    serde_json::Deserializer::from_str(json).into_iter::<Value>().next()?.ok()
+}
+
+fn auth_method(status: &str) -> Option<String> {
+    auth_status_json(status)?.get("authMethod").and_then(Value::as_str).map(String::from)
+}
+
+/// authMethod, and for claude.ai its subscriptionType: "pro", "max", "team" or "enterprise", null for
+/// a free account. A Claude Code that does not say it is taken at its claude.ai login, as the kit took
+/// it before. Nothing else is read. _conseil.connexion reads it alike.
+pub(crate) fn login_of(status: &str) -> ClaudeLogin {
+    let Some(v) = auth_status_json(status) else { return ClaudeLogin::LoggedOut };
+    match v.get("authMethod").and_then(Value::as_str) {
+        Some("claude.ai") => match v.get("subscriptionType") {
+            None => ClaudeLogin::Subscribed,
+            Some(Value::String(plan)) if !plan.is_empty() && plan != "free" => ClaudeLogin::Subscribed,
+            Some(_) => ClaudeLogin::Free,
+        },
+        Some("oauth_token") => ClaudeLogin::Subscribed,
+        Some("none") | None => ClaudeLogin::LoggedOut,
+        Some(_) => ClaudeLogin::Billed,
+    }
 }
 
 // ── Codex ───────────────────────────────────────────────────────────────────
@@ -821,6 +876,31 @@ pub(crate) mod tests {
         assert_eq!(auth_method("note: update available\n{\"authMethod\":\"api_key\"}\n").as_deref(), Some("api_key"));
         for nothing in [r#"{"loggedIn":true}"#, r#"{"authMethod":4}"#, "Not logged in", "", "{oops"] {
             assert_eq!(auth_method(nothing), None, "{nothing}");
+        }
+    }
+
+    /// Only a subscription counts as logged in: a free claude.ai account and a login billed per use
+    /// (an API key, an Anthropic Console account's) do not.
+    #[test]
+    fn a_login_counts_only_with_a_subscription() {
+        use ClaudeLogin::*;
+        assert_eq!(login_of(include_str!("../tests/fixtures/repair/auth-status-claude-ai.json")), Subscribed);
+        assert_eq!(login_of(include_str!("../tests/fixtures/repair/auth-status-none.json")), LoggedOut);
+        let claude_ai = |plan: &str| login_of(&format!(r#"{{"loggedIn":true,"authMethod":"claude.ai","subscriptionType":{plan}}}"#));
+        for plan in [r#""pro""#, r#""max""#, r#""team""#, r#""enterprise""#] {
+            assert_eq!(claude_ai(plan), Subscribed, "{plan}");
+        }
+        for plan in ["null", r#""""#, r#""free""#, "4"] {
+            assert_eq!(claude_ai(plan), Free, "{plan}");
+        }
+        // A Claude Code that does not say its plan: its claude.ai login is taken, as before.
+        assert_eq!(login_of(r#"{"loggedIn":true,"authMethod":"claude.ai"}"#), Subscribed);
+        assert_eq!(login_of(r#"{"loggedIn":true,"authMethod":"oauth_token"}"#), Subscribed);
+        for billed in ["api_key", "api_key_helper", "third_party"] {
+            assert_eq!(login_of(&format!(r#"note: update available{{"authMethod":"{billed}"}}"#)), Billed, "{billed}");
+        }
+        for nothing in [r#"{"loggedIn":true}"#, r#"{"authMethod":4}"#, "Not logged in", "", "{oops"] {
+            assert_eq!(login_of(nothing), LoggedOut, "{nothing}");
         }
     }
 

@@ -3652,6 +3652,7 @@ pub(crate) mod tests {
                 .collect(),
             todo: Vec::new(),
             can_install: true,
+            headline: String::new(), download_mb: 0, minutes: 0,
             advice: None,
         }
     }

@@ -645,7 +645,7 @@ function startInstall() {
 
 function keywordsOnly() {
   const voyage = state.diag.checks.find((c) => c.id === 'voyage');
-  return Boolean(voyage) && voyage.status === 'warn';
+  return Boolean(voyage) && voyage.status !== 'ok';
 }
 
 // The brain is there (before the install, or thanks to it) but finds notes by keywords only.

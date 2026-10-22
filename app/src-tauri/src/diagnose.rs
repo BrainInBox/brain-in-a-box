@@ -11,6 +11,9 @@
 //! The AI agents are the ones agents.json lists (agents.rs): Claude Code's checks, Codex's, or both,
 //! each with its site in the network check and its part of the brain. Without the file, Claude's
 //! alone, the checks of before Codex word for word.
+//!
+//! What is left to install comes with a headline: how long, and how much to download. When something
+//! is left, the network's speed is measured on 2 Mo from GitHub, alongside the other probes.
 
 use std::path::Path;
 use std::thread;
@@ -21,7 +24,7 @@ use crate::agents::{self, Agents, Engine};
 use crate::detect::parse_version;
 #[cfg(unix)]
 use crate::detect::Version;
-use crate::detect::{self, fmt_version, Brain, Found};
+use crate::detect::{self, fmt_version, Brain, ClaudeLogin, Found};
 use crate::model::{Check, Diagnosis, Status};
 use crate::{advice, codex, steps, sys};
 
@@ -38,6 +41,13 @@ const CHATGPT: &str = "https://chatgpt.com";
 const DISK_BLOCKING_GB: f64 = 3.0;
 const DISK_TIGHT_GB: f64 = 10.0;
 const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+/// A file the install downloads from GitHub (Obsidian's), of which 2 Mo are timed, for 5 s at most.
+const SPEED_URL: &str = "https://github.com/obsidianmd/obsidian-releases/releases/download/v1.14.4/Obsidian-1.14.4.dmg";
+const SPEED_BYTES: u64 = 2 * 1024 * 1024;
+/// 2 Mbit/s: below, the downloads of a first install take an hour or more.
+const SLOW_BYTES_PER_S: f64 = 250_000.0;
+/// Without a measure, what most connections give (20 Mbit/s).
+const USUAL_BYTES_PER_S: f64 = 2_500_000.0;
 
 /// One line of the checklist: id, what the user reads, and the install step that fixes it.
 #[derive(Clone, Copy)]
@@ -59,9 +69,12 @@ const PAQUETS: Item = Item("paquets", "Outils de base (git, python3, curl)", Som
 const PYTHON: Item = Item("python", "Python (pour les automatismes)", Some("brain"));
 #[cfg(windows)]
 const GIT: Item = Item("git", "Git (l'historique de tes notes)", Some("brain"));
+/// No fix step: the user installs it from the Microsoft Store.
+#[cfg(windows)]
+const WINGET: Item = Item("winget", "Outil d'installation de Microsoft", None);
 /// The step that installs Bun and Obsidian: their own on a Mac, install.ps1's on Windows.
 const OWN_STEP_OR_BRAIN: [&str; 2] = if cfg!(windows) { ["brain", "brain"] } else { ["bun", "obsidian"] };
-const BUN: Item = Item("bun", "Bun (le moteur de la mémoire)", Some(OWN_STEP_OR_BRAIN[0]));
+const BUN: Item = Item("bun", "Le moteur de la mémoire", Some(OWN_STEP_OR_BRAIN[0]));
 const CLAUDE: Item = Item("claude", "Claude Code", Some("claude"));
 /// No fix step: the window offers a login button and the user logs in to the official CLI themselves.
 const CLAUDE_AUTH: Item = Item("claude_auth", "Connexion à Claude", None);
@@ -73,7 +86,7 @@ const AGENTS: Item = Item("agents", "Ton choix d'IA", None);
 /// The choice made in the window, which the brain step hands to the installer to record.
 const AGENTS_TO_RECORD: Item = Item("agents", "Ton choix d'IA", Some("brain"));
 const OBSIDIAN: Item = Item("obsidian", "Obsidian (pour lire tes notes)", Some(OWN_STEP_OR_BRAIN[1]));
-const BRAIN_VAULT: Item = Item("brain_vault", "Ton dossier Brain", Some("brain"));
+const BRAIN_VAULT: Item = Item("brain_vault", "Le dossier de tes notes", Some("brain"));
 const BRAIN_HOOKS: Item = Item("brain_hooks", "Les automatismes de Claude", Some("brain"));
 const BRAIN_SKILLS: Item = Item("brain_skills", "Les compétences de Claude", Some("brain"));
 const BRAIN_CODEX_HOOKS: Item = Item("brain_codex_hooks", "Les automatismes de Codex", Some("brain"));
@@ -110,7 +123,10 @@ struct Facts {
     arch: String,
     ram_bytes: Option<u64>,
     disk_free_kb: Option<u64>,
-    github: bool,
+    /// What github.com answered: its HTTP status (0 for a bare connection), None when nothing did.
+    github: Option<u16>,
+    /// The network's speed from GitHub, in bytes per second, when it was measured.
+    speed: Option<f64>,
     claude_ai: bool,
     #[cfg(target_os = "macos")]
     clt: bool,
@@ -118,9 +134,12 @@ struct Facts {
     python: Option<detect::Python>,
     #[cfg(windows)]
     git: Found,
+    /// Looked for only when Python or Git is missing.
+    #[cfg(windows)]
+    winget: Option<Found>,
     bun: Found,
     claude: Found,
-    claude_logged_in: bool,
+    claude_login: ClaudeLogin,
     /// What the advice reads (advice.rs): files only, and the login `claude auth status` gave.
     advice: advice::Facts,
     obsidian: Found,
@@ -196,22 +215,33 @@ pub fn failed(why: &str) -> Diagnosis {
         )],
         todo: Vec::new(),
         can_install: false,
+        headline: format!("Je n'ai pas pu finir l'examen de ton {}. Clique sur Revérifier.", sys::MACHINE),
+        download_mb: 0,
+        minutes: 0,
         advice: None,
     }
+}
+
+/// Before the probes: something big is left to download (the brain, or Claude Code), so the
+/// network's speed is worth 2 Mo. Nothing is, on most visits after the install.
+fn left_to_download(home: &Path, agents: &Agents) -> bool {
+    !detect::brain(home, agents).complete() || (agents.lists(Engine::Claude) && detect::claude_bin().is_none())
 }
 
 #[cfg(target_os = "macos")]
 fn probe(home: &Path) -> Facts {
     let agents = agents::current(home);
     let (claude, codex) = (agents.lists(Engine::Claude), agents.lists(Engine::Codex));
+    let to_download = left_to_download(home, &agents);
     thread::scope(|s| {
         // The slow probes (network, `claude auth status`, Codex's login) run alongside the rest.
-        let github = s.spawn(|| answers("https://github.com"));
+        let github = s.spawn(|| http_status("https://github.com"));
+        let speed = s.spawn(move || if to_download { speed() } else { None });
         let claude_ai = s.spawn(move || claude && answers("https://claude.ai"));
-        // `claude auth status` once: whether Claude is logged in, and for the advice how.
+        // `claude auth status` once: how Claude is logged in, for its check and the advice.
         let login = s.spawn(move || {
-            let method = if claude { detect::claude_auth_method() } else { None };
-            (method.as_deref().is_some_and(|m| m != "none"), advice::probe(home, method.as_deref()))
+            let login = if claude { detect::claude_login() } else { ClaudeLogin::LoggedOut };
+            (login, advice::probe(home, login))
         });
         let chatgpt = s.spawn(move || codex && answers(CHATGPT));
         let codex = s.spawn(|| probe_codex(home, &agents));
@@ -227,16 +257,17 @@ fn probe(home: &Path) -> Facts {
             bun: detect::bun(home),
             claude: if claude { detect::claude() } else { Found::Absent },
             obsidian: detect::obsidian(home),
-            github: github.join().unwrap_or(false),
+            github: github.join().ok().flatten(),
+            speed: speed.join().ok().flatten(),
             claude_ai: claude_ai.join().unwrap_or(false),
-            claude_logged_in: false,
+            claude_login: ClaudeLogin::LoggedOut,
             advice: advice::Facts::default(),
             chatgpt: chatgpt.join().unwrap_or(false),
             codex: codex.join().ok().flatten(),
             agents: agents.clone(),
         };
-        let (claude_logged_in, seen) = login.join().unwrap_or_default();
-        Facts { claude_logged_in, advice: seen, ..facts }
+        let (claude_login, seen) = login.join().unwrap_or_default();
+        Facts { claude_login, advice: seen, ..facts }
     })
 }
 
@@ -258,13 +289,15 @@ fn probe_codex(home: &Path, agents: &Agents) -> Option<CodexFacts> {
 fn probe(home: &Path) -> Facts {
     let agents = agents::current(home);
     let (claude, codex) = (agents.lists(Engine::Claude), agents.lists(Engine::Codex));
+    let to_download = left_to_download(home, &agents);
     thread::scope(|s| {
-        let github = s.spawn(|| answers("https://github.com"));
+        let github = s.spawn(|| http_status("https://github.com"));
+        let speed = s.spawn(move || if to_download { speed() } else { None });
         let claude_ai = s.spawn(move || claude && answers("https://claude.ai"));
-        // `claude auth status` once: whether Claude is logged in, and for the advice how.
+        // `claude auth status` once: how Claude is logged in, for its check and the advice.
         let login = s.spawn(move || {
-            let method = if claude { detect::claude_auth_method() } else { None };
-            (method.as_deref().is_some_and(|m| m != "none"), advice::probe(home, method.as_deref()))
+            let login = if claude { detect::claude_login() } else { ClaudeLogin::LoggedOut };
+            (login, advice::probe(home, login))
         });
         let chatgpt = s.spawn(move || codex && answers(CHATGPT));
         let codex = s.spawn(|| probe_codex(home, &agents));
@@ -280,6 +313,7 @@ fn probe(home: &Path) -> Facts {
 
         let python = detect::python();
         let git = detect::git();
+        let winget = (python.is_none() || git == Found::Absent).then(detect::winget);
         let bun = detect::bun(home);
         let claude = if claude { detect::claude() } else { Found::Absent };
         let obsidian = detect::obsidian(home);
@@ -289,21 +323,23 @@ fn probe(home: &Path) -> Facts {
             arch: system.arch,
             ram_bytes: system.ram_bytes,
             disk_free_kb: system.free_bytes.map(|b| b / 1024),
-            github: github.join().unwrap_or(false),
+            github: github.join().ok().flatten(),
+            speed: speed.join().ok().flatten(),
             claude_ai: claude_ai.join().unwrap_or(false),
             python,
             git,
+            winget,
             bun,
             claude,
-            claude_logged_in: false,
+            claude_login: ClaudeLogin::LoggedOut,
             advice: advice::Facts::default(),
             obsidian,
             chatgpt: chatgpt.join().unwrap_or(false),
             codex: codex.join().ok().flatten(),
             agents: agents.clone(),
         };
-        let (claude_logged_in, seen) = login.join().unwrap_or_default();
-        Facts { claude_logged_in, advice: seen, ..facts }
+        let (claude_login, seen) = login.join().unwrap_or_default();
+        Facts { claude_login, advice: seen, ..facts }
     })
 }
 
@@ -311,13 +347,15 @@ fn probe(home: &Path) -> Facts {
 fn probe(home: &Path) -> Facts {
     let agents = agents::current(home);
     let (claude, codex) = (agents.lists(Engine::Claude), agents.lists(Engine::Codex));
+    let to_download = left_to_download(home, &agents);
     thread::scope(|s| {
-        let github = s.spawn(|| answers("https://github.com"));
+        let github = s.spawn(|| http_status("https://github.com"));
+        let speed = s.spawn(move || if to_download { speed() } else { None });
         let claude_ai = s.spawn(move || claude && answers("https://claude.ai"));
-        // `claude auth status` once: whether Claude is logged in, and for the advice how.
+        // `claude auth status` once: how Claude is logged in, for its check and the advice.
         let login = s.spawn(move || {
-            let method = if claude { detect::claude_auth_method() } else { None };
-            (method.as_deref().is_some_and(|m| m != "none"), advice::probe(home, method.as_deref()))
+            let login = if claude { detect::claude_login() } else { ClaudeLogin::LoggedOut };
+            (login, advice::probe(home, login))
         });
         let chatgpt = s.spawn(move || codex && answers(CHATGPT));
         let codex = s.spawn(|| probe_codex(home, &agents));
@@ -340,16 +378,17 @@ fn probe(home: &Path) -> Facts {
             bun: detect::bun(home),
             claude: if claude { detect::claude() } else { Found::Absent },
             obsidian: detect::obsidian(home),
-            github: github.join().unwrap_or(false),
+            github: github.join().ok().flatten(),
+            speed: speed.join().ok().flatten(),
             claude_ai: claude_ai.join().unwrap_or(false),
-            claude_logged_in: false,
+            claude_login: ClaudeLogin::LoggedOut,
             advice: advice::Facts::default(),
             chatgpt: chatgpt.join().unwrap_or(false),
             codex: codex.join().ok().flatten(),
             agents: agents.clone(),
         };
-        let (claude_logged_in, seen) = login.join().unwrap_or_default();
-        Facts { claude_logged_in, advice: seen, ..facts }
+        let (claude_login, seen) = login.join().unwrap_or_default();
+        Facts { claude_login, advice: seen, ..facts }
     })
 }
 
@@ -426,13 +465,18 @@ fn command_text(program: &str, args: &[&str]) -> Option<String> {
 }
 
 /// Any HTTP status counts: claude.ai answers 403 to curl, which still proves the network works.
-/// A Linux without curl yet (the paquets step brings it) gets a plain connection instead.
 pub(crate) fn answers(url: &str) -> bool {
+    http_status(url).is_some()
+}
+
+/// The HTTP status a site answers with, None when nothing answered. A Linux without curl yet (the
+/// paquets step brings it) gets a plain connection instead: 0 when it is accepted.
+fn http_status(url: &str) -> Option<u16> {
     if cfg!(target_os = "linux") && !sys::is_executable(&sys::curl()) {
-        return connects(url);
+        return connects(url).then_some(0);
     }
     let args = ["-sS", "-o", sys::NULL_DEVICE, "-m", "8", "-w", "%{http_code}", url];
-    http_answered(&sys::run(&sys::curl(), &args, PROBE_TIMEOUT).stdout)
+    http_code(&sys::run(&sys::curl(), &args, PROBE_TIMEOUT).stdout)
 }
 
 /// The site's port 443 accepts a connection within 8 s, name lookup included.
@@ -453,8 +497,36 @@ fn connects(url: &str) -> bool {
 }
 
 /// curl prints "000" when nothing answered.
-fn http_answered(code: &str) -> bool {
-    code.trim().parse::<u16>().is_ok_and(|c| c > 0)
+fn http_code(out: &str) -> Option<u16> {
+    out.trim().parse::<u16>().ok().filter(|c| *c > 0)
+}
+
+/// Bytes per second of 2 Mo from GitHub, or what came of them in 5 s. None when the file did not
+/// come (no curl yet, no network, a filter): the network check says why.
+fn speed() -> Option<f64> {
+    if !sys::is_executable(&sys::curl()) {
+        return None;
+    }
+    let range = format!("0-{}", SPEED_BYTES - 1);
+    // --max-filesize: a server that would send the whole file instead of the range is not waited for.
+    let max = (SPEED_BYTES + SPEED_BYTES / 2).to_string();
+    let args = [
+        "-sS", "-L", "-r", &range, "--max-filesize", &max, "-o", sys::NULL_DEVICE, "-m", "5", "-w",
+        "%{http_code} %{size_download} %{time_starttransfer} %{time_total}", SPEED_URL,
+    ];
+    parse_speed(&sys::run(&sys::curl(), &args, Duration::from_secs(8)).stdout)
+}
+
+/// curl's "206 2097152 0.112 0.146": bytes over the time they took to come, from the first one
+/// (the connection and the redirect to GitHub's servers are not the network's speed).
+fn parse_speed(out: &str) -> Option<f64> {
+    let mut fields = out.split_whitespace().map(str::parse::<f64>);
+    let mut next = || fields.next()?.ok();
+    let (code, bytes, start, total) = (next()?, next()?, next()?, next()?);
+    if !(code == 200.0 || code == 206.0) || bytes <= 0.0 {
+        return None;
+    }
+    Some(bytes / (total - start).max(0.05))
 }
 
 fn decide(home: &Path, f: &Facts) -> Diagnosis {
@@ -470,15 +542,22 @@ fn decide(home: &Path, f: &Facts) -> Diagnosis {
     #[cfg(target_os = "linux")]
     let tools = vec![check_paquets(&f.linux)];
     #[cfg(windows)]
-    let tools = vec![check_python(f.python.as_ref()), check_git(&f.git)];
+    let tools = {
+        let winget = f.winget.as_ref().is_none_or(Found::answers);
+        let mut tools = vec![check_python(f.python.as_ref(), winget), check_git(&f.git, winget)];
+        tools.extend(check_winget(f.python.is_none(), f.git == Found::Absent, f.winget.as_ref()));
+        tools
+    };
     let hosts = hosts(f);
     let mut checks = Vec::from(system);
-    checks.extend([check_disk(disk_free_gb), check_network(&hosts)]);
+    checks.push(check_disk(disk_free_gb));
+    // Its place: what it says of a slow network needs what is left to download, known at the end.
+    let network_at = checks.len();
     checks.extend(tools);
     checks.push(check_bun(&f.bun));
     for engine in &f.agents.order {
         match engine {
-            Engine::Claude => checks.extend([check_claude(&f.claude), check_claude_auth(f.claude.answers(), f.claude_logged_in)]),
+            Engine::Claude => checks.extend([check_claude(&f.claude), check_claude_auth(f.claude.answers(), f.claude_login)]),
             Engine::Codex => checks.extend(f.codex.iter().flat_map(|c| [check_codex(&c.found), check_codex_auth(c)])),
         }
     }
@@ -502,12 +581,24 @@ fn decide(home: &Path, f: &Facts) -> Diagnosis {
             .iter()
             .any(|c| c.status == Status::Missing && c.fix.as_deref() == Some(step))
     };
-    let todo = steps::order(&f.agents)
+    let todo: Vec<String> = steps::order(&f.agents)
         .iter()
         .filter(|s| missing(s))
         .map(|s| s.to_string())
         .collect();
+    let download_mb = download_mb(&checks, &todo);
+    let minutes = minutes(&todo, download_mb, f.speed);
+    let slow = f.speed.is_some_and(|s| s < SLOW_BYTES_PER_S) && download_mb > 0;
+    let slow_note = slow.then(|| {
+        format!(
+            "compte environ {} pour tout télécharger ({}). En données mobiles, attends d'avoir un Wi-Fi.",
+            fmt_minutes(minutes),
+            fmt_mb(download_mb)
+        )
+    });
+    checks.insert(network_at, check_network(&hosts, f.github, slow_note.as_deref()));
     let can_install = checks.iter().all(|c| c.status != Status::Error);
+    let headline = headline(&checks, &todo, download_mb, minutes, slow);
 
     #[cfg(target_os = "macos")]
     let os = f.macos.as_ref().map_or("macOS".into(), |v| format!("macOS {v}"));
@@ -526,6 +617,9 @@ fn decide(home: &Path, f: &Facts) -> Diagnosis {
         checks,
         todo,
         can_install,
+        headline,
+        download_mb,
+        minutes,
         advice: advice::decide(&f.advice),
     }
 }
@@ -594,7 +688,7 @@ fn check_disk(free_gb: Option<f64>) -> Check {
 /// The sites the install needs: github.com, then each agent's (claude.ai, chatgpt.com), in the order
 /// of the agents. Claude alone: github.com and claude.ai, as before Codex.
 fn hosts(f: &Facts) -> Vec<(&'static str, bool)> {
-    let mut hosts = vec![("github.com", f.github)];
+    let mut hosts = vec![("github.com", f.github.is_some())];
     hosts.extend(f.agents.order.iter().map(|e| match e {
         Engine::Claude => ("claude.ai", f.claude_ai),
         Engine::Codex => ("chatgpt.com", f.chatgpt),
@@ -602,13 +696,25 @@ fn hosts(f: &Facts) -> Vec<(&'static str, bool)> {
     hosts
 }
 
-/// Blocks only when none of the sites answers.
-fn check_network(hosts: &[(&str, bool)]) -> Check {
+/// Blocks when none of the sites answers, or when a filter answers for github.com (403), where the
+/// brain comes from: only github.com's, as claude.ai turns curl away with a 403 of its own. `slow`:
+/// what a slow network means for the downloads left.
+fn check_network(hosts: &[(&str, bool)], github: Option<u16>, slow: Option<&str>) -> Check {
+    if github == Some(403) {
+        return NETWORK.is(
+            Status::Error,
+            "Ce réseau bloque github.com, d'où je télécharge ton cerveau. Au travail ou à l'école, demande au \
+             service informatique d'autoriser github.com. Sinon, connecte-toi à un autre réseau, puis clique sur Revérifier.",
+        );
+    }
     let names = |up: bool| hosts.iter().filter(|(_, ok)| *ok == up).map(|(h, _)| h.to_string()).collect::<Vec<_>>();
     let (up, down) = (names(true), names(false));
     if down.is_empty() {
         let verb = if up.len() == 1 { "répond" } else { "répondent" };
-        return NETWORK.is(Status::Ok, format!("{} {verb}.", steps::list_fr(&up)));
+        return match slow {
+            Some(note) => NETWORK.is(Status::Warn, format!("{} {verb}, mais lentement : {note}", steps::list_fr(&up))),
+            None => NETWORK.is(Status::Ok, format!("{} {verb}.", steps::list_fr(&up))),
+        };
     }
     if up.is_empty() {
         let none = match down.as_slice() {
@@ -667,26 +773,61 @@ fn check_paquets(f: &LinuxFacts) -> Check {
     }
 }
 
-/// The Microsoft Store's python.exe does not count: it runs nothing.
+/// The Microsoft Store's python.exe does not count: it runs nothing. `winget`: the tool install.ps1
+/// takes it from is there.
 #[cfg(windows)]
-fn check_python(found: Option<&detect::Python>) -> Check {
+fn check_python(found: Option<&detect::Python>, winget: bool) -> Check {
     match found {
         Some(p) => Check {
             path: Some(p.exe.to_string_lossy().into_owned()),
             ..PYTHON.is(Status::Ok, format!("Python {}", fmt_version(p.version)))
         },
-        None => PYTHON.is(Status::Missing, "Pas encore installé. Je le prends chez Microsoft (winget)."),
+        None => PYTHON.is(Status::Missing, not_yet_installed(winget)),
     }
 }
 
 /// Found is installed, as for install.ps1, even when it does not tell its version.
 #[cfg(windows)]
-fn check_git(found: &Found) -> Check {
+fn check_git(found: &Found, winget: bool) -> Check {
     match found {
-        Found::Absent => GIT.is(Status::Missing, "Pas encore installé. Je le prends chez Microsoft (winget)."),
+        Found::Absent => GIT.is(Status::Missing, not_yet_installed(winget)),
         _ if found.version().is_some() => GIT.is(Status::Ok, found.label("Git")),
         _ => GIT.is(Status::Ok, "Git est installé."),
     }
+}
+
+#[cfg(windows)]
+fn not_yet_installed(winget: bool) -> &'static str {
+    if winget {
+        "Pas encore installé : je l'installe pour toi."
+    } else {
+        "Pas encore installé : il me faut d'abord l'outil d'installation de Microsoft (juste en dessous)."
+    }
+}
+
+/// install.ps1 takes Python and Git from winget: without it, the brain step stops on Python, or
+/// goes on without Git (no history, no search memory), minutes into the install. Said only when
+/// one of them is missing and winget is absent (looked for then only). Windows' own names, in
+/// French and in English: a PC may be either.
+#[cfg(windows)]
+fn check_winget(python_missing: bool, git_missing: bool, winget: Option<&Found>) -> Option<Check> {
+    let missing: Vec<String> = [(python_missing, "Python"), (git_missing, "Git")]
+        .into_iter()
+        .filter(|(m, _)| *m)
+        .map(|(_, name)| name.to_string())
+        .collect();
+    if missing.is_empty() || winget.is_none_or(Found::answers) {
+        return None;
+    }
+    Some(WINGET.is(
+        Status::Error,
+        format!(
+            "Il me manque l'outil d'installation de Microsoft pour installer {}. Ouvre le Microsoft Store, \
+             cherche « Programme d'installation d'application (App Installer) », clique sur « Obtenir (Get) » \
+             ou « Mettre à jour (Update) », puis sur Revérifier.",
+            steps::list_fr(&missing)
+        ),
+    ))
 }
 
 fn check_bun(found: &Found) -> Check {
@@ -719,11 +860,24 @@ fn check_claude(found: &Found) -> Check {
     }
 }
 
-fn check_claude_auth(claude_works: bool, logged_in: bool) -> Check {
-    match (claude_works, logged_in) {
-        (false, _) => CLAUDE_AUTH.is(Status::Warn, "Tu te connecteras une fois Claude Code installé."),
-        (true, true) => CLAUDE_AUTH.is(Status::Ok, "Tu es connecté."),
-        (true, false) => CLAUDE_AUTH.is(Status::Warn, "Pas encore connecté. Tu le feras en un clic."),
+/// Only a subscription is used (never a login billed per use): a free account or an API key is said,
+/// without blocking. A developer billed on purpose installs all the same.
+fn check_claude_auth(claude_works: bool, login: ClaudeLogin) -> Check {
+    match (claude_works, login) {
+        (false, _) => CLAUDE_AUTH.is(Status::Missing, "Tu te connecteras une fois Claude Code installé."),
+        (true, ClaudeLogin::Subscribed) => CLAUDE_AUTH.is(Status::Ok, "Tu es connecté avec ton abonnement."),
+        (true, ClaudeLogin::LoggedOut) => CLAUDE_AUTH.is(Status::Missing, "Pas encore connecté. Tu le feras en un clic."),
+        (true, ClaudeLogin::Free) => CLAUDE_AUTH.is(
+            Status::Warn,
+            "Ton compte Claude n'a pas d'abonnement : Claude Code a besoin de Claude Pro (environ 20 € par mois) \
+             ou Max. Abonne-toi sur claude.ai, puis reconnecte-toi quand je te le propose.",
+        ),
+        (true, ClaudeLogin::Billed) => CLAUDE_AUTH.is(
+            Status::Warn,
+            "Claude Code est connecté avec une clé API, facturée à chaque message : je ne m'en sers ni pour le guide \
+             ni pour le résumé du soir. Connecte plutôt ton abonnement Claude Pro ou Max. Développeur et c'est voulu ? \
+             Continue quand même : tout le reste s'installe.",
+        ),
     }
 }
 
@@ -858,15 +1012,133 @@ fn check_brain(brain: Brain, at: &str, muets: bool) -> Vec<Check> {
     checks
 }
 
-/// The model name ("voyage:voyage-4") means nothing to the user: on or off is enough.
+/// The model name ("voyage:voyage-4") means nothing to the user: on or off is enough. Off is no
+/// worry: an option, offered after the install.
 fn check_voyage(model: Option<&str>) -> Check {
     match model {
         Some(m) if m.starts_with("voyage:") => VOYAGE.is(Status::Ok, "Activée (Voyage AI)"),
         Some(_) => VOYAGE.is(Status::Ok, "Activée"),
         None => VOYAGE.is(
-            Status::Warn,
-            "Recherche par mots-clés seulement. Une clé Voyage permet de chercher par le sens.",
+            Status::Missing,
+            "Ton cerveau retrouve tes notes par mots-clés. La recherche par le sens est une option, à ajouter après si tu veux.",
         ),
+    }
+}
+
+/// Roughly what each piece left to install downloads, in Mo: the installers' files as they weighed
+/// in October 2026 (Claude Code 2.1.308, Codex 0.162.1, Obsidian 1.14.4, Bun 1.4.3, Git 2.56,
+/// Python 3.12), Apple's tools, Debian's packages, and gbrain with its own packages.
+fn piece_mb(id: &str) -> u32 {
+    match id {
+        "claude" => 300,
+        "codex" => 100,
+        "clt" => 800,
+        "paquets" => 50,
+        "python" => 30,
+        "git" => 70,
+        "bun" => 45,
+        "obsidian" if cfg!(windows) => 340,
+        "obsidian" if cfg!(target_os = "macos") => 235,
+        "obsidian" => 110,
+        "brain_memory" => 100,
+        _ => 0,
+    }
+}
+
+/// What the steps left download: each missing piece they bring, and the kit's archive when the
+/// brain step runs.
+fn download_mb(checks: &[Check], todo: &[String]) -> u32 {
+    let runs = |fix: &Option<String>| fix.as_ref().is_some_and(|f| todo.contains(f));
+    let pieces: u32 = checks.iter().filter(|c| c.status == Status::Missing && runs(&c.fix)).map(|c| piece_mb(&c.id)).sum();
+    pieces + if todo.iter().any(|s| s == "brain") { 10 } else { 0 }
+}
+
+/// The steps' own work (installers, the brain's memory), then the downloads at the speed measured, or
+/// at a usual one.
+fn minutes(todo: &[String], download_mb: u32, speed: Option<f64>) -> u32 {
+    if todo.is_empty() {
+        return 0;
+    }
+    let work: u32 = todo
+        .iter()
+        .map(|s| match s.as_str() {
+            "brain" => 8,
+            "clt" => 5,
+            "claude" | "codex" | "paquets" => 2,
+            _ => 1,
+        })
+        .sum();
+    let download = f64::from(download_mb) * 1e6 / speed.unwrap_or(USUAL_BYTES_PER_S).max(1.0) / 60.0;
+    work + download.ceil() as u32
+}
+
+/// « 15 minutes », « 1 h 30 », « plusieurs heures »: rounded, after « environ ».
+fn fmt_minutes(m: u32) -> String {
+    match m {
+        0..=57 => format!("{} minutes", ((m + 2) / 5 * 5).max(5)),
+        58..=299 => match (m + 5) / 10 * 10 {
+            r if r % 60 == 0 => format!("{} h", r / 60),
+            r => format!("{} h {}", r / 60, r % 60),
+        },
+        _ => "plusieurs heures".into(),
+    }
+}
+
+/// « 900 Mo », « 1,5 Go »: rounded up, after « environ ».
+fn fmt_mb(mb: u32) -> String {
+    if mb < 1000 {
+        return format!("{} Mo", mb.div_ceil(50).max(1) * 50);
+    }
+    let tenths = mb.div_ceil(100);
+    match tenths % 10 {
+        0 => format!("{} Go", tenths / 10),
+        d => format!("{},{d} Go", tenths / 10),
+    }
+}
+
+/// « Claude et ton cerveau »: the agents by name, then what the other steps bring.
+fn installing(todo: &[String]) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    for step in todo {
+        let part = match step.as_str() {
+            "claude" => "Claude",
+            "codex" => "Codex",
+            "brain" => "ton cerveau",
+            "clt" => "les outils d'Apple",
+            "paquets" => "les outils de base",
+            "bun" => "le moteur de la mémoire",
+            "obsidian" => "Obsidian",
+            _ => continue,
+        };
+        parts.push(part.into());
+    }
+    // The brain step brings the tools along: « ton cerveau » says them all.
+    if todo.iter().any(|s| s == "brain") {
+        parts.retain(|p| ["Claude", "Codex", "ton cerveau"].contains(&p.as_str()));
+    }
+    steps::list_fr(&parts)
+}
+
+/// The sentence over the list: what blocks, else that all is there, else what gets installed, how
+/// long it takes and how much it downloads.
+fn headline(checks: &[Check], todo: &[String], download_mb: u32, minutes: u32, slow: bool) -> String {
+    let machine = sys::MACHINE;
+    match checks.iter().filter(|c| c.status == Status::Error).count() {
+        0 => {}
+        1 => return "Une chose bloque l'installation : la ligne en rouge dit quoi faire. Ensuite, clique sur Revérifier.".into(),
+        _ => return "Des choses bloquent l'installation : les lignes en rouge disent quoi faire. Ensuite, clique sur Revérifier.".into(),
+    }
+    if todo.is_empty() {
+        return format!("Tout est déjà installé sur ton {machine}.");
+    }
+    let (what, time, size) = (installing(todo), fmt_minutes(minutes), fmt_mb(download_mb));
+    if slow {
+        format!(
+            "Ton {machine} est prêt, mais ta connexion est lente. J'installe {what} : compte environ {time}, avec {size} \
+             à télécharger. En données mobiles, attends d'avoir un Wi-Fi."
+        )
+    } else {
+        format!("Ton {machine} est prêt. J'installe {what} : environ {time} et {size} à télécharger. Branche-toi sur un Wi-Fi si tu peux.")
     }
 }
 
@@ -931,7 +1203,8 @@ mod tests {
             arch: "arm64".into(),
             ram_bytes: Some(25_769_803_776),
             disk_free_kb: Some(169_941_844),
-            github: true,
+            github: Some(200),
+            speed: None,
             claude_ai: true,
             #[cfg(target_os = "macos")]
             clt: true,
@@ -939,9 +1212,11 @@ mod tests {
             python: Some(detect::Python { exe: r"C:\Users\jo\AppData\Local\Programs\Python\Python312\python.exe".into(), version: (3, 12, 10) }),
             #[cfg(windows)]
             git: Found::Version("git version 2.51.0.windows.1".into()),
+            #[cfg(windows)]
+            winget: None,
             bun: Found::Version("1.4.2".into()),
             claude: Found::Version("2.1.296 (Claude Code)".into()),
-            claude_logged_in: true,
+            claude_login: ClaudeLogin::Subscribed,
             advice: advice::Facts { claude: true, claude_connecte: true, ..advice::Facts::default() },
             obsidian: Found::Version("1.14.4".into()),
             agents: Agents::claude_alone(),
@@ -1008,7 +1283,7 @@ mod tests {
     #[test]
     fn network_blocks_only_when_both_sites_are_down() {
         let net = |github, claude_ai| {
-            let c = check_network(&[("github.com", github), ("claude.ai", claude_ai)]);
+            let c = check_network(&[("github.com", github), ("claude.ai", claude_ai)], github.then_some(200), None);
             (c.status, c.detail)
         };
         // Claude alone: word for word as before Codex.
@@ -1016,15 +1291,15 @@ mod tests {
         assert_eq!(net(true, false), (Status::Warn, "claude.ai ne répond pas. Une étape risque d'échouer.".into()));
         assert_eq!(net(false, true), (Status::Warn, "github.com ne répond pas. Une étape risque d'échouer.".into()));
         assert_eq!(net(false, false), (Status::Error, "Pas d'internet : ni github.com ni claude.ai ne répondent. Vérifie ton Wi-Fi, puis relance.".into()));
-        assert!(http_answered("403"));
-        assert!(!http_answered("000"));
-        assert!(!http_answered(""));
+        assert_eq!(http_code("403"), Some(403));
+        assert_eq!(http_code("000"), None);
+        assert_eq!(http_code(""), None);
     }
 
     /// Each agent's site; none answering blocks, one of them down warns.
     #[test]
     fn the_network_check_names_each_agents_site() {
-        let three = |a, b, c| check_network(&[("github.com", a), ("claude.ai", b), ("chatgpt.com", c)]);
+        let three = |a: bool, b, c| check_network(&[("github.com", a), ("claude.ai", b), ("chatgpt.com", c)], a.then_some(200), None);
         assert_eq!(three(true, true, true).detail, "github.com, claude.ai et chatgpt.com répondent.");
         let down = three(true, false, false);
         assert_eq!((down.status, down.detail.as_str()), (Status::Warn, "claude.ai et chatgpt.com ne répondent pas. Une étape risque d'échouer."));
@@ -1033,8 +1308,8 @@ mod tests {
             (none.status, none.detail.as_str()),
             (Status::Error, "Pas d'internet : ni github.com, ni claude.ai, ni chatgpt.com ne répondent. Vérifie ton Wi-Fi, puis relance.")
         );
-        assert_eq!(check_network(&[("github.com", true)]).detail, "github.com répond.");
-        let alone = check_network(&[("github.com", false)]);
+        assert_eq!(check_network(&[("github.com", true)], Some(200), None).detail, "github.com répond.");
+        let alone = check_network(&[("github.com", false)], None, None);
         assert_eq!((alone.status, alone.detail.as_str()), (Status::Error, "Pas d'internet : github.com ne répond pas. Vérifie ton Wi-Fi, puis relance."));
         let f = Facts { agents: codex_agents(vec![Engine::Codex, Engine::Claude]), chatgpt: true, ..healthy_facts() };
         assert_eq!(hosts(&f), [("github.com", true), ("chatgpt.com", true), ("claude.ai", true)]);
@@ -1071,10 +1346,31 @@ mod tests {
         assert_eq!(check_claude(&Found::Version("?".into())).status, Status::Ok);
         assert_eq!(check_claude(&Found::Absent).fix.as_deref(), Some("claude"));
         assert_eq!(check_claude(&Found::NoVersion).status, Status::Missing);
-        let unknown = check_claude_auth(false, false);
-        assert_eq!((unknown.status, unknown.fix), (Status::Warn, None));
-        assert_eq!(check_claude_auth(true, false).status, Status::Warn);
-        assert_eq!(check_claude_auth(true, true).status, Status::Ok);
+        // Not logged in yet: nothing to worry about, and no step of its own (the window asks).
+        for (works, login) in [(false, ClaudeLogin::LoggedOut), (false, ClaudeLogin::Subscribed), (true, ClaudeLogin::LoggedOut)] {
+            let c = check_claude_auth(works, login);
+            assert_eq!((c.status, c.fix), (Status::Missing, None), "{works} {login:?}");
+        }
+        assert_eq!(check_claude_auth(true, ClaudeLogin::Subscribed).status, Status::Ok);
+    }
+
+    /// A free account or a login billed per use is not « connecté » : said, never blocking, and the
+    /// developer billed on purpose is told to go on.
+    #[test]
+    fn only_a_subscription_is_a_login() {
+        let free = check_claude_auth(true, ClaudeLogin::Free);
+        assert_eq!((free.status, free.fix), (Status::Warn, None));
+        assert!(free.detail.contains("n'a pas d'abonnement") && free.detail.contains("environ 20 € par mois"), "{}", free.detail);
+        let billed = check_claude_auth(true, ClaudeLogin::Billed);
+        assert_eq!((billed.status, billed.fix), (Status::Warn, None));
+        assert!(billed.detail.contains("clé API") && billed.detail.contains("Continue quand même"), "{}", billed.detail);
+        let tmp = tempfile::tempdir().unwrap();
+        fake_brain(tmp.path());
+        for login in [ClaudeLogin::Free, ClaudeLogin::Billed] {
+            let d = decide(tmp.path(), &Facts { claude_login: login, ..healthy_facts() });
+            assert!(d.can_install && d.todo.is_empty(), "{login:?}");
+            assert_eq!(by_id(&d, "claude_auth").status, Status::Warn);
+        }
     }
 
     #[test]
@@ -1110,6 +1406,28 @@ mod tests {
         assert_eq!((unwired.status, unwired.fix.as_deref()), (Status::Missing, Some("brain")), "not wired: the brain step wires them");
     }
 
+    /// Nothing of the kit, nothing the install brings: a computer as it comes, its network fine.
+    fn fresh_facts() -> Facts {
+        Facts {
+            #[cfg(target_os = "macos")]
+            clt: false,
+            #[cfg(target_os = "linux")]
+            linux: LinuxFacts { missing: vec!["git", "curl"], ..healthy_facts().linux },
+            #[cfg(windows)]
+            python: None,
+            #[cfg(windows)]
+            git: Found::Absent,
+            #[cfg(windows)]
+            winget: Some(Found::Version("v1.9.25200".into())),
+            bun: Found::Absent,
+            claude: Found::Absent,
+            claude_login: ClaudeLogin::LoggedOut,
+            advice: advice::Facts::default(),
+            obsidian: Found::Absent,
+            ..healthy_facts()
+        }
+    }
+
     fn codex_agents(order: Vec<Engine>) -> Agents {
         let codex_home = order.contains(&Engine::Codex).then(|| std::path::PathBuf::from("/nowhere/.codex"));
         Agents { order, codex_home, etat: "ok".into() }
@@ -1131,7 +1449,7 @@ mod tests {
             chatgpt: true,
             codex: Some(codex_facts(codex::Login::LoggedOut)),
             claude: Found::Absent,
-            claude_logged_in: false,
+            claude_login: ClaudeLogin::LoggedOut,
             ..healthy_facts()
         };
         let d = decide(tmp.path(), &with(vec![Engine::Codex]));
@@ -1192,7 +1510,7 @@ mod tests {
     fn an_untrusted_choice_blocks_and_says_why() {
         let tmp = tempfile::tempdir().unwrap();
         fake_brain(tmp.path());
-        let f = Facts { agents: Agents::none("ferme"), claude: Found::Absent, claude_logged_in: false, ..healthy_facts() };
+        let f = Facts { agents: Agents::none("ferme"), claude: Found::Absent, claude_login: ClaudeLogin::LoggedOut, ..healthy_facts() };
         let d = decide(tmp.path(), &f);
         assert!(!d.can_install);
         let a = by_id(&d, "agents");
@@ -1228,8 +1546,128 @@ mod tests {
     fn voyage_says_on_or_off_in_plain_words() {
         assert_eq!(check_voyage(Some("voyage:voyage-4")).detail, "Activée (Voyage AI)");
         assert_eq!(check_voyage(Some("zeroentropy:zembed-1")).detail, "Activée");
+        // Off is an option for after the install, no worry: nothing orange, no step.
         let off = check_voyage(None);
-        assert_eq!((off.status, off.fix), (Status::Warn, None));
+        assert_eq!((off.status, off.fix), (Status::Missing, None));
+        assert!(off.detail.contains("option") && off.detail.contains("après"), "{}", off.detail);
+        let tmp = tempfile::tempdir().unwrap();
+        fake_brain(tmp.path());
+        let d = decide(tmp.path(), &healthy_facts());
+        assert!(d.todo.is_empty() && d.can_install, "{:?}", d.todo);
+    }
+
+    /// What a fresh computer shows before the install: nothing orange nor red when all that is missing
+    /// installs by itself, and a headline that says how long and how much to download.
+    #[test]
+    fn a_fresh_computer_has_nothing_orange_and_says_what_it_downloads() {
+        let tmp = tempfile::tempdir().unwrap();
+        let d = decide(tmp.path(), &fresh_facts());
+        assert!(d.can_install, "{:?}", d.checks);
+        let orange: Vec<&str> = d.checks.iter().filter(|c| c.status == Status::Warn).map(|c| c.id.as_str()).collect();
+        assert!(orange.is_empty(), "{orange:?}");
+        let machine = sys::MACHINE;
+        assert!(
+            d.headline.starts_with(&format!("Ton {machine} est prêt. J'installe Claude et ton cerveau : environ ")),
+            "{}",
+            d.headline
+        );
+        assert!(d.headline.ends_with("à télécharger. Branche-toi sur un Wi-Fi si tu peux."), "{}", d.headline);
+        // Claude Code (300 Mo), the brain's memory and the kit, and each tool of the system.
+        assert!(d.download_mb > 400, "{}", d.download_mb);
+        assert!(d.headline.contains(&fmt_mb(d.download_mb)) && d.headline.contains(&fmt_minutes(d.minutes)), "{}", d.headline);
+        assert!((10..=60).contains(&d.minutes), "{}", d.minutes);
+        for c in &d.checks {
+            for word in ["winget", "Bun (", "Ton dossier Brain"] {
+                assert!(!c.label.contains(word) && !c.detail.contains(word), "{word} in {c:?}");
+            }
+        }
+        assert_eq!(by_id(&d, "bun").label, "Le moteur de la mémoire");
+        assert_eq!(by_id(&d, "brain_vault").label, "Le dossier de tes notes");
+    }
+
+    /// The other headlines: all there, something blocking, nothing measured.
+    #[test]
+    fn the_headline_says_what_blocks_or_that_all_is_there() {
+        let tmp = tempfile::tempdir().unwrap();
+        fake_brain(tmp.path());
+        let d = decide(tmp.path(), &healthy_facts());
+        assert_eq!((d.headline.as_str(), d.download_mb, d.minutes), (format!("Tout est déjà installé sur ton {}.", sys::MACHINE).as_str(), 0, 0));
+        let offline = decide(tmp.path(), &Facts { github: None, claude_ai: false, ..healthy_facts() });
+        assert_eq!(offline.headline, "Une chose bloque l'installation : la ligne en rouge dit quoi faire. Ensuite, clique sur Revérifier.");
+        let both = decide(tmp.path(), &Facts { github: None, claude_ai: false, disk_free_kb: Some(1_000_000), ..healthy_facts() });
+        assert!(both.headline.starts_with("Des choses bloquent l'installation : les lignes en rouge"), "{}", both.headline);
+        assert!(failed("x").headline.contains("Revérifier"));
+    }
+
+    /// A filter that answers for github.com (403) blocks, naming it: the brain comes from there.
+    /// claude.ai's 403 is its own, to curl: it proves the network works.
+    #[test]
+    fn a_filter_on_github_blocks_and_names_it() {
+        let hosts = [("github.com", true), ("claude.ai", true)];
+        let c = check_network(&hosts, Some(403), None);
+        assert_eq!((c.status, c.fix), (Status::Error, None));
+        assert!(c.detail.contains("bloque github.com") && c.detail.contains("Revérifier"), "{}", c.detail);
+        assert_eq!(check_network(&hosts, Some(200), None).status, Status::Ok);
+        assert_eq!(check_network(&hosts, Some(301), None).status, Status::Ok);
+        let tmp = tempfile::tempdir().unwrap();
+        fake_brain(tmp.path());
+        let d = decide(tmp.path(), &Facts { github: Some(403), ..healthy_facts() });
+        assert!(!d.can_install);
+        assert_eq!(by_id(&d, "network").status, Status::Error);
+        let ids: Vec<&str> = d.checks.iter().map(|c| c.id.as_str()).collect();
+        assert_eq!(ids.iter().position(|id| *id == "network"), Some(2), "{ids:?}");
+    }
+
+    /// Below 2 Mbit/s, the network check and the headline say how long the downloads take.
+    #[test]
+    fn a_slow_network_says_how_long() {
+        let tmp = tempfile::tempdir().unwrap();
+        let slow = Facts { speed: Some(100_000.0), ..fresh_facts() };
+        let d = decide(tmp.path(), &slow);
+        assert!(d.can_install);
+        let net = by_id(&d, "network");
+        assert_eq!(net.status, Status::Warn);
+        assert!(net.detail.contains("mais lentement : compte environ ") && net.detail.contains("En données mobiles"), "{}", net.detail);
+        assert!(d.minutes > 60, "{}", d.minutes);
+        assert!(net.detail.contains(&fmt_minutes(d.minutes)) && net.detail.contains(&fmt_mb(d.download_mb)), "{}", net.detail);
+        assert!(d.headline.contains("ta connexion est lente") && d.headline.contains("attends d'avoir un Wi-Fi"), "{}", d.headline);
+        // Fast, or nothing left to download: nothing said of the speed.
+        let fast = decide(tmp.path(), &Facts { speed: Some(5_000_000.0), ..fresh_facts() });
+        assert_eq!(by_id(&fast, "network").status, Status::Ok);
+        assert!(fast.minutes < d.minutes);
+        fake_brain(tmp.path());
+        let done = decide(tmp.path(), &Facts { speed: Some(100_000.0), ..healthy_facts() });
+        assert_eq!(by_id(&done, "network").status, Status::Ok);
+    }
+
+    #[test]
+    fn the_speed_is_read_from_curl() {
+        // 2 Mo in 0.034 s after the first byte (counted as 0.05 s at least); 571 Ko in 5 s, cut by -m
+        // (curl exits 28 and still says).
+        assert!(parse_speed("206 2097152 0.112093 0.145865").is_some_and(|s| s > 40e6));
+        let slow = parse_speed("206 584704 0.097472 5.056582").unwrap();
+        assert!((117_000.0..119_000.0).contains(&slow), "{slow}");
+        assert!(parse_speed("200 2097152 0.5 0.5").is_some_and(|s| s > 40e6), "no time measured: fast");
+        for nothing in ["000 0 0 0", "403 1234 0.1 0.2", "206 0 0 5.0", "206 12", "", "abc 1 2 3"] {
+            assert_eq!(parse_speed(nothing), None, "{nothing}");
+        }
+    }
+
+    #[test]
+    fn durations_and_sizes_read_simply() {
+        let m = |n| fmt_minutes(n);
+        assert_eq!([m(1), m(12), m(13), m(57), m(58), m(95), m(120), m(299), m(300)], [
+            "5 minutes", "10 minutes", "15 minutes", "55 minutes", "1 h", "1 h 40", "2 h", "5 h", "plusieurs heures"
+        ]);
+        let mb = |n| fmt_mb(n);
+        assert_eq!([mb(1), mb(30), mb(890), mb(950), mb(999), mb(1000), mb(1480), mb(2000)], [
+            "50 Mo", "50 Mo", "900 Mo", "950 Mo", "1000 Mo", "1 Go", "1,5 Go", "2 Go"
+        ]);
+        let todo = |s: &[&str]| s.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        assert_eq!(installing(&todo(&["claude", "clt", "bun", "obsidian", "brain"])), "Claude et ton cerveau");
+        assert_eq!(installing(&todo(&["brain"])), "ton cerveau");
+        assert_eq!(installing(&todo(&["obsidian"])), "Obsidian");
+        assert_eq!(installing(&todo(&["claude", "bun"])), "Claude et le moteur de la mémoire");
     }
 
     #[cfg(target_os = "macos")]
@@ -1255,15 +1693,15 @@ mod tests {
             clt: false,
             bun: Found::Version("1.2.0".into()),
             claude: Found::Absent,
-            claude_logged_in: false,
+            claude_login: ClaudeLogin::LoggedOut,
             ..healthy_facts()
         };
         let d = decide(tmp.path(), &facts);
         assert_eq!(d.todo, ["claude", "clt", "bun", "brain"]);
         assert!(d.can_install);
-        // Warnings never land in the todo list.
-        assert_eq!(by_id(&d, "claude_auth").status, Status::Warn);
-        assert_eq!(by_id(&d, "voyage").status, Status::Warn);
+        // What has no step of its own never lands in the todo list.
+        assert_eq!(by_id(&d, "claude_auth").fix, None);
+        assert_eq!(by_id(&d, "voyage").fix, None);
     }
 
     #[test]
@@ -1281,7 +1719,7 @@ mod tests {
         };
         assert!(!decide(tmp.path(), &old_system).can_install);
         let offline = Facts {
-            github: false,
+            github: None,
             claude_ai: false,
             ..healthy_facts()
         };
@@ -1354,7 +1792,7 @@ mod tests {
             linux: LinuxFacts { missing: vec!["git", "curl"], ..healthy_facts().linux },
             bun: Found::Absent,
             claude: Found::Absent,
-            claude_logged_in: false,
+            claude_login: ClaudeLogin::LoggedOut,
             obsidian: Found::Absent,
             ..healthy_facts()
         };
@@ -1422,7 +1860,7 @@ mod tests {
             git: Found::Absent,
             bun: Found::Version("1.2.0".into()),
             claude: Found::Absent,
-            claude_logged_in: false,
+            claude_login: ClaudeLogin::LoggedOut,
             obsidian: Found::Absent,
             ..healthy_facts()
         };
@@ -1433,7 +1871,39 @@ mod tests {
             assert_eq!((c.status, c.fix.as_deref()), (Status::Missing, Some("brain")), "{id}");
         }
         assert_eq!(by_id(&d, "claude").fix.as_deref(), Some("claude"));
-        assert_eq!(check_git(&Found::NoVersion).status, Status::Ok, "found is installed, as for install.ps1");
+        assert_eq!(check_git(&Found::NoVersion, true).status, Status::Ok, "found is installed, as for install.ps1");
+        assert_eq!(by_id(&d, "python").detail, "Pas encore installé : je l'installe pour toi.");
+    }
+
+    /// winget absent while Python or Git is missing: install.ps1 would stop on Python, or go on
+    /// without Git, minutes into the install. Said in red before it, the Store's names in French and
+    /// in English, right after the tools it would bring.
+    #[cfg(windows)]
+    #[test]
+    fn no_winget_is_said_before_the_install() {
+        let tmp = tempfile::tempdir().unwrap();
+        let d = decide(tmp.path(), &Facts { winget: Some(Found::Absent), ..fresh_facts() });
+        assert!(!d.can_install);
+        let w = by_id(&d, "winget");
+        assert_eq!((w.status, w.fix.as_deref(), w.label.as_str()), (Status::Error, None, "Outil d'installation de Microsoft"));
+        assert!(w.detail.contains("installer Python et Git."), "{}", w.detail);
+        for said in ["« Programme d'installation d'application (App Installer) »", "« Obtenir (Get) »", "« Mettre à jour (Update) »", "Revérifier"] {
+            assert!(w.detail.contains(said), "{said}: {}", w.detail);
+        }
+        assert!(by_id(&d, "python").detail.contains("juste en dessous"));
+        let ids: Vec<&str> = d.checks.iter().map(|c| c.id.as_str()).collect();
+        assert_eq!(ids.iter().position(|id| *id == "winget"), ids.iter().position(|id| *id == "git").map(|g| g + 1), "{ids:?}");
+        assert!(d.headline.starts_with("Une chose bloque"), "{}", d.headline);
+
+        let git_alone = Facts { python: healthy_facts().python, winget: Some(Found::Absent), ..fresh_facts() };
+        assert!(by_id(&decide(tmp.path(), &git_alone), "winget").detail.contains("installer Git."));
+        // winget there, or not looked for (Python and Git there): no line.
+        for winget in [Some(Found::Version("v1.9.25200".into())), None] {
+            let d = decide(tmp.path(), &Facts { winget, ..fresh_facts() });
+            assert!(d.checks.iter().all(|c| c.id != "winget"), "{:?}", d.checks);
+            assert!(d.can_install);
+        }
+        assert!(check_winget(false, false, Some(&Found::Absent)).is_none());
     }
 
     #[cfg(windows)]
