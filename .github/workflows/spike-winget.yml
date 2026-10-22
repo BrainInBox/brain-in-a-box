@@ -128,6 +128,19 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: No Git, no Python 3.14.8 for all users (the image's toolcache one made Python's installer ask for elevation)
+        run: |
+          & .github/ci/sans-git.ps1 -Preuve "$env:RUNNER_TEMP\sans-git.json"
+          $u = @(Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*', 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue |
+                 Where-Object { $_.DisplayName -like 'Python 3.14.8 (64-bit)' -and $_.BundleCachePath })
+          foreach ($b in $u) {
+            "uninstall $($b.DisplayName): $($b.BundleCachePath)"
+            $p = Start-Process -FilePath $b.BundleCachePath -ArgumentList '/uninstall', '/quiet' -Wait -PassThru
+            "code $($p.ExitCode)"
+          }
+          Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like 'Python 3.14*' } | ForEach-Object { "left: $($_.DisplayName)" }
+          "UAC: EnableLUA=$((Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System').EnableLUA) ConsentPromptBehaviorUser=$((Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System').ConsentPromptBehaviorUser)"
+
       - name: The official installers as a standard user, each with its log and a time limit
         run: |
           $chars = [char[]]'abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789'
