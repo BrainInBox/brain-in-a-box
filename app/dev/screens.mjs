@@ -585,6 +585,12 @@ if (!args.includes('--app')) {
   }
 }
 differ += compare(GOLDEN, want, got);
+// bibo.js (not loaded here) builds on these parts of the drawing: one renamed, and Bibo stands still.
+for (const part of ['b-body', 'b-brain', 'b-front', 'b-bubbles']) {
+  if (uiText.includes(`class="${part}"`)) continue;
+  differ += 1;
+  console.log(`FAIL BIBO_SVG has no class="${part}", which bibo.js needs`);
+}
 if (guide.size) {
   // A scenario that does not get to its screen is a failure, whatever the golden file says.
   for (const [q, shots] of guide) {

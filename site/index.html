@@ -47,7 +47,54 @@
 
 <section class="hero" aria-labelledby="titre">
   <div class="wrap hero-in">
-    <img class="hero-bibo" src="img/bibo.svg" alt="Bibo, la mascotte : un cerveau rose souriant qui sort d'un carton." width="128" height="128">
+    <!-- img/bibo.svg, inline so style.css can bring Bibo out of his box (no inline style or script: the CSP allows
+         none). app.js only sets --gx and --gy, where his eyes look; without it, he looks ahead. -->
+    <svg class="hero-bibo" viewBox="14 26 212 212" width="128" height="128" role="img" aria-label="Bibo, la mascotte : un cerveau rose souriant qui sort d'un carton." focusable="false">
+      <defs><clipPath id="hb-cut"><rect x="0" y="0" width="240" height="139"/></clipPath></defs>
+      <ellipse cx="120" cy="211" rx="76" ry="7" fill="#3b2418" opacity=".16"/>
+      <g class="hb-box" stroke="#4b2e2b" stroke-width="3" stroke-linejoin="round" stroke-linecap="round">
+        <path d="M46 138 L60 124 L180 124 L194 138 Z" fill="#9c6136"/>
+        <path class="hb-flap-l" d="M46 138 L60 124 L36 104 L20 119 Z" fill="#d8955a"/>
+        <path class="hb-flap-r" d="M194 138 L180 124 L204 104 L220 119 Z" fill="#d8955a"/>
+        <g clip-path="url(#hb-cut)"><g class="hb-rise">
+          <path d="M70 142 C62 128 58 110 66 96 C62 78 72 64 88 62 C92 46 112 40 120 48 C128 40 148 46 152 62 C168 64 178 78 174 96 C182 110 178 128 170 142 Z" fill="#f7a9c4"/>
+          <g fill="none" stroke="#da6f98">
+            <path d="M120 50 C116 56 124 61 120 68"/>
+            <path d="M96 58 C102 53 110 55 112 62"/>
+            <path d="M128 62 C130 55 138 53 144 58"/>
+            <path d="M70 90 C70 80 77 74 85 74"/>
+            <path d="M170 90 C170 80 163 74 155 74"/>
+          </g>
+          <ellipse cx="97" cy="51" rx="6" ry="3" transform="rotate(-24 97 51)" fill="#fff" opacity=".7" stroke="none"/>
+          <g fill="#ff7fa6" opacity=".55" stroke="none">
+            <ellipse cx="79" cy="119" rx="8" ry="5"/>
+            <ellipse cx="161" cy="119" rx="8" ry="5"/>
+          </g>
+          <g class="hb-eyes">
+            <ellipse cx="100" cy="102" rx="14" ry="16.5" fill="#fff"/>
+            <ellipse cx="140" cy="102" rx="14" ry="16.5" fill="#fff"/>
+            <g class="hb-pupils" stroke="none">
+              <ellipse cx="101" cy="104" rx="8.5" ry="10.5" fill="#2b1a1e"/>
+              <ellipse cx="141" cy="104" rx="8.5" ry="10.5" fill="#2b1a1e"/>
+              <circle cx="104.5" cy="99" r="3.4" fill="#fff"/>
+              <circle cx="144.5" cy="99" r="3.4" fill="#fff"/>
+              <circle cx="98" cy="109.5" r="1.6" fill="#fff"/>
+              <circle cx="138" cy="109.5" r="1.6" fill="#fff"/>
+            </g>
+          </g>
+          <path d="M113 124 Q120 131 127 124" fill="none"/>
+        </g></g>
+        <rect x="46" y="138" width="148" height="66" rx="7" fill="#e7a96b"/>
+        <rect x="50" y="141.5" width="140" height="5" rx="2.5" fill="#f2c08a" stroke="none"/>
+        <path d="M120 188 C105 178 107 164 115.5 165 C118 165.4 119.5 167 120 169.5 C120.5 167 122 165.4 124.5 165 C133 164 135 178 120 188 Z" fill="#f7a9c4" stroke-width="2.5"/>
+        <g class="hb-lid">
+          <path class="hb-lid-l" d="M46 138 L60 124 L120 124 L120 138 Z" fill="#d8955a"/>
+          <path class="hb-lid-r" d="M194 138 L180 124 L120 124 L120 138 Z" fill="#d8955a"/>
+          <path class="hb-tape" d="M112 123 H128 V152 H112 Z" fill="#f2c08a" stroke-width="2.5"/>
+        </g>
+        <g class="hb-arm"><path d="M174 128 C186 122 194 108 195 96" fill="none" stroke="#4b2e2b" stroke-width="11" stroke-linecap="round"/><g transform="translate(195 91) rotate(12)"><circle cx="0" cy="1" r="7" fill="#4b2e2b" stroke="#4b2e2b" stroke-width="6"/><path d="M-5 -2L-8 -11" fill="none" stroke="#4b2e2b" stroke-width="10.5" stroke-linecap="round"/><path d="M0 -3L0 -13" fill="none" stroke="#4b2e2b" stroke-width="10.5" stroke-linecap="round"/><path d="M5 -2L8 -11" fill="none" stroke="#4b2e2b" stroke-width="10.5" stroke-linecap="round"/><path d="M5 4L12 1" fill="none" stroke="#4b2e2b" stroke-width="10.5" stroke-linecap="round"/></g><path d="M174 128 C186 122 194 108 195 96" fill="none" stroke="#f7a9c4" stroke-width="5" stroke-linecap="round"/><circle cx="174" cy="128" r="5" fill="#f7a9c4" stroke="none"/><g transform="translate(195 91) rotate(12)"><circle cx="0" cy="1" r="7" fill="#f7a9c4" stroke="none"/><path d="M-5 -2L-8 -11" fill="none" stroke="#f7a9c4" stroke-width="4.5" stroke-linecap="round"/><path d="M0 -3L0 -13" fill="none" stroke="#f7a9c4" stroke-width="4.5" stroke-linecap="round"/><path d="M5 -2L8 -11" fill="none" stroke="#f7a9c4" stroke-width="4.5" stroke-linecap="round"/><path d="M5 4L12 1" fill="none" stroke="#f7a9c4" stroke-width="4.5" stroke-linecap="round"/></g></g>
+      </g>
+    </svg>
     <p class="tag tag-pink-blue">Préversion · open source</p>
     <h1 id="titre"><span class="h1-line">Un second cerveau pour Claude,</span> <span class="h1-line">installé par Bibo.</span></h1>
     <p class="lead">Brain in a Box donne une mémoire à Claude Code&nbsp;: il retient ce que tu lui apprends, résume tes journées dans tes notes et retrouve ce que tu y as écrit. Bibo installe tout en 10 à 20 minutes, sans une seule commande à taper.</p>
