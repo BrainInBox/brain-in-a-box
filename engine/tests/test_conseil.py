@@ -173,7 +173,7 @@ class Conseil(unittest.TestCase):
     def test_a_chatgpt_user_is_told_which_subscription(self):
         self.app("ChatGPT")
         p = self.ask()["phrase"]
-        self.assertIn("Il te faut Claude Pro (environ 20 € par mois), en plus de ChatGPT ou à sa place.", p)
+        self.assertIn("Il te faut Claude Pro (environ 20\u00a0€ par mois), en plus de ChatGPT ou à sa place.", p)
         self.assertIn("ce que ChatGPT sait de toi", p)
         for phrase in _conseil.REGLES["phrases"].values():
             self.assertNotIn(" y apporter", phrase)
@@ -181,31 +181,39 @@ class Conseil(unittest.TestCase):
     def test_the_price_is_said_and_nothing_promised_while_codex_is_closed(self):
         p = _conseil.REGLES["phrases"]
         for key in ("rien", "claude_vu", "chatgpt"):
-            self.assertIn("Claude Pro (environ 20 € par mois)", p[key], key)
+            # A no-break space: « 20 » and « € » stay on one line.
+            self.assertIn("Claude Pro (environ 20\u00a0€ par mois)", p[key], key)
         for key, phrase in p.items():
-            self.assertNotIn("bientôt", phrase, key)
-            self.assertNotIn("il te faudra", phrase, key)
+            for wrong in ("bientôt", "il te faudra", "Il lui faut", "20 €"):
+                self.assertNotIn(wrong, phrase, key)
         closed = {r["phrase"] for r in _conseil.REGLES["regles"] if r["si"].get("porte") is False}
         self.assertFalse([k for k in closed if "Codex" in p[k]], closed)
 
     def test_only_a_subscription_counts_as_logged_in(self):
         status = '{"loggedIn": true, "authMethod": "claude.ai", "subscriptionType": %s}'
-        for plan in ('"pro"', '"max"', '"team"', '"enterprise"'):
+        # claude.ai, its plan read or not: Claude Code says null for a free account as for a plan it
+        # has not read yet (its profile not fetched), and counts null as a plan itself.
+        for plan in ('"pro"', '"max"', '"team"', '"enterprise"', "null"):
             self.assertEqual(_conseil.connexion(status % plan), "abonne", plan)
-        for plan in ("null", '""', '"free"'):
-            self.assertEqual(_conseil.connexion(status % plan), "gratuit", plan)
-        # A Claude Code that does not say its plan: its claude.ai login is taken, as before.
         self.assertEqual(_conseil.connexion('{"authMethod": "claude.ai"}'), "abonne")
-        self.assertEqual(_conseil.connexion('note\n{"authMethod": "oauth_token"}'), "abonne")
+        # "oauth_token" is any token given to Claude Code: the setup-token of a subscription, or a
+        # gateway's ANTHROPIC_AUTH_TOKEN, billed.
+        self.assertEqual(_conseil.connexion('note\n{"authMethod": "oauth_token"}', jeton=True), "abonne")
+        self.assertEqual(_conseil.connexion('note\n{"authMethod": "oauth_token"}'), "facture")
         for billed in ("api_key", "api_key_helper", "third_party"):
             self.assertEqual(_conseil.connexion('{"authMethod": "%s"}' % billed), "facture", billed)
         for nothing in ('{"authMethod": "none"}', '{"loggedIn": true}', '{"authMethod": 4}', "Not logged in", "", "{oops", None):
             self.assertIsNone(_conseil.connexion(nothing), nothing)
-        # A free account, as `claude auth status` says it: Claude is used, not with a subscription.
+        # Through `claude auth status`, run as the questions are: the setup-token reaches it when it is
+        # set, and only then is "oauth_token" a subscription.
         p = _conseil.REGLES["phrases"]
-        c = self.ask(claude=self.says(status % "null"))
+        oauth = self.says('{"loggedIn": true, "authMethod": "oauth_token"}')
+        c = self.ask(claude=oauth)
         self.assertEqual((c["vu"]["claude"], c["vu"]["claude_connecte"], c["phrase"]), (True, False, p["claude_vu"]))
-        c = self.ask(claude=self.says(status % '"pro"'))
+        os.environ["CLAUDE_CODE_OAUTH_TOKEN"] = "fake-setup-token-for-the-tests"
+        c = self.ask(claude=oauth)
+        self.assertEqual((c["vu"]["claude_connecte"], c["phrase"]), (True, p["claude_connecte"]))
+        c = self.ask(claude=self.says(status % "null"))
         self.assertEqual((c["vu"]["claude_connecte"], c["phrase"]), (True, p["claude_connecte"]))
 
     def test_no_login_file_is_ever_opened(self):

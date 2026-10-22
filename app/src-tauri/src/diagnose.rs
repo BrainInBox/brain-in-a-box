@@ -41,9 +41,13 @@ const CHATGPT: &str = "https://chatgpt.com";
 const DISK_BLOCKING_GB: f64 = 3.0;
 const DISK_TIGHT_GB: f64 = 10.0;
 const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
-/// A file the install downloads from GitHub (Obsidian's), of which 2 Mo are timed, for 5 s at most.
+/// A file the install downloads from GitHub (Obsidian's, the Mac step's own: a test holds them
+/// equal), of which 2 Mo are timed, for 8 s at most.
 const SPEED_URL: &str = "https://github.com/obsidianmd/obsidian-releases/releases/download/v1.14.4/Obsidian-1.14.4.dmg";
 const SPEED_BYTES: u64 = 2 * 1024 * 1024;
+/// Cut before the 2 Mo, a download says the network's speed only after this long: before, the
+/// connection is still speeding up (on a satellite link, the first seconds go to the handshakes).
+const SPEED_MIN_SECONDS: f64 = 3.0;
 /// 2 Mbit/s: below, the downloads of a first install take an hour or more.
 const SLOW_BYTES_PER_S: f64 = 250_000.0;
 /// Without a measure, what most connections give (20 Mbit/s).
@@ -313,10 +317,10 @@ fn probe(home: &Path) -> Facts {
 
         let python = detect::python();
         let git = detect::git();
-        let winget = (python.is_none() || git == Found::Absent).then(detect::winget);
         let bun = detect::bun(home);
         let claude = if claude { detect::claude() } else { Found::Absent };
         let obsidian = detect::obsidian(home);
+        let winget = (python.is_none() || git == Found::Absent || obsidian == Found::Absent).then(detect::winget);
         let system = system.join().unwrap_or_default();
         let facts = Facts {
             windows: system.version,
@@ -501,7 +505,7 @@ fn http_code(out: &str) -> Option<u16> {
     out.trim().parse::<u16>().ok().filter(|c| *c > 0)
 }
 
-/// Bytes per second of 2 Mo from GitHub, or what came of them in 5 s. None when the file did not
+/// Bytes per second of 2 Mo from GitHub, or what came of them in 8 s. None when the file did not
 /// come (no curl yet, no network, a filter): the network check says why.
 fn speed() -> Option<f64> {
     if !sys::is_executable(&sys::curl()) {
@@ -511,19 +515,23 @@ fn speed() -> Option<f64> {
     // --max-filesize: a server that would send the whole file instead of the range is not waited for.
     let max = (SPEED_BYTES + SPEED_BYTES / 2).to_string();
     let args = [
-        "-sS", "-L", "-r", &range, "--max-filesize", &max, "-o", sys::NULL_DEVICE, "-m", "5", "-w",
+        "-sS", "-L", "-r", &range, "--max-filesize", &max, "-o", sys::NULL_DEVICE, "-m", "8", "-w",
         "%{http_code} %{size_download} %{time_starttransfer} %{time_total}", SPEED_URL,
     ];
-    parse_speed(&sys::run(&sys::curl(), &args, Duration::from_secs(8)).stdout)
+    parse_speed(&sys::run(&sys::curl(), &args, PROBE_TIMEOUT).stdout)
 }
 
 /// curl's "206 2097152 0.112 0.146": bytes over the time they took to come, from the first one
-/// (the connection and the redirect to GitHub's servers are not the network's speed).
+/// (the connection and the redirect to GitHub's servers are not the network's speed). Cut by the
+/// time limit after less than SPEED_MIN_SECONDS of data, it says nothing.
 fn parse_speed(out: &str) -> Option<f64> {
     let mut fields = out.split_whitespace().map(str::parse::<f64>);
     let mut next = || fields.next()?.ok();
     let (code, bytes, start, total) = (next()?, next()?, next()?, next()?);
     if !(code == 200.0 || code == 206.0) || bytes <= 0.0 {
+        return None;
+    }
+    if bytes < SPEED_BYTES as f64 && total - start < SPEED_MIN_SECONDS {
         return None;
     }
     Some(bytes / (total - start).max(0.05))
@@ -541,11 +549,13 @@ fn decide(home: &Path, f: &Facts) -> Diagnosis {
     let tools = vec![check_clt(f.clt)];
     #[cfg(target_os = "linux")]
     let tools = vec![check_paquets(&f.linux)];
+    // Looked for only when something it brings is missing: there, or not needed.
+    #[cfg(windows)]
+    let winget = f.winget.as_ref().is_none_or(Found::answers);
     #[cfg(windows)]
     let tools = {
-        let winget = f.winget.as_ref().is_none_or(Found::answers);
         let mut tools = vec![check_python(f.python.as_ref(), winget), check_git(&f.git, winget)];
-        tools.extend(check_winget(f.python.is_none(), f.git == Found::Absent, f.winget.as_ref()));
+        tools.extend(check_winget(f.python.is_none(), f.git == Found::Absent, f.obsidian == Found::Absent, winget));
         tools
     };
     let hosts = hosts(f);
@@ -567,8 +577,10 @@ fn decide(home: &Path, f: &Facts) -> Diagnosis {
         checks.push(AGENTS_TO_RECORD.is(Status::Missing, "Je le note en installant ton cerveau."));
     }
     checks.extend([
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(target_os = "macos")]
         check_obsidian(&f.obsidian),
+        #[cfg(windows)]
+        check_obsidian_windows(&f.obsidian, winget),
         #[cfg(target_os = "linux")]
         check_obsidian_linux(&f.obsidian, f.linux.obsidian_installable),
     ]);
@@ -591,7 +603,7 @@ fn decide(home: &Path, f: &Facts) -> Diagnosis {
     let slow = f.speed.is_some_and(|s| s < SLOW_BYTES_PER_S) && download_mb > 0;
     let slow_note = slow.then(|| {
         format!(
-            "compte environ {} pour tout télécharger ({}). En données mobiles, attends d'avoir un Wi-Fi.",
+            "compte {} en tout, avec {} à télécharger. En données mobiles, attends d'avoir un Wi-Fi.",
             fmt_minutes(minutes),
             fmt_mb(download_mb)
         )
@@ -786,48 +798,67 @@ fn check_python(found: Option<&detect::Python>, winget: bool) -> Check {
     }
 }
 
-/// Found is installed, as for install.ps1, even when it does not tell its version.
+/// Found is installed, as for install.ps1, even when it does not tell its version. Without winget,
+/// install.ps1 goes on without it.
 #[cfg(windows)]
 fn check_git(found: &Found, winget: bool) -> Check {
     match found {
-        Found::Absent => GIT.is(Status::Missing, not_yet_installed(winget)),
+        Found::Absent if winget => GIT.is(Status::Missing, not_yet_installed(true)),
+        Found::Absent => GIT.is(Status::Warn, format!("{NO_WINGET} Sans Git, tout s'installe, mais tes notes n'auront pas d'historique.")),
         _ if found.version().is_some() => GIT.is(Status::Ok, found.label("Git")),
         _ => GIT.is(Status::Ok, "Git est installé."),
     }
 }
 
 #[cfg(windows)]
+const NO_WINGET: &str = "Pas installé : il me faut l'outil d'installation de Microsoft pour l'installer (voir sa ligne).";
+
+#[cfg(windows)]
 fn not_yet_installed(winget: bool) -> &'static str {
     if winget {
         "Pas encore installé : je l'installe pour toi."
     } else {
-        "Pas encore installé : il me faut d'abord l'outil d'installation de Microsoft (juste en dessous)."
+        "Pas encore installé : il me faut d'abord l'outil d'installation de Microsoft (voir sa ligne)."
     }
 }
 
-/// install.ps1 takes Python and Git from winget: without it, the brain step stops on Python, or
-/// goes on without Git (no history, no search memory), minutes into the install. Said only when
-/// one of them is missing and winget is absent (looked for then only). Windows' own names, in
-/// French and in English: a PC may be either.
+/// Without winget, install.ps1 brings Obsidian no more and says so at the end.
 #[cfg(windows)]
-fn check_winget(python_missing: bool, git_missing: bool, winget: Option<&Found>) -> Option<Check> {
-    let missing: Vec<String> = [(python_missing, "Python"), (git_missing, "Git")]
+fn check_obsidian_windows(found: &Found, winget: bool) -> Check {
+    match found {
+        Found::Absent if !winget => OBSIDIAN.is(Status::Warn, format!("{NO_WINGET} Sinon, il est gratuit sur obsidian.md.")),
+        _ => check_obsidian(found),
+    }
+}
+
+/// install.ps1 takes Python, Git and Obsidian from winget. Without it, the brain step stops on
+/// Python, minutes into the install: said in red before it, with python.org for a PC whose Store is
+/// closed. Git and Obsidian alone are said in orange: the install goes on without them. Windows' own
+/// names, in French and in English: a PC may be either.
+#[cfg(windows)]
+fn check_winget(python_missing: bool, git_missing: bool, obsidian_missing: bool, winget: bool) -> Option<Check> {
+    let missing: Vec<String> = [(python_missing, "Python"), (git_missing, "Git"), (obsidian_missing, "Obsidian")]
         .into_iter()
         .filter(|(m, _)| *m)
         .map(|(_, name)| name.to_string())
         .collect();
-    if missing.is_empty() || winget.is_none_or(Found::answers) {
+    if missing.is_empty() || winget {
         return None;
     }
-    Some(WINGET.is(
-        Status::Error,
-        format!(
-            "Il me manque l'outil d'installation de Microsoft pour installer {}. Ouvre le Microsoft Store, \
-             cherche « Programme d'installation d'application (App Installer) », clique sur « Obtenir (Get) » \
-             ou « Mettre à jour (Update) », puis sur Revérifier.",
-            steps::list_fr(&missing)
-        ),
-    ))
+    let store = "Ouvre le Microsoft Store, cherche « Programme d'installation d'application (App Installer) », \
+                 clique sur « Obtenir (Get) » ou « Mettre à jour (Update) », puis sur Revérifier.";
+    let what = steps::list_fr(&missing);
+    Some(if python_missing {
+        WINGET.is(
+            Status::Error,
+            format!(
+                "Il me manque l'outil d'installation de Microsoft pour installer {what}. {store} Store bloqué (PC du \
+                 travail) ? Installe Python depuis python.org, ou demande au service informatique."
+            ),
+        )
+    } else {
+        WINGET.is(Status::Warn, format!("Il me manque l'outil d'installation de Microsoft pour installer {what} : je continue sans. {store}"))
+    })
 }
 
 fn check_bun(found: &Found) -> Check {
@@ -860,23 +891,18 @@ fn check_claude(found: &Found) -> Check {
     }
 }
 
-/// Only a subscription is used (never a login billed per use): a free account or an API key is said,
+/// Only a subscription is used (never a login billed per use): a login billed per use is said,
 /// without blocking. A developer billed on purpose installs all the same.
 fn check_claude_auth(claude_works: bool, login: ClaudeLogin) -> Check {
     match (claude_works, login) {
         (false, _) => CLAUDE_AUTH.is(Status::Missing, "Tu te connecteras une fois Claude Code installé."),
-        (true, ClaudeLogin::Subscribed) => CLAUDE_AUTH.is(Status::Ok, "Tu es connecté avec ton abonnement."),
+        (true, ClaudeLogin::Subscribed) => CLAUDE_AUTH.is(Status::Ok, "Tu es connecté."),
         (true, ClaudeLogin::LoggedOut) => CLAUDE_AUTH.is(Status::Missing, "Pas encore connecté. Tu le feras en un clic."),
-        (true, ClaudeLogin::Free) => CLAUDE_AUTH.is(
-            Status::Warn,
-            "Ton compte Claude n'a pas d'abonnement : Claude Code a besoin de Claude Pro (environ 20 € par mois) \
-             ou Max. Abonne-toi sur claude.ai, puis reconnecte-toi quand je te le propose.",
-        ),
         (true, ClaudeLogin::Billed) => CLAUDE_AUTH.is(
             Status::Warn,
             "Claude Code est connecté avec une clé API, facturée à chaque message : je ne m'en sers ni pour le guide \
              ni pour le résumé du soir. Connecte plutôt ton abonnement Claude Pro ou Max. Développeur et c'est voulu ? \
-             Continue quand même : tout le reste s'installe.",
+             Rien ne bloque : tout le reste s'installe.",
         ),
     }
 }
@@ -1072,27 +1098,29 @@ fn minutes(todo: &[String], download_mb: u32, speed: Option<f64>) -> u32 {
     work + download.ceil() as u32
 }
 
-/// « 15 minutes », « 1 h 30 », « plusieurs heures »: rounded, after « environ ».
+/// « environ 15 minutes », « environ 1 h 30 », « plusieurs heures »: rounded, a no-break space
+/// between a number and its unit.
 fn fmt_minutes(m: u32) -> String {
     match m {
-        0..=57 => format!("{} minutes", ((m + 2) / 5 * 5).max(5)),
+        0..=57 => format!("environ {}\u{a0}minutes", ((m + 2) / 5 * 5).max(5)),
         58..=299 => match (m + 5) / 10 * 10 {
-            r if r % 60 == 0 => format!("{} h", r / 60),
-            r => format!("{} h {}", r / 60, r % 60),
+            r if r % 60 == 0 => format!("environ {}\u{a0}h", r / 60),
+            r => format!("environ {}\u{a0}h\u{a0}{}", r / 60, r % 60),
         },
         _ => "plusieurs heures".into(),
     }
 }
 
-/// « 900 Mo », « 1,5 Go »: rounded up, after « environ ».
+/// « 900 Mo », « 1,5 Go »: rounded up (after « environ »), a no-break space before the unit.
 fn fmt_mb(mb: u32) -> String {
-    if mb < 1000 {
-        return format!("{} Mo", mb.div_ceil(50).max(1) * 50);
+    let fifties = mb.div_ceil(50).max(1) * 50;
+    if fifties < 1000 {
+        return format!("{fifties}\u{a0}Mo");
     }
     let tenths = mb.div_ceil(100);
     match tenths % 10 {
-        0 => format!("{} Go", tenths / 10),
-        d => format!("{},{d} Go", tenths / 10),
+        0 => format!("{}\u{a0}Go", tenths / 10),
+        d => format!("{},{d}\u{a0}Go", tenths / 10),
     }
 }
 
@@ -1134,11 +1162,11 @@ fn headline(checks: &[Check], todo: &[String], download_mb: u32, minutes: u32, s
     let (what, time, size) = (installing(todo), fmt_minutes(minutes), fmt_mb(download_mb));
     if slow {
         format!(
-            "Ton {machine} est prêt, mais ta connexion est lente. J'installe {what} : compte environ {time}, avec {size} \
+            "Ton {machine} est prêt, mais ta connexion est lente. J'installe {what} : compte {time}, avec {size} \
              à télécharger. En données mobiles, attends d'avoir un Wi-Fi."
         )
     } else {
-        format!("Ton {machine} est prêt. J'installe {what} : environ {time} et {size} à télécharger. Branche-toi sur un Wi-Fi si tu peux.")
+        format!("Ton {machine} est prêt. J'installe {what} : {time} et {size} à télécharger. Branche-toi sur un Wi-Fi si tu peux.")
     }
 }
 
@@ -1354,23 +1382,20 @@ mod tests {
         assert_eq!(check_claude_auth(true, ClaudeLogin::Subscribed).status, Status::Ok);
     }
 
-    /// A free account or a login billed per use is not « connecté » : said, never blocking, and the
-    /// developer billed on purpose is told to go on.
+    /// A login billed per use is not a subscription: said, never blocking, and the developer billed
+    /// on purpose is told nothing stops.
     #[test]
     fn only_a_subscription_is_a_login() {
-        let free = check_claude_auth(true, ClaudeLogin::Free);
-        assert_eq!((free.status, free.fix), (Status::Warn, None));
-        assert!(free.detail.contains("n'a pas d'abonnement") && free.detail.contains("environ 20 € par mois"), "{}", free.detail);
         let billed = check_claude_auth(true, ClaudeLogin::Billed);
         assert_eq!((billed.status, billed.fix), (Status::Warn, None));
-        assert!(billed.detail.contains("clé API") && billed.detail.contains("Continue quand même"), "{}", billed.detail);
+        assert!(billed.detail.contains("clé API") && billed.detail.contains("Rien ne bloque"), "{}", billed.detail);
+        // No button is named so: the text must not send the user looking for one.
+        assert!(!billed.detail.contains("Continue quand même"), "{}", billed.detail);
         let tmp = tempfile::tempdir().unwrap();
         fake_brain(tmp.path());
-        for login in [ClaudeLogin::Free, ClaudeLogin::Billed] {
-            let d = decide(tmp.path(), &Facts { claude_login: login, ..healthy_facts() });
-            assert!(d.can_install && d.todo.is_empty(), "{login:?}");
-            assert_eq!(by_id(&d, "claude_auth").status, Status::Warn);
-        }
+        let d = decide(tmp.path(), &Facts { claude_login: ClaudeLogin::Billed, ..healthy_facts() });
+        assert!(d.can_install && d.todo.is_empty());
+        assert_eq!(by_id(&d, "claude_auth").status, Status::Warn);
     }
 
     #[test]
@@ -1629,8 +1654,15 @@ mod tests {
         assert_eq!(net.status, Status::Warn);
         assert!(net.detail.contains("mais lentement : compte environ ") && net.detail.contains("En données mobiles"), "{}", net.detail);
         assert!(d.minutes > 60, "{}", d.minutes);
-        assert!(net.detail.contains(&fmt_minutes(d.minutes)) && net.detail.contains(&fmt_mb(d.download_mb)), "{}", net.detail);
+        // The time is the whole install's (downloads and work), the volume the downloads'.
+        let whole = format!("compte {} en tout, avec {} à télécharger.", fmt_minutes(d.minutes), fmt_mb(d.download_mb));
+        assert!(net.detail.contains(&whole), "{}", net.detail);
         assert!(d.headline.contains("ta connexion est lente") && d.headline.contains("attends d'avoir un Wi-Fi"), "{}", d.headline);
+        // Past 5 h: « plusieurs heures », with no « environ » before it.
+        let crawling = decide(tmp.path(), &Facts { speed: Some(20_000.0), ..fresh_facts() });
+        for said in [&by_id(&crawling, "network").detail, &crawling.headline] {
+            assert!(said.contains("compte plusieurs heures") && !said.contains("environ plusieurs"), "{said}");
+        }
         // Fast, or nothing left to download: nothing said of the speed.
         let fast = decide(tmp.path(), &Facts { speed: Some(5_000_000.0), ..fresh_facts() });
         assert_eq!(by_id(&fast, "network").status, Status::Ok);
@@ -1651,17 +1683,34 @@ mod tests {
         for nothing in ["000 0 0 0", "403 1234 0.1 0.2", "206 0 0 5.0", "206 12", "", "abc 1 2 3"] {
             assert_eq!(parse_speed(nothing), None, "{nothing}");
         }
+        // A satellite link: 3.6 s of handshakes and redirect, then 300 Ko in the 1.4 s left, still
+        // speeding up. Nothing said, rather than « compte environ 4 h » on a fast enough network.
+        assert_eq!(parse_speed("206 300000 3.6 5.0"), None);
+        assert_eq!(parse_speed("206 400000 5.1 8.0"), None);
+        // Cut after 3 s of data or more, the speed holds.
+        assert!(parse_speed("206 900000 4.0 8.0").is_some_and(|s| (220_000.0..230_000.0).contains(&s)));
+    }
+
+    /// The speed is measured on the file the Mac step downloads: moving Obsidian on moves both, and a
+    /// file gone (404) would leave the measure silent for good.
+    #[test]
+    fn the_speed_is_measured_on_the_file_the_mac_step_downloads() {
+        let steps = include_str!("steps.rs");
+        assert!(steps.contains(&format!("const OBSIDIAN_URL: &str = \"{SPEED_URL}\";")), "{SPEED_URL}");
     }
 
     #[test]
     fn durations_and_sizes_read_simply() {
-        let m = |n| fmt_minutes(n);
+        // A no-break space between a number and its unit (shown here as « _ »): « 20 » and « Mo »
+        // never part at the end of a line. Past 5 h, no « environ ».
+        let m = |n| fmt_minutes(n).replace('\u{a0}', "_");
         assert_eq!([m(1), m(12), m(13), m(57), m(58), m(95), m(120), m(299), m(300)], [
-            "5 minutes", "10 minutes", "15 minutes", "55 minutes", "1 h", "1 h 40", "2 h", "5 h", "plusieurs heures"
+            "environ 5_minutes", "environ 10_minutes", "environ 15_minutes", "environ 55_minutes", "environ 1_h",
+            "environ 1_h_40", "environ 2_h", "environ 5_h", "plusieurs heures"
         ]);
-        let mb = |n| fmt_mb(n);
-        assert_eq!([mb(1), mb(30), mb(890), mb(950), mb(999), mb(1000), mb(1480), mb(2000)], [
-            "50 Mo", "50 Mo", "900 Mo", "950 Mo", "1000 Mo", "1 Go", "1,5 Go", "2 Go"
+        let mb = |n| fmt_mb(n).replace('\u{a0}', "_");
+        assert_eq!([mb(1), mb(30), mb(890), mb(950), mb(951), mb(999), mb(1000), mb(1480), mb(2000)], [
+            "50_Mo", "50_Mo", "900_Mo", "950_Mo", "1_Go", "1_Go", "1_Go", "1,5_Go", "2_Go"
         ]);
         let todo = |s: &[&str]| s.iter().map(|x| x.to_string()).collect::<Vec<_>>();
         assert_eq!(installing(&todo(&["claude", "clt", "bun", "obsidian", "brain"])), "Claude et ton cerveau");
@@ -1875,9 +1924,9 @@ mod tests {
         assert_eq!(by_id(&d, "python").detail, "Pas encore installé : je l'installe pour toi.");
     }
 
-    /// winget absent while Python or Git is missing: install.ps1 would stop on Python, or go on
-    /// without Git, minutes into the install. Said in red before it, the Store's names in French and
-    /// in English, right after the tools it would bring.
+    /// winget absent while Python is missing: install.ps1 would stop on Python minutes into the
+    /// install. Said in red before it, the Store's names in French and in English, and python.org for
+    /// a PC whose Store is closed.
     #[cfg(windows)]
     #[test]
     fn no_winget_is_said_before_the_install() {
@@ -1886,24 +1935,40 @@ mod tests {
         assert!(!d.can_install);
         let w = by_id(&d, "winget");
         assert_eq!((w.status, w.fix.as_deref(), w.label.as_str()), (Status::Error, None, "Outil d'installation de Microsoft"));
-        assert!(w.detail.contains("installer Python et Git."), "{}", w.detail);
-        for said in ["« Programme d'installation d'application (App Installer) »", "« Obtenir (Get) »", "« Mettre à jour (Update) »", "Revérifier"] {
+        assert!(w.detail.contains("installer Python, Git et Obsidian."), "{}", w.detail);
+        for said in [
+            "« Programme d'installation d'application (App Installer) »", "« Obtenir (Get) »", "« Mettre à jour (Update) »",
+            "Revérifier", "Store bloqué (PC du travail) ? Installe Python depuis python.org",
+        ] {
             assert!(w.detail.contains(said), "{said}: {}", w.detail);
         }
-        assert!(by_id(&d, "python").detail.contains("juste en dessous"));
-        let ids: Vec<&str> = d.checks.iter().map(|c| c.id.as_str()).collect();
-        assert_eq!(ids.iter().position(|id| *id == "winget"), ids.iter().position(|id| *id == "git").map(|g| g + 1), "{ids:?}");
+        // Each line points to it by name, wherever it stands.
+        for id in ["python", "git", "obsidian"] {
+            assert!(by_id(&d, id).detail.contains("l'outil d'installation de Microsoft (voir sa ligne)"), "{id}");
+            assert!(!by_id(&d, id).detail.contains("juste en dessous"), "{id}");
+        }
         assert!(d.headline.starts_with("Une chose bloque"), "{}", d.headline);
 
+        // Python there: install.ps1 goes on without Git and Obsidian. Said in orange, nothing blocks,
+        // and what will not come is not counted in the download.
         let git_alone = Facts { python: healthy_facts().python, winget: Some(Found::Absent), ..fresh_facts() };
-        assert!(by_id(&decide(tmp.path(), &git_alone), "winget").detail.contains("installer Git."));
-        // winget there, or not looked for (Python and Git there): no line.
+        let d = decide(tmp.path(), &git_alone);
+        assert!(d.can_install, "{:?}", d.checks);
+        let w = by_id(&d, "winget");
+        assert_eq!(w.status, Status::Warn);
+        assert!(w.detail.contains("installer Git et Obsidian : je continue sans.") && !w.detail.contains("python.org"), "{}", w.detail);
+        assert_eq!((by_id(&d, "git").status, by_id(&d, "obsidian").status), (Status::Warn, Status::Warn));
+        assert!(by_id(&d, "obsidian").detail.contains("obsidian.md"));
+        let with_winget = decide(tmp.path(), &Facts { winget: None, ..git_alone });
+        assert_eq!(d.download_mb + piece_mb("git") + piece_mb("obsidian"), with_winget.download_mb);
+
+        // winget there, or not looked for (nothing it brings is missing): no line.
         for winget in [Some(Found::Version("v1.9.25200".into())), None] {
             let d = decide(tmp.path(), &Facts { winget, ..fresh_facts() });
             assert!(d.checks.iter().all(|c| c.id != "winget"), "{:?}", d.checks);
             assert!(d.can_install);
         }
-        assert!(check_winget(false, false, Some(&Found::Absent)).is_none());
+        assert!(check_winget(false, false, false, false).is_none());
     }
 
     #[cfg(windows)]

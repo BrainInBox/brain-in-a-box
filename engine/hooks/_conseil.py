@@ -1,8 +1,7 @@
 """The advice Bibo gives at the start: which AI the brain should work with, from what is already on
 this computer (Claude Code and its login, Codex and its ChatGPT login, the ChatGPT and Claude desktop
 apps, Hermes Agent). It reads no token and opens no login file: Codex's auth.json and Hermes's .env
-are only looked for, never opened; of `claude auth status` only authMethod and subscriptionType are
-read (connexion()).
+are only looked for, never opened; of `claude auth status` only authMethod is read (connexion()).
 
 While Codex is closed on this system (_agents.py's CODEX_OUVERT, the one source), the advice never
 offers Codex, nor promises it. Brain in a Box does not install Hermes: when it is there, one
@@ -57,9 +56,9 @@ CONSEIL_JSON = r"""
   ],
   "phrases": {
     "claude_connecte": "Tu as déjà Claude Code, connecté à ton abonnement : ton cerveau travaillera avec lui.",
-    "claude_vu": "Tu utilises déjà Claude : ton cerveau travaillera avec lui. Il lui faut un abonnement Claude Pro (environ 20 € par mois) ou Max.",
-    "chatgpt": "Tu utilises ChatGPT : ton cerveau marche avec Claude. Il te faut Claude Pro (environ 20 € par mois), en plus de ChatGPT ou à sa place. À la fin, tu pourras apporter à ton cerveau ce que ChatGPT sait de toi.",
-    "rien": "Ton cerveau marche avec Claude : il te faut un abonnement Claude Pro (environ 20 € par mois) ou Max.",
+    "claude_vu": "Tu utilises déjà Claude : ton cerveau travaillera avec lui. Il te faut un abonnement Claude Pro (environ 20\u00a0€ par mois) ou Max.",
+    "chatgpt": "Tu utilises ChatGPT : ton cerveau marche avec Claude. Il te faut Claude Pro (environ 20\u00a0€ par mois), en plus de ChatGPT ou à sa place. À la fin, tu pourras apporter à ton cerveau ce que ChatGPT sait de toi.",
+    "rien": "Ton cerveau marche avec Claude : il te faut un abonnement Claude Pro (environ 20\u00a0€ par mois) ou Max.",
     "codex": "Tu utilises ChatGPT : ton cerveau peut travailler avec Codex, l'IA de ChatGPT, sur ton abonnement ChatGPT. À la fin, tu pourras apporter à ton cerveau ce que ChatGPT sait de toi.",
     "les_deux": "Tu as Claude et ChatGPT : ton cerveau peut travailler avec les deux, Claude d'abord.",
     "hermes": "J'ai vu Hermes : je ne l'installe pas et n'y touche pas. Ses meilleures compétences arrivent dans Claude avec ton cerveau.",
@@ -119,38 +118,31 @@ def _hermes_lu(home, env):
     return _existe((env.get("HERMES_DB") or "").strip() or os.path.join(home, ".hermes", "state.db"))
 
 
-def connexion(status):
-    """How `claude auth status` says Claude Code is logged in: "abonne" (claude.ai with a Pro, Max, Team or
-    Enterprise plan, or a subscription's setup-token), "gratuit" (claude.ai with no plan: a free account),
-    "facture" (billed per use: an API key, a key helper's, Bedrock or Vertex), None (nobody). Only
-    authMethod and subscriptionType are read; a Claude Code that does not say the latter is taken at its
-    claude.ai login, as before. The app reads it alike (detect.rs, login_of)."""
-    i = (status or "").find("{")
-    try:
-        v = json.JSONDecoder().raw_decode(status[i:])[0] if i >= 0 else None
-    except ValueError:
-        return None
-    methode = v.get("authMethod") if isinstance(v, dict) else None
+def connexion(status, jeton=False):
+    """How `claude auth status` says Claude Code is logged in: "abonne" (claude.ai, or the setup-token
+    of a subscription: `jeton`, CLAUDE_CODE_OAUTH_TOKEN given to it), "facture" (billed per use: an API
+    key, a key helper's, a gateway's token, Bedrock or Vertex), None (nobody). Only authMethod is read:
+    Claude Code says a claude.ai plan (subscriptionType) only once it could read it, null for a free
+    account as for a plan not read yet. The app reads it alike (detect.rs, login_of)."""
+    import _headless_claude as hc
+    methode = hc.auth_method(status)
     if not isinstance(methode, str) or methode == "none":
         return None
-    if methode == "claude.ai":
-        if "subscriptionType" not in v:
-            return "abonne"
-        plan = v["subscriptionType"]
-        return "abonne" if isinstance(plan, str) and plan not in ("", "free") else "gratuit"
-    return "abonne" if methode == "oauth_token" else "facture"
+    if methode == "claude.ai" or (methode == "oauth_token" and jeton):
+        return "abonne"
+    return "facture"
 
 
 def _connexion(argv0):
     """connexion() of `claude auth status`, run as the questions are (a private folder, an allow-list
-    environment); None when it cannot tell."""
+    environment, the setup-token in it when there is one); None when it cannot tell."""
     import _headless_claude as hc
     try:
         with hc._cage(argv0, None, None) as (work, env):
             _, out, _ = hc._capture(argv0 + ["auth", "status"], env, work)
     except (hc.HeadlessError, OSError):
         return None
-    return connexion(out)
+    return connexion(out, bool(env.get(hc.TOKEN_VAR)))
 
 
 def sondes(home=None, env=None, claude=None, codex=None, applications=None, codex_ouvert=None):

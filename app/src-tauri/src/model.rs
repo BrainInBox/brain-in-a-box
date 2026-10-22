@@ -8,7 +8,7 @@ pub enum Status {
     /// Present and working.
     Ok,
     /// Not there yet, and nothing to worry about: an install step brings it (`fix`), or the user
-    /// adds it in a click later on (the login, the search by meaning).
+    /// adds it in a click later on (the login, the search by meaning: no `fix`, shown « Plus tard »).
     Missing,
     /// Works, but something is off (old version, slow network...). Never blocks.
     Warn,

@@ -245,14 +245,12 @@ pub fn git() -> Found {
     sys::find_tool("git").map_or(Found::Absent, |bin| version_of(&bin, TIMEOUT))
 }
 
-/// winget, which install.ps1 takes Python and Git from: on the PATH, as its `Have winget` finds it,
-/// else Windows' own alias in %LOCALAPPDATA%\Microsoft\WindowsApps. Installed when it answers
-/// `--version` ("v1.9.25200"): an alias left behind by an App Installer that is gone answers nothing.
+/// winget, which install.ps1 takes Python, Git and Obsidian from: only on the PATH it is given
+/// (sys::tool_path), where its `Have winget` looks. Installed when it answers `--version`
+/// ("v1.9.25200"): an alias left behind by an App Installer that is gone answers nothing.
 #[cfg(windows)]
 pub fn winget() -> Found {
-    let alias = std::env::var_os("LOCALAPPDATA").map(|l| Path::new(&l).join(r"Microsoft\WindowsApps"));
     std::env::split_paths(&sys::tool_path())
-        .chain(alias.filter(|d| d.is_absolute()))
         .map(|d| d.join("winget.exe"))
         // An app alias is a link that cannot be read: it exists all the same, and runs.
         .filter(|p| fs::symlink_metadata(p).is_ok())
@@ -289,21 +287,33 @@ pub enum ClaudeLogin {
     /// Nobody, or Claude Code does not say.
     #[default]
     LoggedOut,
-    /// claude.ai with a Pro, Max, Team or Enterprise plan, or a subscription's setup-token.
+    /// claude.ai, or a subscription's setup-token (CLAUDE_CODE_OAUTH_TOKEN).
     Subscribed,
-    /// claude.ai with no plan: a free account, which Claude Code cannot work with.
-    Free,
-    /// Billed per use: an API key (an Anthropic Console account's too), a key helper's, Bedrock or Vertex.
+    /// Billed per use: an API key (an Anthropic Console account's too), a key helper's, a gateway's
+    /// token, Bedrock or Vertex.
     Billed,
 }
 
-/// Logged in with a subscription: what the window waits for at the login step.
+impl ClaudeLogin {
+    /// Someone is logged in, with a subscription or not: what ends the window's wait at the login
+    /// step. A login billed per use ends it too (the diagnosis says what it means), else the window
+    /// would wait for ever.
+    pub fn is_logged_in(self) -> bool {
+        self != ClaudeLogin::LoggedOut
+    }
+}
+
 pub fn claude_logged_in() -> bool {
-    claude_login() == ClaudeLogin::Subscribed
+    claude_login().is_logged_in()
 }
 
 pub fn claude_login() -> ClaudeLogin {
-    claude_auth_status().map_or(ClaudeLogin::LoggedOut, |s| login_of(&s))
+    claude_auth_status().map_or(ClaudeLogin::LoggedOut, |s| login_of(&s, setup_token_given()))
+}
+
+/// The setup-token is in the environment `claude auth status` inherits (sys::run passes it on).
+fn setup_token_given() -> bool {
+    std::env::var_os("CLAUDE_CODE_OAUTH_TOKEN").is_some_and(|t| !t.to_string_lossy().trim().is_empty())
 }
 
 /// How Claude Code is logged in: "claude.ai" for a claude.ai account, "none"
@@ -330,18 +340,15 @@ fn auth_method(status: &str) -> Option<String> {
     auth_status_json(status)?.get("authMethod").and_then(Value::as_str).map(String::from)
 }
 
-/// authMethod, and for claude.ai its subscriptionType: "pro", "max", "team" or "enterprise", null for
-/// a free account. A Claude Code that does not say it is taken at its claude.ai login, as the kit took
-/// it before. Nothing else is read. _conseil.connexion reads it alike.
-pub(crate) fn login_of(status: &str) -> ClaudeLogin {
-    let Some(v) = auth_status_json(status) else { return ClaudeLogin::LoggedOut };
-    match v.get("authMethod").and_then(Value::as_str) {
-        Some("claude.ai") => match v.get("subscriptionType") {
-            None => ClaudeLogin::Subscribed,
-            Some(Value::String(plan)) if !plan.is_empty() && plan != "free" => ClaudeLogin::Subscribed,
-            Some(_) => ClaudeLogin::Free,
-        },
-        Some("oauth_token") => ClaudeLogin::Subscribed,
+/// authMethod, and nothing else. claude.ai is a subscription: Claude Code says its plan
+/// (subscriptionType) only when it could read it, null for a free account as for a plan not read
+/// yet, and counts null as a subscription itself. "oauth_token" is any token given in the
+/// environment: the setup-token's (`setup_token`), or a gateway's ANTHROPIC_AUTH_TOKEN, billed.
+/// _conseil.connexion reads it alike.
+pub(crate) fn login_of(status: &str, setup_token: bool) -> ClaudeLogin {
+    match auth_method(status).as_deref() {
+        Some("claude.ai") => ClaudeLogin::Subscribed,
+        Some("oauth_token") if setup_token => ClaudeLogin::Subscribed,
         Some("none") | None => ClaudeLogin::LoggedOut,
         Some(_) => ClaudeLogin::Billed,
     }
@@ -879,29 +886,29 @@ pub(crate) mod tests {
         }
     }
 
-    /// Only a subscription counts as logged in: a free claude.ai account and a login billed per use
-    /// (an API key, an Anthropic Console account's) do not.
+    /// Only a subscription counts as one: claude.ai, its plan read or not (Claude Code says null for
+    /// a free account as for a plan not read yet, and counts null as a plan itself), or the
+    /// setup-token. Any other token (a gateway's) and an API key are billed per use.
     #[test]
     fn a_login_counts_only_with_a_subscription() {
         use ClaudeLogin::*;
-        assert_eq!(login_of(include_str!("../tests/fixtures/repair/auth-status-claude-ai.json")), Subscribed);
-        assert_eq!(login_of(include_str!("../tests/fixtures/repair/auth-status-none.json")), LoggedOut);
-        let claude_ai = |plan: &str| login_of(&format!(r#"{{"loggedIn":true,"authMethod":"claude.ai","subscriptionType":{plan}}}"#));
-        for plan in [r#""pro""#, r#""max""#, r#""team""#, r#""enterprise""#] {
-            assert_eq!(claude_ai(plan), Subscribed, "{plan}");
+        assert_eq!(login_of(include_str!("../tests/fixtures/repair/auth-status-claude-ai.json"), false), Subscribed);
+        assert_eq!(login_of(include_str!("../tests/fixtures/repair/auth-status-none.json"), false), LoggedOut);
+        for plan in [r#""pro""#, r#""max""#, r#""team""#, r#""enterprise""#, "null"] {
+            let said = format!(r#"{{"loggedIn":true,"authMethod":"claude.ai","subscriptionType":{plan}}}"#);
+            assert_eq!(login_of(&said, false), Subscribed, "{plan}");
         }
-        for plan in ["null", r#""""#, r#""free""#, "4"] {
-            assert_eq!(claude_ai(plan), Free, "{plan}");
-        }
-        // A Claude Code that does not say its plan: its claude.ai login is taken, as before.
-        assert_eq!(login_of(r#"{"loggedIn":true,"authMethod":"claude.ai"}"#), Subscribed);
-        assert_eq!(login_of(r#"{"loggedIn":true,"authMethod":"oauth_token"}"#), Subscribed);
+        assert_eq!(login_of(r#"{"loggedIn":true,"authMethod":"claude.ai"}"#, false), Subscribed);
+        assert_eq!(login_of(r#"{"loggedIn":true,"authMethod":"oauth_token"}"#, true), Subscribed);
+        assert_eq!(login_of(r#"{"loggedIn":true,"authMethod":"oauth_token"}"#, false), Billed);
         for billed in ["api_key", "api_key_helper", "third_party"] {
-            assert_eq!(login_of(&format!(r#"note: update available{{"authMethod":"{billed}"}}"#)), Billed, "{billed}");
+            assert_eq!(login_of(&format!(r#"note: update available{{"authMethod":"{billed}"}}"#), true), Billed, "{billed}");
         }
         for nothing in [r#"{"loggedIn":true}"#, r#"{"authMethod":4}"#, "Not logged in", "", "{oops"] {
-            assert_eq!(login_of(nothing), LoggedOut, "{nothing}");
+            assert_eq!(login_of(nothing, true), LoggedOut, "{nothing}");
         }
+        // The login step's wait ends for any login: billed, it would never end otherwise.
+        assert!(Subscribed.is_logged_in() && Billed.is_logged_in() && !LoggedOut.is_logged_in());
     }
 
     #[test]

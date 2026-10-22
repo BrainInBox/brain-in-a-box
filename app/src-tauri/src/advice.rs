@@ -6,8 +6,7 @@
 //! (include_str!) and applies it to what it probes itself: one source for both.
 //!
 //! Nothing secret is read. Codex's auth.json and Hermes's .env are looked for, never opened; of
-//! `claude auth status`, the diagnosis keeps authMethod and subscriptionType (detect::login_of) and
-//! nothing else. While the kit's gate keeps Codex closed on this system (agents::codex_open), no rule
+//! `claude auth status`, the diagnosis keeps authMethod (detect::login_of) and nothing else. While the kit's gate keeps Codex closed on this system (agents::codex_open), no rule
 //! offers Codex.
 
 use std::collections::BTreeMap;
@@ -131,7 +130,7 @@ fn probe_with(p: &Place, claude_bin: bool, login: ClaudeLogin, codex_bin: bool, 
     let (claude_app, chatgpt_app) = apps(p);
     Facts {
         porte,
-        claude: claude_app || (claude_bin && login != ClaudeLogin::LoggedOut),
+        claude: claude_app || (claude_bin && login.is_logged_in()),
         claude_connecte: claude_bin && login == ClaudeLogin::Subscribed,
         chatgpt: codex_bin || auth || chatgpt_app,
         chatgpt_connecte: auth,
@@ -245,7 +244,7 @@ mod tests {
         }
         // ChatGPT's user is told what Claude costs, and nothing is promised of Codex.
         let chatgpt = decide(&Facts { chatgpt: true, ..Facts::default() }).unwrap();
-        assert!(chatgpt.text.contains("Claude Pro (environ 20 € par mois)"), "{}", chatgpt.text);
+        assert!(chatgpt.text.contains("Claude Pro (environ 20\u{a0}€ par mois)"), "{}", chatgpt.text);
         assert!(!chatgpt.text.contains("Codex"), "{}", chatgpt.text);
         let opened = decide(&Facts { porte: true, chatgpt: true, ..Facts::default() }).unwrap();
         assert_eq!(opened.conseil, "codex");
@@ -309,14 +308,12 @@ mod tests {
         let out = ClaudeLogin::LoggedOut;
         assert_eq!(probe_with(&p, false, out, false, Some(&codex_home), false), Facts::default());
 
-        // Claude Code logged in with a subscription; a free account or an API key is not one, yet
-        // whoever logged in uses Claude.
+        // Claude Code logged in with a subscription; an API key is not one, yet whoever logged in uses
+        // Claude.
         let f = probe_with(&p, true, ClaudeLogin::Subscribed, false, Some(&codex_home), false);
         assert!(f.claude && f.claude_connecte);
-        for other in [ClaudeLogin::Free, ClaudeLogin::Billed] {
-            let f = probe_with(&p, true, other, false, Some(&codex_home), false);
-            assert!(f.claude && !f.claude_connecte, "{other:?}");
-        }
+        let f = probe_with(&p, true, ClaudeLogin::Billed, false, Some(&codex_home), false);
+        assert!(f.claude && !f.claude_connecte);
         // Installed and nobody logged in (the app installs it too): no sign of a Claude user.
         assert_eq!(probe_with(&p, true, out, false, Some(&codex_home), false), Facts::default());
         // A login read without Claude Code is no login of it.
@@ -462,15 +459,17 @@ mod tests {
     }
 
     /// `claude auth status` read by the app (detect::login_of) and by the kit (_conseil.connexion):
-    /// the same login, a free account or one billed per use counted as a subscription by neither.
+    /// the same login, with the setup-token given or not, one billed per use counted as a
+    /// subscription by neither.
     #[test]
     fn the_app_and_the_command_read_a_login_alike() {
         let plans = ["\"pro\"", "\"max\"", "\"team\"", "\"enterprise\"", "\"free\"", "\"\"", "null", "4"];
         let mut said: Vec<String> = plans.iter().map(|p| format!(r#"{{"authMethod":"claude.ai","subscriptionType":{p}}}"#)).collect();
         said.extend(["claude.ai", "oauth_token", "api_key", "api_key_helper", "third_party", "none"].map(|m| format!(r#"note{{"authMethod":"{m}"}}"#)));
         said.extend([r#"{"loggedIn":true}"#, r#"{"authMethod":4}"#, "Not logged in", "", "{oops"].map(String::from));
+        let cases: Vec<(String, bool)> = said.iter().flat_map(|s| [(s.clone(), false), (s.clone(), true)]).collect();
         let script = "import json, sys\nsys.path.insert(0, sys.argv[1])\nimport _conseil\n\
-                      print(json.dumps([_conseil.connexion(s) for s in json.loads(sys.stdin.read())]))";
+                      print(json.dumps([_conseil.connexion(s, j) for s, j in json.loads(sys.stdin.read())]))";
         let mut child = Command::new(python())
             .args(["-I", "-c", script, &hooks().to_string_lossy()])
             .stdin(std::process::Stdio::piped())
@@ -478,19 +477,18 @@ mod tests {
             .spawn()
             .unwrap();
         use std::io::Write;
-        child.stdin.take().unwrap().write_all(json!(said).to_string().as_bytes()).unwrap();
+        child.stdin.take().unwrap().write_all(json!(cases).to_string().as_bytes()).unwrap();
         let out = child.wait_with_output().unwrap();
         assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
         let theirs: Vec<Value> = serde_json::from_slice(&out.stdout).unwrap();
-        assert_eq!(theirs.len(), said.len());
-        for (s, t) in said.iter().zip(theirs) {
-            let ours = match detect::login_of(s) {
+        assert_eq!(theirs.len(), cases.len());
+        for ((s, token), t) in cases.iter().zip(theirs) {
+            let ours = match detect::login_of(s, *token) {
                 ClaudeLogin::Subscribed => json!("abonne"),
-                ClaudeLogin::Free => json!("gratuit"),
                 ClaudeLogin::Billed => json!("facture"),
                 ClaudeLogin::LoggedOut => Value::Null,
             };
-            assert_eq!(ours, t, "{s}");
+            assert_eq!(ours, t, "{s} {token}");
         }
     }
 }
