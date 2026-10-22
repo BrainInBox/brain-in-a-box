@@ -112,6 +112,19 @@ const SCENARIOS = [
   // Point 4, the guide asks for the user: ChatGPT seen here, asked first; Claude seen; neither seen, the
   // user says; its page opened with the question, the answer pasted then sorted; already imported, or
   // put off: the end at once.
+  // Point 6, what Hermes may do, one at a time: on a Mac its files (a page), its screen (CuaDriver's
+  // window), its voice (macOS's window, or its page once refused); on Windows its voice and the folder
+  // guard; nothing on Linux. Put off, all of them; the screen's check failing; all given; then the memory.
+  's=installe&acces=1&go=access',
+  's=installe&acces=1&go=access-ask',
+  's=installe&acces=1&go=done',
+  's=installe&acces=1&micro=refuse&go=done',
+  's=installe&acces=1&go=done&os=windows',
+  's=installe&acces=1&go=done&os=linux',
+  's=installe&acces=1&click=later,later,later&go=done',
+  's=installe&acces=refuse&go=access-ko',
+  's=installe&acces=ok&go=done',
+  's=installe&acces=1&memoire=chatgpt&go=import-offer',
   's=installe&memoire=chatgpt&go=import-offer',
   's=installe&memoire=claude&go=import-offer&os=windows',
   's=installe&memoire=aucun&go=import-offer&os=linux',

@@ -226,47 +226,77 @@
 ### s=installe&hermes_etape=relier&fail=hermes_cerveau&click=skip&go=done
 56 2 320 321 322 325 326 18 329
 
-### s=installe&memoire=chatgpt&go=import-offer
+### s=installe&acces=1&go=access
 56 2 57 18 330
 
+### s=installe&acces=1&go=access-ask
+56 2 57 18 330 331 332 333 334 335 336 337 338 339 54 60 61 62
+
+### s=installe&acces=1&go=done
+56 2 57 18 330 331 332 333 334 335 336 337 338 339 54
+
+### s=installe&acces=1&micro=refuse&go=done
+56 2 57 18 330 331 332 333 334 335 336 337 338 340 339 54
+
+### s=installe&acces=1&go=done&os=windows
+58 21 59 18 341 342 343 344 345 346 347 348 54
+
+### s=installe&acces=1&go=done&os=linux
+58 21 63 18 54
+
+### s=installe&acces=1&click=later,later,later&go=done
+56 2 57 18 330 334 337 54
+
+### s=installe&acces=refuse&go=access-ko
+56 2 57 18 330 331 332 333 334 335 349
+
+### s=installe&acces=ok&go=done
+56 2 57 18 54
+
+### s=installe&acces=1&memoire=chatgpt&go=import-offer
+56 2 57 18 330 331 332 333 334 335 336 337 338 339 350
+
+### s=installe&memoire=chatgpt&go=import-offer
+56 2 57 18 350
+
 ### s=installe&memoire=claude&go=import-offer&os=windows
-58 21 59 18 331
+58 21 59 18 351
 
 ### s=installe&memoire=aucun&go=import-offer&os=linux
-58 21 63 18 332
+58 21 63 18 352
 
 ### s=installe&memoire=chatgpt&go=import-ask
-56 2 57 18 330 333
+56 2 57 18 350 353
 
 ### s=installe&memoire=aucun&go=import-ask&click=ask-claude&os=windows
-58 21 59 18 332 334
+58 21 59 18 352 354
 
 ### s=installe&memoire=chatgpt&go=import-done&colle=1
-56 2 57 18 330 333 335 250 251 252 235 253
+56 2 57 18 350 353 355 250 251 252 235 253
 
 ### s=installe&memoire=chatgpt&go=done&colle=1&click=done
-56 2 57 18 330 333 335 250 251 252 235 253 336
+56 2 57 18 350 353 355 250 251 252 235 253 356
 
 ### s=installe&memoire=deja&go=done
 56 2 57 18 54
 
 ### s=installe&memoire=claude&go=done&click=later
-56 2 57 18 331 54
+56 2 57 18 351 54
 
 ### s=installe&deconnecte=1&memoire=chatgpt&click=skip&go=done
-56 2 337 18 93 338
+56 2 357 18 93 358
 
 ### s=installe&agents=codex&memoire=chatgpt&go=import-ask
-294 295 296 297 2 339 303 330 340
+294 295 296 297 2 359 303 350 360
 
 ### s=installe&memoire=claude&lien=refuse&go=import-ask
-56 2 57 18 331 341
+56 2 57 18 351 361
 
 ### s=installe&memoire=chatgpt&copie=refuse&go=import-ask
-56 2 57 18 330 342
+56 2 57 18 350 362
 
 ### s=motscles&memoire=chatgpt&click=later&add=done&key=pa-abcdefghijklmnopqrstuvwxyz&go=done&nth=2
-56 2 67 18 330 19 68 343 344 345 346 347 54
+56 2 67 18 350 19 68 363 364 365 366 367 54
 
 #1
 == welcome
@@ -4497,6 +4527,159 @@ Dernière chose : présente-toi à lui. Il te pose quelques questions pour te c
 [Personnaliser mon cerveau (15 min)]
 
 #330
+== access
+Je laisse Hermes ouvrir tes fichiers ?
+Avec ça, il retrouve un document que tu lui cites, range tes factures ou lit un PDF sans que tu aies à le lui envoyer.
+Ça lui ouvre tous tes fichiers, y compris tes mails et tes messages. Tu peux le retirer quand tu veux dans les Réglages.
+[Plus tard]
+[Oui, ouvre-lui mes fichiers]
+
+#331
+== access-ask
+À toi : active Hermes dans la page qui s’ouvre.
+Je vérifie tout seul dès que c’est fait.
+Active l’interrupteur à côté d’Hermes (ton mot de passe peut t’être demandé).
+Hermes n’est pas dans la liste ? Glisse-le dedans depuis la fenêtre du Finder que je t’ouvre à côté.
+Si macOS te propose « Quitter et rouvrir », accepte.
+[Plus tard]
+
+#332
+== access-ask
+À toi : active Hermes dans la page qui s’ouvre.
+Je vérifie tout seul dès que c’est fait.
+Active l’interrupteur à côté d’Hermes (ton mot de passe peut t’être demandé).
+Hermes n’est pas dans la liste ? Glisse-le dedans depuis la fenêtre du Finder que je t’ouvre à côté.
+Si macOS te propose « Quitter et rouvrir », accepte.
+[Plus tard]
+[Ouvrir les Réglages]
+
+#333
+== access-ok
+C’est bon, Hermes peut ouvrir tes fichiers.
+Essaie dans Hermes : « Qu’est-ce qui traîne dans mes Téléchargements ? »
+[Suivant]
+
+#334
+== access
+Je laisse Hermes se servir de ton écran ?
+Avec ça, il fait les choses à ta place : il voit l’écran, il clique et il tape comme toi. Remplir un formulaire, trier un dossier, régler une app.
+Il voit ce qui est affiché pendant qu’il travaille. Tu peux le retirer quand tu veux dans les Réglages.
+[Plus tard]
+[Oui, vas-y]
+
+#335
+== access-ask
+À toi : active CuaDriver dans les deux réglages.
+Je vérifie tout seul dès que c’est fait.
+L’outil d’Hermes pour l’écran (CuaDriver) te demande deux réglages : Accessibilité et Enregistrement de l’écran.
+Active CuaDriver dans les deux (ton mot de passe peut t’être demandé).
+[Plus tard]
+
+#336
+== access-ok
+C’est bon, Hermes peut se servir de ton écran.
+Essaie dans Hermes : « Regarde mon écran et dis-moi ce que tu vois. »
+[Suivant]
+
+#337
+== access
+Je laisse Hermes t’entendre ?
+Avec ça, tu lui parles au lieu de taper : tu lui dictes un message, il l’écrit pour toi.
+Quand il t’écoute, un point orange s’allume en haut de l’écran. Tu peux le retirer quand tu veux dans les Réglages.
+[Plus tard]
+[Oui, demande-le]
+
+#338
+== access-ask
+À toi : macOS te pose une question.
+Je vérifie tout seul dès que c’est fait.
+Il demande si Hermes peut utiliser le micro : réponds « Autoriser ».
+[Plus tard]
+
+#339
+== access-ok
+C’est bon, Hermes t’entend.
+Essaie dans Hermes : clique sur le micro et dis « Bonjour ! ».
+[Continuer]
+
+#340
+== access-ask
+À toi : active Hermes dans la page qui s’ouvre.
+Je vérifie tout seul dès que c’est fait.
+Active l’interrupteur à côté d’Hermes.
+[Plus tard]
+[Ouvrir les Réglages]
+
+#341
+== access
+Je laisse Hermes t’entendre ?
+Avec ça, tu lui parles au lieu de taper : tu lui dictes un message, il l’écrit pour toi.
+Quand il t’écoute, une icône de micro s’affiche près de l’horloge. Tu peux le retirer quand tu veux dans les Paramètres.
+[Plus tard]
+[Oui, demande-le]
+
+#342
+== access-ask
+À toi : active le micro dans la page qui s’ouvre.
+Je vérifie tout seul dès que c’est fait.
+Dans la page qui s’ouvre, active l’accès au micro.
+Plus bas, active aussi l’accès des applications de bureau.
+[Plus tard]
+
+#343
+== access-ask
+À toi : active le micro dans la page qui s’ouvre.
+Je vérifie tout seul dès que c’est fait.
+Dans la page qui s’ouvre, active l’accès au micro.
+Plus bas, active aussi l’accès des applications de bureau.
+[Plus tard]
+[Ouvrir les Paramètres]
+
+#344
+== access-ok
+C’est bon, Hermes t’entend.
+Essaie dans Hermes : clique sur le micro et dis « Bonjour ! ».
+[Suivant]
+
+#345
+== access
+Je laisse Hermes ranger tes dossiers protégés ?
+Windows protège tes Documents, tes Images et ton Bureau. Avec ça, Hermes peut y ranger et y écrire tes fichiers.
+Ça lui permet de modifier les fichiers de ces dossiers. Tu peux le retirer quand tu veux, au même endroit.
+[Plus tard]
+[Oui, autorise-le]
+
+#346
+== access-ask
+À toi : ajoute Hermes dans la page qui s’ouvre.
+Je vérifie tout seul dès que c’est fait.
+Dans la page qui s’ouvre, clique sur « Gérer la protection contre les ransomware ».
+Puis sur « Autoriser une application via l’accès contrôlé aux dossiers », et ajoute Hermes.
+[Plus tard]
+
+#347
+== access-ask
+À toi : ajoute Hermes dans la page qui s’ouvre.
+Je vérifie tout seul dès que c’est fait.
+Dans la page qui s’ouvre, clique sur « Gérer la protection contre les ransomware ».
+Puis sur « Autoriser une application via l’accès contrôlé aux dossiers », et ajoute Hermes.
+[Plus tard]
+[Ouvrir les Paramètres]
+
+#348
+== access-ok
+C’est bon, Hermes peut ranger tes dossiers.
+Essaie dans Hermes : « Range mon Bureau par type de fichier. »
+[Continuer]
+
+#349
+== access-ko
+Ce n’est pas encore bon.
+Je ne vois pas encore ces deux autorisations pour CuaDriver. Réessaie : la fenêtre te montre ce qui manque.
+[Plus tard]
+[Réessayer]
+
+#350
 == import-offer
 ChatGPT te connaît déjà.
 Je lui demande ce qu’il sait de toi ? Comme ça, je sais tout de suite qui tu es, et tu n’as rien à me réexpliquer.
@@ -4505,7 +4688,7 @@ Je t’ouvre sa page et je lui prépare ma question. Ce qu’il répond, tu le r
 [J’utilise plutôt Claude]
 [Oui, demande à ChatGPT]
 
-#331
+#351
 == import-offer
 Claude te connaît déjà.
 Je lui demande ce qu’il sait de toi ? Comme ça, je sais tout de suite qui tu es, et tu n’as rien à me réexpliquer.
@@ -4514,7 +4697,7 @@ Je t’ouvre sa page et je lui prépare ma question. Ce qu’il répond, tu le r
 [J’utilise plutôt ChatGPT]
 [Oui, demande à Claude]
 
-#332
+#352
 == import-offer
 Tu as déjà parlé à ChatGPT ou à Claude ?
 S’il te connaît, je lui demande ce qu’il sait de toi : tu n’auras rien à me réexpliquer.
@@ -4523,7 +4706,7 @@ Je t’ouvre sa page et je lui prépare ma question. Ce qu’il répond, tu le r
 [Claude]
 [ChatGPT]
 
-#333
+#353
 == import-ask
 J’ai ouvert ChatGPT avec ma question.
 Envoie-la, puis rapporte-moi sa réponse : je la range dans ton cerveau.
@@ -4540,7 +4723,7 @@ Ce que tu importes est lu sur ton Mac et ses secrets masqués. Puis Claude le tr
 [Retour]
 [Continuer (inactif)]
 
-#334
+#354
 == import-ask
 J’ai ouvert Claude avec ma question.
 Envoie-la, puis rapporte-moi sa réponse : je la range dans ton cerveau.
@@ -4557,7 +4740,7 @@ Ce que tu importes est lu sur ton PC et ses secrets masqués. Puis Claude le tri
 [Retour]
 [Continuer (inactif)]
 
-#335
+#355
 == import-ask
 J’ai ouvert ChatGPT avec ma question.
 Envoie-la, puis rapporte-moi sa réponse : je la range dans ton cerveau.
@@ -4574,7 +4757,7 @@ Ce que tu importes est lu sur ton Mac et ses secrets masqués. Puis Claude le tr
 [Retour]
 [Continuer]
 
-#336
+#356
 == done
 Ton second cerveau est prêt !
 Claude retient maintenant ce que tu lui apprends.
@@ -4586,7 +4769,7 @@ Dernière chose : présente-toi à lui. Il te pose quelques questions pour te c
 [Ouvrir mon cerveau dans Obsidian]
 [Personnaliser mon cerveau (15 min)]
 
-#337
+#357
 == diag
 Tout est déjà installé !
 Ton Mac a tout ce qu’il faut.
@@ -4607,7 +4790,7 @@ La mémoire de recherche : OKPrête.
 Recherche par le sens : OKActivée (Voyage AI)
 [Continuer]
 
-#338
+#358
 == done
 Ton second cerveau est prêt !
 Claude retient maintenant ce que tu lui apprends.
@@ -4620,7 +4803,7 @@ Pense à connecter ton compte Claude : il te le demandera au premier lancement.
 [Ouvrir mon cerveau dans Obsidian]
 [Personnaliser mon cerveau (15 min)]
 
-#339
+#359
 == diag
 Tout est déjà installé !
 Ton Mac a tout ce qu’il faut.
@@ -4642,7 +4825,7 @@ Recherche par le sens : OKActivée (Voyage AI)
 [Changer d’IA]
 [Continuer]
 
-#340
+#360
 == import-ask
 J’ai ouvert ChatGPT avec ma question.
 Envoie-la, puis rapporte-moi sa réponse : je la range dans ton cerveau.
@@ -4659,7 +4842,7 @@ Ce que tu importes est lu sur ton Mac et ses secrets masqués. Puis Codex le tri
 [Retour]
 [Continuer (inactif)]
 
-#341
+#361
 == import-ask
 Je n’ai pas pu ouvrir Claude.
 Ouvre claude.ai dans ton navigateur, colle ma question, puis rapporte-moi sa réponse.
@@ -4676,7 +4859,7 @@ Ce que tu importes est lu sur ton Mac et ses secrets masqués. Puis Claude le tr
 [Retour]
 [Continuer (inactif)]
 
-#342
+#362
 == import-ask
 J’ai ouvert ChatGPT avec ma question.
 Envoie-la, puis rapporte-moi sa réponse : je la range dans ton cerveau.
@@ -4693,7 +4876,7 @@ Ce que tu importes est lu sur ton Mac et ses secrets masqués. Puis Claude le tr
 [Retour]
 [Continuer (inactif)]
 
-#343
+#363
 == voyage
 Je vérifie ta clé auprès de Voyage…
 Crée un compte sur Voyage AI.
@@ -4707,7 +4890,7 @@ Je vérifie…
 [Retour]
 [Activer avec cette clé (inactif)]
 
-#344
+#364
 == voyage
 Clé acceptée !
 Ton cerveau trouvera tes notes par le sens.
@@ -4722,14 +4905,14 @@ Clé valide
 [Retour]
 [Activer avec cette clé]
 
-#345
+#365
 == install
 Je vérifie ton compte Claude…
 Recherche par le sensTon cerveau apprend à retrouver tes notes par le sens.En attente
 macOS va peut-être demander l’accès à ton dossier Documents : clique sur « Autoriser ».
 Détails
 
-#346
+#366
 == install
 J’active la recherche par le sens.
 Ton cerveau relit tes notes : quelques minutes.
@@ -4737,7 +4920,7 @@ Recherche par le sensTon cerveau apprend à retrouver tes notes par le sens.En c
 macOS va peut-être demander l’accès à ton dossier Documents : clique sur « Autoriser ».
 Détails
 
-#347
+#367
 == install
 C’est fait !
 Ton cerveau est installé dans Documents/Brain, avec la recherche par le sens.

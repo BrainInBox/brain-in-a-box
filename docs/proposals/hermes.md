@@ -43,6 +43,28 @@ Le but du point 4 s'élargit : dès l'installation, le cerveau sait qui est la p
   - La phrase fait 1 045 caractères et l'adresse 1 676, sous la limite de 2 000 de l'app et de 2 048 d'`open_link` (test `the_question_fits_in_the_address_that_writes_it`).
 - **Avec le point 6** (écran, clavier et souris), le guide pourra faire ces trois gestes lui-même : ce sera le premier usage qui prouve l'autorisation.
 
+## Mise à jour du 22/10/2026 : les autorisations de l'ordinateur (point 6)
+
+À la fin de l'installation, Hermès peut ouvrir les fichiers de la personne, se servir de son écran et l'entendre, sans qu'elle cherche où ça se règle. Aucune app ne peut s'accorder ces droits elle-même : Bibo dit à quoi chacun sert, ouvre la fenêtre ou la page du système, puis vérifie tout seul (`app/src-tauri/src/hermes_access.rs`).
+
+- **Le guide propose, une autorisation à la fois.** Avant l'offre de mémoire, Bibo demande à Hermès ce qui lui manque. Chaque autorisation est présentée par ce qu'elle apporte (« Avec ça, il retrouve un document que tu lui cites, range tes factures ou lit un PDF »), puis par ce qu'elle ouvre (« Ça lui ouvre tous tes fichiers, y compris tes mails et tes messages ») et la façon de la retirer. « Plus tard » passe à la suivante. Une seule fois par lancement, et ce qui est déjà accordé n'est jamais redemandé.
+- **Sur Mac** :
+  - **les fichiers** (accès complet au disque pour `Hermes.app`) : ce droit n'a pas de fenêtre à lui ; Bibo ouvre sa page des Réglages et montre l'app Hermès dans le Finder (`open -R`), à glisser dans la liste si elle n'y est pas ;
+  - **l'écran, le clavier et la souris** (Accessibilité et Enregistrement de l'écran pour CuaDriver) : par le parcours d'Hermès lui-même, `hermes computer-use permissions grant`, précédé de `hermes computer-use install` si CuaDriver manque ; l'état vient de `hermes computer-use permissions status --json` ;
+  - **le micro** : la fenêtre de macOS d'abord, au nom d'Hermès ; s'il a été refusé avant, sa page des Réglages, seul endroit où un refus se reprend.
+- **Sous Windows** : le micro (pour toutes les apps, puis pour les apps de bureau) et l'Accès contrôlé aux dossiers de Defender quand il est activé. Windows ne demande rien lui-même : Bibo ouvre la page.
+- **Quand c'est à la personne d'agir** dans une page, Bibo revérifie toutes les 4 secondes et passe à la suite dès que c'est fait.
+- **C'est Hermès qui répond, pas Bibo.** macOS accorde ces droits app par app : un contrôle lancé par Bibo répondrait pour Bibo. Le contrôle (`hermes_access.js`) est donc lancé par l'app Hermès elle-même, en mode Node (`ELECTRON_RUN_AS_NODE=1`, par `open`), jamais depuis une copie. Pour les fichiers, il liste les dossiers que macOS protège, sans les lire, comme le docteur d'Hermès. Pour le micro, il lit l'état d'AVFoundation ; la fenêtre de macOS ne s'ouvre qu'après le « oui » de la personne.
+- **Jamais à la place de la personne.** Ni la base TCC, ni `tccutil`. Un état que Bibo n'a pas pu lire n'est jamais pris pour un oui : l'écran demande. Bibo n'ouvre que des pages d'une liste fermée (`SETTINGS_PANES`).
+- **Chaque autorisation finit sur un essai** proposé tout de suite dans Hermès, par exemple pour les fichiers : « Qu'est-ce qui traîne dans mes Téléchargements ? ».
+- **Prouvé sur ce Mac**, sans rien accorder : le contrôle lancé par la vraie app Hermès a répondu en son nom (fichiers refusés, micro jamais demandé). C'est le test `the_real_hermes_app_answers_for_itself`, en lecture seule, ignoré par défaut et lancé à la main. Les écrans sont rejoués par `app/dev/screens.mjs` (10 parcours `acces=`).
+- **Limites connues.**
+  - Personne n'a encore accordé ces droits au bout du parcours : macOS ne le permet qu'à la main. `hermes computer-use permissions grant` n'a tourné qu'avec un Hermès d'essai.
+  - L'essai est proposé, pas fait par le guide : c'est un écart au principe d'un premier usage réel qui prouve chaque autorisation. Avec l'écran accordé, le guide pourra le faire lui-même.
+  - Si une version d'Hermès ferme le mode Node d'Electron (son fusible `RunAsNode`), le contrôle ne voit plus rien : l'état reste inconnu, jamais un oui.
+  - Sous Windows, aucun vrai PC n'a été essayé. Bibo n'y installe pas encore Hermès (points 2 à 4 sur Mac seulement), et `hermes::bin()` ne cherche pas encore dans `%LOCALAPPDATA%\hermes`, le dossier d'Hermès sous Windows : l'écran n'y paraît que si la commande `hermes` est trouvée.
+  - Sous Linux, rien à demander.
+
 ---
 
 ## 0. En bref

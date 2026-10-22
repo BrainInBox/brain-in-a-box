@@ -663,6 +663,9 @@
 
     // « Importer ma mémoire »: what importer-memoire answers through import.rs (no agreement code here).
     const IMP = P.get('imp') || '';
+    // Point 6: the permissions given in this run, and those whose page is open (checks since).
+    const ACCESS_GIVEN = new Set();
+    const ACCESS_PAGE = {};
     const PHRASE = "Je change d'outil et j'ai besoin d'exporter mes données. Liste chaque souvenir que tu as enregistré sur moi, et tout ce que tu as appris de moi dans nos conversations passées. Mets tout dans un seul bloc de code, pour que je puisse le copier facilement. Une entrée par ligne, au format : [date d'enregistrement, si tu l'as] - le souvenir. Couvre tout ce qui suit, avec mes propres mots autant que possible : les consignes que je t'ai données sur ta façon de répondre (ton, format, style, « fais toujours… », « ne fais jamais… ») ; qui je suis : prénom, ville, métier, langues, centres d'intérêt ; mes projets, mes objectifs et les sujets qui reviennent ; les outils, logiciels et langages que j'utilise ; les personnes avec qui je travaille (prénom et rôle) ; mes préférences et les corrections que je t'ai faites ; tout autre contexte enregistré. Ne résume pas, ne regroupe pas, n'oublie rien, n'invente rien. N'écris aucun mot de passe, aucun numéro, aucun identifiant. Après le bloc de code, dis-moi si la liste est complète ou s'il en reste.";
     const IMP_ERRORS = {
       a_jour: { code: 'a_jour', message: 'Ton cerveau a été installé avant l\'import de mémoire : je dois d\'abord le mettre à jour.' },
@@ -718,6 +721,30 @@
         return m ? { deja: m === 'deja', source: ['chatgpt', 'claude'].includes(m) ? m : null } : null;
       },
       async import_phrase() { await wait(T(200)); return PHRASE; },
+      // Point 6, what Hermes may do (acces=1: all missing; acces=ok: all given; acces=refuse: the screen's
+      // check fails; micro=refuse: macOS's window refused before). Without it, no Hermes: no screen.
+      // A page opened: given at the second check after it.
+      async hermes_access({ only } = {}) {
+        await wait(T(300));
+        const A = P.get('acces');
+        if (!A || P.get('os') === 'linux') return null;
+        const ids = (P.get('os') === 'windows' ? ['micro', 'dossiers'] : ['disque', 'ecran', 'micro']).filter((id) => !only || id === only);
+        return ids.map((id) => {
+          if (id in ACCESS_PAGE && ++ACCESS_PAGE[id] >= 2) ACCESS_GIVEN.add(id);
+          return { id, state: A === 'ok' || ACCESS_GIVEN.has(id) ? 'ok' : (id === 'ecran' ? 'unknown' : 'missing') };
+        });
+      },
+      async hermes_access_ask({ id }) {
+        console.log('hermes_access_ask', id);
+        await wait(T(id === 'ecran' ? 1500 : 300));
+        if (id === 'ecran' && P.get('acces') === 'refuse') throw 'Je ne vois pas encore ces deux autorisations pour CuaDriver. Réessaie : la fenêtre te montre ce qui manque.';
+        if (P.get('os') !== 'windows' && (id === 'ecran' || (id === 'micro' && P.get('micro') !== 'refuse'))) {
+          ACCESS_GIVEN.add(id);
+          return true;
+        }
+        ACCESS_PAGE[id] = 0;
+        return false;
+      },
       async import_pick() {
         // The system's picker, then the reading.
         await wait(T(800));

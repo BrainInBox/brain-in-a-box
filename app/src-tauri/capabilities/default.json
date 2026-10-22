@@ -31,6 +31,8 @@
     "allow-machine-advice",
     "allow-import-check",
     "allow-import-offer",
+    "allow-hermes-access",
+    "allow-hermes-access-ask",
     "allow-import-phrase",
     "allow-import-pick",
     "allow-import-paste",

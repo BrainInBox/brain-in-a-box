@@ -139,6 +139,8 @@ const state = {
   importPlan: null,
   // The guide offered, at the end of this run, to ask ChatGPT or Claude what they know: once.
   importOffered: false,
+  // Point 6: what Hermes may do on this computer was asked for, at the end of this run: once.
+  accessOffered: false,
   // An import wrote its note in this run: the last screen offers the other one.
   memoryImported: false,
   // The Voyage key lives only here, in memory, and only once Voyage accepted it.
@@ -2150,8 +2152,153 @@ const PASTE_KEYS = SYSTEM === 'macos' ? 'Cmd-V' : 'Ctrl-V';
 // The guide's offer at the end of the install, before the last screen: ask ChatGPT or Claude what
 // they know of the user, so the brain knows who it is from the start. Once per run, only when the
 // brain's AI can sort (logged in) and nothing was imported yet; otherwise the end straight away.
+// Point 6: what Hermes may do on this computer (hermes_access.rs), asked once per run, one at a time:
+// what it brings first, what it opens, then the system's window or page, and the check. Put off: the next.
+const MAC = OS.machine === 'Mac';
+const ACCESS = {
+  disque: {
+    title: 'Je laisse Hermes ouvrir tes fichiers ?',
+    why: 'Avec ça, il retrouve un document que tu lui cites, range tes factures ou lit un PDF sans que tu aies à le lui envoyer.',
+    opens: `Ça lui ouvre tous tes fichiers, y compris tes mails et tes messages. Tu peux le retirer quand tu veux dans les ${OS.settings}.`,
+    yes: 'Oui, ouvre-lui mes fichiers',
+    asking: 'À toi : active Hermes dans la page qui s’ouvre.',
+    pane: 'privacy_all_files',
+    how: ['Active l’interrupteur à côté d’Hermes (ton mot de passe peut t’être demandé).',
+      'Hermes n’est pas dans la liste ? Glisse-le dedans depuis la fenêtre du Finder que je t’ouvre à côté.',
+      'Si macOS te propose « Quitter et rouvrir », accepte.'],
+    ok: 'C’est bon, Hermes peut ouvrir tes fichiers.',
+    tryIt: 'Essaie dans Hermes : « Qu’est-ce qui traîne dans mes Téléchargements ? »',
+  },
+  ecran: {
+    title: 'Je laisse Hermes se servir de ton écran ?',
+    why: 'Avec ça, il fait les choses à ta place : il voit l’écran, il clique et il tape comme toi. Remplir un formulaire, trier un dossier, régler une app.',
+    opens: `Il voit ce qui est affiché pendant qu’il travaille. Tu peux le retirer quand tu veux dans les ${OS.settings}.`,
+    yes: 'Oui, vas-y',
+    asking: 'À toi : active CuaDriver dans les deux réglages.',
+    how: ['L’outil d’Hermes pour l’écran (CuaDriver) te demande deux réglages : Accessibilité et Enregistrement de l’écran.',
+      'Active CuaDriver dans les deux (ton mot de passe peut t’être demandé).'],
+    ok: 'C’est bon, Hermes peut se servir de ton écran.',
+    tryIt: 'Essaie dans Hermes : « Regarde mon écran et dis-moi ce que tu vois. »',
+  },
+  micro: {
+    title: 'Je laisse Hermes t’entendre ?',
+    why: 'Avec ça, tu lui parles au lieu de taper : tu lui dictes un message, il l’écrit pour toi.',
+    opens: `${MAC ? 'Quand il t’écoute, un point orange s’allume en haut de l’écran.' : 'Quand il t’écoute, une icône de micro s’affiche près de l’horloge.'} Tu peux le retirer quand tu veux dans les ${OS.settings}.`,
+    yes: 'Oui, demande-le',
+    asking: MAC ? 'À toi : macOS te pose une question.' : 'À toi : active le micro dans la page qui s’ouvre.',
+    pane: 'privacy_microphone',
+    how: MAC ? ['Il demande si Hermes peut utiliser le micro : réponds « Autoriser ».']
+      : ['Dans la page qui s’ouvre, active l’accès au micro.', 'Plus bas, active aussi l’accès des applications de bureau.'],
+    // macOS's window refused before, or left unanswered: its page.
+    page: MAC ? ['Active l’interrupteur à côté d’Hermes.'] : null,
+    pageAsking: 'À toi : active Hermes dans la page qui s’ouvre.',
+    ok: 'C’est bon, Hermes t’entend.',
+    tryIt: 'Essaie dans Hermes : clique sur le micro et dis « Bonjour ! ».',
+  },
+  dossiers: {
+    title: 'Je laisse Hermes ranger tes dossiers protégés ?',
+    why: 'Windows protège tes Documents, tes Images et ton Bureau. Avec ça, Hermes peut y ranger et y écrire tes fichiers.',
+    opens: 'Ça lui permet de modifier les fichiers de ces dossiers. Tu peux le retirer quand tu veux, au même endroit.',
+    yes: 'Oui, autorise-le',
+    asking: 'À toi : ajoute Hermes dans la page qui s’ouvre.',
+    pane: 'privacy_files',
+    how: ['Dans la page qui s’ouvre, clique sur « Gérer la protection contre les ransomware ».',
+      'Puis sur « Autoriser une application via l’accès contrôlé aux dossiers », et ajoute Hermes.'],
+    ok: 'C’est bon, Hermes peut ranger tes dossiers.',
+    tryIt: 'Essaie dans Hermes : « Range mon Bureau par type de fichier. »',
+  },
+};
+
+function showAccess(todo, i) {
+  if (i >= todo.length) {
+    finishInstall();
+    return;
+  }
+  const a = ACCESS[todo[i]];
+  screen('access');
+  say('idle', a.title, a.why);
+  ui.screen.append(h('p', { class: 'note' }, a.opens));
+  ui.actions.append(
+    button('Plus tard', () => showAccess(todo, i + 1), { kind: 'ghost', act: 'later' }),
+    button(a.yes, () => askAccess(todo, i), { act: 'next' }));
+  focusMain();
+}
+
+// The system's window waits for the user (the screen, the microphone on a Mac): the answer is the check.
+// A page opened instead: checked every few seconds until it is given.
+async function askAccess(todo, i) {
+  const id = todo[i];
+  const a = ACCESS[id];
+  const gen = screen('access-ask');
+  say('idle', a.asking, 'Je vérifie tout seul dès que c’est fait.');
+  const list = h('ol', { class: 'plan' }, a.how.map((t) => h('li', {}, t)));
+  ui.screen.append(list);
+  ui.actions.append(button('Plus tard', () => showAccess(todo, i + 1), { kind: 'ghost', act: 'later' }));
+  focusMain();
+  let given;
+  try {
+    given = await invoke('hermes_access_ask', { id });
+  } catch (e) {
+    if (gen !== view.gen) return;
+    screen('access-ko');
+    say('worried', 'Ce n’est pas encore bon.', errText(e));
+    ui.actions.append(
+      button('Plus tard', () => showAccess(todo, i + 1), { kind: 'ghost', act: 'later' }),
+      button('Réessayer', () => askAccess(todo, i), { act: 'next' }));
+    focusMain();
+    return;
+  }
+  if (gen !== view.gen) return;
+  if (given) {
+    accessGiven(todo, i);
+    return;
+  }
+  if (a.page) {
+    say('idle', a.pageAsking, 'Je vérifie tout seul dès que c’est fait.');
+    list.replaceChildren(...a.page.map((t) => h('li', {}, t)));
+  }
+  if (a.pane) ui.actions.append(settingsButton(a.pane));
+  let busy = false;
+  every(async () => {
+    if (busy) return;
+    busy = true;
+    try {
+      const seen = await invoke('hermes_access', { only: id });
+      if (gen === view.gen && Array.isArray(seen) && seen.some((p) => p && p.id === id && p.state === 'ok')) accessGiven(todo, i);
+    } catch {
+      // Checked again in a moment.
+    } finally {
+      busy = false;
+    }
+  }, 4000);
+}
+
+function accessGiven(todo, i) {
+  const a = ACCESS[todo[i]];
+  screen('access-ok');
+  say('happy', a.ok, a.tryIt);
+  ui.actions.append(button(i + 1 < todo.length ? 'Suivant' : 'Continuer', () => showAccess(todo, i + 1), { act: 'next' }));
+  focusMain();
+}
+
 async function finishInstall() {
   const gen = view.gen;
+  if (!state.accessOffered) {
+    state.accessOffered = true;
+    let perms = null;
+    try {
+      perms = await invoke('hermes_access');
+    } catch {
+      perms = null;
+    }
+    if (gen !== view.gen) return;
+    // Not seen given: asked, Hermes's own check says what is missing.
+    const todo = (Array.isArray(perms) ? perms : []).filter((p) => p && Object.hasOwn(ACCESS, p.id) && p.state !== 'ok').map((p) => p.id);
+    if (todo.length) {
+      showAccess(todo, 0);
+      return;
+    }
+  }
   let offer = null;
   if (!state.importOffered && importReady()) {
     state.importOffered = true;

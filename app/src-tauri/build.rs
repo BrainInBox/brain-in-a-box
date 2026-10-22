@@ -26,6 +26,8 @@ const COMMANDS: &[&str] = &[
     "machine_advice",
     "import_check",
     "import_offer",
+    "hermes_access",
+    "hermes_access_ask",
     "import_phrase",
     "import_pick",
     "import_paste",

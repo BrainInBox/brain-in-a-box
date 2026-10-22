@@ -1916,6 +1916,8 @@ fn terminal_script(claude: &Path, path: &std::ffi::OsStr, dir: &Path, settings: 
 const SETTINGS_PANES: &[(&str, &str)] = &[
     ("storage", "x-apple.systempreferences:com.apple.settings.Storage"),
     ("privacy_files", "x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders"),
+    ("privacy_all_files", "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"),
+    ("privacy_microphone", "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"),
     ("software_update", "x-apple.systempreferences:com.apple.Software-Update-Settings.extension"),
 ];
 /// Windows: Storage settings, the Windows Security page where ransomware protection
@@ -1924,6 +1926,7 @@ const SETTINGS_PANES: &[(&str, &str)] = &[
 const SETTINGS_PANES: &[(&str, &str)] = &[
     ("storage", "ms-settings:storagesense"),
     ("privacy_files", "windowsdefender://threat"),
+    ("privacy_microphone", "ms-settings:privacy-microphone"),
     ("software_update", "ms-settings:windowsupdate"),
 ];
 
@@ -3588,6 +3591,17 @@ pub(crate) mod tests {
                     "{pane}"
                 );
             }
+        }
+        // The pages hermes_access.rs opens.
+        let access: &[&str] = if cfg!(target_os = "macos") {
+            &["privacy_all_files", "privacy_microphone"]
+        } else if cfg!(windows) {
+            &["privacy_microphone", "privacy_files"]
+        } else {
+            &[]
+        };
+        for pane in access {
+            assert!(settings_url(pane).is_some_and(|u| system.iter().any(|s| u.starts_with(s))), "{pane}");
         }
         for bad in ["", "https://evil.example", "x-apple.systempreferences:com.apple.Users", "storage;open -a Terminal"] {
             assert!(settings_url(bad).is_none(), "{bad}");

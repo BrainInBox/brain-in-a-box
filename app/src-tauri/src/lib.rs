@@ -7,6 +7,7 @@ mod detect;
 mod diagnose;
 mod guide;
 mod hermes;
+mod hermes_access;
 mod hermes_connect;
 mod hermes_brain;
 mod import;
@@ -246,6 +247,21 @@ async fn import_offer() -> Option<import::Offer> {
     .await
     .ok()
     .flatten()
+}
+
+/// What Hermes may do on this computer, one permission at a time (hermes_access.rs); with
+/// `only`, that one. None without Hermes, or on a system with none to give.
+#[tauri::command]
+async fn hermes_access(only: Option<String>) -> Option<Vec<hermes_access::Perm>> {
+    tauri::async_runtime::spawn_blocking(move || hermes_access::status(only.as_deref())).await.ok().flatten()
+}
+
+/// Asks for one: true once it is given and seen, false when its page is open for the user.
+#[tauri::command]
+async fn hermes_access_ask(id: String) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || hermes_access::ask(&id))
+        .await
+        .unwrap_or_else(|e| Err(format!("Erreur interne : {e}")))
 }
 
 /// The sentence to paste in ChatGPT or Claude.
@@ -653,6 +669,8 @@ pub fn run() {
             machine_advice,
             import_check,
             import_offer,
+            hermes_access,
+            hermes_access_ask,
             import_phrase,
             import_pick,
             import_paste,
