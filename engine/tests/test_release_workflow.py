@@ -5,7 +5,16 @@ runs on master, after the merge:
   default branch, so a poisoned one would end up in a preview signed with the repo's name;
 - every action is pinned to a commit, a tag can be moved;
 - only the publishing job can write, and it attests what it publishes before publishing it;
-- a fork's pull request leaves no installer behind in the repository's Actions tab.
+- a fork's pull request leaves no installer behind in the repository's Actions tab;
+- each build gets its own version, the run number, given to Tauri;
+- app-latest holds the preview's files under names without their version, the site's buttons
+  point there, and it is the only tag ever moved;
+- signing (SignPath for Windows, Developer ID for Apple) only runs for the published preview,
+  once its secrets exist; without them nothing changes.
+
+And what goes with it: the Windows installer (Tauri's NSIS template, our words, pictures and
+uninstall hook, app/src-tauri/installer/), the DMG's window, and the download site (site/), whose
+buttons are the files published here.
 
 The workflow is read with Ruby's YAML (macOS ships it, as for test-hooks.sh).
 
@@ -19,7 +28,11 @@ import sys
 import unittest
 from pathlib import Path
 
-WORKFLOW = Path(__file__).resolve().parents[2] / ".github" / "workflows" / "release.yml"
+ROOT = Path(__file__).resolve().parents[2]
+WORKFLOW = ROOT / ".github" / "workflows" / "release.yml"
+TAURI = ROOT / "app" / "src-tauri"
+INSTALLER = TAURI / "installer"
+SITE = ROOT / "site"
 TO_JSON = 'puts JSON.generate(YAML.safe_load(File.read(ARGV[0], encoding: "UTF-8")), ascii_only: true)'
 PINNED = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+@[0-9a-f]{40}")
 
@@ -35,6 +48,14 @@ def load():
     if p.returncode:
         raise AssertionError(f"release.yml does not parse: {p.stderr}")
     return json.loads(p.stdout)
+
+
+def step(job, text):
+    """The step of job whose run (or uses) holds text."""
+    found = [s for s in job["steps"] if text in s.get("run", "") or text in s.get("uses", "")]
+    if len(found) != 1:
+        raise AssertionError("%d steps hold %r" % (len(found), text))
+    return found[0]
 
 
 class ReleaseWorkflow(unittest.TestCase):
@@ -108,20 +129,226 @@ class ReleaseWorkflow(unittest.TestCase):
         attest = [i for i, s in enumerate(steps) if s.get("uses", "").startswith("actions/attest@")]
         create = [i for i, s in enumerate(steps) if "gh release create" in s.get("run", "")]
         sums = [i for i, s in enumerate(steps) if "> SHA256SUMS" in s.get("run", "")]
-        self.assertEqual((len(attest), len(create), len(sums)), (1, 1, 1))
+        self.assertEqual((len(attest), len(create), len(sums)), (1, 2, 2))
         self.assertLess(sums[0], attest[0])
+        # The preview, then app-latest (its files, renamed: their digests are the ones attested).
         self.assertLess(attest[0], create[0])
+        self.assertIn('gh release create "$TAG" dist/*', steps[create[0]]["run"])
+        self.assertEqual(create[1], sums[1])
+        self.assertEqual(steps[create[1]]["name"], "The stable links (app-latest)")
         self.assertEqual(steps[attest[0]]["with"], {"subject-checksums": "dist/SHA256SUMS"})
 
+    def test_each_build_is_given_its_version(self):
+        # The plan's version (MAJOR.MINOR, then the run number) goes to Tauri before the build: the
+        # Windows installer then updates in place, and the app says which preview it is.
+        build = self.jobs["build"]
+        self.assertEqual(build["env"]["VERSION"], "${{ needs.plan.outputs.version }}")
+        self.assertEqual(self.jobs["plan"]["outputs"]["version"], "${{ steps.plan.outputs.version }}")
+        runs = [s["run"] for s in build["steps"] if "cargo tauri b" in s.get("run", "")]
+        self.assertEqual(len(runs), 2, "the build, and the bundle of the signed app")
+        for run in runs:
+            for line in run.splitlines():
+                if "cargo tauri b" in line:
+                    with self.subTest(line=line.strip()):
+                        self.assertIn('--config "{\\"version\\":\\"$VERSION\\"}"', line)
+
+    def test_app_latest_holds_the_previews_files_under_fixed_names(self):
+        steps = self.steps("publish")
+        names = [s.get("name", "") for s in steps]
+        latest = names.index("The stable links (app-latest)")
+        create = next(i for i, s in enumerate(steps) if 'gh release create "$TAG"' in s.get("run", ""))
+        prune = names.index("Keep the 5 newest app previews")
+        self.assertLess(create, latest)
+        self.assertLess(latest, prune)
+        run = steps[latest]["run"]
+        # The files of the preview, renamed: Brain-in-a-Box_<LABEL>_windows-x64-setup.exe becomes
+        # Brain-in-a-Box_windows-x64-setup.exe; never GitHub's "Latest" release (the kit's).
+        self.assertIn('for f in dist/Brain-in-a-Box_"$LABEL"_*; do', run)
+        self.assertIn('cp "$f" "latest/Brain-in-a-Box_${f#dist/Brain-in-a-Box_"$LABEL"_}"', run)
+        for line in run.splitlines():
+            if "gh release create" in line or "gh release edit" in line:
+                with self.subTest(line=line.strip()):
+                    self.assertIn("--prerelease", line)
+                    self.assertIn("app-latest", line)
+        # app-latest is the only tag moved; the pruning never takes it.
+        moves = [s for s in steps if "git/refs/tags/" in s.get("run", "")]
+        self.assertEqual(moves, [steps[latest]])
+        self.assertIn('"repos/$GH_REPO/git/refs/tags/app-latest"', run)
+        pattern = re.search(r'test\("([^"]+)"\)', steps[prune]["run"]).group(1).replace("\\\\", "\\")
+        self.assertRegex("app-v0.1.112-preview.112", pattern)
+        self.assertNotRegex("app-latest", pattern)
+
+    def test_signing_runs_only_for_the_published_preview_with_its_secrets(self):
+        build = self.jobs["build"]
+        self.assertEqual(build["env"]["SIGNPATH"],
+                         "${{ needs.plan.outputs.publish == 'true' && secrets.SIGNPATH_API_TOKEN != '' "
+                         "&& vars.SIGNPATH_ORGANIZATION_ID != '' }}")
+        signpath = [s for s in build["steps"] if "SIGNPATH" in json.dumps(s) or "signpath" in json.dumps(s)]
+        self.assertEqual(len(signpath), 7)
+        for s in signpath:
+            with self.subTest(step=s.get("name") or s.get("uses")):
+                self.assertEqual(s.get("if"), "runner.os == 'Windows' && env.SIGNPATH == 'true'")
+        submits = self.using("build", "signpath/github-action-submit-signing-request")
+        self.assertEqual(len(submits), 2, "the app, then its installer")
+        # The secret only goes to SignPath's action, never to a script.
+        for s in build["steps"]:
+            text = json.dumps(s)
+            if "SIGNPATH_API_TOKEN" in text and s not in submits:
+                self.fail("SIGNPATH_API_TOKEN outside SignPath's action: %s" % (s.get("name"),))
+        for s in submits:
+            self.assertEqual(s["with"]["api-token"], "${{ secrets.SIGNPATH_API_TOKEN }}")
+            self.assertTrue(s["with"]["github-artifact-id"].startswith("${{ steps.unsigned-"))
+        # Apple: only the build step reads the secrets, only for the published preview, on macOS.
+        # Elsewhere, only whether one is set.
+        for name, s in [(s.get("name", ""), s) for s in build["steps"]]:
+            for key, value in (s.get("env") or {}).items():
+                if "secrets.APPLE" in str(value):
+                    with self.subTest(step=name, var=key):
+                        if name.startswith("Build ("):
+                            self.assertRegex(value, r"^\$\{\{ runner\.os == 'macOS' && needs\.plan\.outputs\.publish == 'true' "
+                                                    r"&& secrets\.APPLE_[A-Z_]+ \|\| '' \}\}$")
+                        else:
+                            self.assertRegex(value, r"^\$\{\{ needs\.plan\.outputs\.publish == 'true' && secrets\.APPLE_[A-Z_]+ != '' \}\}$")
+        # Without the secrets, the steps that build and check run as before.
+        for key in ("Build (", "The DMG verifies", "The Windows installer is there"):
+            s = next(s for s in build["steps"] if s.get("name", "").startswith(key))
+            self.assertNotIn("SIGNPATH", s.get("if", ""), key)
+        self.assertEqual(build["env"]["APPLE_SIGNING_IDENTITY"], "-")
+        for job in ("plan", "publish"):
+            self.assertNotIn("secrets.", json.dumps(self.jobs[job]), job)
+
+    def test_the_dmg_window_is_laid_out_by_finder(self):
+        # Tauri skips Finder's layout on a CI: the background would not show.
+        self.assertEqual(self.jobs["build"]["env"]["TAURI_BUNDLER_DMG_IGNORE_CI"], "true")
+        conf = json.loads((TAURI / "tauri.macos.conf.json").read_text(encoding="utf-8"))
+        dmg = conf["bundle"]["macOS"]["dmg"]
+        check = step(self.jobs["build"], "hdiutil verify")["run"]
+        self.assertIn('"$mnt/.background/%s"' % Path(dmg["background"]).name, check)
+
     def test_a_fork_pull_request_uploads_nothing(self):
-        uploads = self.using("build", "actions/upload-artifact")
+        uploads = [s for s in self.using("build", "actions/upload-artifact") if s["with"]["name"].startswith("app-")]
         self.assertEqual(len(uploads), 1)
         self.assertEqual(uploads[0].get("if"), "needs.plan.outputs.upload == 'true'")
+        # The others only go to SignPath, from the preview that is published.
+        for s in self.using("build", "actions/upload-artifact"):
+            if s not in uploads:
+                self.assertIn("env.SIGNPATH == 'true'", s["if"])
         plan_env = next(s for s in self.steps("plan") if s.get("id") == "plan")["env"]
         self.assertEqual(plan_env["HEAD_REPO"], "${{ github.event.pull_request.head.repo.full_name }}")
         self.assertEqual(plan_env["REPOSITORY"], "${{ github.repository }}")
         self.assertEqual(plan_env["EVENT_NAME"], "${{ github.event_name }}")
         self.assertIn("upload", self.jobs["plan"]["outputs"])
+
+
+# The strings of Tauri's NSIS template (tauri-bundler 2.9.4, languages/French.nsh): a custom
+# language file replaces Tauri's own, so each must be in ours.
+TAURI_STRINGS = """addOrReinstall alreadyInstalled alreadyInstalledLong appRunning appRunningOkKill
+chooseMaintenanceOption choowHowToInstall createDesktop deleteAppData dontUninstall dontUninstallDowngrade
+failedToKillApp installingWebview2 newerVersionInstalled older olderOrUnknownVersionInstalled
+silentDowngrades unableToUninstall uninstallApp uninstallBeforeInstalling unknown webview2AbortError
+webview2DownloadError webview2DownloadSuccess webview2Downloading webview2InstallError
+webview2InstallSuccess""".split()
+
+
+def bmp_size(path):
+    """(width, height, bits per pixel) of a BMP."""
+    head = path.read_bytes()[:30]
+    assert head[:2] == b"BM", path
+    return int.from_bytes(head[18:22], "little"), int.from_bytes(head[22:26], "little", signed=True), \
+        int.from_bytes(head[28:30], "little")
+
+
+def jpeg_size(path):
+    data = path.read_bytes()
+    i = 2
+    while i < len(data):
+        marker, length = data[i + 1], int.from_bytes(data[i + 2:i + 4], "big")
+        if 0xC0 <= marker <= 0xC3:
+            return int.from_bytes(data[i + 7:i + 9], "big"), int.from_bytes(data[i + 5:i + 7], "big")
+        i += 2 + length
+    raise AssertionError("no frame in %s" % path)
+
+
+class WindowsInstaller(unittest.TestCase):
+    """The NSIS installer a beginner clicks through: Bibo's pictures and words, no folder to
+    choose, an update in place, and an uninstaller that offers to remove the scheduled tasks."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.conf = json.loads((TAURI / "tauri.windows.conf.json").read_text(encoding="utf-8"))["bundle"]["windows"]["nsis"]
+        cls.nsi = (INSTALLER / "installer.nsi").read_text(encoding="utf-8")
+        cls.french = (INSTALLER / "French.nsh").read_text(encoding="utf-8")
+        cls.hooks = (INSTALLER / "hooks.nsh").read_text(encoding="utf-8")
+
+    def test_the_config_names_our_files_and_they_are_there(self):
+        self.assertEqual(self.conf["installMode"], "currentUser")
+        self.assertEqual(self.conf["template"], "installer/installer.nsi")
+        self.assertEqual(self.conf["customLanguageFiles"], {"French": "installer/French.nsh"})
+        self.assertEqual(self.conf["installerHooks"], "installer/hooks.nsh")
+        for key in ("template", "installerHooks", "installerIcon", "uninstallerIcon", "headerImage", "sidebarImage"):
+            with self.subTest(key=key):
+                self.assertTrue((TAURI / self.conf[key]).is_file(), self.conf[key])
+        # NSIS loads 24-bit BMPs at these sizes (MUI2: 164x314 on the side, 150x57 in the header).
+        self.assertEqual(bmp_size(TAURI / self.conf["sidebarImage"]), (164, 314, 24))
+        self.assertEqual(bmp_size(TAURI / self.conf["headerImage"]), (150, 57, 24))
+
+    def test_the_template_is_tauris_for_the_pinned_cli(self):
+        # Tauri fills the template it is given: with another tauri-cli, its own template may have
+        # changed, and ours must be taken again from it (the "Bibo:" changes carried over).
+        cli = re.search(r'TAURI_CLI_VERSION: "([0-9.]+)"', WORKFLOW.read_text(encoding="utf-8")).group(1)
+        self.assertIn("the bundler of tauri-cli %s (TAURI_CLI_VERSION in release.yml)" % cli, self.nsi)
+        terrain = (ROOT / ".github" / "workflows" / "terrain.yml").read_text(encoding="utf-8")
+        self.assertEqual(set(re.findall(r'TAURI_CLI_VERSION: "([0-9.]+)"', terrain)), {cli})
+
+    def test_no_folder_to_choose_no_nullsoft_and_an_update_in_place(self):
+        self.assertNotIn("MUI_PAGE_DIRECTORY", self.nsi)
+        self.assertNotIn('BrandingText "${COPYRIGHT}"', self.nsi)
+        self.assertIn('BrandingText "Brain in a Box ${VERSION}"', self.nsi)
+        # The same version or an older one already there: no page asking whether to uninstall.
+        self.assertRegex(self.nsi, r"\$\{If\} \$WixMode <> 1\s+\$\{AndIf\} \$R0 >= 0\s+Abort")
+        # The welcome page says « Mettre à jour Bibo » when Bibo is already there.
+        self.assertIn('SendMessage $mui.WelcomePage.Title ${WM_SETTEXT} 0 "STR:$(biboUpdateTitle)"', self.nsi)
+
+    def test_every_string_used_is_written_in_french_and_says_tu(self):
+        defined = dict(re.findall(r'^LangString (\w+) \$\{LANG_FRENCH\} "(.*)"$', self.french, re.M))
+        for name in TAURI_STRINGS:
+            self.assertIn(name, defined)
+        used = set(re.findall(r"\$\((\w+)\)", self.nsi + self.hooks)) - {"^RTL", "^NameDA"}
+        self.assertFalse(used - set(defined), "strings used but not written: %s" % sorted(used - set(defined)))
+        for name, text in defined.items():
+            with self.subTest(name=name):
+                self.assertNotRegex(text, r"(?i)\b(vous|votre|vos|veuillez|cliquez)\b")
+        self.assertIn("Mettre à jour Bibo", defined["addOrReinstall"])
+        self.assertIn("tes notes ne changent pas", defined["alreadyInstalledLong"])
+
+    def test_the_hooks_are_ascii(self):
+        # Tauri rewrites the template and the language file in UTF-8 with a BOM, not the hooks: NSIS
+        # would read their accents in the system's code page.
+        self.hooks.encode("ascii")
+
+    def test_uninstalling_offers_to_remove_the_tasks_install_ps1_schedules(self):
+        install = (ROOT / "install.ps1").read_text(encoding="utf-8")
+        scheduled = set(re.findall(r'Register-BrainTask "(\w+)"', install))
+        self.assertEqual(scheduled, {"BrainNightly", "BrainReflection"})
+        deleted = set(re.findall(r'BIBO_TASK_DELETE "(\w+)"', self.hooks))
+        # BrainSearchReindex: the night's task before gbrain, that an old install may have left.
+        self.assertEqual(deleted, scheduled | {"BrainSearchReindex"})
+        self.assertIn("!macro NSIS_HOOK_POSTUNINSTALL", self.hooks)
+        # Never in an update, nor without a window; silent, the answer is no.
+        self.assertRegex(self.hooks, r"\$\{If\} \$UpdateMode <> 1\s+\$\{AndIf\} \$PassiveMode <> 1")
+        self.assertIn('MessageBox MB_YESNO|MB_ICONQUESTION "$(biboRemoveTasks)" /SD IDNO', self.hooks)
+        self.assertIn("Tes notes restent", self.french)
+
+
+class MacDisk(unittest.TestCase):
+    def test_the_dmg_background_fits_its_window(self):
+        conf = json.loads((TAURI / "tauri.macos.conf.json").read_text(encoding="utf-8"))["bundle"]["macOS"]["dmg"]
+        tiff = TAURI / conf["background"]
+        self.assertTrue(tiff.is_file())
+        self.assertEqual(conf["windowSize"], {"width": 660, "height": 400})
+        # Bibo on the left, Applications on the right: the arrow of the picture goes from one to the other.
+        self.assertLess(conf["appPosition"]["x"], conf["applicationFolderPosition"]["x"])
+        self.assertEqual(conf["appPosition"]["y"], conf["applicationFolderPosition"]["y"])
 
 
 if __name__ == "__main__":

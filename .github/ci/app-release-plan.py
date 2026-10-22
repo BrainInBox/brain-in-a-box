@@ -1,6 +1,8 @@
 """What .github/workflows/release.yml builds, as GITHUB_OUTPUT lines.
 
-version  the app's version, from app/src-tauri/tauri.conf.json (MAJOR.MINOR.PATCH)
+version  the app's version: MAJOR.MINOR from app/src-tauri/tauri.conf.json, the run number as
+         PATCH, so that each build is newer than the one before (the Windows installer then
+         offers an update, and the version says which preview is installed)
 label    <version>-preview.<run number> when the run publishes, <version>-ci.<run number> otherwise
 publish  true or false, from the PUBLISH environment variable the workflow sets
 upload   true or false: whether the run leaves its installers as an artifact. Not for a pull
@@ -63,6 +65,7 @@ def main():
     run = os.environ["GITHUB_RUN_NUMBER"]
     if not run.isdigit():
         sys.exit(f"GITHUB_RUN_NUMBER {run!r} is not a number")
+    version = "%s.%s" % (version.rsplit(".", 1)[0], run)
     publish = os.environ.get("PUBLISH") == "true"
     head, repo = os.environ.get("HEAD_REPO", ""), os.environ.get("REPOSITORY", "")
     upload = os.environ.get("EVENT_NAME") != "pull_request" or (head != "" and head == repo)
