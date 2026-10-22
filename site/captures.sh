@@ -19,27 +19,29 @@ while read -r file x y w h name; do
   cwebp -quiet -near_lossless 60 -z 9 -metadata none -crop "$x" "$y" "$w" "$h" "$src/$file" -o "$out/$name.webp"
   echo "$name.webp  $(wc -c <"$out/$name.webp" | tr -d ' ') bytes"
 done <<'EOF'
-# Installing the app
-macos/01-dmg.png                    52  91 440 150  mac-dmg
-macos/02-gatekeeper.png            382 129 260 284  mac-bloquee
-windows/01-smartscreen.png         246  95 532 150  win-smartscreen-1
-windows/02-smartscreen.png         246  95 532 498  win-smartscreen-2
-windows/03-installeur-bienvenue.png 263 166 497 386 win-installeur
-windows/05-installeur-fin.png      263 166 497 386  win-installeur-fin
+# Installing the app. The DMG's window as laid out by Finder (release.yml and terrain.yml build it so).
+macos/01-dmg.png                     10  60 660 400  mac-dmg
+macos/02-gatekeeper.png             382 129 260 284  mac-bloquee
+# SmartScreen names the file: take these two from a run that installs a published preview (the
+# nightly run on master), not a branch build ("...-terrain.<commit>_windows-x64-setup.exe").
+windows/01-smartscreen.png          246  95 532 150  win-smartscreen-1
+windows/02-smartscreen.png          246  95 532 498  win-smartscreen-2
+windows/03-installeur-bienvenue.png 263 166 497 386  win-installeur
+windows/05-installeur-fin.png       263 166 497 386  win-installeur-fin
 # Bibo, screen by screen (the Mac window)
-macos/03-bienvenue.png             122  31 780 674  bibo-1-bienvenue
-macos/04-diagnostic.png            122  31 780 674  bibo-2-diagnostic
-macos/05-voyage.png                122  31 780 674  bibo-3-voyage
-macos/08-connexion-installation.png 122 31 780 674  bibo-4-connexion
+macos/03-bienvenue.png              122  31 780 674  bibo-1-bienvenue
+macos/04-diagnostic.png             122  31 780 674  bibo-2-diagnostic
+macos/05-voyage.png                 122  31 780 674  bibo-3-voyage
+macos/08-connexion-installation.png 122  31 780 674  bibo-4-connexion
 macos/13-dialogue-install-command-line-developer.png 122 31 780 580 bibo-5-outils-apple
-macos/21-etape-brain.png           122  31 780 580  bibo-6-cerveau
-macos/24-connexion.png             122  31 780 674  bibo-7-compte
-macos/26-fini.png                  122  31 780 674  bibo-8-pret
-macos/28-import-choix.png          122  31 780 674  bibo-9-memoire
+macos/22-etape-brain.png            122  31 780 580  bibo-6-cerveau
+macos/26-connexion.png              122  31 780 674  bibo-7-compte
+macos/27-fini.png                   122  31 780 674  bibo-8-pret
+macos/29-import-choix.png           122  31 780 674  bibo-9-memoire
 # Bibo's guide (its own window, on Windows)
-windows/40-guide-objectif.png      615 200 402 536  guide-objectif
-windows/44-guide-etape.png         615 200 402 536  guide-etape
+windows/36-guide-objectif.png       615 200 402 536  guide-objectif
+windows/40-guide-etape.png          615 200 402 536  guide-etape
 # The same window on Windows and Linux
-windows/17-etape-brain.png          60  50 780 400  bibo-windows
-linux/10-etape-obsidian.png        250  98 780 580  bibo-linux
+windows/15-etape-brain.png          111  50 780 400  bibo-windows
+linux/10-etape-obsidian.png         250  98 780 580  bibo-linux
 EOF

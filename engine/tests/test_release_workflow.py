@@ -278,6 +278,21 @@ def jpeg_size(path):
     raise AssertionError("no frame in %s" % path)
 
 
+def webp_size(path):
+    data = path.read_bytes()
+    if data[:4] != b"RIFF" or data[8:12] != b"WEBP":
+        raise AssertionError("%s is not a WebP" % path)
+    kind = data[12:16]
+    if kind == b"VP8X":
+        return int.from_bytes(data[24:27], "little") + 1, int.from_bytes(data[27:30], "little") + 1
+    if kind == b"VP8 ":
+        return int.from_bytes(data[26:28], "little") & 0x3FFF, int.from_bytes(data[28:30], "little") & 0x3FFF
+    if kind == b"VP8L":
+        bits = int.from_bytes(data[21:25], "little")
+        return (bits & 0x3FFF) + 1, ((bits >> 14) & 0x3FFF) + 1
+    raise AssertionError("%s: unknown WebP chunk %r" % (path, kind))
+
+
 class WindowsInstaller(unittest.TestCase):
     """The NSIS installer a beginner clicks through: Bibo's pictures and words, no folder to
     choose, an update in place, and an uninstaller that offers to remove the scheduled tasks."""
@@ -451,6 +466,17 @@ class Site(unittest.TestCase):
                     self.assertIn('data-dl="sums"', tag)
                 else:
                     self.assertRegex(tag, r'data-dl="(windows|mac|appimage|deb)"')
+
+    def test_each_capture_is_declared_at_its_size(self):
+        # width and height say the picture's own size (no page that jumps as it loads, nothing
+        # stretched): a capture made again from another run (captures.sh) must update them.
+        tags = re.findall(r'<img [^>]*src="img/[^"]+\.webp"[^>]*>', self.html)
+        self.assertGreater(len(tags), 15)
+        for tag in tags:
+            with self.subTest(tag=tag[:80]):
+                name = re.search(r'src="img/([^"]+)"', tag).group(1)
+                size = tuple(int(re.search(r'\b%s="(\d+)"' % a, tag).group(1)) for a in ("width", "height"))
+                self.assertEqual(size, webp_size(SITE / "img" / name))
 
     def test_the_strict_csp_holds(self):
         # vercel.json allows no inline script or style, and no third party but GitHub's API.
