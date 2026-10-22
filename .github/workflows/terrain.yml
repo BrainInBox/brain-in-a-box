@@ -1100,9 +1100,30 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+  # The installers install.ps1 falls back on when winget cannot (Git for Windows, Python) are pinned: a newer
+  # release, a security fix among them, reaches nobody until the pins move. Red once one has been out for 14
+  # days (.github/ci/epingles.py); the report then opens the issue. GitHub's API with the read-only token.
+  epingles:
+    name: install.ps1's pinned installers against their latest release
+    needs: ref
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      TERRAIN_SHA: ${{ needs.ref.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.ref.outputs.sha }}
+          persist-credentials: false
+
+      - name: Git for Windows and Python, no newer release out for 14 days
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -I .github/ci/epingles.py --resume "$GITHUB_STEP_SUMMARY"
+
   rapport:
     name: Report (one issue "terrain")
-    needs: [ref, macos, windows, linux, claude, app-macos, app-windows, app-linux-build, app-linux]
+    needs: [ref, macos, windows, linux, claude, app-macos, app-windows, app-linux-build, app-linux, epingles]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -1112,7 +1133,7 @@ jobs:
     env:
       ATTENDUS: macos-neuf,macos-montee,windows-neuf,windows-montee,linux-neuf,linux-reinstallation,macos-claude,windows-claude,macos-app,windows-app,linux-app,macos-app-codex,windows-app-codex,linux-app-codex
       # A job that did not succeed is a failure even when its rows say nothing (terrain.py JOBS).
-      JOBS: ref=${{ needs.ref.result }},macos=${{ needs.macos.result }},windows=${{ needs.windows.result }},linux=${{ needs.linux.result }},claude=${{ needs.claude.result }},app-macos=${{ needs.app-macos.result }},app-windows=${{ needs.app-windows.result }},app-linux-build=${{ needs.app-linux-build.result }},app-linux=${{ needs.app-linux.result }}
+      JOBS: ref=${{ needs.ref.result }},macos=${{ needs.macos.result }},windows=${{ needs.windows.result }},linux=${{ needs.linux.result }},claude=${{ needs.claude.result }},app-macos=${{ needs.app-macos.result }},app-windows=${{ needs.app-windows.result }},app-linux-build=${{ needs.app-linux-build.result }},app-linux=${{ needs.app-linux.result }},epingles=${{ needs.epingles.result }}
     steps:
       # The workflow's own commit: the code that writes the issue is the one this file came with.
       - uses: actions/checkout@v4
