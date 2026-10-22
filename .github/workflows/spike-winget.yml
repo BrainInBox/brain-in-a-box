@@ -138,6 +138,11 @@ jobs:
             $p = Start-Process -FilePath $b.BundleCachePath -ArgumentList '/uninstall', '/quiet' -Wait -PassThru
             "code $($p.ExitCode)"
           }
+          # The toolcache's Python is its MSI packages, without the bundle: each removed with msiexec.
+          foreach ($m in @(Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like 'Python 3.14.8 *' -and $_.PSChildName -like '{*}' })) {
+            $p = Start-Process msiexec.exe -ArgumentList '/x', $m.PSChildName, '/qn', '/norestart' -Wait -PassThru
+            "msiexec /x $($m.DisplayName): $($p.ExitCode)"
+          }
           Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like 'Python 3.14*' } | ForEach-Object { "left: $($_.DisplayName)" }
           "UAC: EnableLUA=$((Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System').EnableLUA) ConsentPromptBehaviorUser=$((Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System').ConsentPromptBehaviorUser)"
 
