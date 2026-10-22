@@ -675,7 +675,7 @@ fn check_python(found: Option<&detect::Python>) -> Check {
             path: Some(p.exe.to_string_lossy().into_owned()),
             ..PYTHON.is(Status::Ok, format!("Python {}", fmt_version(p.version)))
         },
-        None => PYTHON.is(Status::Missing, "Pas encore installé. Je le prends chez Microsoft (winget)."),
+        None => PYTHON.is(Status::Missing, "Pas encore installé. Je l'installe : par winget (Microsoft), sinon depuis son site officiel."),
     }
 }
 
@@ -683,7 +683,7 @@ fn check_python(found: Option<&detect::Python>) -> Check {
 #[cfg(windows)]
 fn check_git(found: &Found) -> Check {
     match found {
-        Found::Absent => GIT.is(Status::Missing, "Pas encore installé. Je le prends chez Microsoft (winget)."),
+        Found::Absent => GIT.is(Status::Missing, "Pas encore installé. Je l'installe : par winget (Microsoft), sinon depuis son site officiel."),
         _ if found.version().is_some() => GIT.is(Status::Ok, found.label("Git")),
         _ => GIT.is(Status::Ok, "Git est installé."),
     }
