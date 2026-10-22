@@ -360,10 +360,14 @@ jobs:
         with:
           persist-credentials: false
 
+      # The installer of Codex's release, as install.sh and install.ps1 take it, checked against the
+      # SHA-256 they pin (chatgpt.com/codex/install.sh and .ps1 answer 404 since 2026-10-22).
       - name: Codex 0.162.1 from the official installer (macOS, Linux)
         if: runner.os != 'Windows'
         run: |
-          curl -fsSL https://chatgpt.com/codex/install.sh -o "$RUNNER_TEMP/codex-install.sh"
+          curl -fsSL --retry 2 "https://github.com/openai/codex/releases/download/rust-v$CODEX_RELEASE/install.sh" -o "$RUNNER_TEMP/codex-install.sh"
+          want=$(sed -n 's/^CODEX_INSTALLER_SHA256=\([0-9a-f]\{64\}\)$/\1/p' install.sh)
+          echo "$want  $RUNNER_TEMP/codex-install.sh" | shasum -a 256 -c -
           sh "$RUNNER_TEMP/codex-install.sh"
           [ "$("$HOME/.local/bin/codex" --version)" = "codex-cli $CODEX_RELEASE" ]
 
@@ -371,7 +375,12 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://chatgpt.com/codex/install.ps1 | iex"
+          $f = Join-Path $env:RUNNER_TEMP 'codex-install.ps1'
+          Invoke-WebRequest -Uri "https://github.com/openai/codex/releases/download/rust-v$env:CODEX_RELEASE/install.ps1" -OutFile $f -UseBasicParsing
+          $want = [regex]::Match((Get-Content -Raw install.ps1), '(?m)^\$CODEX_INSTALLER_SHA256 = "([0-9a-f]{64})"').Groups[1].Value
+          $got = (Get-FileHash -Algorithm SHA256 -LiteralPath $f).Hash.ToLowerInvariant()
+          if (-not $want -or $got -ne $want) { throw "Codex's installer: SHA-256 $got, install.ps1 pins $want" }
+          powershell -NoProfile -ExecutionPolicy Bypass -File $f
           if ($LASTEXITCODE) { exit 1 }
           $v = & (Join-Path $env:LOCALAPPDATA 'Programs\OpenAI\Codex\bin\codex.exe') --version
           if ($v -ne "codex-cli $env:CODEX_RELEASE") { throw "codex --version said: $v" }
