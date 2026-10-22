@@ -105,8 +105,9 @@ function showVersion(release) {
 // The big buttons (top of the page, and the last call at the bottom) are for the visitor's system.
 function mainButtons(system, release) {
   if (system === 'mobile') {
-    // Neither the app nor the command line installs on a phone: the link goes to the computer.
-    for (const el of document.querySelectorAll('[data-dl-main], [data-top-dl], .dl-actions, [data-dl-main-meta], .dl-others, .dl-version, [data-dl-warn], .dl-privacy')) el.hidden = true;
+    // Neither the app nor the command line installs on a phone: the link goes to the computer. No
+    // installer to download there either, the install guide's buttons included.
+    for (const el of document.querySelectorAll('[data-dl-main], [data-top-dl], .dl-actions, [data-dl-main-meta], .dl-others, .dl-version, [data-dl-warn], .dl-privacy, a[data-dl]:not([data-dl="sums"])')) el.hidden = true;
     for (const msg of document.querySelectorAll('[data-dl-mobile], [data-phone]')) msg.hidden = false;
     return;
   }

@@ -606,6 +606,7 @@ jobs:
         working-directory: app/src-tauri
         env:
           APPLE_SIGNING_IDENTITY: "-"
+          TAURI_BUNDLER_DMG_IGNORE_CI: "true"
           TAURI_CLI_VERSION: "2.11.5"
           TARGET: universal-apple-darwin
         run: |

@@ -37,16 +37,16 @@ TO_JSON = 'puts JSON.generate(YAML.safe_load(File.read(ARGV[0], encoding: "UTF-8
 PINNED = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+@[0-9a-f]{40}")
 
 
-def load():
+def load(path=WORKFLOW):
     ruby = shutil.which("ruby")
     if not ruby:
         if sys.platform == "darwin":
             raise AssertionError("no ruby on this Mac: the release workflow cannot be read")
         raise unittest.SkipTest("no ruby here to read YAML (the macOS run checks it)")
-    p = subprocess.run([ruby, "-ryaml", "-rjson", "-e", TO_JSON, str(WORKFLOW)],
+    p = subprocess.run([ruby, "-ryaml", "-rjson", "-e", TO_JSON, str(path)],
                        capture_output=True, text=True, encoding="utf-8")
     if p.returncode:
-        raise AssertionError(f"release.yml does not parse: {p.stderr}")
+        raise AssertionError(f"{path.name} does not parse: {p.stderr}")
     return json.loads(p.stdout)
 
 
@@ -224,6 +224,15 @@ class ReleaseWorkflow(unittest.TestCase):
         dmg = conf["bundle"]["macOS"]["dmg"]
         check = step(self.jobs["build"], "hdiutil verify")["run"]
         self.assertIn('"$mnt/.background/%s"' % Path(dmg["background"]).name, check)
+
+    def test_the_field_test_opens_the_dmg_users_get(self):
+        # terrain.yml builds its DMG as this workflow does, its window laid out: the night's capture
+        # of it, which the site shows (site/captures.sh), is the window a user opens.
+        terrain = load(WORKFLOW.with_name("terrain.yml"))
+        builds = [s for job in terrain["jobs"].values() for s in job.get("steps", [])
+                  if "--bundles dmg" in s.get("run", "")]
+        self.assertEqual(len(builds), 1)
+        self.assertEqual(builds[0]["env"]["TAURI_BUNDLER_DMG_IGNORE_CI"], "true")
 
     def test_a_fork_pull_request_uploads_nothing(self):
         uploads = [s for s in self.using("build", "actions/upload-artifact") if s["with"]["name"].startswith("app-")]
@@ -430,7 +439,18 @@ class Site(unittest.TestCase):
         for attr in ("data-phone", "data-share", "data-copy-link"):
             self.assertIn(attr, self.html)
         self.assertIn("navigator.share", self.js)
-        self.assertIn("'[data-dl-main], [data-top-dl], .dl-actions, [data-dl-main-meta], .dl-others, .dl-version", self.js)
+        # Nothing to download on a phone: neither the big buttons nor the install guide's.
+        mobile = self.js[self.js.index("if (system === 'mobile')"):]
+        hidden = re.search(r"querySelectorAll\('([^']+)'\)\) el\.hidden = true", mobile).group(1).split(", ")
+        for sel in ("[data-dl-main]", "[data-top-dl]", ".dl-others", ".dl-version", 'a[data-dl]:not([data-dl="sums"])'):
+            self.assertIn(sel, hidden)
+        # Each link to an installer carries data-dl (SHA256SUMS, a text file, stays).
+        for tag in re.findall(r"<a [^>]*href=\"%s[^\"]+\"[^>]*>" % re.escape(self.LATEST), self.html):
+            with self.subTest(tag=tag):
+                if "SHA256SUMS" in tag:
+                    self.assertIn('data-dl="sums"', tag)
+                else:
+                    self.assertRegex(tag, r'data-dl="(windows|mac|appimage|deb)"')
 
     def test_the_strict_csp_holds(self):
         # vercel.json allows no inline script or style, and no third party but GitHub's API.
