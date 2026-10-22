@@ -132,7 +132,7 @@
         <ol class="next-steps" data-next-for="windows">
           <li>
             <h3>Garde le fichier</h3>
-            <p>Si ton navigateur dit qu’il «&nbsp;n’est pas fréquemment téléchargé&nbsp;»&nbsp;: «&nbsp;…&nbsp;» à côté, puis <strong>Conserver</strong> (Keep).</p>
+            <p>Si ton navigateur dit qu’il «&nbsp;n’est pas fréquemment téléchargé&nbsp;»&nbsp;: «&nbsp;…&nbsp;» à côté, <strong>Conserver</strong> (Keep). Dans Edge, ensuite, pas Supprimer (Delete)&nbsp;: <strong>Afficher plus</strong> (Show more) › <strong>Conserver quand même</strong> (Keep anyway).</p>
           </li>
           <li>
             <h3>Ouvre-le</h3>
@@ -186,7 +186,7 @@
           <li data-for="deb"><a data-dl="deb" href="https://github.com/BrainInBox/brain-in-a-box/releases/download/app-latest/Brain-in-a-Box_linux-amd64.deb">Linux</a> <span class="ext">.deb</span></li>
         </ul>
       </div>
-      <p class="dl-version"><span id="version">Préversion</span> · <a href="https://github.com/BrainInBox/brain-in-a-box/releases?q=pr%C3%A9version&amp;expanded=true" rel="noopener">toutes les versions</a></p>
+      <p class="dl-version"><span id="version">Préversion</span></p>
       <p class="dl-warn" data-dl-warn>Pas encore signée par Microsoft ni par Apple&nbsp;: la première fois, ton ordinateur te met en garde. C’est prévu, <a href="#installer">voici quoi faire</a>.</p>
       <p class="dl-privacy">Tes notes restent sur ton ordinateur. Ce que tu demandes à Claude, et les captures du guide, partent chez Anthropic.</p>
     </div>
@@ -333,7 +333,7 @@
         <li>
           <div class="step-text">
             <h4>Garde le fichier, s’il le faut</h4>
-            <p>Ton navigateur peut dire que le fichier «&nbsp;n’est pas fréquemment téléchargé&nbsp;» (isn’t commonly downloaded). Dans Edge&nbsp;: clique sur «&nbsp;…&nbsp;» à côté du fichier, puis <strong>Conserver</strong> (Keep). S’il insiste, <strong>Afficher plus</strong> (Show more), puis <strong>Conserver quand même</strong> (Keep anyway).</p>
+            <p>Ton navigateur peut dire que le fichier «&nbsp;n’est pas fréquemment téléchargé&nbsp;» (isn’t commonly downloaded). Dans Edge&nbsp;: clique sur «&nbsp;…&nbsp;» à côté du fichier, puis <strong>Conserver</strong> (Keep). Une fenêtre s’ouvre, avec un bouton Supprimer (Delete) bien en vue&nbsp;: n’y touche pas. Clique sur <strong>Afficher plus</strong> (Show more), puis sur <strong>Conserver quand même</strong> (Keep anyway).</p>
             <p>Ensuite, ouvre le fichier&nbsp;: dans les téléchargements du navigateur, ou dans ton dossier Téléchargements.</p>
           </div>
         </li>
@@ -784,7 +784,7 @@
       </details>
       <details>
         <summary>Windows&nbsp;: mon navigateur dit que le fichier «&nbsp;n’est pas fréquemment téléchargé&nbsp;»</summary>
-        <p>C’est parce que l’app est nouvelle. Dans Edge&nbsp;: clique sur «&nbsp;…&nbsp;» à côté du fichier, puis <strong>Conserver</strong> (Keep). S’il insiste&nbsp;: <strong>Afficher plus</strong> (Show more), puis <strong>Conserver quand même</strong> (Keep anyway). <a href="#installer-windows">Les étapes</a>.</p>
+        <p>C’est parce que l’app est nouvelle. Dans Edge&nbsp;: clique sur «&nbsp;…&nbsp;» à côté du fichier, puis <strong>Conserver</strong> (Keep). Dans la fenêtre qui s’ouvre, pas Supprimer (Delete)&nbsp;: <strong>Afficher plus</strong> (Show more), puis <strong>Conserver quand même</strong> (Keep anyway). <a href="#installer-windows">Les étapes</a>.</p>
       </details>
       <details>
         <summary>Windows&nbsp;: «&nbsp;Windows a protégé votre ordinateur&nbsp;»</summary>
@@ -850,7 +850,8 @@ sha256sum "$(xdg-user-dir DOWNLOAD)"/Brain-in-a-Box_*</code></pre>
       </details>
       <details>
         <summary>Désinstaller</summary>
-        <p><strong>Windows</strong>&nbsp;: Paramètres › Applications (Settings › Apps), puis Brain in a Box › Désinstaller. Bibo te propose aussi de retirer les résumés automatiques de ton cerveau (les tâches BrainNightly et BrainReflection)&nbsp;: dis Oui si tu arrêtes tout.</p>
+        <p><strong>Windows 11</strong>&nbsp;: Paramètres › Applications › Applications installées (Settings › Apps › Installed apps), puis «&nbsp;…&nbsp;» à côté de Brain in a Box › <strong>Désinstaller</strong> (Uninstall). Sur Windows&nbsp;10&nbsp;: Paramètres › Applications (Settings › Apps), clique sur Brain in a Box, puis <strong>Désinstaller</strong>.</p>
+        <p>Bibo te demande aussi s’il retire les résumés automatiques de ton cerveau (les tâches BrainNightly et BrainReflection)&nbsp;: <strong>Oui</strong> (Yes) si tu arrêtes tout, <strong>Non</strong> (No) si tu réinstalles Bibo.</p>
         <p><strong>Mac</strong>&nbsp;: glisse Brain in a Box (dans Applications) dans la corbeille. <strong>Linux</strong>&nbsp;: supprime le fichier AppImage, ou, pour le .deb, <code>sudo apt remove brain-in-a-box</code>.</p>
         <p>Tes notes (le dossier Brain) ne sont jamais touchées. Claude Code, Obsidian et Bun restent installés&nbsp;: chacun se désinstalle à part, comme une app normale (sur Windows, dans Paramètres › Applications). Pour retirer aussi les automatismes de Claude et la mémoire, morceau par morceau&nbsp;: le README du projet, en anglais, donne la commande de chacun (section <a href="https://github.com/BrainInBox/brain-in-a-box#updating--undo" rel="noopener">«&nbsp;Updating &amp; undo&nbsp;»</a>).</p>
       </details>

@@ -709,7 +709,7 @@ jobs:
     name: The app, clicked through (Windows${{ matrix.parcours == 'app-codex' && ', Codex chosen' || '' }})
     needs: ref
     runs-on: windows-latest
-    timeout-minutes: 185
+    timeout-minutes: 190
     permissions:
       contents: read
       attestations: read
@@ -857,6 +857,28 @@ jobs:
           python -I engine/tests/terrain.py app --parcours $env:PARCOURS --vm --json $env:TERRAIN_JSON `
             "--source=$env:SOURCE" "--fichier=$env:APP_FICHIER" --captures $env:TERRAIN_CAPTURES "--stub=$env:TERRAIN_STUB" `
             --delai-min 125
+
+      # The uninstaller of the setup.exe tested above (app/src-tauri/installer/hooks.nsh), silent as
+      # an IT department runs it, in place (_?=, so that the step waits for it): the app goes,
+      # Windows no longer lists it, and the brain's scheduled tasks stay (silent, its question is
+      # answered no). A question shown anyway would hang it: the step's time limit says so.
+      - name: "The uninstaller, silent: the app goes, the brain's tasks stay"
+        timeout-minutes: 5
+        run: |
+          $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Brain in a Box'
+          $un = (Get-ItemProperty $key).UninstallString.Trim('"')
+          $dir = Split-Path $un
+          $tasks = @('BrainNightly', 'BrainReflection' | Where-Object { Get-ScheduledTask -TaskName $_ -ErrorAction SilentlyContinue })
+          "tasks before: $($tasks -join ', ')"
+          $p = Start-Process -FilePath $un -ArgumentList "/S _?=$dir" -Wait -PassThru
+          if ($p.ExitCode) { throw "the uninstaller ended with $($p.ExitCode)" }
+          if (Test-Path "$dir\brain-in-a-box.exe") { throw 'the app is still there' }
+          if (Test-Path $key) { throw 'Windows still lists the app' }
+          foreach ($t in $tasks) {
+            if (-not (Get-ScheduledTask -TaskName $t -ErrorAction SilentlyContinue)) { throw "$t removed by a silent uninstall" }
+          }
+          if ($tasks.Count -eq 0) { "::warning::no scheduled task here: only the app's removal was checked" }
+          "uninstalled; tasks kept: $($tasks -join ', ')"
 
       - name: Summary
         if: always()

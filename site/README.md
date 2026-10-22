@@ -18,6 +18,8 @@ Locally: `python3 -m http.server -d site 8000`, then http://localhost:8000 (with
 
 Nothing to redeploy when a new app preview comes out: `app-latest` holds it.
 
+The page quotes Bibo's buttons (« Guide-moi dans un logiciel »…) and shows its screens: publish it only once the app in `app-latest` has them, and its captures are redone from that app (below). The same the day a system's files get signed (`release.yml`): the page's words about Windows' and macOS's warnings change by hand.
+
 Before publishing, check that the buttons' files are there (a redirect to the file, not a 404):
 
 ```bash

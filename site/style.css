@@ -385,7 +385,6 @@ code {
 .dl-others ul { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 18px; margin: 0; padding: 0; list-style: none; }
 .dl-others a { font-weight: 500; }
 .dl-version { margin-top: 8px; color: var(--ink-3); font-size: 13.5px; }
-.dl-version a { color: var(--ink-2); }
 .dl-privacy { max-width: 36em; margin-top: 14px; color: var(--ink-3); font-size: 13.5px; }
 
 /* On a phone: the link goes to the computer (app.js shows it). */

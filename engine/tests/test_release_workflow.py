@@ -10,7 +10,10 @@ runs on master, after the merge:
 - app-latest holds the preview's files under names without their version, the site's buttons
   point there, and it is the only tag ever moved;
 - signing (SignPath for Windows, Developer ID for Apple) only runs for the published preview,
-  once its secrets exist; without them nothing changes.
+  once its secrets exist; without them nothing changes. The app compiles without any secret (each
+  dependency's build.rs runs then); the release notes say "unsigned" only where it is;
+- app-latest swaps its files only once every new one is up, and the job checks what the site's
+  buttons then download.
 
 And what goes with it: the Windows installer (Tauri's NSIS template, our words, pictures and
 uninstall hook, app/src-tauri/installer/), the DMG's window, and the download site (site/), whose
@@ -21,10 +24,12 @@ The workflow is read with Ruby's YAML (macOS ships it, as for test-hooks.sh).
     python -I -m unittest discover -s engine/tests -v
 """
 import json
+import os
 import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -145,7 +150,7 @@ class ReleaseWorkflow(unittest.TestCase):
         self.assertEqual(build["env"]["VERSION"], "${{ needs.plan.outputs.version }}")
         self.assertEqual(self.jobs["plan"]["outputs"]["version"], "${{ steps.plan.outputs.version }}")
         runs = [s["run"] for s in build["steps"] if "cargo tauri b" in s.get("run", "")]
-        self.assertEqual(len(runs), 2, "the build, and the bundle of the signed app")
+        self.assertEqual(len(runs), 3, "the build, its bundle, and the bundle of the signed app")
         for run in runs:
             for line in run.splitlines():
                 if "cargo tauri b" in line:
@@ -174,6 +179,18 @@ class ReleaseWorkflow(unittest.TestCase):
         moves = [s for s in steps if "git/refs/tags/" in s.get("run", "")]
         self.assertEqual(moves, [steps[latest]])
         self.assertIn('"repos/$GH_REPO/git/refs/tags/app-latest"', run)
+        # Every new file goes up before any old one goes: the links mix two previews only for the
+        # seconds of the renames, and each rename is tried again before the step gives up.
+        self.assertEqual(run.count("gh release upload"), 1)
+        self.assertIn("gh release upload app-latest next/* --clobber", run)
+        self.assertLess(run.index("gh release upload"), run.index("-X DELETE"))
+        self.assertRegex(run, r'for try in 1 2 3; do\s+gh api -X PATCH "repos/\$GH_REPO/releases/assets/\$new" -f name="\$name"')
+        # Then what the site downloads, whichever way app-latest was made: each link answers, and
+        # the SHA256SUMS it serves is this preview's.
+        self.assertIn('base="$GITHUB_SERVER_URL/$GH_REPO/releases/download/app-latest"', run)
+        check = run[run.rindex("\nfi\n"):]
+        self.assertIn('-o /dev/null -I "$base/${f#latest/}"', check)
+        self.assertIn('"$base/SHA256SUMS" | cmp - latest/SHA256SUMS', check)
         pattern = re.search(r'test\("([^"]+)"\)', steps[prune]["run"]).group(1).replace("\\\\", "\\")
         self.assertRegex("app-v0.1.112-preview.112", pattern)
         self.assertNotRegex("app-latest", pattern)
@@ -183,7 +200,9 @@ class ReleaseWorkflow(unittest.TestCase):
         self.assertEqual(build["env"]["SIGNPATH"],
                          "${{ needs.plan.outputs.publish == 'true' && secrets.SIGNPATH_API_TOKEN != '' "
                          "&& vars.SIGNPATH_ORGANIZATION_ID != '' }}")
-        signpath = [s for s in build["steps"] if "SIGNPATH" in json.dumps(s) or "signpath" in json.dumps(s)]
+        # (The step that only says whether the files are signed, for the release notes, aside.)
+        signpath = [s for s in build["steps"] if s.get("id") != "signed"
+                    and ("SIGNPATH" in json.dumps(s) or "signpath" in json.dumps(s))]
         self.assertEqual(len(signpath), 7)
         for s in signpath:
             with self.subTest(step=s.get("name") or s.get("uses")):
@@ -198,24 +217,107 @@ class ReleaseWorkflow(unittest.TestCase):
         for s in submits:
             self.assertEqual(s["with"]["api-token"], "${{ secrets.SIGNPATH_API_TOKEN }}")
             self.assertTrue(s["with"]["github-artifact-id"].startswith("${{ steps.unsigned-"))
-        # Apple: only the build step reads the secrets, only for the published preview, on macOS.
+        # Apple: only the bundling reads the secrets, only for the published preview, on macOS.
         # Elsewhere, only whether one is set.
         for name, s in [(s.get("name", ""), s) for s in build["steps"]]:
             for key, value in (s.get("env") or {}).items():
                 if "secrets.APPLE" in str(value):
                     with self.subTest(step=name, var=key):
-                        if name.startswith("Build ("):
+                        if name.startswith("Bundle ("):
                             self.assertRegex(value, r"^\$\{\{ runner\.os == 'macOS' && needs\.plan\.outputs\.publish == 'true' "
                                                     r"&& secrets\.APPLE_[A-Z_]+ \|\| '' \}\}$")
                         else:
                             self.assertRegex(value, r"^\$\{\{ needs\.plan\.outputs\.publish == 'true' && secrets\.APPLE_[A-Z_]+ != '' \}\}$")
         # Without the secrets, the steps that build and check run as before.
-        for key in ("Build (", "The DMG verifies", "The Windows installer is there"):
+        for key in ("Build (", "Bundle (", "The DMG verifies", "The Windows installer is there"):
             s = next(s for s in build["steps"] if s.get("name", "").startswith(key))
             self.assertNotIn("SIGNPATH", s.get("if", ""), key)
         self.assertEqual(build["env"]["APPLE_SIGNING_IDENTITY"], "-")
         for job in ("plan", "publish"):
             self.assertNotIn("secrets.", json.dumps(self.jobs[job]), job)
+
+    def test_the_compilation_sees_no_signing_secret(self):
+        # Every build.rs and proc-macro of the app's dependencies runs while it compiles: Apple's
+        # certificate and passwords only reach the bundling, which compiles nothing. The job's own
+        # variables only say whether a secret is set.
+        build = self.jobs["build"]
+        for key, value in build["env"].items():
+            for ref in re.findall(r"secrets\.[A-Z_]+(?: != '')?", value):
+                with self.subTest(var=key):
+                    self.assertTrue(ref.endswith(" != ''"), ref)
+        compile_ = step(build, "cargo tauri build")
+        self.assertIn("--no-bundle", compile_["run"])
+        self.assertNotIn("secrets.", json.dumps(compile_))
+        bundle = step(build, 'cargo tauri bundle --ci --target "$TARGET" --bundles "$BUNDLES"')
+        self.assertTrue(bundle["name"].startswith("Bundle ("))
+        self.assertIn("APPLE_CERTIFICATE", bundle["env"])
+        self.assertNotIn("cargo tauri build", bundle["run"])
+        steps = build["steps"]
+        self.assertLess(steps.index(compile_), steps.index(bundle))
+
+    def test_signpath_can_read_the_artifact_and_wait_for_its_approval(self):
+        build = self.jobs["build"]
+        # SignPath's action reads the job and downloads the unsigned artifact with the job's token.
+        self.assertEqual(build["permissions"], {"contents": "read", "actions": "read"})
+        # Two requests, each waited for (a release-signing policy waits for a person's approval),
+        # after a build without any cache: the job gets the time when it signs, and only then.
+        waits = sum(int(s["with"]["wait-for-completion-timeout-in-seconds"])
+                    for s in self.using("build", "signpath/github-action-submit-signing-request"))
+        m = re.fullmatch(r"\$\{\{ matrix\.platform == 'windows' && needs\.plan\.outputs\.publish == 'true' "
+                         r"&& vars\.SIGNPATH_ORGANIZATION_ID != '' && (\d+) \|\| (\d+) \}\}", str(build["timeout-minutes"]))
+        self.assertTrue(m, build["timeout-minutes"])
+        signing, plain = int(m.group(1)), int(m.group(2))
+        self.assertEqual(plain, 60)
+        self.assertGreaterEqual(signing, plain + waits // 60 + 15)
+
+    def run_step(self, run, env, cwd):
+        base = {"PATH": os.environ["PATH"], "LC_ALL": "C.UTF-8"}
+        p = subprocess.run(["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", run], cwd=cwd,
+                           env=dict(base, **env), capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(p.returncode, 0, p.stderr)
+
+    def test_the_release_says_unsigned_only_where_it_is(self):
+        # Each build says whether its system's files are signed (true or false, from whether the
+        # secrets are set); the notes and the title follow, in the app's words (tu).
+        build, publish = self.jobs["build"], self.jobs["publish"]
+        self.assertEqual(build["outputs"], {"macos_signed": "${{ steps.signed.outputs.macos }}",
+                                            "windows_signed": "${{ steps.signed.outputs.windows }}"})
+        self.assertEqual(build["env"]["DEVELOPER_ID"], "${{ needs.plan.outputs.publish == 'true' && secrets.APPLE_CERTIFICATE != '' }}")
+        self.assertEqual(publish["env"]["MACOS_SIGNED"], "${{ needs.build.outputs.macos_signed }}")
+        self.assertEqual(publish["env"]["WINDOWS_SIGNED"], "${{ needs.build.outputs.windows_signed }}")
+        signed = next(s for s in build["steps"] if s.get("id") == "signed")
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp, "out")
+            for platform, env, line in (("macos", {"DEVELOPER_ID": "true"}, "macos=true"),
+                                        ("windows", {"SIGNPATH": "false"}, "windows=false"),
+                                        ("linux", {}, "")):
+                out.write_text("")
+                self.run_step(signed["run"], dict(env, PLATFORM=platform, GITHUB_OUTPUT=str(out)), tmp)
+                self.assertEqual(out.read_text().strip(), line, platform)
+        notes_step = next(s for s in self.steps("publish") if s.get("name") == "Release notes")
+        create = next(s for s in self.steps("publish") if 'gh release create "$TAG"' in s.get("run", ""))
+        self.assertIn('--title "$(cat "$RUNNER_TEMP/title")"', create["run"])
+        files = ("macos-universal.dmg", "windows-x64-setup.exe", "linux-x86_64.AppImage", "linux-amd64.deb")
+        for mac, win in ((False, False), (True, False), (False, True), (True, True)):
+            with self.subTest(mac=mac, win=win), tempfile.TemporaryDirectory() as tmp:
+                Path(tmp, "dist").mkdir()
+                for f in files:
+                    Path(tmp, "dist", "Brain-in-a-Box_0.1.7-preview.7_" + f).write_text("x")
+                self.run_step(notes_step["run"], {
+                    "RUNNER_TEMP": tmp, "GITHUB_SHA": "0" * 40, "GITHUB_SERVER_URL": "https://github.com",
+                    "GH_REPO": "o/r", "VERSION": "0.1.7", "LABEL": "0.1.7-preview.7",
+                    "MACOS_SIGNED": str(mac).lower(), "WINDOWS_SIGNED": str(win).lower()}, tmp)
+                notes = Path(tmp, "notes.md").read_text(encoding="utf-8")
+                title = Path(tmp, "title").read_text(encoding="utf-8")
+                self.assertTrue(title.startswith("App Brain in a Box 0.1.7 — préversion 7"), title)
+                self.assertEqual("non signée" in title, not (mac and win), title)
+                self.assertEqual("Mac" in title, not mac, title)
+                self.assertEqual("Windows" in title, not win, title)
+                self.assertEqual("signée" in notes, not (mac and win))
+                # Gatekeeper's way round, only for an app Apple has not signed.
+                self.assertEqual("Ouvrir quand même" in notes, not mac)
+                said = re.sub(r"«[^»]*»", "", notes)
+                self.assertNotRegex(said, r"(?i)\b(vous|votre|vos|téléchargez|ouvrez|cliquez|allez|rendez|glissez|lancez)\b")
 
     def test_the_dmg_window_is_laid_out_by_finder(self):
         # Tauri skips Finder's layout on a CI: the background would not show.
@@ -360,8 +462,29 @@ class WindowsInstaller(unittest.TestCase):
         self.assertIn("!macro NSIS_HOOK_POSTUNINSTALL", self.hooks)
         # Never in an update, nor without a window; silent, the answer is no.
         self.assertRegex(self.hooks, r"\$\{If\} \$UpdateMode <> 1\s+\$\{AndIf\} \$PassiveMode <> 1")
-        self.assertIn('MessageBox MB_YESNO|MB_ICONQUESTION "$(biboRemoveTasks)" /SD IDNO', self.hooks)
+        # No by default, said to someone who reinstalls: the tasks would not come back (the app's
+        # "already installed" does not look at them). Windows writes the buttons in its own language.
+        self.assertIn('MessageBox MB_YESNO|MB_ICONQUESTION|MB_DEFBUTTON2 "$(biboRemoveTasks)" /SD IDNO', self.hooks)
         self.assertIn("Tes notes restent", self.french)
+        ask = re.search(r'^LangString biboRemoveTasks \$\{LANG_FRENCH\} "(.*)"$', self.french, re.M).group(1)
+        self.assertIn("Tu réinstalles Bibo\u00a0? Réponds Non (No)", ask)
+        self.assertIn("Oui (Yes)", ask)
+
+    def test_going_back_to_an_older_bibo_uninstalls_as_an_update(self):
+        # The uninstall the reinstall page starts is the first half of an install: /UPDATE, so that
+        # it asks nothing about the brain's tasks, which the Bibo installed next needs.
+        page = self.nsi[self.nsi.index("  reinst_uninstall:"):self.nsi.index("  reinst_done:")]
+        self.assertNotIn("${IfThen} $UpdateMode = 1 ${|} StrCpy $R1 \"$R1 /UPDATE\"", page)
+        self.assertRegex(page, r'ReadRegStr \$R1 SHCTX "\$\{UNINSTKEY\}" "UninstallString"\n(\s*;[^\n]*\n)*\s*StrCpy \$R1 "\$R1 /UPDATE"\n')
+
+    def test_the_installing_page_shows_no_english_count(self):
+        # FileFunc's GetSize writes "Size:111 Kb  Files:1  Folders:" above the progress bar: our
+        # words go there after it.
+        sizes = list(re.finditer(r"^\s*\$\{GetSize\}[^\n]*\n", self.nsi, re.M))
+        self.assertTrue(sizes)
+        for m in sizes:
+            with self.subTest(at=m.start()):
+                self.assertRegex(self.nsi[m.end():], r'^(\s*;[^\n]*\n)*\s*SetDetailsPrint textonly\n\s*DetailPrint "\$\(\w+\)"\n\s*SetDetailsPrint both\n')
 
 
 class MacDisk(unittest.TestCase):
@@ -445,6 +568,38 @@ class Site(unittest.TestCase):
             with self.subTest(fr=fr):
                 self.assertIn("<strong>%s</strong> (%s)" % (fr, en), win)
         self.assertNotIn("Aucun droit administrateur", self.html)
+
+    def test_edges_two_questions_said_in_full(self):
+        # For a file it rarely sees, Edge asks twice: « Conserver », then a window where « Supprimer »
+        # stands out and « Conserver quand même » hides under « Afficher plus ». Every time.
+        blocks = {
+            "next": r'<ol class="next-steps" data-next-for="windows">.*?</ol>',
+            "steps": r'<div class="panel" id="installer-windows">.*?</aside>',
+            "faq": r"<summary>Windows&nbsp;: mon navigateur dit.*?</details>",
+        }
+        for where, pattern in blocks.items():
+            block = re.search(pattern, self.html, re.S).group(0)
+            with self.subTest(where=where):
+                self.assertIn("<strong>Conserver</strong> (Keep)", block)
+                self.assertIn("<strong>Afficher plus</strong> (Show more)", block)
+                self.assertIn("<strong>Conserver quand même</strong> (Keep anyway)", block)
+        self.assertNotIn("insiste", self.html)
+
+    def test_the_hero_leads_to_no_release_page(self):
+        # GitHub's release page is in English and offers « Source code (zip) » next to the files:
+        # only the footer links to the releases.
+        hero = re.search(r'<p class="dl-version">.*?</p>', self.html, re.S).group(0)
+        self.assertNotIn("<a ", hero)
+        self.assertNotIn("release.page", self.js)
+        self.assertNotIn("RELEASE_PAGE", self.js)
+
+    def test_uninstalling_on_windows_step_by_step(self):
+        faq = re.search(r"<summary>Désinstaller</summary>.*?</details>", self.html, re.S).group(0)
+        self.assertIn("Applications installées (Settings › Apps › Installed apps)", faq)
+        self.assertIn("«&nbsp;…&nbsp;» à côté de Brain in a Box", faq)
+        self.assertIn("<strong>Désinstaller</strong> (Uninstall)", faq)
+        # The installer's question: no if Bibo comes back (hooks.nsh).
+        self.assertIn("<strong>Non</strong> (No) si tu réinstalles Bibo", faq)
 
     def test_smart_app_control_is_never_turned_off(self):
         faq = re.search(r'<details id="smart-app-control">.*?</details>', self.html, re.S).group(0)

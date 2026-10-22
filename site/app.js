@@ -4,7 +4,6 @@
 
 const REPO = 'BrainInBox/brain-in-a-box';
 const API = `https://api.github.com/repos/${REPO}/releases?per_page=30`;
-const RELEASE_PAGE = `https://github.com/${REPO}/releases/tag/`;
 // The release .github/workflows/release.yml refreshes with each preview: the same files, named
 // without their version. The buttons point there, whether GitHub's API answers or not.
 const LATEST = `https://github.com/${REPO}/releases/download/app-latest/`;
@@ -71,8 +70,7 @@ async function newestPreview() {
       const asset = (r.assets || []).find((a) => a && typeof a.name === 'string' && a.name.endsWith(`_${suffix}`));
       if (asset) sizes[kind] = Number(asset.size) || 0;
     }
-    const page = typeof r.html_url === 'string' && r.html_url === RELEASE_PAGE + encodeURIComponent(r.tag_name) ? r.html_url : null;
-    return { number: n[3], date: r.published_at, sizes, page };
+    return { number: n[3], date: r.published_at, sizes };
   } catch {
     return null;
   } finally {
@@ -96,10 +94,6 @@ function showVersion(release) {
   const date = frenchDate(release.date);
   const version = document.getElementById('version');
   version.textContent = `Préversion n°\u00a0${release.number}${date ? `, du ${date}` : ''}`;
-  if (release.page) {
-    const link = version.nextElementSibling;
-    if (link && link.tagName === 'A') link.href = release.page;
-  }
 }
 
 // The big buttons (top of the page, and the last call at the bottom) are for the visitor's system.

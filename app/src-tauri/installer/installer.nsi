@@ -382,7 +382,10 @@ Function PageLeaveReinstall
     ${Else}
       ReadRegStr $4 SHCTX "${MANUPRODUCTKEY}" ""
       ReadRegStr $R1 SHCTX "${UNINSTKEY}" "UninstallString"
-      ${IfThen} $UpdateMode = 1 ${|} StrCpy $R1 "$R1 /UPDATE" ${|} ; append /UPDATE
+      ; Bibo: always /UPDATE, not only for the updater: this uninstall is the first half of an install
+      ; (going back to an older Bibo), so the uninstaller asks nothing about the brain's scheduled tasks
+      ; (hooks.nsh), which the Bibo installed next needs.
+      StrCpy $R1 "$R1 /UPDATE"
       ${IfThen} $PassiveMode = 1 ${|} StrCpy $R1 "$R1 /P" ${|} ; append /P
       StrCpy $R1 "$R1 _?=$4" ; append uninstall directory
       ExecWait '$R1' $0
@@ -744,6 +747,10 @@ Section Install
   WriteRegDWORD SHCTX "${UNINSTKEY}" "NoRepair" "1"
 
   ${GetSize} "$INSTDIR" "/M=uninstall.exe /S=0K /G=0" $0 $1 $2
+  ; Bibo: GetSize leaves its count, in English, above the progress bar ("Size:111 Kb  Files:1  Folders:")
+  SetDetailsPrint textonly
+  DetailPrint "$(biboAlmostDone)"
+  SetDetailsPrint both
   IntOp $0 $0 + ${ESTIMATEDSIZE}
   IntFmt $0 "0x%08X" $0
   WriteRegDWORD SHCTX "${UNINSTKEY}" "EstimatedSize" "$0"
