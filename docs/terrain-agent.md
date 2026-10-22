@@ -84,7 +84,8 @@ checks the app's own diagnosis said Git « À installer ». The checks of the in
 nothing was proved there),
 `git-installe` (install.ps1's lines in `~/.brain-in-a-box/install.log`: `> winget install -e --id
 Git.Git ...` then `winget : code N`, one per attempt, `details.git.winget`; when winget could not (absent,
-or its source broken: `winget source update` once, one more try), `> installeur officiel : Git <version>
+or its source broken: `winget source update` once, one more try; or it did not start: `winget : n'a pas
+demarre`, then `> winget : il ne demarre pas, ...`), `> installeur officiel : Git <version>
 (<arch>) <url>` then how it ended, `details.git.officiel`; never when the company's policy blocks winget
 (`> winget : bloque par la politique de l'entreprise, ...`: the kit does not go around it); then `> Git :
 <git.exe> (winget|installeur officiel)`, or `absent`, `details.git.voie`; the reason says each way in order,
