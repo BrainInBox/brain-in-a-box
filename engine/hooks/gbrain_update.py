@@ -35,7 +35,7 @@ import traceback
 import urllib.error
 import urllib.request
 import zipfile
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 UPSTREAM = "https://github.com/garrytan/gbrain.git"
 RELEASES_API = "https://api.github.com/repos/garrytan/gbrain/releases"
@@ -106,12 +106,18 @@ def system_tool(name):
     return os.path.join(os.environ.get("SystemRoot") or r"C:\Windows", "System32", name)
 
 
+def absolute_folder(d):
+    """Whether `d`, a folder of the PATH, is named in full: on Windows with its drive or a share, as
+    _headless_claude.absolute_folder says (Python 3.12's os.path.isabs also takes \\tools)."""
+    return bool(d) and (PureWindowsPath(d).is_absolute() if WINDOWS else os.path.isabs(d))
+
+
 def which(name):
     """`name` in the PATH's absolute folders. Not shutil.which: on Windows it looks in the current
     folder first, and an empty or relative entry is the folder this runs from."""
     for d in os.environ.get("PATH", "").split(os.pathsep):
         p = os.path.join(d, name)
-        if os.path.isabs(d) and os.path.isfile(p) and os.access(p, os.X_OK):
+        if absolute_folder(d) and os.path.isfile(p) and os.access(p, os.X_OK):
             return p
     return None
 

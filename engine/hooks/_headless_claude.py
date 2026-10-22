@@ -40,7 +40,7 @@ import threading
 import time
 from collections import deque, namedtuple
 from contextlib import contextmanager
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 WINDOWS = os.name == "nt"
 # The first version checked with every flag below (the app's MIN_CLAUDE).
@@ -72,7 +72,7 @@ REROUTE_VARS = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "AWS_BEARER_TOKEN_B
                 "ANTHROPIC_FOUNDRY_API_KEY", "ANTHROPIC_FOUNDRY_AUTH_TOKEN", "ANTHROPIC_AWS_API_KEY")
 # Where an administrator's settings live (None: this OS's folder; tests point it elsewhere).
 MANAGED_DIR = None
-# Where Homebrew puts claude, which launchd's bare PATH lacks.
+# Where Homebrew puts claude, which launchd's bare PATH lacks (macOS and Linux).
 EXTRA_DIRS = ("/opt/homebrew/bin", "/usr/local/bin")
 PROXY_VARS = ("HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "NO_PROXY",
               "https_proxy", "http_proxy", "all_proxy", "no_proxy", "NODE_EXTRA_CA_CERTS")
@@ -111,6 +111,15 @@ class HeadlessError(Exception):
         return self.kind in ("timeout", "api")
 
 
+def absolute_folder(d):
+    """Whether `d`, a folder of the PATH, is named in full. On Windows that takes its drive (C:\\...) or a
+    share (\\\\server\\share): up to Python 3.12, os.path.isabs also takes \\tools or /opt/homebrew/bin,
+    folders of whatever drive is current, where a standard account may create one."""
+    if not d:
+        return False
+    return PureWindowsPath(d).is_absolute() if WINDOWS else os.path.isabs(d)
+
+
 def which(name, dirs=None):
     """The first `name` that can run in `dirs` (the PATH's by default), from absolute folders only. Not
     shutil.which: on Windows it looks in the current folder first, even with path=; and an empty or
@@ -118,7 +127,7 @@ def which(name, dirs=None):
     if dirs is None:
         dirs = os.environ.get("PATH", "").split(os.pathsep)
     for d in dirs:
-        if not d or not os.path.isabs(d):
+        if not absolute_folder(d):
             continue
         p = os.path.join(d, name)
         if os.path.exists(p) and not os.path.isdir(p) and (WINDOWS or os.access(p, os.X_OK)):
@@ -134,7 +143,7 @@ def find_claude():
         return [str(local)]
     # launchd and the Task Scheduler start with a bare PATH.
     found = which(exe, os.environ.get("PATH", "").split(os.pathsep) + [str(Path.home() / ".claude" / "local")]
-                  + list(EXTRA_DIRS))
+                  + ([] if WINDOWS else list(EXTRA_DIRS)))
     # On Windows only an .exe: a claude.cmd would put our arguments through cmd.exe.
     return [found] if found and (not WINDOWS or found.lower().endswith(".exe")) else None
 

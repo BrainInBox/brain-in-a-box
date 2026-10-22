@@ -199,6 +199,23 @@ def _content(d):
     return content if isinstance(content, str) else None
 
 
+# The tags of what the user typed in a "user" record: a "!" command, a slash command, a long paste.
+TYPED_TAGS = ("bash-input", "command-name", "command-message", "command-args", "pasted_content")
+
+
+def _who(d, text):
+    """Who wrote the text of a "user" record. "summary": what a compaction left, the model wrote it. "output":
+    what Claude Code put there though no one typed it (a command's output, a background task's notice,
+    another agent's message), told by an origin other than the keyboard or by a tag the user does not type."""
+    if d.get("isCompactSummary"):
+        return "summary"
+    origin = d.get("origin")
+    if isinstance(origin, dict) and origin.get("kind") != "human":
+        return "output"
+    tag = re.match(r"\s*<([A-Za-z][\w-]*)", text)
+    return "output" if tag and tag.group(1) not in TYPED_TAGS else "user"
+
+
 def _render(d, hhmm):
     """Readable lines for one transcript record. Tool results are dropped: they
     are most of the volume and the git digest says what was produced."""
@@ -207,11 +224,9 @@ def _render(d, hhmm):
     content = _content(d)
     out = []
     if d.get("type") == "user":
-        if isinstance(content, str):
-            out.append(_entry(hhmm, "user", content))
-        elif isinstance(content, list):
-            out += [_entry(hhmm, "user", c.get("text", ""))
-                    for c in content if c.get("type") == "text" and c.get("text", "").strip()]
+        texts = [content] if isinstance(content, str) else [
+            c.get("text", "") for c in content or [] if c.get("type") == "text" and c.get("text", "").strip()]
+        out += [_entry(hhmm, _who(d, t), t) for t in texts]
     elif d.get("type") == "assistant" and isinstance(content, list):
         for c in content:
             if c.get("type") == "text" and c.get("text", "").strip():
@@ -251,8 +266,10 @@ def day_session(path, day):
                 if not when or when.strftime("%Y-%m-%d") != day:
                     continue
                 cwd = d["cwd"] if isinstance(d.get("cwd"), str) and d["cwd"] else cwd
-                rendered = _render(d, when.strftime("%H:%M"))
-                n += sum(1 for l in rendered if " user: " in l or " assistant: " in l)
+                hhmm = when.strftime("%H:%M")
+                rendered = _render(d, hhmm)
+                # A conversation's lines only: not a tool's, nor what Claude Code wrote (summary, output).
+                n += sum(1 for l in rendered if l.startswith((f"{hhmm} user: ", f"{hhmm} assistant: ")))
                 lines += rendered
     except OSError:
         return ("", None, 0)

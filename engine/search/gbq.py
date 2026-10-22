@@ -16,7 +16,7 @@ and answered by keywords: Claude Code's Bash tool gives up at 120 s.
 import os
 import subprocess
 import sys
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 HERE = Path(__file__).resolve().parent
 BRAIN_SEARCH = HERE / "brain_search.py"
@@ -41,6 +41,12 @@ def bun_bin():
     return Path(root) / "bin"
 
 
+def absolute_folder(d):
+    """Whether `d`, a folder of the PATH, is named in full: on Windows with its drive or a share, as
+    _headless_claude.absolute_folder says (Python 3.12's os.path.isabs also takes \\tools)."""
+    return bool(d) and (PureWindowsPath(d).is_absolute() if WINDOWS else os.path.isabs(d))
+
+
 def gbrain_exe():
     p = bun_bin() / ("gbrain" + EXE)
     if p.is_file():
@@ -49,7 +55,7 @@ def gbrain_exe():
     # `gbq` is run from (a repository, a download).
     for d in os.environ.get("PATH", "").split(os.pathsep):
         p = Path(d) / ("gbrain" + EXE)
-        if os.path.isabs(d) and p.is_file() and os.access(str(p), os.X_OK):
+        if absolute_folder(d) and p.is_file() and os.access(str(p), os.X_OK):
             return str(p)
     return None
 

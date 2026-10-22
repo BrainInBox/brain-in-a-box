@@ -174,6 +174,32 @@ mkdir -p "$LD/recap-x"
 echo "{\"session_id\":\"x/../../../escaped\",\"cwd\":\"/Users/builder/proj\",\"transcript_path\":\"$TX\"}" | HOME="$H" python3 "$HB/session-recap.py" 2>/dev/null
 [ ! -e "$H/escaped.lock" ] && ! grep -q 'sid:`x/' "$J" && grep -q "session_id is not a plain id" "$H/.claude/logs/session-recap-errors.log" \
   && ok "a session id that is not a plain id is refused (no path out of the lock folder, nothing in the journal)" || no "odd session id used"
+# The three Stop hooks' lock folder sits in a temporary folder all accounts share on Linux (/tmp), where
+# another account may have made one of that name first: they then use one of the user's own, named after
+# the user's id, never fail, and never put a lock where others can write. A folder they cannot write in
+# stands for another account's (root writes anywhere: not that check). With no folder of their own (every
+# one another account's: the user's id played by another), nothing is written and nothing fails.
+LU=$(id -u)
+for h in logger indexer recap; do
+  case $h in logger) HL="$H/.claude/logs/sessions.log" ;; indexer) HL="$H/.claude/logs/sessions-$DAY.jsonl" ;; *) HL="$J" ;; esac
+  for m in 555 777; do
+    [ "$m" = 555 ] && [ "$LU" = 0 ] && continue
+    T="$H/shared-$h-$m"; mkdir -p "$T/claude-session-locks"; chmod "$m" "$T/claude-session-locks"
+    S="${h:0:3}${m}x$(date +%s)"
+    echo "{\"session_id\":\"$S\",\"cwd\":\"/Users/builder/proj\",\"transcript_path\":\"$TX\"}" | TMPDIR="$T" HOME="$H" python3 "$HB/session-$h.py" 2>/dev/null
+    rc=$?; chmod 755 "$T/claude-session-locks"
+    [ "$rc" = 0 ] && grep -q "${S:0:8}" "$HL" && [ -f "$T/claude-session-locks-$LU/$h-$S.lock" ] && [ -z "$(ls -A "$T/claude-session-locks")" ] \
+      && ok "session-$h: a lock folder of that name in mode $m: one of the user's own, nothing put in that one" \
+      || no "session-$h: a lock folder of that name in mode $m (exit $rc)"
+  done
+  S="${h:0:3}frgn$(date +%s)"; T="$H/shared-$h-none"; mkdir -p "$T"
+  echo "{\"session_id\":\"$S\",\"cwd\":\"/Users/builder/proj\",\"transcript_path\":\"$TX\"}" | TMPDIR="$T" HOME="$H" python3 -c \
+    'import os, runpy, sys; os.getuid = lambda: 4242; p = sys.argv[1]; sys.argv = [p]; runpy.run_path(p, run_name="__main__")' \
+    "$HB/session-$h.py" 2>/dev/null
+  rc=$?
+  [ "$rc" = 0 ] && ! grep -q "${S:0:8}" "$HL" && ! find "$T" -name "*$S*" | grep -q . \
+    && ok "session-$h: no lock folder of its own: nothing written, no failure" || no "session-$h: wrote or failed without a lock folder of its own (exit $rc)"
+done
 # Codex's Stop hook (--agent codex), on a session made from step 0's real capture with 3 tool calls,
 # typed in Codex's terminal (source "cli"): silent while agents.json does not list Codex, and while
 # Codex is closed (a file that lists it is not trusted). Control: in a copy of the hooks where Codex is
