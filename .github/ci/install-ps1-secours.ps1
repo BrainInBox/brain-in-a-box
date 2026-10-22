@@ -57,6 +57,7 @@ function Invoke-WebRequest {
 function Start-Process {
     [CmdletBinding()]
     param([string]$FilePath, [string[]]$ArgumentList, [switch]$Wait, [switch]$PassThru)
+    if ($script:StartFails) { throw "blocked by policy" }
     $script:Started += , ([ordered]@{ file = $FilePath; args = @($ArgumentList); temp = $env:TEMP; tmp = $env:TMP
                                       sha = (Sha256File $FilePath); voyage = "$env:VOYAGE_API_KEY" })
     return [pscustomobject]@{ ExitCode = $script:ExitCode }
@@ -73,7 +74,7 @@ function New-Home {
     $script:LogOpen = $true; $script:WingetNotes = @()
     $script:WingetRepaired = $false; $script:WingetBroken = $false; $script:WingetThere = $true
     $script:WingetCalls = @(); $script:WingetCodes = @(); $script:Downloads = @(); $script:Serve = $null
-    $script:Started = @(); $script:ExitCode = 0; $script:Arch = "x64"; $script:Refreshed = 0
+    $script:Started = @(); $script:ExitCode = 0; $script:Arch = "x64"; $script:Refreshed = 0; $script:StartFails = $false
     foreach ($k in $Pins.Keys) { $OFFICIAL_INSTALLERS[$k].x64 = @($Pins[$k].x64); $OFFICIAL_INSTALLERS[$k].arm64 = @($Pins[$k].arm64) }
     $env:TEMP = Join-Path $T "shared-temp"; $env:TMP = $env:TEMP
 }
@@ -110,7 +111,8 @@ try {
     $out = Said { $script:r = Official-Install "Git" }
     Check (-not $r -and $Started.Count -eq 0 -and "$Downloads" -ceq $Pins.Git.x64[0] -and
            $out -match "Git : le fichier telecharge ne correspond pas a l'empreinte SHA-256 epinglee, rien n'est lance" -and
-           (Log).Contains("installeur officiel : empreinte SHA-256 $FakeSha, attendue $($Pins.Git.x64[1]) : rien n'est lance") -and (Leftovers).Count -eq 0) `
+           (Log).Contains("> installeur officiel : Git 2.56.0.2 (x64) $($Pins.Git.x64[0])`r`ninstalleur officiel : empreinte SHA-256 $FakeSha, attendue $($Pins.Git.x64[1]) : rien n'est lance") -and
+           (Leftovers).Count -eq 0) `
           "official installer: a replaced installer is downloaded from the release, never run, said on screen and in the log, its folder removed"
     # The pin changed (one character): the same file, still never run.
     New-Home; $Serve = $Fake; $bad = $FakeSha.Substring(0, 63) + $(if ($FakeSha.EndsWith("0")) { "1" } else { "0" })
@@ -131,8 +133,8 @@ try {
           "official installer: the pinned one runs once, from ~\.brain-in-a-box\installeur-*, silent, its TEMP there, no Voyage key: $($s.file) $($s.temp)"
     Check ((Leftovers).Count -eq 0 -and $env:TEMP -ceq $tempBefore -and $env:TMP -ceq $tempBefore -and $env:VOYAGE_API_KEY -ceq "pa-canari-voyage" -and $Refreshed -ge 1 -and
            $out -match "Git 2\.56\.0\.2 : installeur officiel \(dans ton profil, sans droits admin\), verifie avant de tourner" -and
-           (Log).Contains("> installeur officiel : Git 2.56.0.2 (x64) $($Pins.Git.x64[0])") -and (Log).Contains("installeur officiel : code 0")) `
-          "official installer: its folder removed after, TEMP and the key back, PATH read again, the log says which and its code"
+           (Log).Contains("> installeur officiel : Git 2.56.0.2 (x64) $($Pins.Git.x64[0])`r`ninstalleur officiel : code 0")) `
+          "official installer: its folder removed after, TEMP and the key back, PATH read again, the log says which and its code, in one note"
     foreach ($c in @(@(3010, $true), @(1603, $false))) {
         New-Home; $Serve = $Fake; $OFFICIAL_INSTALLERS.Git.x64 = @($Pins.Git.x64[0], $FakeSha); $ExitCode = $c[0]
         $null = Said { $script:r = Official-Install "Git" }
@@ -148,8 +150,14 @@ try {
     Check (-not $r -and $Downloads.Count -eq 0 -and $Started.Count -eq 0 -and (Log).Contains("aucun pour ce Windows 32 bits")) "official installer: none for a 32-bit Windows, nothing downloaded"
     New-Home
     $out = Said { $script:r = Official-Install "Git" }
-    Check (-not $r -and $Started.Count -eq 0 -and $out -match "Git : telechargement impossible" -and (Log).Contains("telechargement impossible : no network") -and (Leftovers).Count -eq 0) `
+    Check (-not $r -and $Started.Count -eq 0 -and $out -match "Git : telechargement impossible" -and (Log).Contains("installeur officiel : telechargement impossible : no network") -and (Leftovers).Count -eq 0) `
           "official installer: no network, said, nothing run, its folder removed"
+    # The installer does not start (a company's rule, an antivirus): said, the install goes on, the session as it was.
+    New-Home; $Serve = $Fake; $OFFICIAL_INSTALLERS.Git.x64 = @($Pins.Git.x64[0], $FakeSha); $StartFails = $true; $tempBefore = $env:TEMP
+    $out = Said { $script:r = Official-Install "Git" }
+    $StartFails = $false
+    Check (-not $r -and $out -match "Git : son installeur officiel n'a pas tourne" -and (Log).Contains("installeur officiel : erreur : blocked by policy") -and
+           $env:TEMP -ceq $tempBefore -and (Leftovers).Count -eq 0) "official installer: one that does not start, said, nothing left, TEMP back"
 
     # winget: its source broken (0x8A15000F), updated once without admin, one more try, then left alone.
     New-Home; $WingetCodes = @($SourceBroken, $SourceBroken, $SourceBroken)

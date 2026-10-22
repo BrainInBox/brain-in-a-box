@@ -857,9 +857,9 @@ class WindowsWithoutGit(unittest.TestCase):
         for line in ('Note-Winget "> winget absent : $label non installe par winget"',
                      'Note-Winget "> winget : sa source est en panne, $label non installe par winget"',
                      '$null = Invoke-Winget @("source", "update", "--name", "winget")',
-                     'Note-Winget "> installeur officiel : $Label $($o.Version) ($arch) $url"',
-                     'Note-Winget "installeur officiel : code $($p.ExitCode)"',
-                     'Note-Winget "installeur officiel : empreinte SHA-256 $hex, attendue $sha : rien n\'est lance"',
+                     'Note-Winget "> installeur officiel : $Label $($o.Version) ($arch) $url`r`ninstalleur officiel : $end"',
+                     '$end = "code $($p.ExitCode)"',
+                     '$end = "empreinte SHA-256 $hex, attendue $sha : rien n\'est lance"',
                      'Note-Winget "> $Label : $(if (-not $p) { \'absent\' } elseif ($via) { "$p ($via)" } else { $p })"',
                      '$via = if (Official-Install $Label) { "installeur officiel" } else { "" }'):
             self.assertIn(line, ps1)

@@ -708,7 +708,7 @@ jobs:
           . .github/ci/poste-neuf.ps1
           & .github/ci/sans-git.ps1 -Preuve "$env:RUNNER_TEMP\sans-git.json"
           . .github/ci/winget-casse.ps1
-          $null | powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File install.ps1 *>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\install.txt"
+          powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File install.ps1 *>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\install.txt"
           if ($LASTEXITCODE) { throw "install.ps1 exited $LASTEXITCODE" }
 
       - name: Python and Git from their official installers, Git's history and Bash there, the log says which way

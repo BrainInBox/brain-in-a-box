@@ -216,36 +216,38 @@ function Official-Install([string]$Label) {
     if (-not $arch) { Note-Winget "> installeur officiel : $Label, aucun pour ce Windows 32 bits"; return $false }
     $url, $sha = $o[$arch]
     Write-Host "  ... $Label $($o.Version) : installeur officiel (dans ton profil, sans droits admin), verifie avant de tourner"
-    Note-Winget "> installeur officiel : $Label $($o.Version) ($arch) $url"
     $d = Join-Path $H (Join-Path ".brain-in-a-box" ("installeur-" + [guid]::NewGuid().ToString("N")))
     $tmp = Join-Path $d "tmp"
+    $end = "interrompu"
     try {
         New-Item -ItemType Directory -Path $tmp -Force | Out-Null
         $f = Join-Path $d ($url -replace '^.*/', '')
         $pp = $ProgressPreference; $ProgressPreference = "SilentlyContinue"
         try { Invoke-WebRequest -Uri $url -OutFile $f -UseBasicParsing }
         catch {
-            Note-Winget "installeur officiel : telechargement impossible : $($_.Exception.Message)"
+            $end = "telechargement impossible : $($_.Exception.Message)"
             Warn "$Label : telechargement impossible (reseau ?) : relance la meme commande"
             return $false
         } finally { $ProgressPreference = $pp }
         $hex = ([BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash([IO.File]::ReadAllBytes($f))) -replace '-', '').ToLowerInvariant()
         if ($hex -ne $sha) {
-            Note-Winget "installeur officiel : empreinte SHA-256 $hex, attendue $sha : rien n'est lance"
+            $end = "empreinte SHA-256 $hex, attendue $sha : rien n'est lance"
             Warn "$Label : le fichier telecharge ne correspond pas a l'empreinte SHA-256 epinglee, rien n'est lance : relance la meme commande plus tard"
             return $false
         }
         $savedTemp = $env:TEMP; $savedTmp = $env:TMP
         $env:TEMP = $tmp; $env:TMP = $tmp
         try { $p = Invoke-Native { Start-Process -FilePath $f -ArgumentList $o.Args -Wait -PassThru -ErrorAction Stop } }
-        catch {
-            Note-Winget "installeur officiel : ne se lance pas : $($_.Exception.Message)"
-            Warn "$Label : son installeur ne se lance pas (details : $LOG)"
-            return $false
-        } finally { $env:TEMP = $savedTemp; $env:TMP = $savedTmp }
-        Note-Winget "installeur officiel : code $($p.ExitCode)"
+        finally { $env:TEMP = $savedTemp; $env:TMP = $savedTmp }
+        $end = "code $($p.ExitCode)"
         return ($p.ExitCode -eq 0 -or $p.ExitCode -eq 3010)   # 3010 : fini, un redemarrage conseille
+    } catch {
+        $end = "erreur : $($_.Exception.Message)"
+        Warn "$Label : son installeur officiel n'a pas tourne (details : $LOG)"
+        return $false
     } finally {
+        # Une ligne pour l'essai, comme pour winget : ce qui a ete lance, puis comment ca a fini.
+        Note-Winget "> installeur officiel : $Label $($o.Version) ($arch) $url`r`ninstalleur officiel : $end"
         Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue
         Refresh-Path
     }

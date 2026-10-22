@@ -2,9 +2,8 @@
 # required by the source is missing"); on a PC: a source never updated, a company network, an old App
 # Installer. A stand-in winget.exe, first on the Machine PATH (which install.ps1 reads again) and on this
 # process's, answers every command as that one did, and notes each in $WingetCalls. Nothing finds a
-# Python either, but the Store stub of poste-neuf.ps1: the py launchers on the PATHs are renamed (they
-# find the runner's Pythons through the registry once install.ps1 reads the PATH again), the runner's
-# Pythons leave the user's PATH. Then the proof, in a new process whose PATH is read from the registry.
+# Python either, but the Store stub (poste-neuf.ps1, which also takes the py launcher away): the runner's
+# Pythons leave the user's PATH too. Then the proof, in a new process whose PATH is read from the registry.
 # Dot-source it after poste-neuf.ps1 and sans-git.ps1, in the step that runs the installer:
 #   . .github/ci/winget-casse.ps1
 $ErrorActionPreference = 'Stop'
@@ -30,14 +29,6 @@ $env:Path = "$WingetCasse;$env:Path"
 $tc = '*\hostedtoolcache\windows\Python\*'
 $u = [Environment]::GetEnvironmentVariable('Path', 'User')
 if ($u) { [Environment]::SetEnvironmentVariable('Path', ((($u -split ';') | Where-Object { $_ -notlike $tc }) -join ';'), 'User') }
-$launchers = @()
-foreach ($d in @(([Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User') + ";$env:Path") -split ';' | Where-Object { $_ } | Select-Object -Unique)) {
-    foreach ($n in 'py.exe', 'pyw.exe') {
-        $f = Join-Path $d $n
-        if (Test-Path -LiteralPath $f -PathType Leaf) { Rename-Item -LiteralPath $f -NewName "$n.biab-off"; $launchers += $f }
-    }
-}
-"py launchers renamed: $(if ($launchers) { $launchers -join ', ' } else { 'none' })"
 
 # The proof: a new process with the PATH Windows gives a new program finds the stand-in winget first, and
 # no Python that runs code (the Store's aliases exit 9009).

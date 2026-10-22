@@ -1,6 +1,7 @@
 # Spike only (never merged): install.ps1's Official-Install for real, as whoever runs this script.
-param([Parameter(Mandatory = $true)][string]$Out, [string]$Kit = $PSScriptRoot)
+param([Parameter(Mandatory = $true)][string]$Out, [string]$Kit = "")
 $ErrorActionPreference = "Stop"
+if (-not $Kit) { $Kit = Split-Path -Parent $MyInvocation.MyCommand.Path }
 $r = [ordered]@{}
 try {
     $errs = $null

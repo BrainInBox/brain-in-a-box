@@ -129,7 +129,8 @@ jobs:
       - name: The official installers as a standard user (not an administrator)
         run: |
           $chars = [char[]]'abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789'
-          $pw = (-join (1..20 | ForEach-Object { $chars[[Security.Cryptography.RandomNumberGenerator]::GetInt32($chars.Length)] })) + 'aA1!'
+          $pw = (-join (1..10 | ForEach-Object { $chars[[Security.Cryptography.RandomNumberGenerator]::GetInt32($chars.Length)] })) + 'aA1!'
+          # 14 characters at most: net user asks a question past that.
           net user biabstd $pw /add | Out-Null
           if ($LASTEXITCODE) { throw 'net user failed' }
           $work = 'C:\biab-spike'
@@ -144,7 +145,7 @@ jobs:
 
   arm64:
     runs-on: windows-11-arm
-    timeout-minutes: 30
+    timeout-minutes: 60
     defaults:
       run:
         shell: pwsh
@@ -153,8 +154,30 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: The runner's Git away, then the official installers (ARM64)
+      - name: No Git, no Python, no winget (this image has none), then install.ps1 as the app runs it
+        timeout-minutes: 45
         run: |
+          try { . .github/ci/poste-neuf.ps1 } catch { "poste-neuf: $($_.Exception.Message)" }
           try { & .github/ci/sans-git.ps1 -Preuve "$env:RUNNER_TEMP\sans-git.json" } catch { "sans-git: $($_.Exception.Message)" }
-          powershell -NoProfile -ExecutionPolicy Bypass -File .github/ci/spike-run.ps1 -Out "$env:RUNNER_TEMP\out.json"
-          Get-Content "$env:RUNNER_TEMP\out.json" -Raw
+          foreach ($n in 'py.exe', 'pyw.exe') { $f = Join-Path $env:WINDIR $n; if (Test-Path $f) { Rename-Item $f "$n.biab-off"; "renamed $f" } }
+          "winget: $((Get-Command winget -ErrorAction SilentlyContinue).Source)"
+          "machine arch: $([Environment]::GetEnvironmentVariable('PROCESSOR_ARCHITECTURE', 'Machine')), this process: $env:PROCESSOR_ARCHITECTURE"
+          $null | powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File install.ps1 *>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\install.txt"
+          "install.ps1 exit $LASTEXITCODE"
+
+      - name: What came, and for which processor
+        if: always()
+        run: |
+          function Machine([string]$exe) { $b = [IO.File]::ReadAllBytes($exe); $pe = [BitConverter]::ToInt32($b, 0x3C); '0x{0:X4}' -f [BitConverter]::ToUInt16($b, $pe + 4) }
+          foreach ($g in "$env:LOCALAPPDATA\Programs\Git\cmd\git.exe", "$env:ProgramFiles\Git\cmd\git.exe", "$env:ProgramFiles\Git\usr\bin\bash.exe", "$env:ProgramFiles\Git\bin\bash.exe") {
+            if (Test-Path $g) { "$g : $(if ($g -like '*git.exe') { & $g --version }) machine=$(Machine $g)" }
+          }
+          foreach ($p in @(Get-ChildItem "$env:LOCALAPPDATA\Programs\Python\Python3*\python.exe" -ErrorAction SilentlyContinue)) {
+            "$($p.FullName) : $(& $p.FullName -c 'import platform, sys; print(platform.machine(), sys.version.split()[0])') machine=$(Machine $p.FullName)"
+          }
+          $s = Get-Content "$env:USERPROFILE\.claude\settings.json" -Raw -ErrorAction SilentlyContinue
+          "hooks python: $((@(($s | ConvertFrom-Json).hooks.UserPromptSubmit.hooks)[0]).command)"
+          "engine: $(Get-Content "$env:USERPROFILE\.brain-search\engine" -ErrorAction SilentlyContinue)"
+          "vault history: $(git -C "$env:USERPROFILE\Documents\Brain" log --oneline 2>&1 | Select-Object -First 3)"
+          "leftovers: $(@(Get-ChildItem "$env:USERPROFILE\.brain-in-a-box" -Directory -Filter 'installeur-*' -ErrorAction SilentlyContinue).Count)"
+          Get-Content "$env:USERPROFILE\.brain-in-a-box\install.log" -Raw
