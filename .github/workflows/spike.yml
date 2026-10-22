@@ -1,0 +1,76 @@
+name: spike-relecture
+
+on:
+  push:
+    branches: ["spike/winget-relecture"]
+
+permissions:
+  contents: read
+
+jobs:
+  harnais:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: install-ps1-secours.ps1
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File .github/ci/install-ps1-secours.ps1
+          if ($LASTEXITCODE) { throw "install-ps1-secours.ps1 exited $LASTEXITCODE" }
+      - name: install-ps1-codex.ps1
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File .github/ci/install-ps1-codex.ps1
+          if ($LASTEXITCODE) { throw "install-ps1-codex.ps1 exited $LASTEXITCODE" }
+
+  # Not for the PR: what PowerShell does with a winget.exe that cannot start when, as in install.ps1, the
+  # call is at the script's top level (no try anywhere): does the install stop, or go on with a stale code?
+  sonde-winget-casse:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    steps:
+      - name: The probe, Windows PowerShell 5.1 and pwsh
+        shell: pwsh
+        run: |
+          $d = Join-Path $env:RUNNER_TEMP "sonde"
+          New-Item -ItemType Directory -Path $d -Force | Out-Null
+          $bad = Join-Path $d $(if ($IsWindows) { "winget.exe" } else { "winget" })
+          [IO.File]::WriteAllBytes($bad, [byte[]](0, 1, 2, 3))
+          if (-not $IsWindows) { chmod 755 $bad }
+          $probe = @'
+          $ErrorActionPreference = "Stop"
+          function Invoke-Native([scriptblock]$Cmd) {
+              $ErrorActionPreference = "Continue"
+              try { & $Cmd } finally { }
+          }
+          function Invoke-Winget([string[]]$a) {
+              Invoke-Native { & $bad @a } | Out-Host
+              $code = $LASTEXITCODE
+              Write-Output "winget : code $code"
+              return $code
+          }
+          $bad = $args[0]
+          $global:LASTEXITCODE = 0
+          $r = Invoke-Winget @("install", "-e", "--id", "Git.Git")
+          Write-Output "after the call, the install goes on, code read: $r"
+          '@
+          Set-Content -LiteralPath (Join-Path $d "probe.ps1") -Value $probe -Encoding ascii
+          $shells = @("pwsh") + $(if ($IsWindows) { @("powershell") } else { @() })
+          foreach ($sh in $shells) {
+            "----- $sh"
+            & $sh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $d "probe.ps1") $bad 2>&1 | ForEach-Object { "$_" }
+            "exit code of $sh : $LASTEXITCODE"
+          }
