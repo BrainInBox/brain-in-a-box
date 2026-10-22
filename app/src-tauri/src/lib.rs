@@ -636,6 +636,99 @@ fn guide_ask(args: &[String]) -> i32 {
     }
 }
 
+// ── The installer's window: whole on the screen, one at a time, never white ──
+
+/// The window's own size (tauri.conf.json) and the least it shrinks to, in logical pixels.
+const MAIN_SIZE: (f64, f64) = (780.0, 680.0);
+const MAIN_MIN: (f64, f64) = (600.0, 440.0);
+/// Kept free on each side inside the usable area, in logical pixels: the window never touches the taskbar.
+const MAIN_MARGIN: f64 = 12.0;
+/// The window shows once its page is drawn; past this, whatever happened, it shows anyway.
+const SHOW_ANYWAY: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// Where the installer's window goes, in physical pixels.
+#[derive(Debug, PartialEq)]
+struct Placement {
+    /// The inside of the window, the page.
+    width: u32,
+    height: u32,
+    /// Its outer corner, title bar included.
+    x: i32,
+    y: i32,
+}
+
+/// The installer's window on the usable area of its screen (`area`: x, y, width, height, without the
+/// taskbar or the Dock), all in physical pixels: at most its own size and never under its minimum, its
+/// frame (`frame`: the outer size less the inner, the title bar's height included) inside the area,
+/// centered. A screen too small for the minimum keeps the title bar at the top, where it can be grabbed.
+/// A 1366 × 768 laptop at 125 % has 1092 × 566 to give, a taskbar of 48 left out: the page gets 503 high.
+fn place_main(area: (i32, i32, u32, u32), frame: (u32, u32), scale: f64) -> Placement {
+    let px = |v: f64| (v * scale).round() as u32;
+    let (ax, ay, aw, ah) = area;
+    let fit = |want: f64, least: f64, room: u32, frame: u32| px(want).min(room.saturating_sub(frame + 2 * px(MAIN_MARGIN))).max(px(least));
+    let (width, height) = (fit(MAIN_SIZE.0, MAIN_MIN.0, aw, frame.0), fit(MAIN_SIZE.1, MAIN_MIN.1, ah, frame.1));
+    let center = |start: i32, room: u32, size: u32| start + ((i64::from(room) - i64::from(size)) / 2).max(0) as i32;
+    Placement { width, height, x: center(ax, aw, width + frame.0), y: center(ay, ah, height + frame.1) }
+}
+
+/// Before it first shows: a laptop's screen at 125 % is shorter than the window, whose buttons went under
+/// the taskbar (the night's 1024 × 768 too). Without a screen to measure, the window stays as configured.
+fn place_main_window(w: &tauri::WebviewWindow) -> tauri::Result<()> {
+    let Some(monitor) = w.current_monitor()?.or(w.primary_monitor()?) else { return Ok(()) };
+    let area = monitor.work_area();
+    let (outer, inner) = (w.outer_size()?, w.inner_size()?);
+    let frame = (outer.width.saturating_sub(inner.width), outer.height.saturating_sub(inner.height));
+    let p = place_main((area.position.x, area.position.y, area.size.width, area.size.height), frame, monitor.scale_factor());
+    w.set_size(tauri::PhysicalSize::new(p.width, p.height))?;
+    w.set_position(tauri::PhysicalPosition::new(p.x, p.y))
+}
+
+/// Shown once, when hidden: a second call (the page's, then the time's) leaves it where the user put it.
+fn show_main(w: &tauri::Window) {
+    if !w.is_visible().unwrap_or(true) {
+        let _ = w.show();
+        let _ = w.set_focus();
+    }
+}
+
+/// Windows: one Bibo at a time. A second launch (a double click on a window slow to come) brings the first
+/// one to the front and goes: two installers over the same brain would collide. Nothing to find (the
+/// first still starting, or stuck without a window): this one opens. macOS brings an app already open
+/// back by itself.
+#[cfg(windows)]
+fn already_open() -> bool {
+    use windows::core::w;
+    use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS};
+    use windows::Win32::System::Threading::CreateMutexW;
+    use windows::Win32::UI::WindowsAndMessaging::{FindWindowW, IsIconic, SetForegroundWindow, ShowWindow, SW_RESTORE};
+    // SAFETY: a name of ours. The handle is never closed: the system lets it go when the process ends.
+    let first = match unsafe { CreateMutexW(None, false, w!("Local\\BrainInABox.Bibo")) } {
+        Ok(_) => (unsafe { GetLastError() }) != ERROR_ALREADY_EXISTS,
+        Err(_) => true,
+    };
+    if first {
+        return false;
+    }
+    for _ in 0..30 {
+        // SAFETY: Tauri's window class and our windows' titles (tauri.conf.json, open_guide), and a handle
+        // FindWindowW just gave: never a folder named Brain in a Box. The installer's window first; the
+        // guide's when the installer's was closed.
+        let found = unsafe { FindWindowW(w!("Tauri Window"), w!("Brain in a Box")) }
+            .or_else(|_| unsafe { FindWindowW(w!("Tauri Window"), w!("Bibo, ton guide")) });
+        if let Ok(h) = found {
+            unsafe {
+                if IsIconic(h).as_bool() {
+                    let _ = ShowWindow(h, SW_RESTORE);
+                }
+                let _ = SetForegroundWindow(h);
+            }
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    false
+}
+
 pub fn run() {
     // Command-line mode, for tests and support: no window. The Voyage key comes
     // from VOYAGE_API_KEY, never from the command line.
@@ -660,8 +753,30 @@ pub fn run() {
         }
         _ => {}
     }
+    #[cfg(windows)]
+    if already_open() {
+        return;
+    }
 
     tauri::Builder::default()
+        .setup(|app| {
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = place_main_window(&w);
+                let w = w.as_ref().window();
+                std::thread::spawn(move || {
+                    std::thread::sleep(SHOW_ANYWAY);
+                    show_main(&w);
+                });
+            }
+            Ok(())
+        })
+        // Hidden until then (tauri.conf.json): Windows' WebView2 takes a few seconds to start, and showed a
+        // white window meanwhile, which looks broken.
+        .on_page_load(|webview, payload| {
+            if webview.label() == "main" && payload.event() == tauri::webview::PageLoadEvent::Finished {
+                show_main(&webview.window());
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             diagnose_machine,
             run_step,
@@ -776,6 +891,32 @@ mod tests {
         }
         let nobodys: Vec<&String> = commands.iter().filter(|c| !main.contains(*c) && !guide.contains(*c)).collect();
         assert!(nobodys.is_empty(), "no window may call {nobodys:?}");
+    }
+
+    /// The installer's window on the night's VM and on the laptops of the people it is for: whole in the usable
+    /// area, centered, never under its minimum; tauri.conf.json says the same sizes.
+    #[test]
+    fn the_installer_window_fits_the_usable_area_whole() {
+        use super::{place_main, Placement, MAIN_MIN, MAIN_SIZE};
+        // The night's VM: 1024 × 768, a taskbar 48 high, Windows' frame at 100 % (the title bar and the
+        // invisible borders). Before, 780 × 680 at (60, 50): the window's bottom went 41 under the taskbar.
+        assert_eq!(place_main((0, 0, 1024, 720), (16, 39), 1.0), Placement { width: 780, height: 657, x: 114, y: 12 });
+        // 1366 × 768 at 125 % (a taskbar of 60): the page gets 629 / 1.25 = 503 high.
+        assert_eq!(place_main((0, 0, 1366, 708), (20, 49), 1.25), Placement { width: 975, height: 629, x: 185, y: 15 });
+        // A screen with room: the window's own size, centered in the area (here a second screen, at its right).
+        assert_eq!(place_main((1920, 25, 1920, 1015), (0, 28), 1.0), Placement { width: 780, height: 680, x: 2490, y: 178 });
+        // Too small for the minimum: the minimum, its title bar at the area's top.
+        assert_eq!(place_main((0, 0, 640, 400), (16, 39), 1.0), Placement { width: 600, height: 440, x: 12, y: 0 });
+
+        let conf: serde_json::Value = serde_json::from_str(&read("tauri.conf.json")).unwrap();
+        let main = &conf["app"]["windows"][0];
+        assert_eq!(main["label"], "main");
+        assert_eq!((main["width"].as_f64(), main["height"].as_f64()), (Some(MAIN_SIZE.0), Some(MAIN_SIZE.1)));
+        assert_eq!((main["minWidth"].as_f64(), main["minHeight"].as_f64()), (Some(MAIN_MIN.0), Some(MAIN_MIN.1)));
+        // Hidden until its page is drawn (no white window), and on the page's own background meanwhile.
+        assert_eq!((main["visible"].as_bool(), main["center"].as_bool()), (Some(false), Some(true)));
+        let bg = read("../src/styles.css");
+        assert!(bg.contains(&format!("--bg: {};", main["backgroundColor"].as_str().unwrap())), "the window's background is the page's");
     }
 
     #[cfg(not(windows))]

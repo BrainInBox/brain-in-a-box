@@ -194,8 +194,12 @@ class Ecran:
     """What the robot sees: Bibo's title and text, the buttons (label, enabled), every text."""
 
     def __init__(self, fenetre=False, titre="", texte="", boutons=(), textes=(), dialogues=(), lecture="", statut=None,
-                 partiel=False):
+                 partiel=False, places=None, zone=None):
         self.fenetre, self.titre, self.texte = fenetre, norm(titre), norm(texte)
+        # Where each button is on the screen ({label: [x, y, w, h]}) and the screen's usable area (the taskbar
+        # left out), when the driver can tell (Windows): a user must see the main button whole.
+        self.places = {norm(b): r for b, r in (places or {}).items()}
+        self.zone = zone
         # Bibo's words only (a quick read saw them change): the full read comes next.
         self.partiel = partiel
         # (window index, child indices from the window) of Bibo's status region: a quick read's path.
@@ -263,6 +267,7 @@ def ecran_depuis_arbre(fenetres, dialogues=()):
     textes = [(c, _texte(n)) for c, n in flat if n.get("r") == "AXStaticText" and _texte(n).strip()]
     boutons = [(n.get("n") or n.get("d") or _texte(n), n.get("e", True) is not False)
                for c, n in flat if n.get("r") == "AXButton"]
+    places = {n.get("n") or n.get("d") or _texte(n): n["b"] for c, n in flat if n.get("r") == "AXButton" and rect_valide(n.get("b"))}
     statut = next((c for c, n in flat if n.get("s") == "AXApplicationStatus"), None)
     if statut is not None:
         dits = [t for c, t in textes if c[:len(statut)] == statut]
@@ -275,7 +280,36 @@ def ecran_depuis_arbre(fenetres, dialogues=()):
     else:
         dits, lecture = [], "vide"
     return Ecran(fenetre=True, titre=dits[0] if dits else "", texte=" ".join(dits[1:]), boutons=boutons,
-                 textes=[t for _, t in textes], dialogues=dialogues, lecture=lecture, statut=chemin_statut)
+                 textes=[t for _, t in textes], dialogues=dialogues, lecture=lecture, statut=chemin_statut, places=places)
+
+
+def rect_valide(r):
+    return isinstance(r, list) and len(r) == 4 and all(isinstance(v, int) for v in r) and r[2] > 0 and r[3] > 0
+
+
+# The main button of the screens where a user must find it at once, as the app labels it (machine: Mac or
+# PC). The night's Windows VM has 1024 x 768 with its taskbar, as an old laptop: the window has to fit.
+PRINCIPAUX = {
+    "bienvenue": "Vérifier mon {machine}",
+    "bienvenue-retour": "Guide-moi dans un logiciel",
+    "diagnostic": "Tout installer",
+    "voyage": "Passer (recherche par mots-clés)",
+    "connexion-installation": "Connecter mon compte Claude",
+    "connexion": "Connecter mon compte Claude",
+    "fini": "Personnaliser mon cerveau (15 min)",
+}
+
+
+def cache_du_bouton(ecran, libelle):
+    """How much of the button the usable area of the screen leaves out ("" when a user sees it whole), or
+    None when the driver gives no places (macOS, Linux) or the button is not there."""
+    r, zone = ecran.places.get(norm(libelle)), ecran.zone
+    if not rect_valide(r) or not rect_valide(zone):
+        return None
+    x, y, w, h = r
+    zx, zy, zw, zh = zone
+    cotes = [("en haut", zy - y), ("en bas", (y + h) - (zy + zh)), ("à gauche", zx - x), ("à droite", (x + w) - (zx + zw))]
+    return ", ".join("%d px %s" % (n, ou) for ou, n in cotes if n > 0)
 
 
 def dits_rapides(textes):
@@ -483,6 +517,10 @@ class Pilote:
     def ecarter_la_nuit(self):
         """Keeps the nightly the install registered out of the checks' way; returns what it did, or None."""
         return None
+
+    # A second click on the app while it is open (a window slow to show): the second one must go by itself.
+    # Windows only (lib.rs, already_open): macOS brings an open app back by itself, Linux is not checked.
+    ouvrir_encore = None
 
     def poste_neuf(self):
         """Makes the VM the machine users have, right before the app's first start (what its steps must
@@ -1103,6 +1141,8 @@ def _uia(node):
         out["l"] = node["l"]
     if "x" in node:
         out["x"] = node["x"]
+    if rect_valide(node.get("b")):
+        out["b"] = node["b"]
     if role not in ("AXStaticText", "AXButton", "AXCheckBox"):
         out["k"] = [_uia(k) for k in node.get("k") or [] if isinstance(k, dict) and str(k.get("t")) not in UIA_CADRE]
     return out
@@ -1710,6 +1750,21 @@ class PiloteWindows(Pilote):
     def vivante(self):
         return self.proc is not None and self.proc.poll() is None
 
+    def ouvrir_encore(self, env, delai=30):
+        """The app opened a second time while its window is there: seconds the second process took to go
+        by itself, or None when it stayed (then killed, with everything it started)."""
+        debut = self.horloge()
+        try:
+            proc = subprocess.Popen([self.exe], env=env, cwd=os.path.dirname(self.exe), stdin=subprocess.DEVNULL,
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                    creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+        except OSError as e:
+            raise ErreurPilote("l'app ne se lance pas une deuxième fois (%s)" % (e.strerror or type(e).__name__))
+        if self.attendre(lambda: proc.poll() is not None, delai, self.horloge, self.dormir):
+            return round(self.horloge() - debut, 1)
+        self._run(["taskkill", "/PID", proc.pid, "/T", "/F"], timeout=60)
+        return None
+
     def fermer(self):
         """The window's X (WM_CLOSE), as a user quits; the process killed only if it stays."""
         if self.vivante() and self.hwnd is None:
@@ -1753,7 +1808,9 @@ class PiloteWindows(Pilote):
             page = [f for f in fen if any(n.get("r") == "AXWebArea" for _, n in _aplatir(f["arbre"]))]
             self.hwnd = (page or fen)[0]["h"]
             self._devant(self.hwnd)
-        return ecran_depuis_arbre(fen, [d for d in dialogues if d["textes"] or d["boutons"]])
+        e = ecran_depuis_arbre(fen, [d for d in dialogues if d["textes"] or d["boutons"]])
+        e.zone = res.get("zone") if rect_valide(res.get("zone")) else None
+        return e
 
     def exe_nom(self):
         return nom_programme(self.exe or "brain-in-a-box.exe")
@@ -2636,6 +2693,7 @@ class Parcours:
         # « Importer ma mémoire » from the end: "aller" to the copy-paste, "retour" back to the end, else None.
         self.marche = None
         self.arrive = horloge()  # when the current screen showed
+        self.principaux = {}    # {screen: {"bouton", "place", "zone"}}: the main buttons measured, whole on the screen
 
     def secondes(self):
         return int(self.horloge() - self.debut)
@@ -2781,6 +2839,8 @@ class Parcours:
                 self.capturer("%s%s-%dmin" % (prefixe, cle, int((now - depuis) // 60)))
             if cle not in vus or (vus[cle].partiel and not e.partiel):
                 vus[cle] = e
+            if not e.partiel:
+                self.mesurer(prefixe + cle, cle, e)
             if cle == but and not e.partiel:
                 self.ecrans[-1]["duree_s"] = 0
                 return vus
@@ -2805,6 +2865,21 @@ class Parcours:
                     cle, int((now - debut) // 60), "" if fin == debut + delai else " (fin du temps du scénario)"))
             self.dormir(POLL)
 
+    def mesurer(self, nom, cle, e):
+        """The screen's main button, once it is in the tree: a user sees it whole, inside the screen's usable
+        area (a window taller than a laptop's screen hid it under the taskbar)."""
+        libelle = PRINCIPAUX.get(cle, "").format(machine=self.p.machine)
+        if not libelle or nom in self.principaux or e.bouton(libelle) is None:
+            return
+        cache = cache_du_bouton(e, libelle)
+        if cache is None:
+            return
+        self.principaux[nom] = {"bouton": libelle, "place": e.places.get(norm(libelle)), "zone": e.zone}
+        if cache:
+            self.capturer(nom + "-bouton-cache")
+            self.echouer("écran « %s » : le bouton « %s » sort de l'écran utile (%s) : un utilisateur ne le voit pas en entier"
+                         % (nom, libelle, cache))
+
     def lancer(self, env, prefixe=""):
         self.t("app-%slancement" % prefixe)
         self.precedent, self.forcer = None, True
@@ -2812,6 +2887,12 @@ class Parcours:
         if not self.p.attendre(lambda: self.lire().fenetre, DELAI_FENETRE, self.horloge, self.dormir):
             self.capturer(prefixe + "sans-fenetre")
             self.echouer("aucune fenêtre %d s après l'ouverture de l'app" % DELAI_FENETRE)
+        if not prefixe and self.p.ouvrir_encore:
+            # The user double-clicks again: still one Bibo, the first one.
+            pris = self.p.ouvrir_encore(env)
+            self.t.details["deuxieme_ouverture_s"] = pris
+            self.t.check(pris is not None, "l'app ouverte une deuxième fois reste ouverte : deux Bibo à la fois")
+            self.t.check(self.p.vivante(), "l'app ouverte une deuxième fois a fermé la première")
 
     def importer(self):
         """« Importer ma mémoire » from the end: its choice, the copy-paste showing the sentence to paste,
@@ -3037,7 +3118,7 @@ class Parcours:
         mean = lambda xs: int(sum(xs) / len(xs)) if xs else None
         return {"captures": self.captures, "ecrans": self.ecrans, "clics": self.clics,
                 "dialogues_systeme": [{k: v for k, v in d.items() if k != "clic_a"} for d in self.dialogues],
-                "bibo": {"titre": self.dernier.titre, "texte": self.dernier.texte},
+                "bibo": {"titre": self.dernier.titre, "texte": self.dernier.texte}, "boutons_principaux": self.principaux,
                 "dernier_ecran": dict(self.dernier.resume(), lecture=self.dernier.lecture), "lecture_fenetre_ms": {"pleine": mean(self.lectures), "rapide": mean(self.rapides),
                                                            "lectures": [len(self.lectures), len(self.rapides)]}}
 

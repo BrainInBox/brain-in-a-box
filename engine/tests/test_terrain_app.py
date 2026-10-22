@@ -203,6 +203,9 @@ class FauxPilote(ta.Pilote):
         self.guide, self.guide_depuis, self.saisies, self.appels = None, 0.0, [], 0
         self.anneau, self.trace, self.guide_prudent = True, None, False
         self.anneau_apercu, self.modeles_faux = False, None
+        # The places of the buttons and the screen's usable area, as the Windows driver reads them: a function
+        # (screen, label) -> [x, y, w, h] or None. None: no places (macOS, Linux).
+        self.places, self.zone = None, None
 
     def aller(self, etat):
         self.etat = etat() if callable(etat) else etat
@@ -351,9 +354,11 @@ class FauxPilote(ta.Pilote):
         spec = self.spec()
         dialogues = [dict(self.dialogue)] if self.dialogue else []
         late = self.h.now - self.depuis < spec.get("boutons_apres", 0)   # the tree shows the words first
+        boutons = [] if late else list(spec.get("boutons", {}))
+        places = {b: self.places(self.etat, b) for b in boutons} if self.places else None
         return ta.Ecran(fenetre=True, titre=spec["titre"], texte=spec.get("texte", ""),
-                        boutons=[] if late else [(b, True) for b in spec.get("boutons", {})], textes=spec.get("textes", []),
-                        dialogues=dialogues)
+                        boutons=[(b, True) for b in boutons], textes=spec.get("textes", []),
+                        dialogues=dialogues, places={b: r for b, r in (places or {}).items() if r}, zone=self.zone)
 
     def cliquer(self, libelle, processus=None):
         self.clics.append((processus, libelle) if processus else libelle)
@@ -822,6 +827,48 @@ class Walk(Base):
         self.assertRegex(str(cm.exception), r"toujours sur l'écran « etape-brain » après 1\d min \(fin du temps du scénario\)")
         self.assertLess(self.h.now, 21 * 60)
 
+    def test_the_main_button_is_whole_in_the_usable_area_of_the_screen(self):
+        # The night's Windows VM: 1024 x 768, a taskbar 48 high. Each screen's buttons in a row at the bottom
+        # of the window, as the app puts them.
+        def fenetre(haut, hauteur):
+            return lambda etat, b: [400 + 150 * list(p.ecrans[etat]["boutons"]).index(b), haut + hauteur - 60, 140, 40]
+        p = FauxPilote(self.h)
+        p.machine, p.zone = "PC", [0, 0, 1024, 720]
+        p.ecrans["bienvenue"] = dict(p.ecrans["bienvenue"], boutons={"Vérifier mon PC": "diag-en-cours"})
+        # Before: 780 x 680 at (60, 50), its title bar 31 high, Bibo's buttons 20 px under the taskbar.
+        p.places = fenetre(50 + 31, 680)
+        pa = self.parcours(p)
+        with self.assertRaises(terrain.Echec) as cm:
+            pa.premier_lancement({})
+        self.assertIn("écran « bienvenue » : le bouton « Vérifier mon PC » sort de l'écran utile (21 px en bas)", str(cm.exception))
+        self.assertTrue(p.captures[-1].endswith("-bienvenue-bouton-cache.png"), p.captures)
+        # Now: 657 high, centered (lib.rs, place_main): every main button whole, each measured once.
+        p, self.h.now = FauxPilote(self.h), 0.0
+        p.machine, p.zone = "PC", [0, 0, 1024, 720]
+        p.ecrans["bienvenue"] = dict(p.ecrans["bienvenue"], boutons={"Vérifier mon PC": "diag-en-cours"})
+        p.places = fenetre(12 + 31, 657)
+        pa = self.parcours(p)
+        pa.premier_lancement({})
+        self.assertEqual(sorted(pa.principaux), ["bienvenue", "connexion", "connexion-installation", "diagnostic", "fini", "voyage"])
+        self.assertEqual(pa.principaux["diagnostic"], {"bouton": "Tout installer", "place": [550, 640, 140, 40], "zone": [0, 0, 1024, 720]})
+        self.assertEqual(pa.bilan()["boutons_principaux"], pa.principaux)
+        # A driver without places (macOS, Linux) measures nothing and fails nothing.
+        p, self.h.now = FauxPilote(self.h), 0.0
+        pa = self.parcours(p)
+        pa.premier_lancement({})
+        self.assertEqual(pa.principaux, {})
+
+    def test_opened_twice_the_second_one_goes_by_itself(self):
+        p = FauxPilote(self.h)
+        p.ouvrir_encore = lambda env: 0.8
+        self.parcours(p).premier_lancement({})
+        self.assertEqual(self.t.details["deuxieme_ouverture_s"], 0.8)
+        p, self.h.now = FauxPilote(self.h), 0.0
+        p.ouvrir_encore = lambda env: None
+        with self.assertRaises(terrain.Echec) as cm:
+            self.parcours(p).premier_lancement({})
+        self.assertIn("l'app ouverte une deuxième fois reste ouverte : deux Bibo à la fois", str(cm.exception))
+
     def test_no_window_fails_with_a_capture(self):
         p = FauxPilote(self.h)
         p.ouvrir = lambda env: None
@@ -1204,6 +1251,23 @@ class WindowsReading(unittest.TestCase):
         e = self.ecran(page_uia("StatusBar", p_texte=True))
         self.assertEqual((e.titre, e.texte), ("Salut, moi c'est Bibo !", "Je vais installer ton second cerveau."))
 
+    def test_each_buttons_place_and_the_usable_area(self):
+        page = page_uia()
+        footer = [n for n in ta._aplatir(page)[::-1] if n[1].get("lt") == "content info"][0][1]
+        footer["k"][0]["b"] = [552, 676, 160, 44]
+        footer["k"][1]["b"] = [430, 676, 110, 0]     # a place without a height: none
+        e = self.ecran(page)
+        self.assertEqual(e.places, {"Vérifier mon PC": [552, 676, 160, 44]})
+        e.zone = [0, 0, 1024, 720]
+        self.assertEqual(ta.cache_du_bouton(e, "Vérifier mon PC"), "")
+        e.zone = [0, 0, 1024, 700]
+        self.assertEqual(ta.cache_du_bouton(e, "Vérifier mon PC"), "20 px en bas")
+        e.places["Vérifier mon PC"] = [-8, -4, 160, 44]
+        self.assertEqual(ta.cache_du_bouton(e, "Vérifier mon PC"), "4 px en haut, 8 px à gauche")
+        self.assertIsNone(ta.cache_du_bouton(e, "Plus tard"))
+        e.zone = None
+        self.assertIsNone(ta.cache_du_bouton(e, "Vérifier mon PC"))
+
     def test_the_window_frame_is_not_the_page(self):
         e = self.ecran(page_uia())
         self.assertIsNone(e.bouton("Close"))
@@ -1397,6 +1461,20 @@ class WindowsInstaller(Base):
 
 
 class WindowsApp(Base):
+    def test_opened_a_second_time_as_a_user_does_and_killed_if_it_stays(self):
+        p = FauxWindows(self.h, self.tmp)
+        p.exe = r"C:\Users\r\AppData\Local\Brain in a Box\brain-in-a-box.exe"
+        runs = []
+        p._run = lambda argv, timeout=120, **kw: runs.append([str(a) for a in argv]) or (0, "")
+        for fini, attendu in ((3.0, 3.0), (None, None)):
+            second = FauxSetup(self.h)
+            second.fini = None if fini is None else self.h.now + fini
+            with mock.patch.object(ta.subprocess, "Popen", return_value=second) as popen:
+                self.assertEqual(p.ouvrir_encore({"USERPROFILE": "C:\\Users\\r"}), attendu)
+            self.assertEqual(popen.call_args[0][0], [p.exe])
+            self.assertEqual(popen.call_args[1]["env"], {"USERPROFILE": "C:\\Users\\r"})
+        self.assertEqual(runs, [["taskkill", "/PID", str(second.pid), "/T", "/F"]])
+
     def test_the_window_a_dialog_in_front_and_a_click_on_it(self):
         p = FauxWindows(self.h, self.tmp)
         p.proc = FauxSetup(self.h)
@@ -1415,12 +1493,13 @@ class WindowsApp(Base):
                     {"h": 6, "classe": "Tao Thread Event Target", "titre": "", "rect": [0, 0, 16, 16],
                      "arbre": uia("Pane", "", c="Tao Thread Event Target")},
                     {"h": 5, "classe": "Tauri Window", "titre": "Brain in a Box", "rect": [130, 49, 796, 719],
-                     "arbre": page_uia()}], "devant": outil.devant}
+                     "arbre": page_uia()}], "devant": outil.devant, "zone": [0, 0, 1024, 720]}
             return {"ok": True, "comment": "Invoke"}
         p._outil = outil
         outil.devant = devant
         e = p.lire()
         self.assertEqual((e.titre, ta.cle_ecran(e)[0]), ("Salut, moi c'est Bibo !", "bienvenue"))
+        self.assertEqual(e.zone, [0, 0, 1024, 720])
         self.assertEqual(e.dialogues[0]["processus"], "SmartScreen")
         self.assertEqual(ta.bouton_autoriser(e.dialogues[0]), "Autoriser")
         p.cliquer("Autoriser", processus="SmartScreen")
