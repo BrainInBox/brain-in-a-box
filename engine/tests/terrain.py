@@ -103,7 +103,9 @@ JOBS = {"ref": ("tous", ()), "macos": ("macos", ("macos-neuf", "macos-montee")),
         "linux": ("linux", ("linux-neuf", "linux-reinstallation")),
         "claude": ("macos+windows", ("macos-claude", "windows-claude")),
         "app-macos": ("macos", ("macos-app", "macos-app-codex")), "app-windows": ("windows", ("windows-app", "windows-app-codex")),
-        "app-linux-build": ("linux", ("linux-app", "linux-app-codex")), "app-linux": ("linux", ("linux-app", "linux-app-codex"))}
+        "app-linux-build": ("linux", ("linux-app", "linux-app-codex")), "app-linux": ("linux", ("linux-app", "linux-app-codex")),
+        # install.ps1's pinned installers against their latest release (.github/ci/epingles.py): no result file.
+        "epingles": ("windows", ())}
 JOB_RESULTS = ("success", "failure", "cancelled", "skipped")
 ETAPE_RE = re.compile(r"^[a-z0-9][a-z0-9.-]{0,40}$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")

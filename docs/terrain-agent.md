@@ -33,6 +33,13 @@ Nothing missing passes for green: a row with step `absent` is a scenario that wr
 by its timeout, cancelled, or refused to start); `job / aucun-resultat`, a job that wrote no file;
 `job / <job>-<result>` (e.g. `macos-cancelled`, `ref-failure`), a job that did not succeed although
 its rows say nothing. For those three, read the job's log (`gh run view <run-id> --log-failed`).
+`job / epingles-failure` (OS `windows`) is no VM: `.github/ci/epingles.py` found a Git for Windows or a
+Python 3.x (the pinned minor) released 14 days ago or more while `install.ps1` still pins an older one for
+its official installers, or could not read GitHub's or python.org's API (its log says which). The fix is
+`$OFFICIAL_INSTALLERS` in `install.ps1`: the version, both URLs and both SHA-256 (x64, ARM64), each hash
+read from two sources (GitHub's API `digest` and the release notes' table; python.org's release page and
+its API), and the versions `.github/ci/install-ps1-secours.ps1` and `test.yml` expect. `install.ps1` is
+the maintainer's to merge (below).
 
 ## Reproduce
 
