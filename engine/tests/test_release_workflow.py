@@ -351,5 +351,99 @@ class MacDisk(unittest.TestCase):
         self.assertEqual(conf["appPosition"]["y"], conf["applicationFolderPosition"]["y"])
 
 
+class Site(unittest.TestCase):
+    """The download page (site/): its buttons are the files release.yml leaves in app-latest, and
+    keep working when GitHub's API says no; what it promises a beginner, and how it says it."""
+
+    LATEST = "https://github.com/BrainInBox/brain-in-a-box/releases/download/app-latest/"
+
+    @classmethod
+    def setUpClass(cls):
+        cls.html = (SITE / "index.html").read_text(encoding="utf-8")
+        cls.js = (SITE / "app.js").read_text(encoding="utf-8")
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        # The files each build leaves in dist/, named Brain-in-a-Box_${LABEL}_<what>.
+        cls.files = set(re.findall(r'"dist/Brain-in-a-Box_\$\{LABEL\}_([A-Za-z0-9._-]+)"', workflow))
+
+    def links(self):
+        return set(re.findall(r'href="(https://github\.com/BrainInBox/brain-in-a-box/releases/download/[^"]+)"', self.html))
+
+    def test_the_buttons_are_the_files_app_latest_holds(self):
+        self.assertEqual(self.files, {"macos-universal.dmg", "windows-x64-setup.exe", "linux-x86_64.AppImage", "linux-amd64.deb"})
+        expected = {self.LATEST + "Brain-in-a-Box_" + f for f in self.files} | {self.LATEST + "SHA256SUMS"}
+        self.assertEqual(self.links(), expected)
+        # app.js points the big buttons at the same names.
+        self.assertIn("const LATEST = `https://github.com/${REPO}/releases/download/app-latest/`;", self.js)
+        names = set(re.findall(r"^  \w+: '([A-Za-z0-9._-]+)',$", self.js[self.js.index("const FILES"):self.js.index("const MAIN")], re.M))
+        self.assertEqual(names, self.files)
+
+    def test_no_download_waits_for_githubs_api(self):
+        # Every download link is in the page as it is served; without JavaScript the big buttons
+        # lead to the systems' own buttons.
+        for tag in re.findall(r"<a [^>]*data-dl(?:-main)?[ =][^>]*>", self.html):
+            with self.subTest(tag=tag):
+                href = re.search(r'href="([^"]+)"', tag).group(1)
+                self.assertTrue(href.startswith(self.LATEST) or href == "#installer", href)
+        self.assertNotIn(".href = file.url", self.js)
+        self.assertNotIn("browser_download_url", self.js)
+
+    def test_a_shared_link_shows_a_picture(self):
+        meta = dict(re.findall(r'<meta property="(og:[a-z:_]+)" content="([^"]*)">', self.html))
+        self.assertEqual(meta["og:image"], "https://brain-in-a-box.vercel.app/img/og.jpg")
+        self.assertEqual((meta["og:image:width"], meta["og:image:height"]), ("1200", "630"))
+        self.assertEqual(jpeg_size(SITE / "img" / "og.jpg"), (1200, 630))
+        self.assertEqual(meta["og:url"], "https://brain-in-a-box.vercel.app/")
+        self.assertEqual(meta["og:locale"], "fr_FR")
+
+    def test_the_title_says_the_guide_and_that_claude_is_ones_own(self):
+        h1 = re.sub(r"<[^>]+>", "", re.search(r"<h1[^>]*>(.*?)</h1>", self.html, re.S).group(1))
+        self.assertIn("guide", h1)
+        self.assertIn('id="guide"', self.html)
+        self.assertIn("ton propre abonnement Claude", self.html)
+
+    def test_no_terminal_for_a_beginner(self):
+        # Typing claude, Win+R and irm | iex belong to the section for developers only.
+        dev = re.search(r'<section[^>]*id="ligne-de-commande".*?</section>', self.html, re.S).group(0)
+        rest = self.html.replace(dev, "")
+        self.assertNotIn("Win + R", rest)
+        self.assertNotIn("irm ", rest)
+        self.assertNotRegex(rest, r"(?i)tape\s+<code>claude</code>")
+        self.assertIn("Pour les développeurs", dev)
+
+    def test_the_price_is_said_and_never_more_than_known(self):
+        self.assertIn("Claude Pro, environ 20&nbsp;€ par mois", self.html)
+        self.assertEqual(self.html.count("€"), self.html.lower().count("environ 20&nbsp;€"))
+
+    def test_windows_words_also_in_english(self):
+        win = re.search(r'<div class="panel" id="installer-windows">.*?</aside>', self.html, re.S).group(0)
+        for fr, en in (("Conserver", "Keep"), ("Informations complémentaires", "More info"),
+                       ("Exécuter quand même", "Run anyway"), ("Oui", "Yes")):
+            with self.subTest(fr=fr):
+                self.assertIn("<strong>%s</strong> (%s)" % (fr, en), win)
+        self.assertNotIn("Aucun droit administrateur", self.html)
+
+    def test_smart_app_control_is_never_turned_off(self):
+        faq = re.search(r'<details id="smart-app-control">.*?</details>', self.html, re.S).group(0)
+        self.assertIn("Ne le désactive pas", faq)
+
+    def test_a_phone_sends_the_link_to_the_computer(self):
+        for attr in ("data-phone", "data-share", "data-copy-link"):
+            self.assertIn(attr, self.html)
+        self.assertIn("navigator.share", self.js)
+        self.assertIn("'[data-dl-main], [data-top-dl], .dl-actions, [data-dl-main-meta], .dl-others, .dl-version", self.js)
+
+    def test_the_strict_csp_holds(self):
+        # vercel.json allows no inline script or style, and no third party but GitHub's API.
+        self.assertNotRegex(self.html, r"<script(?![^>]*\bsrc=)[^>]*>")
+        self.assertNotRegex(self.html, r"\sstyle=")
+        self.assertNotRegex(self.html, r"\son[a-z]+=")
+        csp = json.loads((SITE / "vercel.json").read_text(encoding="utf-8"))["headers"][0]["headers"][0]["value"]
+        self.assertIn("script-src 'self';", csp)
+        self.assertNotIn("unsafe", csp)
+        for src in re.findall(r'(?:src|href)="((?:img|fonts)/[^"#]+)"', self.html):
+            with self.subTest(file=src):
+                self.assertTrue((SITE / src).is_file())
+
+
 if __name__ == "__main__":
     unittest.main()

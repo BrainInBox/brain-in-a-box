@@ -36,6 +36,9 @@ macos/21-etape-brain.png           122  31 780 580  bibo-6-cerveau
 macos/24-connexion.png             122  31 780 674  bibo-7-compte
 macos/26-fini.png                  122  31 780 674  bibo-8-pret
 macos/28-import-choix.png          122  31 780 674  bibo-9-memoire
+# Bibo's guide (its own window, on Windows)
+windows/40-guide-objectif.png      615 200 402 536  guide-objectif
+windows/44-guide-etape.png         615 200 402 536  guide-etape
 # The same window on Windows and Linux
 windows/17-etape-brain.png          60  50 780 400  bibo-windows
 linux/10-etape-obsidian.png        250  98 780 580  bibo-linux

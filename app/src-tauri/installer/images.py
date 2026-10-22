@@ -93,7 +93,7 @@ def og_image():
     d = ImageDraw.Draw(im)
     d.text((80, 78), "Brain in a Box", font=head(30, 650), fill=PINK)
     y = 150
-    for line in ("Claude te guide", "pas à pas dans", "tes logiciels."):
+    for line in ("Bibo te guide", "pas à pas dans", "tes logiciels."):
         d.text((80, y), line, font=head(76, 700), fill=(250, 250, 250))
         y += 88
     d.text((80, y + 30), "Bibo installe tout, sans rien taper.", font=text(30, 450), fill=(163, 163, 163))
