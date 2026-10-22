@@ -51,7 +51,6 @@ function winget {
     if ($c -eq -1978335217) { "Failed when opening source(s); try the 'source reset' command if the problem persists."; "0x8a15000f : Data required by the source is missing" }
     $global:LASTEXITCODE = $c
 }
-function Have($c) { if ($c -eq "winget") { return $script:WingetThere } return $false }
 function Get-Winget { if ($script:WingetThere) { return "winget" } }
 function Invoke-WebRequest {
     [CmdletBinding()]
