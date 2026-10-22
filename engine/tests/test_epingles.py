@@ -132,6 +132,34 @@ class Epingles(unittest.TestCase):
         self.assertEqual(rc, 1, out)
         self.assertIn("::error::install.ps1 n'épingle plus Git", out)
 
+    def test_the_token_never_follows_a_redirect(self):
+        seen = []
+
+        class Answer(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        def urlopen(req, timeout):
+            seen.append(req)
+            return Answer(b"{}")
+
+        real = epingles.urllib.request.urlopen
+        epingles.urllib.request.urlopen = urlopen
+        self.addCleanup(setattr, epingles.urllib.request, "urlopen", real)
+        old = os.environ.get("GH_TOKEN")
+        os.environ["GH_TOKEN"] = "jeton-de-test"
+        self.addCleanup(lambda: os.environ.pop("GH_TOKEN") if old is None else os.environ.__setitem__("GH_TOKEN", old))
+        epingles.fetch_json(epingles.GIT_API)
+        epingles.fetch_json(epingles.PYTHON_API)
+        github, python = seen
+        # urllib copies req.headers onto a redirect, whatever the host; it never copies unredirected ones.
+        self.assertNotIn("Authorization", github.headers)
+        self.assertEqual(github.unredirected_hdrs.get("Authorization"), "Bearer jeton-de-test")
+        self.assertIsNone(python.get_header("Authorization"))
+
 
 if __name__ == "__main__":
     unittest.main()

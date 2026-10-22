@@ -30,7 +30,8 @@ def fetch_json(url):
     req = urllib.request.Request(url, headers={"Accept": "application/json", "User-Agent": "brain-in-a-box/epingles"})
     token = os.environ.get("GH_TOKEN", "")
     if token and url.startswith("https://api.github.com/"):
-        req.add_header("Authorization", "Bearer " + token)
+        # Unredirected: urllib would carry it along a redirect to any other host.
+        req.add_unredirected_header("Authorization", "Bearer " + token)
     with urllib.request.urlopen(req, timeout=60) as r:
         return json.load(r)
 
