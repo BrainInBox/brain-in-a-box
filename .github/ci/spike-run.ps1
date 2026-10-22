@@ -5,9 +5,13 @@ if (-not $Kit) { $Kit = Split-Path -Parent $MyInvocation.MyCommand.Path }
 $r = [ordered]@{}
 try {
 # Started with -Credential, this process got its parent's environment: the user's own, from its token and registry.
-$env:USERPROFILE = [Environment]::GetFolderPath('UserProfile')
-$env:LOCALAPPDATA = [Environment]::GetFolderPath('LocalApplicationData')
-$env:APPDATA = [Environment]::GetFolderPath('ApplicationData')
+$r.env_before = "USERPROFILE=$env:USERPROFILE LOCALAPPDATA=$env:LOCALAPPDATA TEMP=$env:TEMP"
+$sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+$prof = (Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$sid").ProfileImagePath
+$env:USERPROFILE = $prof
+$env:LOCALAPPDATA = Join-Path $prof 'AppData\Local'
+$env:APPDATA = Join-Path $prof 'AppData\Roaming'
+New-Item -ItemType Directory -Path (Join-Path $env:LOCALAPPDATA 'Temp'), $env:APPDATA -Force | Out-Null
 $env:TEMP = Join-Path $env:LOCALAPPDATA 'Temp'; $env:TMP = $env:TEMP
 $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
 
