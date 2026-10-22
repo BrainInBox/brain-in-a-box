@@ -66,7 +66,25 @@ function Ok($t)   { Write-Host "  [OK] $t" -ForegroundColor Green }
 function Warn($t) { Write-Host "  [!]  $t" -ForegroundColor Yellow }
 # throw et pas exit : lance par `irm | iex`, exit fermerait la fenetre avant qu'on lise le message.
 function Fail($t) { Write-Host "  [X]  $t" -ForegroundColor Red; throw "brain-in-a-box : installation arretee - $t" }
-function Have($c) { return [bool](Get-Command $c -ErrorAction SilentlyContinue) }
+# Un programme par son nom, dans les seuls dossiers du PATH nommes en entier (C:\..., \\serveur\...), comme le
+# kit depuis #60 : une entree relative ("." ou "bin") est un dossier de la ou l'installation est lancee (un
+# dossier de telechargements), ou un faux git.exe serait pris et un faux python lance. Tous, dans l'ordre du PATH.
+function Find-Program([string]$Name) {
+    $exts = @("")
+    if (-not [IO.Path]::GetExtension($Name) -and $env:PATHEXT) { $exts = @($env:PATHEXT -split ";" | Where-Object { $_ }) }
+    $found = @()
+    foreach ($d in ("$env:PATH" -split [IO.Path]::PathSeparator)) {
+        $d = $d.Trim().Trim('"')
+        $full = ($d -match '^[A-Za-z]:[\\/]') -or ($d -match '^[\\/]{2}[^\\/]') -or ([IO.Path]::DirectorySeparatorChar -eq '/' -and $d.StartsWith('/'))
+        if (-not $full) { continue }
+        foreach ($e in $exts) {
+            $hits = @()
+            try { $hits = [IO.Directory]::GetFiles($d, "$Name$e") } catch {}   # dossier absent ou nom invalide
+            foreach ($h in $hits) { if ($found -notcontains $h) { $found += $h } }
+        }
+    }
+    return $found
+}
 function Refresh-Path {
     $env:Path = [Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [Environment]::GetEnvironmentVariable("Path","User") + ";" + $env:Path
 }
@@ -155,9 +173,12 @@ $WingetDown = $false       # il ne demarre pas : winget n'est plus essaye
 
 # Le code de sortie de winget, ou $null quand il n'a pas demarre (App Installer pas encore enregistre pour
 # ce compte) : pas le code du programme d'avant, reste dans $LASTEXITCODE.
+function Get-Winget { return @(Find-Program "winget")[0] }
+
 function Invoke-Winget([string[]]$a) {
+    $w = Get-Winget
     $global:LASTEXITCODE = $null
-    try { Invoke-Native { & winget @a } | Out-Host }
+    try { Invoke-Native { & $w @a } | Out-Host }
     catch { Note-Winget "> winget $($a -join ' ')`r`nwinget : n'a pas demarre : $($_.Exception.Message)"; return $null }
     $code = $LASTEXITCODE
     if ($null -eq $code) { Note-Winget "> winget $($a -join ' ')`r`nwinget : n'a pas demarre"; return $null }
@@ -167,7 +188,7 @@ function Invoke-Winget([string[]]$a) {
 
 # $true quand winget a installe le paquet.
 function Winget-Install($id, $label) {
-    if (-not (Have winget)) { Note-Winget "> winget absent : $label non installe par winget"; return $false }
+    if (-not (Get-Winget)) { Note-Winget "> winget absent : $label non installe par winget"; return $false }
     if ($script:WingetBlocked) { Note-Winget "> winget : bloque par la politique de l'entreprise, $label non installe par winget"; return $false }
     if ($script:WingetBroken) { Note-Winget "> winget : sa source est en panne, $label non installe par winget"; return $false }
     if ($script:WingetDown) { Note-Winget "> winget : il ne demarre pas, $label non installe par winget"; return $false }
@@ -317,19 +338,17 @@ function Test-Python($exe, [string[]]$pre = @()) {
 
 function Find-Python {
     $cands = @()
-    foreach ($n in "python", "python3") {
-        $cands += @(Get-Command $n -All -CommandType Application -ErrorAction SilentlyContinue | ForEach-Object { $_.Source })
-    }
+    foreach ($n in "python", "python3") { $cands += @(Find-Program $n) }
     $cands += @(Get-ChildItem -Path "$env:LOCALAPPDATA\Programs\Python\Python3*\python.exe", "$env:ProgramFiles\Python3*\python.exe" -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
     foreach ($c in $cands) { $p = Test-Python $c; if ($p) { return $p } }
-    $launcher = Get-Command py -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($launcher) { return (Test-Python $launcher.Source @("-3")) }
+    $launcher = @(Find-Program "py")[0]
+    if ($launcher) { return (Test-Python $launcher @("-3")) }
     return $null
 }
 
 function Find-Git {
-    $g = Get-Command git -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($g) { return $g.Source }
+    $g = @(Find-Program "git")[0]
+    if ($g) { return $g }
     foreach ($p in "$env:ProgramFiles\Git\cmd\git.exe", "$env:LOCALAPPDATA\Programs\Git\cmd\git.exe") {
         if (Test-Path -LiteralPath $p) { return $p }
     }
@@ -337,8 +356,8 @@ function Find-Git {
 }
 
 function Find-Claude {
-    $c = Get-Command claude -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($c) { return $c.Source }
+    $c = @(Find-Program "claude")[0]
+    if ($c) { return $c }
     if (Test-Path -LiteralPath "$BIN\claude.exe") { return "$BIN\claude.exe" }
     return $null
 }
@@ -468,8 +487,8 @@ $CodexDir = ""   # le CODEX_HOME que note agents.json, une fois Codex choisi
 function Find-Codex {
     $p = Join-Path $env:LOCALAPPDATA (Join-Path "Programs" (Join-Path "OpenAI" (Join-Path "Codex" (Join-Path "bin" "codex.exe"))))
     if (Test-Path -LiteralPath $p -PathType Leaf) { return $p }
-    $c = Get-Command codex.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($c) { return $c.Source }
+    $c = @(Find-Program "codex.exe")[0]
+    if ($c) { return $c }
     return $null
 }
 
