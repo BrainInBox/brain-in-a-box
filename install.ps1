@@ -130,19 +130,139 @@ function Note-Winget([string]$t) {
     if ($script:LogOpen) { Add-Content -LiteralPath $LOG -Value "`r`n$t" -Encoding utf8 } else { $script:WingetNotes += $t }
 }
 
+# Les codes de winget pour une source qui ne s'ouvre pas (winget-cli, AppInstallerErrors.h) : index
+# corrompu (0x8A15000A), sources corrompues (0x8A15000B), donnees manquantes (0x8A15000F), source
+# alteree (0x8A15003F), source(s) impossible(s) a ouvrir (0x8A150045, 0x8A15004B). "winget source
+# update" la refait souvent, sans droits admin ("winget source reset" en demande).
+$WINGET_SOURCE_CODES = @(-1978335222, -1978335221, -1978335217, -1978335169, -1978335163, -1978335157)
+$WingetRepaired = $false   # "winget source update" deja tente
+$WingetBroken = $false     # sa source toujours en panne apres : winget n'est plus essaye
+
+function Invoke-Winget([string[]]$a) {
+    Invoke-Native { & winget @a } | Out-Host
+    $code = $LASTEXITCODE
+    Note-Winget "> winget $($a -join ' ')`r`nwinget : code $code"
+    return $code
+}
+
+# $true quand winget a installe le paquet.
 function Winget-Install($id, $label) {
-    if (-not (Have winget)) { Warn "$label absent et winget indisponible"; Note-Winget "> winget absent : $label non installe"; return }
+    if (-not (Have winget)) { Note-Winget "> winget absent : $label non installe par winget"; return $false }
+    if ($script:WingetBroken) { Note-Winget "> winget : sa source est en panne, $label non installe par winget"; return $false }
     Write-Host "  ... $label : installation (winget)"
+    $ok = $false
     # Portee utilisateur d'abord (pas de fenetre admin), sinon l'installeur par defaut du paquet.
     foreach ($scope in @("user", "")) {
         $a = @("install", "-e", "--id", $id, "--source", "winget", "--silent", "--accept-package-agreements", "--accept-source-agreements")
         if ($scope) { $a += @("--scope", $scope) }
-        Invoke-Native { & winget @a }
-        $code = $LASTEXITCODE
-        Note-Winget "> winget $($a -join ' ')`r`nwinget : code $code"
-        if ($code -eq 0) { break }
+        $code = Invoke-Winget $a
+        # Sa source en panne : une mise a jour (une fois, sans admin), puis un seul nouvel essai.
+        if ($WINGET_SOURCE_CODES -contains $code -and -not $script:WingetRepaired) {
+            $script:WingetRepaired = $true
+            Write-Host "  ... winget : sa source ne s'ouvre pas, je la mets a jour"
+            $null = Invoke-Winget @("source", "update", "--name", "winget")
+            $code = Invoke-Winget $a
+        }
+        if ($code -eq 0) { $ok = $true; break }
+        if ($WINGET_SOURCE_CODES -contains $code) { $script:WingetBroken = $true; break }
     }
     Refresh-Path
+    return $ok
+}
+
+# Git et Python quand winget n'a pas pu (absent, ou sa source en panne) : leur installeur officiel, a la
+# version epinglee ici, compare a son empreinte SHA-256 avant de tourner, comme celui de Codex. Pour cet
+# utilisateur, sans fenetre ni question. x64, ou ARM64 natif sur un PC ARM (ce que winget prendrait).
+# Chaque empreinte est relevee a deux sources : pour Git for Windows, le digest de l'API GitHub et le
+# tableau de ses notes de version ; pour Python, sa page sur python.org et l'API de python.org.
+$OFFICIAL_INSTALLERS = @{
+    "Git" = @{
+        Version = "2.56.0.2"
+        x64 = @("https://github.com/git-for-windows/git/releases/download/v2.56.0.windows.2/Git-2.56.0.2-64-bit.exe",
+                "52188f917b378f00c70ec136bcf090005f30d44fbc4eba0bce759cc6592d60f6")
+        arm64 = @("https://github.com/git-for-windows/git/releases/download/v2.56.0.windows.2/Git-2.56.0.2-arm64.exe",
+                  "b9ced78ce371577dc966f50ae571909d6731e36d31065d35c8efa21544c58bf0")
+        # Inno Setup, sans fenetre ni message. Il ne demande jamais les droits admin : sans eux, il va
+        # dans le profil (%LOCALAPPDATA%\Programs\Git, la ou Find-Git le cherche).
+        Args = @("/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/NOCANCEL", "/SP-", "/CURRENTUSER")
+    }
+    "Python" = @{
+        Version = "3.14.8"
+        x64 = @("https://www.python.org/ftp/python/3.14.8/python-3.14.8-amd64.exe",
+                "759be887b96e736a3ca886daf8d575f18fcae1a09efab6902f42d59e8999f8ef")
+        arm64 = @("https://www.python.org/ftp/python/3.14.8/python-3.14.8-arm64.exe",
+                  "53ba74b5b4370eb823fe0005eedeab907479f7339cecb11efea0e75ab5f10cfc")
+        # Pour cet utilisateur (%LOCALAPPDATA%\Programs\Python), sur son PATH ; sans le lanceur py, qui
+        # s'installe pour tous les comptes (une fenetre admin).
+        Args = @("/quiet", "InstallAllUsers=0", "PrependPath=1", "Include_launcher=0", "Include_test=0")
+    }
+}
+
+# Le systeme, pas ce processus : un PowerShell x64 emule sur un PC ARM se dit AMD64.
+function Get-WinArch {
+    switch ("$([Environment]::GetEnvironmentVariable('PROCESSOR_ARCHITECTURE', 'Machine'))") {
+        "AMD64" { return "x64" }
+        "ARM64" { return "arm64" }
+    }
+    return ""
+}
+
+# $true quand l'installeur a fini sans erreur. Le fichier va dans un dossier a soi sous le profil (pas
+# TEMP, ou d'autres comptes peuvent ecrire), ou l'installeur deballe aussi les siens ; supprime apres.
+# Une empreinte qui ne correspond pas : rien n'est lance.
+function Official-Install([string]$Label) {
+    $o = $OFFICIAL_INSTALLERS[$Label]
+    $arch = Get-WinArch
+    if (-not $arch) { Note-Winget "> installeur officiel : $Label, aucun pour ce Windows 32 bits"; return $false }
+    $url, $sha = $o[$arch]
+    Write-Host "  ... $Label $($o.Version) : installeur officiel (dans ton profil, sans droits admin), verifie avant de tourner"
+    $d = Join-Path $H (Join-Path ".brain-in-a-box" ("installeur-" + [guid]::NewGuid().ToString("N")))
+    $tmp = Join-Path $d "tmp"
+    $end = "interrompu"
+    try {
+        New-Item -ItemType Directory -Path $tmp -Force | Out-Null
+        $f = Join-Path $d ($url -replace '^.*/', '')
+        $pp = $ProgressPreference; $ProgressPreference = "SilentlyContinue"
+        try { Invoke-WebRequest -Uri $url -OutFile $f -UseBasicParsing }
+        catch {
+            $end = "telechargement impossible : $($_.Exception.Message)"
+            Warn "$Label : telechargement impossible (reseau ?) : relance la meme commande"
+            return $false
+        } finally { $ProgressPreference = $pp }
+        $hex = ([BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash([IO.File]::ReadAllBytes($f))) -replace '-', '').ToLowerInvariant()
+        if ($hex -ne $sha) {
+            $end = "empreinte SHA-256 $hex, attendue $sha : rien n'est lance"
+            Warn "$Label : le fichier telecharge ne correspond pas a l'empreinte SHA-256 epinglee, rien n'est lance : relance la meme commande plus tard"
+            return $false
+        }
+        $savedTemp = $env:TEMP; $savedTmp = $env:TMP
+        $env:TEMP = $tmp; $env:TMP = $tmp
+        try { $p = Invoke-Native { Start-Process -FilePath $f -ArgumentList $o.Args -Wait -PassThru -ErrorAction Stop } }
+        finally { $env:TEMP = $savedTemp; $env:TMP = $savedTmp }
+        $end = "code $($p.ExitCode)"
+        return ($p.ExitCode -eq 0 -or $p.ExitCode -eq 3010)   # 3010 : fini, un redemarrage conseille
+    } catch {
+        $end = "erreur : $($_.Exception.Message)"
+        Warn "$Label : son installeur officiel n'a pas tourne (details : $LOG)"
+        return $false
+    } finally {
+        # Une ligne pour l'essai, comme pour winget : ce qui a ete lance, puis comment ca a fini.
+        Note-Winget "> installeur officiel : $Label $($o.Version) ($arch) $url`r`ninstalleur officiel : $end"
+        Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue
+        Refresh-Path
+    }
+}
+
+# Python ou Git absent : winget, sinon son installeur officiel. Le journal dit la voie qui a marche.
+function Install-Missing([string]$Label, [string]$Id, [scriptblock]$Find) {
+    $via = if (Winget-Install $Id $Label) { "winget" } else { "" }
+    $p = & $Find
+    if (-not $p) {
+        $via = if (Official-Install $Label) { "installeur officiel" } else { "" }
+        $p = & $Find
+    }
+    Note-Winget "> $Label : $(if (-not $p) { 'absent' } elseif ($via) { "$p ($via)" } else { $p })"
+    return $p
 }
 
 # Le "python" livre avec Windows est un raccourci vers le Microsoft Store : il est sur le PATH mais
@@ -543,7 +663,7 @@ $BUN_VERSION = [string]$pin.bun
 # 1. Preflight : Python (obligatoire), Git (historique du vault, et Git Bash pour l'outil Bash de Claude Code)
 Say "Preflight"
 $Py = Find-Python
-if (-not $Py) { Winget-Install "Python.Python.3.12" "Python"; $Py = Find-Python }
+if (-not $Py) { $Py = Install-Missing "Python" "Python.Python.3.12" { Find-Python } }
 if (-not $Py) { Fail "Python introuvable. Installe Python 3 depuis https://www.python.org/downloads/ puis relance la meme commande." }
 Ok "python ($Py)"
 # >>> agents
@@ -600,7 +720,7 @@ Add-Content -LiteralPath $LOG -Value "`r`n===== $(Get-Date -Format 'yyyy-MM-dd H
 $LogOpen = $true
 foreach ($n in $WingetNotes) { Note-Winget $n }
 $Git = Find-Git
-if (-not $Git) { Winget-Install "Git.Git" "Git"; $Git = Find-Git }
+if (-not $Git) { $Git = Install-Missing "Git" "Git.Git" { Find-Git } }
 if ($Git) {
     $gitDir = Split-Path -Parent $Git
     if (($env:Path -split ";") -notcontains $gitDir) { $env:Path = "$gitDir;$env:Path" }
@@ -1083,9 +1203,10 @@ if ($WithClaude) {
     $Claude = Find-Claude
     if ($Claude) { Ok "Claude Code ($Claude)" } else { Warn "Claude Code non installe - telecharge-le sur https://claude.com/download puis relance" }
 }
-if (-not (Find-Obsidian)) { Winget-Install "Obsidian.Obsidian" "Obsidian" }
+# Obsidian est optionnel : winget seulement, pas d'installeur de secours.
+if (-not (Find-Obsidian)) { $null = Winget-Install "Obsidian.Obsidian" "Obsidian" }
 $Obsidian = Find-Obsidian
-if ($Obsidian) { Ok "Obsidian ($Obsidian)" } else { Warn "Obsidian non installe - gratuit sur https://obsidian.md" }
+if ($Obsidian) { Ok "Obsidian ($Obsidian)" } else { Warn "Obsidian non installe (optionnel, pour voir ton cerveau) : gratuit sur https://obsidian.md" }
 
 # 11. Verifier la recherche (l'index par mots-cles sert aussi de repli a gbrain)
 Say "Verification"
