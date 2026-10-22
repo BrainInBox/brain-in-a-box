@@ -32,7 +32,7 @@ try {
         $f = Join-Path $Kit ($url -replace '^.*/', '')
         $ProgressPreference = "SilentlyContinue"
         if (-not (Test-Path -LiteralPath $f)) { Invoke-WebRequest -Uri $url -OutFile $f -UseBasicParsing }
-        $hex = (Get-FileHash -LiteralPath $f -Algorithm SHA256).Hash.ToLowerInvariant()
+        $hex = ([BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash([IO.File]::ReadAllBytes($f))) -replace '-', '').ToLowerInvariant()
         if ($hex -ne $sha) { $r["$k"] = "sha $hex"; continue }
         $a = @($o.Args)
         $a += if ($k -eq "Python") { @("/log", "`"$logs\py.log`"") } else { @("/LOG=`"$logs\git.log`"") }
