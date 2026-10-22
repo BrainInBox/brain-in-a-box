@@ -321,10 +321,10 @@ class WindowsInstaller(unittest.TestCase):
         self.assertIn("Mettre à jour Bibo", defined["addOrReinstall"])
         self.assertIn("tes notes ne changent pas", defined["alreadyInstalledLong"])
 
-    def test_the_hooks_are_ascii(self):
-        # Tauri rewrites the template and the language file in UTF-8 with a BOM, not the hooks: NSIS
-        # would read their accents in the system's code page.
+    def test_the_hooks_hold_no_words(self):
+        # What the uninstaller says is in French.nsh, with the rest: no sentence hidden in the hooks.
         self.hooks.encode("ascii")
+        self.assertNotRegex(self.hooks, r'MessageBox [A-Z_|]+ "[^$]')
 
     def test_uninstalling_offers_to_remove_the_tasks_install_ps1_schedules(self):
         install = (ROOT / "install.ps1").read_text(encoding="utf-8")
