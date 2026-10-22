@@ -569,6 +569,17 @@ class Workflow(unittest.TestCase):
         # Green again on a scheduled night: the issue is closed, not left open with a comment.
         self.assertIn('gh issue close \\"$open\\"', runs)
 
+    def test_the_installers_install_ps1_pins_are_checked_every_night(self):
+        job = self.jobs["epingles"]
+        runs = [st for st in job["steps"] if "run" in st]
+        self.assertEqual(len(runs), 1)
+        self.assertIn("python3 -I .github/ci/epingles.py", runs[0]["run"])
+        # Releases read only: GitHub's API with the read-only token, in that step alone; python.org without one.
+        self.assertEqual(runs[0]["env"], {"GH_TOKEN": "${{ github.token }}"})
+        self.assertEqual([st for st in job["steps"] if "github.token" in json.dumps(st)], runs)
+        self.assertNotIn("permissions", job)
+        self.assertEqual(self.wf["permissions"], {"contents": "read"})
+
 
     def test_the_app_jobs_get_the_app_as_a_user_and_never_a_claude_token(self):
         for name, os_name, ref in (("app-macos", "macos", '"$TERRAIN_REF"'), ("app-windows", "windows", '"$env:TERRAIN_REF"'),
@@ -849,9 +860,14 @@ class WindowsWithoutGit(unittest.TestCase):
         self.assertIn('Note-Winget "> winget $($a -join \' \')`r`nwinget : code $code"', ps1)
         self.assertIn('if ($script:LogOpen) { Add-Content -LiteralPath $LOG -Value "`r`n$t" -Encoding utf8 }', ps1)
         # The journal opens once the choice of agents is accepted (a refused one leaves nothing in it), with
-        # Python's attempts kept until then, and before Git's.
-        order = [ps1.index(s) for s in ('Install-Missing "Python" "Python.Python.3.12"', "# <<< agents", 'install =====" -Encoding utf8',
-                                        "foreach ($n in $WingetNotes) { Note-Winget $n }", 'Install-Missing "Git" "Git.Git"')]
+        # Python's attempts kept until then, and before Git's; or before Python's failure stops the install.
+        opener = ps1[ps1.index("function Open-Log {"):]
+        opener = opener[:opener.index("\n}\n")]
+        self.assertIn('install =====" -Encoding utf8', opener)
+        self.assertIn("foreach ($n in $script:WingetNotes) { Note-Winget $n }", opener)
+        order = [ps1.index(s) for s in ("function Open-Log {", 'Install-Missing "Python" "Python.Python.3.12"',
+                                        'if (-not $Py) { Open-Log; Fail "Python introuvable.', "# <<< agents", "\nOpen-Log\n",
+                                        'Install-Missing "Git" "Git.Git"')]
         self.assertEqual(order, sorted(order))
         # The lines the harness reads when winget could not (WINGET_SOURCE_MAJ, WINGET_SANS_GIT, OFFICIEL_GIT, VOIE_GIT).
         for line in ('Note-Winget "> winget absent : $label non installe par winget"',
@@ -870,6 +886,24 @@ class WindowsWithoutGit(unittest.TestCase):
               "\r\n> winget %s\r\nwinget : code 0\r\n\r\n> winget install -e --id Python.Python.3.12 x\r\nwinget : code 0\r\n" % (args, args)
         found = [(m.group("args").endswith("--scope user"), m.group("code")) for m in terrain.WINGET_GIT.finditer(log)]
         self.assertEqual(found, [(True, "-1978335216"), (False, "0")])
+
+    def test_winget_left_out_for_its_company_s_policy_or_because_it_does_not_start_is_said(self):
+        with open(os.path.join(HERE, "..", "..", "install.ps1"), encoding="utf-8") as f:
+            ps1 = f.read()
+        for line in ('Note-Winget "> winget : bloque par la politique de l\'entreprise, $label non installe par winget"',
+                     'Note-Winget "> winget : il ne demarre pas, $label non installe par winget"'):
+            self.assertIn(line, ps1)
+        codes = re.search(r"^\$WINGET_POLICY_CODES = @\(([-0-9, ]+)\)$", ps1, re.M)
+        self.assertTrue(codes, "install.ps1 has no $WINGET_POLICY_CODES")
+        self.assertEqual(sorted(int(c) for c in codes.group(1).split(",")), sorted(terrain.POLICY_WINGET))
+        args = "install -e --id Git.Git --source winget --silent --accept-package-agreements --accept-source-agreements --scope user"
+        for code, said in ((-1978335174, "-1978335174 (0x8A15003A, bloqué par la politique de l'entreprise)"),
+                           (-1978334961, "-1978334961 (0x8A15010F, installation bloquée par la politique de l'entreprise)")):
+            log = "\r\n> winget %s\r\nwinget : code %d\r\n\r\n> Git : absent\r\n" % (args, code)
+            self.assertEqual(terrain.chemin_git(log), "winget --scope user : code " + said)
+        for dit in ("winget : bloque par la politique de l'entreprise, Git non installe par winget",
+                    "winget : il ne demarre pas, Git non installe par winget"):
+            self.assertEqual(terrain.chemin_git("\r\n> %s\r\n\r\n> Git : absent\r\n" % dit), dit)
 
     def broken_winget_log(self, home, end):
         """install.log as install.ps1 writes it when winget's source does not open (2026-10-22): Python's attempt,
@@ -1299,6 +1333,15 @@ class Reports(Sandbox):
                                "--jobs", "ref=success,linux=failure")
         self.assertIn("1 échec(s)", out)
         self.assertIn("| linux | ? | job | linux-failure |", out)
+
+    def test_a_pin_of_install_ps1_left_behind_its_release_opens_the_issue(self):
+        # The job epingles (.github/ci/epingles.py) writes no result file: red when Git for Windows or Python,
+        # whose installers install.ps1 falls back on, has had a newer release out for 14 days.
+        self.assertEqual(terrain.parse_jobs("ref=success,epingles=failure"), {"ref": "success", "epingles": "failure"})
+        rc, out = self.terrain("issue", *self.green(), "--attendus", "macos-neuf,macos-claude", "--date", "2026-11-05",
+                               "--jobs", "ref=success,macos=success,claude=success,epingles=failure")
+        self.assertIn("Terrain du 2026-11-05 : 1 échec(s).", out)
+        self.assertIn("| windows | ? | job | epingles-failure |", out)
 
     def test_the_summary_table(self):
         files, _ = self.files()
