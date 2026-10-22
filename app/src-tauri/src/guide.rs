@@ -1,8 +1,9 @@
 //! The guide (docs/proposals/guide.md): the user shows Bibo a window of a program, says what they
 //! want to do in it, and their own Claude says the next action, one at a time, pointed on the image.
 //!
-//! The user pastes the capture (§G2, « Colle une capture »), or, on Windows, Bibo captures the window
-//! they clicked in (capture/, phase 2a): that window alone, checked to be still theirs before each look.
+//! Bibo captures the window the user clicked in (Windows, X11) or picked in the system's picker (macOS
+//! 14 and later), capture/: that window alone, checked to be still theirs before each look. Elsewhere,
+//! or when the window draws nothing Bibo can see, the user pastes a capture (§G2, « Colle une capture »).
 //! Claude runs as the repair's does (claude.rs: no tool, checked line by line), with the capture on
 //! stdin and Opus (phase 0, §15), or Sonnet in a cautious mode when the account cannot use Opus
 //! (decision 8, §22: never a full ellipse, a question when in doubt). Its answer is trusted for
@@ -114,11 +115,29 @@ pub enum Ia {
     Arrete,
 }
 
-/// How the capture comes. v1: pasted, everywhere; the system's picker and the click come later.
+/// How the capture comes: Bibo takes the chosen window itself, or the user pastes one (macOS 13,
+/// Wayland, X11 without a compositing manager). The window never names the reason.
 #[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum Capture {
+    Auto {
+        /// "clic": a click in the window (Windows, X11); "selecteur": the system's picker (macOS 14+).
+        via: &'static str,
+        /// How long Bibo waits for the click: the window counts it down. The picker waits on its own.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        secondes: Option<u64>,
+    },
     Collage { raison: &'static str },
+}
+
+impl Capture {
+    fn of(screen: &dyn Screen) -> Self {
+        match (screen.available(), screen.picker()) {
+            (true, true) => Capture::Auto { via: "selecteur", secondes: None },
+            (true, false) => Capture::Auto { via: "clic", secondes: Some(capture::CLIC_SECONDES) },
+            (false, _) => Capture::Collage { raison: screen.raison() },
+        }
+    }
 }
 
 #[derive(Serialize, Clone, Copy, Debug)]
@@ -344,7 +363,7 @@ pub enum GuideError {
     /// The window drew nothing Bibo can see (DirectX, a program run as administrator, a protected
     /// window): no image leaves, the user pastes a capture instead.
     CaptureNoire,
-    /// No click in a window within 15 s, or no choice in the system's picker for too long.
+    /// No click in a window within 45 s, or no choice in the system's picker for too long.
     AucunClic,
     /// The system's picker closed without a window (macOS): « Tu as fermé la fenêtre de choix ».
     SelecteurFerme,
@@ -1349,7 +1368,7 @@ struct Run {
 }
 
 impl Guide {
-    fn status(&self, home: &Path, check: &dyn Fn() -> Result<String, Ia>) -> Status {
+    fn status(&self, home: &Path, check: &dyn Fn() -> Result<String, Ia>, screen: &dyn Screen) -> Status {
         let ia = match check() {
             Ok(_) if self.launch.unsupported.load(Ordering::SeqCst) => Ia::Arrete,
             Ok(_) => Ia::Ready,
@@ -1357,7 +1376,7 @@ impl Guide {
         };
         Status {
             ia,
-            capture: Capture::Collage { raison: "a_venir" },
+            capture: Capture::of(screen),
             cerveau: detect::vault(home).is_some(),
             vu: home.join(STORE).join("vu").is_file(),
             prudent: self.launch.prudent.load(Ordering::SeqCst),
@@ -1460,7 +1479,7 @@ impl Guide {
         Ok(found.iter().map(Fenetre::from).collect())
     }
 
-    /// « Clique dans la fenêtre de ton logiciel »: the window that comes to the front within 15 s,
+    /// « Clique dans la fenêtre de ton logiciel »: the window that comes to the front within 45 s,
     /// which becomes the only one that may be chosen.
     fn wait_click(&self, screen: &dyn Screen) -> Result<Fenetre, GuideError> {
         if !screen.available() || screen.picker() {
@@ -1976,21 +1995,25 @@ impl Guide {
 
 // ── Entry points ────────────────────────────────────────────────────────────
 
-/// Whether the installer's welcome offers the guide (G0): the brain is whole, as the installer's own
-/// check says it, and Claude Code is there. Files are read, nothing is run, unlike `status`, whose
-/// three runs of Claude Code would hold the first screen up.
+/// Whether the installer's welcome offers the guide (G0, decision D1): Claude Code and the brain's
+/// folder are there, and Claude Code is logged in. The guide needs nothing else of the install (memory,
+/// hooks, skills): a user whose install stopped on Git or Bun can already be guided. A whole brain, as
+/// the installer's own check says it, needs no question (as before D1: the guide's window asks for the
+/// login itself); else one run of Claude Code (`auth status`), never the three of `status`, and none
+/// on a first launch, which holds no folder yet.
 pub fn offert() -> bool {
-    offered(&sys::home(), detect::claude_bin().is_some())
+    let home = sys::home();
+    offered(&home, detect::claude_bin().is_some(), &|| detect::brain(&home, &agents::current(&home)).complete(), &detect::claude_logged_in)
 }
 
-fn offered(home: &Path, claude: bool) -> bool {
-    claude && detect::brain(home, &agents::current(home)).complete()
+fn offered(home: &Path, claude: bool, whole: &dyn Fn() -> bool, logged_in: &dyn Fn() -> bool) -> bool {
+    claude && detect::vault(home).is_some() && (whole() || logged_in())
 }
 
 pub fn status() -> Status {
     let home = sys::home();
     let check = || detect::claude_bin().ok_or(Ia::Absent).and_then(|c| check_cli(&c));
-    GUIDE.status(&home, &check)
+    GUIDE.status(&home, &check, &capture::System)
 }
 
 /// « J'ai compris »: the flag, an empty file.
@@ -2043,7 +2066,7 @@ pub fn fenetres() -> Result<Vec<Fenetre>, GuideError> {
     GUIDE.list(&capture::System)
 }
 
-/// « Clique dans la fenêtre de ton logiciel » (Windows): the window clicked within 15 s.
+/// « Clique dans la fenêtre de ton logiciel » (Windows, X11): the window clicked within 45 s.
 pub fn attendre_clic() -> Result<Fenetre, GuideError> {
     GUIDE.wait_click(&capture::System)
 }
@@ -2143,12 +2166,16 @@ pub enum Taille {
 }
 
 const MARGIN: f64 = 16.0;
+/// The window's title bar, above its content: the frame's size is the content's, its place the
+/// window's corner. Windows draws 31 px, macOS 28, GNOME up to 37; left out, the window went 15 px
+/// under the taskbar (G-38 to G-51, Windows 11 at 1024×768).
+const TITLE_BAR: f64 = 40.0;
 
 /// Where the guide's window goes in the screen's usable area (logical pixels): in the bottom right
-/// corner, 400 wide, 70 % of the height at most and 640 (R3).
+/// corner, 400 wide, 70 % of the height at most and 640 (R3), its title bar included.
 pub fn frame(area: Frame, taille: Taille) -> Frame {
     let room_w = (area.w - 2.0 * MARGIN).max(1.0);
-    let room_h = (area.h - 2.0 * MARGIN).max(1.0);
+    let room_h = (area.h - 2.0 * MARGIN - TITLE_BAR).max(1.0);
     let normal_h = (area.h * 0.7).clamp(420.0, 640.0).min(room_h);
     let (w, h): (f64, f64) = match taille {
         Taille::Normal => (400.0, normal_h),
@@ -2156,7 +2183,7 @@ pub fn frame(area: Frame, taille: Taille) -> Frame {
         Taille::Large => (900.0, normal_h),
     };
     let (w, h) = (w.min(room_w), h.min(room_h));
-    Frame { x: area.x + area.w - w - MARGIN, y: area.y + area.h - h - MARGIN, w, h }
+    Frame { x: area.x + area.w - w - MARGIN, y: area.y + area.h - h - MARGIN - TITLE_BAR, w, h }
 }
 
 #[cfg(test)]
@@ -3291,7 +3318,7 @@ mod tests {
             assert_eq!(journal.len(), 2);
             assert_eq!((journal[0]["issue"].as_str(), journal[0]["modele"].as_str()), (Some("modele_absent"), Some("opus")));
             assert_eq!((journal[1]["issue"].as_str(), journal[1]["modele"].as_str()), (Some("etape"), Some("sonnet")));
-            assert!(b.guide.status(b.home.path(), &|| Ok("2.1.305".into())).prudent);
+            assert!(b.guide.status(b.home.path(), &|| Ok("2.1.305".into()), &FakeScreen::default()).prudent);
         }
 
         // From then on, Sonnet straight away; no label, no ellipse at all.
@@ -3361,7 +3388,7 @@ mod tests {
         assert_eq!(b.send(Demande::Debut), Err(GuideError::Lancement), "an older Opus");
         // From now on, no question until the app starts again.
         assert_eq!(b.send(Demande::Debut), Err(GuideError::Indisponible { ia: Ia::Arrete }));
-        assert_eq!(b.guide.status(b.home.path(), &|| Ok("2.1.305".into())).ia, Ia::Arrete, "not « too old »: an update would not help");
+        assert_eq!(b.guide.status(b.home.path(), &|| Ok("2.1.305".into()), &FakeScreen::default()).ia, Ia::Arrete, "not « too old »: an update would not help");
         let issues: Vec<Value> = b.journal().iter().map(|e| e["issue"].clone()).collect();
         assert_eq!(issues, [json!("image_non_vue"), json!("refus"), json!("lancement")]);
         // Sonnet: the start-up line already says another model.
@@ -3403,30 +3430,60 @@ mod tests {
         assert_eq!(b.guide.paste(&png_of(1, 1, png::ColorType::Rgb, png::BitDepth::Eight, &[0; 3])), Err(GuideError::Occupe), "no capture swapped under a question");
     }
 
-    /// The welcome says « Ton second cerveau est installé » and leads to the guide only when the brain
-    /// is whole, as the installer's own check says it: a vault left by an install that failed later
-    /// (hooks, memory, skills) keeps the welcome of before, which leads to the check of the computer.
+    /// D1: the welcome leads to the guide once Claude is logged in and the brain's folder is there,
+    /// whatever else of the install is missing (an install stopped on Git or Bun: no memory, no
+    /// hooks). Claude Code is asked only when it may change the answer: never on a first launch (no
+    /// folder), nor for a whole brain (offered as before).
     #[test]
-    fn the_guide_is_offered_only_with_a_whole_brain_and_claude() {
+    fn the_guide_is_offered_with_the_brains_folder_and_claude_logged_in() {
         let home = tempfile::tempdir().unwrap();
-        fs::create_dir_all(home.path().join("Documents/Brain")).unwrap();
-        assert!(!offered(home.path(), true), "the vault alone");
-        crate::detect::tests::fake_brain(home.path());
-        assert!(!offered(home.path(), false), "no Claude Code");
-        assert!(offered(home.path(), true));
-        fs::remove_dir_all(home.path().join(".gbrain")).unwrap();
-        assert!(!offered(home.path(), true), "no memory");
+        let h = home.path();
+        let asked = std::cell::Cell::new(0);
+        let logged = |yes: bool| {
+            let asked = &asked;
+            move || {
+                asked.set(asked.get() + 1);
+                yes
+            }
+        };
+        let whole = || crate::detect::brain(h, &crate::agents::current(h)).complete();
+        assert!(!offered(h, true, &whole, &logged(true)), "no folder");
+        assert_eq!(asked.get(), 0, "Claude Code not run without the folder");
+        fs::create_dir_all(h.join("Documents/Brain")).unwrap();
+        assert!(offered(h, true, &whole, &logged(true)), "the folder alone, Claude logged in");
+        assert!(!offered(h, true, &whole, &logged(false)), "the folder alone, Claude not logged in");
+        assert!(!offered(h, false, &whole, &logged(true)), "no Claude Code");
+        crate::detect::tests::fake_brain(h);
+        let before = asked.get();
+        assert!(offered(h, true, &whole, &logged(false)), "the whole brain: offered, the window asks for the login");
+        assert_eq!(asked.get(), before, "a whole brain needs no run of Claude Code");
+        fs::remove_dir_all(h.join(".gbrain")).unwrap();
+        assert!(offered(h, true, &whole, &logged(true)), "no memory: the guide needs none");
+        assert!(!offered(h, true, &whole, &logged(false)), "no memory and no login");
     }
 
     #[test]
     fn the_status_says_what_stops_the_guide() {
         let b = Bench::new();
+        let screen = FakeScreen::default();
         for (check, ia) in [(Err(Ia::Absent), Ia::Absent), (Err(Ia::NotLoggedIn), Ia::NotLoggedIn), (Err(Ia::Billed), Ia::Billed), (Ok("2.1.305".to_string()), Ia::Ready)] {
-            assert_eq!(b.guide.status(b.home.path(), &|| check.clone()).ia, ia);
+            assert_eq!(b.guide.status(b.home.path(), &|| check.clone(), &screen).ia, ia);
         }
-        let s = b.guide.status(b.home.path(), &|| Ok("x".into()));
-        assert_eq!(serde_json::to_value(s.capture).unwrap(), json!({"mode": "collage", "raison": "a_venir"}));
+        let s = b.guide.status(b.home.path(), &|| Ok("x".into()), &screen);
         assert!(!s.vu && !s.cerveau);
+    }
+
+    /// How the window gets the capture: a click (Windows, X11, with the time it waits), the system's
+    /// picker (macOS 14+), or a paste where Bibo cannot see a window (macOS 13, Wayland, X11 without
+    /// a compositing manager).
+    #[test]
+    fn the_status_says_how_the_capture_comes() {
+        let b = Bench::new();
+        let mode = |screen: &FakeScreen| serde_json::to_value(b.guide.status(b.home.path(), &|| Ok("x".into()), screen).capture).unwrap();
+        assert_eq!(mode(&FakeScreen::default()), json!({"mode": "auto", "via": "clic", "secondes": 45}));
+        assert_eq!(mode(&FakeScreen { picker: true, ..FakeScreen::default() }), json!({"mode": "auto", "via": "selecteur"}));
+        assert_eq!(mode(&FakeScreen { off: true, ..FakeScreen::default() }), json!({"mode": "collage", "raison": "indisponible"}));
+        assert_eq!(mode(&FakeScreen { off: true, picker: true, ..FakeScreen::default() })["mode"], "collage", "macOS 13: no picker");
     }
 
     #[test]
@@ -3465,12 +3522,20 @@ mod tests {
         let laptop = Frame { x: 0.0, y: 25.0, w: 1366.0, h: 743.0 };
         let f = frame(laptop, Taille::Normal);
         assert_eq!((f.w, f.h), (400.0, (743.0f64 * 0.7).max(420.0)));
-        assert_eq!((f.x + f.w + MARGIN, f.y + f.h + MARGIN), (1366.0, 768.0));
+        // Its title bar over it: the whole window above the taskbar, by the margin.
+        assert_eq!((f.x + f.w + MARGIN, f.y + TITLE_BAR + f.h + MARGIN), (1366.0, 768.0));
+        // Windows 11 at 1024×768, its taskbar 48 px high: the window's bottom (title bar of 31 px) 16 px
+        // or more above it, not 15 px under it as on G-38 to G-51.
+        let vm = Frame { x: 0.0, y: 0.0, w: 1024.0, h: 720.0 };
+        for taille in [Taille::Normal, Taille::Reduit, Taille::Large] {
+            let f = frame(vm, taille);
+            assert!(f.y >= 0.0 && f.y + 31.0 + f.h <= 720.0 - MARGIN, "{taille:?} {f:?}");
+        }
         assert_eq!(frame(Frame { x: 0.0, y: 0.0, w: 2560.0, h: 1400.0 }, Taille::Normal).h, 640.0);
         assert_eq!((frame(laptop, Taille::Reduit).w, frame(laptop, Taille::Reduit).h), (360.0, 220.0));
         assert_eq!(frame(laptop, Taille::Large).w, 900.0);
         let tiny = frame(Frame { x: 0.0, y: 0.0, w: 600.0, h: 400.0 }, Taille::Large);
-        assert!(tiny.x >= 0.0 && tiny.y >= 0.0 && tiny.w <= 568.0 && tiny.h <= 368.0, "{tiny:?}");
+        assert!(tiny.x >= 0.0 && tiny.y >= 0.0 && tiny.w <= 568.0 && tiny.h <= 368.0 - TITLE_BAR, "{tiny:?}");
     }
 
     #[test]

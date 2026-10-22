@@ -164,6 +164,11 @@ pub fn available() -> bool {
     true
 }
 
+/// Never asked: PrintWindow is there on every Windows the app runs on.
+pub fn raison() -> &'static str {
+    "indisponible"
+}
+
 /// The window under this id, if it is another program's the guide may capture.
 pub fn describe(id: u64) -> Option<Found> {
     let h = handle(id);

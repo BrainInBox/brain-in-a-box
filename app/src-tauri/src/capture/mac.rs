@@ -48,6 +48,11 @@ pub fn available() -> bool {
     objc2::available!(macos = 14.0)
 }
 
+/// Before macOS 14, no picker: the user pastes a capture.
+pub fn raison() -> &'static str {
+    "macos_13"
+}
+
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(PoisonError::into_inner)
 }

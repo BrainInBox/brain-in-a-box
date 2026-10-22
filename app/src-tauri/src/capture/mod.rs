@@ -22,8 +22,10 @@ mod win;
 #[cfg(target_os = "linux")]
 mod x11;
 
-/// How long Bibo waits for the click in the user's window (R4).
-const CLIC: Duration = Duration::from_secs(15);
+/// How long Bibo waits for the click in the user's window (R4): time to find the program in the
+/// taskbar. The guide's window counts it down (the status gives it).
+pub const CLIC_SECONDES: u64 = 45;
+const CLIC: Duration = Duration::from_secs(CLIC_SECONDES);
 const POLL: Duration = Duration::from_millis(100);
 /// G2: a title is cut there (a mail's subject, a document's name: no more of it than needed).
 const TITRE_MAX: usize = 60;
@@ -106,6 +108,11 @@ pub enum Pick {
 /// The system's windows, as the guide asks for them: this computer's, or a test's.
 pub trait Screen {
     fn available(&self) -> bool;
+    /// Why not, when not available: for the status and the tests, never shown (the window says « sur
+    /// ce PC », never the name of a display server).
+    fn raison(&self) -> &'static str {
+        "indisponible"
+    }
     /// The window is chosen in the system's own picker (macOS), not in Bibo's list nor by a click.
     fn picker(&self) -> bool {
         false
@@ -116,7 +123,7 @@ pub trait Screen {
     }
     /// Other programs' windows, the top one first (G2's list).
     fn windows(&self) -> Vec<Found>;
-    /// The window that comes to the front within 15 s, Bibo's left out (R4); None if none came or
+    /// The window that comes to the front within 45 s, Bibo's left out (R4); None if none came or
     /// `cancel` was set.
     fn clicked(&self, cancel: &AtomicBool) -> Option<Found>;
     /// The window under this id now, if it is one the guide may capture.
@@ -135,6 +142,10 @@ pub struct System;
 impl Screen for System {
     fn available(&self) -> bool {
         os::available()
+    }
+
+    fn raison(&self) -> &'static str {
+        os::raison()
     }
 
     #[cfg(target_os = "macos")]
@@ -183,6 +194,10 @@ mod os {
 
     pub fn available() -> bool {
         false
+    }
+
+    pub fn raison() -> &'static str {
+        "indisponible"
     }
 
     pub fn list() -> Vec<Found> {
