@@ -883,7 +883,8 @@ class WindowsWithoutGit(unittest.TestCase):
                "\r\n===== 2026-10-22 06:07:07 install =====\r\n"
                "\r\n> winget : sa source est en panne, Git non installe par winget\r\n"
                "\r\n> installeur officiel : Git 2.56.0.2 (x64) %s\r\n%s" % (py, py, url, end))
-        (home / ".brain-in-a-box" / "install.log").write_text(log, encoding="utf-8")
+        # Bytes: in text mode, Windows would write each \r\n as \r\r\n.
+        (home / ".brain-in-a-box" / "install.log").write_bytes(log.encode("utf-8"))
 
     def test_git_from_its_official_installer_when_winget_could_not(self):
         home = Path(self.tmp) / "home"
