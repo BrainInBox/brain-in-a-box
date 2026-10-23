@@ -83,10 +83,12 @@ CLIC_RELANCE = 20           # a click that changed nothing is tried again after 
 CLIC_ESSAIS = 3
 INCONNU_MAX = 180           # a screen the robot does not know, for this long: a failure
 DELAI_FENETRE = 120
+DELAI_DEVANT = 5            # Bibo back in front after macOS's picker
 DELAI_PREMIER = 75 * 60     # Bienvenue to the final screen (Apple's tools up to 45 min, the brain step 40)
 DELAI_RELANCE = 5 * 60
-# How every click is done: the mouse on the button, as a user clicks. Anything else (AXPress,
-# Invoke) proves no user could have clicked there: the scenario fails, once the walk is over.
+# How every click is done: the mouse on the button, as a user clicks, maybe followed by where, in
+# parentheses (macOS's picker). Anything else (AXPress, Invoke) proves no user could have clicked there:
+# the scenario fails, once the walk is over.
 CLIC_SOURIS = "clic souris"
 
 # Bibo's titles (app/src/app.js), after norm(): the screen they stand for.
@@ -607,6 +609,14 @@ class Pilote:
     # The guide's walk on this system: an account without Opus (Sonnet, the cautious mode) or not.
     guide_prudent = False
 
+    def logiciel(self, dossier):
+        """The user's program the guide is walked in, its window Bibo takes in photo itself (Logiciel), not
+        open yet; None where the robot pastes the captures (Linux)."""
+        return None
+
+    # The programs whose windows in front are the user's, not a dialog over the app (the guide's program).
+    ignores = ()
+
     def cerveau(self, home):
         """Where the app put the brain."""
         return Path(home) / "Documents" / "Brain"
@@ -614,6 +624,11 @@ class Pilote:
     def racines_traces(self, home):
         """Where the guide could have left an image: the home, the temporary folders."""
         return [Path(home), Path(tempfile.gettempdir())]
+
+    def app_devant(self):
+        """(whether the app is in front, its window with the keyboard; the name of the one in front), where the
+        driver can tell (macOS); (None, None) elsewhere."""
+        return None, None
 
     def attendre(self, predicat, delai, horloge=time.monotonic, dormir=time.sleep, pas=1.0):
         fin = horloge() + delai
@@ -629,7 +644,9 @@ function run(argv) {
   var req = JSON.parse(argv[0]);
   var se = Application('System Events');
   var out = req.op === 'cliquer' ? cliquer(se, req) : req.op === 'rapide' ? rapide(se, req) :
-            req.op === 'clavier' ? clavier(se, req) : lire(se, req);
+            req.op === 'clavier' ? clavier(se, req) : req.op === 'cadre' ? cadre(se, req) :
+            req.op === 'boutons' ? boutonsSelecteur(se) : req.op === 'souris' ? pointeur(req) :
+            req.op === 'devant' ? devant(se) : lire(se, req);
   return enc(out);
 }
 
@@ -701,6 +718,13 @@ function fenetres(p, budget) {
     out.push({titre: arbre.n, arbre: arbre});
   }
   return out;
+}
+
+// The app in front, the one the keyboard types in.
+function devant(se) {
+  var name = '';
+  try { name = se.processes.whose({frontmost: true}).name()[0] || ''; } catch (e) {}
+  return {ok: true, devant: name};
 }
 
 function lire(se, req) {
@@ -821,6 +845,48 @@ function cliquer(se, req) {
   return {ok: false, pourquoi: 'absent'};
 }
 
+// The guide's program (the user's): the place and size of its window, by a part of its title.
+function cadre(se, req) {
+  try {
+    var ws = se.processes.byName(req.processus).windows();
+    for (var i = 0; i < ws.length; i++) {
+      if (norm(prop(ws[i], 'name')).indexOf(norm(req.titre)) >= 0) return {pos: ws[i].position(), size: ws[i].size()};
+    }
+  } catch (e) { return {erreur: String(e)}; }
+  return {};
+}
+
+// macOS's picker: the buttons ControlCenter lays over the screen, its menu bar left out.
+function boutonsSelecteur(se) {
+  var out = [];
+  function walk(el, depth) {
+    var ks = [];
+    try { ks = el.uiElements(); } catch (e) { return; }
+    for (var i = 0; i < ks.length; i++) {
+      if (prop(ks[i], 'role') === 'AXButton') out.push({n: str(prop(ks[i], 'name')), d: str(prop(ks[i], 'description')), pos: prop(ks[i], 'position'), size: prop(ks[i], 'size')});
+      if (depth < 8) walk(ks[i], depth + 1);
+    }
+  }
+  try {
+    var ws = se.processes.byName('ControlCenter').windows();
+    for (var i = 0; i < ws.length; i++) walk(ws[i], 0);
+  } catch (e) {}
+  return {boutons: out.filter(function (b) { return b.pos && b.size && b.pos[1] > 70; })};
+}
+
+// The pointer moved there, and clicked when asked, as the mouse does (kCGHIDEventTap).
+function pointeur(req) {
+  ObjC.import('CoreGraphics');
+  var pt = $.CGPointMake(req.x, req.y);
+  (req.clic ? [5, 1, 2] : [5]).forEach(function (type) {
+    var ev = $.CGEventCreateMouseEvent($(), type, pt, 0);
+    if (type !== 5) $.CGEventSetIntegerValueField(ev, 1, 1);
+    $.CGEventPost(0, ev);
+    delay(type === 5 ? 0.3 : 0.08);
+  });
+  return {ok: true};
+}
+
 // The keyboard, as a user types in the window: text, Tab, or a PNG put in the clipboard (from its
 // base64, no file) then Cmd+V. The app is brought to the front and the window raised first.
 function clavier(se, req) {
@@ -873,6 +939,9 @@ class PiloteMac(Pilote):
         self.script.write_text(JXA, encoding="utf-8")
         self.dernier_arbre = None
         self.statut = None
+
+    def logiciel(self, dossier):
+        return LogicielMac(self, dossier)
 
     def _osa(self, req, timeout=90):
         rc, out = self._run(["/usr/bin/osascript", "-l", "JavaScript", self.script, json.dumps(req)], timeout=timeout)
@@ -1052,7 +1121,7 @@ class PiloteMac(Pilote):
 
     def lire(self):
         res = self._osa({"op": "lire", "processus": self.processus, "dialogues": list(self.DIALOGUES),
-                         "ignorer": list(self.IGNORER)})
+                         "ignorer": list(self.IGNORER) + list(self.ignores)})
         self.dernier_arbre = res
         fen = [f for f in res.get("app") or [] if isinstance(f, dict)]
         if self.fenetre_titre:
@@ -1086,6 +1155,10 @@ class PiloteMac(Pilote):
         if not res.get("ok"):
             raise ErreurPilote("le clavier n'atteint pas la fenêtre (%s)" % res.get("pourquoi"))
 
+    def app_devant(self):
+        nom = self._osa({"op": "devant"}, timeout=30).get("devant") or ""
+        return nom == self.processus, nom
+
     def taper(self, texte):
         self._clavier(texte=texte)
 
@@ -1107,6 +1180,17 @@ class PiloteMac(Pilote):
 
     def arbre(self):
         return self.dernier_arbre
+
+    # In the system's log, who speaks of the capture and of the picker: the app, ControlCenter (the picker's
+    # buttons), screencaptureui, replayd, ScreenCaptureKit.
+    JOURNAL = ('process == "%s" OR process == "ControlCenter" OR process == "screencaptureui" OR process == "replayd" '
+               'OR subsystem == "com.apple.ScreenCaptureKit"')
+
+    def journaux(self):
+        """The system's log of the last 5 minutes, the app's and the picker's: its last 400 lines."""
+        rc, text = self._run(["/usr/bin/log", "show", "--last", "5m", "--style", "compact", "--info",
+                              "--predicate", self.JOURNAL % self.processus], timeout=180)
+        return {"log_show": text.splitlines()[-400:] if rc == 0 else ["code %d" % rc] + text.splitlines()[-20:]}
 
 
 # UI Automation's control types, as the roles of the tree ecran_depuis_arbre() reads (macOS's words).
@@ -1497,6 +1581,9 @@ class PiloteWindows(Pilote):
     def environnement(self, home, extra=None):
         return env_app_windows(env_session(), self.stub, extra)
 
+    def logiciel(self, dossier):
+        return LogicielWindows(self, dossier)
+
     def outils(self, home):
         home = Path(home)
         local = Path(os.environ.get("LOCALAPPDATA") or home / "AppData" / "Local")
@@ -1812,7 +1899,7 @@ class PiloteWindows(Pilote):
             elif not self.fenetre_titre or norm(f.get("titre")) == norm(self.fenetre_titre):
                 fen.append({"titre": f.get("titre"), "arbre": arbre, "h": f.get("h")})
         d = res.get("devant")
-        if isinstance(d, dict) and d.get("classe") not in self.IGNORER:
+        if isinstance(d, dict) and d.get("classe") not in self.IGNORER and nom_programme(d.get("exe")) not in self.ignores:
             name = nom_programme(d.get("exe"))
             self.dialogues_h[name] = d.get("h")
             dialogues.append(dialogue_depuis_arbre(name, arbre_uia(d.get("arbre"))))
@@ -2772,7 +2859,7 @@ class Parcours:
         except ErreurPilote as e:
             seen["reponse"] = "échec du clic : %s" % e
 
-    def entrer(self, cle, prefixe):
+    def entrer(self, cle, prefixe, capture=True):
         if self.ecrans and self.ecrans[-1]["duree_s"] is None:
             self.ecrans[-1]["duree_s"] = self.secondes() - self.ecrans[-1]["debut_s"]
         self.ecrans.append({"ecran": prefixe + cle, "debut_s": self.secondes(), "duree_s": None})
@@ -2781,7 +2868,8 @@ class Parcours:
         # A failure keeps the step it happened in (app-etape-brain, not app-echec).
         if cle not in ARRETS:
             self.t("app-" + prefixe + cle)
-        self.capturer(prefixe + cle)
+        if capture:
+            self.capturer(prefixe + cle)
 
     def raison(self, message):
         e = self.dernier
@@ -3003,13 +3091,16 @@ class Parcours:
 
     # ── The guide (§9): a third launch, its window walked to the procedure in the brain ──
 
-    def guide(self, env, images, prudent=False):
+    def guide(self, env, images, prudent=False, logiciel=None):
         """From the welcome's « Guide-moi dans un logiciel » to the procedure in the brain, as a user: G1
-        read, the program and the goal typed, a capture pasted (Cmd/Ctrl+V) and sent, the step and its
-        ellipse, « C'est fait », a second capture, the end, the procedure saved, the guide closed.
-        images: {"debut": PNG, "fait": PNG}, pasted in turn; prudent: no Opus for the account (the fake
-        refuses it), Sonnet's dotted ellipse expected. Returns what was seen."""
-        vu = {"ecrans": [], "collages": [], "saisie": None, "temoin": None, "etape": None}
+        read, the window shown to Bibo, the goal typed, its photo sent, the step and its ellipse, the step
+        done in the program, « C'est fait », a second photo, the end, the procedure saved, the guide closed.
+        logiciel: the user's program open on the screen (Logiciel), whose window Bibo takes in photo itself
+        (a click in it on Windows, the system's picker on macOS); None: the captures `images` are pasted
+        instead ({"debut": PNG, "fait": PNG}, Cmd/Ctrl+V), the program's name typed with the goal. prudent:
+        no Opus for the account (the fake refuses it), Sonnet's dotted ellipse expected. Returns what was seen."""
+        vu = {"ecrans": [], "collages": [], "saisie": None, "temoin": None, "etape": None,
+              "capture": logiciel.via if logiciel else "collage", "gestes": []}
         self.lancer(env, "guide-")
         self.avancer("bienvenue-retour", DELAI_RELANCE, relance=True, prefixe="guide-")
         self.forcer = True
@@ -3018,13 +3109,13 @@ class Parcours:
         self.p.fenetre_titre = GUIDE_TITRE
         self.precedent, self.forcer = None, True
         try:
-            self.marcher_guide(images, prudent, vu)
+            self.marcher_guide(images, prudent, vu, logiciel)
         finally:
             self.p.fenetre_titre = None
             self.precedent, self.forcer = None, True
         return vu
 
-    def marcher_guide(self, images, prudent, vu):
+    def marcher_guide(self, images, prudent, vu, logiciel=None):
         p, t = self.p, self.t
         debut = self.horloge()
         fin = debut + DELAI_GUIDE if self.echeance is None else min(debut + DELAI_GUIDE, self.echeance)
@@ -3037,36 +3128,65 @@ class Parcours:
                 cle_prec, depuis, clic = cle, now, None
                 if cle == "sans-fenetre" and "enregistre" in vu["ecrans"]:
                     return      # « Fermer le guide »: its window went
-                self.entrer(cle, "guide-")
+                # macOS's picker out, the screen is not captured, as a user takes none then (the first night's
+                # walk took one there, and the picker never gave the window: cause not proven, 2026-10-23).
+                self.entrer(cle, "guide-", capture=not (cle == "selecteur" and logiciel is not None))
                 vu["ecrans"].append(cle)
             action = None
-            if cle == "inconnu":
+            ratee = next((why for key, _, why in PHOTO_RATEE if key == cle), None)
+            if ratee:
+                self.echouer(ratee)
+            elif cle == "inconnu":
                 if now - depuis >= INCONNU_GUIDE:
                     self.echouer("le guide montre un écran inattendu")
             elif cle in ATTENTES_GUIDE:
                 if now - depuis >= (DELAI_FENETRE if cle == "sans-fenetre" else 90):
                     self.echouer("le guide reste sur « %s » depuis %d s" % (cle, int(now - depuis)))
+                if cle == "selecteur" and logiciel is not None:
+                    # macOS's picker is out: the window and the button macOS shows over it.
+                    action = ("logiciel", "montrer")
             elif cle == "comment":
                 action = ("cliquer", "J'ai compris")
+            elif cle == "choisir":
+                if logiciel is None:
+                    # Bibo could take the window, the robot pastes instead (Linux): pasting from then on.
+                    action = ("coller", "debut")
+                elif e.bouton("Réessayer"):
+                    action = ("cliquer", "Réessayer")      # the click came too soon: Bibo asks again
+                elif logiciel.via == "selecteur":
+                    action = ("cliquer", CHOISIR_FENETRE)
+                else:
+                    action = ("logiciel", "montrer")
+            elif cle == "fenetre":
+                action = ("cliquer", "Oui, c'est elle")
             elif cle == "objectif":
                 if "objectif" not in faits:
                     faits.add("objectif")
-                    # The field of the program has the focus: the program, Tab, the goal.
-                    p.taper(LOGICIEL_GUIDE)
-                    p.tabulation()
-                    p.taper(OBJECTIF_GUIDE)
-                    vu["saisie"] = "clavier"
+                    if logiciel is not None and logiciel.via == "selecteur":
+                        self.bibo_devant(vu)
+                    if e.texte.startswith(norm(PROGRAMME_CONNU)):
+                        # The program's name from the window (Windows): only the goal, its field has the focus.
+                        p.taper(OBJECTIF_GUIDE)
+                        vu["saisie"] = "clavier, le logiciel rempli par Bibo"
+                    else:
+                        # The field of the program has the focus: the program, Tab, the goal.
+                        p.taper(LOGICIEL_GUIDE)
+                        p.tabulation()
+                        p.taper(OBJECTIF_GUIDE)
+                        vu["saisie"] = "clavier"
                     self.forcer = True
                     continue
                 action = ("cliquer", "Continuer")
             elif cle in ("coller-debut", "coller-fait"):
+                if logiciel is not None:
+                    self.echouer("Bibo demande une capture collée au lieu de prendre lui-même la photo de la fenêtre")
                 action = ("coller", cle.split("-", 1)[1])
             elif cle == "apercu":
                 if "temoin" not in faits:
                     # Before any answer, no ellipse on the screen: the ring's reading proves nothing otherwise.
                     faits.add("temoin")
                     vu["temoin"] = self.lire_anneaux(self.captures[-1])
-                    t.check(vu["temoin"]["boutons_verts"] >= 1, "l'aperçu ne montre pas la capture collée (aucun bouton vert)")
+                    t.check(vu["temoin"]["boutons_verts"] >= 1, "l'aperçu ne montre pas la fenêtre (aucun bouton vert)")
                     t.check(not vu["temoin"]["entoures"], "une ellipse rouge sur l'aperçu, avant toute réponse de Claude")
                 t.check(e.bouton("Refaire la capture") is None, "l'aperçu dit « la même capture que la dernière fois »")
                 action = ("cliquer", "Envoyer à Claude")
@@ -3074,6 +3194,14 @@ class Parcours:
                 if "etape" not in faits:
                     faits.add("etape")
                     vu["etape"] = self.verifier_etape(e, prudent)
+                if logiciel is not None and "pas" not in faits:
+                    # The step itself, in the program: « Nouveau », as Claude said.
+                    faits.add("pas")
+                    how = logiciel.faire_etape()
+                    vu["gestes"].append("Nouveau")
+                    self.clics.append({"a_s": self.secondes(), "ecran": "logiciel", "bouton": "Nouveau", "comment": how})
+                    self.forcer = True
+                    continue
                 action = ("cliquer", "C'est fait")
             elif cle == "fin":
                 # The summary's step is checked in the note it becomes (AT-SPI names a list item, no text).
@@ -3091,6 +3219,12 @@ class Parcours:
                     vu["collages"].append(action[1])
                     clic = (now, (clic[1] if clic else 0) + 1)
                     self.forcer = True
+                elif action[0] == "logiciel":
+                    how = logiciel.montrer()
+                    vu["gestes"].append(cle)
+                    self.clics.append({"a_s": self.secondes(), "ecran": "guide-" + cle, "bouton": logiciel.titre, "comment": how})
+                    clic = (now, (clic[1] if clic else 0) + 1)
+                    self.forcer = True
                 else:
                     state = e.bouton(action[1])
                     if state:
@@ -3105,6 +3239,22 @@ class Parcours:
             if now >= fin:
                 self.echouer("toujours sur l'écran « %s » du guide après %d min" % (cle, int((now - debut) // 60)))
             self.dormir(POLL)
+
+    def bibo_devant(self, vu):
+        """After macOS's picker, Bibo in front again (lib.rs, guide_choisir): what the user types next goes to
+        Bibo, not to the program picked. Asked before the robot types, its keyboard bringing Bibo in front."""
+        lu = [(None, None)]
+
+        def devant():
+            lu[0] = self.p.app_devant()
+            return lu[0][0] is not False
+
+        self.p.attendre(devant, DELAI_DEVANT, self.horloge, self.dormir, pas=0.5)
+        ok, nom = lu[0]
+        vu["devant"] = nom
+        if ok is False:
+            self.echouer("après le sélecteur de macOS, « %s » est devant et pas Bibo : ce que l'utilisateur tape irait "
+                         "dans son logiciel" % (nom or "aucune app"))
 
     def lire_anneaux(self, nom):
         """The green buttons of the capture `nom` and those a red ring goes round."""
@@ -3161,6 +3311,8 @@ GUIDE_TITRE = "Bibo, ton guide"
 APP_TITRE = TITRE_FENETRE
 # What the robot types, ASCII (System Events' keystroke): a made-up program and what to do in it.
 LOGICIEL_GUIDE, OBJECTIF_GUIDE = "Atelier Demo", "Faire une facture"
+# Bibo's words on the goal's screen when it named the program from the window (guide.js, showGoal).
+PROGRAMME_CONNU = "Dis-moi ce que tu veux faire dans ton logiciel"
 # The fake Claude's answers (engine/tests/fake_claude.py, scenario "guide"): « Nouveau », then done.
 REPONSES_GUIDE = {
     "debut": {"etat": "etape", "consigne": "Clique sur « Nouveau », en haut à gauche, sous le titre.", "libelle": "Nouveau",
@@ -3171,12 +3323,16 @@ REPONSES_GUIDE = {
              "resume_etape": "Clique sur « Valider »."},
 }
 ETAPE_ENREGISTREE = "1. Clique sur « Nouveau » en haut à gauche."
-# Bibo's titles in the guide's window (app/src/guide.js), after norm(): the screen they stand for.
+# Bibo's titles in the guide's window (app/src/guide.js), after norm(): the screen they stand for. « Montre-moi
+# ta fenêtre. » is the paste's and the wait for the window's (« choisir »): its buttons say which (cle_guide).
 ECRANS_GUIDE = (
     ("charge", "Je prépare le guide"),
     ("comment", "Comment je regarde ton écran"),
     ("objectif", "Qu'est-ce que tu veux faire ?"),
     ("coller-debut", "Montre-moi ta fenêtre."),
+    ("selecteur", "Choisis ta fenêtre."),
+    ("fenetre", "C'est bien celle-ci ?"),
+    ("photo", "Je prends ta fenêtre en photo"),
     ("coller-fait", "Montre-moi où tu en es."),
     ("lecture", "Je lis ton image"),
     ("apercu", "Voici ce que Claude va voir."),
@@ -3187,7 +3343,20 @@ ECRANS_GUIDE = (
     ("enregistrer", "Je l'écris dans ton cerveau ?"),
     ("enregistre", "Enregistré dans "),
 )
-ATTENTES_GUIDE = {"sans-fenetre", "chargement", "charge", "lecture", "regarde", "brouillon"}
+# The buttons of the wait for the window: a click in it (Windows, X11), the system's picker (macOS).
+CHOISIR_LISTE, CHOISIR_FENETRE = "Choisir dans une liste", "Choisir la fenêtre"
+# Where Bibo's own photo of the window does not come (Windows, macOS): (screen, Bibo's title, the failure).
+PHOTO_RATEE = (
+    ("photo-noire", "Ton logiciel ne me laisse pas le prendre en photo.", "la photo de la fenêtre d'Atelier Demo est noire"),
+    ("fenetre-noire", "Cette fenêtre ne se laisse pas prendre en photo.", "la fenêtre d'Atelier Demo, choisie à nouveau, reste noire"),
+    ("sans-photo", "Je ne peux pas voir tes fenêtres tout seul", "Bibo ne voit pas les fenêtres de ce système : il demande une capture collée"),
+    ("apercu-meme", "Ta fenêtre n'a pas changé depuis la dernière photo.",
+     "la deuxième photo est la même que la première : le clic sur « Nouveau » dans Atelier Demo n'a rien changé"),
+    ("reduite", "Ta fenêtre est réduite.", "Bibo dit la fenêtre d'Atelier Demo réduite"),
+    ("introuvable", "Je ne trouve plus ta fenêtre.", "Bibo ne trouve plus la fenêtre d'Atelier Demo"),
+    ("terminal", "Je ne guide pas dans un terminal.", "Bibo a pris un terminal pour la fenêtre du logiciel"),
+)
+ATTENTES_GUIDE = {"sans-fenetre", "chargement", "charge", "lecture", "regarde", "brouillon", "photo", "selecteur"}
 # On the step: what the page says for the screen reader with its ellipse, Opus's full one or Sonnet's dotted one.
 ANNEAU_PLEIN = "Sur l'image, « Nouveau » est entouré en rouge."
 ANNEAU_POINTILLE = "Sur l'image, la zone à vérifier est entourée en pointillés."
@@ -3199,13 +3368,18 @@ ROUGE, VERT = (229, 38, 43), (20, 160, 60)
 
 
 def cle_guide(e):
-    """The guide's screen the window shows: a known one, an error said in Bibo's words, or « inconnu »."""
+    """The guide's screen the window shows: a known one, a photo that did not come, or « inconnu »."""
     if not e.fenetre:
         return "sans-fenetre"
     if not e.titre:
         return "chargement"
+    for key, start, _ in PHOTO_RATEE:
+        if e.titre.startswith(norm(start)):
+            return key
     for key, start in ECRANS_GUIDE:
         if e.titre.startswith(norm(start)):
+            if key == "coller-debut" and (e.bouton(CHOISIR_LISTE) is not None or e.bouton(CHOISIR_FENETRE) is not None):
+                return "choisir"
             return key
     return "inconnu"
 
@@ -3275,6 +3449,11 @@ def note_du_guide(cerveau, depuis):
             return None, "la note %s n'a pas « %s »" % (notes[0].name, must)
     return notes[0], None
 
+
+# How the walk showed the windows to Bibo, as the summary says it.
+CAPTURES_DITES = {"clic": "la fenêtre d'Atelier Demo montrée d'un clic, deux photos prises par Bibo",
+                  "selecteur": "la fenêtre d'Atelier Demo choisie dans le sélecteur de macOS, deux photos prises par Bibo",
+                  "collage": "deux captures collées"}
 
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 TRACES_MAX = 64 * 1024 * 1024
@@ -3401,6 +3580,8 @@ def poser_faux_claude(home, exe, travail, prudent):
     (fake / "guide").mkdir(parents=True)
     (fake / "scenario").write_text("guide", encoding="utf-8")
     (fake / "version").write_text("2.1.306 (Claude Code)", encoding="utf-8")
+    # A subscription, as only one asks Claude (guide.rs): Pro, the plan Opus is refused to, when `prudent`.
+    (fake / "plan").write_text("pro" if prudent else "max", encoding="utf-8")
     for demande, answer in REPONSES_GUIDE.items():
         (fake / "guide" / (demande + ".json")).write_text(json.dumps(answer, ensure_ascii=False), encoding="utf-8")
     if prudent:
@@ -3428,6 +3609,262 @@ def rendre_vrai_claude(exe, vrai):
         os.replace(str(vrai), str(exe))
 
 
+# The user's program the guide is walked in (Windows, macOS): « Atelier Demo », the list of invoices Linux
+# pastes (ecrans_guide.liste, « Nouveau » in green), then the invoice saved once « Nouveau » is clicked in it.
+# The drawn screens' 1280 × 800 shown at 800 × 500, the size of a program on a laptop's screen. Two real
+# buttons lie over the drawn ones, which the drivers find by name, as a screen reader does: « Importer »
+# (nothing happens), where the user clicks to show the window, and « Nouveau », the step.
+TITRE_LOGICIEL = "Atelier Demo - Factures clients"
+TAILLE_LOGICIEL = (800, 500)
+PLACE_LOGICIEL = (40, 60)
+# On macOS, lower: macOS 26's picker drew the window placed at 60 points 20 points lower, with its « Share
+# This Window » button, which accessibility still gave at the window's real place (the night of 2026-10-23:
+# 3 clicks in the middle of that button fell 3 points over the drawn one). The desk test's window, at 80,
+# is picked (app/src-tauri/tests/fixtures/guide/pilote_mac.py).
+PLACE_LOGICIEL_MAC = (40, 100)
+# « Importer », as ecrans_guide.liste draws it next to « Nouveau ».
+IMPORTER = {"x": 374, "y": 120, "largeur": 130, "hauteur": 40}
+
+ATELIER_CS = r'''// Atelier Demo, the user's program of the field test "app" (terrain_app.py, LogicielWindows): the list of
+// invoices, then the invoice saved once "Nouveau" is clicked. The drawn screens fill the window; two real
+// buttons lie over the drawn ones. Compiled on the VM by the csc.exe of the .NET Framework; ASCII only.
+//
+//   atelier-demo.exe <title> <list.png> <invoice.png> <x> <y> <w> <h> <nx> <ny> <nw> <nh> <ix> <iy> <iw> <ih>
+using System;
+using System.Drawing;
+using System.Reflection;
+using System.Runtime.InteropServices;
+using System.Windows.Forms;
+
+[assembly: AssemblyTitle("Atelier Demo")]
+
+static class Atelier
+{
+    [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
+
+    static Button Bouton(string text, string[] a, int at, Color back, Color fore)
+    {
+        Button b = new Button();
+        b.Text = text;
+        b.Bounds = new Rectangle(int.Parse(a[at]), int.Parse(a[at + 1]), int.Parse(a[at + 2]), int.Parse(a[at + 3]));
+        b.FlatStyle = FlatStyle.Flat;
+        b.FlatAppearance.BorderSize = 0;
+        b.FlatAppearance.MouseOverBackColor = back;
+        b.FlatAppearance.MouseDownBackColor = back;
+        b.BackColor = back;
+        b.ForeColor = fore;
+        b.TabStop = false;
+        return b;
+    }
+
+    [STAThread]
+    static int Main(string[] a)
+    {
+        SetProcessDPIAware();
+        Form f = new Form();
+        f.Text = a[0];
+        f.StartPosition = FormStartPosition.Manual;
+        f.Location = new Point(int.Parse(a[3]), int.Parse(a[4]));
+        f.ClientSize = new Size(int.Parse(a[5]), int.Parse(a[6]));
+        f.FormBorderStyle = FormBorderStyle.FixedSingle;
+        f.MaximizeBox = false;
+        PictureBox screen = new PictureBox();
+        screen.Dock = DockStyle.Fill;
+        screen.SizeMode = PictureBoxSizeMode.StretchImage;
+        screen.Image = Image.FromFile(a[1]);
+        Button nouveau = Bouton("Nouveau", a, 7, Color.FromArgb(20, 160, 60), Color.White);
+        Button importer = Bouton("Importer", a, 11, Color.White, Color.FromArgb(30, 30, 36));
+        nouveau.Click += delegate
+        {
+            screen.Image = Image.FromFile(a[2]);
+            nouveau.Visible = false;
+            importer.Visible = false;
+        };
+        screen.Controls.Add(nouveau);
+        screen.Controls.Add(importer);
+        f.Controls.Add(screen);
+        Application.Run(f);
+        return 0;
+    }
+}
+'''
+
+PAGE_ATELIER = """<!doctype html><meta charset=utf-8><title>%(titre)s</title>
+<style>html,body{margin:0;background:#f4f5f7;overflow:hidden}img{display:block;width:%(w)dpx;height:%(h)dpx}
+button{position:absolute;border:0;padding:0;margin:0;font:600 12px sans-serif}</style>
+<img id=ecran src="liste.png" alt="">
+%(boutons)s
+<script>document.getElementById('nouveau').onclick=function(){document.getElementById('ecran').src='facture.png';
+document.querySelectorAll('button').forEach(function(b){b.remove()})}</script>
+"""
+CHROME_MAC = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+
+
+class Logiciel:
+    """The user's program, open on the screen: its window, which Bibo takes in photo itself. via: how the
+    user shows it to Bibo, "clic" (a click in it) or "selecteur" (the system's picker)."""
+
+    via = None
+    titre = TITRE_LOGICIEL
+
+    def __init__(self, pilote, dossier):
+        self.p, self.dossier = pilote, Path(dossier)
+        self.proc = None
+        self.dossier.mkdir(parents=True, exist_ok=True)
+        liste, boites = ecrans().liste(vert=True)
+        for name, png in (("liste", liste.png()), ("facture", ecrans().facture_creee()[0].png())):
+            (self.dossier / (name + ".png")).write_bytes(png)
+        k = TAILLE_LOGICIEL[0] / liste.w
+        self.places = {name: [round(b["x"] * k), round(b["y"] * k), round(b["largeur"] * k), round(b["hauteur"] * k)]
+                       for name, b in (("Nouveau", boites["nouveau"]), ("Importer", IMPORTER))}
+
+    def ouvrir(self):
+        """The program opened, its window on the screen."""
+        raise NotImplementedError
+
+    def montrer(self):
+        """The user's gesture that shows Bibo the window, while Bibo waits for it: returns how it was done."""
+        raise NotImplementedError
+
+    def faire_etape(self):
+        """« Nouveau » clicked in the program, as the step says: returns how."""
+        raise NotImplementedError
+
+    def fermer(self):
+        if self.proc is not None and self.proc.poll() is None:
+            self.proc.kill()
+            try:
+                self.proc.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                pass
+
+
+class LogicielWindows(Logiciel):
+    """A Windows program of its own, as an ERP is (AssemblyTitle: Bibo names it from it): the user clicks once
+    in its window, on « Importer » (the driver's mouse, as a user's)."""
+
+    via = "clic"
+
+    def ouvrir(self):
+        src, exe = self.dossier / "atelier-demo.cs", self.dossier / "atelier-demo.exe"
+        src.write_text(ATELIER_CS, encoding="ascii")
+        csc = Path(os.environ.get("WINDIR") or r"C:\Windows") / "Microsoft.NET" / "Framework64" / "v4.0.30319" / "csc.exe"
+        rc, out = self.p._run([csc, "/nologo", "/target:winexe", "/optimize+", "/out:%s" % exe, src], timeout=300,
+                              creationflags=SANS_CONSOLE)
+        if rc != 0 or not exe.is_file():
+            raise ErreurPilote("Atelier Demo ne compile pas : %s" % out.strip()[-300:])
+        args = [exe, self.titre, self.dossier / "liste.png", self.dossier / "facture.png", PLACE_LOGICIEL[0], PLACE_LOGICIEL[1],
+                TAILLE_LOGICIEL[0], TAILLE_LOGICIEL[1]] + self.places["Nouveau"] + self.places["Importer"]
+        try:
+            self.proc = subprocess.Popen([str(a) for a in args], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                         stderr=subprocess.DEVNULL)
+        except OSError as e:
+            raise ErreurPilote("Atelier Demo ne se lance pas (%s)" % (e.strerror or type(e).__name__))
+        self.h = self.p.attendre(self._fenetre, 60, self.p.horloge, self.p.dormir)
+        if not self.h:
+            raise ErreurPilote("la fenêtre d'Atelier Demo ne s'ouvre pas")
+        self.p.ignores = (nom_programme(exe),)
+
+    def _fenetre(self):
+        for f in self.p._outil(["fenetres"]).get("fenetres") or []:
+            if isinstance(f, dict) and f.get("pid") == self.proc.pid and norm(f.get("titre")) == norm(self.titre):
+                return f.get("h")
+        return None
+
+    def _clic(self, libelle):
+        res = self.p._outil(["cliquer", self.h, libelle, "souris"])
+        if not res.get("ok"):
+            raise ErreurPilote("pas de clic sur « %s » dans Atelier Demo (%s)" % (libelle, res.get("pourquoi")))
+        return res.get("comment")
+
+    def montrer(self):
+        return self._clic("Importer")
+
+    def faire_etape(self):
+        return self._clic("Nouveau")
+
+
+def dessus(b, f):
+    """The middle of the button b on the window f ({pos, size} both, in points)."""
+    cx, cy = b["pos"][0] + b["size"][0] / 2, b["pos"][1] + b["size"][1] / 2
+    return f["pos"][0] <= cx <= f["pos"][0] + f["size"][0] and f["pos"][1] <= cy <= f["pos"][1] + f["size"][1]
+
+
+class LogicielMac(Logiciel):
+    """A program in a browser, as many are (Chrome's window of one page, its own profile): the user picks its
+    window in macOS's picker. The page's buttons, read through accessibility."""
+
+    via = "selecteur"
+    processus = "Google Chrome"
+
+    def ouvrir(self):
+        if not Path(CHROME_MAC).is_file():
+            raise ErreurPilote("pas de Google Chrome sur ce Mac (%s) : pas de logiciel où guider" % CHROME_MAC)
+        boutons = "\n".join('<button id=%s type=button style="left:%dpx;top:%dpx;width:%dpx;height:%dpx;background:%s;color:%s">%s</button>'
+                            % (name.lower(), x, y, w, h, "rgb(20,160,60)" if name == "Nouveau" else "#fff",
+                               "#fff" if name == "Nouveau" else "#1e1e24", name)
+                            for name, (x, y, w, h) in self.places.items())
+        page = self.dossier / "atelier.html"
+        page.write_text(PAGE_ATELIER % {"titre": self.titre, "w": TAILLE_LOGICIEL[0], "h": TAILLE_LOGICIEL[1], "boutons": boutons},
+                        encoding="utf-8")
+        x, y = PLACE_LOGICIEL_MAC
+        try:
+            self.proc = subprocess.Popen(
+                [CHROME_MAC, "--user-data-dir=" + str(self.dossier / "profil"), "--no-first-run", "--no-default-browser-check",
+                 "--disable-features=Translate", "--force-renderer-accessibility", "--window-position=%d,%d" % (x, y),
+                 "--window-size=%d,%d" % (TAILLE_LOGICIEL[0], TAILLE_LOGICIEL[1] + 40), "--app=" + page.as_uri()],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except OSError as e:
+            raise ErreurPilote("Google Chrome ne se lance pas (%s)" % (e.strerror or type(e).__name__))
+        if not self.p.attendre(self._cadre, 60):
+            raise ErreurPilote("la fenêtre d'Atelier Demo ne s'ouvre pas dans Chrome")
+        self.p.ignores = (self.processus,)
+
+    def _cadre(self):
+        f = self.p._osa({"op": "cadre", "processus": self.processus, "titre": self.titre})
+        return f if isinstance(f.get("pos"), list) and isinstance(f.get("size"), list) else None
+
+    def montrer(self):
+        """macOS's picker is out (Bibo asked for it): the pointer over a part of the program's window, then a
+        click on the button macOS shows there (« Share This Window », a small button of ControlCenter's, on
+        macOS 15 and 26), or on the window itself (macOS 14 lays a button of the window's size over it). As
+        the desk test of the capture does it (app/src-tauri/tests/fixtures/guide/pilote_mac.py). Of the small
+        buttons, the widest whose middle is on the window. Returns a click of the mouse (CLIC_SOURIS), then where,
+        on which window and the buttons read (a failure's record)."""
+        f = self._cadre()
+        if not f:
+            raise ErreurPilote("la fenêtre d'Atelier Demo n'est plus là")
+        (x, y), (w, h) = f["pos"], f["size"]
+        over, share, boutons = [], [], []
+        for i in range(12):
+            self.p._osa({"op": "souris", "x": x + 0.5 * w + 7 * (i % 3), "y": y + 0.12 * h + 5 * (i % 2), "clic": False})
+            boutons = [b for b in self.p._osa({"op": "boutons"}).get("boutons") or []
+                       if isinstance(b, dict) and isinstance(b.get("pos"), list) and isinstance(b.get("size"), list)]
+            over = [b for b in boutons if b["pos"] == f["pos"] and b["size"] == f["size"]]
+            share = sorted((b for b in boutons if dessus(b, f)), key=lambda b: -b["size"][0]) \
+                if boutons and all(b["size"][1] < 60 for b in boutons) else []
+            if over or share:
+                break
+            time.sleep(1)
+        if share:
+            b = share[0]
+            bx, by, how = b["pos"][0] + b["size"][0] * 0.75, b["pos"][1] + b["size"][1] / 2, "« Share This Window »"
+        elif over:
+            bx, by, how = x + 0.5 * w, y + 0.12 * h, "la fenêtre, sous le sélecteur"
+        else:
+            bx, by, how = x + w / 2 + 40, y + h / 2, "le milieu de la fenêtre (aucun bouton du sélecteur lu)"
+        self.p._osa({"op": "souris", "x": bx, "y": by, "clic": True})
+        lus = ", ".join("%s %s" % ("/".join(x for x in (b.get("n"), b.get("d")) if x) or "sans nom", b["pos"] + b["size"]) for b in boutons)
+        return "%s (sélecteur de macOS : %s à %d, %d ; fenêtre %s ; boutons lus : %s)" % (
+            CLIC_SOURIS, how, bx, by, f["pos"] + f["size"], lus or "aucun")
+
+    def faire_etape(self):
+        res = self.p._osa({"op": "cliquer", "processus": self.processus, "fenetre": None, "libelle": "Nouveau"})
+        if not res.get("ok"):
+            raise ErreurPilote("pas de clic sur « Nouveau » dans Atelier Demo (%s)" % res.get("pourquoi"))
+        return res.get("comment")
+
+
 _ECRANS = []
 
 
@@ -3443,9 +3880,10 @@ def ecrans():
 
 
 def guide_terrain(t, parcours, pilote, home, env, captures, travail):
-    """The guide on a third launch (Claude alone): the fake Claude in Claude Code's place, the walk, then
-    what it must have left (the procedure) and must not (an image), the calls the fake got, and on Windows
-    the windows' commands kept apart. Returns the details."""
+    """The guide on a third launch (Claude alone): the fake Claude in Claude Code's place, the user's program
+    open where Bibo takes its window in photo (Windows, macOS; Linux pastes), the walk, then what it must
+    have left (the procedure) and must not (an image), the calls the fake got, and on Windows the windows'
+    commands kept apart. Returns the details."""
     prudent = pilote.guide_prudent
     t("app-guide-faux-claude")
     debut = time.time()
@@ -3455,15 +3893,23 @@ def guide_terrain(t, parcours, pilote, home, env, captures, travail):
     vrai = poser_faux_claude(home, exe, travail, prudent)
     fake = Path(home) / ".claude" / "fake"
     images = {"debut": ecrans().liste(vert=True)[0].png(), "fait": ecrans().facture_creee()[0].png()}
+    logiciel = pilote.logiciel(Path(travail) / "logiciel")
     try:
-        vu = parcours.guide(env, images, prudent)
+        if logiciel is not None:
+            t("app-guide-logiciel")
+            logiciel.ouvrir()
+        vu = parcours.guide(env, images, prudent, logiciel)
         t("app-guide-fermeture")
         pilote.lire()   # the installer's window again, the guide's gone
         vu["fermeture"] = pilote.fermer()
     finally:
         rendre_vrai_claude(exe, vrai)
-    d = {"prudent": prudent, "ecrans": vu["ecrans"], "collages": vu["collages"], "saisie": vu["saisie"],
-         "temoin": vu["temoin"], "etape": vu["etape"], "enregistre": vu.get("enregistre")}
+        if logiciel is not None:
+            logiciel.fermer()
+            pilote.ignores = ()
+    d = {"prudent": prudent, "capture": vu["capture"], "ecrans": vu["ecrans"], "collages": vu["collages"],
+         "gestes": vu["gestes"], "saisie": vu["saisie"], "temoin": vu["temoin"], "etape": vu["etape"],
+         "enregistre": vu.get("enregistre"), "devant": vu.get("devant")}
     t("app-guide-procedure")
     note, pourquoi = note_du_guide(pilote.cerveau(home), debut)
     t.check(note, pourquoi)
@@ -3727,7 +4173,7 @@ def journaux_systeme(pilote, details):
 
 def clics_sans_souris(clics):
     """A reason when a click was not the mouse's (AXPress, Invoke, Toggle), else None."""
-    autres = [c for c in clics if c.get("comment") != CLIC_SOURIS]
+    autres = [c for c in clics if c.get("comment") != CLIC_SOURIS and not str(c.get("comment")).startswith(CLIC_SOURIS + " (")]
     if not autres:
         return None
     return "%d clic(s) sans la souris, qu'un utilisateur n'aurait pas pu faire (bouton couvert ? fenêtre derrière ?) : %s" % (
@@ -3826,9 +4272,9 @@ def scenario(t, opts, kit, pilote=None, horloge=time.monotonic, dormir=time.slee
                    "deuxième lancement : déjà installé%s, une nuit lancée par le planificateur%s" % (
                        details.get("release") or "construite", "Codex choisi seul, " if codex else "", len(parcours.ecrans),
                        details["duree_parcours_s"] // 60,
-                       "" if codex else " ; guide : deux captures collées, l'étape entourée%s, la procédure dans Guides/, "
-                                         "aucune image sur le disque" % (
-                                             " en pointillés (Sonnet, mode prudent)" if details["guide"]["prudent"] else ""),
+                       "" if codex else " ; guide : %s, l'étape entourée%s, la procédure dans Guides/, aucune image sur le disque" % (
+                           CAPTURES_DITES.get(details["guide"]["capture"], CAPTURES_DITES["collage"]),
+                           " en pointillés (Sonnet, mode prudent)" if details["guide"]["prudent"] else ""),
                        " ; " + details["git"]["resume"] if (details.get("git") or {}).get("resume") else "")
     except ErreurPilote as e:
         if parcours:

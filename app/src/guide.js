@@ -12,9 +12,12 @@ const SYSTEM = ['macos', 'windows', 'linux'].includes(window.BIBO_OS) ? window.B
 const MACHINE = SYSTEM === 'macos' ? 'Mac' : 'PC';
 const PASTE_KEYS = SYSTEM === 'macos' ? 'Cmd + V' : 'Ctrl + V';
 const COPY_KEYS = SYSTEM === 'macos' ? 'Cmd + C' : 'Ctrl + C';
+// The window Claude Code's login and update open: black on Windows, Terminal's elsewhere (white in light mode).
+const TERMINAL = SYSTEM === 'windows' ? 'fenêtre noire' : 'fenêtre du Terminal';
 const LOGIN_POLL_MS = 3000;
 const HAPPY_MS = 4500;
 const PRIVACY_URL = 'https://claude.ai/settings/data-privacy-controls';
+const UPGRADE_URL = 'https://claude.ai/upgrade';
 // shot.rs: the grey band under the image, its code inside; Claude's zones never reach it.
 const BAND = 28;
 const OBJECTIF_MAX = 300;
@@ -127,6 +130,11 @@ const G = {
   early: false,
   // Rust waits for a click or the system's picker: leaving the screen stops it.
   waiting: false,
+  // The number of the last wait (guide.rs, Waits): its stop names it, whichever call reaches Rust first.
+  // The status says where to number from (a page opened again never reuses a number).
+  attente: 0,
+  // « C'est fait, on y va » after « Me reconnecter »: the check that follows says when nothing changed.
+  relu: false,
 };
 const gui = {};
 
@@ -167,7 +175,7 @@ function screen(name) {
   // Away from the wait for a click or the system's picker (a paste, the list, the end): Rust stops waiting.
   if (G.waiting) {
     G.waiting = false;
-    invoke('guide_annuler').catch(() => {});
+    invoke('guide_annuler', { attente: G.attente }).catch(() => {});
   }
   G.gen += 1;
   document.body.dataset.screen = name;
@@ -314,12 +322,15 @@ async function boot() {
     return;
   }
   if (gen !== G.gen) return;
+  const relu = G.relu;
+  G.relu = false;
   G.status = s;
+  G.attente = Math.max(G.attente, Number(s.attentes) || 0);
   const c = s.capture || {};
   G.auto = c.mode === 'auto' && ['clic', 'selecteur'].includes(c.via) ? c.via : null;
   G.secondes = Number(c.secondes) > 0 ? Number(c.secondes) : G.secondes;
   if (!s.cerveau || s.ia === 'absent') return showNeedsInstall();
-  if (s.ia !== 'ready') return showUnavailable(s.ia);
+  if (s.ia !== 'ready') return showUnavailable(s.ia, relu);
   if (!s.vu) return showHow(true);
   firstScreen();
 }
@@ -346,12 +357,13 @@ function showNeedsInstall() {
   focusMain();
 }
 
-// Claude Code is there but cannot be asked: what stops it, and what the user can do (§2).
-function showUnavailable(ia) {
+// Claude Code is there but cannot be asked: what stops it, and what the user can do (§2). `relu`: the user
+// just logged in again (« Me reconnecter »), and the same stop came back.
+function showUnavailable(ia, relu = false) {
   if (ia === 'not_logged_in') return showLogin();
   if (ia === 'unsupported') {
     screen('vieux');
-    say('worried', 'Ton Claude Code est trop ancien pour le guide.', 'Une fenêtre noire va s’ouvrir et le mettre à jour : attends qu’elle dise que c’est fini, puis reviens ici.');
+    say('worried', 'Ton Claude Code est trop ancien pour le guide.', `Une ${TERMINAL} va s’ouvrir et le mettre à jour : attends qu’elle dise que c’est fini, puis reviens ici.`);
     const update = button('Mettre à jour', async () => {
       update.disabled = true;
       try {
@@ -366,21 +378,98 @@ function showUnavailable(ia) {
     focusMain();
     return;
   }
-  screen(ia === 'billed' ? 'facture' : 'arrete');
-  if (ia === 'billed') {
-    say('worried', 'Claude est connecté avec une clé qui serait facturée : je ne m’en sers pas.', 'Le guide passe seulement par ton abonnement Claude.');
-  } else {
-    say('worried', 'Claude ne s’est pas lancé comme prévu : je préfère arrêter le guide.', 'Relance l’app pour réessayer.');
-  }
+  if (ia === 'sans_forfait') return showPlan(relu);
+  if (ia === 'billed') return showBilled(relu);
+  screen('arrete');
+  say('worried', 'Claude ne s’est pas lancé comme prévu : je préfère arrêter le guide.', 'Relance l’app pour réessayer.');
   gui.actions.append(button('Fermer le guide', closeGuide, { kind: 'secondary', act: 'next' }));
   focusMain();
+}
+
+// A claude.ai account whose plan Claude Code does not say (guide.rs, Ia::SansForfait): a free one most
+// often, which Claude Code cannot use, so « Voir Claude Pro » comes first. Logging in again reads the plan,
+// the one just taken too; still unsaid after that, the account is the one to check.
+function showPlan(relu) {
+  screen('forfait');
+  if (relu) {
+    say('worried', 'Claude ne voit toujours pas d’abonnement Pro ou Max sur ce compte.', 'Vérifie que tu t’es connecté avec le compte où tu as pris Claude Pro.');
+    gui.screen.append(
+      note('Pas le bon compte ? Clique « Me reconnecter », puis connecte-toi avec celui de ton abonnement.'),
+      note('Pas encore abonné ? Claude Pro coûte environ 20 € par mois : clique « Voir Claude Pro ».'),
+      note('Toujours bloqué ? Demande de l’aide à la personne qui t’a conseillé Bibo.'));
+  } else {
+    say('worried', 'Le guide demande Claude Pro ou Max.', 'Claude ne me dit pas quel est ton abonnement, et un compte gratuit ne suffit pas.');
+    gui.screen.append(
+      note('Pas encore abonné ? Claude Pro coûte environ 20 € par mois : clique « Voir Claude Pro ».'),
+      note('Déjà abonné, ou tu viens de le faire ? Clique « Me reconnecter » : Claude relira ton abonnement.'));
+  }
+  const reconnect = reconnectButton();
+  const upgrade = button('Voir Claude Pro', async () => {
+    const gen = G.gen;
+    try {
+      await invoke('open_link', { url: UPGRADE_URL });
+    } catch {
+      if (gen !== G.gen) return;
+      say('worried', 'Ton navigateur ne s’est pas ouvert.', 'Va toi-même sur claude.ai/upgrade, puis reviens ici.');
+      return;
+    }
+    if (gen !== G.gen) return;
+    say('idle', 'Prends ton abonnement dans ton navigateur.', 'Quand c’est fait, reviens ici et clique « Me reconnecter » : Claude relira ton abonnement.');
+    reconnect.focus({ preventScroll: true });
+  }, { act: 'next' });
+  gui.actions.append(stopButton('Fermer le guide'), reconnect, upgrade);
+  focusMain();
+}
+
+// A login billed per use (an API key, a Console account): the guide never uses it. A Console account
+// chosen by mistake goes with a new login; what stays billed after that is set on the computer.
+function showBilled(relu) {
+  screen('facture');
+  if (relu) {
+    say('worried', 'Claude est toujours connecté à un compte payé à chaque message.', `Quelque chose sur ton ${MACHINE} passe avant ton abonnement : demande de l’aide à la personne qui t’a conseillé Bibo.`);
+    gui.actions.append(button('Fermer le guide', closeGuide, { kind: 'secondary', act: 'next' }));
+    focusMain();
+    return;
+  }
+  say('worried', 'Claude est connecté à un compte payé à chaque message : je ne m’en sers pas.', 'Le guide passe seulement par ton abonnement Claude Pro ou Max.');
+  gui.screen.append(
+    note('Tu as Claude Pro ou Max ? Clique « Me reconnecter », puis connecte-toi avec ce compte.'),
+    note('Sinon, demande de l’aide à la personne qui t’a conseillé Bibo.'));
+  gui.actions.append(stopButton('Fermer le guide'), reconnectButton(true));
+  focusMain();
+}
+
+// « Me reconnecter »: Claude Code's login again, in its window. « C'est fait, on y va » checks again, and
+// the screen that comes back says if nothing changed (G.relu).
+function reconnectButton(main = false) {
+  const gen = G.gen;
+  const again = button('Me reconnecter', async () => {
+    again.disabled = true;
+    try {
+      await invoke('open_claude_login');
+    } catch (e) {
+      if (gen !== G.gen) return;
+      say('worried', 'La fenêtre ne s’est pas ouverte.', errText(e));
+      again.disabled = false;
+      return;
+    }
+    if (gen !== G.gen) return;
+    say('thinking', `Reconnecte-toi dans la ${TERMINAL}.`, 'Prends le compte de ton abonnement Claude Pro ou Max. Quand c’est fini, clique « C’est fait, on y va ».');
+    gui.screen.replaceChildren();
+    gui.actions.replaceChildren(stopButton('Fermer le guide'), button('C’est fait, on y va', () => {
+      G.relu = true;
+      boot();
+    }, { act: 'next' }));
+    focusMain();
+  }, main ? { act: 'next' } : { kind: 'secondary', act: 'reconnecter' });
+  return again;
 }
 
 // R26: the login opens a terminal, once; the window waits for it.
 function showLogin(after = boot) {
   const gen = screen('connexion');
   let polling = false;
-  say('worried', 'Connecte ton compte Claude pour que je puisse te guider.', 'Une fenêtre noire va s’ouvrir, une seule fois : suis ce qu’elle dit, puis reviens ici.');
+  say('worried', 'Connecte ton compte Claude pour que je puisse te guider.', `Une ${TERMINAL} va s’ouvrir, une seule fois : suis ce qu’elle dit, puis reviens ici.`);
   const go = button('Connecter mon compte Claude', async () => {
     go.disabled = true;
     try {
@@ -392,7 +481,7 @@ function showLogin(after = boot) {
       return;
     }
     if (gen !== G.gen) return;
-    say('thinking', 'J’attends que tu te connectes…', 'Suis les étapes dans la fenêtre noire.');
+    say('thinking', 'J’attends que tu te connectes…', `Suis les étapes dans la ${TERMINAL}.`);
     go.textContent = 'Rouvrir la fenêtre';
     go.className = 'btn btn-secondary';
     go.disabled = false;
@@ -532,10 +621,11 @@ async function waitClick(gen, left) {
     n = Math.max(0, n - 1);
     left.textContent = `${n} s`;
   }, 1000);
+  G.attente += 1;
   G.waiting = true;
   let f;
   try {
-    f = await invoke('guide_attendre_clic');
+    f = await invoke('guide_attendre_clic', { attente: G.attente });
   } catch (e) {
     clearInterval(timer);
     if (gen !== G.gen) return;
@@ -552,10 +642,11 @@ async function waitClick(gen, left) {
 async function pickWindow(gen, pick) {
   pick.disabled = true;
   say('idle', 'Choisis ta fenêtre.', `Clique sur la fenêtre de ton logiciel, puis sur ${SHARE_BUTTON}.`);
+  G.attente += 1;
   G.waiting = true;
   let f;
   try {
-    f = await invoke('guide_choisir', { id: null });
+    f = await invoke('guide_choisir', { id: null, attente: G.attente });
   } catch (e) {
     if (gen !== G.gen) return;
     G.waiting = false;
@@ -566,8 +657,13 @@ async function pickWindow(gen, pick) {
   chosen(f);
 }
 
+// A title that names its program already (« Budget.xlsx - Excel », most of them on Windows) is said alone.
+function namesApp(f) {
+  return Boolean(f.app && f.titre && f.titre.toLowerCase().includes(f.app.toLowerCase()));
+}
+
 function windowName(f) {
-  return [f.app, f.titre].filter(Boolean).join(' — ');
+  return namesApp(f) ? f.titre : [f.app, f.titre].filter(Boolean).join(' — ');
 }
 
 // « C'est bien celle-ci ? »: the clicked window, before it is kept.
@@ -626,7 +722,7 @@ async function showList() {
   const lines = list.map((f, i) => {
     const why = f.terminal ? 'terminal : je n’y guide pas' : f.reduite ? 'réduite : ouvre-la d’abord' : '';
     return h('li', {}, h('button', { type: 'button', class: 'window-line', 'data-act': `fenetre-${i + 1}`, disabled: Boolean(why), onclick: () => chooseWindow(f.id) },
-      h('strong', {}, f.app || 'Sans nom'), f.titre ? ` — ${f.titre}` : '', why ? h('span', { class: 'window-why' }, ` (${why})`) : null));
+      h('strong', {}, namesApp(f) ? f.titre : f.app || 'Sans nom'), f.titre && !namesApp(f) ? ` — ${f.titre}` : '', why ? h('span', { class: 'window-why' }, ` (${why})`) : null));
   });
   if (lines.length) gui.screen.append(h('ul', { class: 'windows' }, ...lines));
   else gui.screen.append(note('Je ne vois aucune fenêtre ouverte. Ouvre ton logiciel, puis clique « Actualiser ».'));
@@ -1406,30 +1502,34 @@ function zoomBox(look, e) {
 
 // ── Errors (§2) ─────────────────────────────────────────────────────────────
 
-// When the limit ends: the hour today, else its day too (the 7-day window may end next week).
+// When the limit ends: the hour today, else its day too (the 7-day window may end next week). The hour
+// as French writes it: « 15 h 30 », « demain à 9 h ».
 function reprise(unix) {
   if (!unix) return '';
   const d = new Date(unix * 1000);
-  const hour = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  const hour = `${d.getHours()}\u00a0h${d.getMinutes() ? `\u00a0${String(d.getMinutes()).padStart(2, '0')}` : ''}`;
   const day = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
   const days = Math.round((day(d) - day(new Date())) / 86400000);
   if (days <= 0) return hour;
-  if (days === 1) return `demain ${hour}`;
+  if (days === 1) return `demain à ${hour}`;
   const when = days < 7 ? { weekday: 'long' } : { weekday: 'long', day: 'numeric', month: 'long' };
-  return `${d.toLocaleDateString('fr-FR', when)} ${hour}`;
+  return `${d.toLocaleDateString('fr-FR', when)} à ${hour}`;
 }
 
-// The brain's summaries, at noon and at night, run on the same subscription (critique 10): a limit
-// reached at lunchtime is no mystery. Said only once the install went through: before, none runs.
+// The brain's summaries run on the same subscription (critique 10, C6): at noon, at night, each first
+// catching up the evenings the computer was off (up to 3). A limit reached at lunchtime is no mystery. Said
+// only once the install went through: before, none runs.
 function summaries() {
-  return G.status && G.status.complet ? ' Les résumés automatiques de ton cerveau, à midi et le soir, comptent aussi dans cette limite.' : '';
+  return G.status && G.status.complet
+    ? ` Les résumés automatiques de ton cerveau comptent aussi dans cette limite, surtout après des jours où ton ${MACHINE} était éteint.`
+    : '';
 }
 
 // What Bibo says of an error, as words only.
 function errorWords(e) {
   const kind = (e && e.kind) || '';
   switch (kind) {
-    case 'quota': return { title: e.reprise ? `Ton abonnement est à sa limite jusqu’à ${reprise(e.reprise)}.` : 'Ton abonnement est à sa limite pour l’instant.', text: `${e.reprise ? 'Reviens après cette heure et relance le guide.' : 'Reviens plus tard et relance le guide.'}${summaries()}` };
+    case 'quota': return { title: e.reprise ? `Ton abonnement Claude est à sa limite jusqu’à ${reprise(e.reprise)}.` : 'Ton abonnement Claude est à sa limite pour l’instant.', text: `${e.reprise ? 'Reviens après cette heure et relance le guide.' : 'Reviens plus tard et relance le guide.'}${summaries()}` };
     case 'hors_ligne': return { title: 'Pas d’internet : je ne peux pas demander à Claude.', text: 'Vérifie ton Wi-Fi, puis réessaie.' };
     case 'api': return { title: 'Claude ne répond pas pour l’instant.', text: 'Réessaie dans un moment.' };
     case 'delai': return { title: 'Claude met trop de temps.', text: 'Tu peux réessayer : ça compte une capture de plus.' };

@@ -493,27 +493,33 @@ async fn guide_fenetres() -> Result<Vec<capture::Fenetre>, guide::GuideError> {
 
 /// « Clique dans la fenêtre de ton logiciel » (Windows, X11): the window clicked within 45 s (R4). The
 /// guide's window takes the focus first, so a click in the user's window, in front already, counts.
+/// `attente`: the page's number for this wait, which its stop names (guide::Waits).
 #[tauri::command]
-async fn guide_attendre_clic(app: tauri::AppHandle) -> Result<capture::Fenetre, guide::GuideError> {
+async fn guide_attendre_clic(app: tauri::AppHandle, attente: u64) -> Result<capture::Fenetre, guide::GuideError> {
     if let Some(w) = app.get_webview_window("guide") {
         let _ = w.set_focus();
     }
-    guiding(guide::attendre_clic).await
+    guiding(move || guide::attendre(attente)).await
 }
 
 /// The window from the list or the click, kept with its process and program (R22). On macOS (no id),
-/// the system's picker: the guide's window leaves « always on top » while it is out, or it would lie
-/// over the picker's « Share This Window » button (phase 0, macOS 15 and 26), and comes back after.
+/// the system's picker, a wait the page numbers as a click's (`attente`): the guide's window leaves
+/// « always on top » while it is out, or it would lie over the picker's « Share This Window » button
+/// (phase 0, macOS 15 and 26), and comes back after. The picker leaves the chosen program in front: the
+/// guide's window takes the keyboard back, or the program's name typed next would go to that program.
 #[tauri::command]
-async fn guide_choisir(app: tauri::AppHandle, id: Option<u64>) -> Result<capture::Fenetre, guide::GuideError> {
+async fn guide_choisir(app: tauri::AppHandle, id: Option<u64>, attente: Option<u64>) -> Result<capture::Fenetre, guide::GuideError> {
     let picker = id.is_none() && tauri::async_runtime::spawn_blocking(guide::selecteur).await.unwrap_or(false);
     let lowered = app.get_webview_window("guide").filter(|w| picker && w.is_always_on_top().unwrap_or(false));
     if let Some(w) = &lowered {
         let _ = w.set_always_on_top(false);
     }
-    let chosen = guiding(move || guide::choisir(id)).await;
+    let chosen = guiding(move || if picker { guide::choisir_au_selecteur(attente) } else { guide::choisir(id) }).await;
     if let Some(w) = &lowered {
         let _ = w.set_always_on_top(true);
+    }
+    if let Some(w) = app.get_webview_window("guide").filter(|_| picker) {
+        let _ = w.set_focus();
     }
     chosen
 }
@@ -553,9 +559,11 @@ async fn guide_trancher(faite: bool) -> Result<guide::Etape, guide::GuideError> 
     guiding(move || guide::trancher(faite)).await
 }
 
+/// « Arrêter », or the page gone elsewhere: the question, and the waits numbered up to `attente` (the
+/// one running, without a number).
 #[tauri::command]
-fn guide_annuler() {
-    guide::annuler();
+fn guide_annuler(attente: Option<u64>) {
+    guide::annuler(attente);
 }
 
 /// « Fermer le guide »: the session forgotten, images included.

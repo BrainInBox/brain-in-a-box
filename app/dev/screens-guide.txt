@@ -289,6 +289,36 @@
 ### g=ok&cap=clic&os=windows&rate=fermee:2&go=arreter&arret=choisir:2
 22 93 94 95 96 97 98 99 10 11 100 120 146
 
+### g=sans-forfait&go=forfait
+1 147
+
+### g=sans-forfait&go=forfait&click=next
+1 147 148
+
+### g=sans-forfait&go=forfait&lien=0&click=next
+1 147 149
+
+### g=sans-forfait&go=forfait&click=reconnecter,next
+1 147 150 151 152
+
+### g=sans-forfait&relu=ok&go=objectif&click=reconnecter,next
+1 147 150 151 4
+
+### g=billed&os=windows&go=facture&click=next,next
+22 69 153 154 155
+
+### g=billed&relu=ok&go=objectif&click=next,next
+1 69 153 156 4
+
+### g=ok&cap=clic&os=windows&course=1&go=liste&click=liste
+22 93 112 113
+
+### g=ok&cap=selecteur&course=1&go=coller&click=next,deja-capture
+1 107 108 157
+
+### g=ok&cap=clic&os=windows&base=7&go=objectif
+22 93 94 95 96
+
 #1
 == charge
 Je prépare le guide…
@@ -890,8 +920,8 @@ Quelque chose sur cette capture l’a gêné (un code, un mot de passe, un messa
 
 #52
 == erreur
-Ton abonnement est à sa limite jusqu’à mercredi 21 octobre 03:00.
-Reviens après cette heure et relance le guide. Les résumés automatiques de ton cerveau, à midi et le soir, comptent aussi dans cette limite.
+Ton abonnement Claude est à sa limite jusqu’à mercredi 21 octobre à 3 h.
+Reviens après cette heure et relance le guide. Les résumés automatiques de ton cerveau comptent aussi dans cette limite, surtout après des jours où ton Mac était éteint.
 [Toujours au-dessus]
 [Fermer le guide]
 
@@ -1040,7 +1070,7 @@ L’étape 2 contient un lien, un numéro ou une commande : retire-les.
 #66
 == connexion
 Connecte ton compte Claude pour que je puisse te guider.
-Une fenêtre noire va s’ouvrir, une seule fois : suis ce qu’elle dit, puis reviens ici.
+Une fenêtre du Terminal va s’ouvrir, une seule fois : suis ce qu’elle dit, puis reviens ici.
 [Toujours au-dessus]
 [Fermer le guide]
 [Connecter mon compte Claude]
@@ -1048,7 +1078,7 @@ Une fenêtre noire va s’ouvrir, une seule fois : suis ce qu’elle dit, puis 
 #67
 == connexion
 Connecte ton compte Claude pour que je puisse te guider.
-Une fenêtre noire va s’ouvrir, une seule fois : suis ce qu’elle dit, puis reviens ici.
+Une fenêtre du Terminal va s’ouvrir, une seule fois : suis ce qu’elle dit, puis reviens ici.
 [Toujours au-dessus]
 [Fermer le guide]
 [Connecter mon compte Claude (inactif)]
@@ -1056,22 +1086,25 @@ Une fenêtre noire va s’ouvrir, une seule fois : suis ce qu’elle dit, puis 
 #68
 == connexion
 J’attends que tu te connectes…
-Suis les étapes dans la fenêtre noire.
+Suis les étapes dans la fenêtre du Terminal.
 [Toujours au-dessus]
 [Fermer le guide]
 [Rouvrir la fenêtre]
 
 #69
 == facture
-Claude est connecté avec une clé qui serait facturée : je ne m’en sers pas.
-Le guide passe seulement par ton abonnement Claude.
+Claude est connecté à un compte payé à chaque message : je ne m’en sers pas.
+Le guide passe seulement par ton abonnement Claude Pro ou Max.
 [Toujours au-dessus]
+Tu as Claude Pro ou Max ? Clique « Me reconnecter », puis connecte-toi avec ce compte.
+Sinon, demande de l’aide à la personne qui t’a conseillé Bibo.
 [Fermer le guide]
+[Me reconnecter]
 
 #70
 == vieux
 Ton Claude Code est trop ancien pour le guide.
-Une fenêtre noire va s’ouvrir et le mettre à jour : attends qu’elle dise que c’est fini, puis reviens ici.
+Une fenêtre du Terminal va s’ouvrir et le mettre à jour : attends qu’elle dise que c’est fini, puis reviens ici.
 [Toujours au-dessus]
 [Fermer le guide]
 [Mettre à jour]
@@ -1114,15 +1147,15 @@ Si ton écran te le demande lui-même, ne le fais pas non plus : c’est souven
 
 #75
 == erreur
-Ton abonnement est à sa limite jusqu’à 17:30.
-Reviens après cette heure et relance le guide. Les résumés automatiques de ton cerveau, à midi et le soir, comptent aussi dans cette limite.
+Ton abonnement Claude est à sa limite jusqu’à 17 h 30.
+Reviens après cette heure et relance le guide. Les résumés automatiques de ton cerveau comptent aussi dans cette limite, surtout après des jours où ton Mac était éteint.
 [Toujours au-dessus]
 [Fermer le guide]
 
 #76
 == erreur
-Ton abonnement est à sa limite jusqu’à demain 15:30.
-Reviens après cette heure et relance le guide. Les résumés automatiques de ton cerveau, à midi et le soir, comptent aussi dans cette limite.
+Ton abonnement Claude est à sa limite jusqu’à demain à 15 h 30.
+Reviens après cette heure et relance le guide. Les résumés automatiques de ton cerveau comptent aussi dans cette limite, surtout après des jours où ton Mac était éteint.
 [Toujours au-dessus]
 [Fermer le guide]
 
@@ -1450,7 +1483,7 @@ Qu’est-ce que tu veux faire ?
 Dis-moi ce que tu veux faire dans ton logiciel : je te guide une étape à la fois.
 [Toujours au-dessus]
 Ta fenêtre :
-Sage 100 Comptabilité — Sage 100 Comptabilité - DEMO SARL
+Sage 100 Comptabilité - DEMO SARL
 [Autre fenêtre]
 Ton logiciel
 Qu’est-ce que tu veux faire dans Sage ?
@@ -1466,7 +1499,7 @@ Qu’est-ce que tu veux faire ?
 Dis-moi ce que tu veux faire dans ton logiciel : je te guide une étape à la fois.
 [Toujours au-dessus]
 Ta fenêtre :
-Sage 100 Comptabilité — Sage 100 Comptabilité - DEMO SARL
+Sage 100 Comptabilité - DEMO SARL
 [Autre fenêtre]
 Ton logiciel
 Qu’est-ce que tu veux faire dans Sage ?
@@ -1573,8 +1606,8 @@ Choisis ta fenêtre dans la liste.
 Les fenêtres ouvertes sur ton PC, la dernière utilisée en haut.
 [Toujours au-dessus]
 [Microsoft Edge — Factures clients - Odoo]
-[Sage 100 Comptabilité — Sage 100 Comptabilité - DEMO SARL (réduite : ouvre-la d’abord) (inactif)]
-[Windows PowerShell — Windows PowerShell (terminal : je n’y guide pas) (inactif)]
+[Sage 100 Comptabilité - DEMO SARL (réduite : ouvre-la d’abord) (inactif)]
+[Windows PowerShell (terminal : je n’y guide pas) (inactif)]
 [Explorateur de fichiers — Documents]
 [Arrêter le guide]
 [Retour]
@@ -1821,7 +1854,7 @@ L’Outil Capture (Snipping Tool) en garde aussi une copie dans Images › Captu
 
 #133
 == erreur
-Ton abonnement est à sa limite jusqu’à mercredi 21 octobre 03:00.
+Ton abonnement Claude est à sa limite jusqu’à mercredi 21 octobre à 3 h.
 Reviens après cette heure et relance le guide.
 [Toujours au-dessus]
 [Fermer le guide]
@@ -1992,3 +2025,113 @@ On perdra où on en est.
 [Toujours au-dessus]
 [Oui, arrêter]
 [Non, je continue]
+
+#147
+== forfait
+Le guide demande Claude Pro ou Max.
+Claude ne me dit pas quel est ton abonnement, et un compte gratuit ne suffit pas.
+[Toujours au-dessus]
+Pas encore abonné ? Claude Pro coûte environ 20 € par mois : clique « Voir Claude Pro ».
+Déjà abonné, ou tu viens de le faire ? Clique « Me reconnecter » : Claude relira ton abonnement.
+[Fermer le guide]
+[Me reconnecter]
+[Voir Claude Pro]
+
+#148
+== forfait
+Prends ton abonnement dans ton navigateur.
+Quand c’est fait, reviens ici et clique « Me reconnecter » : Claude relira ton abonnement.
+[Toujours au-dessus]
+Pas encore abonné ? Claude Pro coûte environ 20 € par mois : clique « Voir Claude Pro ».
+Déjà abonné, ou tu viens de le faire ? Clique « Me reconnecter » : Claude relira ton abonnement.
+[Fermer le guide]
+[Me reconnecter]
+[Voir Claude Pro]
+
+#149
+== forfait
+Ton navigateur ne s’est pas ouvert.
+Va toi-même sur claude.ai/upgrade, puis reviens ici.
+[Toujours au-dessus]
+Pas encore abonné ? Claude Pro coûte environ 20 € par mois : clique « Voir Claude Pro ».
+Déjà abonné, ou tu viens de le faire ? Clique « Me reconnecter » : Claude relira ton abonnement.
+[Fermer le guide]
+[Me reconnecter]
+[Voir Claude Pro]
+
+#150
+== forfait
+Le guide demande Claude Pro ou Max.
+Claude ne me dit pas quel est ton abonnement, et un compte gratuit ne suffit pas.
+[Toujours au-dessus]
+Pas encore abonné ? Claude Pro coûte environ 20 € par mois : clique « Voir Claude Pro ».
+Déjà abonné, ou tu viens de le faire ? Clique « Me reconnecter » : Claude relira ton abonnement.
+[Fermer le guide]
+[Me reconnecter (inactif)]
+[Voir Claude Pro]
+
+#151
+== forfait
+Reconnecte-toi dans la fenêtre du Terminal.
+Prends le compte de ton abonnement Claude Pro ou Max. Quand c’est fini, clique « C’est fait, on y va ».
+[Toujours au-dessus]
+[Fermer le guide]
+[C’est fait, on y va]
+
+#152
+== forfait
+Claude ne voit toujours pas d’abonnement Pro ou Max sur ce compte.
+Vérifie que tu t’es connecté avec le compte où tu as pris Claude Pro.
+[Toujours au-dessus]
+Pas le bon compte ? Clique « Me reconnecter », puis connecte-toi avec celui de ton abonnement.
+Pas encore abonné ? Claude Pro coûte environ 20 € par mois : clique « Voir Claude Pro ».
+Toujours bloqué ? Demande de l’aide à la personne qui t’a conseillé Bibo.
+[Fermer le guide]
+[Me reconnecter]
+[Voir Claude Pro]
+
+#153
+== facture
+Claude est connecté à un compte payé à chaque message : je ne m’en sers pas.
+Le guide passe seulement par ton abonnement Claude Pro ou Max.
+[Toujours au-dessus]
+Tu as Claude Pro ou Max ? Clique « Me reconnecter », puis connecte-toi avec ce compte.
+Sinon, demande de l’aide à la personne qui t’a conseillé Bibo.
+[Fermer le guide]
+[Me reconnecter (inactif)]
+
+#154
+== facture
+Reconnecte-toi dans la fenêtre noire.
+Prends le compte de ton abonnement Claude Pro ou Max. Quand c’est fini, clique « C’est fait, on y va ».
+[Toujours au-dessus]
+[Fermer le guide]
+[C’est fait, on y va]
+
+#155
+== facture
+Claude est toujours connecté à un compte payé à chaque message.
+Quelque chose sur ton PC passe avant ton abonnement : demande de l’aide à la personne qui t’a conseillé Bibo.
+[Toujours au-dessus]
+[Fermer le guide]
+
+#156
+== facture
+Reconnecte-toi dans la fenêtre du Terminal.
+Prends le compte de ton abonnement Claude Pro ou Max. Quand c’est fini, clique « C’est fait, on y va ».
+[Toujours au-dessus]
+[Fermer le guide]
+[C’est fait, on y va]
+
+#157
+== coller
+Montre-moi ta fenêtre.
+Fais une capture de la fenêtre de ton logiciel, puis colle-la ici.
+[Toujours au-dessus]
+Appuie en même temps sur ⌘ Cmd, ⌃ Ctrl, ⇧ Maj et 4, puis sur la barre d’espace : un petit appareil photo apparaît.
+Clique sur la fenêtre de ton logiciel : l’image est copiée, sans fichier.
+Reviens ici et appuie sur Cmd + V.
+Tu t’es trompé ? Appuie sur Échap (esc) et recommence.
+Tu peux aussi glisser le fichier de ta capture sur cette fenêtre.
+[Arrêter le guide]
+[Choisir ma fenêtre]
