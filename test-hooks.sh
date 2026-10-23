@@ -105,6 +105,20 @@ rm -f "$GT/_paste_guard.py"
 rm -rf "$GT"
 out=$(printf '{"prompt": "no, actually do it the other way"}' | CLAUDE_CODE_ENTRYPOINT=sdk-cli HOME="$H" python3 "$HB/correction-detector.py")
 [ $? = 0 ] && [ -z "$out" ] && ok "headless run (claude -p, sdk-cli): silent, a correction included" || no "fired in a headless run: $out"
+# Outside the brain, the lesson goes to the brain the session start names (controle-sessionstart.py's
+# order): BRAIN_DIR, else Documents/Brain, else ~/Brain (install.ps1's when Windows guards Documents).
+lessons_to() {   # $1 HOME, then env assignments → the lessons.md the reminder names
+  printf '{"prompt": "no, actually do it the other way"}' | (cd "$H/tmp" && env -u CLAUDE_CODE_ENTRYPOINT \
+    -u CLAUDE_PROJECT_DIR -u BRAIN_DIR HOME="$1" "${@:2}" python3 "$HB/correction-detector.py") \
+    | python3 -c 'import json,re,sys; print(re.search(r"line to (.*?)/Profile/lessons\.md", json.load(sys.stdin)["hookSpecificOutput"]["additionalContext"]).group(1))' 2>/dev/null
+}
+LH="$H/lessonhome"; mkdir -p "$LH/Brain/Profile" "$H/elsewhere/Profile"
+: > "$LH/Brain/Profile/lessons.md"
+[ "$(lessons_to "$LH")" = "$LH/Brain" ] && [ "$(lessons_to "$LH" BRAIN_DIR="$H/elsewhere")" = "$H/elsewhere" ] \
+  && [ "$(lessons_to "$H")" = "$H/Documents/Brain" ] \
+  && ok "a correction outside the brain: the lesson goes to BRAIN_DIR, else Documents/Brain, else ~/Brain" \
+  || no "a correction outside the brain names $(lessons_to "$LH") (~/Brain), $(lessons_to "$LH" BRAIN_DIR="$H/elsewhere") (BRAIN_DIR)"
+rm -rf "$LH" "$H/elsewhere"
 
 echo "════ 2) session-logger ════"
 echo "$PAYLOAD" | HOME="$H" python3 "$HB/session-logger.py" 2>/dev/null
@@ -242,10 +256,11 @@ FK="$H/.claude/fake"; mkdir -p "$FK"
 chmod +x "$H/.local/bin/claude"
 echo "$REPO/app/src-tauri/tests/fixtures/repair" > "$FK/fixtures"
 RL="$H/.claude/logs"; M="$H/Documents/Brain/Profile/memory.md"; P="$FK/prompt.txt"; ST="$RL/daily-reflection.state.json"
-# Keys a scheduler's environment may hold: none may reach Claude.
+# Keys a scheduler's environment may hold: none may reach Claude. An English computer: the
+# journal's titles follow its language (French ones: engine/tests/test_reflection.py).
 reflect() { rm -f "$TMPDIR"/brain-daily-reflection-*.lock
-  HOME="$H" BRAIN_NO_NOTIFY=1 ANTHROPIC_API_KEY=canary-anthropic VOYAGE_API_KEY=canary-voyage GITHUB_TOKEN=canary-gh \
-    python3 "$HB/daily-reflection.py" "$@" 2>/dev/null
+  HOME="$H" LANG=en_US.UTF-8 LC_MESSAGES='' BRAIN_NO_NOTIFY=1 ANTHROPIC_API_KEY=canary-anthropic VOYAGE_API_KEY=canary-voyage \
+    GITHUB_TOKEN=canary-gh python3 "$HB/daily-reflection.py" "$@" 2>/dev/null
   touch -t 202001010000 "$M" "$J" 2>/dev/null; }   # files no one is editing right now
 answer() { printf '%s' "$1" > "$FK/answer.json"; }
 scenario() { echo "$1" > "$FK/scenario"; }
@@ -296,6 +311,9 @@ FIRST='{"what_i_did":["Shipped the login page","---\ntype: pwned","<!-- REFLECTI
  "memory":["Login page shipped"],"suspect":false}'
 answer "$FIRST"
 scenario plan-ok
+# Yesterday's evening already summed up: this run is today's alone (a missed one is caught up
+# first: engine/tests/test_reflection.py, CatchUp).
+mkdir -p "$RL"; printf '{"last_ok": "%s evening"}\n' "${T1%%T*}" > "$ST"
 reflect --slot midday >/dev/null
 [ "$(calls)" = 1 ] && grep -q "Login page shipped" "$P" && ! grep -qE "YESTERDAY-ONLY|TOOL-OUTPUT-NOISE|SELF-RUN" "$P" \
   && ok "prompt: the day's transcript only, without tool output nor its own past runs" || no "prompt carries out-of-scope text"
@@ -305,7 +323,7 @@ grep -q "\[REDACTED\]" "$P" && ! grep -q "abababab" "$P" \
   && ok "secrets masked before the prompt leaves the machine" || no "secret reached the prompt"
 [ "$(grep -c '^</sessions>$' "$P")" = 1 ] && grep -q "‹/sessions>" "$P" \
   && ok "data cannot close the <sessions> tag it sits in" || no "a transcript can close the prompt's data tags"
-python3 - "$FK" "$H/Documents/Brain" <<'PY' && ok "claude ran with no tool, no settings, no key, in a private folder outside the vault" || no "claude not isolated"
+python3 - "$FK" "$H/Documents/Brain" <<'PY' && ok "claude ran with no tool, no settings, no key, in a private folder outside the vault, on Sonnet" || no "claude not isolated"
 import json, os, sys
 fk, vault = sys.argv[1], sys.argv[2]
 a = json.load(open(os.path.join(fk, "argv.json")))
@@ -313,7 +331,7 @@ env = json.load(open(os.path.join(fk, "env.json")))
 cwd = json.load(open(os.path.join(fk, "cwd.json")))
 assert a[a.index("--tools") + 1] == "" and a[a.index("--permission-mode") + 1] == "dontAsk", a
 assert all(f in a for f in ("--restricted", "--safe-mode", "--strict-mcp-config", "--disable-slash-commands")), a
-assert "--model" not in a and "acceptEdits" not in a, a
+assert a[a.index("--model") + 1] == "sonnet" and "acceptEdits" not in a, a
 assert not any(v.startswith("canary-") for v in env.values()), sorted(env)
 assert set(env) - {"__CF_USER_TEXT_ENCODING"} <= {"HOME", "PATH", "LANG", "USER", "LOGNAME", "TMPDIR",
     "DISABLE_AUTOUPDATER", "CLAUDE_CODE_DISABLE_ADVISOR_TOOL", "HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "NO_PROXY",
@@ -599,6 +617,52 @@ if command -v ruby >/dev/null 2>&1; then
 else
   printf "  \033[1;33m⚠\033[0m skipped (no ruby found) — install ruby to enable YAML validation\n"
 fi
+# The interview: nothing technical before "Est-ce que tu écris du code ?" nor on the path of those who
+# say no; the developer's path as it was. The brain is the folder Claude starts in: no note of the
+# skeleton nor the interview names a fixed one (install.ps1 puts it in ~/Brain when Windows guards
+# Documents). Bibo starts it with a sentence in English: not the person's language. Claude Code asks
+# before each write: said before the first one; on the non-developer's path, nothing outside the brain
+# (it would ask again), and the brain's git called by its path, whatever folder Claude is in. The edit
+# prompt's words change with Claude Code (2.1.309: « Yes, and switch to accept edits (…) for this
+# session »): only their end is named. A note of the skeleton is copied once and stays: it quotes no
+# button of Bibo, whose names change (« Personnaliser mon cerveau (15 min) », « Présente-toi à … »).
+# soul.md's language stays under a heading _langue.py finds.
+python3 - "$REPO" <<'PY' && ok "onboarding: nothing technical before « Est-ce que tu écris du code ? » nor on the non-developer's path; no fixed brain folder; Bibo's English and the edit prompt said; no button of Bibo quoted in the skeleton" \
+  || no "onboarding or skeleton: jargon on the non-developer's path, a fixed brain folder, Bibo's English, the edit prompt, a write outside the brain, a promise, or a button of Bibo quoted"
+import pathlib, re, sys
+repo = pathlib.Path(sys.argv[1])
+text = (repo / "onboarding" / "ONBOARDING.md").read_text(encoding="utf-8")
+before, asked, after = text.partition("**« Est-ce que tu écris du code ?")
+path_a, _, path_b = after.partition("## Path B")
+assert asked and "## Path A" in path_a and path_b, "the question, then path A, then path B"
+assert "développeur ou développeuse" in after.split("\n", 1)[0], "the question, to her too"
+jargon = re.compile(r"GitHub|\bCLIs?\b|\bDB\b|database|base de données|gstack|Keychain|Hermes|\bcloud\b", re.I)
+for part in (before, path_a):
+    assert not jargon.search(part), jargon.search(part).group(0)
+for word in ("GitHub", "CLIs", "DB", "gstack", "Keychain"):
+    assert word in path_b, word
+notes = sorted((repo / "vault-skeleton").rglob("*.md"))
+app = (repo / "app" / "src" / "app.js").read_text(encoding="utf-8")
+for f in [repo / "onboarding" / "ONBOARDING.md"] + notes:
+    body = f.read_text(encoding="utf-8")
+    assert "Documents/Brain" not in body, f
+    assert "ne refait plus" not in body and "je ne referai pas" not in body, (f, "a promise Claude cannot keep")
+for f in notes:
+    body = f.read_text(encoding="utf-8")
+    assert not re.search(r"clique sur «", body), (f, "a button of Bibo quoted")
+    if "(15 min)" in body:
+        assert re.search(r"button\([`'][^`']*\(15 min\)[`']", app), (f, "no button of Bibo ends with (15 min)")
+assert "may be Bibo's (the app), always in English: it says nothing of their language" in before
+assert before.index("« for this session »") < before.index("## Files to fill")
+assert "allow all edits" not in text, "Claude Code 2.1.309 has no such answer"
+assert "« ## Langue »" in text, "soul.md's language under a heading _langue.py finds"
+assert "else `~/Brain`" in (repo / "engine" / "CLAUDE.global.template.md").read_text(encoding="utf-8")
+assert "- Path B only: your global instructions" in before and "On Path A, leave it" in before
+assert "~/.claude/CLAUDE.md" not in path_a
+assert 'git -C "<brain>" add -A && git -C "<brain>" commit' in text and "git add -A" not in text
+skeleton = (repo / "vault-skeleton" / "CLAUDE.md").read_text(encoding="utf-8")
+assert skeleton.startswith("> Cette note est pour Claude. Pour toi : ouvre « Commence ici ».\n"), "Obsidian lists CLAUDE first"
+PY
 
 echo "════ 9) gbrain-nightly — night check, then commit; waits for the network, retries the vault push ════"
 # Runs the real nightly in its own throwaway HOME, with gbrain and the self-update
@@ -1818,7 +1882,8 @@ done
 # home beside a Codex of the user's own (its hooks.json naming one of the kit's hooks, wired by hand),
 # then master's and this one's again over that install; without a choice, then with --agents claude.
 # The same lines on screen, the same calls, the same commands in install.log, the same files but the
-# kit's copies of the sources this change touches and installed.json; this one's re-run leaves the
+# kit's copies of the sources this change touches (a new home also gets the vault's skeleton and the
+# global CLAUDE.md: those it touches too) and installed.json; this one's re-run leaves the
 # install as it found it; ~/.codex untouched, no ~/.agents. What the change adds (a source, a launcher,
 # a skill master has not) is the one more thing: the lines that name it, its files, the skills'
 # manifest; each of those lines must be there. A skill master has too and this change edits: its
@@ -1830,6 +1895,9 @@ if git -C "$REPO" rev-parse -q --verify origin/master >/dev/null 2>&1 \
   cp "$KIT/test-hooks.sh" "$MK/test-hooks.sh"
   # The sources install.sh copies into the home, by name, that differ from master's.
   changed=$(git -C "$REPO" diff --name-only origin/master -- engine/hooks engine/bin engine/nightly engine/search | sed 's#.*/##' | sort -u)
+  # The vault's skeleton and the global CLAUDE.md's template, where a new home has them.
+  skel=$(git -C "$REPO" diff --name-only origin/master -- vault-skeleton engine/CLAUDE.global.template.md \
+    | sed -e 's#^vault-skeleton/#Documents/Brain/#' -e 's#^engine/CLAUDE\.global\.template\.md$#.claude/CLAUDE.md#')
   # What it adds: the line install.sh prints for each new copy, install_skills.py's for a new skill.
   added=$(git -C "$REPO" diff --diff-filter=A --name-only origin/master -- engine/hooks engine/bin skills)
   added_skills=$(printf '%s\n' "$added" | sed -nE 's#^skills/([^/]+)/SKILL\.md$#\1#p' | sort -u)
@@ -1873,9 +1941,11 @@ if git -C "$REPO" rev-parse -q --verify origin/master >/dev/null 2>&1 \
     done
     [ -s "$IX/sm-b.log" ] || bad="$bad $choice:no-command-in-install.log"
     cmp -s "$IX/sm-b.tree" "$IX/sm-b2.tree" || bad="$bad $choice:re-run-changed-the-install"
-    apart=$(diff "$IX/sm-m.tree" "$IX/sm-b.tree" | sed -n 's/^[<>] \([^ ]*\) .*/\1/p' | sort -u)
-    want=$(cut -d' ' -f1 "$IX/sm-b.tree" | while read -r f; do
+    # A tree's line: the path (a note's name may hold a space), its mode, its hash.
+    apart=$(diff "$IX/sm-m.tree" "$IX/sm-b.tree" | sed -n 's/^[<>] \(.*\) [^ ]* [^ ]*$/\1/p' | sort -u)
+    want=$(sed -E 's/ [^ ]+ [^ ]+$//' "$IX/sm-b.tree" | while IFS= read -r f; do
       printf '%s\n' "$changed" | grep -qxF "$(basename "$f")" && echo "$f"
+      printf '%s\n' "$skel" | grep -qxF "$f" && echo "$f"
       for sk in $added_skills; do [ "${f#".claude/skills/$sk/"}" = "$f" ] || echo "$f"; done
       printf '%s\n' "$edited_skills" | grep -qxF "$f" && echo "$f"
     done)

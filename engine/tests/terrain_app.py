@@ -92,7 +92,8 @@ CLIC_SOURIS = "clic souris"
 # Bibo's titles (app/src/app.js), after norm(): the screen they stand for.
 ECRANS = (
     ("bienvenue", "Salut, moi c'est Bibo"),
-    # Opened again with the brain and Claude Code there: the guide first (G0, docs/proposals/guide.md).
+    # Opened again with the brain and Claude Code there: the guide first (G0, docs/proposals/guide.md), or
+    # Claude's login first when it was put off.
     ("bienvenue-retour", "Content de te revoir"),
     ("choix", "Avec quelle IA veux-tu travailler"),
     ("choix-resume", "Lequel écrit le résumé de chaque soir"),
@@ -101,7 +102,8 @@ ECRANS = (
     ("bloque", "Je ne peux pas installer"),
     ("deja-installe", "Tout est déjà installé"),
     ("diagnostic", "J'ai fait le tour"),
-    ("voyage", "Une option avant de commencer"),
+    # Search by meaning, an option offered at the end only: never on the way to the brain.
+    ("voyage", "Activons la recherche par le sens"),
     ("verif-compte", "Je vérifie ton compte Claude"),
     ("verif-compte-codex", "Je vérifie la connexion de Codex"),
     ("connexion-installation", "Connecte ton compte Claude maintenant"),
@@ -112,6 +114,8 @@ ECRANS = (
     ("codex-systeme", "Codex suit des réglages de ce "),
     ("installe", "C'est installé"),
     ("fini", "Ton second cerveau est prêt"),
+    # The end, Claude's login put off (as the robot does: no account on these VMs): it asks for it first.
+    ("fini", "Presque prêt"),
     ("import-verif", "Je prépare l'import"),
     ("import-choix", "D'où vient ta mémoire"),
     ("import-collage", "Demande-lui ce qu'il sait de toi"),
@@ -142,6 +146,7 @@ DELAI_PHRASE = 60
 DELAI_IMPORT = 3 * 60
 # The returning welcome's way to the guide: offered, not taken (no AI is asked on these VMs).
 GUIDE = "Guide-moi dans un logiciel"
+CONNECTER = "Connecter mon compte Claude"
 # Buttons that only come with a failure (the repair screens have many titles).
 BOUTONS_ECHEC = {"Réessayer", "Copier le rapport", "Revérifier"}
 # The screens each path must never see: Codex's on the path of Claude alone (the app users get keeps it
@@ -194,8 +199,12 @@ class Ecran:
     """What the robot sees: Bibo's title and text, the buttons (label, enabled), every text."""
 
     def __init__(self, fenetre=False, titre="", texte="", boutons=(), textes=(), dialogues=(), lecture="", statut=None,
-                 partiel=False):
+                 partiel=False, places=None, zone=None):
         self.fenetre, self.titre, self.texte = fenetre, norm(titre), norm(texte)
+        # Where each button is on the screen ({label: [x, y, w, h]}) and the screen's usable area (the taskbar
+        # left out), when the driver can tell (Windows): a user must see the main button whole.
+        self.places = {norm(b): r for b, r in (places or {}).items()}
+        self.zone = zone
         # Bibo's words only (a quick read saw them change): the full read comes next.
         self.partiel = partiel
         # (window index, child indices from the window) of Bibo's status region: a quick read's path.
@@ -263,6 +272,7 @@ def ecran_depuis_arbre(fenetres, dialogues=()):
     textes = [(c, _texte(n)) for c, n in flat if n.get("r") == "AXStaticText" and _texte(n).strip()]
     boutons = [(n.get("n") or n.get("d") or _texte(n), n.get("e", True) is not False)
                for c, n in flat if n.get("r") == "AXButton"]
+    places = {n.get("n") or n.get("d") or _texte(n): n["b"] for c, n in flat if n.get("r") == "AXButton" and rect_valide(n.get("b"))}
     statut = next((c for c, n in flat if n.get("s") == "AXApplicationStatus"), None)
     if statut is not None:
         dits = [t for c, t in textes if c[:len(statut)] == statut]
@@ -275,7 +285,39 @@ def ecran_depuis_arbre(fenetres, dialogues=()):
     else:
         dits, lecture = [], "vide"
     return Ecran(fenetre=True, titre=dits[0] if dits else "", texte=" ".join(dits[1:]), boutons=boutons,
-                 textes=[t for _, t in textes], dialogues=dialogues, lecture=lecture, statut=chemin_statut)
+                 textes=[t for _, t in textes], dialogues=dialogues, lecture=lecture, statut=chemin_statut, places=places)
+
+
+def rect_valide(r):
+    return isinstance(r, list) and len(r) == 4 and all(isinstance(v, int) for v in r) and r[2] > 0 and r[3] > 0
+
+
+# The main button of the screens where a user must find it at once, as the app labels it (machine: Mac or
+# PC), the first one there of its candidates. The night's Windows VM has 1024 x 768 with its taskbar, as an
+# old laptop: the window has to fit.
+PRINCIPAUX = {
+    "bienvenue": ("Vérifier mon {machine}", "Choisir mon IA"),
+    "bienvenue-retour": ("Guide-moi dans un logiciel", "Connecter mon compte Claude"),
+    "diagnostic": ("Tout installer",),
+    "connexion-installation": ("Connecter mon compte Claude",),
+    "connexion": ("Connecter mon compte Claude",),
+    "connexion-chatgpt": ("Connecter Codex à mon compte ChatGPT",),
+    "fini": ("Guide-moi dans un logiciel", "Connecter mon compte Claude", "Connecter Codex à mon compte ChatGPT"),
+}
+# The diagnosis' lines, folded under this button: the robot unfolds them, to read what the VM had.
+DETAIL = "Voir le détail"
+
+
+def cache_du_bouton(ecran, libelle):
+    """How much of the button the usable area of the screen leaves out ("" when a user sees it whole), or
+    None when the driver gives no places (macOS, Linux) or the button is not there."""
+    r, zone = ecran.places.get(norm(libelle)), ecran.zone
+    if not rect_valide(r) or not rect_valide(zone):
+        return None
+    x, y, w, h = r
+    zx, zy, zw, zh = zone
+    cotes = [("en haut", zy - y), ("en bas", (y + h) - (zy + zh)), ("à gauche", zx - x), ("à droite", (x + w) - (zx + zw))]
+    return ", ".join("%d px %s" % (n, ou) for ou, n in cotes if n > 0)
 
 
 def dits_rapides(textes):
@@ -483,6 +525,13 @@ class Pilote:
     def ecarter_la_nuit(self):
         """Keeps the nightly the install registered out of the checks' way; returns what it did, or None."""
         return None
+
+    # A second click on the app while it is open (a window slow to show): the second one must go by itself.
+    # Windows only (lib.rs, already_open): macOS brings an open app back by itself, Linux is not checked.
+    ouvrir_encore = None
+    # The driver gives each button's place and the screen's usable area (Windows): the main buttons must be
+    # measured, not skipped without a word when the tree stops giving them.
+    mesure_places = False
 
     def poste_neuf(self):
         """Makes the VM the machine users have, right before the app's first start (what its steps must
@@ -1103,6 +1152,8 @@ def _uia(node):
         out["l"] = node["l"]
     if "x" in node:
         out["x"] = node["x"]
+    if rect_valide(node.get("b")):
+        out["b"] = node["b"]
     if role not in ("AXStaticText", "AXButton", "AXCheckBox"):
         out["k"] = [_uia(k) for k in node.get("k") or [] if isinstance(k, dict) and str(k.get("t")) not in UIA_CADRE]
     return out
@@ -1393,6 +1444,7 @@ class PiloteWindows(Pilote):
 
     machine = "PC"
     suffixe = "_windows-x64-setup.exe"
+    mesure_places = True
     neufs = ("Python (pour les automatismes)", LIGNE_GIT)
     # In front, yet no dialog: the desktop, the taskbar, a console.
     IGNORER = ("Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd", "ConsoleWindowClass",
@@ -1710,6 +1762,21 @@ class PiloteWindows(Pilote):
     def vivante(self):
         return self.proc is not None and self.proc.poll() is None
 
+    def ouvrir_encore(self, env, delai=30):
+        """The app opened a second time while its window is there: seconds the second process took to go
+        by itself, or None when it stayed (then killed, with everything it started)."""
+        debut = self.horloge()
+        try:
+            proc = subprocess.Popen([self.exe], env=env, cwd=os.path.dirname(self.exe), stdin=subprocess.DEVNULL,
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                    creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+        except OSError as e:
+            raise ErreurPilote("l'app ne se lance pas une deuxième fois (%s)" % (e.strerror or type(e).__name__))
+        if self.attendre(lambda: proc.poll() is not None, delai, self.horloge, self.dormir):
+            return round(self.horloge() - debut, 1)
+        self._run(["taskkill", "/PID", proc.pid, "/T", "/F"], timeout=60)
+        return None
+
     def fermer(self):
         """The window's X (WM_CLOSE), as a user quits; the process killed only if it stays."""
         if self.vivante() and self.hwnd is None:
@@ -1753,7 +1820,9 @@ class PiloteWindows(Pilote):
             page = [f for f in fen if any(n.get("r") == "AXWebArea" for _, n in _aplatir(f["arbre"]))]
             self.hwnd = (page or fen)[0]["h"]
             self._devant(self.hwnd)
-        return ecran_depuis_arbre(fen, [d for d in dialogues if d["textes"] or d["boutons"]])
+        e = ecran_depuis_arbre(fen, [d for d in dialogues if d["textes"] or d["boutons"]])
+        e.zone = res.get("zone") if rect_valide(res.get("zone")) else None
+        return e
 
     def exe_nom(self):
         return nom_programme(self.exe or "brain-in-a-box.exe")
@@ -2636,6 +2705,7 @@ class Parcours:
         # « Importer ma mémoire » from the end: "aller" to the copy-paste, "retour" back to the end, else None.
         self.marche = None
         self.arrive = horloge()  # when the current screen showed
+        self.principaux = {}    # {screen: {"bouton", "place", "zone"}}: the main buttons measured, whole on the screen
 
     def secondes(self):
         return int(self.horloge() - self.debut)
@@ -2746,7 +2816,7 @@ class Parcours:
         if self.marche == "aller" and cle == "fini":
             return "Importer ma mémoire"
         if cle == "import-choix":
-            return "Je copie-colle une réponse" if self.marche == "aller" else "Retour"
+            return "Je copie-colle (2 min)" if self.marche == "aller" else "Retour"
         if cle == "import-collage":
             return "Retour"
         if cle in ("connexion", "connexion-chatgpt"):
@@ -2759,8 +2829,11 @@ class Parcours:
             return None
         if cle == "deja-installe":
             self.echouer("au premier lancement, l'app dit que tout est déjà installé : la VM n'est pas neuve")
-        return {"diagnostic": "Tout installer", "voyage": "Passer (recherche par mots-clés)",
-                "connexion-installation": "Plus tard"}.get(cle)
+        if cle == "voyage":
+            self.echouer("l'app demande une clé Voyage avant la fin de l'installation : c'est une option de la fin")
+        if cle == "diagnostic" and e.bouton(DETAIL) is not None:
+            return DETAIL
+        return {"diagnostic": "Tout installer", "connexion-installation": "Plus tard"}.get(cle)
 
     def avancer(self, but, delai, relance=False, prefixe=None):
         """Until the screen `but`, within delai seconds. Returns {screen: first Ecran of it}."""
@@ -2779,8 +2852,12 @@ class Parcours:
             elif now - capture_prec >= CAPTURE_ATTENTE:
                 capture_prec = now
                 self.capturer("%s%s-%dmin" % (prefixe, cle, int((now - depuis) // 60)))
-            if cle not in vus or (vus[cle].partiel and not e.partiel):
+            # The fullest read of a screen: the diagnosis once its lines are unfolded.
+            if cle not in vus or (vus[cle].partiel and not e.partiel) or (
+                    cle == "diagnostic" and not e.partiel and len(e.textes) > len(vus[cle].textes)):
                 vus[cle] = e
+            if not e.partiel:
+                self.mesurer(prefixe + cle, cle, e)
             if cle == but and not e.partiel:
                 self.ecrans[-1]["duree_s"] = 0
                 return vus
@@ -2790,12 +2867,15 @@ class Parcours:
                 # The page's accessibility tree may show the words before the buttons: read it all again.
                 self.forcer = True
             if state:
+                # Another button of the same screen (« Voir le détail », then « Tout installer »): clicked now.
+                if clic is not None and clic[2] != label:
+                    clic = None
                 if clic is None or now - clic[0] >= CLIC_RELANCE:
                     if clic is not None and clic[1] >= CLIC_ESSAIS:
                         self.echouer("le clic sur « %s » ne change rien (%d essais)" % (label, clic[1]))
                     how = self.p.cliquer(label)
                     self.clics.append({"a_s": self.secondes(), "ecran": prefixe + cle, "bouton": label, "comment": how})
-                    clic = (now, (clic[1] if clic else 0) + 1)
+                    clic = (now, (clic[1] if clic else 0) + 1, label)
             elif label and now - depuis >= CLIC_RELANCE * CLIC_ESSAIS:
                 self.echouer("l'écran « %s » n'offre pas le bouton « %s »%s" % (cle, label, " (désactivé)" if state is False else ""))
             if cle in ("inconnu", "chargement", "sans-fenetre") and now - depuis >= INCONNU_MAX:
@@ -2805,6 +2885,22 @@ class Parcours:
                     cle, int((now - debut) // 60), "" if fin == debut + delai else " (fin du temps du scénario)"))
             self.dormir(POLL)
 
+    def mesurer(self, nom, cle, e):
+        """The screen's main button, once it is in the tree: a user sees it whole, inside the screen's usable
+        area (a window taller than a laptop's screen hid it under the taskbar)."""
+        libelle = next((b for b in (x.format(machine=self.p.machine) for x in PRINCIPAUX.get(cle, ()))
+                        if e.bouton(b) is not None), None)
+        if not libelle or nom in self.principaux:
+            return
+        cache = cache_du_bouton(e, libelle)
+        if cache is None:
+            return
+        self.principaux[nom] = {"bouton": libelle, "place": e.places.get(norm(libelle)), "zone": e.zone}
+        if cache:
+            self.capturer(nom + "-bouton-cache")
+            self.echouer("écran « %s » : le bouton « %s » sort de l'écran utile (%s) : un utilisateur ne le voit pas en entier"
+                         % (nom, libelle, cache))
+
     def lancer(self, env, prefixe=""):
         self.t("app-%slancement" % prefixe)
         self.precedent, self.forcer = None, True
@@ -2812,6 +2908,12 @@ class Parcours:
         if not self.p.attendre(lambda: self.lire().fenetre, DELAI_FENETRE, self.horloge, self.dormir):
             self.capturer(prefixe + "sans-fenetre")
             self.echouer("aucune fenêtre %d s après l'ouverture de l'app" % DELAI_FENETRE)
+        if not prefixe and self.p.ouvrir_encore:
+            # The user double-clicks again: still one Bibo, the first one.
+            pris = self.p.ouvrir_encore(env)
+            self.t.details["deuxieme_ouverture_s"] = pris
+            self.t.check(pris is not None, "l'app ouverte une deuxième fois reste ouverte : deux Bibo à la fois")
+            self.t.check(self.p.vivante(), "l'app ouverte une deuxième fois a fermé la première")
 
     def importer(self):
         """« Importer ma mémoire » from the end: its choice, the copy-paste showing the sentence to paste,
@@ -2845,20 +2947,28 @@ class Parcours:
         vus = self.avancer("fini", DELAI_PREMIER)
         for must in ("bienvenue", "choix", "diagnostic", "etape-codex", "connexion-chatgpt") if self.codex else ("bienvenue", "diagnostic"):
             self.t.check(must in vus, "le parcours n'est pas passé par l'écran « %s »" % must)
+        if self.p.mesure_places:
+            for cle in ("diagnostic",) if self.codex else ("bienvenue", "diagnostic"):
+                self.t.check(cle in self.principaux, "écran « %s » : le bouton principal n'a pas été mesuré (le pilote ne donne "
+                                                      "plus la place des boutons ou la zone utile de l'écran)" % cle)
         fini = vus["fini"]
         if self.codex:
             self.t.check("etape-claude" not in vus, "l'app a installé Claude Code alors que seul Codex est choisi")
             self.t.check(fini.texte.startswith("Codex retient"), "l'écran final ne nomme pas Codex : « %s »" % fini.texte)
             # The robot put the ChatGPT login off: Codex is used on that login only (§4.3), so it comes first.
-            self.t.check(fini.bouton("Personnaliser mon cerveau (15 min)") is None,
-                         "l'écran final propose de personnaliser le cerveau avec un Codex qui n'est pas connecté à ChatGPT")
+            self.t.check(fini.bouton("Présente-toi à Codex (15 min)") is None,
+                         "l'écran final propose de se présenter à un Codex qui n'est pas connecté à ChatGPT")
             self.t.check(any("Sign in with ChatGPT" in x for x in fini.textes), "l'écran final ne dit pas de choisir « Sign in with ChatGPT »")
-            boutons = ("Connecter Codex à mon compte ChatGPT", "Ouvrir mon cerveau dans Obsidian")
+            boutons = ("Connecter Codex à mon compte ChatGPT", "Voir mes notes")
         else:
             # Claude alone: the words of before Codex (all of them: app/dev/screens.mjs, in the tests).
             self.t.check("pour Claude" in vus["bienvenue"].texte, "la bienvenue ne parle pas de Claude : « %s »" % vus["bienvenue"].texte)
-            self.t.check(fini.texte.startswith("Claude retient"), "l'écran final ne nomme pas Claude : « %s »" % fini.texte)
-            boutons = ("Personnaliser mon cerveau (15 min)", "Ouvrir mon cerveau dans Obsidian")
+            # The robot put Claude's login off: the end is not « prêt », it asks for the login first, and
+            # opens nothing of Claude Code before it.
+            self.t.check(fini.titre.startswith("Presque prêt"), "l'écran final se dit prêt sans compte Claude : « %s »" % fini.titre)
+            self.t.check(fini.bouton("Présente-toi à Claude (15 min)") is None,
+                         "l'écran final propose de se présenter à Claude, qui n'est pas connecté")
+            boutons = ("Connecter mon compte Claude", "Voir mes notes")
         for b in boutons + ("Importer ma mémoire",):
             self.t.check(fini.bouton(b) is not None, "l'écran final n'a pas le bouton « %s »" % b)
         # Bibo's advice: at the diagnosis, or where Codex is open on the choice screen (the app's own words).
@@ -2883,10 +2993,12 @@ class Parcours:
         if self.codex:
             self.t.check("choix" in vus, "au deuxième lancement, l'app n'a pas redemandé quelle IA")
         else:
-            # Claude Code and the brain are there now: the welcome offers the guide.
+            # Claude Code and the brain are there now, Claude's login still put off (no account on these VMs):
+            # the welcome asks for it, the guide needs it.
             retour = vus.get("bienvenue-retour")
             self.t.check(retour is not None, "au deuxième lancement, l'app ne dit pas « Content de te revoir »")
-            self.t.check(retour is None or retour.bouton(GUIDE) is not None, "au deuxième lancement, l'accueil ne propose pas « %s »" % GUIDE)
+            self.t.check(retour is None or (retour.bouton(CONNECTER) is not None and retour.bouton(GUIDE) is None),
+                         "au deuxième lancement, sans compte Claude, l'accueil ne demande pas « %s » avant le guide" % CONNECTER)
         return vus
 
     # ── The guide (§9): a third launch, its window walked to the procedure in the brain ──
@@ -3037,7 +3149,7 @@ class Parcours:
         mean = lambda xs: int(sum(xs) / len(xs)) if xs else None
         return {"captures": self.captures, "ecrans": self.ecrans, "clics": self.clics,
                 "dialogues_systeme": [{k: v for k, v in d.items() if k != "clic_a"} for d in self.dialogues],
-                "bibo": {"titre": self.dernier.titre, "texte": self.dernier.texte},
+                "bibo": {"titre": self.dernier.titre, "texte": self.dernier.texte}, "boutons_principaux": self.principaux,
                 "dernier_ecran": dict(self.dernier.resume(), lecture=self.dernier.lecture), "lecture_fenetre_ms": {"pleine": mean(self.lectures), "rapide": mean(self.rapides),
                                                            "lectures": [len(self.lectures), len(self.rapides)]}}
 

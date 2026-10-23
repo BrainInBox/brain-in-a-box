@@ -45,10 +45,12 @@ winreg = "0.56"
 # Already in the build through tauri, tao and wry (Cargo.lock): the guide's capture of a window
 # (capture/win.rs), by PrintWindow alone. Features only, no crate: PrintWindow (Win32_Storage_Xps) and
 # a program's name in its version resource (Win32_Storage_FileSystem) are the two the build lacked.
+# Win32_Security: the named mutex that keeps one Bibo open at a time (lib.rs, already_open).
 windows = { version = "=0.61.3", features = [
   "Win32_Foundation",
   "Win32_Graphics_Dwm",
   "Win32_Graphics_Gdi",
+  "Win32_Security",
   "Win32_Storage_FileSystem",
   "Win32_Storage_Xps",
   "Win32_System_Threading",
