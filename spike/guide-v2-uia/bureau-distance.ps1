@@ -41,21 +41,41 @@ $lines | Out-File -FilePath $rdp -Encoding ascii
 Start-Process mstsc.exe -ArgumentList "`"$rdp`""
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
 $A = [System.Windows.Automation.AutomationElement]
-# The warnings mstsc shows for a file of no publisher, or a certificate of its own: "Connect" / "Yes".
+Add-Type -Namespace Loin -Name Main -MemberDefinition @'
+[DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+[DllImport("user32.dll")] public static extern void mouse_event(uint f, uint x, uint y, uint d, IntPtr e);
+[DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+'@
+[Loin.Main]::SetProcessDPIAware() | Out-Null
+function Click($el) {
+  $r = $el.Current.BoundingRectangle
+  [Loin.Main]::SetCursorPos([int]($r.X + $r.Width / 2), [int]($r.Y + $r.Height / 2)) | Out-Null
+  [Loin.Main]::mouse_event(2, 0, 0, 0, [IntPtr]::Zero); [Loin.Main]::mouse_event(4, 0, 0, 0, [IntPtr]::Zero)
+}
+# The warnings mstsc shows for a file of no publisher (since 2026: a box to tick, then OK), or for a
+# certificate of its own: "Connect" / "Yes".
 for ($i = 0; $i -lt 90; $i++) {
   Start-Sleep -Milliseconds 1000
   foreach ($w in $A::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition)) {
     $c = $w.Current
     $proc = (Get-Process -Id $c.ProcessId -ErrorAction SilentlyContinue).ProcessName
-    if ($proc -ne 'mstsc') { continue }
-    foreach ($b in $w.FindAll([System.Windows.Automation.TreeScope]::Descendants, (New-Object System.Windows.Automation.PropertyCondition($A::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)))) {
-      if ($b.Current.Name -in 'Connect', '&Connect', 'Yes', '&Yes', 'Se connecter', 'Oui') {
-        "click '$($b.Current.Name)' in '$($c.Name)' class=$($c.ClassName)"
-        $b.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    if ($proc -ne 'mstsc' -or $c.ClassName -ne '#32770') { continue }
+    $all = $w.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
+    foreach ($b in $all) {
+      $bc = $b.Current
+      if ($bc.ControlType -eq [System.Windows.Automation.ControlType]::CheckBox -and $bc.Name -like 'I understand*') {
+        $t = $b.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern)
+        if ($t.Current.ToggleState -ne 'On') { "tick '$($bc.Name.Substring(0, 30))...'"; $t.Toggle() }
+      }
+    }
+    foreach ($b in $all) {
+      if ($b.Current.Name -in 'OK', 'Connect', '&Connect', 'Yes', '&Yes') {
+        "click '$($b.Current.Name)' in '$($c.Name)'"
+        Click $b
+        Start-Sleep -Milliseconds 500
       }
     }
   }
-  $rail = Get-Process mstsc, rdpinit, rdpshell -ErrorAction SilentlyContinue
   $wins = $A::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition) | Where-Object { (Get-Process -Id $_.Current.ProcessId -ErrorAction SilentlyContinue).ProcessName -eq 'mstsc' }
   $names = $wins | ForEach-Object { "$($_.Current.ClassName)|$($_.Current.Name)" }
   if ($i % 10 -eq 0) { "t=$i s: mstsc windows: $($names -join ' ; ')" }
