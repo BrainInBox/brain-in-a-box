@@ -12,13 +12,15 @@ use windows::core::{BOOL, PCWSTR, PWSTR};
 use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM, RECT};
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS};
 use windows::Win32::Graphics::Gdi::{
-    CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, GdiFlush, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HBITMAP, HDC,
-    HGDIOBJ,
+    CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, GdiFlush, MonitorFromWindow, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB,
+    DIB_RGB_COLORS, HBITMAP, HDC, HGDIOBJ, MONITOR_DEFAULTTONEAREST,
 };
 use windows::Win32::Storage::FileSystem::{GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW};
 use windows::Win32::Storage::Xps::{PrintWindow, PRINT_WINDOW_FLAGS};
 use windows::Win32::System::Threading::{OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION};
-use windows::Win32::UI::HiDpi::{SetThreadDpiAwarenessContext, DPI_AWARENESS_CONTEXT, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2};
+use windows::Win32::UI::HiDpi::{
+    GetDpiForMonitor, GetDpiForWindow, SetThreadDpiAwarenessContext, DPI_AWARENESS_CONTEXT, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, MDT_EFFECTIVE_DPI,
+};
 use windows::Win32::UI::Input::KeyboardAndMouse::IsWindowEnabled;
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetClassNameW, GetForegroundWindow, GetLastActivePopup, GetWindow, GetWindowLongW, GetWindowRect, GetWindowTextW, GetWindowThreadProcessId,
@@ -218,8 +220,8 @@ pub fn foreground() -> Option<Found> {
     describe(id_of(h))
 }
 
-/// While it lives, this thread counts in physical pixels, as PrintWindow draws: a window's frame and
-/// its image agree whatever the screen's scale.
+/// While it lives, this thread counts in physical pixels, as PrintWindow draws a window aware of the
+/// screen's scale: its frame and its image agree. One Windows stretches draws at its own (`image_ratio`).
 struct Physical(DPI_AWARENESS_CONTEXT);
 
 impl Physical {
@@ -302,6 +304,28 @@ impl Drop for Canvas {
     }
 }
 
+/// A capture's pixels to a pixel of the screen. A program unaware of the screen's scale (or aware of
+/// another one) has its windows stretched by Windows on the screen, while PrintWindow draws them at
+/// their own size: 96 / 144 at 150 %. Counted in physical pixels (`Physical`).
+fn image_ratio(h: HWND) -> f64 {
+    let (mut screen, mut y) = (0, 0);
+    // SAFETY: a window handle and plain values; two u32 for the call.
+    let (own, read) = unsafe {
+        let monitor = MonitorFromWindow(h, MONITOR_DEFAULTTONEAREST);
+        (GetDpiForWindow(h), GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut screen, &mut y))
+    };
+    if own == 0 || read.is_err() || screen == 0 {
+        1.0
+    } else {
+        f64::from(own) / f64::from(screen)
+    }
+}
+
+/// A length on the screen in a capture's pixels.
+fn in_image(v: i32, ratio: f64) -> i32 {
+    (f64::from(v) * ratio).round() as i32
+}
+
 fn frame(h: HWND) -> Option<RECT> {
     let mut r = RECT::default();
     // SAFETY: a RECT for DWMWA_EXTENDED_FRAME_BOUNDS, its size given.
@@ -310,7 +334,8 @@ fn frame(h: HWND) -> Option<RECT> {
 }
 
 /// The window drawn by itself into a bitmap of ours, cut to its visible frame (without the invisible
-/// borders of Windows 10 and 11), with that frame on the screen; None when it would not draw.
+/// borders of Windows 10 and 11) at the size it drew, with that frame on the screen; None when it would
+/// not draw.
 fn print(h: HWND) -> Option<(Rgba, RECT)> {
     let mut outer = RECT::default();
     // SAFETY: a RECT for the call.
@@ -325,7 +350,9 @@ fn print(h: HWND) -> Option<(Rgba, RECT)> {
     if !unsafe { PrintWindow(h, canvas.dc, PRINT_WINDOW_FLAGS(PW_RENDERFULLCONTENT)) }.as_bool() {
         return None;
     }
-    let keep = (shown.left - outer.left, shown.top - outer.top, shown.right - outer.left, shown.bottom - outer.top);
+    let r = image_ratio(h);
+    let mine = |v: i32| in_image(v, r);
+    let keep = (mine(shown.left - outer.left), mine(shown.top - outer.top), mine(shown.right - outer.left), mine(shown.bottom - outer.top));
     Some((from_bgra(canvas.pixels(), w as u32, ht as u32, keep), shown))
 }
 
@@ -359,7 +386,8 @@ pub fn grab(chosen: &Window) -> Result<Rgba, Rate> {
     }
     let (mut image, at) = print(h).ok_or(Rate::Noire)?;
     if let Some((dialog, its)) = modal(h, chosen.pid).and_then(print) {
-        lay(&mut image, &dialog, i64::from(its.left - at.left), i64::from(its.top - at.top));
+        let r = image_ratio(h);
+        lay(&mut image, &dialog, in_image(its.left - at.left, r).into(), in_image(its.top - at.top, r).into());
     }
     if !still() {
         return Err(Rate::Introuvable);
