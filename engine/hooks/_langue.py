@@ -27,8 +27,10 @@ LANGUES = {
 WORDS = {w: code for code, (_, words) in LANGUES.items() for w in words}
 # Windows: the primary language of a LANGID (its low 10 bits).
 WINDOWS = {0x0c: "fr", 0x09: "en", 0x0a: "es", 0x16: "pt", 0x07: "de", 0x10: "it", 0x13: "nl", 0x01: "ar"}
-# soul.md's heading, as the onboarding may have translated it.
-HEADING = re.compile(r"#{1,6}\s+(language|langue|idioma|sprache|lingua|taal)s?\b", re.I)
+# The word for "language" in soul.md, as the onboarding may have translated it: in a heading ("## Ta
+# langue", "## 🗣️ Langue"), else as a field ("- Langue : français", "**Language**: French").
+WORD = re.compile(r"(?<!\w)(language|langue|idioma|sprache|lingua|língua|lengua|taal|اللغة|لغة)s?(?!\w)", re.I)
+HEADING = re.compile(r"#{1,6}\s")
 
 
 def nom(code):
@@ -36,21 +38,31 @@ def nom(code):
     return LANGUES[code][0] if code in LANGUES else None
 
 
+def _field(line):
+    """The value of a line "Langue : français" (a bullet, bold, up to 3 words before the colon), or None."""
+    key, colon, value = line.strip().lstrip("-*+ ").partition(":")
+    key = key.strip(" *_")
+    if colon and value.strip(" *_") and len(key.split()) <= 3 and not key.startswith((">", "#")) and WORD.search(key):
+        return value.strip(" *_")
+    return None
+
+
 def de_soul(vault):
-    """What Profile/soul.md says under its Language heading (Langue, Idioma...): the code of the first
-    language its first line names, "?" for a language this module does not know, None when it
-    names none (still {{LANGUAGE}}, no such heading, no file)."""
+    """What Profile/soul.md says of its language: the first line under a heading with the word for it
+    (Language, Langue, Idioma...), else the first field that names it ("- Langue : français"). The code
+    of the first language that line names, "?" for a language this module does not know, None when it
+    names none (still {{LANGUAGE}}, no such heading nor field, no file)."""
     try:
         with open(os.path.join(str(vault), "Profile", "soul.md"), encoding="utf-8", errors="replace") as f:
             lines = f.read(20000).splitlines()
     except OSError:
         return None
     for i, line in enumerate(lines):
-        if HEADING.match(line.strip()):
+        if HEADING.match(line.strip()) and WORD.search(line):
             value = next((l.strip() for l in lines[i + 1:] if l.strip()), "")
             break
     else:
-        return None
+        value = next((v for v in map(_field, lines) if v), "")
     if not value or value.startswith("#") or "{{" in value:
         return None
     for word in re.findall(r"\w+", value.casefold()):

@@ -9,7 +9,7 @@ The brain is the **current folder** (it holds `CLAUDE.md` and `Profile/`): Bibo 
 Speak the person's language: the one your session start names, else French. The message that started you may be Bibo's (the app), always in English: it says nothing of their language. Switch only when they themselves write in another one. In French: « tu », short sentences, everyday words, French typography. Before each step, say in one sentence what you are doing. Any question can be skipped: « je ne sais pas » or « passe » is a fine answer.
 
 ## Before your first write
-Claude Code asks before each write (Codex does not). Before your first one, tell them, in their language: « Claude Code va me demander, en anglais, la permission d'écrire dans tes notes. Choisis « Yes, allow all edits during this session » (Oui, pour toute cette session) avec les flèches du clavier, puis appuie sur Entrée. » Then nothing more is asked in the brain folder. Write nowhere else on Path A.
+Claude Code asks before each write (Codex does not). Before your first one, tell them, in their language: « Claude Code va me demander, en anglais, la permission d'écrire dans tes notes. Choisis la réponse qui finit par « for this session » (pour cette session) avec les flèches du clavier, puis appuie sur Entrée. » Never quote the whole answer: its words change with Claude Code's versions. Then nothing more is asked in the brain folder. Write nowhere else on Path A.
 
 ## Files to fill
 Replace every `{{PLACEHOLDER}}` in:
@@ -19,7 +19,7 @@ Replace every `{{PLACEHOLDER}}` in:
 - `Profile/stack.md` (their tools)
 - Path B only: your global instructions, in the brain-in-a-box block (after `<!-- brain-in-a-box -->`): `~/.claude/CLAUDE.md` for Claude Code, `~/.codex/AGENTS.md` for Codex (`AGENTS.override.md` there when it has text; `$CODEX_HOME` instead of `~/.codex` when set). It holds {{NAME}}; the language goes in `soul.md`. On Path A, leave it: it is outside the brain, and Claude Code would ask again.
 
-Write these notes in the person's language, headings and explanations included. Keep the file and folder names as they are: programs look for them. Remove the sections that do not apply and the lines left empty. If they do not read French, rewrite `Commence ici.md` (their map of the brain) in their language too, under the same name.
+Write these notes in the person's language, headings and explanations included. Keep the file and folder names as they are: programs look for them. In `soul.md`, the language stays under its own heading, the word for "language" in theirs (« ## Langue »), and the line below names it (« Français »): the journal and every session take it from there. Remove the sections that do not apply and the lines left empty. If they do not read French, rewrite `Commence ici.md` (their map of the brain) in their language too, under the same name.
 
 ## First question
 Greet them in two sentences: about fifteen minutes of simple questions, so that you know them from now on; any question can be skipped. Then ask:
@@ -81,7 +81,7 @@ Each of these folders ships a `README.md` (purpose) + `_template.md` (schema). C
    ```
    One that fails is said in one sentence, then you go on: the notes are written, and the night indexes them.
 4. **Confirm**, in their language:
-   - Path A, in a few plain sentences, for example: « C'est fait : je te connais maintenant. Ce que je sais de toi est dans tes notes, dossier Profile : pour les lire, ouvre Obsidian depuis Bibo, et commence par la note « Commence ici ». Quand je me trompe, corrige-moi : je note la leçon et j'évite de refaire l'erreur. Chaque jour où on se parle, je résume nos conversations dans ton journal (à midi et le soir, si ton ordinateur est allumé). Et Bibo peut te guider pas à pas dans un logiciel. »
+   - Path A, in a few plain sentences, for example: « C'est fait : je te connais maintenant. Ce que je sais de toi est dans tes notes, dossier Profile : Bibo les ouvre dans Obsidian. Commence par la note « Commence ici ». Quand je me trompe, corrige-moi : je note la leçon et j'évite de refaire l'erreur. Chaque jour où on se parle, je résume nos conversations dans ton journal (à midi et le soir, si ton ordinateur est allumé). Et Bibo peut te guider pas à pas dans un logiciel. »
    - Path B: profile filled, memory active, next step = just live (the hooks capture corrections + sessions, the nightly consolidates at 4am).
 
 ## Rules

@@ -98,7 +98,8 @@ MODEL = "sonnet"
 CATCH_UP = 3
 # A missed evening that fails is tried again at each run while it is within CATCH_UP days, and TRIES
 # times at most when its failure cost usage (the AI ran: an answer off the schema or over its cap, a
-# refusal, a timeout). A missing login or a usage limit costs nothing: it waits for the next run.
+# refusal, a timeout, or an answer the vault refused: a journal that is a link, a memory.md being
+# edited). A missing login or a usage limit costs nothing: it waits for the next run.
 TRIES = 2
 COSTLY = ("invalid", "refused", "timeout")
 # Codex has no spending cap (docs/proposals/codex.md, §2.3): a shorter wait, and no second try after it.
@@ -122,14 +123,14 @@ FRENCH = {"what_i_did": "Ce que j'ai fait", "key_decisions": "Décisions clés",
                      "sessions.",
           "memory_suspect": "⚠️ Du texte adressé à une IA est apparu le {day} : lis Journal/{day}.md avant de "
                             "t'y fier.",
-          "lost": "⚠️ Cette journée n'a pas pu être résumée : ton journal ne la couvre pas. Pour réessayer, dis à "
-                  "Claude « résume ma journée du {jour} » (daily-reflection.py --day {day})."}
+          "lost": "⚠️ Cette journée n'a pas pu être résumée en entier : ton journal peut être incomplet. Pour "
+                  "réessayer, dis à Claude « résume ma journée du {jour} » (daily-reflection.py --day {day})."}
 MAX_ITEMS, MAX_ITEM, MAX_SECTION = 60, 500, 12_000
 MEMORY_ITEMS, MEMORY_ITEM = 12, 300
 SOUL_CAP, JOURNAL_CAP, MEMORY_CAP = 4_000, 40_000, 8_000
 SUSPECT_LINE = "⚠️ Some text of this day was addressed to an AI: check this summary against your sessions."
 MEMORY_SUSPECT = "⚠️ Text addressed to an AI showed up on {day}: read Journal/{day}.md before relying on it."
-LOST = "⚠️ This day could not be summed up: the journal does not cover it. To try again: daily-reflection.py --day {day}."
+LOST = "⚠️ This day could not be fully summed up: its journal may be incomplete. To try again: daily-reflection.py --day {day}."
 DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
@@ -1339,7 +1340,7 @@ def record(day, slot, reason, answer, chosen, lang, missed):
         if missed:
             tries = pending.setdefault(day, {"failed": 0, "costly": 0})
             tries["failed"] += 1
-            tries["costly"] += _kind(reason) in COSTLY
+            tries["costly"] += answer is not None or _kind(reason) in COSTLY
             if tries["costly"] >= TRIES:
                 del pending[day]
                 give_up(day, lang, f"{tries['costly']} costly failures, the last one: {reason}")

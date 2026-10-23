@@ -18,7 +18,7 @@ Les noms des dossiers restent en anglais : des programmes les cherchent sous ces
 
 ## Pour commencer
 
-Si ce n'est pas déjà fait, ouvre Bibo et clique sur « Présente-toi à Claude (15 min) ». Claude te pose une quinzaine de questions simples, puis il remplit ces notes pour toi.
+Si ce n'est pas déjà fait, ouvre Bibo et clique sur le bouton qui finit par « (15 min) ». Claude te pose une quinzaine de questions simples, puis il remplit ces notes pour toi.
 
 ---
 

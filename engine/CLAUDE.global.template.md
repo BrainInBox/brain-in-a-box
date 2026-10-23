@@ -4,7 +4,7 @@
 
 The governing loop for all work: **gather context → take action → verify work → repeat.**
 
-**The brain** is the person's notes folder: the one your session start names ("Brain: this person's notes are in …"), else `$BRAIN_DIR`, else `~/Documents/Brain`. Every `Profile/…` path below is in it.
+**The brain** is the person's notes folder: the one your session start names ("Brain: this person's notes are in …"), else `$BRAIN_DIR`, else `~/Documents/Brain`, else `~/Brain`. Every `Profile/…` path below is in it.
 
 **Language**: speak to the person in the language `Profile/soul.md` names (your session start says it too); until it is filled, in the one they write in. Code, commits and file names keep their project's language.
 

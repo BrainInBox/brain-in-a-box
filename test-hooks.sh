@@ -622,9 +622,13 @@ fi
 # skeleton nor the interview names a fixed one (install.ps1 puts it in ~/Brain when Windows guards
 # Documents). Bibo starts it with a sentence in English: not the person's language. Claude Code asks
 # before each write: said before the first one; on the non-developer's path, nothing outside the brain
-# (it would ask again), and the brain's git called by its path, whatever folder Claude is in.
-python3 - "$REPO" <<'PY' && ok "onboarding: nothing technical before « Est-ce que tu écris du code ? » nor on the non-developer's path; no fixed brain folder; Bibo's English and the edit prompt said" \
-  || no "onboarding or skeleton: jargon on the non-developer's path, a fixed brain folder, or Bibo's English, the edit prompt or a write outside the brain"
+# (it would ask again), and the brain's git called by its path, whatever folder Claude is in. The edit
+# prompt's words change with Claude Code (2.1.309: « Yes, and switch to accept edits (…) for this
+# session »): only their end is named. A note of the skeleton is copied once and stays: it quotes no
+# button of Bibo, whose names change (« Personnaliser mon cerveau (15 min) », « Présente-toi à … »).
+# soul.md's language stays under a heading _langue.py finds.
+python3 - "$REPO" <<'PY' && ok "onboarding: nothing technical before « Est-ce que tu écris du code ? » nor on the non-developer's path; no fixed brain folder; Bibo's English and the edit prompt said; no button of Bibo quoted in the skeleton" \
+  || no "onboarding or skeleton: jargon on the non-developer's path, a fixed brain folder, Bibo's English, the edit prompt, a write outside the brain, a promise, or a button of Bibo quoted"
 import pathlib, re, sys
 repo = pathlib.Path(sys.argv[1])
 text = (repo / "onboarding" / "ONBOARDING.md").read_text(encoding="utf-8")
@@ -637,17 +641,27 @@ for part in (before, path_a):
     assert not jargon.search(part), jargon.search(part).group(0)
 for word in ("GitHub", "CLIs", "DB", "gstack", "Keychain"):
     assert word in path_b, word
-for f in [repo / "onboarding" / "ONBOARDING.md"] + sorted((repo / "vault-skeleton").rglob("*.md")):
-    assert "Documents/Brain" not in f.read_text(encoding="utf-8"), f
+notes = sorted((repo / "vault-skeleton").rglob("*.md"))
+app = (repo / "app" / "src" / "app.js").read_text(encoding="utf-8")
+for f in [repo / "onboarding" / "ONBOARDING.md"] + notes:
+    body = f.read_text(encoding="utf-8")
+    assert "Documents/Brain" not in body, f
+    assert "ne refait plus" not in body and "je ne referai pas" not in body, (f, "a promise Claude cannot keep")
+for f in notes:
+    body = f.read_text(encoding="utf-8")
+    assert not re.search(r"clique sur «", body), (f, "a button of Bibo quoted")
+    if "(15 min)" in body:
+        assert re.search(r"button\([`'][^`']*\(15 min\)[`']", app), (f, "no button of Bibo ends with (15 min)")
 assert "may be Bibo's (the app), always in English: it says nothing of their language" in before
-assert before.index("Yes, allow all edits during this session") < before.index("## Files to fill")
+assert before.index("« for this session »") < before.index("## Files to fill")
+assert "allow all edits" not in text, "Claude Code 2.1.309 has no such answer"
+assert "« ## Langue »" in text, "soul.md's language under a heading _langue.py finds"
+assert "else `~/Brain`" in (repo / "engine" / "CLAUDE.global.template.md").read_text(encoding="utf-8")
 assert "- Path B only: your global instructions" in before and "On Path A, leave it" in before
 assert "~/.claude/CLAUDE.md" not in path_a
 assert 'git -C "<brain>" add -A && git -C "<brain>" commit' in text and "git add -A" not in text
 skeleton = (repo / "vault-skeleton" / "CLAUDE.md").read_text(encoding="utf-8")
 assert skeleton.startswith("> Cette note est pour Claude. Pour toi : ouvre « Commence ici ».\n"), "Obsidian lists CLAUDE first"
-start = (repo / "vault-skeleton" / "Commence ici.md").read_text(encoding="utf-8")
-assert "ne refait plus" not in start and "je ne referai pas" not in text, "a promise Claude cannot keep"
 PY
 
 echo "════ 9) gbrain-nightly — night check, then commit; waits for the network, retries the vault push ════"

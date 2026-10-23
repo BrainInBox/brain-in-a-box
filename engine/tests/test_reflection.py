@@ -1178,9 +1178,19 @@ class Language(Run):
                 (self.vault / "Profile" / "soul.md").write_text("## Language\n\n%s\n\n## Values\n- x\n" % value,
                                                                encoding="utf-8")
                 self.assertEqual(_langue.de_soul(self.vault), code)
-        for soul, code in (("## Langue\nespañol\n", "es"), ("### Idioma\nPortuguês\n", "pt"), ("# Values\nFrench\n", None)):
-            (self.vault / "Profile" / "soul.md").write_text(soul, encoding="utf-8")
-            self.assertEqual(_langue.de_soul(self.vault), code, soul)
+        for soul, code in (("## Langue\nespañol\n", "es"), ("### Idioma\nPortuguês\n", "pt"), ("# Values\nFrench\n", None),
+                           # The headings and lines the interview may write when it translates the note
+                           ("## Ta langue\nfrançais\n", "fr"), ("## La langue\nFrançais\n", "fr"),
+                           ("## 🗣️ Langue\nfrançais\n", "fr"), ("## Língua\nportuguês\n", "pt"),
+                           ("## Comment je te parle\n- Langue : français\n- Réponses courtes\n", "fr"),
+                           ("## Style\n- **Language**: English\n", "en"),
+                           ("## Style\n- Langue du code : anglais\n\n## Langue\nfrançais\n", "fr"),
+                           ("> Claude te parle dans ta langue : celle que tu choisis.\n", None),
+                           ("## Comment je te parle\n- Langue : {{LANGUAGE}}\n", None)):
+            with self.subTest(soul):
+                (self.vault / "Profile" / "soul.md").write_text(soul, encoding="utf-8")
+                self.assertEqual(_langue.de_soul(self.vault), code, soul)
+        self.assertIsNone(_langue.de_soul(HERE.parents[1] / "vault-skeleton"), "the skeleton's soul.md names none yet")
         for env, code in (({"LANG": "fr_FR.UTF-8"}, "fr"), ({"LC_ALL": "de_DE.UTF-8", "LANG": "fr_FR"}, "de"),
                           ({"LANG": "xx_YY.UTF-8"}, None), ({"LC_MESSAGES": "pt_BR", "LANG": "C.UTF-8"}, "pt")):
             with self.subTest(env), mock.patch.dict(os.environ, env):
@@ -1314,6 +1324,28 @@ class CatchUp(Run):
             lock.unlink()
         self.scheduled(slot="evening")
         self.assertEqual(self.asked(), [(DAY, "evening")], "never asked again")
+
+    @unittest.skipUnless(POSIX, "symlinks")
+    def test_an_answer_the_vault_refuses_cost_usage_too(self):
+        # The AI summed up the 13th's evening, but its journal is a link: the call was spent all the same.
+        self.state("2026-10-12 evening")
+        target = self.root / "elsewhere.md"
+        target.write_text("# kept\n", encoding="utf-8")
+        os.symlink(target, self.vault / "Journal" / f"{self.YESTERDAY}.md")
+        st = self.scheduled()
+        self.assertEqual(self.asked(), [(self.YESTERDAY, "backfill"), (DAY, "midday")])
+        self.assertEqual(st["pending"], {self.YESTERDAY: {"failed": 1, "costly": 1}})
+        st = self.scheduled(slot="evening")
+        self.assertEqual(self.asked(), [(self.YESTERDAY, "backfill"), (DAY, "evening")])
+        self.assertNotIn("pending", st, "given up after TRIES answers")
+        for lock in self.root.glob("brain-daily-reflection-*.lock"):
+            lock.unlink()
+        self.scheduled(slot="evening")
+        self.assertEqual(self.asked(), [(DAY, "evening")], "not asked a third time")
+        self.assertEqual(target.read_text(encoding="utf-8"), "# kept\n")
+        # Its midday, or a run whose memory.md alone was refused, may be in the journal: never "not covered".
+        self.assertNotIn("does not cover", dr.LOST)
+        self.assertNotIn("ne la couvre pas", dr.FRENCH["lost"])
 
     def test_the_days_done_meanwhile_are_never_summed_up_again(self):
         # The 13th's evening fails at no cost (a usage limit) while the 14th is summed up by its own runs.
