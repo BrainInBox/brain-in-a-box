@@ -240,7 +240,7 @@ static class Sage
     static Form Piece(string type, bool remplie, bool devis)
     {
         Form f = Principale(type);
-        Form c = Fille(f, type + (remplie ? " : FA00121" : " : Nouveau document"), 960, 540);
+        Form c = Fille(f, type + (remplie ? (devis ? " : DE00044" : " : FA00121") : " : Nouveau document"), 960, 540);
         Panel entete = new Panel();
         entete.Dock = DockStyle.Top;
         entete.Height = 110;
@@ -249,7 +249,7 @@ static class Sage
         if (remplie) client.Text = "CDUPONT";
         Champ(entete, "Client", client, 12, 12);
         Champ(entete, "Date", Texte("23/10/2026"), 12, 44);
-        Champ(entete, "N° pièce", Texte(remplie ? "FA00121" : devis ? "DE00044" : "FA00121"), 330, 12);
+        Champ(entete, "N° pièce", Texte(devis ? "DE00044" : "FA00121"), 330, 12);
         Champ(entete, "Référence", Texte(""), 330, 44);
         Champ(entete, "Dépôt", Liste("Bièvres"), 650, 12);
         Champ(entete, "Affaire", Liste(""), 650, 44);
