@@ -543,11 +543,12 @@ jobs:
   # asked), and "app-codex", Codex chosen alone, the gate open in the robot's copy of the kit only
   # (terrain_app.py), as the other benches open it. On "app", a third launch walks Bibo's guide with
   # a fake Claude in Claude Code's place (engine/tests/fake_claude.py): no AI is asked here either.
-  # On macOS and Windows, "app-mise-a-jour": the version users already have (app-latest, what the
-  # site's button downloads), clicked through to its brain, then the tested version over it (on master
-  # the same preview, as a user who downloads Bibo again), opened again with the fake Claude connected
-  # (terrain.py, mise_a_jour). A branch's app is built as the next version after the published ones
-  # (terrain.py version-suivante), as release.yml numbers them: the installer then updates it.
+  # On macOS and Windows, "app-mise-a-jour": the version users already have, clicked through to its
+  # brain, then the tested version over it, opened again with the fake Claude connected (terrain.py,
+  # mise_a_jour). On master, app-latest (what the site's button downloads), then the same preview over
+  # it, as a user who downloads Bibo again. A branch's app is built as the next version after the
+  # published ones (terrain.py version-suivante), as release.yml numbers them, and goes over the
+  # preview it was numbered after: never a newer one published meanwhile.
   app-macos:
     name: The app, clicked through (macOS${{ matrix.parcours == 'app-codex' && ', Codex chosen' || matrix.parcours == 'app-mise-a-jour' && ', update over the published one' || '' }})
     needs: ref

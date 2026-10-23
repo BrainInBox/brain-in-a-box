@@ -1839,7 +1839,7 @@ def app(t, opts):
         t.check(voies == {"git": "installeur officiel", "python": "installeur officiel"},
                 "sans winget, Git et Python viennent de leurs installeurs officiels ; ici : Git par %s, Python par %s"
                 % (voies["git"], voies["python"]))
-        t.resume += " ; sans winget, Obsidian pas installé, comme Bibo l'a dit au diagnostic"
+        t.resume += " ; sans winget, Obsidian pas installé, comme le dit le détail du diagnostic"
     if (t.details.get("python") or {}).get("resume"):
         t.resume += " ; " + t.details["python"]["resume"]
 
@@ -1879,6 +1879,12 @@ def sans_winget(pilote, opts):
             statut = terrain_app.statut_diagnostic(textes, ligne)
             t.check(statut == attendu, "sans winget, le diagnostic de l'app devait dire « %s %s » (%s) ; il dit « %s »"
                     % (ligne, attendu, dit, (statut or ": rien").lstrip(": ")))
+        # What a user sees without clicking « Voir le détail »: a title that says ready folds the orange lines
+        # (app.js, detailToggle). Noted until the app unfolds them, then a check.
+        titre = textes[0] if textes else ""
+        if "prêt" in titre:
+            t.notes.append("sans winget, le diagnostic se dit prêt (« %s ») : qu'Obsidian ne sera pas installé n'est écrit que "
+                           "sous « Voir le détail », replié" % titre)
         t("app-obsidian-absent")
         places = dict(outils(opts.home)).get("Obsidian") or []
         t.check(not any(Path(x).exists() for x in places), "Obsidian est installé sur un PC sans winget (%s)" % next(
@@ -1903,11 +1909,15 @@ def preuve_sans_winget(p):
     return " ; ".join(trouve)
 
 
-# The version a user already has (path app-mise-a-jour): the one the site's button downloads, the release
-# app-latest (the newest preview, its files named without their version). On a branch, the tested version is the
-# next one; on master, the newest preview itself: installed over itself, as a user who downloads Bibo again does.
+# The version a user already has (path app-mise-a-jour). On master, the one the site's button downloads, the
+# release app-latest (the newest preview, its files named without their version), and the tested version is the
+# newest preview itself: installed over itself, as a user who downloads Bibo again does. On a branch, the tested
+# version is built as the next one (version-suivante), over the preview it was numbered after: app-latest may have
+# moved on meanwhile, a preview published during the night.
 APP_LATEST = "https://github.com/%s/releases/download/app-latest/" % terrain_app.REPO_SLUG
+RELEASES = "https://github.com/%s/releases/download/" % terrain_app.REPO_SLUG
 VERSION_RE = re.compile(r"^Brain-in-a-Box_(\d+\.\d+\.\d+)")
+NUMERO_RE = re.compile(r"^\d+\.\d+\.\d+$")
 # The NSIS installer over a Bibo already there (app/src-tauri/installer): its first page says it updates, and no
 # text of a page starts as the question it must not ask (French.nsh: alreadyInstalled, chooseMaintenanceOption...).
 MAJ_TITRE = "Mettre à jour Bibo"
@@ -1917,22 +1927,50 @@ PRET = "Ton second cerveau est prêt"
 PRESENTE = "Présente-toi à Claude (15 min)"
 
 
-def version_d_avant(t, pilote, dossier, details):
-    """The installer the site's button downloads, checked against app-latest's SHA256SUMS."""
+def version_d_avant(t, pilote, dossier, details, apres=None):
+    """The version a user already has, checked against its SHA256SUMS: on master what the site's button downloads
+    (app-latest); on a branch (apres: the version built), the newest preview before it, the one it was numbered after."""
     t("maj-telechargement-avant")
-    name = "Brain-in-a-Box" + pilote.suffixe
+    if apres:
+        tags = tags_publies()
+        t.check(tags is not None, "les tags du dépôt ne se lisent pas (git ls-remote, 3 essais) : relance la nuit")
+        avant = [p for p in previews(tags) if p[0] < numero(apres)]
+        t.check(avant, "aucune préversion publiée avant %s : pas de version d'avant à mettre à jour" % apres)
+        tag = max(avant)[2]
+        base, name, release, de = RELEASES + tag + "/", "Brain-in-a-Box_" + tag[len("app-v"):] + pilote.suffixe, tag, "de " + tag
+    else:
+        base, name, release, de = APP_LATEST, "Brain-in-a-Box" + pilote.suffixe, "app-latest (le bouton du site)", "d'app-latest"
     dest = Path(dossier) / name
     sums = Path(tempfile.mkdtemp(prefix="sums-")) / "SHA256SUMS"
     try:
-        terrain_app.telecharger(APP_LATEST + name, dest)
-        terrain_app.telecharger(APP_LATEST + "SHA256SUMS", sums)
+        terrain_app.telecharger(base + name, dest)
+        terrain_app.telecharger(base + "SHA256SUMS", sums)
     except OSError as e:
-        t.check(False, "téléchargement de %s impossible (%s)" % (APP_LATEST + name, type(e).__name__))
+        t.check(False, "téléchargement de %s impossible (%s)" % (base + name, type(e).__name__))
     got = terrain_app.sha256(dest)
     t.check(terrain_app.somme_attendue(sums.read_text(encoding="utf-8", errors="replace"), name) == got,
-            "%s ne correspond pas au SHA256SUMS d'app-latest" % name)
-    details.update(release="app-latest (le bouton du site)", fichier=name, sha256=got)
+            "%s ne correspond pas au SHA256SUMS %s" % (name, de))
+    details.update(release=release, fichier=name, sha256=got)
     return dest
+
+
+def numero(version):
+    return tuple(int(x) for x in version.split("."))
+
+
+def ordre_des_versions(apres, avant, source):
+    """What forbids installing the tested version (apres) over the one there (avant) ("" : nothing). A branch's
+    build is newer; master's newest preview is the same, or newer when one came out meanwhile. Never older."""
+    if not avant or not NUMERO_RE.match(str(avant)):
+        return "la version d'avant, une fois installée, ne dit pas sa version (« %s »)" % avant
+    if source == "build" and numero(apres) <= numero(avant):
+        return ("la version testée (%s) n'est pas plus récente que celle d'avant (%s) : ce ne serait pas une mise à jour. "
+                "Relance la nuit ; si ça revient, regarde le numéro que l'étape de construction a donné (version-suivante)"
+                % (apres, avant))
+    if numero(apres) < numero(avant):
+        return ("la version testée (%s) est plus ancienne que celle d'avant (%s) : ce ne serait pas une mise à jour. "
+                "Relance la nuit" % (apres, avant))
+    return ""
 
 
 def version_installee(pilote):
@@ -2058,7 +2096,13 @@ def mise_a_jour(t, opts, pilote=None, horloge=time.monotonic, dormir=time.sleep)
         downloads = home / "Downloads"
         downloads.mkdir(exist_ok=True)
         avant = details["avant"] = {}
-        fichier_avant = version_d_avant(t, pilote, downloads, avant)
+        construite = None
+        if source == "build":
+            m = VERSION_RE.match(Path(getattr(opts, "fichier", "") or "").name)
+            t.check(m, "pas d'app construite avec sa version dans son nom (%s) : voir l'étape de construction du job"
+                    % (getattr(opts, "fichier", "") or "aucun fichier"))
+            construite = m.group(1)
+        fichier_avant = version_d_avant(t, pilote, downloads, avant, construite)
         avant["quarantaine_posee"] = pilote.marquer_telecharge(fichier_avant)
 
         t("maj-installation-avant")
@@ -2090,6 +2134,9 @@ def mise_a_jour(t, opts, pilote=None, horloge=time.monotonic, dormir=time.sleep)
         nouveau["fichier"] = fichier.name
         attendue = VERSION_RE.match(fichier.name)
         t.check(attendue, "la version de %s n'est pas dans son nom" % fichier.name)
+        t("maj-versions")
+        faux = ordre_des_versions(attendue.group(1), avant.get("version"), source)
+        t.check(not faux, faux)
         nouveau["quarantaine_posee"] = pilote.marquer_telecharge(fichier)
         t("maj-installation")
         t.notes.extend(par_dessus(pilote, fichier, nouveau, lambda nom: parcours.capturer("maj-" + nom)))
@@ -2155,23 +2202,48 @@ def mise_a_jour(t, opts, pilote=None, horloge=time.monotonic, dormir=time.sleep)
             details["clics_installation"] = pilote.clics_installation
 
 
+def tags_publies(essais=3, dormir=time.sleep):
+    """The repository's app tags (git ls-remote, no token), asked again after a hiccup of GitHub; None if it never
+    answered."""
+    for essai in range(essais):
+        if essai:
+            dormir(10 * essai)
+        try:
+            rc, out = run(["git", "ls-remote", "--tags", "--refs", "https://github.com/%s" % terrain_app.REPO_SLUG,
+                           "refs/tags/app-v*"], timeout=120)
+        except Echec:
+            continue
+        if rc == 0:
+            return [l.split()[-1] for l in out.splitlines() if l.strip()]
+    return None
+
+
+def previews(tags):
+    """(version, run, tag) of each app preview among tags (refs/tags/... or bare names)."""
+    out = []
+    for x in tags:
+        tag = x.rsplit("/", 1)[-1]
+        m = terrain_app.PREVIEW_RE.match(tag)
+        if m:
+            out.append((tuple(int(m.group(i)) for i in (1, 2, 3)), int(m.group(4)), tag))
+    return out
+
+
 def version_suivante(tags, base):
     """MAJOR.MINOR of base and, as PATCH, one more than the published previews' (release.yml numbers each with its
     run): the version a branch's app is built with, newer than the one users have (the installer then updates it)."""
-    major_minor = base.rsplit(".", 1)[0]
-    patches = [int(m.group(3)) for m in (terrain_app.PREVIEW_RE.match(x.rsplit("/", 1)[-1]) for x in tags)
-               if m and "%s.%s" % (m.group(1), m.group(2)) == major_minor]
-    return "%s.%d" % (major_minor, max(patches + [int(base.rsplit(".", 1)[1])]) + 1)
+    major_minor = numero(base)[:2]
+    patches = [v[2] for v, _, _ in previews(tags) if v[:2] == major_minor]
+    return "%d.%d.%d" % (major_minor + (max(patches + [numero(base)[2]]) + 1,))
 
 
 def cmd_version_suivante():
     base = json.loads(read(REPO / "app" / "src-tauri" / "tauri.conf.json"))["version"]
-    rc, out = run(["git", "ls-remote", "--tags", "--refs", "https://github.com/%s" % terrain_app.REPO_SLUG, "refs/tags/app-v*"],
-                  timeout=120)
-    if rc != 0:
-        print("git ls-remote : code %d" % rc, file=sys.stderr)
+    tags = tags_publies()
+    if tags is None:
+        print("git ls-remote : les tags du dépôt ne se lisent pas (3 essais)", file=sys.stderr)
         return 1
-    print(version_suivante([l.split()[-1] for l in out.splitlines() if l.strip()], base))
+    print(version_suivante(tags, base))
     return 0
 
 
@@ -2220,13 +2292,17 @@ def play(name, fn, opts):
         if name in VM_ONLY and not opts.vm:
             raise Saute("seulement sur une VM GitHub jetable (--vm)")
         fn(t, opts)
-        statut, raison = "ok", (t.resume or "conforme") + "".join(" ; à noter : " + n for n in t.notes)
+        statut, raison = "ok", None
     except Saute as e:
         statut, raison = "saute", str(e)
     except Echec as e:
         statut, raison = "echec", str(e)
     except Exception as e:  # a bug of the field test itself still gives a line and a step
         statut, raison = "echec", "erreur du terrain lui-même : %s: %s" % (type(e).__name__, str(e)[:300])
+    # Said once: the update installs twice, and its notes come twice.
+    t.notes[:] = dict.fromkeys(t.notes)
+    if statut == "ok":
+        raison = (t.resume or "conforme") + "".join(" ; à noter : " + n for n in t.notes)
     if t.notes:
         t.details["a_noter"] = t.notes
     entry = {"scenario": name, "statut": statut, "etape": t.nom if statut == "echec" else None, "raison": raison,
