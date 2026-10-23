@@ -383,6 +383,7 @@ mod tests {
     use std::time::Duration;
     use windows::core::w;
     use windows::Win32::Foundation::POINT;
+    use windows::Win32::UI::HiDpi::{GetDpiForWindow, DPI_AWARENESS_CONTEXT_UNAWARE};
     use windows::Win32::UI::Input::KeyboardAndMouse::{
         EnableWindow, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, MOUSEEVENTF_LEFTDOWN,
         MOUSEEVENTF_LEFTUP, MOUSEINPUT, MOUSE_EVENT_FLAGS, VIRTUAL_KEY, VK_ESCAPE, VK_LWIN,
@@ -588,6 +589,67 @@ mod tests {
         click(((r.left + r.right) / 2, (r.top + r.bottom) / 2));
         assert_eq!(waiting.join().unwrap().map(|f| f.id), Ok(win.window.id));
         guide::fin();
+    }
+
+    /// The frame of a window as its program counts it: Windows gives a program unaware of the screen's
+    /// scale (and a thread unaware too) 96 dpi coordinates, and stretches its windows on the screen.
+    fn its_own(h: HWND) -> RECT {
+        let mut r = RECT::default();
+        // SAFETY: a context Windows defines, the one before put back; a RECT for the call.
+        unsafe {
+            let before = SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_UNAWARE);
+            let read = GetWindowRect(h, &mut r);
+            SetThreadDpiAwarenessContext(before);
+            read.unwrap();
+        }
+        r
+    }
+
+    /// A program unaware of the screen's scale (many an old ERP): at 125 or 150 %, Windows stretches its
+    /// window and its dialog on the screen, while PrintWindow draws them at their own size. The capture
+    /// is that image, whole: no black left from the screen's size, the dialog where the program put it.
+    /// At 100 % with the others; at 125 and 150 % in the job bureau-echelle (test.yml), which says the
+    /// scale in BIBO_ECHELLE.
+    #[test]
+    #[ignore = "a Windows desktop (VM)"]
+    fn bureau_echelle_a_window_windows_stretches_is_captured_whole() {
+        let d = desk();
+        let (_p, win) = d.open("etiree", "Etiree", (80, 80, 640, 480), &[BLUE, ORANGE]);
+        let h = handle(win.window.id);
+        until("its dialog open", || modal(h, win.window.pid).is_some());
+        let dialog = modal(h, win.window.pid).unwrap();
+        // SAFETY: a window handle.
+        assert_eq!(unsafe { GetDpiForWindow(h) }, 96, "a program unaware of the scale");
+        let own = its_own(h);
+        let (outer, at, its) = {
+            let _physical = Physical::enter();
+            let mut outer = RECT::default();
+            // SAFETY: a RECT for the call.
+            unsafe { GetWindowRect(h, &mut outer) }.unwrap();
+            (outer, frame(h).unwrap(), frame(dialog).unwrap())
+        };
+        // The program's pixels to a pixel of the screen, as Windows stretched its window.
+        let s = f64::from(own.right - own.left) / f64::from(outer.right - outer.left);
+        if let Ok(echelle) = std::env::var("BIBO_ECHELLE") {
+            let want = 100.0 / echelle.parse::<f64>().unwrap();
+            assert!((s - want).abs() < 0.01, "the screen at {echelle} %: the window stretched {s:.3}, not {want:.3}");
+        }
+        let mine = |v: i32| (f64::from(v) * s).round() as i32;
+        let img = grab(&win.window).unwrap();
+        let size = (mine(at.right - at.left), mine(at.bottom - at.top));
+        let place = (mine(its.left - at.left), mine(its.top - at.top), mine(its.right - at.left), mine(its.bottom - at.top));
+        let margins = black_margins(&img);
+        let orange = bounds(&img, ORANGE).expect("the dialog's colour in the capture");
+        eprintln!("stretched {s:.3}: image {}x{}, its own frame {size:?}, black margins {margins:?}, dialog {orange:?} at {place:?}", img.w, img.h);
+        assert!(margins.iter().all(|&m| m <= 1), "nothing left black from the screen's size: {margins:?}");
+        assert!((img.w as i32).abs_diff(size.0) <= 2 && (img.h as i32).abs_diff(size.1) <= 2, "its own size: {}x{}, not {size:?}", img.w, img.h);
+        assert!(
+            orange.0 >= place.0 - 3 && orange.1 >= place.1 - 3 && orange.2 <= place.2 + 3 && orange.3 <= place.3 + 3,
+            "the dialog at its place: {orange:?} within {place:?}"
+        );
+        let area = (place.2 - place.0) * (place.3 - place.1);
+        assert!(count(&img, ORANGE) as i32 > area * 6 / 10, "its colour over most of it: {} of {area}", count(&img, ORANGE));
+        assert!(count(&img, BLUE) > pixels(&img) / 3, "and the window around it");
     }
 
     /// R11: a window of another program that makes itself a popup of the chosen one, while that one

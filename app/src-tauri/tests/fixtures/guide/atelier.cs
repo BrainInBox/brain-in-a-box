@@ -10,6 +10,8 @@
 //   atelier.exe message <title> <x> <y> <w> <h> <rrggbb>            a window, then the system's message box
 //   atelier.exe protege <title> <x> <y> <w> <h> <rrggbb>            a window Windows keeps out of captures
 //   atelier.exe intrus  <title> <x> <y> <w> <h> <rrggbb> <hwnd>     a window owned by another program's
+//   atelier.exe etiree  <title> <x> <y> <w> <h> <rrggbb> <rrggbb>   "modal", from a program unaware of the
+//                                                                   screen's scale: Windows stretches both
 using System;
 using System.Drawing;
 using System.Reflection;
@@ -51,8 +53,11 @@ static class Atelier
     [STAThread]
     static int Main(string[] a)
     {
-        SetProcessDPIAware();
         string mode = a[0];
+        if (mode != "etiree")
+        {
+            SetProcessDPIAware();
+        }
         Form f = mode == "dessus" ? new Dessus() : new Form();
         f.Text = a[1];
         f.StartPosition = FormStartPosition.Manual;
@@ -71,7 +76,7 @@ static class Atelier
             {
                 SetWindowDisplayAffinity(f.Handle, WDA_MONITOR);
             }
-            if (mode == "modal")
+            if (mode == "modal" || mode == "etiree")
             {
                 f.BeginInvoke(new MethodInvoker(delegate
                 {

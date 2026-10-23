@@ -492,6 +492,41 @@ jobs:
           print("linux:", d["os"], len(ids), "checks, to do:", d["todo"])
           PY
 
+  # The guide's capture at 125 and 150 % (capture/win.rs): a program unaware of the scale, as many an old
+  # ERP, whose window and dialog Windows stretches on the screen, captured whole and in place. The
+  # runner's screen is set as Settings sets it (.github/ci/echelle.cs, compiled there by Windows' own
+  # csc); at 100 % the same test runs with the others, in the app job.
+  bureau-echelle:
+    name: bureau-echelle (${{ matrix.echelle }} %)
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        echelle: [125, 150]
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: app/src-tauri
+    env:
+      BIBO_ECHELLE: ${{ matrix.echelle }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build the tests
+        run: cargo test --locked --lib --no-run
+      - name: The screen, 1920x1080 at ${{ matrix.echelle }} %
+        run: |
+          & "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /target:exe "/out:$env:RUNNER_TEMP\echelle.exe" ..\..\.github\ci\echelle.cs
+          if ($LASTEXITCODE) { exit 1 }
+          & "$env:RUNNER_TEMP\echelle.exe" 1920 1080 $env:BIBO_ECHELLE
+          if ($LASTEXITCODE) { exit 1 }
+      - name: A window Windows stretches is captured whole
+        run: cargo test --locked --lib -- --ignored bureau_echelle --test-threads=1 --nocapture
+
   # The app's own install path on a real Windows, without its window: Claude Code, then the
   # brain (install.ps1 from this commit, no console, no question) on a PC with only the Store's
   # python stub, Documents protected against ransomware and a TEMP every account can write to.
