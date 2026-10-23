@@ -1,6 +1,6 @@
 name: app-release
 
-# The app as people download it: an unsigned preview on GitHub Releases.
+# The app as people download it: a preview on GitHub Releases, unsigned until the signing secrets exist.
 #
 # - pull_request touching the app: builds it and leaves the installers as an artifact of the
 #   run. Nothing is published; the token reads only and no secret is used. A fork's pull
@@ -9,16 +9,32 @@ name: app-release
 # - push to master touching the app, or a run by hand on master: builds without any cache
 #   (the default branch's caches can be written by any of its jobs), then a job of its own,
 #   the only one allowed to write, attests the installers (gh attestation verify) and
-#   publishes a pre-release tagged app-v<version>-preview.<run number> (version from
-#   app/src-tauri/tauri.conf.json) with them and SHA256SUMS, and deletes the app previews
-#   beyond the 5 newest. A tag that already exists is never moved. A run by hand on another
-#   branch only builds.
+#   publishes a pre-release tagged app-v<version>-preview.<run number> with them and SHA256SUMS,
+#   and deletes the app previews beyond the 5 newest. A tag that already exists is never moved.
+#   A run by hand on another branch only builds.
+# - the version is MAJOR.MINOR of app/src-tauri/tauri.conf.json and the run number, given to Tauri
+#   before the build: each build is newer than the one before, so Windows' installer updates the
+#   app in place, and the version installed says which preview it is.
+# - the same files, named without their version, also go to the release app-latest, the only tag
+#   ever moved: the site's buttons point at them, and keep working when api.github.com answers no.
+#   They are the very files of the preview (same SHA-256, so the same attestation).
+# - signing: Windows (SignPath) and Apple (Developer ID, notarization) only sign once the
+#   repository has their secrets, and only the preview that is published. Without them nothing
+#   changes: the app stays unsigned, as today. The app compiles without any secret (every build.rs
+#   and proc-macro of its dependencies runs then); only the bundling, which compiles nothing, reads
+#   Apple's. That is no wall: on the same runner, a process a dependency left behind while compiling
+#   would still be there. Before Apple's or SignPath's secrets are created, the signing moves to a
+#   job of its own, on a fresh runner, that runs no code from the build (not done yet).
+#   The release says "non signée" only for a system whose files are not signed; the site
+#   (site/index.html) says it too, in its own words, to change by hand the day a system is signed.
 #
 # Actions are pinned to a commit (a tag can be moved), and engine/tests/test_release_workflow.py
 # holds all of the above, since the publishing part only ever runs after the merge.
 #
 # macOS: one universal DMG (Apple Silicon and Intel), ad-hoc signed: unsigned by Apple, macOS
-# offers "Open Anyway" for it, while an app with no signature at all reads as "damaged".
+# offers "Open Anyway" for it, while an app with no signature at all reads as "damaged". Its window
+# shows the arrow to Applications (tauri.macos.conf.json): Finder lays it out, which Tauri skips on
+# a CI unless TAURI_BUNDLER_DMG_IGNORE_CI; if Finder fails twice, the DMG goes out plain.
 # Windows: built once the Tauri config declares an NSIS installer ("nsis" or "all" in
 # bundle.targets of tauri.windows.conf.json, or of tauri.conf.json), see
 # .github/ci/app-release-plan.py. Until then the matrix is macOS only and nothing else changes.
@@ -81,7 +97,13 @@ jobs:
     name: Build (${{ matrix.platform }})
     needs: plan
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    # Windows signing waits for two SignPath requests (up to 30 min each: a release-signing policy
+    # waits for a person's approval), after a build without any cache.
+    timeout-minutes: ${{ matrix.platform == 'windows' && needs.plan.outputs.publish == 'true' && vars.SIGNPATH_ORGANIZATION_ID != '' && 150 || 60 }}
+    # SignPath's action reads the job and downloads the unsigned artifact with the job's token.
+    permissions:
+      contents: read
+      actions: read
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
@@ -91,7 +113,19 @@ jobs:
       BUNDLES: ${{ matrix.bundles }}
       PLATFORM: ${{ matrix.platform }}
       LABEL: ${{ needs.plan.outputs.label }}
+      VERSION: ${{ needs.plan.outputs.version }}
       APPLE_SIGNING_IDENTITY: "-"
+      # Only the DMG reads it: Finder lays out its window (background, places) on the runner too.
+      TAURI_BUNDLER_DMG_IGNORE_CI: "true"
+      # true or false, never the secret: whether the published Windows preview is signed (SignPath),
+      # whether the published DMG is (Developer ID).
+      SIGNPATH: ${{ needs.plan.outputs.publish == 'true' && secrets.SIGNPATH_API_TOKEN != '' && vars.SIGNPATH_ORGANIZATION_ID != '' }}
+      DEVELOPER_ID: ${{ needs.plan.outputs.publish == 'true' && secrets.APPLE_CERTIFICATE != '' }}
+    # Whether each system's files are signed, for the release notes (one name per system: the
+    # matrix's outputs are put together).
+    outputs:
+      macos_signed: ${{ steps.signed.outputs.macos }}
+      windows_signed: ${{ steps.signed.outputs.windows }}
     defaults:
       run:
         shell: bash
@@ -145,16 +179,47 @@ jobs:
           key: app-release-${{ runner.os }}-${{ matrix.target }}-${{ hashFiles('app/src-tauri/Cargo.lock') }}
           restore-keys: app-release-${{ runner.os }}-${{ matrix.target }}-
 
-      # A bundle left in the cache never passes for this build's. bundle_dmg.sh sometimes
-      # finds hdiutil busy on a runner: one more try, the compiled code is reused.
-      - name: Build (${{ matrix.target }}, ${{ matrix.bundles }})
+      # The app compiled, not bundled, without any secret in its environment: every build.rs and
+      # proc-macro of its dependencies runs here.
+      - name: Build (${{ matrix.target }})
         working-directory: app/src-tauri
+        run: cargo tauri build --ci --no-bundle --target "$TARGET" --config "{\"version\":\"$VERSION\"}" -- --locked
+
+      # A bundle left in the cache never passes for this build's. bundle_dmg.sh sometimes
+      # finds hdiutil busy on a runner: one more try, and a last one without Finder's layout of the
+      # DMG's window (it would only lose its background). Bundling compiles nothing.
+      # Developer ID and notarization: only for the preview that is published, once the secrets
+      # exist (Tauri signs, notarizes and staples). Without them the variables are dropped and the
+      # app is ad-hoc signed as before.
+      - name: Bundle (${{ matrix.bundles }})
+        working-directory: app/src-tauri
+        env:
+          APPLE_CERTIFICATE: ${{ runner.os == 'macOS' && needs.plan.outputs.publish == 'true' && secrets.APPLE_CERTIFICATE || '' }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ runner.os == 'macOS' && needs.plan.outputs.publish == 'true' && secrets.APPLE_CERTIFICATE_PASSWORD || '' }}
+          APPLE_ID: ${{ runner.os == 'macOS' && needs.plan.outputs.publish == 'true' && secrets.APPLE_ID || '' }}
+          APPLE_PASSWORD: ${{ runner.os == 'macOS' && needs.plan.outputs.publish == 'true' && secrets.APPLE_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ runner.os == 'macOS' && needs.plan.outputs.publish == 'true' && secrets.APPLE_TEAM_ID || '' }}
         run: |
-          build() {
+          # Tauri reads a variable that is set, even empty: an empty certificate would fail the build.
+          for v in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            [ -n "${!v}" ] || unset "$v"
+          done
+          if [ -n "${APPLE_CERTIFICATE:-}" ]; then
+            [ -n "${APPLE_CERTIFICATE_PASSWORD:-}" ] && [ -n "${APPLE_ID:-}" ] && [ -n "${APPLE_PASSWORD:-}" ] && [ -n "${APPLE_TEAM_ID:-}" ] \
+              || { echo "::error::APPLE_CERTIFICATE without APPLE_CERTIFICATE_PASSWORD, APPLE_ID, APPLE_PASSWORD and APPLE_TEAM_ID"; exit 1; }
+            # The identity comes from the certificate.
+            unset APPLE_SIGNING_IDENTITY
+            echo "Developer ID signing and notarization"
+          fi
+          bundle() {
             rm -rf "target/$TARGET/release/bundle"
-            cargo tauri build --ci --target "$TARGET" --bundles "$BUNDLES" -- --locked
+            cargo tauri bundle --ci --target "$TARGET" --bundles "$BUNDLES" --config "{\"version\":\"$VERSION\"}"
           }
-          build || { echo "::warning::bundling failed once, trying again"; build; }
+          bundle || { echo "::warning::bundling failed once, trying again"; bundle; } || {
+            [ "$RUNNER_OS" = macOS ] || exit 1
+            echo "::warning::the DMG once more, without Finder's layout: no background, no arrow"
+            TAURI_BUNDLER_DMG_IGNORE_CI=false bundle
+          }
 
       - name: The DMG verifies, mounts, holds Brain in a Box.app for both architectures, and runs
         if: runner.os == 'macOS'
@@ -178,6 +243,17 @@ jobs:
           [ -d "$app" ] || { echo "::error::Brain in a Box.app is not in the DMG"; exit 1; }
           [ -L "$mnt/Applications" ] || { echo "::error::no Applications shortcut to drag the app onto"; exit 1; }
           codesign --verify --deep --strict --verbose=2 "$app"
+          # The window Finder opens: its background (the arrow to Applications) and the icons' places.
+          if [ -f "$mnt/.background/dmg-background.tiff" ] && [ -f "$mnt/.DS_Store" ]; then
+            echo "window laid out, with its background"
+          else
+            echo "::warning::the DMG opens without its background (no arrow to Applications)"
+          fi
+          # Signed by Apple's Developer ID: notarized, the ticket stapled, accepted by Gatekeeper.
+          if [ "$DEVELOPER_ID" = true ]; then
+            xcrun stapler validate "$app"
+            spctl --assess --type execute --verbose=2 "$app"
+          fi
 
           bin="$app/Contents/MacOS/brain-in-a-box"
           archs=$(lipo -archs "$bin")
@@ -234,6 +310,54 @@ jobs:
           APPIMAGE_EXTRACT_AND_RUN=1 "./$image" --diagnose | python3 -I -c "$check" AppImage
           sudo apt-get remove -y -q brain-in-a-box
 
+      # Windows signing, SignPath (signpath.org): only for the preview that is published, once the
+      # repository has the secret SIGNPATH_API_TOKEN and the variable SIGNPATH_ORGANIZATION_ID.
+      # Smart App Control checks the app as well as its installer: the app is signed first, then put
+      # in the installer again (tauri bundle), then the installer is signed. SignPath's GitHub
+      # connector takes each file from an artifact of this run and checks it was built here.
+      # Not signed yet: NSIS's plugins (nsDialogs, System, nsis_tauri_utils), which the installer
+      # unpacks in %TEMP% and loads, and uninstall.exe, which makensis writes inside the installer.
+      # Tauri signs them only through bundle.windows.signCommand; until they are, Smart App Control
+      # may still block the installer.
+      # Tauri marks the app with the kind of bundle it is in (for its updater) while it bundles: the
+      # mark is written before signing, so that bundling then leaves the signed app as it is.
+      - name: "Windows signing 1/3: the app, marked for its NSIS bundle"
+        if: runner.os == 'Windows' && env.SIGNPATH == 'true'
+        run: |
+          exe="app/src-tauri/target/$TARGET/release/brain-in-a-box.exe"
+          python -I -c 'import sys; p = sys.argv[1]; b = open(p, "rb").read(); old = b"__TAURI_BUNDLE_TYPE_VAR_UNK"; assert old in b, "no bundle mark in the app"; open(p, "wb").write(b.replace(old, b"__TAURI_BUNDLE_TYPE_VAR_NSS", 1))' "$exe"
+          mkdir -p signpath/app
+          cp "$exe" signpath/app/
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        id: unsigned-app
+        if: runner.os == 'Windows' && env.SIGNPATH == 'true'
+        with:
+          name: signpath-app
+          path: signpath/app/
+          if-no-files-found: error
+          retention-days: 1
+
+      - uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3.0
+        if: runner.os == 'Windows' && env.SIGNPATH == 'true'
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'brain-in-a-box' }}
+          signing-policy-slug: ${{ vars.SIGNPATH_POLICY_SLUG || 'release-signing' }}
+          github-artifact-id: ${{ steps.unsigned-app.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 1800
+          output-artifact-directory: signpath/app-signed
+
+      - name: "Windows signing 2/3: the signed app, bundled again"
+        if: runner.os == 'Windows' && env.SIGNPATH == 'true'
+        working-directory: app/src-tauri
+        run: |
+          cp ../../signpath/app-signed/brain-in-a-box.exe "target/$TARGET/release/brain-in-a-box.exe"
+          rm -rf "target/$TARGET/release/bundle"
+          cargo tauri bundle --ci --target "$TARGET" --bundles nsis --config "{\"version\":\"$VERSION\"}"
+
       - name: The Windows installer is there
         if: runner.os == 'Windows'
         run: |
@@ -244,6 +368,48 @@ jobs:
           exe="dist/Brain-in-a-Box_${LABEL}_windows-x64-setup.exe"
           cp "${exes[0]}" "$exe"
           [ "$(head -c 2 "$exe")" = MZ ] || { echo "::error::$exe is not a Windows program"; exit 1; }
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        id: unsigned-installer
+        if: runner.os == 'Windows' && env.SIGNPATH == 'true'
+        with:
+          name: signpath-installer
+          path: dist/*_windows-x64-setup.exe
+          if-no-files-found: error
+          retention-days: 1
+
+      - uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3.0
+        if: runner.os == 'Windows' && env.SIGNPATH == 'true'
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'brain-in-a-box' }}
+          signing-policy-slug: ${{ vars.SIGNPATH_POLICY_SLUG || 'release-signing' }}
+          github-artifact-id: ${{ steps.unsigned-installer.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 1800
+          output-artifact-directory: signpath/installer-signed
+
+      - name: "Windows signing 3/3: the signed installer, and both signatures valid"
+        if: runner.os == 'Windows' && env.SIGNPATH == 'true'
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem dist -Filter *_windows-x64-setup.exe
+          Copy-Item (Join-Path signpath/installer-signed $exe.Name) $exe.FullName -Force
+          foreach ($f in @($exe.FullName, "app/src-tauri/target/$env:TARGET/release/brain-in-a-box.exe")) {
+            $sig = Get-AuthenticodeSignature $f
+            if ($sig.Status -ne 'Valid') { throw "${f}: signature $($sig.Status)" }
+            "{0}: {1}" -f $f, $sig.SignerCertificate.Subject
+          }
+
+      # true or false for this system, never a secret: what the release notes say of it.
+      - name: Signed or not
+        id: signed
+        run: |
+          case "$PLATFORM" in
+            macos) echo "macos=$DEVELOPER_ID" ;;
+            windows) echo "windows=$SIGNPATH" ;;
+          esac >> "$GITHUB_OUTPUT"
 
       - name: Summary
         run: |
@@ -289,6 +455,8 @@ jobs:
       TAG: app-v${{ needs.plan.outputs.label }}
       VERSION: ${{ needs.plan.outputs.version }}
       LABEL: ${{ needs.plan.outputs.label }}
+      MACOS_SIGNED: ${{ needs.build.outputs.macos_signed }}
+      WINDOWS_SIGNED: ${{ needs.build.outputs.windows_signed }}
     steps:
       # No checkout: this job runs no code of the repository, only gh on the files built above.
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -312,38 +480,52 @@ jobs:
         with:
           subject-checksums: dist/SHA256SUMS
 
+      # In the app's words (tu). "Non signée" only for a system whose files are not signed.
       - name: Release notes
         run: |
           short=${GITHUB_SHA:0:7}
           dmg=$(cd dist && ls -- *.dmg)
+          exe=$(cd dist && ls -- *-setup.exe 2>/dev/null) || exe=""
+          unsigned=""
+          [ "$MACOS_SIGNED" = true ] || unsigned="Mac"
+          [ -z "$exe" ] || [ "$WINDOWS_SIGNED" = true ] || unsigned="${unsigned:+$unsigned et }Windows"
+          printf '%s' "App Brain in a Box $VERSION — préversion ${LABEL##*.}${unsigned:+ (non signée sur $unsigned)}" > "$RUNNER_TEMP/title"
           {
-            echo "Préversion **non signée** de l'app Brain in a Box, construite automatiquement depuis \`master\` (commit [$short]($GITHUB_SERVER_URL/$GH_REPO/commit/$GITHUB_SHA)). Elle peut changer ou disparaître : seules les 5 dernières préversions sont gardées."
+            echo "Préversion de l'app Brain in a Box, construite automatiquement depuis \`master\` (commit [$short]($GITHUB_SERVER_URL/$GH_REPO/commit/$GITHUB_SHA)). Elle peut changer ou disparaître : seules les 5 dernières préversions sont gardées."
+            if [ -n "$unsigned" ]; then
+              echo
+              echo "Pas encore signée sur $unsigned : la première fois, ton ordinateur te met en garde. C'est prévu, voici quoi faire."
+            fi
             echo
             echo "**Mac** (macOS 13 ou plus récent, puces Apple et Intel)"
             echo
-            echo "1. Téléchargez \`$dmg\`, ouvrez-le et glissez **Brain in a Box** dans **Applications**."
-            echo "2. Ouvrez l'app. macOS la bloque, car elle n'est pas encore signée par Apple : fermez le message, sans la placer dans la corbeille."
-            echo "3. Allez dans **Réglages Système > Confidentialité et sécurité**, descendez jusqu'à « Sécurité » et cliquez sur **« Ouvrir quand même »** à côté de Brain in a Box, puis confirmez. Les fois suivantes, elle s'ouvre normalement."
-            if exe=$(cd dist && ls -- *-setup.exe 2>/dev/null); then
+            echo "1. Télécharge \`$dmg\`, ouvre-le et glisse **Brain in a Box** dans **Applications**."
+            if [ "$MACOS_SIGNED" = true ]; then
+              echo "2. Ouvre Brain in a Box depuis Applications."
+            else
+              echo "2. Ouvre l'app. macOS l'arrête, car elle n'est pas encore signée par Apple : clique sur **Terminé** (Done ; **Annuler** sur macOS 13 et 14), surtout pas sur « Placer dans la corbeille »."
+              echo "3. Va dans **Réglages Système › Confidentialité et sécurité** (System Settings › Privacy & Security), descends jusqu'à « Sécurité » et clique sur **Ouvrir quand même** (Open Anyway) à côté de Brain in a Box, puis confirme. Les fois suivantes, elle s'ouvre normalement."
+            fi
+            if [ -n "$exe" ]; then
               echo
               echo "**Windows** (10 ou 11, 64 bits)"
               echo
-              echo "1. Téléchargez \`$exe\` et lancez-le (aucun droit administrateur demandé)."
-              echo "2. Si Windows affiche « Windows a protégé votre ordinateur », cliquez sur **Informations complémentaires**, puis **Exécuter quand même**."
+              echo "1. Télécharge \`$exe\` et ouvre-le."
+              echo "2. Si Windows affiche « Windows a protégé votre ordinateur » (Windows protected your PC), clique sur **Informations complémentaires** (More info), puis **Exécuter quand même** (Run anyway)."
             fi
             if image=$(cd dist && ls -- *.AppImage 2>/dev/null) && deb=$(cd dist && ls -- *.deb 2>/dev/null); then
               echo
               echo "**Linux** (Ubuntu 22.04 ou plus récent, Debian 12, processeur Intel ou AMD 64 bits)"
               echo
-              echo "- **AppImage**, sans installation : téléchargez \`$image\`, rendez-le exécutable (clic droit > Propriétés > « Exécutable comme un programme », ou \`chmod +x\`), puis double-cliquez dessus. Rien d'autre à installer sur Ubuntu 22.04 ou 24.04 ; ailleurs, si elle ne démarre pas : \`sudo apt install fuse3\`."
-              echo "- **.deb** : \`sudo apt install ./$deb\`, puis ouvrez Brain in a Box depuis le menu des applications."
+              echo "- **AppImage**, sans installation : télécharge \`$image\`, rends-la exécutable (clic droit > Propriétés > « Exécutable comme un programme », ou \`chmod +x\`), puis double-clique dessus. Rien d'autre à installer sur Ubuntu 22.04 ou 24.04 ; ailleurs, si elle ne démarre pas : \`sudo apt install fuse3\`."
+              echo "- **.deb** : \`sudo apt install ./$deb\`, puis ouvre Brain in a Box depuis le menu des applications."
               echo
-              echo "Pendant l'installation, l'app demande votre mot de passe (fenêtre du système) pour installer git, curl ou Obsidian s'ils manquent."
+              echo "Pendant l'installation, l'app demande ton mot de passe (fenêtre du système) pour installer git, curl ou Obsidian s'ils manquent."
             fi
             echo
             echo "Vérifier un téléchargement : \`shasum -a 256 <fichier>\` (Mac), \`certutil -hashfile <fichier> SHA256\` (Windows) ou \`sha256sum <fichier>\` (Linux) doit donner la ligne du fichier dans \`SHA256SUMS\`. Vérifier qu'il a bien été construit ici, depuis \`master\` : \`gh attestation verify <fichier> -R $GH_REPO --signer-workflow $GH_REPO/.github/workflows/release.yml --source-ref refs/heads/master\`."
           } > "$RUNNER_TEMP/notes.md"
-          cat "$RUNNER_TEMP/notes.md"
+          cat "$RUNNER_TEMP/title"; echo; echo; cat "$RUNNER_TEMP/notes.md"
 
       - name: Publish the pre-release (a tag is never moved)
         run: |
@@ -358,9 +540,63 @@ jobs:
           gh release create "$TAG" dist/* \
             --target "$GITHUB_SHA" \
             --prerelease \
-            --title "App Brain in a Box $VERSION — préversion ${LABEL##*.} (non signée)" \
+            --title "$(cat "$RUNNER_TEMP/title")" \
             --notes-file "$RUNNER_TEMP/notes.md"
           echo "Published: $GITHUB_SERVER_URL/$GH_REPO/releases/tag/$TAG" >> "$GITHUB_STEP_SUMMARY"
+
+      # The site's buttons: releases/download/app-latest/Brain-in-a-Box_<system>, the files just
+      # published under names without their version. Every new file goes up first under a temporary
+      # name; then each takes the place of the old one: the links mix two previews, or answer 404,
+      # only for the seconds of the renames (each tried again). Then the step checks what the site
+      # downloads: each link answers, and the SHA256SUMS it serves is this preview's (asked again
+      # while a link still leads to the previous one). Never with GitHub's immutable releases:
+      # app-latest's files could no longer be replaced. A pre-release,
+      # so that it is never GitHub's "Latest" (the kit's releases are).
+      - name: The stable links (app-latest)
+        run: |
+          mkdir latest next
+          for f in dist/Brain-in-a-Box_"$LABEL"_*; do
+            cp "$f" "latest/Brain-in-a-Box_${f#dist/Brain-in-a-Box_"$LABEL"_}"
+          done
+          (cd latest && sha256sum -- * > SHA256SUMS && cat SHA256SUMS)
+          base="$GITHUB_SERVER_URL/$GH_REPO/releases/download/app-latest"
+          notes="Les fichiers de la dernière préversion, [$TAG]($GITHUB_SERVER_URL/$GH_REPO/releases/tag/$TAG), sous des noms sans numéro de version : le site y renvoie. Mêmes fichiers, même empreinte SHA-256, même attestation : voir les instructions de $TAG."
+          title="App Brain in a Box : dernière préversion (${LABEL##*.})"
+          if gh release view app-latest --json tagName >/dev/null 2>&1; then
+            gh api -X PATCH "repos/$GH_REPO/git/refs/tags/app-latest" -f sha="$GITHUB_SHA" -F force=true --silent
+            gh release edit app-latest --prerelease --title "$title" --notes "$notes"
+            id=$(gh api "repos/$GH_REPO/releases/tags/app-latest" --jq .id)
+            asset() { gh api "repos/$GH_REPO/releases/$id/assets" --paginate --jq ".[] | select(.name == \"$1\") | .id"; }
+            for f in latest/*; do
+              cp "$f" "next/next-${f#latest/}"
+            done
+            gh release upload app-latest next/* --clobber
+            for f in latest/*; do
+              name=${f#latest/}
+              new=$(asset "next-$name")
+              [ -n "$new" ] || { echo "::error::next-$name did not go up"; exit 1; }
+              old=$(asset "$name")
+              [ -z "$old" ] || gh api -X DELETE "repos/$GH_REPO/releases/assets/$old" --silent
+              for try in 1 2 3; do
+                gh api -X PATCH "repos/$GH_REPO/releases/assets/$new" -f name="$name" --silent && break
+                [ "$try" != 3 ] || { echo "::error::$name: the new file could not take its name"; exit 1; }
+                sleep 10
+              done
+            done
+          else
+            gh release create app-latest latest/* --target "$GITHUB_SHA" --prerelease --title "$title" --notes "$notes"
+          fi
+          for f in latest/*; do
+            curl -fsS --retry 5 --retry-all-errors --retry-delay 10 -o /dev/null -I "$base/${f#latest/}" \
+              || { echo "::error::$base/${f#latest/} does not answer"; exit 1; }
+          done
+          # A link may still lead to the previous file for a moment: asked again, up to 2 minutes.
+          for try in $(seq 12); do
+            curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 "$base/SHA256SUMS" | cmp -s - latest/SHA256SUMS && break
+            [ "$try" != 12 ] || { echo "::error::app-latest does not serve this preview's SHA256SUMS"; exit 1; }
+            sleep 10
+          done
+          echo "Stable links: $GITHUB_SERVER_URL/$GH_REPO/releases/tag/app-latest" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Keep the 5 newest app previews
         run: |

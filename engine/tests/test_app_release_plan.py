@@ -114,9 +114,16 @@ class Plan(unittest.TestCase):
     def test_label_says_preview_only_when_the_run_publishes(self):
         self.conf("tauri.conf.json", {"version": "1.2.3", "bundle": {"targets": ["dmg"]}})
         out, _ = self.plan(publish="true", run="17")
-        self.assertEqual((out["version"], out["label"], out["publish"]), ("1.2.3", "1.2.3-preview.17", "true"))
+        self.assertEqual((out["version"], out["label"], out["publish"]), ("1.2.17", "1.2.17-preview.17", "true"))
         out, _ = self.plan(publish="false", run="18")
-        self.assertEqual((out["label"], out["publish"]), ("1.2.3-ci.18", "false"))
+        self.assertEqual((out["label"], out["publish"]), ("1.2.18-ci.18", "false"))
+
+    def test_each_build_is_newer_than_the_last(self):
+        # The run number is the patch: Windows' installer then updates the app in place, and the
+        # version installed says which preview it is.
+        self.conf("tauri.conf.json", {"version": "0.1.0", "bundle": {"targets": ["dmg"]}})
+        versions = [self.plan(publish="true", run=run)[0]["version"] for run in ("9", "10", "101")]
+        self.assertEqual(versions, ["0.1.9", "0.1.10", "0.1.101"])
 
     def test_a_version_that_would_make_a_strange_tag_is_refused(self):
         for version in ("1.2", "1.2.3-beta", "1.2.3; rm -rf /", ""):

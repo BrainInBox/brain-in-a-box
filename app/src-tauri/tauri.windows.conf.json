@@ -7,7 +7,14 @@
       "nsis": {
         "installMode": "currentUser",
         "languages": ["French"],
-        "displayLanguageSelector": false
+        "displayLanguageSelector": false,
+        "template": "installer/installer.nsi",
+        "customLanguageFiles": { "French": "installer/French.nsh" },
+        "installerHooks": "installer/hooks.nsh",
+        "installerIcon": "icons/icon.ico",
+        "uninstallerIcon": "icons/icon.ico",
+        "headerImage": "installer/nsis-header.bmp",
+        "sidebarImage": "installer/nsis-sidebar.bmp"
       }
     }
   }
