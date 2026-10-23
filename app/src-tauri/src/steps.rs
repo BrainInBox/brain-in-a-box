@@ -1295,7 +1295,9 @@ fn onboarding_prompt(guide: &Path, vault: &Path) -> String {
 }
 
 /// The interview writes the user's notes in the brain without asking each time: that is what it is for.
-/// Claude Code accepts edits in its working folder only (the brain) and still asks before any command.
+/// Claude Code then accepts, in its working folder only (the brain), edits and the file commands (mkdir,
+/// touch, cp, mv, rm, rmdir, sed); it still asks for any other command, for a path outside the brain, and
+/// for its protected paths (.git, .claude).
 const ONBOARDING_MODE: [&str; 2] = ["--permission-mode", "acceptEdits"];
 
 fn login_script(path: &std::ffi::OsStr, claude: &Path) -> String {
