@@ -158,7 +158,7 @@ jobs:
 
       - name: The ERP-like window (unaware, system, per-monitor) and the Odoo-like page in Edge
         run: |
-          cargo test --locked --lib -- --ignored uia_atelier uia_edge_imitation --test-threads=1 --nocapture 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\uia-1.txt"
+          cargo test --locked --lib -- --ignored uia_atelier uia_edge_imitation uia_sans_arbre --test-threads=1 --nocapture 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\uia-1.txt"
           exit $LASTEXITCODE
 
       - name: The public Odoo demo in Edge

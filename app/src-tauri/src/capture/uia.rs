@@ -789,8 +789,8 @@ mod tests {
         mesure(&test, "accueil_sales_dans_la_liste", home.elements.iter().any(|e| e.name == "Sales"));
         print_list(&format!("{test}_accueil"), &home, (0, 0), 1.0);
         click_at(&sales.2);
-        until_list(&test, pid, &app, Duration::from_secs(60), |l| l.elements.iter().any(|e| e.name == "New" || e.name == "Nouveau"));
-        until("the quotations' table", || raw(h).iter().filter(|n| n.3 && DEMO.iter().any(|c| n.1 == *c)).count() >= 5);
+        until_list(&test, pid, &app, Duration::from_secs(60), |l| l.elements.iter().any(|e| e.name.starts_with("New") || e.name.starts_with("Nouveau")));
+        until("the quotations' table", || raw(h).iter().filter(|n| n.3 && DEMO.iter().any(|c| n.1.contains(c))).count() >= 5);
         std::thread::sleep(Duration::from_secs(2));
         let p90 = latency(&test, pid, &app);
         let (l, _) = timed(pid, &app);
@@ -807,7 +807,7 @@ mod tests {
         temoin(&test, pid, h, &DEMO);
 
         // A quotation's form: the client is a field's value there, not a table's cell.
-        let row = nodes.iter().find(|n| n.3 && DEMO.iter().any(|c| n.1 == *c)).map(|n| n.2).unwrap();
+        let row = nodes.iter().find(|n| n.3 && DEMO.iter().any(|c| n.1.contains(c))).map(|n| n.2).unwrap();
         click_at(&row);
         let start = Instant::now();
         while start.elapsed() < Duration::from_secs(30) && !raw(h).iter().any(|n| n.1 == "Customer" || n.1 == "Confirm" || n.1 == "Send by Email") {

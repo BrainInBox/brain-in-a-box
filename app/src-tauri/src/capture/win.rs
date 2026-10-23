@@ -325,7 +325,11 @@ fn print(h: HWND) -> Option<(Rgba, RECT)> {
     if !unsafe { PrintWindow(h, canvas.dc, PRINT_WINDOW_FLAGS(PW_RENDERFULLCONTENT)) }.as_bool() {
         return None;
     }
-    let keep = (shown.left - outer.left, shown.top - outer.top, shown.right - outer.left, shown.bottom - outer.top);
+    // A window Windows stretches (unaware of the scale) draws itself at its own size: its frame,
+    // counted on the screen, is cut at that size too (spike W2).
+    let ratio = uia::image_ratio(h);
+    let at = |v: i32| (v as f64 * ratio).round() as i32;
+    let keep = (at(shown.left - outer.left), at(shown.top - outer.top), at(shown.right - outer.left), at(shown.bottom - outer.top));
     Some((from_bgra(canvas.pixels(), w as u32, ht as u32, keep), shown))
 }
 
@@ -359,7 +363,9 @@ pub fn grab(chosen: &Window) -> Result<Rgba, Rate> {
     }
     let (mut image, at) = print(h).ok_or(Rate::Noire)?;
     if let Some((dialog, its)) = modal(h, chosen.pid).and_then(print) {
-        lay(&mut image, &dialog, i64::from(its.left - at.left), i64::from(its.top - at.top));
+        let r = uia::image_ratio(h);
+        let at_scale = |v: i32| (v as f64 * r).round() as i64;
+        lay(&mut image, &dialog, at_scale(its.left - at.left), at_scale(its.top - at.top));
     }
     if !still() {
         return Err(Rate::Introuvable);
