@@ -277,7 +277,8 @@ fn is_terminal(app: &str, class: &str) -> bool {
 
 /// The window that comes to the front. The one in front at the start is left out, as only a click
 /// says which one the user means, until none is: Bibo's window took the focus (lib.rs gives it as the
-/// wait starts), or the taskbar did. Then a click in the user's window, in front a moment ago, counts.
+/// wait starts), or the taskbar or Start did. Then a click in the user's window, in front a moment ago,
+/// counts.
 fn wait_for(front: &dyn Fn() -> Option<Found>, limit: Duration, step: Duration, cancel: &AtomicBool) -> Option<Found> {
     let start = Instant::now();
     let mut before = front().map(|f| f.window.id);

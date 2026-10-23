@@ -118,6 +118,21 @@ export const GUIDE_SCENARIOS = [
   'g=ok&cap=selecteur&selecteur=introuvable&go=objectif',
   'g=ok&cap=clic&os=windows&go=coller&click=deja-capture',
   'g=quota&go=erreur&complet=0',
+  // Their third pass. The window that drew black, chosen again: the paste at once, not a third black photo;
+  // another window: its photo. A site Bibo does not know, in a browser named « Arc »: the program asked, the
+  // tabs said. Not open yet: no wait until « Il est ouvert » (its splash or Start would be taken). Nothing
+  // changed, or not here: a new window may have opened, chosen again. The note not copied: shown, to copy by
+  // hand. « Arrêter le guide ? » is a screen of its own: a paste is not taken there, and the wait for a click
+  // stops (its end would replace the question).
+  'g=ok&cap=clic&os=windows&rate=noire&go=coller&nth=2&click=auto',
+  'g=ok&cap=clic&os=windows&rate=noire&go=etape&click=auto,liste,fenetre-4',
+  'g=ok&cap=clic&os=windows&clic=arc&go=apercu',
+  'g=ok&cap=clic&os=windows&go=objectif&click=pas-ouvert',
+  'g=pas-fait&cap=clic&os=windows&go=etape&nth=2&click=nouvelle-fenetre',
+  'g=pas-ici&cap=clic&os=windows&go=pas-ici',
+  'g=ok&vu=0&go=comment&click=note-entreprise&copie=0',
+  'g=ok&go=arreter&arret=1&colle-arret=1',
+  'g=ok&cap=clic&os=windows&rate=fermee:2&go=arreter&arret=choisir:2',
 ];
 
 // The guide's window sizes, as the page asks Rust for them, in turn: the image made wide to hide a zone

@@ -11,6 +11,7 @@
 const SYSTEM = ['macos', 'windows', 'linux'].includes(window.BIBO_OS) ? window.BIBO_OS : detectSystem();
 const MACHINE = SYSTEM === 'macos' ? 'Mac' : 'PC';
 const PASTE_KEYS = SYSTEM === 'macos' ? 'Cmd + V' : 'Ctrl + V';
+const COPY_KEYS = SYSTEM === 'macos' ? 'Cmd + C' : 'Ctrl + C';
 const LOGIN_POLL_MS = 3000;
 const HAPPY_MS = 4500;
 const PRIVACY_URL = 'https://claude.ai/settings/data-privacy-controls';
@@ -26,7 +27,8 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
 // G2: the names the « Logiciel » field suggests. Never a piece of a window's title, which may name a client.
 const KNOWN = ['Odoo', 'Sage', 'SAP', 'EBP', 'Cegid', 'Dolibarr', 'QuickBooks', 'Pennylane', 'Excel', 'Word', 'Outlook', 'Gmail', 'Google Sheets', 'Shopify', 'WordPress', 'Doctolib'];
 // A browser's window: the program is the page, so the browser's name is never the program's (R5).
-const BROWSER = /\b(?:chrome|chromium|edge|firefox|safari|opera|brave|vivaldi)\b/i;
+// Windows names a program by its file when it has no description (« msedge »).
+const BROWSER = /\b(?:chrome|chromium|edge|msedge|firefox|safari|opera|brave|vivaldi|arc)\b/i;
 // Programs that run in a browser: its tabs and address bar leave with the capture (point 19).
 const WEB = ['Odoo', 'Dolibarr', 'Pennylane', 'Gmail', 'Google Sheets', 'Shopify', 'WordPress', 'Doctolib'];
 // G2: how the system's own tool copies a window, key by key (each key with its symbol: « Maj » is ⇧
@@ -59,6 +61,9 @@ const SLIP = {
 }[SYSTEM];
 // Where a window waits when it is minimized (Windows' own word too, D5).
 const DOCK = { macos: 'dans le Dock', windows: 'dans la barre des tâches (taskbar)', linux: 'dans la barre des tâches' }[SYSTEM];
+// The button macOS's picker shows on the window under the pointer: its English name, the only one seen so
+// far (phase 0, macOS 15 and 26, lib.rs), said as such (D5).
+const SHARE_BUTTON = 'le bouton qui apparaît au milieu (en anglais : « Share This Window »)';
 // What goes where, for whoever decides at work (point 19): the same facts as G1, in one block to paste.
 const COMPANY_NOTE = [
   'Le guide de Bibo (Brain in a Box) : ce qui part, et où',
@@ -113,6 +118,9 @@ const G = {
   fenetre: null,
   // The user pasted instead, or the window drew black: captures are pasted until a window is chosen.
   collage: false,
+  // The id of the window that drew black (a protected program, or one run as administrator): chosen
+  // again, it goes straight to the paste.
+  noire: null,
   // The objective was given: Rust's session started.
   goal: false,
   // A capture pasted before the objective: its preview comes once the objective is given.
@@ -239,18 +247,31 @@ function stopButton(label = 'Arrêter le guide') {
 }
 
 // Once a step was shown, « Arrêter le guide » asks first: it sits next to « Je suis bloqué » (point 20).
+// The question is a screen of its own: a capture pasted or dropped meanwhile is not taken. The wait for
+// a click (or the list it may lead to) stops, and starts again after « Non »: its end would replace the
+// question. Elsewhere the screen stays under the question, as it was.
 function confirmStop() {
   if (!G.steps) return closeGuide();
+  const from = document.body.dataset.screen;
+  const again = { choisir: () => showChoose(G.next), liste: showList }[from];
+  if (again) {
+    screen('arreter');
+    return askStop(again);
+  }
   const mood = ['idle', 'thinking', 'happy', 'worried'].find((m) => gui.bibo.classList.contains(m)) || 'idle';
   const was = { title: gui.title.textContent, text: gui.text.hidden ? '' : gui.text.textContent, buttons: [...gui.actions.childNodes] };
+  document.body.dataset.screen = 'arreter';
+  askStop(() => {
+    document.body.dataset.screen = from;
+    say(mood, was.title, was.text);
+    gui.actions.replaceChildren(...was.buttons);
+    focusMain();
+  });
+}
+
+function askStop(back) {
   say('worried', 'Arrêter le guide ?', 'On perdra où on en est.');
-  gui.actions.replaceChildren(
-    button('Oui, arrêter', closeGuide, { kind: 'ghost', act: 'stop' }),
-    button('Non, je continue', () => {
-      say(mood, was.title, was.text);
-      gui.actions.replaceChildren(...was.buttons);
-      focusMain();
-    }, { act: 'next' }));
+  gui.actions.replaceChildren(button('Oui, arrêter', closeGuide, { kind: 'ghost', act: 'stop' }), button('Non, je continue', back, { act: 'next' }));
   focusMain();
 }
 
@@ -404,7 +425,17 @@ function showHow(first) {
   const company = button('Copier une note pour mon entreprise', async () => {
     const copied = await copyText(COMPANY_NOTE);
     if (gen !== G.gen) return;
-    company.textContent = nbsp(copied ? 'Note copiée : colle-la dans un message' : 'Je n’ai pas pu la copier');
+    if (copied) {
+      company.textContent = nbsp('Note copiée : colle-la dans un message');
+      return;
+    }
+    // The webview would not copy: the note itself, to copy by hand.
+    const area = h('textarea', { class: 'input company-note', rows: '6', readonly: true, spellcheck: 'false', 'aria-label': 'La note pour ton entreprise' }, COMPANY_NOTE);
+    area.value = COMPANY_NOTE;
+    company.after(note(`Je n’ai pas pu la copier. Sélectionne-la ci-dessous, puis copie-la (${COPY_KEYS}).`), area);
+    company.remove();
+    area.focus();
+    area.select();
   }, { kind: 'secondary', small: true, act: 'note-entreprise' });
   gui.screen.append(h('ul', { class: 'bullets how' },
     h('li', {}, autoMode()
@@ -462,7 +493,7 @@ function showChoose(next = G.next || { demande: 'debut' }, said = null, wait = t
   const gen = screen('choisir');
   const pasted = h('p', { class: 'note' }, button('J’ai déjà une capture', () => turnToPaste(next), { kind: 'ghost', small: true, act: 'deja-capture' }));
   if (G.auto === 'selecteur') {
-    say(said ? 'worried' : 'idle', 'Montre-moi ta fenêtre.', said || 'Clique sur « Choisir la fenêtre » : ton Mac te montre tes fenêtres. Clique sur celle de ton logiciel, puis sur le bouton qui apparaît au milieu.');
+    say(said ? 'worried' : 'idle', 'Montre-moi ta fenêtre.', said || `Clique sur « Choisir la fenêtre » : ton Mac te montre tes fenêtres. Clique sur celle de ton logiciel, puis sur ${SHARE_BUTTON}.`);
     const pick = button('Choisir la fenêtre', () => pickWindow(gen, pick), { act: 'next' });
     gui.screen.append(note('Ton logiciel n’est pas ouvert ? Ouvre-le d’abord.'),
       note('Pendant le guide, une petite icône de partage reste en haut de ton écran : c’est normal.'), pasted);
@@ -473,8 +504,10 @@ function showChoose(next = G.next || { demande: 'debut' }, said = null, wait = t
   say(said ? 'worried' : 'idle', 'Montre-moi ta fenêtre.', said || 'Clique une fois dans la fenêtre de ton logiciel : je la reconnais tout seul.');
   const left = h('span', { class: 'chrono-time' }, `${G.secondes} s`);
   if (wait) gui.screen.append(h('p', { class: 'countdown' }, 'Temps pour cliquer : ', left));
-  gui.screen.append(note('Ton logiciel n’est pas ouvert ? Ouvre-le d’abord, puis clique dedans.'),
-    note(`Il est réduit ? Clique sur son icône ${DOCK}, puis dans sa fenêtre.`), pasted);
+  // Opened while Bibo waits, its first window (a splash, the login) or Windows' Start would be taken
+  // for it: the wait stops until the program is ready.
+  const closed = h('p', { class: 'note' }, button('Mon logiciel n’est pas encore ouvert', () => showOpenFirst(next), { kind: 'ghost', small: true, act: 'pas-ouvert' }));
+  gui.screen.append(closed, note(`Il est réduit ? Clique sur son icône ${DOCK}, puis dans sa fenêtre.`), pasted);
   const list = button('Choisir dans une liste', showList, { kind: 'secondary', act: 'liste' });
   gui.actions.append(stopButton(), list);
   if (!wait) gui.actions.append(button('Réessayer', () => showChoose(next), { act: 'next' }));
@@ -482,6 +515,14 @@ function showChoose(next = G.next || { demande: 'debut' }, said = null, wait = t
   if (wait) list.focus({ preventScroll: true });
   else focusMain();
   if (wait) waitClick(gen, left);
+}
+
+// The program to open first: no wait meanwhile, then « Il est ouvert » starts it.
+function showOpenFirst(next) {
+  screen('ouvrir');
+  say('idle', 'Ouvre ton logiciel.', 'Attends qu’il soit prêt (connecte-toi si besoin), puis clique « Il est ouvert ».');
+  gui.actions.append(stopButton(), button('Il est ouvert', () => showChoose(next), { act: 'next' }));
+  focusMain();
 }
 
 async function waitClick(gen, left) {
@@ -510,7 +551,7 @@ async function waitClick(gen, left) {
 // macOS 14 and later: the system's picker, then the window it gave (its name only from macOS 15.2).
 async function pickWindow(gen, pick) {
   pick.disabled = true;
-  say('idle', 'Choisis ta fenêtre.', 'Clique sur la fenêtre de ton logiciel, puis sur le bouton qui apparaît au milieu.');
+  say('idle', 'Choisis ta fenêtre.', `Clique sur la fenêtre de ton logiciel, puis sur ${SHARE_BUTTON}.`);
   G.waiting = true;
   let f;
   try {
@@ -557,12 +598,14 @@ async function chooseWindow(id) {
 }
 
 // The window is kept for the session: its program fills the « Logiciel » field, and a session going on
-// looks at it straight away.
+// looks at it straight away. The window that drew black, chosen again, draws black again: the paste.
 function chosen(f) {
   G.fenetre = f;
-  G.collage = false;
+  G.collage = f.id === G.noire;
   G.logiciel = guessProgram(f) || G.logiciel;
-  if (G.goal) return lookAuto(G.next || { demande: G.steps ? 'fait' : 'debut' });
+  const next = G.next || { demande: G.steps ? 'fait' : 'debut' };
+  if (G.goal && G.collage) return askCapture(next, { title: 'Cette fenêtre ne se laisse pas prendre en photo.', text: 'Fais une capture toi-même et colle-la ici : je te montre comment.' });
+  if (G.goal) return lookAuto(next);
   showGoal();
 }
 
@@ -628,7 +671,8 @@ function chooseFailed(e) {
 function showGoal(said = '') {
   const gen = screen('objectif');
   const win = autoShot() ? G.fenetre : null;
-  say('idle', 'Qu’est-ce que tu veux faire ?', said || (win
+  // The program's name not found in the window (macOS 14's picker, a site Bibo does not know): asked.
+  say('idle', 'Qu’est-ce que tu veux faire ?', said || (win && G.logiciel
     ? 'Dis-moi ce que tu veux faire dans ton logiciel : je te guide une étape à la fois.'
     : 'Dis-moi dans quel logiciel, et ce que tu veux y faire : je te guide une étape à la fois.'));
   G.goal = false;
@@ -726,6 +770,7 @@ function shotFailed(e, next) {
   const kind = (e && e.kind) || '';
   if (kind === 'capture_noire') {
     G.collage = true;
+    G.noire = G.fenetre ? G.fenetre.id : null;
     return askCapture(next, { title: 'Ton logiciel ne me laisse pas le prendre en photo.', text: 'Fais une capture toi-même et colle-la ici : je te montre comment.' });
   }
   if (kind === 'capture_indisponible') return chooseFailed(e);
@@ -791,8 +836,8 @@ function askCapture(next, said = null) {
   if (G.step) gui.actions.append(button('Retour', () => showAnswer(G.step, G.stepLook), { kind: 'secondary', act: 'back' }));
   // The first capture: the objective or the program can still be put right.
   else if (next.demande === 'debut' && G.goal) gui.actions.append(button('Retour', () => showGoal(), { kind: 'secondary', act: 'back' }));
-  // Bibo can take the photo here: back to it.
-  if (G.auto) gui.actions.append(button('Choisir ma fenêtre', () => showChoose(next), { kind: 'secondary', act: 'auto' }));
+  // Bibo can take the photo here: back to it, in another window than the one that drew black.
+  if (G.auto) gui.actions.append(button(G.noire == null ? 'Choisir ma fenêtre' : 'Choisir une autre fenêtre', () => showChoose(next), { kind: 'secondary', act: 'auto' }));
   zone.focus();
 }
 
@@ -1168,10 +1213,15 @@ function relookButton() {
   return button(autoShot() ? 'Regarde à nouveau' : 'Nouvelle capture', relook, { act: 'next' });
 }
 
+// Bibo photographs the window chosen, never another: one the step opened (a second window, a new
+// file) is chosen again (G7).
+const NEW_WINDOW = 'Une nouvelle fenêtre s’est ouverte ? Choisis-la : je ne regarde que celle que tu m’as montrée.';
+
 function showNotHere(e) {
   screen('pas-ici');
   say('worried', 'Je ne vois pas ça dans cette fenêtre.', '');
   gui.screen.append(h('p', { class: 'consigne' }, e.consigne), ...banners(e), ...counters(e));
+  if (autoShot()) gui.screen.append(note(NEW_WINDOW));
   gui.actions.append(stopButton());
   if (autoShot()) gui.actions.append(button('Choisir une autre fenêtre', () => showChoose({ demande: G.steps ? 'fait' : 'debut' }), { kind: 'secondary', act: 'autre-fenetre' }));
   gui.actions.append(relookButton());
@@ -1203,6 +1253,10 @@ function showConfirm(e) {
     showAnswer(v, faite ? G.look : G.stepLook);
   };
   if (was) gui.screen.append(h('p', { class: 'consigne' }, was.consigne));
+  if (autoShot()) {
+    gui.screen.append(h('p', { class: 'note' }, NEW_WINDOW, ' ',
+      button('Choisir une autre fenêtre', () => showChoose({ demande: 'fait' }), { kind: 'ghost', small: true, act: 'nouvelle-fenetre' })));
+  }
   gui.actions.append(button('Je réessaie', () => decide(false), { kind: 'secondary', act: 'reessaie' }), button('Oui, c’est fait', () => decide(true), { act: 'next' }));
   focusMain();
 }

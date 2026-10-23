@@ -355,10 +355,11 @@ async fn guide_open(app: tauri::AppHandle) -> Result<(), String> {
     open_guide(&app).map_err(|e| e.to_string())
 }
 
-/// The installer's welcome offers the guide: the brain and Claude Code are there (nothing is run).
+/// The installer's welcome offers the guide, with a whole brain or its folder only (guide::Offre):
+/// Claude Code's login is asked only when the brain is not whole.
 #[tauri::command]
-async fn guide_offert() -> bool {
-    tauri::async_runtime::spawn_blocking(guide::offert).await.unwrap_or(false)
+async fn guide_offert() -> guide::Offre {
+    tauri::async_runtime::spawn_blocking(guide::offert).await.unwrap_or(guide::Offre::Non)
 }
 
 /// « Fermer le guide »: its window goes, the session with it (Destroyed), the installer's comes back.

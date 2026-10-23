@@ -403,6 +403,13 @@ jobs:
       # against the SHA-256 install.sh and install.ps1 pin, run as the step runs it, into a throwaway home.
       - name: The Codex step installs the pinned Codex
         run: cargo test --locked -- --ignored codex_real
+      # The guide's capture on the runner's own desktop (capture/win.rs): windows of known colours drawn by
+      # a program compiled there (tests/fixtures/guide/atelier.cs), a click in one, Start opened while Bibo
+      # waits, a dialog, a protected window, a terminal, a page in the browser. Their pixels are counted in
+      # memory; nothing of a user's.
+      - name: The guide sees a real desktop's windows (Windows)
+        if: runner.os == 'Windows'
+        run: cargo test --locked -- --ignored bureau --test-threads=1
       - name: Clippy, warnings are errors
         run: cargo clippy --locked --all-targets -- -D warnings
       - name: The windows' scripts parse

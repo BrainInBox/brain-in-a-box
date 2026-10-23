@@ -43,3 +43,6 @@ body.guide.reduit .consigne { padding-right: 0; }
 .window-line:disabled { opacity: 0.6; cursor: default; }
 
 .window-why { color: var(--ink-2); }
+
+/* The note for the company, when the window could not copy it: to select and copy by hand. */
+.company-note { display: block; margin-top: 6px; font-size: 12px; line-height: 1.4; resize: vertical; }

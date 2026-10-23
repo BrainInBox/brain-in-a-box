@@ -42,23 +42,26 @@
   //   it); &gtk=1 WebKitGTK's paste (no image in the event: Rust reads the
   //   system's clipboard), &gtk=vide that clipboard empty too; &recolle=<screen> once there, a Ctrl+V of text (no
   //   image in the event nor, from then on, in the system's clipboard); &compte=<n> looks already sent this session;
-  //   &complet=0 the install stopped once the brain's folder was there (D1: the guide works, no summary runs).
+  //   &complet=0 the install stopped once the brain's folder was there (D1: the guide works, no summary runs);
+  //   &copie=0 the window copies nothing to the clipboard.
   // The automatic capture (capture/, guide_status's « capture »): &cap=clic (Windows, X11: a click in the window,
   // 45 s), &cap=selecteur (macOS 14+: the system's picker); paste mode, as guide.rs says why: &cap=macos_13,
   // wayland, sans_compositeur (default: paste mode, « indisponible »). Then what the user's windows do:
   //   &clic=odoo (default: Odoo in Edge), sage (a program of its own), pdf (a PDF reader, « Sage » in its title),
-  //   terminal, aucun (no click in 45 s), ferme
+  //   arc (a site Bibo does not know, in a browser that names itself « Arc »), terminal, aucun (no click in 45 s), ferme
   //   (the window clicked closes before « Oui »); &selecteur=ferme (the picker closed once), introuvable (the window
   //   picked closes before it is kept, once), refuse (macOS
   //   refuses it), vide (macOS 14: the picker gives no name); &rate=noire|reduite|fermee[:n] the n-th photo
-  //   (default the first) black (and every one after: a protected program), of a minimized window, of a closed one.
+  //   (default the first) black (and every one after, of that window: a protected program), of a minimized
+  //   window, of a closed one.
   // Driving, for screenshots and app/dev/screens.mjs: &go=<screen> clicks through to that screen
   // (objectif, coller, apercu, cacher, regarde, etape, question, pas-ici, bloque, confirmer, coince, abandon,
   // fin, enregistrer, enregistre, erreur, connexion, choisir, fenetre, liste, photo, reduite, introuvable…),
   // &nth=<n> its n-th arrival, &click=<act>[,<act>…] those buttons first, in that order; &cache=1 draws a zone on
   // « Cacher une zone »; &sent=1 opens « Voir exactement ce que j'envoie »; &pause=1 leaves the look running
   // (« Arrêter »); &colle-avant=1 pastes a capture where the window is to be chosen; &colle-etape=1 pastes one
-  // on the first step instead of « C'est fait »; &arret=1 clicks « Arrêter le guide » on the first step.
+  // on the first step instead of « C'est fait »; &arret=1 clicks « Arrêter le guide » on the first step
+  // (&arret=<screen>[:<n>]: on that screen's n-th arrival), and &colle-arret=1 pastes a capture on its question.
   // Checks the driver makes (the run then ends elsewhere than &go, and app/dev/screens.mjs fails it):
   //   - a word of the system's inside (Wayland, X11, compositeur…) on the screen: « mot-interdit »;
   //   - the page leaves the wait for a click, or the picker, without telling Rust: « attente-oubliee »;
@@ -68,6 +71,10 @@
   //     program, the step itself, is no gesture of the guide's.
   (() => {
     const P = new URLSearchParams(location.search);
+    if (P.get('copie') === '0') {
+      Object.defineProperty(navigator, 'clipboard', { value: { writeText: () => Promise.reject(new Error('refusé')) }, configurable: true });
+      document.execCommand = () => false;
+    }
     if (P.get('os') === 'windows') window.BIBO_OS = 'windows';
     if (P.get('os') === 'linux') window.BIBO_OS = 'linux';
     const g = P.get('g') || 'ok';
@@ -194,6 +201,7 @@
       terminal: window_(11, 'Windows PowerShell', 'Windows PowerShell', { terminal: true }),
       explorer: window_(12, 'Explorateur de fichiers', 'Documents'),
       pdf: window_(13, 'Adobe Acrobat Reader', 'Facture Sage 2026-118.pdf'),
+      arc: window_(14, 'Arc', 'Factures - Axonaut'),
     };
     // The list: the top one first, a minimized one, a terminal.
     const LIST = [WINDOWS.odoo, { ...WINDOWS.sage, reduite: true }, WINDOWS.terminal, WINDOWS.explorer];
@@ -213,6 +221,8 @@
     let offered = [];
     let chosenWindow = null;
     let closedOnce = false;
+    // &rate=noire: the window that drew black, as it stays (another one draws).
+    let black = null;
     // &compte: looks already sent, as late in a long session.
     const COMPTE = Number(P.get('compte')) || 0;
     let regards = COMPTE;
@@ -394,7 +404,10 @@
         if (!chosenWindow) throw { kind: 'sans_fenetre' };
         looks += 1;
         const at = Number(rateAt) || 1;
-        if (rate === 'noire' && looks >= at) throw { kind: 'capture_noire' };
+        if (rate === 'noire' && looks >= at && (black === null || black === chosenWindow.id)) {
+          black = chosenWindow.id;
+          throw { kind: 'capture_noire' };
+        }
         if (rate === 'reduite' && looks === at) throw { kind: 'fenetre_reduite' };
         if (rate === 'fermee' && looks === at) {
           chosenWindow = null;
@@ -485,6 +498,8 @@
     const nth = Number(P.get('nth')) || 1;
     let seen = '';
     let arrivals = 0;
+    // Each screen's arrivals.
+    const visits = {};
     let acted = '';
     let drew = false;
     function paste() {
@@ -526,7 +541,9 @@
     const NEVER = /wayland|x11|xorg|composit/i;
     let pastedOnStep = false;
     const dropOn = P.get('lache') === '1' ? 'etape' : P.get('lache');
+    const [stopOn, stopAt] = (P.get('arret') === '1' ? 'etape' : P.get('arret') || '').split(':');
     let stopAsked = false;
+    let pastedOnStop = false;
     setInterval(() => {
       const q = (sel) => document.querySelector(sel);
       if (halted) {
@@ -541,6 +558,7 @@
       if (s !== seen) {
         seen = s;
         acted = '';
+        visits[s] = (visits[s] || 0) + 1;
         if (s === go) arrivals += 1;
         // A step or the end: the gestures since « C'est fait », measured.
         if ((s === 'etape' || s === 'fin') && cycle !== null) {
@@ -556,7 +574,8 @@
         return;
       }
       if (s === P.get('recolle') && !repasted && !clicks.length) { repasted = true; paste(); return; }
-      if (s === 'etape' && P.get('arret') && !stopAsked) { stopAsked = true; q('[data-act=stop]').click(); return; }
+      if (s === stopOn && visits[s] === (Number(stopAt) || 1) && !stopAsked) { stopAsked = true; q('[data-act=stop]').click(); return; }
+      if (s === 'arreter' && P.get('colle-arret') && !pastedOnStop) { pastedOnStop = true; paste(); return; }
       if (s === go && arrivals >= nth && !clicks.length) return;
       if (acted === s) return;
       if (s === 'objectif') {
