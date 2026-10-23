@@ -20,7 +20,7 @@ use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{LazyLock, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use regex::Regex;
@@ -1016,7 +1016,7 @@ struct Waits {
     stopped: u64,
     begun: u64,
     /// The wait running: its number (None: the desk tests', without a page) and its flag.
-    current: Option<(Option<u64>, std::sync::Arc<AtomicBool>)>,
+    current: Option<(Option<u64>, Arc<AtomicBool>)>,
 }
 
 /// Each image that may leave has its number, never given twice.
@@ -1423,7 +1423,7 @@ impl Guide {
             complet: detect::brain(home, &agents::current(home)).complete(),
             vu: home.join(STORE).join("vu").is_file(),
             prudent: self.launch.prudent.load(Ordering::SeqCst),
-            attentes: { let w = lock(&self.waits); w.stopped.max(w.begun) },
+            attentes: self.numbered(),
         }
     }
 
@@ -1545,9 +1545,15 @@ impl Guide {
         Ok(())
     }
 
+    /// The highest number a wait or a stop used: the page numbers its next wait above it.
+    fn numbered(&self) -> u64 {
+        let w = lock(&self.waits);
+        w.stopped.max(w.begun)
+    }
+
     /// A wait begins, numbered by the page (`Waits`): over at once if its stop came first, or if a newer
     /// one began. One the page left running stops.
-    fn begin_wait(&self, attente: Option<u64>) -> Result<std::sync::Arc<AtomicBool>, GuideError> {
+    fn begin_wait(&self, attente: Option<u64>) -> Result<Arc<AtomicBool>, GuideError> {
         let mut w = lock(&self.waits);
         if attente.is_some_and(|n| n <= w.stopped.max(w.begun)) {
             return Err(GuideError::Annule);
@@ -1556,15 +1562,15 @@ impl Guide {
             older.store(true, Ordering::SeqCst);
         }
         w.begun = w.begun.max(attente.unwrap_or(0));
-        let stop = std::sync::Arc::new(AtomicBool::new(false));
+        let stop = Arc::new(AtomicBool::new(false));
         w.current = Some((attente, stop.clone()));
         Ok(stop)
     }
 
     /// The wait over: no longer the one a stop stops.
-    fn end_wait(&self, stop: &std::sync::Arc<AtomicBool>) {
+    fn end_wait(&self, stop: &Arc<AtomicBool>) {
         let mut w = lock(&self.waits);
-        if w.current.as_ref().is_some_and(|(_, s)| std::sync::Arc::ptr_eq(s, stop)) {
+        if w.current.as_ref().is_some_and(|(_, s)| Arc::ptr_eq(s, stop)) {
             w.current = None;
         }
     }
@@ -3832,8 +3838,8 @@ mod tests {
         assert_eq!(env[repair.len()..], [("DISABLE_ERROR_REPORTING", "1".to_string())]);
         assert!(!repair.iter().any(|(k, _)| *k == "DISABLE_ERROR_REPORTING"));
         // A subscription's setup-token: the only credential that goes with it.
-        let with = child_env(Path::new("/Users/jo"), "jo", "/bin", Path::new("/t"), Some("sk-ant-oat01-x".into()));
-        assert_eq!(with[env.len()..], [("CLAUDE_CODE_OAUTH_TOKEN", "sk-ant-oat01-x".to_string())]);
+        let with = child_env(Path::new("/Users/jo"), "jo", "/bin", Path::new("/t"), Some("jeton-de-test".into()));
+        assert_eq!(with[env.len()..], [("CLAUDE_CODE_OAUTH_TOKEN", "jeton-de-test".to_string())]);
     }
 
     /// The login as the diagnosis reads it (detect::login_of, C5): a subscription's setup-token is the

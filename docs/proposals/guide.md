@@ -1216,3 +1216,41 @@ Même appel (s1, Opus, low) avec et sans : ligne d'init identique champ par cham
    - terrain : `terrain.py`, `terrain_app.py`, `fake_claude.py`, `pilote_windows.cs`, `ecrans_guide.py` (nouveau), `terrain.yml` (xclip) ;
    - le reste : tests, fixtures, maquette, `test-hooks.sh`, CODEOWNERS, `terrain-agent.md`, la spec.
 7. La correction Linux (point 4) n'était pas au programme de la phase 5 : sans elle, le guide ne marchait pas sous Linux. `Cargo.toml` gagne aussi la fonctionnalité `test` de `tauri` pour les tests seulement, hors Windows (point 5).
+
+## 23. Capture automatique : livré par #70 et par ses suivis (chantier B), et ce qui reste (2026-10-23)
+
+**Prime sur le corps et sur §20 à §22 là où elle les contredit.** §22 écart 1 (« pas de choix de fenêtre dans le parcours ») est levé sous Windows et macOS.
+
+**Livré par #70 (chantier C4)**
+- La capture automatique branchée sur la fenêtre du guide :
+  - Windows et X11 : un clic dans la fenêtre du logiciel, 45 s avec un compte à rebours, ou « Choisir dans une liste » au clavier ;
+  - macOS 14 et plus : le sélecteur du système ;
+  - puis « C'est bien celle-ci ? » et le nom du logiciel prérempli depuis la fenêtre (R5).
+- Une étape coûte 2 gestes au lieu de 6 ou 7 : « C'est fait », puis « Envoyer à Claude ».
+- Chaque échec a son écran et repasse au collage : capture noire (la fenêtre retenue), fenêtre réduite ou fermée, terminal, sélecteur fermé ou refusé, nouvelle fenêtre ouverte par une étape. L'aperçu reste.
+- Aussi : la note pour l'entreprise (point 19), les consignes touche par touche et « Arrêter le guide ? » (point 20), D1 (`guide_offert` : `true`, `"dossier"` ou `false`), les 11 tests `bureau_*` dans la CI Windows.
+
+**Livré par les suivis (chantier B, branche `feat/lambda-guide-suivi`)**
+1. **La connexion lue comme le diagnostic** (`detect::login_of`, C5) :
+   - un jeton d'abonnement (`CLAUDE_CODE_OAUTH_TOKEN`, celui de `claude setup-token`) est l'abonnement, plus un compte « facturé ». Il est passé au Claude du guide, comme le kit le passe (`_headless_claude.TOKEN_VAR`) : le seul identifiant transmis, à un Claude sans outil ;
+   - un compte claude.ai dont Claude Code ne dit pas le forfait (un compte gratuit, le plus souvent) n'est plus « prêt » : `Ia::SansForfait`. L'écran dit « Le guide demande Claude Pro ou Max. », le prix (environ 20 € par mois), « Voir Claude Pro » (claude.ai/upgrade) et « Me reconnecter » (Claude Code relit le forfait à la connexion) ;
+   - un compte payé à chaque message : le texte dit à qui demander de l'aide.
+2. **Les attentes numérotées** (sécu 3 de la relecture de C4). La page numérote chaque attente d'un clic ou du sélecteur, et son arrêt nomme ce numéro (`guide::Waits`). `lib.rs` : 3 signatures, `guide_attendre_clic(attente)`, `guide_choisir(id, attente)` et `guide_annuler(attente)`.
+   - Un arrêt arrivé avant son attente la termine dès qu'elle commence. Elle ne tourne plus 45 s pour rien.
+   - Un arrêt tardif d'une attente plus ancienne n'arrête jamais la suivante.
+   - Une nouvelle attente arrête celle que la page aurait laissée en cours.
+   - Le statut donne le numéro d'où repartir : une page rouverte ne réutilise jamais un numéro.
+3. **Le message de limite** : l'heure à la française (« jusqu'à 15 h 30 », « demain 9 h »), puis « Les résumés de ton cerveau comptent aussi dans cette limite : celui de midi, celui du soir, et le rattrapage d'un soir où ton PC était éteint. » Chaque passage du résumé rattrape d'abord les soirs manqués, jusqu'à 3 (C6). Rien n'est mesuré : il n'y a pas de compte Pro de test.
+4. **Le parcours de nuit en capture automatique** (`terrain_app.py`, jambes `app`) :
+   - **Windows** : « Atelier Demo », un vrai programme WinForms compilé sur la VM par le `csc` du .NET Framework (`AssemblyTitle`, d'où Bibo tire son nom). Il montre la liste de factures dessinée par `ecrans_guide.py`, réduite à 800 × 500, avec deux vrais boutons posés sur les boutons dessinés. Le robot clique « Importer » dans sa fenêtre : Bibo la reconnaît. Puis « Oui, c'est elle », le nom du logiciel déjà rempli, l'objectif tapé, deux photos prises par Bibo, et « Nouveau » cliqué dans le logiciel entre les deux ;
+   - **macOS** : la même page dans une fenêtre de Chrome (`--app`, profil à part). Le robot clique « Choisir la fenêtre », puis pose le pointeur sur la fenêtre et clique le bouton que macOS y montre (« Share This Window »), comme le test de bureau de #61 (`pilote_mac.py`). Le nom du logiciel est tapé, comme pour un site ;
+   - **Linux** : le collage, comme avant. Bibo attend un clic, le robot colle à la place ;
+   - la nuit échoue en nommant le cas : photo noire, fenêtre introuvable ou réduite, terminal, collage demandé, deuxième photo identique à la première ;
+   - les captures de nuit du guide (G-41 à G-48 de l'audit, faites en collage) sont refaites : `choisir`, `fenetre`, `objectif`, `photo`, `apercu`, `regarde`, `etape`, `etape-anneau`. Les images du guide sur le site (`site/img/guide-objectif.webp`, `site/img/guide-etape.webp`) viennent des captures d'avant : elles sont à refaire par le chantier D.
+
+**Reste à faire (non mesuré)**
+- **Retina** : la photo du sélecteur est prise en pixels réels (`pointPixelScale`), puis réduite par `shot.rs`. Les VM macOS sont à l'échelle 1 : un écran 2× n'a jamais été essayé.
+- **DPI de Windows** : le fil de la capture passe en Per-Monitor v2, mais les VM sont à 100 %. 125 % et 150 % restent à l'essai de Chad, sur un portable Windows 11 en français.
+- **Applications du Store** : leur fenêtre appartient à `ApplicationFrameHost`, dont le nom serait affiché. Aucune n'a été photographiée.
+- **DirectX, OpenGL, programmes lancés en administrateur** : la capture noire est détectée et mène au collage, mais aucun vrai logiciel de ce genre n'a été essayé (Sage ?).
+- Aussi : le libellé français du sélecteur de macOS, jamais vu ; le quota d'un compte Pro, jamais mesuré.
