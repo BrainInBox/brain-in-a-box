@@ -354,6 +354,20 @@ pub fn run_streaming(
     limit: Duration,
     on_line: &mut dyn FnMut(String),
 ) -> i32 {
+    run_streaming_until(program, args, env, cwd, limit, &AtomicBool::new(false), on_line)
+}
+
+/// `run_streaming`, also stopped with everything it started once `cancel` is set (from another
+/// thread, or `on_line`): -1 then, and the caller says why.
+pub fn run_streaming_until(
+    program: &Path,
+    args: &[&str],
+    env: &[(&str, Option<&str>)],
+    cwd: Option<&Path>,
+    limit: Duration,
+    cancel: &AtomicBool,
+    on_line: &mut dyn FnMut(String),
+) -> i32 {
     let mut cmd = command(program);
     cmd.args(args).stdin(Stdio::null());
     for (k, v) in env {
@@ -372,13 +386,22 @@ pub fn run_streaming(
             return -1;
         }
     };
-    let code = supervise(&mut child, &rx, limit, None, &mut |_, bytes| {
+    let code = supervise(&mut child, &rx, limit, Some(cancel), &mut |_, bytes| {
         on_line(strip_ansi(String::from_utf8_lossy(&bytes).trim_end_matches('\n')));
     });
     code.unwrap_or_else(|| {
-        on_line(format!("Toujours pas fini au bout de {} : j'arrête.", minutes(limit)));
+        if !cancel.load(Ordering::SeqCst) {
+            on_line(format!("Toujours pas fini au bout de {} : j'arrête.", minutes(limit)));
+        }
         -1
     })
+}
+
+/// Starts a helper that lives as long as the caller keeps its `Child` (and the pipe to its stdin, when
+/// `stdin` is piped): nothing of an AppImage reaches it.
+#[cfg(unix)]
+pub fn spawn_held(program: &Path, args: &[&str], stdin: Stdio) -> io::Result<Child> {
+    outside_appimage(&mut Command::new(program)).args(args).stdin(stdin).stdout(Stdio::null()).stderr(Stdio::null()).spawn()
 }
 
 /// How `run_isolated` runs a program that must not inherit anything from the app.

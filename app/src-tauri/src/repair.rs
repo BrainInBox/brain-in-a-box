@@ -198,11 +198,55 @@ const CAUSES: &[Entry] = &[
         if cfg!(windows) { "Windows bloque l'écriture dans ton dossier Documents (protection contre les ransomwares)." }
         else { "macOS refuse l'accès à ton dossier Documents." }),
     Entry::new("settings_json_invalide", BRAIN, "le fichier de réglages de Claude est illisible.",
-        "Ton fichier de réglages Claude est abîmé. Je n'y touche pas : l'équipe va t'aider."),
+        "Ton fichier de réglages Claude est abîmé. Je n'y touche pas : envoie le rapport à la personne qui t'a conseillé Bibo."),
     Entry::new("cle_voyage_refusee", BRAIN, "la clé Voyage a été refusée.", "Voyage a refusé la clé."),
     Entry::new("base_verrouillee", BRAIN, "la base de mémoire est utilisée par un autre programme.",
         "La base de mémoire est utilisée par un autre programme."),
+    // install.ps1's own stops (BIAB_ARRET, see STOPS).
+    Entry::new("winget_absent", WINDOWS_BRAIN, "winget est absent ou ne démarre pas, et Python n'a pas pu s'installer sans lui.",
+        "Il manque à ce PC l'outil d'installation de Windows (winget), et Python n'a pas pu s'installer sans lui."),
+    Entry::new("python_absent", WINDOWS_BRAIN, "Python n'a pu s'installer ni par winget ni par son installeur officiel.",
+        "Python, dont ton cerveau a besoin, n'a pas pu s'installer."),
+    Entry::new("powershell_verrouille", WINDOWS_BRAIN, "PowerShell est verrouillé par l'entreprise (mode de langage restreint).",
+        "Ton PC bloque PowerShell, le programme qui installe ton cerveau : c'est une règle de ton entreprise."),
+    Entry::new("strategie_entreprise", WINDOWS_BRAIN,
+        "une stratégie de l'entreprise interdit d'installer des programmes (winget ou un installeur bloqués).",
+        "Une règle de ton entreprise interdit d'installer des programmes sur ce PC."),
+    Entry::new("proxy_entreprise", WINDOWS_BRAIN, "le proxy de l'entreprise bloque les téléchargements.",
+        "Le réseau de ton entreprise bloque les téléchargements de l'installation."),
+    Entry::new("antivirus_bloque", WINDOWS_BRAIN, "un antivirus a bloqué ou supprimé un programme d'installation.",
+        "Ton antivirus a bloqué un programme dont l'installation a besoin."),
+    Entry::new("choix_ia", WINDOWS_BRAIN, "l'installeur refuse le choix d'IA (agents.json, ou les réglages de Codex).",
+        "Ton choix d'IA (Claude ou Codex) ne peut pas être appliqué tel quel."),
 ];
+
+/// What the user does about each stop install.ps1 says (BIAB_ARRET=<cause>, the line before it stops):
+/// the cause's sentence, then this one. Every stop it can make is here, each a cause above.
+const STOPS: &[(&str, &str)] = &[
+    ("reseau", "Vérifie ton Wi-Fi, puis clique sur « Réessayer ». En données mobiles, attends d'avoir un Wi-Fi."),
+    ("sources_abimees", "Clique sur « Réessayer » : je le retélécharge."),
+    ("acces_documents_refuse",
+        "N'y autorise aucun programme toi-même : clique sur « Réessayer » ; si ça recommence, envoie le rapport à la personne qui t'a conseillé Bibo."),
+    ("winget_absent",
+        "Installe « Programme d'installation d'application » (App Installer) depuis le Microsoft Store, puis clique sur « Réessayer »."),
+    ("python_absent",
+        "Clique sur « Réessayer ». Si ça recommence, installe Python toi-même depuis python.org (bouton « Download »), puis clique sur « Réessayer »."),
+    ("powershell_verrouille", "Demande à ton service informatique s'il peut installer Brain in a Box pour toi, ou installe-le sur un PC personnel."),
+    ("strategie_entreprise", "Demande à ton service informatique d'installer Python 3 sur ce PC, puis clique sur « Réessayer »."),
+    ("proxy_entreprise",
+        "Demande à ton service informatique de laisser passer python.org, github.com, claude.ai et bun.sh, ou installe depuis un autre réseau (chez toi), puis clique sur « Réessayer »."),
+    ("antivirus_bloque",
+        "Ne le désactive pas : installe Python toi-même depuis python.org, puis clique sur « Réessayer ». Sur un PC d'entreprise, demande-le à ton service informatique."),
+    ("choix_ia", "Rien n'a changé dans ton cerveau : envoie le rapport à la personne qui t'a conseillé Bibo."),
+];
+
+/// The window's sentence for a stop of install.ps1: what happened, then what to do. None for a cause it
+/// does not know (an older or newer install.ps1, a line a program printed).
+pub fn stop_message(id: &str) -> Option<String> {
+    let (_, todo) = STOPS.iter().find(|(s, _)| *s == id)?;
+    let cause = CAUSES.iter().find(|e| e.id == id)?;
+    Some(format!("{} {todo}", local(cause.user)))
+}
 
 const REMEDIES: &[Entry] = &[
     Entry::new("relancer", ALL, "relancer l'étape telle quelle.", "Relancer l'étape « {étape} »."),
@@ -231,8 +275,12 @@ const ACTIONS: &[Entry] = &[
     Entry::new("ouvrir_mise_a_jour", CLT, "installer les outils depuis Mise à jour de logiciels.",
         "Installe les Command Line Tools proposés dans Mise à jour de logiciels.")
     .pane("software_update"),
-    Entry::new("verifier_reseau", ALL, "vérifier le Wi-Fi, couper le VPN.",
-        "Vérifie ton Wi-Fi. Si tu as un VPN ou un réseau d'entreprise, coupe-le le temps de l'installation."),
+    Entry::new("verifier_reseau", ALL, "vérifier le Wi-Fi, couper un VPN personnel.",
+        "Vérifie ton Wi-Fi. Si tu as un VPN perso, coupe-le le temps de l'installation."),
+    // A company's PC: nothing of its security is for the user to turn off.
+    Entry::new("demander_informatique", ALL,
+        "sur un ordinateur d'entreprise : demander au service informatique (proxy, règles d'installation, antivirus de l'entreprise).",
+        "Sur un {machine} d'entreprise, ne coupe et ne désactive rien toi-même : demande à ton service informatique de laisser passer les téléchargements de l'installation (github.com, claude.ai, bun.sh)."),
     Entry::new("liberer_espace", ALL, "libérer au moins 5 Go.", "Libère au moins 5 Go sur ton {machine}.").pane("storage"),
     // A Mac asks once for the app itself. On Windows the only way through would be to allow
     // PowerShell, git or Python in protected folders, for every script: never offered.
@@ -246,8 +294,8 @@ const ACTIONS: &[Entry] = &[
         "Quand ton ordinateur te demande ton mot de passe, tape-le : c'est pour installer Obsidian."),
     Entry::new("attendre_mises_a_jour", LINUX_OBSIDIAN, "attendre la fin des mises à jour du système.",
         "Attends que les mises à jour du système soient finies, puis relance."),
-    Entry::new("envoyer_rapport", ALL, "envoyer le rapport à l'équipe.",
-        "Copie le rapport et envoie-le à l'équipe : il contient déjà l'analyse de {ia}."),
+    Entry::new("envoyer_rapport", ALL, "envoyer le rapport à la personne qui a conseillé l'app.",
+        "Envoie le rapport à la personne qui t'a conseillé Bibo : il contient déjà l'analyse de {ia}."),
 ];
 
 const CONFIDENCE: &[&str] = &["haute", "moyenne", "basse"];
@@ -1826,8 +1874,8 @@ impl Session {
         let dossier = blocks(&request, None, step, &failure, &facts, &previous, &known);
         // Claude in Terminal runs commands: a log written to steer it stays with the team.
         if dossier.log_suspect {
-            return Err("Le journal contient des choses inhabituelles : je préfère que l'équipe regarde. \
-                        Copie le rapport et envoie-le-lui."
+            return Err("Le journal contient des choses inhabituelles : je préfère ne pas laisser Claude y toucher. \
+                        Envoie le rapport à la personne qui t'a conseillé Bibo."
                 .into());
         }
         let fail = |e: io::Error| format!("Je n'ai pas pu préparer le dossier pour Claude ({e}).");
@@ -2754,7 +2802,7 @@ pub(crate) mod tests {
         // Linux has no settings page to open: the sentence alone.
         assert_eq!(p.actions[0].pane, if cfg!(target_os = "linux") { None } else { Some("storage") });
         assert_eq!(p.actions[1].pane, None);
-        assert_eq!(p.actions[1].text, "Copie le rapport et envoie-le à l'équipe : il contient déjà l'analyse de Claude.");
+        assert_eq!(p.actions[1].text, "Envoie le rapport à la personne qui t'a conseillé Bibo : il contient déjà l'analyse de Claude.");
         let json = serde_json::to_value(&p).unwrap();
         assert_eq!(json["plan_id"], "20261013-184455-brain");
         assert!(json.get("engine").is_none(), "Claude alone: the plan the window always got");
@@ -4476,5 +4524,47 @@ pub(crate) mod tests {
         assert_eq!(entry["erreur"], json!({ "kind": "auth" }));
         assert_eq!(s.used("brain"), (0, 0), "two refusals that cost nothing: the analysis is given back");
         assert_eq!(s.launches.load(Ordering::SeqCst), 2);
+    }
+    /// Every stop install.ps1 can make (BIAB_ARRET=<cause>) has its sentence here, what happened then
+    /// what to do, and each is a cause of the catalogue (Claude may name it on Windows); no sentence waits
+    /// for a stop install.ps1 never makes.
+    #[test]
+    fn every_stop_of_install_ps1_has_its_sentence() {
+        let ps1 = include_str!("../../../install.ps1");
+        let quoted = Regex::new(r#""([a-z]+(?:_[a-z]+)*)""#).unwrap();
+        let said = Regex::new(r"BIAB_ARRET=([a-z_]+)").unwrap();
+        let body = |name: &str| {
+            let at = ps1.find(&format!("function {name} {{")).unwrap_or_else(|| panic!("{name}"));
+            &ps1[at..at + ps1[at..].find("\n}").unwrap()]
+        };
+        let mut made: HashSet<&str> = HashSet::new();
+        for text in ps1.lines().filter(|l| l.contains("Arret") || l.contains("BIAB_ARRET")).chain([body("Get-ArretPython")]) {
+            made.extend(quoted.captures_iter(text).map(|c| c.get(1).unwrap().as_str()));
+            made.extend(said.captures_iter(text).map(|c| c.get(1).unwrap().as_str()));
+        }
+        let mut made: Vec<&str> = made.into_iter().collect();
+        made.sort();
+        let mut known: Vec<&str> = STOPS.iter().map(|(id, _)| *id).collect();
+        known.sort();
+        assert_eq!(made, known, "install.ps1's stops and the sentences for them");
+        for id in known {
+            let m = stop_message(id).unwrap_or_else(|| panic!("{id} is no cause of the catalogue"));
+            assert!(!m.contains('{') && m.ends_with('.') && m.chars().count() <= 400, "{id}: {m}");
+            assert!(m.contains("« Réessayer »") || m.contains("service informatique") || m.contains("conseillé Bibo"), "{id} does not say what to do: {m}");
+            #[cfg(windows)]
+            assert!(find(CAUSES, "brain", id).is_some(), "Claude cannot name {id}");
+        }
+        assert_eq!(stop_message("pas_une_cause"), None);
+        assert_eq!(stop_message("disque_plein"), None, "a cause install.ps1 never stops on has no stop sentence");
+    }
+
+    /// A company's PC: nothing of its security is for the user to turn off; the VPN to cut is one's own.
+    #[test]
+    fn a_company_pc_is_left_to_its_it_service() {
+        let it = ACTIONS.iter().find(|e| e.id == "demander_informatique").unwrap();
+        let text = it.user_text("brain");
+        assert!(text.contains("service informatique") && text.contains("ne coupe et ne désactive rien"), "{text}");
+        let vpn = ACTIONS.iter().find(|e| e.id == "verifier_reseau").unwrap().user_text("brain");
+        assert!(vpn.contains("VPN perso") && !vpn.contains("entreprise"), "{vpn}");
     }
 }
