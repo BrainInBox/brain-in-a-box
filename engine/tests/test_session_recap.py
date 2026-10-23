@@ -492,6 +492,14 @@ class Brain(unittest.TestCase):
         (brain / "Profil").mkdir(parents=True)
         self.assertIn(self.stop(), self.journal(brain) or "")
 
+    def test_a_profil_folders_soul_md_names_the_language(self):
+        brain = self.root / "older"
+        (brain / "Profil").mkdir(parents=True)
+        (brain / "Profil" / "soul.md").write_text("# Âme\n\n## Langue\nfrançais\n", encoding="utf-8")
+        os.environ["BRAIN_DIR"] = str(brain)
+        self.stop()
+        self.assertTrue(self.journal(brain).startswith(f"# {self.day} — Journal\n\n## 📊 Sessions avec Claude\n"))
+
     def test_no_brain_no_folder(self):
         self.stop()
         self.assertEqual(list(self.home.iterdir()), [], "nothing made in the home folder")

@@ -1579,6 +1579,21 @@ class SessionStart(unittest.TestCase):
         self.assertEqual(lessons, [])
         self.assertIsNone(self.hook(BRAIN_DIR=os.path.join(self.tmp, "gone")), "BRAIN_DIR names the brain")
 
+    def test_an_older_brains_profil_folder_is_read_too(self):
+        """A brain with a Profil folder only (an older brain's, which brain_dir accepts): its soul.md and its
+        lessons, and Claude told where they are."""
+        profil = os.path.join(self.home, "Documents", "Brain", "Profil")
+        os.makedirs(profil)
+        with open(os.path.join(profil, "soul.md"), "w", encoding="utf-8") as f:
+            f.write("# Âme\n\n## Langue\nanglais\n")
+        with open(os.path.join(profil, "lessons.md"), "w", encoding="utf-8") as f:
+            f.write("## 2026-10-01\n- **profil** -> règle : lue\n")
+        ctx, lessons = self.brain(self.hook(LANG="fr_FR.UTF-8"))
+        self.assertIn("Speak to them in English (Profil/soul.md).", ctx)
+        self.assertEqual(lessons, ["- [2026-10-01] **profil** -> règle : lue"])
+        self.assertIn("(Profil/lessons.md, oldest first)", ctx)
+        self.assertNotIn("Profile/", ctx)
+
     def test_said_again_after_clear_and_compact_not_on_resume(self):
         self.etat()
         self.vault("## 2026-10-01\n- **one** -> rule: x\n")
