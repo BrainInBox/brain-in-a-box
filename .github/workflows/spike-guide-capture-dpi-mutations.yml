@@ -1,0 +1,43 @@
+# Throwaway (branch spike/guide-capture-dpi-mutations, deleted afterwards): on the CI's Windows at 125
+# and 150 %, the test of #78 green on its code, then red with each protection of a stretched window's
+# capture taken out (spike/guide-capture-dpi/mutations.py).
+name: spike-guide-capture-dpi-mutations
+
+on:
+  push:
+    branches: [spike/guide-capture-dpi-mutations]
+
+permissions:
+  contents: read
+
+jobs:
+  mutations:
+    name: mutations (${{ matrix.echelle }} %)
+    strategy:
+      fail-fast: false
+      matrix:
+        echelle: [125, 150]
+    runs-on: windows-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: app/src-tauri
+    env:
+      BIBO_ECHELLE: ${{ matrix.echelle }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build the tests
+        run: cargo test --locked --lib --no-run
+      - name: The screen, 1920x1080 at ${{ matrix.echelle }} %
+        run: |
+          & "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /target:exe "/out:$env:RUNNER_TEMP\echelle.exe" ..\..\.github\ci\echelle.cs
+          if ($LASTEXITCODE) { exit 1 }
+          & "$env:RUNNER_TEMP\echelle.exe" 1920 1080 $env:BIBO_ECHELLE
+          if ($LASTEXITCODE) { exit 1 }
+      - name: Unmutated, green
+        run: cargo test --locked --lib -- --ignored bureau_echelle --test-threads=1 --nocapture
+      - name: Each protection taken out turns it red
+        run: python -I ../../spike/guide-capture-dpi/mutations.py
