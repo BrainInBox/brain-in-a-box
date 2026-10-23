@@ -890,6 +890,19 @@ class Walk(Base):
         pa.sur_echec()
         self.assertTrue(any(n.endswith("-echec-arbre.json") for n in os.listdir(self.shots)))
 
+    def test_on_a_mac_a_failure_keeps_the_systems_log_of_the_app_and_the_picker(self):
+        tmp = Path(tempfile.mkdtemp(prefix="journal-"))
+        self.addCleanup(shutil.rmtree, str(tmp), True)
+        mac = ta.PiloteMac(tmp)
+        runs = []
+        mac._run = lambda argv, timeout=120, **kw: runs.append([str(a) for a in argv]) or (0, "\n".join(map(str, range(500))))
+        self.assertEqual(mac.journaux(), {"log_show": [str(i) for i in range(100, 500)]})
+        self.assertEqual(runs[0][:6], ["/usr/bin/log", "show", "--last", "5m", "--style", "compact"])
+        for who in ('process == "brain-in-a-box"', 'process == "ControlCenter"', 'subsystem == "com.apple.ScreenCaptureKit"'):
+            self.assertIn(who, runs[0][-1])
+        mac._run = lambda argv, timeout=120, **kw: (1, "refusé")
+        self.assertEqual(mac.journaux(), {"log_show": ["code 1", "refusé"]})
+
     def test_a_click_that_changes_nothing_fails(self):
         p = FauxPilote(self.h, change={"bienvenue": {"titre": "Salut, moi c’est Bibo !", "boutons": {"Vérifier mon Mac": None}}})
         with self.assertRaises(terrain.Echec) as cm:
@@ -2451,6 +2464,9 @@ class Guide(Scenario):
         self.assertEqual([x for k, x in p.saisies if k == "taper"], [ta.LOGICIEL_GUIDE, ta.OBJECTIF_GUIDE])
         self.assertEqual((d["capture"], d["collages"]), ("selecteur", []))
         self.assertIn("guide : la fenêtre d'Atelier Demo choisie dans le sélecteur de macOS, deux photos prises par Bibo", row["raison"])
+        # No capture of the screen while the picker is out, as a user takes none then.
+        self.assertFalse([c for c in row["details"]["captures"] if c.endswith("-guide-selecteur.png")], row["details"]["captures"])
+        self.assertTrue([c for c in row["details"]["captures"] if c.endswith("-guide-objectif.png")])
 
     def test_where_bibo_could_take_the_window_linux_pastes(self):
         # The X11 of the night's VM: Bibo waits for a click, the robot pastes there (the paste is Linux's walk).
@@ -2658,8 +2674,10 @@ class GuideParts(unittest.TestCase):
         p = ta.PiloteMac(tmp)
         asked = []
         frame = {"pos": [40, 60], "size": [800, 540]}
-        share = {"n": "", "pos": [380, 100], "size": [120, 28]}
-        replies = {"cadre": lambda r: frame, "boutons": lambda r: {"boutons": [] if len(asked) < 6 else [share]},
+        share = {"n": "", "d": "", "pos": [380, 100], "size": [120, 28]}
+        # Another small button of ControlCenter's, off the window, and a narrower one on it.
+        ailleurs, etroit = {"n": "", "pos": [900, 300], "size": [160, 28]}, {"n": "x", "pos": [700, 90], "size": [20, 20]}
+        replies = {"cadre": lambda r: frame, "boutons": lambda r: {"boutons": [] if len(asked) < 6 else [ailleurs, etroit, share]},
                    "souris": lambda r: {"ok": True}, "cliquer": lambda r: {"ok": True, "comment": "clic souris"}}
         p._osa = lambda req, timeout=90: asked.append(req) or replies[req["op"]](req)
         logiciel = p.logiciel(tmp / "logiciel")
@@ -2678,7 +2696,9 @@ class GuideParts(unittest.TestCase):
         self.assertEqual(ta.VERT, (20, 160, 60))
         self.assertEqual(p.ignores, ("Google Chrome",))
         with mock.patch.object(ta.time, "sleep"):
-            self.assertEqual(logiciel.montrer(), "sélecteur de macOS : « Share This Window »")
+            said = logiciel.montrer()
+        self.assertEqual(said, "sélecteur de macOS : « Share This Window » (clic à 470, 114 ; boutons lus : "
+                               "sans nom [900, 300, 160, 28], x [700, 90, 20, 20], sans nom [380, 100, 120, 28])")
         clicks = [r for r in asked if r["op"] == "souris" and r["clic"]]
         self.assertEqual(clicks, [{"op": "souris", "x": 380 + 120 * 0.75, "y": 114.0, "clic": True}])
         hovers = [r for r in asked if r["op"] == "souris" and not r["clic"]]
@@ -2687,7 +2707,7 @@ class GuideParts(unittest.TestCase):
         asked.clear()
         replies["boutons"] = lambda r: {"boutons": [dict(frame, n="")]}
         with mock.patch.object(ta.time, "sleep"):
-            self.assertEqual(logiciel.montrer(), "sélecteur de macOS : la fenêtre, sous le sélecteur")
+            self.assertTrue(logiciel.montrer().startswith("sélecteur de macOS : la fenêtre, sous le sélecteur (clic à 440, 124 ;"))
         self.assertEqual([r for r in asked if r["op"] == "souris" and r["clic"]], [{"op": "souris", "x": 440.0, "y": 60 + 0.12 * 540, "clic": True}])
         self.assertEqual(logiciel.faire_etape(), "clic souris")
         self.assertEqual(asked[-1], {"op": "cliquer", "processus": "Google Chrome", "fenetre": None, "libelle": "Nouveau"})

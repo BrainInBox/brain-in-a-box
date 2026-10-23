@@ -848,7 +848,7 @@ function boutonsSelecteur(se) {
     var ks = [];
     try { ks = el.uiElements(); } catch (e) { return; }
     for (var i = 0; i < ks.length; i++) {
-      if (prop(ks[i], 'role') === 'AXButton') out.push({n: str(prop(ks[i], 'name')), pos: prop(ks[i], 'position'), size: prop(ks[i], 'size')});
+      if (prop(ks[i], 'role') === 'AXButton') out.push({n: str(prop(ks[i], 'name')), d: str(prop(ks[i], 'description')), pos: prop(ks[i], 'position'), size: prop(ks[i], 'size')});
       if (depth < 8) walk(ks[i], depth + 1);
     }
   }
@@ -1161,6 +1161,17 @@ class PiloteMac(Pilote):
 
     def arbre(self):
         return self.dernier_arbre
+
+    # In the system's log, who speaks of the capture and of the picker: the app, ControlCenter (the picker's
+    # buttons), screencaptureui, replayd, ScreenCaptureKit.
+    JOURNAL = ('process == "%s" OR process == "ControlCenter" OR process == "screencaptureui" OR process == "replayd" '
+               'OR subsystem == "com.apple.ScreenCaptureKit"')
+
+    def journaux(self):
+        """The system's log of the last 5 minutes, the app's and the picker's: its last 400 lines."""
+        rc, text = self._run(["/usr/bin/log", "show", "--last", "5m", "--style", "compact", "--info",
+                              "--predicate", self.JOURNAL % self.processus], timeout=180)
+        return {"log_show": text.splitlines()[-400:] if rc == 0 else ["code %d" % rc] + text.splitlines()[-20:]}
 
 
 # UI Automation's control types, as the roles of the tree ecran_depuis_arbre() reads (macOS's words).
@@ -2829,7 +2840,7 @@ class Parcours:
         except ErreurPilote as e:
             seen["reponse"] = "échec du clic : %s" % e
 
-    def entrer(self, cle, prefixe):
+    def entrer(self, cle, prefixe, capture=True):
         if self.ecrans and self.ecrans[-1]["duree_s"] is None:
             self.ecrans[-1]["duree_s"] = self.secondes() - self.ecrans[-1]["debut_s"]
         self.ecrans.append({"ecran": prefixe + cle, "debut_s": self.secondes(), "duree_s": None})
@@ -2838,7 +2849,8 @@ class Parcours:
         # A failure keeps the step it happened in (app-etape-brain, not app-echec).
         if cle not in ARRETS:
             self.t("app-" + prefixe + cle)
-        self.capturer(prefixe + cle)
+        if capture:
+            self.capturer(prefixe + cle)
 
     def raison(self, message):
         e = self.dernier
@@ -3097,7 +3109,9 @@ class Parcours:
                 cle_prec, depuis, clic = cle, now, None
                 if cle == "sans-fenetre" and "enregistre" in vu["ecrans"]:
                     return      # « Fermer le guide »: its window went
-                self.entrer(cle, "guide-")
+                # macOS's picker out, the screen is not captured, as a user takes none then (the first night's
+                # walk took one there, and the picker never gave the window: cause not proven, 2026-10-23).
+                self.entrer(cle, "guide-", capture=not (cle == "selecteur" and logiciel is not None))
                 vu["ecrans"].append(cle)
             action = None
             ratee = next((why for key, _, why in PHOTO_RATEE if key == cle), None)
@@ -3728,6 +3742,12 @@ class LogicielWindows(Logiciel):
         return self._clic("Nouveau")
 
 
+def dessus(b, f):
+    """The middle of the button b on the window f ({pos, size} both, in points)."""
+    cx, cy = b["pos"][0] + b["size"][0] / 2, b["pos"][1] + b["size"][1] / 2
+    return f["pos"][0] <= cx <= f["pos"][0] + f["size"][0] and f["pos"][1] <= cy <= f["pos"][1] + f["size"][1]
+
+
 class LogicielMac(Logiciel):
     """A program in a browser, as many are (Chrome's window of one page, its own profile): the user picks its
     window in macOS's picker. The page's buttons, read through accessibility."""
@@ -3766,7 +3786,9 @@ class LogicielMac(Logiciel):
         """macOS's picker is out (Bibo asked for it): the pointer over a part of the program's window, then a
         click on the button macOS shows there (« Share This Window », a small button of ControlCenter's, on
         macOS 15 and 26), or on the window itself (macOS 14 lays a button of the window's size over it). As
-        the desk test of the capture does it (app/src-tauri/tests/fixtures/guide/pilote_mac.py)."""
+        the desk test of the capture does it (app/src-tauri/tests/fixtures/guide/pilote_mac.py). Of the small
+        buttons, the widest whose middle is on the window. Returns how, with the buttons read and the click's
+        place (a failure's record)."""
         f = self._cadre()
         if not f:
             raise ErreurPilote("la fenêtre d'Atelier Demo n'est plus là")
@@ -3777,7 +3799,8 @@ class LogicielMac(Logiciel):
             boutons = [b for b in self.p._osa({"op": "boutons"}).get("boutons") or []
                        if isinstance(b, dict) and isinstance(b.get("pos"), list) and isinstance(b.get("size"), list)]
             over = [b for b in boutons if b["pos"] == f["pos"] and b["size"] == f["size"]]
-            share = [b for b in boutons if b["size"][1] < 60] if boutons and all(b["size"][1] < 60 for b in boutons) else []
+            share = sorted((b for b in boutons if dessus(b, f)), key=lambda b: -b["size"][0]) \
+                if boutons and all(b["size"][1] < 60 for b in boutons) else []
             if over or share:
                 break
             time.sleep(1)
@@ -3789,7 +3812,8 @@ class LogicielMac(Logiciel):
         else:
             bx, by, how = x + w / 2 + 40, y + h / 2, "le milieu de la fenêtre (aucun bouton du sélecteur lu)"
         self.p._osa({"op": "souris", "x": bx, "y": by, "clic": True})
-        return "sélecteur de macOS : " + how
+        lus = ", ".join("%s %s" % ("/".join(x for x in (b.get("n"), b.get("d")) if x) or "sans nom", b["pos"] + b["size"]) for b in boutons)
+        return "sélecteur de macOS : %s (clic à %d, %d ; boutons lus : %s)" % (how, bx, by, lus or "aucun")
 
     def faire_etape(self):
         res = self.p._osa({"op": "cliquer", "processus": self.processus, "fenetre": None, "libelle": "Nouveau"})
