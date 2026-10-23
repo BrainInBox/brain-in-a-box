@@ -268,6 +268,15 @@
 ### s=installe&deco=1&go=login&click=check
 275 2 276 16 277
 
+### s=manque&go=diag&click=detail&aveugle=1&os=windows
+18 19 20 278
+
+### s=installe&go=done&compte=api&os=windows
+59 19 268 16 279
+
+### s=manque&go=done&click=skip
+1 2 3 4 5 6 11 12 13 14 15 16 90
+
 #1
 == welcome
 Salut, moi c’est Bibo !
@@ -3280,7 +3289,7 @@ Pour me retrouver plus tard : ouvre le menu Démarrer (Start) et tape « Brain
 #264
 == welcome
 Content de te revoir !
-Ton installation n’est pas finie : ta mémoire et le résumé du soir l’attendent. Je peux déjà te guider dans un logiciel.
+Ton installation n’est pas finie. Je peux déjà te guider dans un logiciel.
 [Guide-moi dans un logiciel]
 [Finir l’installation]
 
@@ -3382,8 +3391,8 @@ Recherche par le sens : OKActivée (Voyage AI)
 
 #270
 == diag
-J’ai fait le tour : deux points à vérifier.
-J’installe Claude et ton cerveau : environ 15 minutes et 600 Mo à télécharger. Lis les lignes en orange, ci-dessous. Tu peux installer quand même, ou faire ce qu’elles disent, puis cliquer sur « Revérifier ».
+J’ai fait le tour : un point à vérifier.
+J’installe Claude et ton cerveau : environ 15 minutes et 600 Mo à télécharger. Lis la ligne en orange, ci-dessous. Tu peux installer quand même, ou faire ce qu’elle dit, puis cliquer sur « Revérifier ».
 Mon conseil : Ton cerveau marche avec Claude : il te faut un abonnement Claude Pro (environ 20 € par mois) ou Max.
 [Masquer le détail]
 Windows 11 (24H2) · 16 Go de mémoire · 182 Go libres
@@ -3392,17 +3401,16 @@ Espace disque : OK182 Go libres
 Connexion internet : OKgithub.com et claude.ai répondent.
 Python (pour les automatismes) : À installerPas encore installé : je l’installe pour toi.
 Git (l’historique de tes notes) : À installerPas encore installé : je l’installe pour toi.
-Outil d’installation de Microsoft : À noterIl me manque l’outil d’installation de Microsoft pour installer Obsidian : je continue sans. Ouvre le Microsoft Store, cherche « Programme d’installation d’application (App Installer) » et clique sur « Obtenir (Get) » ou « Mettre à jour (Update) ». S’il n’y a que « Ouvrir (Open) », redémarre ton PC. Puis clique sur Revérifier.
+Outil d’installation de Microsoft : À noterIl me manque l’outil d’installation de Microsoft pour installer Obsidian : je continue sans. Ouvre le Microsoft Store : dans le menu Démarrer (Start), tape « Microsoft Store ». Dans le Store, cherche « Programme d’installation d’application (App Installer) » et clique sur « Obtenir (Get) » ou « Mettre à jour (Update) ». S’il n’y a que « Ouvrir (Open) », redémarre ton PC. Puis clique sur Revérifier.
 Le moteur de la mémoire : À installerPas encore installé.
 Claude Code : À installerPas encore installé.
 Connexion à Claude : Plus tardTu te connecteras une fois Claude Code installé.
-Obsidian (pour lire tes notes) : À noterPas installé : je ne peux pas l’installer sans l’outil d’installation de Microsoft (voir sa ligne). Tu peux aussi le télécharger toi-même, gratuitement, sur obsidian.md.
+Obsidian (pour lire tes notes) : À savoirPas installé : je ne peux pas l’installer sans l’outil d’installation de Microsoft (voir sa ligne). Tu peux aussi le télécharger toi-même, gratuitement, sur obsidian.md.
 Le dossier de tes notes : À installerPas encore créé.
 Les automatismes de Claude : À installerPas encore branchés.
 Les compétences de Claude : À installerPas encore installées.
 La mémoire de recherche : À installerPas encore créée.
 Recherche par le sens : Plus tardTon cerveau retrouve tes notes par mots-clés. La recherche par le sens est une option, à ajouter après si tu veux.
-Pour ouvrir le Microsoft Store : ouvre le menu Démarrer (Start), puis tape « Microsoft Store ».
 [Revérifier]
 [Tout installer]
 
@@ -3438,7 +3446,7 @@ Mon conseil : Ton cerveau marche avec Claude : il te faut un abonnement Claude
 Windows 11 (24H2) · 16 Go de mémoire · 182 Go libres
 Version de Windows : OKWindows 11 (24H2)
 Espace disque : OK182 Go libres
-Connexion internet : À notergithub.com et claude.ai répondent, mais lentement : prévois environ 2 h 40 en tout, avec 900 Mo à télécharger. En données mobiles, attends d’avoir un Wi-Fi.
+Connexion internet : À notergithub.com et claude.ai répondent, mais lentement.
 Python (pour les automatismes) : À installerPas encore installé : je l’installe pour toi.
 Git (l’historique de tes notes) : À installerPas encore installé : je l’installe pour toi.
 Le moteur de la mémoire : À installerPas encore installé.
@@ -3455,7 +3463,7 @@ Recherche par le sens : Plus tardTon cerveau retrouve tes notes par mots-clés.
 
 #273
 == diag
-J’ai fait le tour : trois points à vérifier.
+J’ai fait le tour : deux points à vérifier.
 J’installe Claude et ton cerveau : environ 15 minutes et 600 Mo à télécharger. Lis les lignes en orange, ci-dessous. Tu peux installer quand même, ou faire ce qu’elles disent, puis cliquer sur « Revérifier ».
 Mon conseil : Ton cerveau marche avec Claude : il te faut un abonnement Claude Pro (environ 20 € par mois) ou Max.
 [Masquer le détail]
@@ -3465,17 +3473,16 @@ Espace disque : À noterIl reste 7 Go. Ça passe, mais c’est juste. Pour fair
 Connexion internet : OKgithub.com et claude.ai répondent.
 Python (pour les automatismes) : À installerPas encore installé : je l’installe pour toi.
 Git (l’historique de tes notes) : À installerPas encore installé : je l’installe pour toi.
-Outil d’installation de Microsoft : À noterIl me manque l’outil d’installation de Microsoft pour installer Obsidian : je continue sans. Ouvre le Microsoft Store, cherche « Programme d’installation d’application (App Installer) » et clique sur « Obtenir (Get) » ou « Mettre à jour (Update) ». S’il n’y a que « Ouvrir (Open) », redémarre ton PC. Puis clique sur Revérifier.
+Outil d’installation de Microsoft : À noterIl me manque l’outil d’installation de Microsoft pour installer Obsidian : je continue sans. Ouvre le Microsoft Store : dans le menu Démarrer (Start), tape « Microsoft Store ». Dans le Store, cherche « Programme d’installation d’application (App Installer) » et clique sur « Obtenir (Get) » ou « Mettre à jour (Update) ». S’il n’y a que « Ouvrir (Open) », redémarre ton PC. Puis clique sur Revérifier.
 Le moteur de la mémoire : À installerPas encore installé.
 Claude Code : À installerPas encore installé.
 Connexion à Claude : Plus tardTu te connecteras une fois Claude Code installé.
-Obsidian (pour lire tes notes) : À noterPas installé : je ne peux pas l’installer sans l’outil d’installation de Microsoft (voir sa ligne). Tu peux aussi le télécharger toi-même, gratuitement, sur obsidian.md.
+Obsidian (pour lire tes notes) : À savoirPas installé : je ne peux pas l’installer sans l’outil d’installation de Microsoft (voir sa ligne). Tu peux aussi le télécharger toi-même, gratuitement, sur obsidian.md.
 Le dossier de tes notes : À installerPas encore créé.
 Les automatismes de Claude : À installerPas encore branchés.
 Les compétences de Claude : À installerPas encore installées.
 La mémoire de recherche : À installerPas encore créée.
 Recherche par le sens : Plus tardTon cerveau retrouve tes notes par mots-clés. La recherche par le sens est une option, à ajouter après si tu veux.
-Pour ouvrir le Microsoft Store : ouvre le menu Démarrer (Start), puis tape « Microsoft Store ».
 [Revérifier]
 [Tout installer]
 
@@ -3488,7 +3495,7 @@ Mon conseil : Ton cerveau marche avec Claude : il te faut un abonnement Claude
 Windows 11 (24H2) · 16 Go de mémoire · 7 Go libres
 Version de Windows : OKWindows 11 (24H2)
 Espace disque : À noterIl reste 7 Go. Ça passe, mais c’est juste. Pour faire de la place, vide la Corbeille (Recycle Bin) ou supprime de gros fichiers.
-Connexion internet : À notergithub.com et claude.ai répondent, mais lentement : prévois environ 2 h 40 en tout, avec 900 Mo à télécharger. En données mobiles, attends d’avoir un Wi-Fi.
+Connexion internet : À notergithub.com et claude.ai répondent, mais lentement.
 Python (pour les automatismes) : À installerPas encore installé : je l’installe pour toi.
 Git (l’historique de tes notes) : À installerPas encore installé : je l’installe pour toi.
 Le moteur de la mémoire : À installerPas encore installé.
@@ -3532,3 +3539,36 @@ Reviens ici : je vois tout seul quand c’est bon.
 Tu te connectes directement chez Anthropic : je ne vois jamais ton mot de passe. Il faut un abonnement Claude Pro ou Max.
 [Plus tard]
 [Connecter mon compte Claude]
+
+#278
+== diag
+J’ai fait le tour : ton PC est prêt.
+J’installe Claude et ton cerveau : environ 15 minutes et 900 Mo à télécharger.
+Mon conseil : Ton cerveau marche avec Claude : il te faut un abonnement Claude Pro (environ 20 € par mois) ou Max.
+[Masquer le détail]
+Windows · 16 Go de mémoire
+Version de Windows : À savoirJe n’ai pas pu lire la version de Windows.
+Espace disque : À savoirJe n’ai pas pu mesurer l’espace libre.
+Connexion internet : OKgithub.com et claude.ai répondent.
+Python (pour les automatismes) : À installerPas encore installé : je l’installe pour toi.
+Git (l’historique de tes notes) : À installerPas encore installé : je l’installe pour toi.
+Le moteur de la mémoire : À installerPas encore installé.
+Claude Code : À installerPas encore installé.
+Connexion à Claude : Plus tardTu te connecteras une fois Claude Code installé.
+Obsidian (pour lire tes notes) : À installerPas encore installé.
+Le dossier de tes notes : À installerPas encore créé.
+Les automatismes de Claude : À installerPas encore branchés.
+Les compétences de Claude : À installerPas encore installées.
+La mémoire de recherche : À installerPas encore créée.
+Recherche par le sens : Plus tardTon cerveau retrouve tes notes par mots-clés. La recherche par le sens est une option, à ajouter après si tu veux.
+[Tout installer]
+
+#279
+== done
+Presque prêt : il manque ton abonnement Claude
+Claude Code est connecté à un compte payé à chaque message : je ne m’en sers ni pour le guide ni pour le résumé du soir. Pour passer à Claude Pro ou Max, demande de l’aide à la personne qui t’a conseillé Bibo.
+Tu utilisais ChatGPT ou Claude ? « Importer ma mémoire » apporte à ton cerveau ce qu’ils savent de toi.
+[Importer ma mémoire]
+[Voir mes notes]
+Pour me retrouver plus tard : ouvre le menu Démarrer (Start) et tape « Brain in a Box ».
+[Présente-toi à Claude (15 min)]

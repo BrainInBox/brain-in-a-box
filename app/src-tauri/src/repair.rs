@@ -3739,7 +3739,7 @@ pub(crate) mod tests {
             todo: Vec::new(),
             can_install: true,
             headline: String::new(), download_mb: 0, minutes: 0,
-            advice: None,
+            advice: None, claude_billed: false,
         }
     }
 

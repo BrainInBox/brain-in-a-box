@@ -78,8 +78,9 @@
   // The diagnosis: &alerte=network|disk is a warning on that line (claude.ai silent, a disk nearly full);
   // &reseau=lent a network under 2 Mbit/s, &reseau=filtre a filter answering 403 for github.com; &compte=api
   // Claude Code on a key paid per message, &compte=gratuit on claude.ai without its plan said (a free
-  // account); &winget=absent (Windows) no winget for Obsidian. Each diagnosis says how long and how much to
-  // download (headline), as diagnose.rs counts it.
+  // account); &winget=absent (Windows) no winget for Obsidian; &aveugle=1 the system's version and the free space
+  // not read (said, nothing to do). Each diagnosis says how long and how much to download (headline), as
+  // diagnose.rs counts it.
   // Windows: &os=windows shows the PC's words and checks (manque, installe, motscles, echec with &fail=brain):
   // Python and Git instead of Apple's tools, install.ps1's sections under the brain step.
   // Linux: &os=linux shows the words and checks of an Ubuntu (manque, installe, motscles, echec):
@@ -161,7 +162,7 @@
     // Codex's lines (diagnose.rs), missing and there.
     const CODEX_MISSING = {
       codex: C('codex', 'missing', 'Pas encore installé.'),
-      codex_auth: C('codex_auth', 'warn', 'Tu te connecteras une fois Codex installé.'),
+      codex_auth: C('codex_auth', 'missing', 'Tu te connecteras une fois Codex installé.'),
       brain_codex_hooks: C('brain_codex_hooks', 'missing', 'Pas encore branchés.'),
       brain_codex_instructions: C('brain_codex_instructions', 'missing', 'Pas encore ajoutées.'),
       brain_codex_skills: C('brain_codex_skills', 'missing', 'Pas encore installées.'),
@@ -259,15 +260,22 @@
       api: "Claude Code est connecté à un compte payé à chaque message (clé API, passerelle…), pas à un abonnement : je ne m'en sers ni pour le guide ni pour le résumé du soir. Rien ne bloque : tout le reste s'installe. Pour passer à ton abonnement Claude Pro ou Max, demande de l'aide à la personne qui t'a conseillé Bibo.",
       gratuit: "Tu es connecté, mais Claude ne me dit pas quel est ton abonnement. Ton cerveau demande Claude Pro (environ 20\u00a0€ par mois) ou Max : un compte gratuit ne suffit pas. Si tu as Pro ou Max, tout va bien.",
     };
-    const STORE = "Ouvre le Microsoft Store, cherche « Programme d'installation d'application (App Installer) » et clique sur « Obtenir (Get) » ou « Mettre à jour (Update) ». S'il n'y a que « Ouvrir (Open) », redémarre ton PC. Puis clique sur Revérifier.";
+    const STORE = "Ouvre le Microsoft Store : dans le menu Démarrer (Start), tape « Microsoft Store ». Dans le Store, cherche « Programme d'installation d'application (App Installer) » et clique sur « Obtenir (Get) » ou « Mettre à jour (Update) ». S'il n'y a que « Ouvrir (Open) », redémarre ton PC. Puis clique sur Revérifier.";
     const SANS_WINGET = {
       winget: C('winget', 'warn', `Il me manque l'outil d'installation de Microsoft pour installer Obsidian : je continue sans. ${STORE}`),
-      obsidian: C('obsidian', 'warn', "Pas installé : je ne peux pas l'installer sans l'outil d'installation de Microsoft (voir sa ligne). Tu peux aussi le télécharger toi-même, gratuitement, sur obsidian.md."),
+      obsidian: C('obsidian', 'info', "Pas installé : je ne peux pas l'installer sans l'outil d'installation de Microsoft (voir sa ligne). Tu peux aussi le télécharger toi-même, gratuitement, sur obsidian.md."),
+    };
+    // What diagnose.rs could not read: said, nothing to do (&aveugle=1).
+    const AVEUGLE = {
+      [WIN ? 'windows' : LIN ? 'linux' : 'macos']: C(WIN ? 'windows' : LIN ? 'linux' : 'macos', 'info', WIN ? "Je n'ai pas pu lire la version de Windows." : LIN ? "Je n'ai pas pu lire le nom du système." : "Je n'ai pas pu lire la version de macOS."),
+      disk: C('disk', 'info', "Je n'ai pas pu mesurer l'espace libre."),
     };
     const FILTRE = "Ce réseau bloque github.com, d'où je télécharge ton cerveau. Au travail ou à l'école, demande au service informatique d'autoriser github.com. Sinon, connecte-toi à un autre réseau, puis clique sur Revérifier.";
-    // What each piece downloads (Mo), the steps' own work (min), the speed: diagnose.rs' piece_mb and minutes.
+    // What each piece downloads (Mo), the steps' own work (min), the speed: diagnose.rs' piece_mb, minutes and
+    // USUAL_BYTES_PER_S (dev/screens.mjs holds them to diagnose.rs, and the two formats to its tests).
     const MB = { claude: 300, codex: 100, clt: 800, paquets: 50, python: 30, git: 70, bun: 45, obsidian: WIN ? 340 : LIN ? 110 : 235, brain_memory: 100 };
     const WORK = { brain: 8, clt: 5, claude: 2, codex: 2, paquets: 2 };
+    const USUAL = 2.5e6;
     const MACHINE = WIN || LIN ? 'PC' : 'Mac';
     const fmtMinutes = (m) => {
       if (m <= 57) return `environ ${Math.max(5, Math.floor((m + 2) / 5) * 5)}\u00a0minutes`;
@@ -294,19 +302,24 @@
     function measured(d) {
       const reseau = P.get('reseau');
       let checks = d.checks.map((c) => (c.id === 'claude_auth' && Object.hasOwn(COMPTES, P.get('compte') || '') ? C('claude_auth', 'warn', COMPTES[P.get('compte')]) : c));
+      // Not read: diagnose.rs says the system without its version, and no free space.
+      if (P.get('aveugle')) {
+        checks = checks.map((c) => AVEUGLE[c.id] || c);
+        d = { ...d, os: WIN ? 'Windows' : LIN ? 'Linux' : 'macOS', disk_free_gb: 0 };
+      }
       if (WIN && P.get('winget') === 'absent' && checks.some((c) => c.id === 'obsidian' && c.status === 'missing')) {
         checks = checks.flatMap((c) => (c.id === 'git' ? [c, SANS_WINGET.winget] : c.id === 'obsidian' ? [SANS_WINGET.obsidian] : [c]));
       }
       const { todo } = d;
       const mb = todo.length ? checks.filter((c) => c.status === 'missing' && todo.includes(c.fix)).reduce((n, c) => n + (MB[c.id] || 0), 0) + (todo.includes('brain') ? 10 : 0) : 0;
-      const minutes = todo.length ? todo.reduce((n, s) => n + (WORK[s] || 1), 0) + Math.ceil((mb * 1e6) / (reseau === 'lent' ? 1e5 : 2.5e6) / 60) : 0;
+      const minutes = todo.length ? todo.reduce((n, s) => n + (WORK[s] || 1), 0) + Math.ceil((mb * 1e6) / (reseau === 'lent' ? 1e5 : USUAL) / 60) : 0;
       const slow = reseau === 'lent' && mb > 0;
       const time = fmtMinutes(minutes);
       const size = fmtMb(mb);
       checks = checks.map((c) => {
         if (c.id !== 'network') return c;
         if (reseau === 'filtre' && todo.includes('brain')) return C('network', 'error', FILTRE);
-        if (slow) return C('network', 'warn', `${c.detail.replace(/\.$/, '')}, mais lentement : prévois ${time} en tout, avec ${size} à télécharger. En données mobiles, attends d'avoir un Wi-Fi.`);
+        if (slow) return C('network', 'warn', `${c.detail.replace(/\.$/, '')}, mais lentement.`);
         return c;
       });
       const red = checks.filter((c) => c.status === 'error').length;
@@ -318,8 +331,11 @@
       else if (slow) headline = `Ta connexion est lente. J'installe ${what} : prévois ${time}, avec ${size} à télécharger. En données mobiles, attends d'avoir un Wi-Fi.`;
       // claude.ai silent (&alerte=network): not every site answers.
       const online = d.online && P.get('alerte') !== 'network';
-      return { ...d, checks, online, can_install: red === 0, headline, download_mb: mb, minutes };
+      // An account paid per message: the end offers no guide on it.
+      const billed = P.get('compte') === 'api' && checks.some((c) => c.id === 'claude_auth' && c.status === 'warn');
+      return { ...d, checks, online, can_install: red === 0, headline, download_mb: mb, minutes, claude_billed: billed };
     }
+    window.__mesures = { MB, WORK, USUAL, fmtMinutes, fmtMb };
 
     function diagnosisOfClaude() {
       if (scenario === 'installe' || scenario === 'motscles') {
@@ -368,7 +384,7 @@
       codex: ['Téléchargement de l’installeur de Codex', 'Je vérifie l’installeur de Codex…', 'J’installe Codex…', 'Installing Codex CLI 0.162.1', 'Codex CLI 0.162.1 installed to /Users/camille/.local/bin/codex'],
       obsidian: ['Téléchargement d’Obsidian 1.14.4 (233 Mo)', '  12 %', '  47 %', '  83 %', '  100 %', 'Copie dans /Users/camille/Applications/Obsidian.app', 'Signature vérifiée (6JSW4SJWN9)'],
       brain: WIN ? [
-        'Je télécharge le moteur du cerveau…', 'Je mets en place ton cerveau, avec Python, Git, la mémoire et Obsidian (10 à 20 minutes)…',
+        'Je télécharge le moteur du cerveau…', 'Je mets en place ton cerveau, avec Python, Git, la mémoire et Obsidian…',
         '▸ Je vérifie Python et Git, et je les installe s’il le faut (1 sur 13)…', '=== Preflight ===', '  ... Python : installation (winget)', '  [OK] python (~\\AppData\\Local\\Programs\\Python\\Python312\\python.exe)',
         '▸ Je crée ton dossier Brain (3 sur 13)…', '=== Brain vault (~\\Documents\\Brain) ===', '  [OK] skeleton place',
         '▸ J’installe la mémoire, 2 à 5 minutes (10 sur 13)…', '=== Memoire gbrain (2 a 5 minutes la premiere fois) ===', '  [OK] bun 1.4.3',

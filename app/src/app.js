@@ -102,7 +102,7 @@ const STEPS = {
   },
 };
 
-const CHECK_STATUS = { ok: 'OK', missing: 'À installer', later: 'Plus tard', warn: 'À noter', error: 'Bloquant' };
+const CHECK_STATUS = { ok: 'OK', missing: 'À installer', later: 'Plus tard', info: 'À savoir', warn: 'À noter', error: 'Bloquant' };
 const STEP_STATUS = { pending: 'En attente', running: 'En cours…', done: 'Fait', failed: 'Échec' };
 
 const state = {
@@ -464,7 +464,8 @@ function showWelcome() {
     if (!state.brainWhole) {
       // An install that stopped half way (D1): finishing it comes first, named as such; the guide works already.
       const guide = button('Guide-moi dans un logiciel', () => openGuide(guide), { kind: 'secondary', act: 'guide' });
-      say('idle', 'Content de te revoir !', 'Ton installation n’est pas finie : ta mémoire et le résumé du soir l’attendent. Je peux déjà te guider dans un logiciel.');
+      // Not finished: the memory, the hooks, the skills or the choice of the AI (detect.rs' complete), none named.
+      say('idle', 'Content de te revoir !', 'Ton installation n’est pas finie. Je peux déjà te guider dans un logiciel.');
       ui.actions.append(guide, button('Finir l’installation', state.offer.open ? showChoice : runDiagnosis, { act: 'next' }));
     } else {
       // The guide first, the check of the machine still there.
@@ -664,10 +665,11 @@ function adviceLines(a) {
 function checkList(checks) {
   return h('ul', { class: 'checks card' }, checks.map((c) => {
     // Missing, with no step to bring it (the login, the search by meaning): for later, nothing to worry about.
+    // Info (what the diagnosis could not read, a consequence of another line): said, nothing to do.
     const said = c.status === 'missing' && !c.fix ? 'later' : c.status;
     const status = Object.hasOwn(CHECK_STATUS, said) ? said : 'warn';
     return h('li', { class: `check is-${status}` },
-      icon(status === 'later' ? 'pending' : status),
+      icon(status === 'later' || status === 'info' ? 'pending' : status),
       h('span', { class: 'check-label' }, String(c.label), h('span', { class: 'sr-only' }, ` : ${CHECK_STATUS[status]}`)),
       h('span', { class: 'check-detail' }, String(c.detail || '')));
   }));
@@ -712,10 +714,6 @@ function detailToggle(d) {
   return [toggle, body];
 }
 
-// No winget: its line says what to do in the Microsoft Store, this how to open it. No button: open_link
-// opens a few sites only (steps.rs' LINK_HOSTS), and the Store's page would open in the browser anyway.
-const STORE_WAY = 'Pour ouvrir le Microsoft Store : ouvre le menu Démarrer (Start), puis tape « Microsoft Store ».';
-
 // The title over orange lines: as many points as the list has.
 const POINTS = ['un point', 'deux points', 'trois points', 'quatre points', 'cinq points'];
 
@@ -725,10 +723,10 @@ function showDiagnosis() {
   // Where Codex can be chosen, the advice comes with that choice instead.
   if (!state.offer.open) ui.screen.append(...adviceLines(d.advice));
   ui.screen.append(...detailToggle(d));
-  if (d.checks.some((c) => c.id === 'winget' && c.status === 'warn')) ui.screen.append(h('p', { class: 'note' }, STORE_WAY));
   const change = changeButton();
   if (change) ui.actions.append(change);
-  // An orange line can often be set right away (winget, the network, the disk): « Revérifier » next to it.
+  // An orange line can often be set right away (winget, the network, the disk): « Revérifier » next to it. A
+  // line with nothing to do (diagnose.rs' info, the logins for later) is no point to check.
   const orange = d.checks.filter((c) => c.status === 'warn').length;
   const recheck = () => button('Revérifier', runDiagnosis, { kind: 'secondary', act: 'recheck' });
   const read = orange > 1 ? 'Lis les lignes en orange, ci-dessous.' : 'Lis la ligne en orange, ci-dessous.';
@@ -2045,8 +2043,6 @@ const FIND_ME = {
 // login when it was put off, Codex's when Codex comes first and is not on its ChatGPT login. The rest
 // as links underneath.
 function showDone() {
-  const gen = screen('done', { big: true });
-  readBrainDir();
   const names = chosenAgents().map((e) => ai(e).name);
   const first = names[0];
   // The preferred one does the onboarding. Codex only on the login the kit uses (§4.3): logged in
@@ -2056,12 +2052,21 @@ function showDone() {
   // Claude's login put off: Claude Code would ask for it on its first start, in English, next to an
   // account billed by use. Nothing is ready without it: the end asks for it, and says so.
   const claudeOff = !loginFirst && chose('claude') && state.loginSkipped;
+  // Claude Code on a login billed per use (diagnose.rs): the guide refuses it, the evening's summary does not
+  // use it. Nothing to connect here: who advised Bibo can change it.
+  const billed = !loginFirst && !claudeOff && chose('claude') && state.diag?.claude_billed === true;
   // The guide works with Claude (docs/proposals/guide.md): Codex is not shown images yet.
-  const guide = chose('claude') && !claudeOff;
+  const guide = chose('claude') && !claudeOff && !billed;
+  // « Presque prêt » with the account's steps: beside a small Bibo, as the login's screen, else the steps and
+  // where to find me do not fit a Mac's window.
+  const gen = screen('done', { big: !claudeOff });
+  readBrainDir();
   const waiting = loginWaiting();
   if (claudeOff) {
     say('idle', 'Presque prêt : il manque ton compte Claude', 'Connecte-le pour que Claude puisse travailler avec ton cerveau. Il faut un abonnement Claude Pro ou Max.');
     ui.screen.append(claudeLoginSteps('Reviens ici : je vois tout seul quand c’est bon.'), waiting, planLink());
+  } else if (billed) {
+    say('idle', 'Presque prêt : il manque ton abonnement Claude', 'Claude Code est connecté à un compte payé à chaque message : je ne m’en sers ni pour le guide ni pour le résumé du soir. Pour passer à Claude Pro ou Max, demande de l’aide à la personne qui t’a conseillé Bibo.');
   } else {
     say('happy', 'Ton second cerveau est prêt !', names.length > 1
       ? `${listFr(names)} retiennent maintenant ce que tu leur apprends.`

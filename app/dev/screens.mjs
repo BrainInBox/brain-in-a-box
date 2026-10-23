@@ -130,6 +130,11 @@ const SCENARIOS = [
   's=manque&go=diag&winget=absent&alerte=disk&os=windows',
   's=manque&go=diag&reseau=lent&alerte=disk&os=windows',
   's=installe&deco=1&go=login&click=check',
+  // Their second reviews': what the diagnosis could not read (nothing to do), an account paid per message to
+  // the end, « Presque prêt » on a Mac.
+  's=manque&go=diag&click=detail&aveugle=1&os=windows',
+  's=installe&go=done&compte=api&os=windows',
+  's=manque&go=done&click=skip',
 ];
 
 // Where Codex can be chosen (&porte=1, as the tests open it): what some screens must say, or not.
@@ -225,6 +230,14 @@ const CODEX_CHECKS = [
     ok: (shots) => mainOf(shots, 'done') === '' && shots.asleep,
   },
   {
+    name: 'Codex chosen on a new PC: its login is for later, as Claude\'s, never « un point à vérifier »',
+    query: 's=manque&porte=1&choix=codex&click=detail&go=diag&os=windows',
+    ok: (shots) => {
+      const diag = last(shots, 'diag');
+      return bibo(diag).startsWith('J’ai fait le tour\u00a0: ton PC est prêt.') && diag.includes('Connexion à Codex\u00a0: Plus tard');
+    },
+  },
+  {
     name: 'One account rule everywhere: a personal ChatGPT plan, and both accounts for both',
     query: 's=manque&porte=1&go=choice',
     ok: (shots) => has(shots, 'welcome', 'abonnement ChatGPT personnel (pas un compte d’entreprise)')
@@ -274,6 +287,33 @@ const CLAUDE_CHECKS = [
     },
   },
   {
+    name: '« Presque prêt » on a Mac fits: the account\'s steps beside a small Bibo, as the login\'s screen; the end that is ready keeps him big',
+    query: 's=manque&go=done&click=skip',
+    ok: (shots) => {
+      const i = shots.findLastIndex((s) => s.startsWith('== done'));
+      return shots[i].includes('Presque prêt') && shots[i].includes('glisse d’abord l’icône') && shots.bigs[i] === false
+        && shots.bigs[shots.findIndex((s) => s.startsWith('== welcome'))] === true;
+    },
+  },
+  {
+    name: 'An account paid per message to the end: « Presque prêt », who to ask, never the guide it refuses (nor as the main button)',
+    query: 's=installe&go=done&compte=api&os=windows',
+    ok: (shots) => {
+      const done = last(shots, 'done');
+      return done.includes('Presque prêt\u00a0: il manque ton abonnement Claude') && done.includes('la personne qui t’a conseillé Bibo')
+        && !done.includes('[Guide-moi dans un logiciel]') && !done.includes('Je peux te guider') && mainOf(shots, 'done') === 'Présente-toi à Claude (15 min)';
+    },
+  },
+  {
+    name: 'What the diagnosis could not read (the version, the free space): said, nothing to do, never « un point à vérifier » nor how to make room',
+    query: 's=manque&go=diag&click=detail&aveugle=1&os=windows',
+    ok: (shots) => {
+      const diag = last(shots, 'diag');
+      return bibo(diag).startsWith('J’ai fait le tour\u00a0: ton PC est prêt.') && diag.includes('Espace disque\u00a0: À savoir')
+        && diag.includes('Version de Windows\u00a0: À savoir') && !diag.includes('Corbeille') && !diag.includes('orange');
+    },
+  },
+  {
     name: 'Claude\'s login: its command window stays open, and the hint says what to do with a code',
     query: 's=login-early&go=done&jamais=1&hint=20',
     ok: (shots) => has(shots, 'install', 'laisse-la ouverte') && has(shots, 'install', 'Si ton navigateur affiche un code')
@@ -291,11 +331,12 @@ const CLAUDE_CHECKS = [
     ok: (shots) => has(shots, 'install', 'sur le chargeur') && shots.filter((s) => s.includes('Oups, ça a coincé')).every((s) => !s.includes('jusqu’à la fin')),
   },
   {
-    name: 'D1, back on an install that stopped half way (guide_offert "dossier"): not finished and what waits for it, « Finir l’installation » first, the guide already there, Claude\'s login not read again',
+    name: 'D1, back on an install that stopped half way (guide_offert "dossier"): not finished, « Finir l’installation » first, the guide already there, Claude\'s login not read again',
     query: 's=installe&go=welcome&incomplet=1&os=windows',
     ok: (shots) => {
       const welcome = last(shots, 'welcome');
-      return welcome.includes('Ton installation n’est pas finie\u00a0: ta mémoire et le résumé du soir l’attendent. Je peux déjà te guider dans un logiciel.')
+      // Not only the memory may be missing (the hooks, the skills, the choice of the AI): nothing more is named.
+      return welcome.includes('Ton installation n’est pas finie. Je peux déjà te guider dans un logiciel.')
         && !welcome.includes('Pour la finir') && mainOf(shots, 'welcome') === 'Finir l’installation' && welcome.includes('[Guide-moi dans un logiciel]') && shots.auths === 0;
     },
   },
@@ -344,12 +385,14 @@ const CLAUDE_CHECKS = [
     ok: (shots) => last(shots, 'diag').includes('[Masquer le détail]') && last(shots, 'diag').includes('Claude Pro (environ 20\u00a0€ par mois)'),
   },
   {
-    name: 'No winget: the list unfolded, its line says what to do in the Store, and how to open the Store (no button open_link would refuse)',
+    name: 'No winget: one point, the list unfolded, its line says how to open the Store and what to do there (no button open_link would refuse); Obsidian\'s line follows from it',
     query: 's=manque&go=diag&winget=absent&os=windows',
     ok: (shots) => {
       const diag = last(shots, 'diag');
-      return diag.includes('[Masquer le détail]') && diag.includes('App Installer') && diag.includes('[Revérifier]')
-        && diag.includes('menu Démarrer (Start), puis tape «\u00a0Microsoft Store\u00a0»') && !diag.includes('[Ouvrir le Microsoft Store');
+      const line = diag.split('\n').find((l) => l.startsWith('Outil d’installation de Microsoft')) || '';
+      return bibo(diag).startsWith('J’ai fait le tour\u00a0: un point à vérifier.') && diag.includes('[Masquer le détail]') && diag.includes('[Revérifier]')
+        && line.includes('Ouvre le Microsoft Store\u00a0: dans le menu Démarrer (Start), tape «\u00a0Microsoft Store\u00a0».') && line.includes('App Installer')
+        && diag.includes('Obsidian (pour lire tes notes)\u00a0: À savoir') && !diag.includes('[Ouvrir le Microsoft Store') && !diag.includes('puis tape');
     },
   },
   {
@@ -368,8 +411,10 @@ const CLAUDE_CHECKS = [
       const diag = last(shots, 'diag');
       const said = bibo(diag);
       return said.includes('un point à vérifier.\nTa connexion est lente. J’installe') && said.includes('prévois environ 2\u00a0h\u00a040') && said.includes('attends d’avoir un Wi-Fi')
-        && said.split('Wi-Fi').length === 2 && said.endsWith('Tu peux installer maintenant et laisser ton PC allumé, ou attendre un réseau plus rapide.')
-        && diag.includes('[Revérifier]') && !diag.includes('10 à 20');
+        && said.endsWith('Tu peux installer maintenant et laisser ton PC allumé, ou attendre un réseau plus rapide.')
+        && diag.includes('[Revérifier]') && !diag.includes('10 à 20')
+        // How long and the Wi-Fi once on the screen: the network's line only says it is slow.
+        && diag.split('Wi-Fi').length === 2 && diag.split('prévois').length === 2 && diag.includes('github.com et claude.ai répondent, mais lentement.');
     },
   },
   {
@@ -379,15 +424,15 @@ const CLAUDE_CHECKS = [
       const diag = last(shots, 'diag');
       const said = bibo(diag);
       return said.startsWith('J’ai fait le tour\u00a0: deux points à vérifier.\nTa connexion est lente.') && said.includes('Lis les lignes en orange')
-        && said.split('Wi-Fi').length === 2 && diag.includes('c’est juste. Pour faire de la place, vide la Corbeille (Recycle Bin)');
+        && diag.split('Wi-Fi').length === 2 && diag.includes('c’est juste. Pour faire de la place, vide la Corbeille (Recycle Bin)');
     },
   },
   {
-    name: 'A disk nearly full and two other orange lines (no winget): all three counted, Bibo sends to them, the time before the choice',
+    name: 'A disk nearly full and no winget: both counted (not Obsidian\'s line, which follows from winget\'s), Bibo sends to them, the time before the choice',
     query: 's=manque&go=diag&winget=absent&alerte=disk&os=windows',
     ok: (shots) => {
       const said = bibo(last(shots, 'diag'));
-      return said.startsWith('J’ai fait le tour\u00a0: trois points à vérifier.\nJ’installe') && said.includes('Lis les lignes en orange, ci-dessous.')
+      return said.startsWith('J’ai fait le tour\u00a0: deux points à vérifier.\nJ’installe') && said.includes('Lis les lignes en orange, ci-dessous.')
         && said.indexOf('J’installe') < said.indexOf('Tu peux installer quand même');
     },
   },
@@ -684,6 +729,8 @@ async function screens(mockText, scripts, query) {
   // When each screen first showed, in the run's own milliseconds, and its main button then.
   shots.at = [];
   shots.mains = [];
+  // Whether it showed in the big layout (Bibo big, the whole centered: the welcome, the end).
+  shots.bigs = [];
   // The install bar's widths, each new one in turn (bibo.js draws the same one on Bibo's box).
   const bars = [];
   const snap = () => {
@@ -698,6 +745,7 @@ async function screens(mockText, scripts, query) {
       shots.push(text);
       shots.at.push(t.now());
       shots.mains.push(doc.body.querySelector('.actions')?.querySelector('[data-act="next"]')?.textContent ?? '');
+      shots.bigs.push(doc.body.classList.contains('big'));
     }
   };
   // Promises settle between two timers, as in the window.
@@ -720,7 +768,50 @@ async function screens(mockText, scripts, query) {
   // How many times the window read Claude's login, and whether Bibo dozed off by the end (app.js' own sleep).
   shots.auths = ctx.__auths || 0;
   shots.asleep = Boolean(doc.body.querySelector('.hero')?.children[0]?.classList.contains('asleep'));
+  // The mock's copy of diagnose.rs' measures (sizes, work, speed, the two formats).
+  shots.mesures = ctx.__mesures || null;
   return shots;
+}
+
+// What differs between the mock's measures (window.__mesures, on a Mac, a PC and Linux) and diagnose.rs'.
+function measuresDiffer(rust, got) {
+  const faults = [];
+  const body = (name) => (rust.match(new RegExp(`fn ${name}\\([^)]*\\)[^{]*\\{([\\s\\S]*?)\\n\\}`)) || [])[1] || '';
+  const pieces = [...body('piece_mb').matchAll(/"(\w+)"(?: if cfg!\((?:target_os = "(\w+)"|(\w+))\))? => (\d+),/g)];
+  const work = [...body('minutes').matchAll(/((?:"\w+"(?: \| )?)+) => (\d+),/g)].flatMap((m) => [...m[1].matchAll(/"(\w+)"/g)].map((x) => [x[1], Number(m[2])]));
+  const usual = Number((rust.match(/const USUAL_BYTES_PER_S: f64 = ([\d_.]+);/) || [])[1]?.replaceAll('_', ''));
+  const table = (fn) => {
+    const m = rust.match(new RegExp(`let \\w+ = \\|n\\| ${fn}\\(n\\)\\.replace\\('\\\\u\\{a0\\}', "_"\\);\\s*assert_eq!\\(\\[([^\\]]*)\\], \\[([^\\]]*)\\]\\);`));
+    return m ? [[...m[1].matchAll(/\((\d+)\)/g)].map((x) => Number(x[1])), [...m[2].matchAll(/"([^"]*)"/g)].map((x) => x[1])] : [[], []];
+  };
+  if (!pieces.length || !work.length || !usual) return ['diagnose.rs\' piece_mb, minutes or USUAL_BYTES_PER_S not found'];
+  for (const [system, q] of [['macos', 's=manque&go=done'], ['windows', 's=manque&go=done&os=windows'], ['linux', 's=echec&go=done&os=linux']]) {
+    const m = got.get(q)?.mesures;
+    if (!m) {
+      faults.push(`no window.__mesures in ${q}`);
+      continue;
+    }
+    const rustMb = {};
+    for (const [, id, os, cfgWord, mb] of pieces) {
+      const on = os || (cfgWord === 'windows' ? 'windows' : cfgWord);
+      if (!on || on === system) rustMb[id] ??= Number(mb);
+    }
+    for (const id of new Set([...Object.keys(rustMb), ...Object.keys(m.MB)])) {
+      if (rustMb[id] !== m.MB[id]) faults.push(`${system}: ${id} downloads ${m.MB[id]} Mo, diagnose.rs ${rustMb[id]}`);
+    }
+    for (const [id, n] of work) if ((m.WORK[id] ?? 1) !== n) faults.push(`${id}'s work: ${m.WORK[id] ?? 1} min, diagnose.rs ${n}`);
+    for (const id of Object.keys(m.WORK)) if (!work.some(([w]) => w === id)) faults.push(`${id}'s work: ${m.WORK[id]} min, diagnose.rs 1`);
+    if (m.USUAL !== usual) faults.push(`the usual speed: ${m.USUAL}, diagnose.rs ${usual}`);
+    for (const [fn, mine] of [['fmt_minutes', m.fmtMinutes], ['fmt_mb', m.fmtMb]]) {
+      const [ins, outs] = table(fn);
+      if (!ins.length || ins.length !== outs.length) faults.push(`diagnose.rs' test of ${fn} not found`);
+      ins.forEach((n, i) => {
+        const said = mine(n).replace(/\u00a0/g, '_');
+        if (said !== outs[i]) faults.push(`${fn}(${n}): « ${said} », diagnose.rs « ${outs[i]} »`);
+      });
+    }
+  }
+  return [...new Set(faults)];
 }
 
 // screens-claude.txt: each scenario as the numbers of its screens, then every screen once.
@@ -814,6 +905,18 @@ const rustHosts = hostsOf(fs.readFileSync(path.join(HERE, '..', 'src-tauri', 'sr
 if (!rustHosts || rustHosts !== hostsOf(mockText.match(/const LINK_HOSTS = \[([^\]]*)\]/))) {
   differ += 1;
   console.log(`FAIL mock.html's LINK_HOSTS are not steps.rs' (${rustHosts})`);
+}
+// The mock counts what diagnose.rs counts: each piece's download and each step's work (piece_mb, minutes), the usual
+// speed, and its two formats give what diagnose.rs' own test says (durations_and_sizes_read_simply).
+const diagnoseRs = fs.readFileSync(path.join(HERE, '..', 'src-tauri', 'src', 'diagnose.rs'), 'utf8');
+for (const fault of measuresDiffer(diagnoseRs, got)) {
+  differ += 1;
+  console.log(`FAIL mock.html's measures are not diagnose.rs': ${fault}`);
+}
+// « 10 à 20 minutes » nowhere the window shows: the install's Details either (steps.rs' log).
+if (fs.readFileSync(path.join(HERE, '..', 'src-tauri', 'src', 'steps.rs'), 'utf8').includes('10 à 20')) {
+  differ += 1;
+  console.log('FAIL steps.rs still says « 10 à 20 minutes »: the diagnosis says how long');
 }
 // A link the window asks for opens: steps.rs' open_link refuses any other host, and the button would only ever
 // say « Je n'ai pas pu l'ouvrir » (the Store's page, once).

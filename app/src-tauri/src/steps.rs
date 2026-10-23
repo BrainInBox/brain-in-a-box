@@ -823,7 +823,8 @@ fn brain(voyage_key: Option<&str>, log: &mut dyn FnMut(String)) -> Step {
     fs::create_dir_all(&base).map_err(|e| format!("Je n'ai pas pu créer le dossier .brain-in-a-box ({e})."))?;
     let src = install_sources(&base, &archive_source(std::env::var("BIAB_ARCHIVE").ok())?, log)?;
 
-    log("Je mets en place ton cerveau, avec Python, Git, la mémoire et Obsidian (10 à 20 minutes)…".into());
+    // How long: the diagnosis said it, from what is left and the network's speed.
+    log("Je mets en place ton cerveau, avec Python, Git, la mémoire et Obsidian…".into());
     // Without a key from the user, the variable is removed: a key inherited from the
     // app's own environment never sneaks in. The brain's folder, once one was chosen (by the
     // user, a repair, or install.ps1 itself), goes the same way: this app may have started
