@@ -5,7 +5,8 @@
 //! `decide()` and the `check_*` functions, so tests drive them with a fake home.
 //!
 //! On Windows, install.ps1 installs Python, Git, Bun and Obsidian along with the brain:
-//! their checks point to the brain step. On Linux, the system's own tools (git, python3,
+//! their checks point to the brain step. Python and Git come from winget, else from their official
+//! installers; Obsidian from winget alone. On Linux, the system's own tools (git, python3,
 //! curl) come first, from the system's packages, as Apple's tools do on a Mac.
 //!
 //! The AI agents are the ones agents.json lists (agents.rs): Claude Code's checks, Codex's, or both,
@@ -76,10 +77,6 @@ const GIT: Item = Item("git", "Git (l'historique de tes notes)", Some("brain"));
 /// No fix step: the user installs it from the Microsoft Store.
 #[cfg(windows)]
 const WINGET: Item = Item("winget", "Outil d'installation de Microsoft", None);
-/// install.ps1 takes Python and Git from their official installers when winget cannot (#65): winget is
-/// then Obsidian's alone. A test holds it equal to install.ps1, whichever of the two changes first.
-#[cfg(any(windows, test))]
-const OFFICIAL_INSTALLERS: bool = false;
 /// The step that installs Bun and Obsidian: their own on a Mac, install.ps1's on Windows.
 const OWN_STEP_OR_BRAIN: [&str; 2] = if cfg!(windows) { ["brain", "brain"] } else { ["bun", "obsidian"] };
 const BUN: Item = Item("bun", "Le moteur de la mémoire", Some(OWN_STEP_OR_BRAIN[0]));
@@ -142,7 +139,7 @@ struct Facts {
     python: Option<detect::Python>,
     #[cfg(windows)]
     git: Found,
-    /// Looked for only when Python, Git or Obsidian is missing.
+    /// Looked for only when Obsidian is missing.
     #[cfg(windows)]
     winget: Option<Found>,
     bun: Found,
@@ -324,7 +321,7 @@ fn probe(home: &Path) -> Facts {
         let bun = detect::bun(home);
         let claude = if claude { detect::claude() } else { Found::Absent };
         let obsidian = detect::obsidian(home);
-        let winget = (python.is_none() || git == Found::Absent || obsidian == Found::Absent).then(detect::winget);
+        let winget = (obsidian == Found::Absent).then(detect::winget);
         let system = system.join().unwrap_or_default();
         let facts = Facts {
             windows: system.version,
@@ -553,16 +550,14 @@ fn decide(home: &Path, f: &Facts) -> Diagnosis {
     let tools = vec![check_clt(f.clt)];
     #[cfg(target_os = "linux")]
     let tools = vec![check_paquets(&f.linux)];
-    // Looked for only when something it brings is missing (None: not needed). There but silent,
-    // install.ps1 tries it all the same.
+    // Looked for only when Obsidian is missing (None: not needed). There but silent, install.ps1 tries
+    // it all the same.
     #[cfg(windows)]
     let winget = f.winget.as_ref().is_none_or(|w| *w != Found::Absent);
     #[cfg(windows)]
     let tools = {
-        let python_git = winget || OFFICIAL_INSTALLERS;
-        let mut tools = vec![check_python(f.python.as_ref(), python_git), check_git(&f.git, python_git)];
-        let needs = |missing: bool| missing && !OFFICIAL_INSTALLERS;
-        tools.extend(check_winget(needs(f.python.is_none()), needs(f.git == Found::Absent), f.obsidian == Found::Absent, f.winget.as_ref()));
+        let mut tools = vec![check_python(f.python.as_ref()), check_git(&f.git)];
+        tools.extend(check_winget(f.obsidian == Found::Absent, f.winget.as_ref()));
         tools
     };
     let hosts = hosts(f);
@@ -794,40 +789,30 @@ fn check_paquets(f: &LinuxFacts) -> Check {
     }
 }
 
-/// The Microsoft Store's python.exe does not count: it runs nothing. `winget`: the tool install.ps1
-/// takes it from is there.
+/// Python and Git: install.ps1 takes them from winget, else from their official installers (its
+/// Official-Install, a test holds it there).
 #[cfg(windows)]
-fn check_python(found: Option<&detect::Python>, winget: bool) -> Check {
+const INSTALLED_FOR_YOU: &str = "Pas encore installé : je l'installe pour toi.";
+
+/// The Microsoft Store's python.exe does not count: it runs nothing.
+#[cfg(windows)]
+fn check_python(found: Option<&detect::Python>) -> Check {
     match found {
         Some(p) => Check {
             path: Some(p.exe.to_string_lossy().into_owned()),
             ..PYTHON.is(Status::Ok, format!("Python {}", fmt_version(p.version)))
         },
-        None => PYTHON.is(Status::Missing, not_yet_installed(winget)),
+        None => PYTHON.is(Status::Missing, INSTALLED_FOR_YOU),
     }
 }
 
-/// Found is installed, as for install.ps1, even when it does not tell its version. Without winget,
-/// install.ps1 goes on without it.
+/// Found is installed, as for install.ps1, even when it does not tell its version.
 #[cfg(windows)]
-fn check_git(found: &Found, winget: bool) -> Check {
+fn check_git(found: &Found) -> Check {
     match found {
-        Found::Absent if winget => GIT.is(Status::Missing, not_yet_installed(true)),
-        Found::Absent => GIT.is(Status::Warn, format!("{NO_WINGET} Sans Git, tout s'installe, mais tes notes n'auront pas d'historique.")),
+        Found::Absent => GIT.is(Status::Missing, INSTALLED_FOR_YOU),
         _ if found.version().is_some() => GIT.is(Status::Ok, found.label("Git")),
         _ => GIT.is(Status::Ok, "Git est installé."),
-    }
-}
-
-#[cfg(windows)]
-const NO_WINGET: &str = "Pas installé : je ne peux pas l'installer sans l'outil d'installation de Microsoft (voir sa ligne).";
-
-#[cfg(windows)]
-fn not_yet_installed(winget: bool) -> &'static str {
-    if winget {
-        "Pas encore installé : je l'installe pour toi."
-    } else {
-        "Pas encore installé : il me faut d'abord l'outil d'installation de Microsoft (voir sa ligne)."
     }
 }
 
@@ -835,48 +820,34 @@ fn not_yet_installed(winget: bool) -> &'static str {
 #[cfg(windows)]
 fn check_obsidian_windows(found: &Found, winget: bool) -> Check {
     match found {
-        Found::Absent if !winget => {
-            OBSIDIAN.is(Status::Warn, format!("{NO_WINGET} Tu peux aussi le télécharger toi-même, gratuitement, sur obsidian.md."))
-        }
+        Found::Absent if !winget => OBSIDIAN.is(
+            Status::Warn,
+            "Pas installé : je ne peux pas l'installer sans l'outil d'installation de Microsoft (voir sa ligne). Tu \
+             peux aussi le télécharger toi-même, gratuitement, sur obsidian.md.",
+        ),
         _ => check_obsidian(found),
     }
 }
 
-/// install.ps1 takes Python, Git and Obsidian from winget (the `_missing` it would need it for). Without
-/// it, the brain step stops on Python, minutes into the install: said in red before it, with
-/// python.org for a PC whose Store is closed. Git and Obsidian alone are said in orange: the install
-/// goes on without them. There but silent (its first run on a new profile is slow): orange, and a
-/// minute to wait. Windows' own names, in French and in English: a PC may be either.
+/// install.ps1 takes Obsidian from winget alone: without it, the install goes on without Obsidian,
+/// said in orange with the Store's way to get it. There but silent (its first run on a new profile is
+/// slow): orange, and a minute to wait. Windows' own names, in French and in English: a PC may be
+/// either.
 #[cfg(windows)]
-fn check_winget(python_missing: bool, git_missing: bool, obsidian_missing: bool, winget: Option<&Found>) -> Option<Check> {
-    let missing: Vec<String> = [(python_missing, "Python"), (git_missing, "Git"), (obsidian_missing, "Obsidian")]
-        .into_iter()
-        .filter(|(m, _)| *m)
-        .map(|(_, name)| name.to_string())
-        .collect();
-    let winget = winget.filter(|w| !w.answers())?;
-    if missing.is_empty() {
-        return None;
-    }
+fn check_winget(obsidian_missing: bool, winget: Option<&Found>) -> Option<Check> {
+    let winget = winget.filter(|w| obsidian_missing && !w.answers())?;
     let store = "Ouvre le Microsoft Store, cherche « Programme d'installation d'application (App Installer) » et clique \
                  sur « Obtenir (Get) » ou « Mettre à jour (Update) ». S'il n'y a que « Ouvrir (Open) », redémarre ton \
                  PC. Puis clique sur Revérifier.";
-    let what = steps::list_fr(&missing);
     Some(match winget {
-        Found::Absent if python_missing => WINGET.is(
-            Status::Error,
-            format!(
-                "Pour installer {what}, il me faut l'outil d'installation de Microsoft. {store} Store bloqué (PC du \
-                 travail) ? Installe Python depuis python.org, ou demande au service informatique."
-            ),
+        Found::Absent => WINGET.is(
+            Status::Warn,
+            format!("Il me manque l'outil d'installation de Microsoft pour installer Obsidian : je continue sans. {store}"),
         ),
-        Found::Absent => {
-            WINGET.is(Status::Warn, format!("Il me manque l'outil d'installation de Microsoft pour installer {what} : je continue sans. {store}"))
-        }
         _ => WINGET.is(
             Status::Warn,
             format!(
-                "L'outil d'installation de Microsoft ne répond pas encore : il me sert à installer {what}. Attends une \
+                "L'outil d'installation de Microsoft ne répond pas encore : il me sert à installer Obsidian. Attends une \
                  minute, puis clique sur Revérifier. Toujours rien ? {store}"
             ),
         ),
@@ -1766,13 +1737,17 @@ mod tests {
         assert!(steps.contains(&format!("const OBSIDIAN_URL: &str = \"{SPEED_URL}\";")), "{SPEED_URL}");
     }
 
-    /// What the winget line says follows install.ps1: while it takes Python and Git from winget alone, a
-    /// PC without winget stops on Python. Once it falls back on their official installers (#65), it does
-    /// not, and the line must say so: set OFFICIAL_INSTALLERS.
+    /// What the Windows lines say follows install.ps1: Python and Git « je l'installe pour toi », with or
+    /// without winget, as it falls back on their official installers (#65); Obsidian from winget alone,
+    /// hence the winget line. On every system: install.ps1 is the same file.
     #[test]
     fn the_winget_line_follows_install_ps1() {
         let ps1 = include_str!("../../../install.ps1");
-        assert_eq!(OFFICIAL_INSTALLERS, ps1.contains("function Official-Install"), "install.ps1 changed: set OFFICIAL_INSTALLERS");
+        assert!(ps1.contains("function Official-Install"), "install.ps1 lost its fallback: Python and Git need winget again");
+        for tool in ["Python", "Git"] {
+            assert!(ps1.contains(&format!("= Install-Missing \"{tool}\"")), "{tool}");
+        }
+        assert!(ps1.contains("Winget-Install \"Obsidian.Obsidian\""));
     }
 
     #[test]
@@ -1996,82 +1971,53 @@ mod tests {
             assert_eq!((c.status, c.fix.as_deref()), (Status::Missing, Some("brain")), "{id}");
         }
         assert_eq!(by_id(&d, "claude").fix.as_deref(), Some("claude"));
-        assert_eq!(check_git(&Found::NoVersion, true).status, Status::Ok, "found is installed, as for install.ps1");
+        assert_eq!(check_git(&Found::NoVersion).status, Status::Ok, "found is installed, as for install.ps1");
         assert_eq!(by_id(&d, "python").detail, "Pas encore installé : je l'installe pour toi.");
     }
 
-    /// winget absent while Python is missing: install.ps1 would stop on Python minutes into the
-    /// install, while it takes Python from winget alone (OFFICIAL_INSTALLERS). Said in red before it,
-    /// the Store's names in French and in English, and python.org for a PC whose Store is closed.
+    /// winget absent: Python and Git come all the same (install.ps1's official installers), Obsidian
+    /// does not. Said in orange before the install, the Store's names in French and in English, and
+    /// what will not come is not counted in the download.
     #[cfg(windows)]
     #[test]
     fn no_winget_is_said_before_the_install() {
         let tmp = tempfile::tempdir().unwrap();
-        // All three missing, Python among them: red, the Store's names, python.org.
-        let w = check_winget(true, true, true, Some(&Found::Absent)).unwrap();
-        assert_eq!((w.status, w.fix.as_deref(), w.label.as_str()), (Status::Error, None, "Outil d'installation de Microsoft"));
-        assert!(w.detail.starts_with("Pour installer Python, Git et Obsidian, il me faut"), "{}", w.detail);
+        let d = decide(tmp.path(), &Facts { winget: Some(Found::Absent), ..fresh_facts() });
+        assert!(d.can_install, "{:?}", d.checks);
+        let w = by_id(&d, "winget");
+        assert_eq!((w.status, w.fix.as_deref(), w.label.as_str()), (Status::Warn, None, "Outil d'installation de Microsoft"));
+        assert!(w.detail.starts_with("Il me manque l'outil d'installation de Microsoft pour installer Obsidian : je continue sans."), "{}", w.detail);
         for said in [
             "« Programme d'installation d'application (App Installer) »", "« Obtenir (Get) »", "« Mettre à jour (Update) »",
-            "S'il n'y a que « Ouvrir (Open) », redémarre ton PC.", "Revérifier", "Store bloqué (PC du travail) ? Installe Python depuis python.org",
+            "S'il n'y a que « Ouvrir (Open) », redémarre ton PC.", "Revérifier",
         ] {
             assert!(w.detail.contains(said), "{said}: {}", w.detail);
         }
-        let d = decide(tmp.path(), &Facts { winget: Some(Found::Absent), ..fresh_facts() });
-        // Each line winget would bring points to it by name, wherever it stands.
-        let points = |d: &Diagnosis, id: &str| by_id(d, id).detail.contains("l'outil d'installation de Microsoft (voir sa ligne)");
-        assert!(points(&d, "obsidian") && !by_id(&d, "obsidian").detail.contains("juste en dessous"));
-        if OFFICIAL_INSTALLERS {
-            // install.ps1 takes Python and Git from their own sites (#65): only Obsidian waits on winget.
-            assert!(d.can_install, "{:?}", d.checks);
-            let w = by_id(&d, "winget");
-            assert!(w.status == Status::Warn && w.detail.contains("pour installer Obsidian : je continue sans."), "{}", w.detail);
-            for id in ["python", "git"] {
-                assert_eq!((by_id(&d, id).status, by_id(&d, id).detail.as_str()), (Status::Missing, "Pas encore installé : je l'installe pour toi."));
-            }
-        } else {
-            assert!(!d.can_install);
-            assert_eq!(by_id(&d, "winget").detail, w.detail);
-            assert!(points(&d, "python") && points(&d, "git"));
-            assert!(d.headline.starts_with("Une chose bloque"), "{}", d.headline);
-
-            // Python there: install.ps1 goes on without Git and Obsidian. Said in orange, nothing
-            // blocks, and what will not come is not counted in the download.
-            let git_alone = Facts { python: healthy_facts().python, winget: Some(Found::Absent), ..fresh_facts() };
-            let d = decide(tmp.path(), &git_alone);
-            assert!(d.can_install, "{:?}", d.checks);
-            let w = by_id(&d, "winget");
-            assert_eq!(w.status, Status::Warn);
-            assert!(w.detail.contains("installer Git et Obsidian : je continue sans.") && !w.detail.contains("python.org"), "{}", w.detail);
-            assert_eq!((by_id(&d, "git").status, by_id(&d, "obsidian").status), (Status::Warn, Status::Warn));
-            assert!(by_id(&d, "obsidian").detail.ends_with("Tu peux aussi le télécharger toi-même, gratuitement, sur obsidian.md."));
-            let with_winget = decide(tmp.path(), &Facts { winget: None, ..git_alone });
-            assert_eq!(d.download_mb + piece_mb("git") + piece_mb("obsidian"), with_winget.download_mb);
+        for id in ["python", "git"] {
+            assert_eq!((by_id(&d, id).status, by_id(&d, id).detail.as_str()), (Status::Missing, "Pas encore installé : je l'installe pour toi."), "{id}");
         }
+        let o = by_id(&d, "obsidian");
+        assert_eq!(o.status, Status::Warn);
+        assert!(o.detail.contains("(voir sa ligne)") && o.detail.ends_with("Tu peux aussi le télécharger toi-même, gratuitement, sur obsidian.md."), "{}", o.detail);
+        let with_winget = decide(tmp.path(), &Facts { winget: None, ..fresh_facts() });
+        assert_eq!(d.download_mb + piece_mb("obsidian"), with_winget.download_mb);
 
-        // winget there, or not looked for (nothing it brings is missing): no line.
+        // winget there, or not looked for (Obsidian there): no line.
         for winget in [Some(Found::Version("v1.9.25200".into())), None] {
             let d = decide(tmp.path(), &Facts { winget, ..fresh_facts() });
             assert!(d.checks.iter().all(|c| c.id != "winget"), "{:?}", d.checks);
             assert!(d.can_install);
         }
-        assert!(check_winget(false, false, false, Some(&Found::Absent)).is_none());
+        assert!(check_winget(false, Some(&Found::Absent)).is_none());
 
         // There but silent (its first run on a new profile outlasts the probe): install.ps1 tries it
-        // all the same. Orange, a minute to wait, nothing blocks.
+        // all the same. Orange, a minute to wait.
         let d = decide(tmp.path(), &Facts { winget: Some(Found::NoVersion), ..fresh_facts() });
         assert!(d.can_install, "{:?}", d.checks);
         let w = by_id(&d, "winget");
         assert_eq!(w.status, Status::Warn);
         assert!(w.detail.contains("ne répond pas encore") && w.detail.contains("Attends une minute"), "{}", w.detail);
-        assert_eq!(by_id(&d, "python").detail, "Pas encore installé : je l'installe pour toi.");
-        assert_eq!((by_id(&d, "git").status, by_id(&d, "obsidian").status), (Status::Missing, Status::Missing));
-
-        // Once install.ps1 takes Python and Git from their own sites (OFFICIAL_INSTALLERS), winget is
-        // Obsidian's alone: orange.
-        let only_obsidian = check_winget(false, false, true, Some(&Found::Absent)).unwrap();
-        assert_eq!(only_obsidian.status, Status::Warn);
-        assert!(only_obsidian.detail.contains("pour installer Obsidian : je continue sans."), "{}", only_obsidian.detail);
+        assert_eq!(by_id(&d, "obsidian").status, Status::Missing);
     }
 
     #[cfg(windows)]

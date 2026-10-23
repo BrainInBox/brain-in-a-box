@@ -33,6 +33,13 @@ Nothing missing passes for green: a row with step `absent` is a scenario that wr
 by its timeout, cancelled, or refused to start); `job / aucun-resultat`, a job that wrote no file;
 `job / <job>-<result>` (e.g. `macos-cancelled`, `ref-failure`), a job that did not succeed although
 its rows say nothing. For those three, read the job's log (`gh run view <run-id> --log-failed`).
+`job / epingles-failure` (OS `windows`) is no VM: `.github/ci/epingles.py` found a Git for Windows or a
+Python 3.x (the pinned minor) released 14 days ago or more while `install.ps1` still pins an older one for
+its official installers, or could not read GitHub's or python.org's API (its log says which). The fix is
+`$OFFICIAL_INSTALLERS` in `install.ps1`: the version, both URLs and both SHA-256 (x64, ARM64), each hash
+read from two sources (GitHub's API `digest` and the release notes' table; python.org's release page and
+its API), and the versions `.github/ci/install-ps1-secours.ps1` and `test.yml` expect. `install.ps1` is
+the maintainer's to merge (below).
 
 ## Reproduce
 
@@ -82,8 +89,15 @@ checks the app's own diagnosis said Git « À installer ». The checks of the in
 `git-absent-au-depart` (the proof, probe by probe, and the uninstaller's code: `details.git.avant`;
 « sa sortie est illisible » is the new process sans-git.ps1 starts answering nothing it could read:
 nothing was proved there),
-`git-winget` (install.ps1's lines in `~/.brain-in-a-box/install.log`, `> winget install -e --id
-Git.Git ...` then `winget : code N`, one per attempt: `details.git.winget`), `git-nouveau-processus`
+`git-installe` (install.ps1's lines in `~/.brain-in-a-box/install.log`: `> winget install -e --id
+Git.Git ...` then `winget : code N`, one per attempt, `details.git.winget`; when winget could not (absent,
+or its source broken: `winget source update` once, one more try; or it did not start: `winget : n'a pas
+demarre`, then `> winget : il ne demarre pas, ...`), `> installeur officiel : Git <version>
+(<arch>) <url>` then how it ended, `details.git.officiel`; never when the company's policy blocks winget
+(`> winget : bloque par la politique de l'entreprise, ...`: the kit does not go around it); then `> Git :
+<git.exe> (winget|installeur officiel)`, or `absent`, `details.git.voie`; the reason says each way in order,
+winget's codes in words),
+`git-nouveau-processus`
 (`where git` and `git --version` through cmd.exe in the environment Windows builds from the
 registry, and the folder of that git.exe created after the proof), `git-coffre` (the vault's first
 commit is the installer's « brain init »), `git-bash` (Claude Code, without a token and its
@@ -96,7 +110,8 @@ it uses: the end of that log is in the reason; the fix is `CLAUDE_BASH_RE` in te
 maintainer reviews it), not the kit. The VM's user is an administrator without UAC: Git's installer
 puts Git in `C:\Program Files\Git` even when winget asks for the user's scope, so the question
 Windows may ask a user, a Git for one user (`%LOCALAPPDATA%\Programs\Git`) and Claude Code finding
-its bash through `git` on the PATH are not seen there.
+its bash through `git` on the PATH are not seen there. The nights start with the step `git`: without git on
+the harness's PATH, « git introuvable », followed by what install.log says of Git, as `git-installe` says it.
 
 ## Read a failure of the app scenario
 

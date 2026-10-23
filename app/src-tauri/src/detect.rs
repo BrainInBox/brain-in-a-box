@@ -245,7 +245,8 @@ pub fn git() -> Found {
     sys::find_tool("git").map_or(Found::Absent, |bin| version_of(&bin, TIMEOUT))
 }
 
-/// winget, which install.ps1 takes Python, Git and Obsidian from: only on the PATH it is given
+/// winget, which install.ps1 takes Obsidian from (Python and Git too, else from their official
+/// installers): only on the PATH it is given
 /// (sys::tool_path), where its `Have winget` looks. Installed when it answers `--version`
 /// ("v1.9.25200"). There but silent (NoVersion): its first run on a new profile can outlast the
 /// probe, and an alias left behind by an App Installer that is gone answers nothing either.
