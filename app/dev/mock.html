@@ -115,8 +115,8 @@
     const C = (id, status, detail) => ({ id, label: LABELS[id], status, detail, fix: FIX[id] || null });
     const ALL_STEPS = WIN ? ['claude', 'brain'] : LIN ? ['paquets', 'claude', 'bun', 'obsidian', 'brain'] : ['claude', 'clt', 'bun', 'obsidian', 'brain'];
     const TOOLS_MISSING = WIN
-      ? [C('python', 'missing', 'Pas encore installé. Je le prends chez Microsoft (winget).'),
-        C('git', 'missing', 'Pas encore installé. Je le prends chez Microsoft (winget).')]
+      ? [C('python', 'missing', 'Pas encore installé. Je l’installe : par winget (Microsoft), sinon depuis son site officiel.'),
+        C('git', 'missing', 'Pas encore installé. Je l’installe : par winget (Microsoft), sinon depuis son site officiel.')]
       : LIN ? [C('paquets', 'missing', 'Il manque git et curl. Je les installe : ton ordinateur te demandera ton mot de passe.')]
         : [C('clt', 'missing', 'Pas encore installés. Apple s’en charge, il suffit de cliquer.')];
     const MISSING = [

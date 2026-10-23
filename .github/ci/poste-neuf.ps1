@@ -20,4 +20,10 @@ if (-not (Test-Path "$stub\python.exe")) {
 }
 # The py launcher would find the toolcache Pythons through the registry: a machine without Python has none.
 Set-Content "$stub\py.cmd" "@echo No installed Python found!`r`n@exit /b 103" -Encoding ascii
+# The stub comes first only until install.ps1 reads the PATH again after winget (the Machine PATH first): the
+# launcher in Windows' folder then answers, with a toolcache Python (a GitHub VM, 2026-10-22, when winget
+# failed). Renamed once; the job's later steps find it gone.
+foreach ($n in 'py.exe', 'pyw.exe') {
+    if (Test-Path -LiteralPath "$env:WINDIR\$n" -PathType Leaf) { Rename-Item -LiteralPath "$env:WINDIR\$n" -NewName "$n.biab-off" }
+}
 $env:Path = "$stub;" + ((($env:Path -split ';') | Where-Object { $_ -notlike $tc }) -join ';')

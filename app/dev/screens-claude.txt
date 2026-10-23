@@ -3227,8 +3227,8 @@ Windows 11 (24H2) · 16 Go de mémoire · 182 Go libres
 Version de Windows : OKWindows 11 (24H2)
 Espace disque : OK182 Go libres
 Connexion internet : À noterclaude.ai ne répond pas. Une étape risque d’échouer.
-Python (pour les automatismes) : À installerPas encore installé. Je le prends chez Microsoft (winget).
-Git (l’historique de tes notes) : À installerPas encore installé. Je le prends chez Microsoft (winget).
+Python (pour les automatismes) : À installerPas encore installé. Je l’installe : par winget (Microsoft), sinon depuis son site officiel.
+Git (l’historique de tes notes) : À installerPas encore installé. Je l’installe : par winget (Microsoft), sinon depuis son site officiel.
 Bun (le moteur de la mémoire) : À installerPas encore installé.
 Claude Code : À installerPas encore installé.
 Connexion à Claude : À noterTu te connecteras une fois Claude Code installé.
