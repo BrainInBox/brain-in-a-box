@@ -1,6 +1,12 @@
 //! W3 with Tauri: the overlay as `WebviewWindowBuilder` makes it (transparent, no frame, always on top,
 //! not focusable, out of the taskbar), clicks let through by `set_ignore_cursor_events`, kept out of
-//! captures by WDA_EXCLUDEFROMCAPTURE on its HWND. It prints « hwnd <id> » once shown.
+//! captures by WDA_EXCLUDEFROMCAPTURE on its HWND. It prints « hwnd <id> … » once shown.
+//!
+//! `calque-tauri.exe <rings> <mode>`, the order of the calls (Server 2022 refuses the affinity to the
+//! layered window tao makes):
+//!   apres        set_ignore_cursor_events, then the affinity
+//!   avant        the affinity first (no WS_EX_LAYERED yet), then set_ignore_cursor_events
+//!   lwa          set_ignore_cursor_events, SetLayeredWindowAttributes(255, LWA_ALPHA), then the affinity
 #![windows_subsystem = "windows"]
 
 use std::io::{BufRead, Write};
@@ -9,13 +15,16 @@ use std::time::Duration;
 
 use tauri::{PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindowBuilder};
 use windows::Win32::Foundation::HWND;
+use windows::Win32::Foundation::COLORREF;
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetSystemMetrics, SetWindowDisplayAffinity, SetWindowPos, HWND_TOPMOST, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
-    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE, WDA_EXCLUDEFROMCAPTURE, WDA_NONE, WINDOW_DISPLAY_AFFINITY,
+    GetSystemMetrics, GetWindowDisplayAffinity, GetWindowLongPtrW, SetLayeredWindowAttributes, SetWindowDisplayAffinity, SetWindowPos, GWL_EXSTYLE, HWND_TOPMOST,
+    LWA_ALPHA, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE,
+    WDA_EXCLUDEFROMCAPTURE, WDA_NONE, WINDOW_DISPLAY_AFFINITY,
 };
 
 fn main() {
     let rects = std::env::args().nth(1).unwrap_or_default();
+    let mode = std::env::args().nth(2).unwrap_or_else(|| "apres".into());
     tauri::Builder::default()
         .setup(move |app| {
             // SAFETY: plain values; the app is per-monitor aware (Tauri's manifest): physical pixels.
@@ -37,13 +46,34 @@ fn main() {
                 .build()?;
             win.set_position(PhysicalPosition::new(x, y))?;
             win.set_size(PhysicalSize::new(w as u32, h as u32))?;
-            win.set_ignore_cursor_events(true)?;
             let hwnd = win.hwnd()?;
             // SAFETY: our window, on the main thread (setup).
-            let excluded = unsafe { SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE) }.is_ok();
+            let exclure = || unsafe { SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE) }.map_err(|e| e.code());
+            let mut lwa = None;
+            let excluded = match mode.as_str() {
+                "avant" => {
+                    let r = exclure();
+                    win.set_ignore_cursor_events(true)?;
+                    r
+                }
+                "lwa" => {
+                    win.set_ignore_cursor_events(true)?;
+                    // SAFETY: as above; the whole window drawn as it is (alpha 255).
+                    lwa = Some(unsafe { SetLayeredWindowAttributes(hwnd, COLORREF(0), 255, LWA_ALPHA) }.map_err(|e| e.code()));
+                    exclure()
+                }
+                _ => {
+                    win.set_ignore_cursor_events(true)?;
+                    exclure()
+                }
+            };
             win.show()?;
+            let mut lue = 0u32;
+            // SAFETY: as above.
+            let _ = unsafe { GetWindowDisplayAffinity(hwnd, &mut lue) };
+            let ex = unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) };
             let id = hwnd.0 as usize;
-            println!("hwnd {id} excluded {excluded}");
+            println!("hwnd {id} mode {mode} excluded {} ({excluded:?}) affinity {lue:#x} exstyle {ex:#x} lwa {lwa:?}", excluded.is_ok());
             let _ = std::io::stdout().flush();
             // Back on top of the topmost band, as calque.rs does.
             std::thread::spawn(move || loop {

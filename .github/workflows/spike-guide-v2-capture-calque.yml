@@ -125,14 +125,18 @@ jobs:
             echo "### Mesures (${{ matrix.os }})"
             echo
             echo '```'
-            grep -h '^MESURE\|^test tests::\|panicked' "$RUNNER_TEMP"/*.log || true
+            grep -h '^MESURE\|^test tests::\|^calque\|panicked' "$RUNNER_TEMP"/*.log || true
             echo '```'
           } | tee -a "$GITHUB_STEP_SUMMARY"
 
   # Only on a commit that asks for them (« [mutations] »), once the desktop tests are green.
   mutations:
     if: contains(github.event.head_commit.message, '[mutations]')
-    runs-on: windows-2025
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2025, windows-2022]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 150
     defaults:
       run:
@@ -150,7 +154,7 @@ jobs:
             ~/.cargo/registry/cache
             spike/guide-v2-capture-calque/target
             spike/guide-v2-capture-calque/calque-tauri/target
-          key: spikev2cc-mut-${{ hashFiles('spike/guide-v2-capture-calque/Cargo.lock', 'spike/guide-v2-capture-calque/calque-tauri/Cargo.lock') }}
+          key: spikev2cc-mut-${{ matrix.os }}-${{ hashFiles('spike/guide-v2-capture-calque/Cargo.lock', 'spike/guide-v2-capture-calque/calque-tauri/Cargo.lock') }}
 
       - name: Build
         run: |

@@ -92,6 +92,16 @@ impl Navigateur {
         }
     }
 
+    /// The element at a point of the screen: its name, class and control type (the proofs' diagnostics).
+    pub fn element_au(&self, (x, y): (i32, i32)) -> Option<(String, String, i32)> {
+        let _physical = Physical::enter();
+        // SAFETY: COM calls on objects of this thread.
+        unsafe {
+            let e = self.uia.ElementFromPoint(windows::Win32::Foundation::POINT { x, y }).ok()?;
+            Some((e.CurrentName().ok()?.to_string(), e.CurrentClassName().ok()?.to_string(), e.CurrentControlType().ok()?.0))
+        }
+    }
+
     /// The tab strip, on the screen (physical pixels).
     pub fn bande(&self) -> Option<RECT> {
         let _physical = Physical::enter();

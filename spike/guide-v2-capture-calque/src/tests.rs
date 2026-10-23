@@ -26,7 +26,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WDA_NONE, WINDOW_DISPLAY_AFFINITY,
 };
 
-use crate::calque::{anneau, Calque, ANNEAU, EPAISSEUR, MARGE};
+use crate::calque::{anneau, Calque, Mode, ANNEAU, EPAISSEUR, MARGE};
 use crate::compose::composer;
 use crate::echelle;
 use crate::navigateur::{hote, Navigateur, Refus};
@@ -56,19 +56,30 @@ fn centile(v: &[f32], p: f32) -> f32 {
     s.get(((s.len().max(1) - 1) as f32 * p).round() as usize).copied().unwrap_or(f32::NAN)
 }
 
-/// Pixels a red of any shade (the other site's page and icon): what must never be in the image.
+/// The other site's red (its page and its icon): what must never be in the image.
+const BANQUE: [u8; 3] = [0xe0, 0x00, 0x00];
+
 fn rouges(img: &Rgba, z: Option<Zone>) -> usize {
-    let z = z.unwrap_or((0, 0, img.w as i32, img.h as i32));
-    let mut n = 0;
-    for y in z.1.max(0)..z.3.min(img.h as i32) {
-        for x in z.0.max(0)..z.2.min(img.w as i32) {
+    img.count_in(z.unwrap_or((0, 0, img.w as i32, img.h as i32)), BANQUE)
+}
+
+/// Reds of any shade outside `hors`: how many, their box and mean colour (what Edge itself paints red).
+fn autres_rouges(img: &Rgba, hors: Zone) -> Option<(usize, Zone, [u32; 3])> {
+    let (mut n, mut b, mut sum): (usize, Option<Zone>, [u32; 3]) = (0, None, [0; 3]);
+    for y in 0..img.h as i32 {
+        for x in 0..img.w as i32 {
+            if x >= hors.0 && x < hors.2 && y >= hors.1 && y < hors.3 {
+                continue;
+            }
             let p = &img.px[((y as u32 * img.w + x as u32) * 4) as usize..][..3];
             if p[0] > 160 && p[1] < 80 && p[2] < 80 {
                 n += 1;
+                (0..3).for_each(|i| sum[i] += u32::from(p[i]));
+                b = Some(b.map_or((x, y, x + 1, y + 1), |(l, t, r, bt)| (l.min(x), t.min(y), r.max(x + 1), bt.max(y + 1))));
             }
         }
     }
-    n
+    b.map(|b| (n, b, sum.map(|v| v / n as u32)))
 }
 
 fn bounds_in(img: &Rgba, z: Zone, c: [u8; 3]) -> Option<Zone> {
@@ -531,6 +542,13 @@ fn bureau_w1_edge() {
     let bz = brut.zone(bande);
     let rouge_bande = rouges(&brut.img, Some(bz));
     mesure(T, "temoin_icone_rouge_dans_bande", rouge_bande);
+    match autres_rouges(&brut.img, bz) {
+        None => mesure(T, "autres_rouges_hors_bande", "aucun"),
+        Some((n, z, moy)) => {
+            let at = (brut.left + (z.0 + z.2) / 2, brut.top + (z.1 + z.3) / 2);
+            mesure(T, "autres_rouges_hors_bande", format!("{n} px, boîte {z:?}, moyenne {moy:?}, élément UIA au centre {:?}", nav.element_au(at)));
+        }
+    }
     assert!(rouge_bande >= 20, "witness: the other tab's red icon is in the tab strip");
     mesure(T, "fenetres", brut.fenetres.len());
     assert!(brut.fenetres.iter().all(|&(h, _)| h != w2), "Edge's other window is left out");
@@ -636,9 +654,9 @@ impl CalqueTauri {
         std::env::var_os("CALQUE_TAURI").map(PathBuf::from).filter(|p| p.is_file())
     }
 
-    fn ouvrir(anneaux: Vec<RECT>) -> Self {
+    fn ouvrir(anneaux: Vec<RECT>, mode: &str) -> Self {
         let arg = anneaux.iter().map(|r| format!("{},{},{},{}", r.left, r.top, r.right - r.left, r.bottom - r.top)).collect::<Vec<_>>().join(";");
-        let mut child = Command::new(Self::exe().expect("CALQUE_TAURI")).arg(arg).stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
+        let mut child = Command::new(Self::exe().expect("CALQUE_TAURI")).args([arg.as_str(), mode]).stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
         let stdin = child.stdin.take().unwrap();
         let mut stdout = BufReader::new(child.stdout.take().unwrap());
         let mut line = String::new();
@@ -673,23 +691,33 @@ impl Drop for CalqueTauri {
 
 #[derive(Clone, Copy, PartialEq)]
 enum Sorte {
-    Win32,
-    Tauri,
+    Win32(Mode),
+    /// calque-tauri's mode: the order of its calls.
+    Tauri(&'static str),
 }
+
+/// The overlay the guide would take: the Win32 one by colour key, and Tauri's in this order.
+const WIN32_RETENU: Sorte = Sorte::Win32(Mode::Cle);
+const TAURI_MODES: [&str; 3] = ["apres", "avant", "lwa"];
 
 impl Sorte {
     fn ouvrir(self, anneaux: Vec<RECT>) -> Box<dyn Overlay> {
         match self {
-            Sorte::Win32 => Box::new(Calque::ouvrir(anneaux)),
-            Sorte::Tauri => Box::new(CalqueTauri::ouvrir(anneaux)),
+            Sorte::Win32(m) => Box::new(Calque::ouvrir(anneaux, m)),
+            Sorte::Tauri(m) => Box::new(CalqueTauri::ouvrir(anneaux, m)),
         }
     }
 
-    fn nom(self) -> &'static str {
+    fn nom(self) -> String {
         match self {
-            Sorte::Win32 => "win32",
-            Sorte::Tauri => "tauri",
+            Sorte::Win32(Mode::Cle) => "win32-cle".into(),
+            Sorte::Win32(Mode::Ulw) => "win32-ulw".into(),
+            Sorte::Tauri(m) => format!("tauri-{m}"),
         }
+    }
+
+    fn tauri(self) -> bool {
+        matches!(self, Sorte::Tauri(_))
     }
 }
 
@@ -734,6 +762,7 @@ fn verifier_calque(d: &Desk, echelle: u32, sorte: Sorte) -> Result<(), String> {
     }
     let _p = Physical::enter();
     let (_prog, win) = d.open("bouton", &format!("Calque{echelle}{}", sorte.nom()), (100, 100, 600, 400), BLUE);
+    let tauri = sorte.tauri();
     let pid = pid_of(win);
     let bouton = until_some("its button", || enfants(win).into_iter().find(|&c| title(c) == "Nouveau"));
     let b = window_rect(bouton).unwrap();
@@ -750,11 +779,14 @@ fn verifier_calque(d: &Desk, echelle: u32, sorte: Sorte) -> Result<(), String> {
     let tb_cible = RECT { left: tb.left + 40, top: tb.top + o, right: tb.left + 300, bottom: tb.bottom - o };
     let s = screen_rect();
     mesure(&t, "ecran", rect_s(s));
-    check(screen_copy(s).unwrap().count(ANNEAU) == 0, "the ring's colour on the screen before the overlay")?;
+    let avant = screen_copy(s).unwrap();
+    check(avant.count(ANNEAU) == 0, "the ring's colour on the screen before the overlay")?;
+    let zf = zone_of(f, s);
+    let bleu_avant = avant.count_in(zf, BLUE) as i64;
 
     let calque = sorte.ouvrir(vec![b, tb_cible]);
     // A web view draws its page a moment after the window shows.
-    sleep(if sorte == Sorte::Tauri { 3000 } else { 500 });
+    sleep(if tauri { 3000 } else { 500 });
     mesure(&t, "devant_apres_calque", class(devant()));
     verifier!(devant() == win, "the overlay took the focus");
     mesure(&t, "z_calque_vs_barre_avant", format!("{:?} < {:?}", z_index(calque.hwnd()), z_index(tray)));
@@ -763,21 +795,28 @@ fn verifier_calque(d: &Desk, echelle: u32, sorte: Sorte) -> Result<(), String> {
     let ec = screen_copy(s).unwrap();
     mesure(&t, "anneau_printwindow", pw.img.count(ANNEAU));
     mesure(&t, "anneau_ecran_entier", ec.count(ANNEAU));
+    let bleu_exclu = ec.count_in(zf, BLUE) as i64;
+    mesure(&t, "bleu_capture_calque_exclu", format!("{bleu_exclu}/{bleu_avant}"));
     verifier!(pw.img.count(ANNEAU) == 0, "the ring in PrintWindow's image");
     verifier!(ec.count(ANNEAU) == 0, "the ring in a copy of the whole screen");
+    verifier!(bleu_exclu * 100 >= bleu_avant * 95, "the app hidden in a capture of the screen");
 
     // The witness: shown to captures for a moment, the ring is on the screen, where it should be.
     let aff = calque.affinite(WDA_NONE);
     mesure(&t, "affinite_none", aff);
     let (ob, _) = anneau(b);
     let autour = zone_of(RECT { left: ob.left - 20, top: ob.top - 20, right: ob.right + 20, bottom: ob.bottom + 20 }, s);
-    let part = if sorte == Sorte::Tauri { 80 } else { 95 };
+    let part = if tauri { 80 } else { 95 };
     let vu = within(Duration::from_secs(10), || {
         let vu = screen_copy(s).unwrap();
         (vu.count_in(autour, ANNEAU) as i64 * 100 >= ring_area(b) * part).then_some(vu)
     })
     .unwrap_or_else(|| screen_copy(s).unwrap());
     let nb = vu.count_in(autour, ANNEAU) as i64;
+    // The overlay is transparent but for its rings: the app under it is seen.
+    let bleu_vu = vu.count_in(zf, BLUE) as i64;
+    mesure(&t, "bleu_sous_calque", format!("{bleu_vu}/{bleu_avant}"));
+    verifier!(bleu_vu * 100 >= bleu_avant * 90, "the app hidden by the overlay");
     let bornes = bounds_in(&vu, autour, ANNEAU);
     let attendu = zone_of(ob, s);
     let erreur = bornes.map_or(i32::MAX, |z| (z.0 - attendu.0).abs().max((z.1 - attendu.1).abs()).max((z.2 - attendu.2).abs()).max((z.3 - attendu.3).abs()));
@@ -847,19 +886,24 @@ fn sonde_affinite() {
     use windows::Win32::Foundation::{COLORREF, SIZE};
     use windows::Win32::Graphics::Gdi::{GetDC, ReleaseDC, AC_SRC_ALPHA, AC_SRC_OVER, BLENDFUNCTION};
     use windows::Win32::UI::WindowsAndMessaging::{
-        CreateWindowExW, DestroyWindow, SetLayeredWindowAttributes, SetWindowDisplayAffinity, ShowWindow, UpdateLayeredWindow, LWA_ALPHA, SW_SHOWNOACTIVATE,
-        ULW_ALPHA, WDA_MONITOR, WINDOW_EX_STYLE, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
+        CreateWindowExW, DestroyWindow, SetLayeredWindowAttributes, SetWindowDisplayAffinity, ShowWindow, UpdateLayeredWindow, LWA_ALPHA, LWA_COLORKEY,
+        SW_SHOWNOACTIVATE, ULW_ALPHA, WDA_MONITOR, WINDOW_EX_STYLE, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+        WS_EX_TRANSPARENT, WS_POPUP,
     };
     const T: &str = "w3.affinite";
     let _p = Physical::enter();
     let s = screen_rect();
     let (sw, sh) = (s.right - s.left, s.bottom - s.top);
     for (nom, w, h) in [("ecran", sw, sh), ("ecran_moins_1", sw - 1, sh), ("moitie", sw / 2, sh / 2), ("anneau", 260, 120)] {
-        for sorte in ["ulw", "lwa", "opaque", "ulw_transparent"] {
+        // « tao »: what Tauri makes for a transparent window that clicks go through (no back buffer, layered,
+        // neither UpdateLayeredWindow nor SetLayeredWindowAttributes).
+        for sorte in ["ulw", "lwa", "opaque", "ulw_transparent", "cle_transparent", "tao"] {
+            let base = WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
             let ex = match sorte {
-                "ulw" | "lwa" => WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
-                "ulw_transparent" => WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
-                _ => WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+                "ulw" | "lwa" => WS_EX_LAYERED | base,
+                "ulw_transparent" | "cle_transparent" => WS_EX_LAYERED | WS_EX_TRANSPARENT | base,
+                "tao" => WS_EX_NOREDIRECTIONBITMAP | WS_EX_LAYERED | WS_EX_TRANSPARENT | base,
+                _ => base,
             };
             // SAFETY: a window of a system class, destroyed below.
             let hw = unsafe { CreateWindowExW(WINDOW_EX_STYLE(ex.0), w!("STATIC"), w!("sonde"), WS_POPUP, s.left, s.top, w, h, None, None, None, None) }.unwrap();
@@ -876,6 +920,9 @@ fn sonde_affinite() {
             } else if sorte == "lwa" {
                 // SAFETY: our layered window.
                 let _ = unsafe { SetLayeredWindowAttributes(hw, COLORREF(0), 1, LWA_ALPHA) };
+            } else if sorte == "cle_transparent" {
+                // SAFETY: as above.
+                let _ = unsafe { SetLayeredWindowAttributes(hw, COLORREF(0), 0, LWA_COLORKEY) };
             }
             // SAFETY: our window.
             let _ = unsafe { ShowWindow(hw, SW_SHOWNOACTIVATE) };
@@ -889,19 +936,36 @@ fn sonde_affinite() {
     }
 }
 
+/// The Win32 overlay by colour key (retained); by per-pixel alpha, measured only.
 #[test]
 #[ignore = "a Windows desktop (VM)"]
 fn bureau_w3_calque() {
     let d = desk();
-    verifier_calque(&d, 100, Sorte::Win32).unwrap();
+    let ulw = verifier_calque(&d, 100, Sorte::Win32(Mode::Ulw));
+    mesure("w3.win32-ulw.100", "verdict", format!("{ulw:?}"));
+    let cle = verifier_calque(&d, 100, WIN32_RETENU);
+    mesure("w3.win32-cle.100", "verdict", format!("{cle:?}"));
+    cle.unwrap();
 }
 
-/// The same overlay made by Tauri, as the guide would (calque-tauri, built by the workflow).
+/// Each order of calqueTauri's calls, as the guide would make it (calque-tauri, built by the workflow).
+fn verifier_tauri(d: &Desk, echelle: u32) -> Vec<(&'static str, Result<(), String>)> {
+    TAURI_MODES
+        .iter()
+        .map(|&m| {
+            let r = verifier_calque(d, echelle, Sorte::Tauri(m));
+            mesure(&format!("w3.tauri-{m}.{echelle}"), "verdict", format!("{r:?}"));
+            (m, r)
+        })
+        .collect()
+}
+
 #[test]
 #[ignore = "a Windows desktop (VM), CALQUE_TAURI"]
 fn bureau_w3_calque_tauri() {
     let d = desk();
-    verifier_calque(&d, 100, Sorte::Tauri).unwrap();
+    let r = verifier_tauri(&d, 100);
+    assert!(r.iter().any(|(_, r)| r.is_ok()), "no order of Tauri's calls makes an overlay that holds: {r:?}");
 }
 
 /// At 125 and 150 %, when the VM lets its scale change: the overlay again, and how PrintWindow draws a
@@ -965,12 +1029,13 @@ fn bureau_w3_echelles() {
             mesure(&format!("w1.{pct}"), "bleu", format!("{}/{}", c.img.count(BLUE), c.img.pixels()));
             mesure(&format!("w1.{pct}"), "bornes_bleu", format!("{:?}", c.img.bounds(BLUE)));
         }
-        for sorte in [Sorte::Win32, Sorte::Tauri] {
-            if sorte == Sorte::Tauri && CalqueTauri::exe().is_none() {
-                continue;
-            }
-            if let Err(e) = verifier_calque(&d, pct, sorte) {
-                fautes.push(format!("{pct} % {}: {e}", sorte.nom()));
+        if let Err(e) = verifier_calque(&d, pct, WIN32_RETENU) {
+            fautes.push(format!("{pct} % {}: {e}", WIN32_RETENU.nom()));
+        }
+        if CalqueTauri::exe().is_some() {
+            let r = verifier_tauri(&d, pct);
+            if !r.iter().any(|(_, r)| r.is_ok()) {
+                fautes.push(format!("{pct} % tauri: {r:?}"));
             }
         }
     }
