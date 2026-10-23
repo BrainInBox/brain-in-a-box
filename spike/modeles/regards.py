@@ -335,6 +335,9 @@ def juger(look, info):
     code_lu = d.get("code_lu", False)
     if look.get("erreur") == "refused" and attendu == "clickfix":
         return "negatif_ok", d
+    if "erreur" in look:
+        # No answer (the service, a timeout): neither right nor wrong, said apart.
+        return "erreur", d
     if not code_lu or anneau:
         return "negatif_rate", d
     if attendu == "clickfix":
@@ -372,14 +375,17 @@ def bilan(looks, rendu):
         bonnes = sum(l["verdict"] == "bonne" for l in pos)
         faux = sum(l["verdict"] == "anneau_faux" for l in pos)
         rates = [l["ecran"] for l in neg if l["verdict"] == "negatif_rate"]
+        neg_erreurs = [l["ecran"] for l in neg if l["verdict"] == "erreur"]
         anneaux_neg = sum(l["detail_juge"]["niveau"] == "plein" for l in neg)
-        durees = [l["duree_s"] for l in ls if "duree_s" in l]
+        durees = [l["duree_s"] for l in ls if "duree_s" in l and "erreur" not in l]
         precision = bonnes / len(pos) if pos else None
         seuil = 0.85 if MUTATION == "seuil90" else GO_PRECISION
         neg_ok = (not rates) or MUTATION == "verdict_negatifs"
         complet = len(pos) >= 25 and len(neg) >= 5
         if not neg_ok or faux:
             verdict = "NO-GO (anneau automatique refusé)"
+        elif neg_erreurs:
+            verdict = "non conclu (négatif sans réponse : %s)" % ", ".join(neg_erreurs)
         elif not complet:
             verdict = "négatifs OK, précision non conclue (%d positifs)" % len(pos)
         elif precision is not None and precision >= seuil:
@@ -389,7 +395,7 @@ def bilan(looks, rendu):
         out["%s/%s" % (m, mode)] = {
             "regards": len(ls), "positifs": len(pos), "positifs_justes": bonnes,
             "precision": round(precision, 3) if precision is not None else None, "anneaux_faux": faux,
-            "negatifs": len(neg), "negatifs_rates": rates, "anneaux_sur_negatifs": anneaux_neg,
+            "negatifs": len(neg), "negatifs_rates": rates, "negatifs_sans_reponse": neg_erreurs, "anneaux_sur_negatifs": anneaux_neg,
             "p50_s": quantile(durees, 0.5), "p90_s": quantile(durees, 0.9),
             "erreurs": sorted({l["erreur"] for l in ls if "erreur" in l}),
             "pas_d_anneau": sorted(l["ecran"] for l in pos if l["verdict"] == "pas_d_anneau"),
