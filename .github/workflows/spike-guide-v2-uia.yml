@@ -183,3 +183,45 @@ jobs:
           '```' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
           Get-ChildItem "$env:RUNNER_TEMP\uia-*.txt" | ForEach-Object { Get-Content $_ } | Where-Object { $_ -match '^MESURE |test result|panicked|FAILED|\.\.\. (ok|FAILED)' } | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
           '```' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+
+  mutations:
+    if: contains(github.event.head_commit.message, '[mutations]')
+    runs-on: windows-2025
+    timeout-minutes: 150
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: app/src-tauri
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            app/src-tauri/target
+          key: spike-uia-windows-2025-${{ hashFiles('app/src-tauri/Cargo.lock') }}
+
+      - name: Build the tests
+        run: cargo test --locked --lib --no-run
+
+      - name: The screen, 1920x1080 at 150 %
+        run: |
+          $fw = "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319"
+          & "$fw\csc.exe" /nologo /target:exe "/out:$env:RUNNER_TEMP\echelle.exe" ..\..\spike\guide-v2-uia\echelle.cs
+          & "$env:RUNNER_TEMP\echelle.exe" taille 1920 1080
+          if ($LASTEXITCODE) { exit 1 }
+          & "$env:RUNNER_TEMP\echelle.exe" pour 150
+          if ($LASTEXITCODE) { exit 1 }
+
+      - name: A RemoteApp (mstsc), for its mutation
+        timeout-minutes: 10
+        run: |
+          ../../spike/guide-v2-uia/bureau-distance.ps1 -Mode remoteapp
+          "BIBO_LOIN_PID=$((Get-Process mstsc | Select-Object -First 1).Id)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Each protection taken out turns a desktop test red
+        run: python -I ../../spike/guide-v2-uia/mutations.py --distance

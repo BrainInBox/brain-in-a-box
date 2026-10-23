@@ -33,6 +33,8 @@ pub struct Element {
     pub name: String,
     /// On the screen, in physical pixels.
     pub rect: RECT,
+    /// One of the window's own buttons (minimize, maximize, close), not the program's.
+    pub titlebar: bool,
 }
 
 #[derive(Debug, Default)]
@@ -108,7 +110,7 @@ fn uia() -> windows::core::Result<Uia> {
         unsafe { cache.AddProperty(p)? };
     }
     let mut filter: Option<IUIAutomationCondition> = None;
-    for t in KEPT.iter().chain(DATA.iter()).chain([UIA_DocumentControlTypeId].iter()) {
+    for t in KEPT.iter().chain(DATA.iter()).chain([UIA_DocumentControlTypeId, UIA_TitleBarControlTypeId].iter()) {
         // SAFETY: a condition on a property UIA defines.
         let c = unsafe { auto.CreatePropertyCondition(UIA_ControlTypePropertyId, &VARIANT::from(t.0))? };
         filter = Some(match filter {
@@ -142,7 +144,7 @@ struct Walk<'a> {
     hidden: &'a [RECT],
 }
 
-fn walk(el: &IUIAutomationElement, in_data: bool, in_doc: bool, w: &mut Walk) {
+fn walk(el: &IUIAutomationElement, in_data: bool, in_doc: bool, in_bar: bool, w: &mut Walk) {
     w.nodes += 1;
     // SAFETY: cached properties of an element of ours.
     let t = unsafe { el.CachedControlType() }.unwrap_or_default();
@@ -154,10 +156,11 @@ fn walk(el: &IUIAutomationElement, in_data: bool, in_doc: bool, w: &mut Walk) {
     }
     let data = in_data || DATA.contains(&t);
     let doc = in_doc || t == UIA_DocumentControlTypeId;
+    let bar = in_bar || t == UIA_TitleBarControlTypeId;
     if let Some(k) = kind(t) {
         if on && !offscreen && !data && (!w.browser || doc) && !w.hidden.iter().any(|h| overlaps(h, &rect)) {
             let name = unsafe { el.CachedName() }.map(|b| short(&b.to_string())).unwrap_or_default();
-            w.out.push(Element { kind: k, name, rect });
+            w.out.push(Element { kind: k, name, rect, titlebar: bar });
         }
         if matches!(t, UIA_EditControlTypeId | UIA_ComboBoxControlTypeId) {
             return;
@@ -166,7 +169,7 @@ fn walk(el: &IUIAutomationElement, in_data: bool, in_doc: bool, w: &mut Walk) {
     if let Ok(children) = unsafe { el.GetCachedChildren() } {
         for i in 0..unsafe { children.Length() }.unwrap_or(0) {
             if let Ok(c) = unsafe { children.GetElement(i) } {
-                walk(&c, data, doc, w);
+                walk(&c, data, doc, bar, w);
             }
         }
     }
@@ -214,7 +217,7 @@ pub fn commands(pid: u32, app: &str, hidden: &[RECT]) -> Result<Liste, String> {
                 Err(_) => continue,
             };
             let mut w = Walk { out: Vec::new(), passwords: Vec::new(), nodes: 0, frame: f, browser: is_browser(app), hidden };
-            walk(&root, false, false, &mut w);
+            walk(&root, false, false, false, &mut w);
             liste.elements.extend(w.out);
             liste.passwords.extend(w.passwords);
             liste.nodes += w.nodes;
@@ -225,9 +228,9 @@ pub fn commands(pid: u32, app: &str, hidden: &[RECT]) -> Result<Liste, String> {
 }
 
 /// Bibo points by pixels, as in v1, when the tree has nothing (a remote desktop, an app without
-/// accessibility): its list is empty, or the program shows another computer.
+/// accessibility): no command but the window's own buttons, or the program shows another computer.
 pub fn repli_pixels(app: &str, liste: &Liste) -> bool {
-    liste.elements.is_empty() || is_remote(app)
+    liste.elements.iter().all(|e| e.titlebar) || is_remote(app)
 }
 
 /// A screen box in the image of a window whose frame starts at `origin`, `ratio` image pixels to a
@@ -508,7 +511,7 @@ mod tests {
             worst = worst.max(gap(&test, &img, colour, e, origin, ratio));
         }
         assert_eq!(l.passwords.len(), 1, "{test}: the password field");
-        let field = Element { kind: "champ", name: "mot de passe".into(), rect: l.passwords[0] };
+        let field = Element { kind: "champ", name: "mot de passe".into(), rect: l.passwords[0], titlebar: false };
         worst = worst.max(gap(&test, &img, ORANGE, &field, origin, ratio));
         mesure(&test, "ecart_max_px", worst);
         let before = count(&img, ORANGE);
@@ -553,6 +556,25 @@ mod tests {
         atelier("pmv2");
     }
 
+    /// A window that draws itself without a control (v1's window of a colour, as a canvas or an app
+    /// without accessibility would): nothing but its title bar's buttons, so pixels.
+    #[test]
+    #[ignore = "a Windows desktop (VM)"]
+    fn uia_sans_arbre() {
+        let test = format!("sans_arbre_{}", scale());
+        let dir = tempfile::tempdir().unwrap();
+        let exe = csc("atelier.cs", dir.path());
+        let titre = format!("Atelier toile {}", std::process::id());
+        let program = Program(Command::new(&exe).args(["fenetre", titre.as_str(), "80", "80", "640", "480", "1e88e5"]).spawn().unwrap());
+        let win = listed_as(|f| f.titre == titre);
+        let l = until_list(&test, program.0.id(), &win.window.app, WAIT, |l| !l.elements.is_empty());
+        mesure(&test, "elements", l.elements.len());
+        for e in &l.elements {
+            println!("LISTE {test} {} \"{}\" barre={}", e.kind, e.name, e.titlebar);
+        }
+        assert!(repli_pixels(&win.window.app, &l), "{test}: pixels");
+    }
+
     /// An Odoo-like page in Edge, with a tab of mail behind it: time (cold, then warm), boxes, the
     /// password field blacked, no client from the table, no other tab's title, nothing out of view.
     #[test]
@@ -591,7 +613,7 @@ mod tests {
             worst = worst.max(gap(&test, &img, colour, e, origin, ratio));
         }
         assert_eq!(l.passwords.len(), 1, "{test}: the password field");
-        let field = Element { kind: "champ", name: "mot de passe".into(), rect: l.passwords[0] };
+        let field = Element { kind: "champ", name: "mot de passe".into(), rect: l.passwords[0], titlebar: false };
         worst = worst.max(gap(&test, &img, ORANGE, &field, origin, ratio));
         mesure(&test, "ecart_max_px", worst);
         let before = count(&img, ORANGE);
@@ -610,7 +632,7 @@ mod tests {
         assert!(before > 500 && count(&img, ORANGE) == 0, "{test}: the password field blacked");
         assert!(found.is_empty(), "{test}: no client of the table");
         assert!(l.elements.iter().all(|e| e.kind != "onglet" && !e.name.contains("Boite de reception")), "{test}: no other tab");
-        assert!(named(&l, "bouton", "Bas de page").is_none(), "{test}: nothing out of view");
+        assert!(named(&l, "bouton", "Bas de page").is_none() && named(&l, "bouton", "Cache derriere").is_none(), "{test}: nothing out of view");
         assert!(l.elements.iter().all(|e| e.name.chars().count() <= NOM_MAX), "{test}: names cut");
         for want in ["Ventes", "Commandes", "Menu des applications", "Rechercher", "Suivant", "Planifier une activite"] {
             assert!(l.elements.iter().any(|e| e.name == want), "{test}: {want} listed");
@@ -640,11 +662,13 @@ mod tests {
         );
         let win = listed_as(|f| f.window.pid == browser.0.id());
         let (pid, app) = (win.window.pid, win.window.app.clone());
+        let h = handle(win.window.id);
         let start = Instant::now();
-        let home = loop {
-            let l = commands(pid, &app, &[]).unwrap();
-            if l.elements.iter().any(|e| e.kind == "lien" && (e.name == "Sales" || e.name == "Ventes")) {
-                break l;
+        // The home menu: Odoo's apps are options of a list box (role="option"), so not in Bibo's list;
+        // found here in the whole tree, the oracle's.
+        let sales = loop {
+            if let Some(n) = raw(h).into_iter().find(|n| n.1 == "Sales" || n.1 == "Ventes") {
+                break n;
             }
             if start.elapsed() > Duration::from_secs(120) {
                 mesure(&test, "odoo_demo", "injoignable ou pas d'accueil en 120 s");
@@ -653,9 +677,15 @@ mod tests {
             std::thread::sleep(Duration::from_millis(500));
         };
         mesure(&test, "s_jusqu_a_l_accueil", format!("{:.1}", start.elapsed().as_secs_f64()));
-        let sales = home.elements.iter().find(|e| e.kind == "lien" && (e.name == "Sales" || e.name == "Ventes")).unwrap();
-        click_at(&sales.rect);
-        let h = handle(win.window.id);
+        std::thread::sleep(Duration::from_secs(2));
+        let (home, ms) = timed(pid, &app);
+        let tiles = raw(h).into_iter().filter(|n| n.0 == UIA_ListItemControlTypeId.0 && n.1.len() > 2).count();
+        mesure(&test, "accueil_ms", format!("{ms:.1}"));
+        mesure(&test, "accueil_elements", home.elements.len());
+        mesure(&test, "accueil_tuiles_d_applis_listitem", tiles);
+        mesure(&test, "accueil_sales_dans_la_liste", home.elements.iter().any(|e| e.name == "Sales"));
+        print_list(&format!("{test}_accueil"), &home, (0, 0), 1.0);
+        click_at(&sales.2);
         until_list(&test, pid, &app, Duration::from_secs(60), |l| l.elements.iter().any(|e| e.name == "New" || e.name == "Nouveau"));
         until("the quotations' table", || raw(h).iter().filter(|n| n.3 && DEMO.iter().any(|c| n.1 == *c)).count() >= 5);
         std::thread::sleep(Duration::from_secs(2));
@@ -676,7 +706,10 @@ mod tests {
         // A quotation's form: the client is a field's value there, not a table's cell.
         let row = nodes.iter().find(|n| n.3 && DEMO.iter().any(|c| n.1 == *c)).map(|n| n.2).unwrap();
         click_at(&row);
-        until_list(&test, pid, &app, Duration::from_secs(30), |l| l.elements.iter().any(|e| e.name == "Customer" || e.name == "Client"));
+        let start = Instant::now();
+        while start.elapsed() < Duration::from_secs(30) && !raw(h).iter().any(|n| n.1 == "Customer" || n.1 == "Confirm" || n.1 == "Send by Email") {
+            std::thread::sleep(Duration::from_millis(500));
+        }
         std::thread::sleep(Duration::from_secs(2));
         let (form, ms) = timed(pid, &app);
         mesure(&test, "fiche_ms", format!("{ms:.1}"));
