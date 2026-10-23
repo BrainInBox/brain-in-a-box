@@ -7,6 +7,9 @@ B (20) : le meilleur de A sur les 20 autres positifs, en mode liste : il a alors
 C (10) : sans liste, le meilleur de A sur le panneau (comparer les deux modes).
 
     python3 -I etapes.py A|B|C --rendu D --dossier R
+
+Avant chaque étape, regarder le forfait (le dernier regard le donne, « forfait » dans R/*.jsonl) : au-delà
+de 85 % de la fenêtre de 5 h, attendre sa reprise ; le 23/10, A s'est arrêté à 12 regards sur 30 à 97 %.
 """
 import json
 import subprocess
@@ -38,9 +41,14 @@ def main():
     etape, rendu, dossier = sys.argv[1], Path(sys.argv[3]), Path(sys.argv[5])
     dossier.mkdir(parents=True, exist_ok=True)
     if etape == "A":
+        # A run stopped halfway (the 5-hour window nearly used up) resumes where it was.
+        faits = set()
+        if (dossier / "A.jsonl").exists():
+            faits = {(l["ecran"], l["modele"]) for l in map(json.loads, (dossier / "A.jsonl").read_text(encoding="utf-8").splitlines()) if "erreur" not in l}
         for k in regards.PANNEAU:
             for m in MODELES:
-                lancer(rendu, dossier / "A.jsonl", m, "liste", [k])
+                if (k, m) not in faits:
+                    lancer(rendu, dossier / "A.jsonl", m, "liste", [k])
         return
     m, b = meilleur(dossier, rendu)
     print("meilleur de A :", m, json.dumps({k: v["verdict"] for k, v in b.items()}, ensure_ascii=False))
