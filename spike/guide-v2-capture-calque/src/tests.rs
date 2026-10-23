@@ -831,22 +831,29 @@ impl Drop for Pastille {
     }
 }
 
-/// The user clicks Bibo's pastille, then Bibo puts the app back in front: this process (and the overlay's,
-/// when it is another) may still put a window in front when the overlay shows.
-fn bibo_vient_d_avoir_la_main(t: &str, s: RECT, tb: RECT, win: HWND) -> Result<Pastille, String> {
-    use windows::Win32::UI::WindowsAndMessaging::{AllowSetForegroundWindow, SetForegroundWindow, ASFW_ANY};
+/// The user clicks Bibo's pastille: Bibo is in front, and may put any window in front (the overlay's
+/// process too, when it is another), as when the user just typed in its bar.
+fn bibo_a_la_main(t: &str, s: RECT, tb: RECT) -> Result<Pastille, String> {
+    use windows::Win32::UI::WindowsAndMessaging::{AllowSetForegroundWindow, ASFW_ANY};
     let pr = RECT { left: s.right - 240, top: tb.top - 90, right: s.right - 40, bottom: tb.top - 30 };
     let pastille = Pastille::ouvrir(pr);
     sleep(300);
     clic(centre(pr));
     let ph = handle(pastille.id);
     let eue = within(Duration::from_secs(5), || (devant() == ph).then_some(())).is_some();
-    // SAFETY: plain values; this process is in front.
-    let rendue = unsafe { AllowSetForegroundWindow(ASFW_ANY).is_ok() && SetForegroundWindow(win).as_bool() };
-    let revenue = within(Duration::from_secs(5), || (devant() == win).then_some(())).is_some();
-    mesure(t, "pastille", format!("devant {eue}, rendue {rendue}, appli revenue {revenue}"));
-    check(eue && revenue, "Bibo never had the focus, or never gave it back")?;
+    // SAFETY: a plain value; this process is in front.
+    let partagee = unsafe { AllowSetForegroundWindow(ASFW_ANY) }.is_ok();
+    mesure(t, "pastille", format!("devant {eue}, droit partagé {partagee}"));
+    check(eue, "Bibo's pastille never came in front")?;
     Ok(pastille)
+}
+
+/// Bibo gives the focus back to the app.
+fn rendre_la_main(win: HWND) -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::SetForegroundWindow;
+    // SAFETY: a plain value.
+    let _ = unsafe { SetForegroundWindow(win) };
+    within(Duration::from_secs(5), || (devant() == win).then_some(())).is_some()
 }
 
 fn ring_area(r: RECT) -> i64 {
@@ -917,13 +924,18 @@ fn verifier_calque(d: &Desk, echelle: u32, sorte: Sorte) -> Result<(), String> {
     let zf = zone_of(f, s);
     let bleu_avant = avant.count_in(zf, BLUE) as i64;
 
-    let pastille = bibo_vient_d_avoir_la_main(&t, s, tb, win)?;
+    // The overlay shows while Bibo has the focus (the user just asked); then Bibo gives it back to the app.
+    let pastille = bibo_a_la_main(&t, s, tb)?;
     let calque = sorte.ouvrir(vec![b, tb_cible]);
     // A web view draws its page a moment after the window shows.
     sleep(if tauri { 3000 } else { 500 });
-    mesure(&t, "devant_apres_calque", class(devant()));
-    verifier!(devant() == win, "the overlay took the focus");
+    mesure(&t, "devant_calque_montre_bibo_devant", class(devant()));
+    verifier!(devant() == handle(pastille.id), "the overlay took the focus from Bibo");
+    let rendue = rendre_la_main(win);
     drop(pastille);
+    sleep(300);
+    mesure(&t, "devant_apres_calque", format!("{} (rendue {rendue})", class(devant())));
+    verifier!(devant() == win, "the app not in front once Bibo gave it back");
     mesure(&t, "z_calque_vs_barre_avant", format!("{:?} < {:?}", z_index(calque.hwnd()), z_index(tray)));
 
     let pw = composer(pid, win).unwrap();
