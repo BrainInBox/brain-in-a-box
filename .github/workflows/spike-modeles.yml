@@ -28,7 +28,7 @@ jobs:
           $fw = "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319"
           & "$fw\csc.exe" /nologo /codepage:65001 /target:exe /out:sage.exe `
             /r:"$fw\WPF\UIAutomationClient.dll" /r:"$fw\WPF\UIAutomationTypes.dll" /r:"$fw\WPF\WindowsBase.dll" `
-            /r:System.Windows.Forms.dll /r:System.Drawing.dll spike/modeles/sage.cs
+            /r:System.Windows.Forms.dll /r:System.Drawing.dll spike\modeles\sage.cs
           if ($LASTEXITCODE) { throw "csc $LASTEXITCODE" }
           .\sage.exe "$env:RUNNER_TEMP\corpus"
           if ($LASTEXITCODE) { throw "sage.exe $LASTEXITCODE" }
