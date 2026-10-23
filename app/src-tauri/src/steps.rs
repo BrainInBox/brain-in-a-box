@@ -857,16 +857,19 @@ fn brain(voyage_key: Option<&str>, log: &mut dyn FnMut(String)) -> Step {
     installed(&detect::brain_dir_shown(&home), detect::embedding_model(&home).is_some(), key.is_some(), &missing_tools(&home))
 }
 
+/// install.ps1's environment from the app: the key, the folder, the choice of AI, and BIAB_APP, the app's
+/// word that it keeps the PC awake itself (KeepAwake): install.ps1 then compiles nothing for that.
 #[cfg(any(windows, test))]
 fn brain_ps1_env<'a>(key: Option<&'a str>, dir: Option<&'a str>, choice: &'a [(&'static str, String)]) -> Vec<(&'a str, Option<&'a str>)> {
-    let mut env = vec![("VOYAGE_API_KEY", key), ("BRAIN_DIR", dir)];
+    let mut env = vec![("VOYAGE_API_KEY", key), ("BRAIN_DIR", dir), ("BIAB_APP", Some("1"))];
     env.extend(choice.iter().map(|(k, v)| (*k, Some(v.as_str()))));
     env
 }
 
 /// The brain is in place: said with what it searches by, and what could not come along. Without Python
 /// nothing of it runs; without Git or Bun (no gbrain) it works by keywords, without Obsidian it works all
-/// the same: a later « Réessayer » brings them, the notes stay as they are.
+/// the same: the step succeeded, so the window has no « Réessayer »; Bibo's check, another day, sees what
+/// is missing and runs the step again, the notes as they are.
 #[cfg(any(windows, test))]
 fn installed(at: &str, meaning: bool, key: bool, missing: &[&str]) -> Step {
     if missing.contains(&"Python") {
@@ -878,7 +881,8 @@ fn installed(at: &str, meaning: bool, key: bool, missing: &[&str]) -> Step {
     let mut said = match (engine.is_empty(), meaning, key) {
         (false, ..) => format!(
             "Ton cerveau est installé dans {at} et il marche : il retrouve tes notes par mots-clés. {} n'{} pas pu s'installer : \
-             la recherche par le sens viendra plus tard (clique sur « Réessayer » un autre jour, tes notes ne changent pas).",
+             la recherche par le sens viendra plus tard. Un autre jour, rouvre Bibo et relance la vérification de ton PC : \
+             il les installera, tes notes ne changent pas.",
             list_fr(&engine),
             if engine.len() > 1 { "ont" } else { "a" }
         ),
@@ -919,26 +923,37 @@ fn incomplete(missing: &[String]) -> String {
 /// sentence: it stays in the log, under « Détails ».
 #[derive(Default)]
 struct Stop {
-    cause: Option<String>,
+    /// install.ps1's word (BIAB_ARRET), which nothing after it changes.
+    said: Option<String>,
+    /// The last refusal of the section install.ps1 is in: one of an earlier section was got past (Git's
+    /// installer blocked, a warning), and says nothing of what stopped it later.
+    refused: Option<&'static str>,
 }
 
 impl Stop {
     /// Reads `line`; true when it is install.ps1's word for the app, which stays out of the log: a cause
     /// of the catalogue in a log would make Claude's dossier look forged (repair's CATALOGUE_IDS).
     fn see(&mut self, line: &str) -> bool {
-        if let Some(id) = line.trim().strip_prefix("BIAB_ARRET=") {
-            self.cause = Some(id.trim().to_string());
+        let line = line.trim();
+        if let Some(id) = line.strip_prefix("BIAB_ARRET=") {
+            self.said = Some(id.trim().to_string());
             return true;
         }
-        if self.cause.is_none() {
-            self.cause = refusal(line).map(String::from);
+        if line.starts_with("=== ") {
+            self.refused = None;
+        } else if let Some(cause) = refusal(line) {
+            self.refused = Some(cause);
         }
         false
     }
 
+    fn cause(&self) -> Option<&str> {
+        self.said.as_deref().or(self.refused)
+    }
+
     /// The brain step's sentence: what happened and what to do.
     fn message(&self, timed_out: bool) -> String {
-        if let Some(m) = self.cause.as_deref().and_then(repair::stop_message) {
+        if let Some(m) = self.cause().and_then(repair::stop_message) {
             return m;
         }
         if timed_out {
@@ -956,7 +971,9 @@ impl Stop {
 fn refusal(line: &str) -> Option<&'static str> {
     let l = line.to_lowercase();
     let said = |words: &[&str]| words.iter().any(|w| l.contains(w));
-    if said(&["language mode", "mode de langage"]) {
+    // A locked PowerShell; or an execution policy the company imposes (AllSigned, Restricted), which wins over
+    // -ExecutionPolicy Bypass: about_Execution_Policies is named in every language of Windows.
+    if said(&["language mode", "mode de langage", "about_execution_policies", "not digitally signed", "signé numériquement"]) {
         Some("powershell_verrouille")
     } else if said(&["(407)", "proxy authentication required", "authentification proxy"]) {
         Some("proxy_entreprise")
@@ -1237,15 +1254,28 @@ pub fn start_claude() -> Result<(), String> {
     open_window("claude", &talk_to_claude(detect::claude_bin(), detect::vault(&home), detect::claude_logged_in)?)
 }
 
-fn talk_to_claude(claude: Option<PathBuf>, vault: Option<PathBuf>, _logged_in: impl FnOnce() -> bool) -> Result<String, String> {
+/// The window's script, once Claude Code is logged in: otherwise it would open on its login menu, in
+/// English, with API billing among its choices.
+fn talk_to_claude(claude: Option<PathBuf>, vault: Option<PathBuf>, logged_in: impl FnOnce() -> bool) -> Result<String, String> {
     let Some(claude) = claude else {
         return Err("Claude Code n'est pas encore installé.".into());
     };
     let Some(vault) = vault else {
         return Err("Ton cerveau n'est pas encore installé.".into());
     };
+    if !logged_in() {
+        return Err("Connecte d'abord Claude à ton compte Claude (abonnement Pro ou Max), puis recommence.".into());
+    }
     Ok(claude_in_brain_script(&sys::tool_path(), &vault, &claude))
 }
+
+/// What the window says before Claude, which speaks English until it is spoken to: what to type, the
+/// question it may ask first (trust this folder), how to end.
+const TALK_INTRO: [&str; 3] = [
+    "Claude t'écoute : écris ta question, puis appuie sur Entrée.",
+    "S'il te demande d'abord en anglais si tu fais confiance à ce dossier (« trust »), choisis la première réponse (« Yes ») : c'est ton cerveau.",
+    "Pour finir, ferme cette fenêtre.",
+];
 
 fn start_codex_onboarding(home: &Path) -> Result<(), String> {
     let (codex, codex_home) = chosen_codex(home)?;
@@ -1294,11 +1324,12 @@ fn onboarding_guide(home: &Path) -> Result<PathBuf, String> {
 }
 
 /// The interview's first message, in French, with the brain's real folder: it is not always
-/// Documents/Brain (install.ps1 puts a new one in the profile's folder when Windows guards Documents).
+/// Documents/Brain (install.ps1 puts a new one in the profile's folder when Windows guards Documents),
+/// which the guide may still name, and Claude writes without asking only in its working folder.
 fn onboarding_prompt(guide: &Path, vault: &Path) -> String {
     format!(
-        "Lis {} et suis-le pour me personnaliser. Mon cerveau est dans {}. Parle-moi en français, avec des mots simples : \
-         je ne suis pas informaticien.",
+        "Lis {} et suis-le pour me personnaliser. Mon cerveau est dans {}. Quand le guide dit ~/Documents/Brain, c'est ce dossier-là. \
+         Parle-moi en français, avec des mots simples : je ne suis pas informaticien.",
         guide.display(),
         vault.display()
     )
@@ -1306,12 +1337,28 @@ fn onboarding_prompt(guide: &Path, vault: &Path) -> String {
 
 /// The interview writes the user's notes in the brain without asking each time: that is what it is for.
 /// Claude Code then accepts, in its working folder only (the brain), edits and the file commands (mkdir,
-/// touch, cp, mv, rm, rmdir, sed); it still asks for any other command, for a path outside the brain, and
-/// for its protected paths (.git, .claude).
+/// touch, cp, mv, rm, rmdir, sed; with its PowerShell tool, Set-Content, Add-Content, Clear-Content and
+/// Remove-Item); it still asks for any other command, for a path outside the brain, and for its protected
+/// paths (.git, .claude).
 const ONBOARDING_MODE: [&str; 2] = ["--permission-mode", "acceptEdits"];
 
-fn onboarding_mode(_vault: &Path, _home: &Path) -> &'static [&'static str] {
-    &ONBOARDING_MODE
+/// acceptEdits only where that is the brain alone: a folder of the kit's (its CLAUDE.md and Profile), never
+/// the home folder or one above it, Documents or the Desktop, a drive. A BRAIN_DIR set to Documents would
+/// let Claude write, unasked, Windows PowerShell's profile there (Documents\WindowsPowerShell), which runs
+/// at the next start of PowerShell, or remove anything of Documents. Elsewhere Claude asks, as by default.
+fn onboarding_mode(vault: &Path, home: &Path) -> &'static [&'static str] {
+    let shared = [home.join("Documents"), home.join("Desktop")];
+    let own = vault.is_absolute()
+        && vault.parent().is_some()
+        && !home.starts_with(vault)
+        && !shared.iter().any(|d| d == vault)
+        && vault.join("CLAUDE.md").is_file()
+        && vault.join("Profile").is_dir();
+    if own {
+        &ONBOARDING_MODE
+    } else {
+        &[]
+    }
 }
 
 fn login_script(path: &std::ffi::OsStr, claude: &Path) -> String {
@@ -1340,11 +1387,12 @@ fn onboarding_script(path: &std::ffi::OsStr, vault: &Path, guide: &Path, claude:
     )
 }
 
-/// Claude Code alone, in the brain.
+/// Claude Code alone, in the brain, after a word in French.
 #[cfg(not(windows))]
 fn claude_in_brain_script(path: &std::ffi::OsStr, vault: &Path, claude: &Path) -> String {
+    let intro = TALK_INTRO.map(|l| format!("echo {}", sh_quote(l))).join("\n");
     format!(
-        "#!/bin/bash\nexport PATH={}\ncd {} || exit 1\n{}\necho\necho 'Tu peux fermer cette fenêtre.'\n",
+        "#!/bin/bash\nexport PATH={}\ncd {} || exit 1\nprintf '\\033]0;Claude\\007'\n{intro}\necho\n{}\necho\necho 'Tu peux fermer cette fenêtre.'\n",
         sh_quote(&path.to_string_lossy()),
         sh_quote(&vault.to_string_lossy()),
         sh_quote(&claude.to_string_lossy())
@@ -1422,9 +1470,10 @@ fn onboarding_script(path: &std::ffi::OsStr, vault: &Path, guide: &Path, claude:
 
 #[cfg(windows)]
 fn claude_in_brain_script(path: &std::ffi::OsStr, vault: &Path, claude: &Path) -> String {
+    let intro = TALK_INTRO.map(|l| format!("Write-Host {}", ps_quote(l))).join("\r\n");
     format!(
-        "$ErrorActionPreference = 'Stop'\r\n$env:Path = {}\r\nSet-Location -LiteralPath {}\r\n& {}\r\n\
-         Write-Host ''\r\nWrite-Host 'Tu peux fermer cette fenêtre.'\r\n",
+        "$ErrorActionPreference = 'Stop'\r\n$env:Path = {}\r\nSet-Location -LiteralPath {}\r\n$Host.UI.RawUI.WindowTitle = 'Claude'\r\n\
+         {intro}\r\nWrite-Host ''\r\n& {}\r\nWrite-Host ''\r\nWrite-Host 'Tu peux fermer cette fenêtre.'\r\n",
         ps_quote(&path.to_string_lossy()),
         ps_quote(&vault.to_string_lossy()),
         ps_quote(&claude.to_string_lossy())
@@ -1804,20 +1853,26 @@ fn download(
     timeout: Duration,
     log: &mut dyn FnMut(String),
 ) -> Result<(), String> {
-    download_via(url, dest, what, size, timeout, None, log)
+    download_via(url, dest, what, size, timeout, system_proxy(url).as_deref(), log)
 }
 
+/// `download`, through `proxy` when the system sends the site through one.
 fn download_via(
     url: &str,
     dest: &Path,
     what: &str,
     size: Option<u64>,
     timeout: Duration,
-    _proxy: Option<&str>,
+    proxy: Option<&str>,
     log: &mut dyn FnMut(String),
 ) -> Result<(), String> {
     log(format!("Je télécharge {what}…"));
-    let args = curl_download_args(url, dest);
+    let mut args = curl_download_args(url, dest);
+    if let Some(p) = proxy {
+        // Before the address, the last word.
+        let at = args.len() - 1;
+        args.splice(at..at, curl_proxy_args(p));
+    }
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
         let args: Vec<&str> = args.iter().map(String::as_str).collect();
@@ -1831,15 +1886,39 @@ fn download_via(
                 log(progress(got, size));
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
-                return Err(format!("Le téléchargement de {what} s'est interrompu. Réessaie."))
+                return Err(format!("Le téléchargement de {what} s'est interrompu. Clique sur « Réessayer »."))
             }
         }
     };
     if !out.ok() {
         log(out.stderr.trim().to_string());
-        return Err(format!("Je n'ai pas pu télécharger {what}. Vérifie ta connexion internet, puis réessaie."));
+        // Through a company's proxy, nothing of the user's Wi-Fi is the matter: what to ask its IT service.
+        if let Some(m) = proxy.and_then(|_| repair::stop_message("proxy_entreprise")) {
+            return Err(m);
+        }
+        return Err(format!("Je n'ai pas pu télécharger {what}. Vérifie ta connexion internet, puis clique sur « Réessayer »."));
     }
     Ok(())
+}
+
+/// The proxy Windows sends `url` through (its settings, a PAC script, WPAD), as its own web requests find
+/// it: curl.exe never reads them, and without it a PC behind a company's proxy has no internet for curl.
+/// None when the site is reached directly, or PowerShell does not say in time.
+#[cfg(windows)]
+fn system_proxy(url: &str) -> Option<String> {
+    let out = ask_system_proxy(url);
+    out.ok().then(|| proxy_url(&out.stdout)).flatten()
+}
+
+#[cfg(windows)]
+fn ask_system_proxy(url: &str) -> sys::Output {
+    const ASK: &str = "$u = [Uri]$env:BIAB_URL; $p = [Net.WebRequest]::GetSystemWebProxy().GetProxy($u); if ($p -ne $u) { $p.AbsoluteUri }";
+    sys::run_with(&sys::powershell(), &["-NoProfile", "-NonInteractive", "-Command", ASK], &[("BIAB_URL", url)], None, Duration::from_secs(20))
+}
+
+#[cfg(not(windows))]
+fn system_proxy(_url: &str) -> Option<String> {
+    None
 }
 
 /// https only, redirects included; a stalled connection gives up instead of waiting
@@ -1856,16 +1935,26 @@ fn curl_download_args(url: &str, dest: &Path) -> Vec<String> {
     args
 }
 
-fn curl_proxy_args(_proxy: &str) -> Vec<String> {
-    Vec::new()
+/// Through the proxy, offering it the user's own Windows login when it asks (NTLM or Kerberos: -U : is
+/// Windows' own credentials for curl.exe), whichever it takes.
+fn curl_proxy_args(proxy: &str) -> Vec<String> {
+    ["--proxy", proxy, "--proxy-anyauth", "--proxy-user", ":"].map(String::from).to_vec()
 }
 
-fn proxy_url(_said: &str) -> Option<String> {
-    None
+/// A proxy's address as PowerShell prints it: one plain http:// address, or nothing.
+#[cfg(any(windows, test))]
+fn proxy_url(said: &str) -> Option<String> {
+    let p = said.trim();
+    let plain = p.len() <= 256 && p.bytes().all(|b| b.is_ascii_graphic() && !b"\"'`\\".contains(&b));
+    (plain && p.starts_with("http://") && p.len() > "http://".len()).then(|| p.to_string())
 }
 
-/// Runs Claude Code's installer (install.ps1, next to it).
-const INSTALLER_WRAPPER: &str = "& (Join-Path $PSScriptRoot 'install.ps1')\r\nexit $LASTEXITCODE\r\n";
+/// Runs Claude Code's installer (install.ps1, next to it) once Windows PowerShell's web requests offer the
+/// user's Windows login to a proxy that asks for it: they never do by themselves (407). Its end is the
+/// installer's: its code, or a throw.
+#[cfg(any(windows, test))]
+const INSTALLER_WRAPPER: &str = "try { [Net.WebRequest]::DefaultWebProxy.Credentials = [Net.CredentialCache]::DefaultNetworkCredentials } catch {}\r\n\
+                                 & (Join-Path $PSScriptRoot 'install.ps1')\r\nexit $LASTEXITCODE\r\n";
 
 fn progress(got: u64, size: Option<u64>) -> String {
     let mb = got / 1_000_000;
@@ -1894,7 +1983,9 @@ fn run_installer(url: &str, name: &str, args: &[&str], watched: &[PathBuf], log:
     #[cfg(windows)]
     let (program, argv) = {
         debug_assert!(args.is_empty());
-        (sys::powershell(), ps1_args(&script))
+        let wrapper = tmp.path().join("lance.ps1");
+        fs::write(&wrapper, INSTALLER_WRAPPER).map_err(|e| format!("Je n'ai pas pu préparer l'installeur de {name} ({e})."))?;
+        (sys::powershell(), ps1_args(&wrapper))
     };
     let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
     let mut stop = Stop::default();
@@ -1902,7 +1993,7 @@ fn run_installer(url: &str, name: &str, args: &[&str], watched: &[PathBuf], log:
         stop.see(&line);
         log(line);
     });
-    installer_ended(name, ended, stop.cause.as_deref())
+    installer_ended(name, ended, stop.cause())
 }
 
 /// The sentence for an installer's end: a download that no longer moves or never ends says so, with what
@@ -3045,7 +3136,7 @@ mod tests {
         let claude = Some(bin.join("claude"));
         let err = talk_to_claude(claude.clone(), Some(vault.clone()), || false).unwrap_err();
         assert!(err.contains("Connecte d'abord"), "{err}");
-        assert!(talk_to_claude(claude, Some(vault.clone()), || true).unwrap().contains("Claude t'écoute"));
+        assert!(talk_to_claude(claude, Some(vault.clone()), || true).unwrap().contains("écoute : écris ta question"));
         assert_eq!(talk_to_claude(None, Some(vault), || true).unwrap_err(), "Claude Code n'est pas encore installé.");
     }
 
@@ -3348,6 +3439,37 @@ mod tests {
         assert!(env.contains(&("VOYAGE_API_KEY", Some("k"))) && env.contains(&("BRAIN_DIR", None)) && env.contains(&("BIAB_AGENTS", Some("claude"))), "{env:?}");
     }
 
+    /// « Parler à Claude »'s window on a real Windows: Windows Terminal when it is there (the script then
+    /// runs in one of its sessions: WT_SESSION is set), else PowerShell's own window. The script runs.
+    #[cfg(windows)]
+    #[test]
+    fn a_window_of_windows_runs_its_script() {
+        let dir = sys::home().join(".brain-in-a-box");
+        let mark = dir.join(format!("fenetre-{}.txt", std::process::id()));
+        let _ = fs::remove_file(&mark);
+        let script = format!("Set-Content -LiteralPath {} -Value ('wt=' + $env:WT_SESSION) -Encoding ascii\r\n", ps_quote(&mark.to_string_lossy()));
+        open_window("test-fenetre", &script).unwrap();
+        let start = Instant::now();
+        while !mark.is_file() && start.elapsed() < Duration::from_secs(90) {
+            thread::sleep(Duration::from_millis(500));
+        }
+        thread::sleep(Duration::from_millis(500));
+        let said = fs::read_to_string(&mark).unwrap_or_default();
+        let _ = fs::remove_file(&mark);
+        println!("Windows Terminal: {:?} ; the window's script wrote {said:?}", windows_terminal());
+        assert!(said.starts_with("wt="), "no window ran the script");
+        assert_eq!(said.trim().len() > "wt=".len(), windows_terminal().is_some(), "{said}");
+    }
+
+    /// The query of the system's proxy runs, and a runner reaches the internet directly.
+    #[cfg(windows)]
+    #[test]
+    fn the_system_proxy_is_asked_to_windows() {
+        let o = ask_system_proxy("https://github.com/BrainInBox/brain-in-a-box");
+        assert!(o.ok() && o.stdout.trim().is_empty(), "{} {} {}", o.code, o.stdout, o.stderr);
+        assert_eq!(system_proxy("https://claude.ai/install.ps1"), None);
+    }
+
     /// The computer stays awake while a step runs, and is let go after.
     #[cfg(target_os = "macos")]
     #[test]
@@ -3365,12 +3487,15 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn a_step_asks_linux_not_to_sleep_and_lets_go() {
-        // A runner has no session to inhibit for: the helper may refuse at once; it never outlives the step.
+        // Started whenever the system has systemd-inhibit (a runner has no session to inhibit for: it may
+        // stop at once), and gone, reaped, once the step ends.
         let mut awake = KeepAwake::start();
+        let there = sys::find_tool("systemd-inhibit").is_some() && sys::find_tool("cat").is_some();
+        assert_eq!(awake.held.is_some(), there, "systemd-inhibit there: {there}");
         let pid = awake.held.as_mut().map(|h| h.id());
         drop(awake);
         if let Some(pid) = pid {
-            assert!(!Path::new(&format!("/proc/{pid}")).exists() || fs::read_to_string(format!("/proc/{pid}/stat")).unwrap_or_default().contains(") Z"));
+            assert!(!Path::new(&format!("/proc/{pid}")).exists(), "systemd-inhibit {pid} outlived the step");
         }
     }
 

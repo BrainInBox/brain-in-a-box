@@ -51,11 +51,17 @@ if ($ExecutionContext.SessionState.LanguageMode -ne "FullLanguage") {
 try { Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force -ErrorAction Stop } catch {}
 # Windows PowerShell 5.1 negocie encore TLS 1.0 sur les vieux Windows 10 : GitHub et claude.ai le refusent.
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+# Un proxy d'entreprise qui demande l'identifiant Windows (407) : Windows PowerShell ne le lui donne jamais de
+# lui-meme. Ses telechargements (Invoke-WebRequest, irm de Bun) le donnent, comme le navigateur.
+try { [Net.WebRequest]::DefaultWebProxy.Credentials = [Net.CredentialCache]::DefaultNetworkCredentials } catch {}
 
 # Pas de mise en veille pendant l'installation (10 a 20 minutes : un portable sur batterie s'endort, et
 # l'installation s'arrete) : le PC reste eveille tant que ce script tourne, l'ecran peut s'eteindre. Rendu
-# a la fin et a l'arret (Fail) ; lance a part (l'app, -File), Windows le rend aussi quand le processus finit.
+# a la fin et a tout arret (le trap) ; lance a part, Windows le rend aussi quand le processus finit. Lance par
+# l'app (BIAB_APP), rien : l'app garde elle-meme le PC eveille, et Add-Type (un compilateur lance par un
+# script) est ce qu'un antivirus d'entreprise surveille.
 function Set-Awake([bool]$On) {
+    if ($env:BIAB_APP) { return }
     try {
         if (-not ("BiabVeille.Etat" -as [type])) {
             Add-Type -Namespace BiabVeille -Name Etat -MemberDefinition '[DllImport("kernel32.dll")] public static extern uint SetThreadExecutionState(int flags);'
@@ -65,6 +71,9 @@ function Set-Awake([bool]$On) {
     } catch {}   # le compilateur d'Add-Type bloque, ou pas Windows : le PC peut dormir, comme avant
 }
 Set-Awake $true
+# Tout arret, pas seulement Fail (une copie qui echoue, une erreur imprevue) : le PC peut de nouveau dormir.
+# Un trap vaut pour tout le script, meme avant cette ligne (Set-Awake encore inconnu : le try).
+trap { try { Set-Awake $false } catch {}; break }
 
 $H = $env:USERPROFILE
 $HOOKS = "$H\.claude\hooks\brain"
@@ -86,7 +95,6 @@ function Warn($t) { Write-Host "  [!]  $t" -ForegroundColor Yellow }
 function Fail($t, [string]$Arret = "") {
     if ($Arret) { Write-Host "BIAB_ARRET=$Arret" }
     Write-Host "  [X]  $t" -ForegroundColor Red
-    Set-Awake $false
     throw "brain-in-a-box : installation arretee - $t"
 }
 # Un programme par son nom, dans les seuls dossiers du PATH nommes en entier (C:\..., \\serveur\...), comme le
@@ -808,7 +816,7 @@ if ($agentsOut -cnotmatch '^agents=(claude|codex|claude,codex) prefere=(claude|c
     '^erreur=fichier:' { Fail "$AgentsFile n'est pas un choix que ce kit connait. Laisse tel quel : relance avec -Agents claude (ou codex, ou claude,codex) pour le remplacer." -Arret "choix_ia" }
     '^erreur=codex_home$' { Fail "CODEX_HOME doit etre un chemin absolu." -Arret "choix_ia" }
     '^erreur=ecriture:' { Fail "impossible d'ecrire $AgentsFile ($($agentsOut.Substring(16)))." -Arret "choix_ia" }
-    default { Fail "engine\hooks\_agents.py n'a pas repondu (code $LASTEXITCODE). Retelecharge brain-in-a-box puis relance." -Arret "choix_ia" }
+    default { Fail "engine\hooks\_agents.py n'a pas repondu (code $LASTEXITCODE). Retelecharge brain-in-a-box puis relance." -Arret "sources_abimees" }
   }
 }
 $ChosenAgents, $PreferredAgent, $agentsSource, $agentsWritten = $Matches[1], $Matches[2], $Matches[3], $Matches[4]

@@ -155,9 +155,12 @@ impl Entry {
 }
 
 /// The catalogue's words for this computer: {machine} is "Mac" or "PC", {terminal}
-/// the window where commands run.
+/// the window where commands run, {sites} the sites to let through (SITES).
 fn local(text: &str) -> String {
-    text.replace("{machine}", sys::MACHINE).replace("{terminal}", if cfg!(windows) { "PowerShell" } else { "Terminal" })
+    let sites: Vec<String> = SITES.iter().map(|s| s.to_string()).collect();
+    text.replace("{machine}", sys::MACHINE)
+        .replace("{terminal}", if cfg!(windows) { "PowerShell" } else { "Terminal" })
+        .replace("{sites}", &steps::list_fr(&sites))
 }
 
 const CAUSES: &[Entry] = &[
@@ -203,12 +206,14 @@ const CAUSES: &[Entry] = &[
     Entry::new("base_verrouillee", BRAIN, "la base de mémoire est utilisée par un autre programme.",
         "La base de mémoire est utilisée par un autre programme."),
     // install.ps1's own stops (BIAB_ARRET, see STOPS).
-    Entry::new("winget_absent", WINDOWS_BRAIN, "winget est absent ou ne démarre pas, et Python n'a pas pu s'installer sans lui.",
-        "Il manque à ce PC l'outil d'installation de Windows (winget), et Python n'a pas pu s'installer sans lui."),
+    Entry::new("winget_absent", WINDOWS_BRAIN,
+        "winget est absent, ne démarre pas ou sa source est en panne, et Python n'a pas pu s'installer sans lui.",
+        "Il manque à ce PC l'outil d'installation de Windows (winget), ou il est en panne, et Python n'a pas pu s'installer sans lui."),
     Entry::new("python_absent", WINDOWS_BRAIN, "Python n'a pu s'installer ni par winget ni par son installeur officiel.",
         "Python, dont ton cerveau a besoin, n'a pas pu s'installer."),
-    Entry::new("powershell_verrouille", WINDOWS_BRAIN, "PowerShell est verrouillé par l'entreprise (mode de langage restreint).",
-        "Ton PC bloque PowerShell, le programme qui installe ton cerveau : c'est une règle de ton entreprise."),
+    Entry::new("powershell_verrouille", WINDOWS_BRAIN,
+        "PowerShell est verrouillé par l'entreprise (mode de langage restreint, ou stratégie d'exécution imposée).",
+        "Ton PC bloque PowerShell, dont l'installation a besoin : c'est une règle de ton entreprise."),
     Entry::new("strategie_entreprise", WINDOWS_BRAIN,
         "une stratégie de l'entreprise interdit d'installer des programmes (winget ou un installeur bloqués).",
         "Une règle de ton entreprise interdit d'installer des programmes sur ce PC."),
@@ -223,28 +228,43 @@ const CAUSES: &[Entry] = &[
 /// What the user does about each stop install.ps1 says (BIAB_ARRET=<cause>, the line before it stops):
 /// the cause's sentence, then this one. Every stop it can make is here, each a cause above.
 const STOPS: &[(&str, &str)] = &[
-    ("reseau", "Vérifie ton Wi-Fi, puis clique sur « Réessayer ». En données mobiles, attends d'avoir un Wi-Fi."),
+    ("reseau",
+        "Vérifie ton Wi-Fi, puis clique sur « Réessayer ». En données mobiles, attends d'avoir un Wi-Fi. \
+         Sur un PC d'entreprise, son réseau bloque peut-être l'installation : demande à ton service informatique."),
     ("sources_abimees", "Clique sur « Réessayer » : je le retélécharge."),
     ("acces_documents_refuse",
         "N'y autorise aucun programme toi-même : clique sur « Réessayer » ; si ça recommence, envoie le rapport à la personne qui t'a conseillé Bibo."),
     ("winget_absent",
-        "Installe « Programme d'installation d'application » (App Installer) depuis le Microsoft Store, puis clique sur « Réessayer »."),
+        "Installe ou mets à jour « Programme d'installation d'application » (App Installer) depuis le Microsoft Store, puis clique sur « Réessayer ». \
+         Sur un PC d'entreprise, demande-le à ton service informatique."),
+    // python.org's first button is the install manager, a console in English: the classic installer instead,
+    // which puts Python where install.ps1 looks (Find-Python).
     ("python_absent",
-        "Clique sur « Réessayer ». Si ça recommence, installe Python toi-même depuis python.org (bouton « Download »), puis clique sur « Réessayer »."),
+        "Clique sur « Réessayer ». Si ça recommence, installe Python toi-même : sur python.org/downloads/windows, prends \
+         « Windows installer (64-bit) » de Python 3.14, lance-le et clique sur « Install Now ». Puis clique sur « Réessayer »."),
     ("powershell_verrouille", "Demande à ton service informatique s'il peut installer Brain in a Box pour toi, ou installe-le sur un PC personnel."),
-    ("strategie_entreprise", "Demande à ton service informatique d'installer Python 3 sur ce PC, puis clique sur « Réessayer »."),
+    ("strategie_entreprise",
+        "Demande à ton service informatique d'installer ce dont Brain in a Box a besoin (Python 3, Git, Bun et Obsidian), puis clique sur « Réessayer »."),
     ("proxy_entreprise",
-        "Demande à ton service informatique de laisser passer python.org, github.com, claude.ai et bun.sh, ou installe depuis un autre réseau (chez toi), puis clique sur « Réessayer »."),
+        "Demande à ton service informatique de laisser passer {sites} (avec leurs sous-domaines), ou installe depuis un autre réseau (chez toi), \
+         puis clique sur « Réessayer »."),
     ("antivirus_bloque",
-        "Ne le désactive pas : installe Python toi-même depuis python.org, puis clique sur « Réessayer ». Sur un PC d'entreprise, demande-le à ton service informatique."),
+        "Ne le désactive pas : installe Python toi-même (sur python.org/downloads/windows, « Windows installer (64-bit) » de Python 3.14, \
+         puis « Install Now »), puis clique sur « Réessayer ». Sur un PC d'entreprise, demande-le à ton service informatique."),
     ("choix_ia", "Rien n'a changé dans ton cerveau : envoie le rapport à la personne qui t'a conseillé Bibo."),
 ];
 
-/// The sites the install downloads from, the ones a company's network has to let through.
-pub(crate) const SITES: &[&str] = &["python.org", "github.com", "claude.ai", "bun.sh"];
+/// The sites a company's network has to let through, with their subdomains: Claude Code's installer and
+/// Claude itself, the kit and Git (github.com, its downloads on githubusercontent.com), Python, Bun and the
+/// packages it fetches for gbrain. One list for every sentence that names them ({sites}).
+pub(crate) const SITES: &[&str] = &["claude.ai", "anthropic.com", "github.com", "githubusercontent.com", "python.org", "bun.sh", "npmjs.org"];
 
-fn withheld(_message: &str) -> bool {
-    false
+/// The stops no AI can do anything about from here: the company's rules, the choice of AI that the user
+/// alone changes. Their sentence says whom to ask; Claude is not offered (and the subscription not spent).
+const WITHHELD: &[&str] = &["powershell_verrouille", "strategie_entreprise", "proxy_entreprise", "choix_ia"];
+
+fn withheld(message: &str) -> bool {
+    WITHHELD.iter().filter_map(|id| stop_message(id)).any(|m| m == message)
 }
 
 /// The window's sentence for a stop of install.ps1: what happened, then what to do. None for a cause it
@@ -252,7 +272,7 @@ fn withheld(_message: &str) -> bool {
 pub fn stop_message(id: &str) -> Option<String> {
     let (_, todo) = STOPS.iter().find(|(s, _)| *s == id)?;
     let cause = CAUSES.iter().find(|e| e.id == id)?;
-    Some(format!("{} {todo}", local(cause.user)))
+    Some(format!("{} {}", local(cause.user), local(todo)))
 }
 
 const REMEDIES: &[Entry] = &[
@@ -287,7 +307,7 @@ const ACTIONS: &[Entry] = &[
     // A company's PC: nothing of its security is for the user to turn off.
     Entry::new("demander_informatique", ALL,
         "sur un ordinateur d'entreprise : demander au service informatique (proxy, règles d'installation, antivirus de l'entreprise).",
-        "Sur un {machine} d'entreprise, ne coupe et ne désactive rien toi-même : demande à ton service informatique de laisser passer les téléchargements de l'installation (github.com, claude.ai, bun.sh)."),
+        "Sur un {machine} d'entreprise, ne coupe et ne désactive rien toi-même : demande à ton service informatique de laisser passer les téléchargements de l'installation ({sites}, avec leurs sous-domaines)."),
     Entry::new("liberer_espace", ALL, "libérer au moins 5 Go.", "Libère au moins 5 Go sur ton {machine}.").pane("storage"),
     // A Mac asks once for the app itself. On Windows the only way through would be to allow
     // PowerShell, git or Python in protected folders, for every script: never offered.
@@ -709,8 +729,9 @@ impl Session {
         lock(&self.traces).entry(r.id.clone()).or_default().result = Some(r.clone());
     }
 
-    fn withheld(&self, _step: &str) -> Option<RepairStatus> {
-        None
+    /// The step's failure is one of the stops left to the user (see WITHHELD).
+    fn withheld(&self, step: &str) -> Option<RepairStatus> {
+        self.failure(step).filter(|f| withheld(&f.message)).map(|_| RepairStatus::of(RepairState::Withheld))
     }
 
     fn failure(&self, step: &str) -> Option<Failure> {
@@ -856,6 +877,9 @@ impl Used {
 /// What the window can offer under a failed step: the first engine agents.json lists that may be
 /// asked, else why the preferred one may not.
 pub fn availability(step: &str) -> RepairStatus {
+    if let Some(status) = SESSION.withheld(step) {
+        return status;
+    }
     lineup(&agents::current(&sys::home()), step, true).status()
 }
 
@@ -2550,12 +2574,12 @@ fn sha256_hex(text: &str) -> Option<String> {
     Some(config_guard::hex(&Sha256::digest(text.as_bytes())))
 }
 
-fn now_secs() -> u64 {
+pub(crate) fn now_secs() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs())
 }
 
 /// UTC calendar date and time (days-to-civil, proleptic Gregorian).
-fn civil(secs: u64) -> (i64, u64, u64, u64, u64, u64) {
+pub(crate) fn civil(secs: u64) -> (i64, u64, u64, u64, u64, u64) {
     let days = (secs / 86_400) as i64;
     let rem = secs % 86_400;
     let z = days + 719_468;
@@ -4594,13 +4618,13 @@ pub(crate) mod tests {
     #[test]
     fn one_list_of_sites_covers_every_download() {
         let covered = |host: &str| SITES.iter().any(|s| host == *s || host.ends_with(&format!(".{s}")));
-        let url = Regex::new(r"https://([a-z0-9.-]+)").unwrap();
-        // Links shown to the user, Codex's (Claude's only, on Windows), Voyage's (only with a key).
-        let not_downloads = ["claude.com", "obsidian.md", "git-scm.com", "developers.openai.com", "api.voyageai.com", "dashboard.voyageai.com", "go.microsoft.com"];
+        let url = Regex::new(r"https://([a-z0-9-]+(?:\.[a-z0-9-]+)+)").unwrap();
+        // Links shown to the user, Codex's (Claude's only, on Windows), Voyage's (only with a key), tests' hosts.
+        let not_downloads = ["claude.com", "obsidian.md", "git-scm.com", "go.microsoft.com", "openai.com", "chatgpt.com", "voyageai.com", "evil.com", ".test", ".invalid"];
         let sources = [include_str!("../../../install.ps1"), include_str!("steps.rs")];
         let mut hosts: Vec<&str> = sources.iter().flat_map(|s| url.captures_iter(s).map(|c| c.get(1).unwrap().as_str())).collect();
         hosts.extend(["downloads.claude.ai", "registry.npmjs.org", "api.anthropic.com", "objects.githubusercontent.com", "codeload.github.com"]);
-        for host in hosts.into_iter().filter(|h| !not_downloads.contains(h) && !h.ends_with(".invalid") && !h.contains("openai") && !h.contains("chatgpt")) {
+        for host in hosts.into_iter().filter(|h| !not_downloads.iter().any(|n| h.ends_with(n))) {
             assert!(covered(host), "{host} is not among the sites to let through");
         }
         let proxy = stop_message("proxy_entreprise").unwrap();

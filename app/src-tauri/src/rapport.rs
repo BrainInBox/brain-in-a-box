@@ -21,22 +21,39 @@ pub struct Saved {
     pub message: String,
 }
 
-/// Writes `text`, masked, to the Desktop (the home folder when there is none, or when the system keeps
-/// the app out of it) and says where.
+/// Writes `text`, masked, after a header that says what the file is, to the Desktop (the home folder when
+/// there is none, or when the system keeps the app out of it) and says where.
 pub fn save(text: &str) -> Result<Saved, String> {
     let home = sys::home();
     let mask = repair::masker();
     let desk = desktop(&home);
-    let file = save_in(&[desk.clone(), home.clone()], &mask(text))?;
+    let file = save_in(&[desk.clone(), home.clone()], &format!("{}{}", header(repair::now_secs()), mask(text)))?;
     Ok(Saved { message: saved_message(&file, file.parent() == Some(desk.as_path()), &home), path: file.display().to_string() })
 }
 
-fn saved_message(_file: &Path, _on_desktop: bool, _home: &Path) -> String {
-    "Le rapport est sur ton Bureau. Envoie-le à la personne qui t'a conseillé Bibo.".into()
+/// The window's sentence: « sur ton Bureau » only when it is there.
+fn saved_message(file: &Path, on_desktop: bool, home: &Path) -> String {
+    let send = "Envoie-le à la personne qui t'a conseillé Bibo.";
+    if on_desktop {
+        return format!("Le rapport est sur ton Bureau. {send}");
+    }
+    let shown = file.strip_prefix(home).map_or_else(|_| file.display().to_string(), |rel| rel.display().to_string());
+    format!("Le rapport est dans ton dossier personnel ({shown}). {send}")
 }
 
-fn header(_secs: u64) -> String {
-    String::new()
+/// What the file is, for whoever opens it: when, which app, which system; that it holds no secret.
+fn header(secs: u64) -> String {
+    let (y, mo, d, h, mi, _) = repair::civil(secs);
+    let system = match std::env::consts::OS {
+        "windows" => "Windows",
+        "macos" => "macOS",
+        _ => "Linux",
+    };
+    format!(
+        "Rapport d'installation de Bibo, le {y:04}-{mo:02}-{d:02} à {h:02}:{mi:02} (UTC), version {}, {system}.\n\
+         Ni mot de passe ni clé dedans : envoie-le à la personne qui t'a conseillé Bibo.\n\n",
+        env!("CARGO_PKG_VERSION")
+    )
 }
 
 /// The first of `dirs` that takes the file. The text is already masked.
