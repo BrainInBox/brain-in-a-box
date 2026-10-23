@@ -255,6 +255,8 @@ class FauxPilote(ta.Pilote):
         self.via, self.photo_noire, self.pas_change = None, False, False
         # Bibo never sees the window shown; Bibo waits for the window, where the robot pastes (Linux).
         self.jamais_vue, self.colle_au_choix = False, False
+        # The app in front once macOS's picker gave the window (None: Bibo, as lib.rs brings it back).
+        self.devant_apres_selecteur = None
         self.photos, self.etape_faite, self.gestes, self.programme = 0, False, [], None
         # The places of the buttons and the screen's usable area, as the Windows driver reads them: a function
         # (screen, label) -> [x, y, w, h] or None. None: no places (macOS, Linux).
@@ -366,6 +368,10 @@ class FauxPilote(ta.Pilote):
             else [ta.LOGICIEL_GUIDE, ta.OBJECTIF_GUIDE]
         boutons = [(b, not (self.guide == "objectif" and b == "Continuer" and tape != attendu)) for b in spec.get("boutons", {})]
         return ta.Ecran(fenetre=True, titre=spec["titre"], texte=spec.get("texte", ""), boutons=boutons, textes=spec.get("textes", []))
+
+    def app_devant(self):
+        autre = self.devant_apres_selecteur if self.via == "selecteur" else None
+        return autre is None, autre or "brain-in-a-box"
 
     def taper(self, texte):
         self.saisies.append(("taper", texte))
@@ -2471,6 +2477,19 @@ class Guide(Scenario):
         # No capture of the screen while the picker is out, as a user takes none then.
         self.assertFalse([c for c in row["details"]["captures"] if c.endswith("-guide-selecteur.png")], row["details"]["captures"])
         self.assertTrue([c for c in row["details"]["captures"] if c.endswith("-guide-objectif.png")])
+        # Bibo in front once the window picked: the program's name typed goes to Bibo.
+        self.assertEqual(d["devant"], "brain-in-a-box")
+
+    def test_on_macos_the_program_left_in_front_by_the_picker_fails(self):
+        # The night of 9fc9681: Chrome's menu bar over the goal's screen, Bibo's window without the keyboard.
+        # A user typing the program's name there types it in the program picked. The robot's keyboard brings
+        # Bibo in front itself: asked before it types.
+        p = FauxPilote(self.h, home=Path(self.tmp) / "home")
+        p.via, p.devant_apres_selecteur = "selecteur", "Google Chrome"
+        row, p, _, _, _, _ = self.run_it(pilote=p)
+        self.assertEqual((row["statut"], row["etape"]), ("echec", "app-guide-objectif"))
+        self.assertIn("après le sélecteur de macOS, « Google Chrome » est devant et pas Bibo", row["raison"])
+        self.assertEqual([x for k, x in p.saisies if k == "taper"], [])
 
     def test_where_bibo_could_take_the_window_linux_pastes(self):
         # The X11 of the night's VM: Bibo waits for a click, the robot pastes there (the paste is Linux's walk).

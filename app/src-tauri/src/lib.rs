@@ -490,7 +490,8 @@ async fn guide_attendre_clic(app: tauri::AppHandle, attente: u64) -> Result<capt
 /// The window from the list or the click, kept with its process and program (R22). On macOS (no id),
 /// the system's picker, a wait the page numbers as a click's (`attente`): the guide's window leaves
 /// « always on top » while it is out, or it would lie over the picker's « Share This Window » button
-/// (phase 0, macOS 15 and 26), and comes back after.
+/// (phase 0, macOS 15 and 26), and comes back after. The picker leaves the chosen program in front: the
+/// guide's window takes the keyboard back, or the program's name typed next would go to that program.
 #[tauri::command]
 async fn guide_choisir(app: tauri::AppHandle, id: Option<u64>, attente: Option<u64>) -> Result<capture::Fenetre, guide::GuideError> {
     let picker = id.is_none() && tauri::async_runtime::spawn_blocking(guide::selecteur).await.unwrap_or(false);
@@ -501,6 +502,9 @@ async fn guide_choisir(app: tauri::AppHandle, id: Option<u64>, attente: Option<u
     let chosen = guiding(move || if picker { guide::choisir_au_selecteur(attente) } else { guide::choisir(id) }).await;
     if let Some(w) = &lowered {
         let _ = w.set_always_on_top(true);
+    }
+    if let Some(w) = app.get_webview_window("guide").filter(|_| picker) {
+        let _ = w.set_focus();
     }
     chosen
 }

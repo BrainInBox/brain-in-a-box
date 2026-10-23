@@ -83,6 +83,7 @@ CLIC_RELANCE = 20           # a click that changed nothing is tried again after 
 CLIC_ESSAIS = 3
 INCONNU_MAX = 180           # a screen the robot does not know, for this long: a failure
 DELAI_FENETRE = 120
+DELAI_DEVANT = 5            # Bibo back in front after macOS's picker
 DELAI_PREMIER = 75 * 60     # Bienvenue to the final screen (Apple's tools up to 45 min, the brain step 40)
 DELAI_RELANCE = 5 * 60
 # How every click is done: the mouse on the button, as a user clicks, maybe followed by where, in
@@ -624,6 +625,11 @@ class Pilote:
         """Where the guide could have left an image: the home, the temporary folders."""
         return [Path(home), Path(tempfile.gettempdir())]
 
+    def app_devant(self):
+        """(whether the app is in front, its window with the keyboard; the name of the one in front), where the
+        driver can tell (macOS); (None, None) elsewhere."""
+        return None, None
+
     def attendre(self, predicat, delai, horloge=time.monotonic, dormir=time.sleep, pas=1.0):
         fin = horloge() + delai
         while True:
@@ -639,7 +645,8 @@ function run(argv) {
   var se = Application('System Events');
   var out = req.op === 'cliquer' ? cliquer(se, req) : req.op === 'rapide' ? rapide(se, req) :
             req.op === 'clavier' ? clavier(se, req) : req.op === 'cadre' ? cadre(se, req) :
-            req.op === 'boutons' ? boutonsSelecteur(se) : req.op === 'souris' ? pointeur(req) : lire(se, req);
+            req.op === 'boutons' ? boutonsSelecteur(se) : req.op === 'souris' ? pointeur(req) :
+            req.op === 'devant' ? devant(se) : lire(se, req);
   return enc(out);
 }
 
@@ -711,6 +718,13 @@ function fenetres(p, budget) {
     out.push({titre: arbre.n, arbre: arbre});
   }
   return out;
+}
+
+// The app in front, the one the keyboard types in.
+function devant(se) {
+  var name = '';
+  try { name = se.processes.whose({frontmost: true}).name()[0] || ''; } catch (e) {}
+  return {ok: true, devant: name};
 }
 
 function lire(se, req) {
@@ -1140,6 +1154,10 @@ class PiloteMac(Pilote):
         res = self._osa(dict(req, op="clavier", processus=self.processus, fenetre=self.fenetre_titre))
         if not res.get("ok"):
             raise ErreurPilote("le clavier n'atteint pas la fenêtre (%s)" % res.get("pourquoi"))
+
+    def app_devant(self):
+        nom = self._osa({"op": "devant"}, timeout=30).get("devant") or ""
+        return nom == self.processus, nom
 
     def taper(self, texte):
         self._clavier(texte=texte)
@@ -3144,6 +3162,8 @@ class Parcours:
             elif cle == "objectif":
                 if "objectif" not in faits:
                     faits.add("objectif")
+                    if logiciel is not None and logiciel.via == "selecteur":
+                        self.bibo_devant(vu)
                     if e.texte.startswith(norm(PROGRAMME_CONNU)):
                         # The program's name from the window (Windows): only the goal, its field has the focus.
                         p.taper(OBJECTIF_GUIDE)
@@ -3219,6 +3239,22 @@ class Parcours:
             if now >= fin:
                 self.echouer("toujours sur l'écran « %s » du guide après %d min" % (cle, int((now - debut) // 60)))
             self.dormir(POLL)
+
+    def bibo_devant(self, vu):
+        """After macOS's picker, Bibo in front again (lib.rs, guide_choisir): what the user types next goes to
+        Bibo, not to the program picked. Asked before the robot types, its keyboard bringing Bibo in front."""
+        lu = [(None, None)]
+
+        def devant():
+            lu[0] = self.p.app_devant()
+            return lu[0][0] is not False
+
+        self.p.attendre(devant, DELAI_DEVANT, self.horloge, self.dormir, pas=0.5)
+        ok, nom = lu[0]
+        vu["devant"] = nom
+        if ok is False:
+            self.echouer("après le sélecteur de macOS, « %s » est devant et pas Bibo : ce que l'utilisateur tape irait "
+                         "dans son logiciel" % (nom or "aucune app"))
 
     def lire_anneaux(self, nom):
         """The green buttons of the capture `nom` and those a red ring goes round."""
@@ -3873,7 +3909,7 @@ def guide_terrain(t, parcours, pilote, home, env, captures, travail):
             pilote.ignores = ()
     d = {"prudent": prudent, "capture": vu["capture"], "ecrans": vu["ecrans"], "collages": vu["collages"],
          "gestes": vu["gestes"], "saisie": vu["saisie"], "temoin": vu["temoin"], "etape": vu["etape"],
-         "enregistre": vu.get("enregistre")}
+         "enregistre": vu.get("enregistre"), "devant": vu.get("devant")}
     t("app-guide-procedure")
     note, pourquoi = note_du_guide(pilote.cerveau(home), debut)
     t.check(note, pourquoi)
