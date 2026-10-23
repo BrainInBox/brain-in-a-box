@@ -214,7 +214,7 @@ try {
     # A proxy that asks for the Windows login (407): Windows PowerShell's web requests offer it, before any download.
     $cred = '[Net.WebRequest]::DefaultWebProxy.Credentials = [Net.CredentialCache]::DefaultNetworkCredentials'
     $at = $ps1.IndexOf($cred)
-    Check ($at -gt 0 -and $at -lt $ps1.IndexOf("Invoke-WebRequest")) "the proxy is offered the Windows login before any download"
+    Check ($at -gt 0 -and $at -lt $ps1.IndexOf("Invoke-WebRequest -Uri")) "the proxy is offered the Windows login before any download"
     if ($at -gt 0 -and $Win) {
         $credLine = ($ps1.Substring($ps1.LastIndexOf("`n", $at) + 1) -split "\r?\n")[0]
         . ([scriptblock]::Create($credLine))

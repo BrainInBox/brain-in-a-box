@@ -3470,7 +3470,11 @@ mod tests {
         thread::sleep(Duration::from_millis(500));
         let said = fs::read_to_string(&mark).unwrap_or_default();
         let _ = fs::remove_file(&mark);
-        println!("Windows Terminal: {:?} ; the window's script wrote {said:?}", windows_terminal());
+        // Which window it was, in the CI run's summary (a passing test's output is not shown).
+        let seen = format!("a_window_of_windows_runs_its_script: Windows Terminal {:?}, the script wrote {said:?}\n", windows_terminal());
+        if let Some(summary) = std::env::var_os("GITHUB_STEP_SUMMARY") {
+            let _ = fs::OpenOptions::new().append(true).open(summary).and_then(|mut f| f.write_all(seen.as_bytes()));
+        }
         assert!(said.starts_with("wt="), "no window ran the script");
         assert_eq!(said.trim().len() > "wt=".len(), windows_terminal().is_some(), "{said}");
     }
