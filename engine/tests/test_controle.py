@@ -1158,8 +1158,10 @@ class WindowsPaths(Sandbox):
 # --------------------------------------------------------------------------- the SessionStart line
 
 HOOK = os.path.join(HOOKS, "controle-sessionstart.py")
-# What a beginner says to Claude to hear more: the controle skill's own words.
-ASK = "dis « qu'est-ce que le contrôle a fait ? »"
+# What a beginner says to Claude to hear more, or to undo a night: the controle skill's own words.
+ASK = "dis « montre-moi ce que tu as trouvé »"
+UNDO = "dis « annule les corrections de cette nuit »"
+SUMMARY = "dis « le résumé de ma journée échoue, regarde pourquoi »"
 
 
 def stamp(hours_ago, utc=False):
@@ -1233,21 +1235,25 @@ class SessionStart(unittest.TestCase):
         self.assertNotIn("systemMessage", out, "green and orange are said once, by Claude")
         self.assertIsNone(self.hook(), "once per run")
         self.etat(run="20261015-0402", corrections=1, a_voir=0, rapport="Profil/controle.md")
-        self.assertEqual(self.line(self.hook()), "Cette nuit, j'ai fait 1 petite correction dans tes notes : tout va "
-                                                 "bien, rien à faire (si tu n'en veux pas, dis « annule le contrôle »).")
+        self.assertEqual(self.line(self.hook()), "Cette nuit, j'ai fait une petite correction dans tes notes : tout "
+                                                 "va bien, rien à faire (si tu n'en veux pas, %s)." % UNDO)
         self.etat(run="20261015-1630", mode="maintenant", corrections=0, a_voir=1)
         self.assertEqual(self.line(self.hook()), "Au dernier contrôle, j'ai vérifié tes notes : rien à corriger, mais "
-                                                 "1 point attend ton avis ; %s pour tout voir." % ASK)
+                                                 "un point attend ton avis ; %s pour tout voir." % ASK)
+        self.etat(run="20261015-1700", mode="maintenant", corrections=3, a_voir=0)
+        self.assertEqual(self.line(self.hook()), "Au dernier contrôle, j'ai fait 3 petites corrections dans tes notes : "
+                                                 "tout va bien, rien à faire (si tu n'en veux pas, dis « annule les "
+                                                 "dernières corrections »).")
         self.etat(run="20261016-0401", corrections=0, a_voir=0, rapport_reecrit=False)
         self.assertIsNone(self.hook(), "a quiet night says nothing")
 
     def test_a_problem_is_never_hidden_behind_good_news(self):
-        """An orange alert of the night (the evening summary failing, a refused commit…) is said whatever else
-        the night did: never « tout va bien » next to it."""
-        trouble = [{"niveau": "orange", "code": "reflexion"}]
+        """An orange alert of the night (a refused commit, Claude logged out…) is said whatever else the night
+        did: never « tout va bien » next to it."""
+        trouble = [{"niveau": "orange", "code": "commit_refuse"}]
         cases = {(2, 0): "Cette nuit, j'ai fait 2 petites corrections dans tes notes, mais un souci est à regarder : "
                          "%s pour tout voir, et annuler ce que tu ne veux pas." % ASK,
-                 (2, 1): "Cette nuit, j'ai fait 2 petites corrections dans tes notes, mais 1 point attend ton avis et "
+                 (2, 1): "Cette nuit, j'ai fait 2 petites corrections dans tes notes, mais un point attend ton avis et "
                          "un souci est à regarder : %s pour tout voir, et annuler ce que tu ne veux pas." % ASK,
                  (0, 3): "Cette nuit, j'ai vérifié tes notes : rien à corriger, mais 3 points attendent ton avis et un "
                          "souci est à regarder ; %s pour tout voir." % ASK,
@@ -1261,12 +1267,41 @@ class SessionStart(unittest.TestCase):
         # gbrain's own alert is said by its own line (last-update.json), not twice, and not next to « tout va bien ».
         self.etat(run="20261014-0500", corrections=2, a_voir=0, alertes=[{"niveau": "rouge", "code": "gbrain"}])
         self.assertEqual(self.line(self.hook()), "Cette nuit, j'ai fait 2 petites corrections dans tes notes (si tu "
-                                                 "n'en veux pas, dis « annule le contrôle »).")
+                                                 "n'en veux pas, %s)." % UNDO)
+
+    def test_what_asks_nothing_is_no_worry_and_the_failing_summary_says_its_name(self):
+        """A review skipped for a usage limit, the day's quota or a paid key, and the evening summary stopped by
+        the usage limit, ask nothing: the night stays calm, as the evening's notice said. The summary failing
+        for another reason is named, with the words that have Claude look at it."""
+        calm = "Cette nuit, j'ai fait une petite correction dans tes notes : tout va bien, rien à faire (si tu n'en " \
+               "veux pas, %s)." % UNDO
+        claude = {"niveau": "orange", "code": "claude"}
+        summary = {"niveau": "orange", "code": "reflexion"}
+        quiet = [("saute:limite-reflexion", [summary, claude]), ("saute:limite", [claude]),
+                 ("saute:quota-jour", [claude]), ("saute:abonnement", [claude])]
+        for n, (skip, alerts) in enumerate(quiet):
+            with self.subTest(skip):
+                self.etat(run="20261014-07%02d" % n, corrections=1, a_voir=0, claude=skip, alertes=alerts)
+                self.assertEqual(self.line(self.hook()), calm)
+        cases = [((2, 0, [summary], "fait"),
+                  "Cette nuit, j'ai fait 2 petites corrections dans tes notes, mais le résumé de ta journée ne se fait "
+                  "plus : %s." % SUMMARY),
+                 ((0, 0, [summary], "saute:limite"),
+                  "Cette nuit, j'ai vérifié tes notes : rien à corriger, mais le résumé de ta journée ne se fait plus ; "
+                  "%s." % SUMMARY),
+                 ((2, 1, [summary, claude], "saute:connexion"),
+                  "Cette nuit, j'ai fait 2 petites corrections dans tes notes, mais un point attend ton avis, le résumé "
+                  "de ta journée ne se fait plus et un souci est à regarder : %s pour tout voir, et annuler ce que tu "
+                  "ne veux pas." % ASK)]
+        for n, ((fixed, look, alerts, skip), want) in enumerate(cases):
+            with self.subTest(want):
+                self.etat(run="20261014-08%02d" % n, corrections=fixed, a_voir=look, claude=skip, alertes=alerts)
+                self.assertEqual(self.line(self.hook()), want)
 
     def test_good_news_is_never_said_next_to_a_red(self):
         """A secret to change, gbrain broken or late have their own line: the night's line then says what it
         did, never « tout va bien, rien à faire » next to them."""
-        done = "Cette nuit, j'ai fait 2 petites corrections dans tes notes (si tu n'en veux pas, dis « annule le contrôle »)."
+        done = "Cette nuit, j'ai fait 2 petites corrections dans tes notes (si tu n'en veux pas, %s)." % UNDO
         shown = os.path.join(self.state, "shown.json")
         for n, (etat, update) in enumerate([({"secrets_a_changer": 1}, {}), ({}, {"status": "broken"}),
                                              ({}, {"retard_jours": 16})]):
@@ -1303,10 +1338,10 @@ class SessionStart(unittest.TestCase):
         out = self.hook()
         text = self.line(out)
         self.assertEqual(text.split(" · "), [
-            "Un mot de passe ou une clé était écrit en clair dans tes notes : je l'ai caché, mais il reste dans leur "
-            "historique, alors change-le, puis dis « c'est changé » ; pour savoir lequel, %s." % ASK,
-            "gbrain (la recherche dans tes notes) ne marche plus depuis une mise à jour ratée : dis « répare gbrain » "
-            "et je t'aide à le remettre en route."],
+            "J'ai trouvé un mot de passe ou une clé écrit en clair dans tes notes et je l'ai caché, mais une copie "
+            "reste dans l'historique de ton cerveau : dis « quel mot de passe dois-je changer ? » et je te guide.",
+            "La recherche intelligente dans tes notes (gbrain) est en panne depuis une mise à jour ratée, mais tes "
+            "notes ne risquent rien : dis « répare gbrain » et je t'aide à la remettre en route."],
             "two at most, reds first")
         self.assertEqual(out["systemMessage"], text)
         out = self.hook()
@@ -1326,8 +1361,9 @@ class SessionStart(unittest.TestCase):
         self.etat(secrets_a_changer=3)
         os.unlink(os.path.join(self.state, "shown.json"))
         self.assertTrue(self.line(self.hook()).startswith(
-            "3 mots de passe ou clés étaient écrits en clair dans tes notes : je les ai cachés, mais ils restent dans "
-            "leur historique, alors change-les, puis dis « c'est changé » ; pour savoir lesquels, %s." % ASK))
+            "J'ai trouvé 3 mots de passe ou clés écrits en clair dans tes notes et je les ai cachés, mais des copies "
+            "restent dans l'historique de ton cerveau : dis « quels mots de passe dois-je changer ? » et je te "
+            "guide."))
 
     def test_dead_mans_switches(self):
         os.makedirs(os.path.join(self.home, "DEV", "gbrain", ".git"))
@@ -1360,9 +1396,9 @@ class SessionStart(unittest.TestCase):
         self.installed("controle.py", 200)
         self.etat(dernier_succes=stamp(100), alertes=[{"niveau": "rouge", "code": "vault_absent"}])
         out = self.hook()
-        self.assertEqual(out["systemMessage"], "Le contrôle de nuit ne trouve plus le dossier de ton cerveau, donc "
-                                               "tes notes ne sont plus vérifiées : dis « contrôle mon cerveau » pour "
-                                               "que je regarde pourquoi.")
+        self.assertEqual(out["systemMessage"], "Je ne trouve plus le dossier de ton cerveau : je n'ai rien effacé, "
+                                               "mais tes notes ne sont plus vérifiées la nuit ; dis « retrouve mon "
+                                               "cerveau » pour que je le cherche.")
         self.assertNotIn("éteint", out["systemMessage"])
         os.unlink(os.path.join(self.state, "shown.json"))
         self.etat(dernier_succes=stamp(100))
@@ -1390,7 +1426,9 @@ class SessionStart(unittest.TestCase):
                  dict(night, secrets_a_changer=1), dict(night, secrets_a_changer=4),
                  dict(night, alertes=[{"code": "lecons"}]), dict(night, mode="maintenant", corrections=2),
                  dict(night, corrections=2, alertes=[{"code": "reflexion"}]),
-                 dict(night, corrections=1, a_voir=1, alertes=[{"code": "reflexion"}])]
+                 dict(night, corrections=1, a_voir=1, alertes=[{"code": "reflexion"}]),
+                 dict(night, corrections=1, claude="saute:limite-reflexion", alertes=[{"code": "reflexion"}]),
+                 dict(night, corrections=0, alertes=[{"code": "reflexion"}, {"code": "commit_refuse"}])]
         etats += [dict(night, corrections=c, a_voir=v) for c in (0, 1, 3) for v in (0, 1, 2) if c or v]
         lines = []
         for etat in etats:
@@ -1411,8 +1449,9 @@ class SessionStart(unittest.TestCase):
                 for words in re.findall(r"dis « ([^»]+) »", line):
                     self.assertIn(words.rstrip(" ?"), described, "words the controle skill answers to")
                 for jargon in ("/controle", "Détail", "détail", ".md", "tape ", "annulable", "retour arrière",
-                               "point de santé", "masqué"):
+                               "point de santé", "masqué", "le contrôle a fait", "annule le contrôle"):
                     self.assertNotIn(jargon, line)
+                self.assertNotRegex(line, r"^\d|(?<!\d)1 ", "un, une; a sentence starts with a word")
                 self.assertRegex(line, r"dis « [^»]+ »|rien à faire|relance l'installation")
                 self.assertTrue(line.endswith(".") and ". " not in line, "one sentence")
 
