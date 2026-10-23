@@ -431,6 +431,9 @@ code {
 .next-steps h3 { font-size: 16.5px; letter-spacing: -0.01em; }
 .next-steps h3::before { content: counter(next) ". "; color: var(--pink); }
 .next-steps p { margin-top: 8px; color: var(--ink-2); font-size: 14.5px; }
+.next-steps .gestures { margin: 6px 0 0; padding-left: 1.4em; list-style: decimal; color: var(--ink-2); font-size: 14.5px; }
+.next-steps .gestures li { display: list-item; counter-increment: none; margin-top: 4px; padding: 0; border: 0; border-radius: 0; background: none; }
+.next-steps .gestures li::marker { color: var(--pink); }
 .next-steps img { display: block; width: 100%; height: auto; max-height: 150px; margin-top: 12px; object-fit: contain; object-position: left top; border-radius: 6px; }
 .next-more { margin-top: 16px; font-size: 15px; }
 .dl-warn {
@@ -969,8 +972,9 @@ pre.cmd code { padding: 0; background: none; border: 0; color: inherit; font: in
 
 @media (max-width: 900px) {
   .next-steps { grid-template-columns: minmax(0, 1fr); }
-  .next-steps li { display: grid; grid-template-columns: minmax(0, 1fr) 140px; gap: 0 16px; align-items: start; }
+  .next-steps li { display: grid; grid-template-columns: minmax(0, 1fr) 140px; grid-template-rows: auto 1fr; gap: 0 16px; align-items: start; }
   .next-steps li img { grid-column: 2; grid-row: 1 / span 2; margin-top: 0; }
+  .next-steps li > :not(img) { grid-column: 1; }
   .foot-top { grid-template-columns: minmax(0, 1fr); }
   .systems-grid { grid-template-columns: minmax(0, 1fr); max-width: 560px; }
   .journey > li, .journey > li:nth-child(even) { grid-template-columns: minmax(0, 1fr); padding: 44px 0; }

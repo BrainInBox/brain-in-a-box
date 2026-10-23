@@ -184,8 +184,15 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
 Function BiboWelcomeShow
   ReadRegStr $0 SHCTX "${UNINSTKEY}" "UninstallString"
   ${If} $0 != ""
-    SendMessage $mui.WelcomePage.Title ${WM_SETTEXT} 0 "STR:$(biboUpdateTitle)"
-    SendMessage $mui.WelcomePage.Text ${WM_SETTEXT} 0 "STR:$(biboUpdateText)"
+    ; As PageReinstall decides: this version or an older one is updated in place; a newer one is
+    ; asked about on the next page, which says so.
+    ReadRegStr $0 SHCTX "${UNINSTKEY}" "DisplayVersion"
+    nsis_tauri_utils::SemverCompare "${VERSION}" $0
+    Pop $0
+    ${If} $0 >= 0
+      SendMessage $mui.WelcomePage.Title ${WM_SETTEXT} 0 "STR:$(biboUpdateTitle)"
+      SendMessage $mui.WelcomePage.Text ${WM_SETTEXT} 0 "STR:$(biboUpdateText)"
+    ${EndIf}
   ${EndIf}
 FunctionEnd
 

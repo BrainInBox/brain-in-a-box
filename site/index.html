@@ -132,7 +132,12 @@
         <ol class="next-steps" data-next-for="windows">
           <li>
             <h3>Garde le fichier</h3>
-            <p>Si ton navigateur dit qu’il «&nbsp;n’est pas fréquemment téléchargé&nbsp;»&nbsp;: «&nbsp;…&nbsp;» à côté, <strong>Conserver</strong> (Keep). Dans Edge, ensuite, pas Supprimer (Delete)&nbsp;: <strong>Afficher plus</strong> (Show more) › <strong>Conserver quand même</strong> (Keep anyway).</p>
+            <p>Si ton navigateur dit qu’il «&nbsp;n’est pas fréquemment téléchargé&nbsp;»&nbsp;:</p>
+            <ol class="gestures">
+              <li>Clique sur «&nbsp;…&nbsp;» à côté du fichier.</li>
+              <li>Clique sur <strong>Conserver</strong> (Keep).</li>
+              <li>Pas Supprimer (Delete)&nbsp;: <strong>Afficher plus</strong> (Show more), puis <strong>Conserver quand même</strong> (Keep anyway).</li>
+            </ol>
           </li>
           <li>
             <h3>Ouvre-le</h3>
@@ -152,8 +157,8 @@
             <img src="img/mac-dmg.webp" width="660" height="400" alt="" loading="lazy" decoding="async">
           </li>
           <li>
-            <h3>Ouvre-le, puis Terminé</h3>
-            <p>Ton Mac l’arrête une première fois&nbsp;: clique sur <strong>Terminé</strong> (Done&nbsp;; <strong>Annuler</strong> sur macOS 13 et 14), surtout pas sur «&nbsp;Placer dans la corbeille&nbsp;».</p>
+            <h3>Ouvre-le depuis Applications</h3>
+            <p>Dans le Finder › <strong>Applications</strong>, double-clique sur Brain in a Box (pas depuis la fenêtre du fichier). Ton Mac l’arrête une première fois&nbsp;: clique sur <strong>Terminé</strong> (Done&nbsp;; <strong>Annuler</strong> sur macOS 13 et 14), surtout pas sur «&nbsp;Placer dans la corbeille&nbsp;».</p>
             <img src="img/mac-bloquee.webp" width="260" height="284" alt="" loading="lazy" decoding="async">
           </li>
           <li>
@@ -210,7 +215,7 @@
       <li>
         <p class="num" aria-hidden="true">03</p>
         <h3>Bibo te guide.</h3>
-        <p>Clique sur «&nbsp;Guide-moi dans un logiciel&nbsp;»&nbsp;: dis-lui ce que tu veux faire et montre-lui ta fenêtre. <a href="#guide">Comment ça marche</a>.</p>
+        <p>À la fin de l’installation, il te propose le guide. Ensuite, rouvre Bibo et clique sur «&nbsp;Guide-moi dans un logiciel&nbsp;»&nbsp;: dis-lui ce que tu veux faire et montre-lui ta fenêtre. <a href="#guide">Comment ça marche</a>.</p>
       </li>
     </ol>
   </div>
@@ -220,7 +225,7 @@
   <div class="wrap">
     <p class="tag tag-pink-blue">Le guide</p>
     <h2 id="guide-t">Tu montres, <span class="nowrap">il te dit où cliquer.</span></h2>
-    <p class="section-lead">Tu bloques dans un logiciel (Odoo, Sage, Excel, le site des impôts…)&nbsp;? Bibo ouvre une petite fenêtre à côté. Claude regarde ta fenêtre et te dit où cliquer, une étape à la fois, en entourant l’endroit. Tu cliques, tu dis «&nbsp;C’est fait&nbsp;», il passe à la suite.</p>
+    <p class="section-lead">Tu bloques dans un logiciel (Odoo, Sage, Excel, le site des impôts…)&nbsp;? Bibo ouvre une petite fenêtre à côté. Tu lui montres ton logiciel d’une capture d’écran&nbsp;: Claude la regarde et te dit où cliquer, une étape à la fois, en entourant l’endroit. Tu cliques, tu dis «&nbsp;C’est fait&nbsp;», il passe à la suite.</p>
     <ol class="guide-steps">
       <li>
         <figure class="shot">
@@ -239,7 +244,7 @@
         <div class="guide-text">
           <p class="j-num">2</p>
           <h3>Montre ta fenêtre, suis l’étape</h3>
-          <p>Il te dit où cliquer et l’entoure en rouge sur ta capture. Coincé&nbsp;? «&nbsp;Je suis bloqué&nbsp;»&nbsp;: dis ce qui coince, il regarde à nouveau. À la fin, il peut ranger la marche à suivre dans ton cerveau, pour la prochaine fois.</p>
+          <p>Il te dit où cliquer et l’entoure en rouge sur ta capture. À chaque étape, tu lui remontres ta fenêtre&nbsp;: une nouvelle capture, que tu colles dans Bibo (il te montre comment). Coincé&nbsp;? «&nbsp;Je suis bloqué&nbsp;»&nbsp;: dis ce qui coince, il regarde à nouveau. À la fin, il peut ranger la marche à suivre dans ton cerveau, pour la prochaine fois.</p>
         </div>
       </li>
     </ol>
@@ -601,7 +606,7 @@
         <li><strong>Réessayer</strong>&nbsp;: il relance l’étape.</li>
         <li><strong>Demander à Claude de réparer</strong>, si ton compte est connecté. Claude lit le journal de l’étape (clés masquées, jamais tes fichiers personnels), puis Bibo te dit ce qui coince et ce qu’il propose. Rien ne change avant que tu cliques sur «&nbsp;Réparer&nbsp;». S’il met quelque chose de côté, rien n’est effacé&nbsp;: «&nbsp;Remettre comme avant&nbsp;» le remet. Ça utilise un peu de ton abonnement Claude, et tu peux voir exactement ce qui lui est envoyé.</li>
         <li><strong>Le plan B, Claude dans le Terminal</strong> (PowerShell sur Windows). Bibo t’explique d’abord comment ça se passe. Claude t’explique le problème avec des mots simples et te demande ton accord avant chaque commande. Ses questions sont en anglais&nbsp;: «&nbsp;Yes&nbsp;» veut dire oui, «&nbsp;No&nbsp;» non. Évite «&nbsp;Yes, and don’t ask again&nbsp;»&nbsp;: il ne te demanderait plus ton accord.</li>
-        <li><strong>Copier le rapport</strong>, en dernier recours, et l’envoyer au projet&nbsp;: <a href="https://github.com/BrainInBox/brain-in-a-box/issues" rel="noopener">ouvre un ticket sur GitHub</a> et colle-le. Les clés y sont masquées, mais relis-le avant&nbsp;: un ticket est public.</li>
+        <li><strong>Copier le rapport</strong>, en dernier recours, et l’envoyer à la personne qui t’a conseillé Bibo (par mail ou par message). Les clés y sont masquées, mais relis-le avant de l’envoyer.</li>
       </ol>
     </div>
   </div>
@@ -654,7 +659,7 @@
         <svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M13 2.5L5 13.5h6l-1 8 8-11h-6z"/></svg>
         <h3>Les automatismes et compétences de Claude</h3>
         <p class="label">Ce qu’il fait pour toi</p>
-        <p>Des automatismes&nbsp;: quand tu corriges Claude, il note la leçon&nbsp;; tes séances sont résumées dans ton Journal. Des compétences&nbsp;: le contrôle de nuit (<code>/controle</code>), une recherche rapide sur le web, une page HTML pour expliquer ou présenter quelque chose, la conversion de documents (Word, PDF…) en notes, <a href="#memoire">l’import de ta mémoire ChatGPT ou Claude</a> et «&nbsp;brain-boost&nbsp;», qui t’explique ce que ton installation sait faire.</p>
+        <p>Des automatismes&nbsp;: quand tu corriges Claude, il note la leçon&nbsp;; tes séances sont résumées dans ton Journal. Des compétences&nbsp;: le contrôle de nuit, une recherche rapide sur le web, une page HTML pour expliquer ou présenter quelque chose, la conversion de documents (Word, PDF…) en notes, <a href="#memoire">l’import de ta mémoire ChatGPT ou Claude</a> et «&nbsp;brain-boost&nbsp;», qui t’explique ce que ton installation sait faire.</p>
         <p class="label">Ce que tu as à faire</p>
         <ul class="plain">
           <li>Rien. Pour découvrir, demande à Claude&nbsp;: «&nbsp;qu’est-ce que tu peux faire pour moi&nbsp;?&nbsp;»</li>
@@ -700,7 +705,7 @@
     <div class="grid-frame after">
       <div class="cell">
         <h3>Fais-toi guider</h3>
-        <p>Dans Bibo, clique sur «&nbsp;Guide-moi dans un logiciel&nbsp;». Dis ce que tu veux faire, montre ta fenêtre&nbsp;: Claude te dit où cliquer, une étape à la fois. <a href="#guide">Le guide</a>.</p>
+        <p>Ouvre Bibo et clique sur «&nbsp;Guide-moi dans un logiciel&nbsp;». Dis ce que tu veux faire, montre ta fenêtre&nbsp;: Claude te dit où cliquer, une étape à la fois. <a href="#guide">Le guide</a>.</p>
       </div>
       <div class="cell">
         <h3>Présente-toi à Claude (15 min)</h3>
@@ -718,7 +723,7 @@
       <div class="cell">
         <h3>Le contrôle de nuit</h3>
         <p>Chaque nuit à 4&nbsp;h, un script vérifie tes notes&nbsp;: il masque les mots de passe écrits en clair, archive les vieux souvenirs, retire les doublons, et note le reste pour toi. Le matin, la première ligne de Claude dit ce qu’il a fait.</p>
-        <p>Tape <code>/controle</code> pour qu’il t’explique. Pour défaire une correction&nbsp;: <code>/controle annuler</code> suivi de son identifiant, par exemple <code>S2-261014-02</code>. Tu le trouves dans le compte rendu de la nuit, Profile › controle.md dans ton cerveau. Pour défaire toute la nuit, dis à Claude&nbsp;: «&nbsp;annule le contrôle de cette nuit&nbsp;».</p>
+        <p>Pour qu’il t’explique, demande à Claude&nbsp;: «&nbsp;qu’est-ce que le contrôle a fait&nbsp;?&nbsp;». Pour défaire une correction, donne-lui son identifiant&nbsp;: «&nbsp;annule la correction S2-261014-02&nbsp;». Tu le trouves dans le compte rendu de la nuit, Profile › controle.md dans ton cerveau. Pour défaire toute la nuit&nbsp;: «&nbsp;annule le contrôle de cette nuit&nbsp;».</p>
       </div>
       <div class="cell">
         <h3>Les mises à jour</h3>
@@ -809,7 +814,7 @@
       </details>
       <details>
         <summary>Une étape échoue</summary>
-        <p>Clique sur «&nbsp;Réessayer&nbsp;». Si ça coince encore, demande à Claude de réparer, ou suis le plan B dans le Terminal. En dernier recours, copie le rapport et ouvre un ticket. <a href="#coince">Comment ça se passe</a>.</p>
+        <p>Clique sur «&nbsp;Réessayer&nbsp;». Si ça coince encore, demande à Claude de réparer, ou suis le plan B dans le Terminal. En dernier recours, copie le rapport et envoie-le à la personne qui t’a conseillé Bibo. <a href="#coince">Comment ça se passe</a>.</p>
       </details>
       <details>
         <summary>Pour les développeurs&nbsp;: installer en ligne de commande</summary>
@@ -819,7 +824,7 @@
         <summary>Mettre à jour</summary>
         <p>La mémoire se met à jour toute seule, la nuit. L’app, quand une nouvelle préversion sort&nbsp;: télécharge-la ici, puis&nbsp;:</p>
         <ul class="plain">
-          <li><strong>Windows</strong>&nbsp;: ferme Bibo et lance le nouvel installeur. Il affiche «&nbsp;Mettre à jour Bibo&nbsp;»&nbsp;: clique sur Suivant. Tes notes ne changent pas.</li>
+          <li><strong>Windows</strong>&nbsp;: ferme Bibo et lance le nouvel installeur. Ton navigateur et Windows te mettent de nouveau en garde&nbsp;: fais comme la première fois. L’installeur affiche ensuite «&nbsp;Mettre à jour Bibo&nbsp;»&nbsp;: clique sur Suivant. Tes notes ne changent pas.</li>
           <li><strong>Mac</strong>&nbsp;: ferme l’app, ouvre le nouveau fichier .dmg, glisse Brain in a Box dans Applications et choisis «&nbsp;Remplacer&nbsp;» (Replace). Ton Mac peut te redemander «&nbsp;Ouvrir quand même&nbsp;», comme la première fois.</li>
           <li><strong>Linux</strong>&nbsp;: remplace l’ancienne AppImage par la nouvelle, et rends-la exécutable comme la première fois. Pour le .deb&nbsp;: la même commande qu’à l’installation, dans ton dossier Téléchargements.</li>
         </ul>
@@ -943,13 +948,13 @@ sha256sum "$(xdg-user-dir DOWNLOAD)"/Brain-in-a-Box_*</code></pre>
             <li><a href="#aide">Un souci&nbsp;?</a></li>
             <li><a href="#mettre-a-jour">Mettre à jour</a></li>
             <li><a href="#verifier">Vérifier le fichier</a></li>
-            <li><a href="https://github.com/BrainInBox/brain-in-a-box/issues" rel="noopener">Ouvrir un ticket</a></li>
           </ul>
         </div>
         <div>
           <h2>Le projet</h2>
           <ul>
             <li><a href="https://github.com/BrainInBox/brain-in-a-box" rel="noopener">Code source sur GitHub</a></li>
+            <li><a href="https://github.com/BrainInBox/brain-in-a-box/issues" rel="noopener">Signaler un bug (en anglais)</a></li>
             <li><a href="https://github.com/BrainInBox/brain-in-a-box/releases?q=pr%C3%A9version&amp;expanded=true" rel="noopener">Toutes les versions</a></li>
             <li><a href="https://github.com/BrainInBox/brain-in-a-box/blob/master/LICENSE" rel="noopener">Licence MIT</a></li>
           </ul>

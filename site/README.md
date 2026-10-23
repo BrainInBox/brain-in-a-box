@@ -20,6 +20,10 @@ Nothing to redeploy when a new app preview comes out: `app-latest` holds it.
 
 The page quotes Bibo's buttons (« Guide-moi dans un logiciel »…) and shows its screens: publish it only once the app in `app-latest` has them, and its captures are redone from that app (below). The same the day a system's files get signed (`release.yml`): the page's words about Windows' and macOS's warnings change by hand.
 
+- The names it gives Bibo's buttons are checked against `app/src/app.js` (`test_the_buttons_it_names_are_bibos`, in `engine/tests/test_release_workflow.py`): a button renamed in the app fails the test until the page says the new name.
+- The guide's section says the capture is made and pasted at each step, as long as `guide.rs` only reads a pasted capture (`test_the_guide_says_how_the_window_is_shown`). The day Bibo sees the window by itself, say that instead, and drop the test.
+- Edge's two questions for a file it rarely sees (« Conserver », then « Afficher plus › Conserver quand même ») are written from Edge's dialogs, not filmed by the field test (it marks the file as a browser would, without Edge): check them once on a Windows PC, in Edge, with the file of `app-latest`.
+
 Before publishing, check that the buttons' files are there (a redirect to the file, not a 404):
 
 ```bash

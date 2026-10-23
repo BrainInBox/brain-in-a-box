@@ -22,7 +22,10 @@ name: app-release
 #   repository has their secrets, and only the preview that is published. Without them nothing
 #   changes: the app stays unsigned, as today. The app compiles without any secret (every build.rs
 #   and proc-macro of its dependencies runs then); only the bundling, which compiles nothing, reads
-#   Apple's. The release says "non signée" only for a system whose files are not signed; the site
+#   Apple's. That is no wall: on the same runner, a process a dependency left behind while compiling
+#   would still be there. Before Apple's or SignPath's secrets are created, the signing moves to a
+#   job of its own, on a fresh runner, that runs no code from the build (not done yet).
+#   The release says "non signée" only for a system whose files are not signed; the site
 #   (site/index.html) says it too, in its own words, to change by hand the day a system is signed.
 #
 # Actions are pinned to a commit (a tag can be moved), and engine/tests/test_release_workflow.py
@@ -545,7 +548,9 @@ jobs:
       # published under names without their version. Every new file goes up first under a temporary
       # name; then each takes the place of the old one: the links mix two previews, or answer 404,
       # only for the seconds of the renames (each tried again). Then the step checks what the site
-      # downloads: each link answers, and the SHA256SUMS it serves is this preview's. A pre-release,
+      # downloads: each link answers, and the SHA256SUMS it serves is this preview's (asked again
+      # while a link still leads to the previous one). Never with GitHub's immutable releases:
+      # app-latest's files could no longer be replaced. A pre-release,
       # so that it is never GitHub's "Latest" (the kit's releases are).
       - name: The stable links (app-latest)
         run: |
@@ -585,8 +590,12 @@ jobs:
             curl -fsS --retry 5 --retry-all-errors --retry-delay 10 -o /dev/null -I "$base/${f#latest/}" \
               || { echo "::error::$base/${f#latest/} does not answer"; exit 1; }
           done
-          curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 "$base/SHA256SUMS" | cmp - latest/SHA256SUMS \
-            || { echo "::error::app-latest does not serve this preview's SHA256SUMS"; exit 1; }
+          # A link may still lead to the previous file for a moment: asked again, up to 2 minutes.
+          for try in $(seq 12); do
+            curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 "$base/SHA256SUMS" | cmp -s - latest/SHA256SUMS && break
+            [ "$try" != 12 ] || { echo "::error::app-latest does not serve this preview's SHA256SUMS"; exit 1; }
+            sleep 10
+          done
           echo "Stable links: $GITHUB_SERVER_URL/$GH_REPO/releases/tag/app-latest" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Keep the 5 newest app previews

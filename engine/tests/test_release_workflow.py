@@ -41,6 +41,53 @@ SITE = ROOT / "site"
 TO_JSON = 'puts JSON.generate(YAML.safe_load(File.read(ARGV[0], encoding: "UTF-8")), ascii_only: true)'
 PINNED = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+@[0-9a-f]{40}")
 
+# The release app-latest as gh sees it: in $FAKE_GH/a, one file per asset, named by its id and
+# holding its name, next to <id>.data, its content.
+FAKE_GH = r"""#!/usr/bin/env bash
+set -eu
+a=$FAKE_GH/a
+named() { for f in "$a"/*; do case $f in *.data) ;; *) [ "$(cat "$f")" != "$1" ] || echo "${f##*/}" ;; esac; done; }
+case "$1 $2" in
+  "release view"|"release edit") ;;
+  "release upload")
+    shift 3
+    for f in "$@"; do
+      [ "$f" != --clobber ] || continue
+      [ -z "$(named "${f##*/}")" ] || { echo "fake gh: ${f##*/} is already there" >&2; exit 1; }
+      id=$(cat "$FAKE_GH/next"); echo $((id + 1)) > "$FAKE_GH/next"
+      echo "${f##*/}" > "$a/$id"; cp "$f" "$a/$id.data"
+    done ;;
+  "api -X")
+    id=${4##*/}
+    case "$3 $4" in
+      "PATCH repos/o/r/git/refs/tags/app-latest") ;;
+      "DELETE repos/o/r/releases/assets/"*) rm "$a/$id" "$a/$id.data" ;;
+      "PATCH repos/o/r/releases/assets/"*)
+        [ -z "$(named "${6#name=}")" ] || { echo "fake gh: ${6#name=} is taken" >&2; exit 1; }
+        echo "${6#name=}" > "$a/$id" ;;
+      *) echo "fake gh: $*" >&2; exit 1 ;;
+    esac ;;
+  "api repos/o/r/releases/tags/app-latest") echo 1 ;;
+  "api repos/o/r/releases/1/assets") named "$(sed -E 's/.*\.name == "([^"]+)".*/\1/' <<< "$5")" ;;
+  *) echo "fake gh: $*" >&2; exit 1 ;;
+esac
+"""
+
+# What a link of app-latest serves (the last argument), from the fake gh's files; SHA256SUMS
+# served stale $FAKE_GH/stale times first.
+FAKE_CURL = r"""#!/usr/bin/env bash
+set -eu
+url=${!#}; name=${url##*/}; id=
+for f in "$FAKE_GH"/a/*; do case $f in *.data) ;; *) [ "$(cat "$f")" != "$name" ] || id=${f##*/} ;; esac; done
+[ -n "$id" ] || exit 22
+case " $* " in *" -I "*) exit 0 ;; esac
+stale=$(cat "$FAKE_GH/stale")
+if [ "$name" = SHA256SUMS ] && [ "$stale" -gt 0 ]; then
+  echo $((stale - 1)) > "$FAKE_GH/stale"; echo old; exit 0
+fi
+cat "$FAKE_GH/a/$id.data"
+"""
+
 
 def load(path=WORKFLOW):
     ruby = shutil.which("ruby")
@@ -53,6 +100,18 @@ def load(path=WORKFLOW):
     if p.returncode:
         raise AssertionError(f"{path.name} does not parse: {p.stderr}")
     return json.loads(p.stdout)
+
+
+def actions_bash():
+    """The bash a step runs in (shell: bash). On Windows, Git's: a bare "bash" would be WSL's
+    bash.exe, which Windows finds in System32 before the PATH (with no distribution: exit 1, silent)."""
+    if os.name != "nt":
+        return shutil.which("bash")
+    git = shutil.which("git")
+    for d in Path(git).resolve().parents if git else ():
+        if (d / "bin" / "bash.exe").is_file():
+            return str(d / "bin" / "bash.exe")
+    return None
 
 
 def step(job, text):
@@ -186,11 +245,11 @@ class ReleaseWorkflow(unittest.TestCase):
         self.assertLess(run.index("gh release upload"), run.index("-X DELETE"))
         self.assertRegex(run, r'for try in 1 2 3; do\s+gh api -X PATCH "repos/\$GH_REPO/releases/assets/\$new" -f name="\$name"')
         # Then what the site downloads, whichever way app-latest was made: each link answers, and
-        # the SHA256SUMS it serves is this preview's.
+        # the SHA256SUMS it serves is this preview's (run below against a fake gh and curl).
         self.assertIn('base="$GITHUB_SERVER_URL/$GH_REPO/releases/download/app-latest"', run)
         check = run[run.rindex("\nfi\n"):]
         self.assertIn('-o /dev/null -I "$base/${f#latest/}"', check)
-        self.assertIn('"$base/SHA256SUMS" | cmp - latest/SHA256SUMS', check)
+        self.assertIn('"$base/SHA256SUMS" | cmp -s - latest/SHA256SUMS', check)
         pattern = re.search(r'test\("([^"]+)"\)', steps[prune]["run"]).group(1).replace("\\\\", "\\")
         self.assertRegex("app-v0.1.112-preview.112", pattern)
         self.assertNotRegex("app-latest", pattern)
@@ -238,8 +297,9 @@ class ReleaseWorkflow(unittest.TestCase):
 
     def test_the_compilation_sees_no_signing_secret(self):
         # Every build.rs and proc-macro of the app's dependencies runs while it compiles: Apple's
-        # certificate and passwords only reach the bundling, which compiles nothing. The job's own
-        # variables only say whether a secret is set.
+        # certificate and passwords only reach the bundling, which compiles nothing (on the same
+        # runner all the same: release.yml's header says what is left to do before the secrets
+        # exist). The job's own variables only say whether a secret is set.
         build = self.jobs["build"]
         for key, value in build["env"].items():
             for ref in re.findall(r"secrets\.[A-Z_]+(?: != '')?", value):
@@ -271,10 +331,14 @@ class ReleaseWorkflow(unittest.TestCase):
         self.assertGreaterEqual(signing, plain + waits // 60 + 15)
 
     def run_step(self, run, env, cwd):
+        bash = actions_bash()
+        if not bash:
+            self.skipTest("no Git Bash to run the step in")
         base = {"PATH": os.environ["PATH"], "LC_ALL": "C.UTF-8"}
-        p = subprocess.run(["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", run], cwd=cwd,
+        p = subprocess.run([bash, "--noprofile", "--norc", "-eo", "pipefail", "-c", run], cwd=cwd,
                            env=dict(base, **env), capture_output=True, text=True, encoding="utf-8")
-        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        return p
 
     def test_the_release_says_unsigned_only_where_it_is(self):
         # Each build says whether its system's files are signed (true or false, from whether the
@@ -318,6 +382,43 @@ class ReleaseWorkflow(unittest.TestCase):
                 self.assertEqual("Ouvrir quand même" in notes, not mac)
                 said = re.sub(r"«[^»]*»", "", notes)
                 self.assertNotRegex(said, r"(?i)\b(vous|votre|vos|téléchargez|ouvrez|cliquez|allez|rendez|glissez|lancez)\b")
+
+    @unittest.skipIf(os.name == "nt", "the publishing job runs on Linux, and so do these fake gh and curl")
+    def test_app_latest_swaps_its_files_and_waits_for_what_the_site_downloads(self):
+        # The step only ever runs on master, after the merge: here against a fake gh (app-latest
+        # and its files) and a fake curl that serves the previous SHA256SUMS twice, as a link
+        # cached for a moment would. The step waits for the new one instead of failing the release.
+        swap = step(self.jobs["publish"], "gh release upload app-latest")["run"]
+        files = ("macos-universal.dmg", "windows-x64-setup.exe", "linux-x86_64.AppImage", "linux-amd64.deb")
+        with tempfile.TemporaryDirectory() as tmp:
+            fake, bin_ = Path(tmp, "gh-state"), Path(tmp, "bin")
+            (fake / "a").mkdir(parents=True)
+            bin_.mkdir()
+            for name, script in (("gh", FAKE_GH), ("curl", FAKE_CURL), ("sleep", "#!/bin/sh\nexit 0\n")):
+                Path(bin_, name).write_text(script)
+                Path(bin_, name).chmod(0o755)
+            for i, name in enumerate(["SHA256SUMS"] + ["Brain-in-a-Box_" + f for f in files]):
+                Path(fake, "a", str(i)).write_text(name + "\n")
+                Path(fake, "a", "%d.data" % i).write_text("old\n")
+            Path(fake, "next").write_text("100\n")
+            Path(fake, "stale").write_text("2\n")
+            work = Path(tmp, "work")
+            Path(work, "dist").mkdir(parents=True)
+            for f in files:
+                Path(work, "dist", "Brain-in-a-Box_0.1.8-preview.8_" + f).write_text("new " + f + "\n")
+            Path(work, "dist", "SHA256SUMS").write_text("the preview's own, with its version\n")
+            self.run_step(swap, {
+                "PATH": str(bin_) + os.pathsep + os.environ["PATH"], "FAKE_GH": str(fake),
+                "GH_REPO": "o/r", "GITHUB_SERVER_URL": "https://github.com", "GITHUB_SHA": "0" * 40,
+                "LABEL": "0.1.8-preview.8", "TAG": "app-v0.1.8-preview.8",
+                "GITHUB_STEP_SUMMARY": str(Path(tmp, "summary"))}, work)
+            held = {Path(fake, "a", i).read_text().strip(): Path(fake, "a", i + ".data").read_text()
+                    for i in os.listdir(Path(fake, "a")) if not i.endswith(".data")}
+            sums = Path(work, "latest", "SHA256SUMS").read_text()
+            self.assertEqual(held, dict({"Brain-in-a-Box_" + f: "new " + f + "\n" for f in files}, SHA256SUMS=sums))
+            for f in files:
+                self.assertIn("  Brain-in-a-Box_" + f + "\n", sums)
+            self.assertEqual(Path(fake, "stale").read_text().strip(), "0")
 
     def test_the_dmg_window_is_laid_out_by_finder(self):
         # Tauri skips Finder's layout on a CI: the background would not show.
@@ -432,8 +533,13 @@ class WindowsInstaller(unittest.TestCase):
         self.assertIn('BrandingText "Brain in a Box ${VERSION}"', self.nsi)
         # The same version or an older one already there: no page asking whether to uninstall.
         self.assertRegex(self.nsi, r"\$\{If\} \$WixMode <> 1\s+\$\{AndIf\} \$R0 >= 0\s+Abort")
-        # The welcome page says « Mettre à jour Bibo » when Bibo is already there.
-        self.assertIn('SendMessage $mui.WelcomePage.Title ${WM_SETTEXT} 0 "STR:$(biboUpdateTitle)"', self.nsi)
+        # The welcome page says « Mettre à jour Bibo » when Bibo is already there, of this version
+        # or an older one: the update in place. A newer one is asked about on the next page.
+        welcome = self.nsi[self.nsi.index("Function BiboWelcomeShow"):]
+        welcome = welcome[:welcome.index("FunctionEnd")]
+        self.assertRegex(welcome, r'ReadRegStr \$0 SHCTX "\$\{UNINSTKEY\}" "DisplayVersion"\s+'
+                                  r'nsis_tauri_utils::SemverCompare "\$\{VERSION\}" \$0\s+Pop \$0\s+\$\{If\} \$0 >= 0\s+'
+                                  r'SendMessage \$mui\.WelcomePage\.Title \$\{WM_SETTEXT\} 0 "STR:\$\(biboUpdateTitle\)"')
 
     def test_every_string_used_is_written_in_french_and_says_tu(self):
         defined = dict(re.findall(r'^LangString (\w+) \$\{LANG_FRENCH\} "(.*)"$', self.french, re.M))
@@ -469,6 +575,8 @@ class WindowsInstaller(unittest.TestCase):
         ask = re.search(r'^LangString biboRemoveTasks \$\{LANG_FRENCH\} "(.*)"$', self.french, re.M).group(1)
         self.assertIn("Tu réinstalles Bibo\u00a0? Réponds Non (No)", ask)
         self.assertIn("Oui (Yes)", ask)
+        # What "no" costs: the tasks go on calling Claude, on the person's subscription.
+        self.assertIn("Même sans Bibo, elles utilisent ton abonnement Claude.", ask)
 
     def test_going_back_to_an_older_bibo_uninstalls_as_an_update(self):
         # The uninstall the reinstall page starts is the first half of an install: /UPDATE, so that
@@ -555,6 +663,8 @@ class Site(unittest.TestCase):
         self.assertNotIn("Win + R", rest)
         self.assertNotIn("irm ", rest)
         self.assertNotRegex(rest, r"(?i)tape\s+<code>claude</code>")
+        # Claude's skills are asked for in words: a slash command is typed in a terminal.
+        self.assertNotIn("<code>/controle", rest)
         self.assertIn("Pour les développeurs", dev)
 
     def test_the_price_is_said_and_never_more_than_known(self):
@@ -604,6 +714,65 @@ class Site(unittest.TestCase):
     def test_smart_app_control_is_never_turned_off(self):
         faq = re.search(r'<details id="smart-app-control">.*?</details>', self.html, re.S).group(0)
         self.assertIn("Ne le désactive pas", faq)
+
+    def test_edges_three_gestures_one_by_one(self):
+        # Right after the click, the first thing most people see: each gesture on a line of its own.
+        first = re.search(r'<ol class="next-steps" data-next-for="windows">\s*<li>(.*?)</li>\s*<li>\s*<h3>', self.html, re.S).group(1)
+        gestures = re.findall(r"<li>(.*?)</li>", re.search(r'<ol class="gestures">(.*?)</ol>', first, re.S).group(1), re.S)
+        self.assertEqual(len(gestures), 3)
+        self.assertIn("«&nbsp;…&nbsp;» à côté du fichier", gestures[0])
+        self.assertIn("<strong>Conserver</strong> (Keep)", gestures[1])
+        self.assertIn("<strong>Afficher plus</strong> (Show more), puis <strong>Conserver quand même</strong> (Keep anyway)", gestures[2])
+
+    def test_the_mac_opens_bibo_from_applications(self):
+        # Opened from the disk image's window, the app runs from a disk that goes away.
+        mac = re.search(r'<ol class="next-steps" data-next-for="mac">.*?</ol>', self.html, re.S).group(0)
+        self.assertIn("<h3>Ouvre-le depuis Applications</h3>", mac)
+        self.assertIn("pas depuis la fenêtre du fichier", mac)
+
+    def test_an_update_on_windows_warns_again(self):
+        # Each preview is a new file to Edge and SmartScreen: the warnings come back, as the first time.
+        faq = re.search(r'<details id="mettre-a-jour">.*?</details>', self.html, re.S).group(0)
+        windows = re.search(r"<li><strong>Windows</strong>.*?</li>", faq, re.S).group(0)
+        self.assertIn("de nouveau en garde", windows)
+
+    def test_the_report_goes_to_whoever_recommended_bibo(self):
+        # D4: a beginner sends the report to the person who told them about Bibo. A GitHub ticket is
+        # public, in English: only the project's links (the footer's « Le projet ») lead there.
+        projet = re.search(r"<h2>Le projet</h2>.*?</ul>", self.html, re.S).group(0)
+        self.assertNotIn("ticket", self.html.replace(projet, ""))
+        self.assertIn("/issues", projet)
+        for where, pattern in (("stuck", r'<div class="stuck" id="coince">.*?</div>'),
+                               ("faq", r"<summary>Une étape échoue</summary>.*?</details>")):
+            with self.subTest(where=where):
+                self.assertIn("la personne qui t’a conseillé Bibo", re.search(pattern, self.html, re.S).group(0))
+
+    def test_the_guide_says_how_the_window_is_shown(self):
+        # While the guide only reads a capture the person pastes (guide.rs, Capture), the page says
+        # so: « tu montres ta fenêtre » alone promises a guide that looks by itself.
+        rust = (TAURI / "src" / "guide.rs").read_text(encoding="utf-8")
+        modes = re.findall(r"^    (\w+)", re.search(r"pub enum Capture \{\n(.*?)\n\}", rust, re.S).group(1), re.M)
+        if modes != ["Collage"]:
+            self.skipTest("the guide sees the window by itself: say it on the page, then drop this test")
+        guide = re.search(r'<section[^>]*id="guide".*?</section>', self.html, re.S).group(0)
+        self.assertIn("capture d’écran", guide)
+        self.assertIn("que tu colles dans Bibo", guide)
+
+    def test_the_buttons_it_names_are_bibos(self):
+        # The page names Bibo's buttons as Bibo writes them (app/src/app.js): a renamed button is
+        # renamed here too, or a beginner looks for a button that is not there.
+        app = (ROOT / "app" / "src" / "app.js").read_text(encoding="utf-8")
+        for label in ("Guide-moi dans un logiciel", "Personnaliser mon cerveau", "Importer ma mémoire",
+                      "Ouvrir mon cerveau dans Obsidian", "Réessayer", "Copier le rapport", "Remettre comme avant",
+                      "Connecter mon compte Claude"):
+            with self.subTest(label=label):
+                self.assertRegex(self.html, r"(«&nbsp;|<strong>)%s(&nbsp;»|</strong>)" % re.escape(label))
+                self.assertIn("button('%s" % label, app)
+        # At the end of the install, the guide's button is not always this one: the page names it
+        # where Bibo shows it whatever its version, when Bibo is opened again.
+        trio = re.search(r'<ol class="trio">.*?</ol>', self.html, re.S).group(0)
+        self.assertNotIn("<p>Clique sur «&nbsp;Guide-moi dans un logiciel", trio)
+        self.assertIn("rouvre Bibo et clique sur «&nbsp;Guide-moi dans un logiciel&nbsp;»", trio)
 
     def test_a_phone_sends_the_link_to_the_computer(self):
         for attr in ("data-phone", "data-share", "data-copy-link"):
