@@ -367,6 +367,10 @@ pub fn grab(chosen: &Window) -> Result<Rgba, Rate> {
     Ok(image)
 }
 
+// Throwaway (spike/guide-v2-uia): the commands of the front app, from UI Automation (proof W2).
+#[path = "uia.rs"]
+pub(crate) mod uia;
+
 /// On a Windows desktop only, a VM of the CI's: `cargo test -- --ignored bureau --test-threads=1`.
 /// Windows of known colours (tests/fixtures/guide/atelier.cs, compiled there by Windows' own csc)
 /// and a page in the browser; their pixels are counted in memory. Nothing is written but that program
