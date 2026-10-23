@@ -1,41 +1,65 @@
 # Preuve H1 sous Windows (jetable) : Hermes installé comme Bibo le ferait, à côté d'un Hermes
 # « de la personne » (sentinelles), mesuré, piloté par sa TUI gateway, purgé, désinstallé.
-param([switch]$Mutations)
+# Une phase par étape du job : chaque phase écrit son JSON dans h1out, téléversé aussitôt.
+#   H1_DEFENDER = armed (temps réel pendant l'installation) | static (scan du dossier seulement)
+#   H1_UNINSTALL = full (mutation : hermes uninstall --full) | bounded (la désinstallation de Bibo)
+param([Parameter(Mandatory)][ValidateSet("setup", "install", "defender", "pathfix", "probe", "mutations", "uninstall")][string]$Phase)
 $ErrorActionPreference = "Continue"
 $ProgressPreference = "SilentlyContinue"
 $Here = $PSScriptRoot
 $Sha = $env:H1_HERMES_COMMIT
-$Expected = $env:H1_INSTALL_PS1_SHA256
 $Out = Join-Path $env:RUNNER_TEMP "h1out"
 New-Item -ItemType Directory -Force $Out | Out-Null
 $Root = Join-Path $env:LOCALAPPDATA "Bibo\hermes"
+$Bin = Join-Path $Root "bin"
 $UserHome = Join-Path $env:LOCALAPPDATA "hermes"
 $AppDataHermes = Join-Path $env:APPDATA "Hermes"
 $Xdg = @((Join-Path $HOME ".cache\hermes"), (Join-Path $HOME ".local\share\hermes"))
-$R = [ordered]@{ os = (Get-CimInstance Win32_OperatingSystem).Caption; build = [Environment]::OSVersion.Version.ToString(); commit = $Sha; root = $Root }
+$Shortcuts = @((Join-Path ([Environment]::GetFolderPath('Programs')) 'Hermes.lnk'), (Join-Path ([Environment]::GetFolderPath('Desktop')) 'Hermes.lnk'))
+$env:H1_USER_HERMES_HOME = $UserHome
+$env:HERMES_HOME = $UserHome             # l'environnement hérité de la personne
+"$Phase $(Get-Date -Format HH:mm:ss)" | Set-Content (Join-Path $Out "phase.txt")
+$R = [ordered]@{ phase = $Phase; os = (Get-CimInstance Win32_OperatingSystem).Caption; build = [Environment]::OSVersion.Version.ToString() }
 
-function Save { $R | ConvertTo-Json -Depth 14 | Set-Content (Join-Path $Out "windows.json") -Encoding UTF8 }
+function Save { $R | ConvertTo-Json -Depth 14 | Set-Content (Join-Path $Out "$Phase.json") -Encoding UTF8 }
+function Load([string]$name) { $f = Join-Path $Out "$name.json"; if (Test-Path $f) { Get-Content $f -Raw | ConvertFrom-Json } else { $null } }
 function Py([string[]]$A) {
-    $o = & python @A
+    $o = & python -I @A
     if ($LASTEXITCODE) { return @{ error = "python $($A[0]) $($A[1]) exit $LASTEXITCODE" } }
     return (($o -join "`n") | ConvertFrom-Json)
 }
 function Now { [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() / 1000.0 }
-function EnvKey { [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey("Environment", $true) }
-function RawUserPath { $k = EnvKey; try { $k.GetValue("Path", "", "DoNotExpandEnvironmentNames") } finally { $k.Close() } }
-function UserPathKind { $k = EnvKey; try { if ($k.GetValue("Path") -ne $null) { "$($k.GetValueKind('Path'))" } else { "absent" } } finally { $k.Close() } }
-function EnvSnapshot {
-    $k = EnvKey; $h = [ordered]@{}
-    try { foreach ($n in $k.GetValueNames()) { $h[$n] = "$($k.GetValueKind($n)):" + $k.GetValue($n, "", "DoNotExpandEnvironmentNames") } } finally { $k.Close() }
+function AsHash($o) {
+    $h = [ordered]@{}
+    if ($null -eq $o) { return $h }
+    if ($o -is [System.Collections.IDictionary]) { foreach ($k in $o.Keys) { $h["$k"] = $o[$k] } }
+    else { foreach ($p in $o.PSObject.Properties) { $h[$p.Name] = $p.Value } }
     return $h
 }
 function DiffMap($a, $b) {
-    $d = [ordered]@{}
+    $a = AsHash $a; $b = AsHash $b; $d = [ordered]@{}
     foreach ($n in @($a.Keys) + @($b.Keys) | Sort-Object -Unique) {
         $x = $a[$n]; $y = $b[$n]
         if ("$x" -ne "$y") { $d[$n] = [ordered]@{ before = $x; after = $y } }
     }
     return $d
+}
+function EnvKey { [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey("Environment", $true) }
+function RawUserPath { $k = EnvKey; try { $k.GetValue("Path", "", "DoNotExpandEnvironmentNames") } finally { $k.Close() } }
+function UserPathKind { $k = EnvKey; try { if ($null -ne $k.GetValue("Path")) { "$($k.GetValueKind('Path'))" } else { "absent" } } finally { $k.Close() } }
+function EnvSnapshot {
+    $k = EnvKey; $h = [ordered]@{}
+    try { foreach ($n in $k.GetValueNames()) { $h[$n] = "$($k.GetValueKind($n)):" + $k.GetValue($n, "", "DoNotExpandEnvironmentNames") } } finally { $k.Close() }
+    return $h
+}
+function RunKeys {
+    $h = [ordered]@{}
+    foreach ($p in "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run", "HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce") {
+        $i = Get-ItemProperty $p -ErrorAction SilentlyContinue
+        if ($i) { foreach ($q in $i.PSObject.Properties) { if ($q.Name -notlike "PS*") { $h["$p\$($q.Name)"] = "$($q.Value)" } } }
+    }
+    foreach ($k in Get-ChildItem "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall" -ErrorAction SilentlyContinue) { $h["uninstall:" + $k.PSChildName] = "$($k.GetValue('DisplayName'))" }
+    return $h
 }
 function Resolve-Hermes {
     $all = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::ExpandEnvironmentVariables((RawUserPath))
@@ -49,32 +73,59 @@ function Resolve-Hermes {
     return $null
 }
 function Sentinels {
-    $files = Py @("$Here\h1_disk.py", "hashes", $UserHome, $AppDataHermes, $Xdg[0], $Xdg[1])
-    $h = [ordered]@{}
-    foreach ($p in $files.PSObject.Properties) { $h[$p.Name] = $p.Value }
+    $files = Py @("$Here\h1_disk.py", "hashes", $UserHome, $AppDataHermes, $Xdg[0], $Xdg[1], $Shortcuts[0], $Shortcuts[1])
+    $h = AsHash $files
     $h["HKCU:HERMES_HOME"] = [Environment]::GetEnvironmentVariable("HERMES_HOME", "User")
     $h["HKCU:HERMES_GIT_BASH_PATH"] = [Environment]::GetEnvironmentVariable("HERMES_GIT_BASH_PATH", "User")
-    $h["HKCU:Path has %LOCALAPPDATA%\hermes\bin"] = ((RawUserPath) -split ";") -contains "%LOCALAPPDATA%\hermes\bin"
-    $h["HKCU:Path kind"] = UserPathKind
     $h["task Hermes_Gateway"] = [bool](Get-ScheduledTask -TaskName "Hermes_Gateway" -ErrorAction SilentlyContinue)
     return $h
 }
+function Underroot([string]$p) { $p -and $p.StartsWith($Root, [StringComparison]::OrdinalIgnoreCase) }
+function RootProcesses {
+    @(Get-CimInstance Win32_Process | Where-Object { (Underroot $_.ExecutablePath) -or ($_.CommandLine -and $_.CommandLine.IndexOf($Root, [StringComparison]::OrdinalIgnoreCase) -ge 0) } |
+        ForEach-Object { [ordered]@{ pid = $_.ProcessId; name = $_.Name; cmd = "$($_.CommandLine)".Substring(0, [math]::Min(200, "$($_.CommandLine)".Length)) } })
+}
+function KillRoot { foreach ($p in RootProcesses) { & taskkill.exe /T /F /PID $p.pid 2>&1 | Out-Null } }
+# Une commande avec délai : sortie dans un fichier (un petit-enfant resté ouvert ne bloque rien).
+function RunTimed([string]$exe, [string[]]$argv, [int]$seconds, [string]$label, [hashtable]$envs = @{}) {
+    $saved = @{}
+    foreach ($k in $envs.Keys) { $saved[$k] = [Environment]::GetEnvironmentVariable($k, "Process"); [Environment]::SetEnvironmentVariable($k, $envs[$k], "Process") }
+    $o = Join-Path $Out "$label.out.log"; $e = Join-Path $Out "$label.err.log"
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    $quoted = @($argv | ForEach-Object { if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ } })
+    $p = Start-Process -FilePath $exe -ArgumentList $quoted -WindowStyle Hidden -PassThru -RedirectStandardOutput $o -RedirectStandardError $e
+    $null = $p.Handle
+    $done = $p.WaitForExit($seconds * 1000)
+    if (-not $done) { & taskkill.exe /T /F /PID $p.Id 2>&1 | Out-Null }
+    $sw.Stop()
+    foreach ($k in $saved.Keys) { [Environment]::SetEnvironmentVariable($k, $saved[$k], "Process") }
+    $text = ((Get-Content $o -Raw -ErrorAction SilentlyContinue) + "`n" + (Get-Content $e -Raw -ErrorAction SilentlyContinue)) -replace "$([char]27)\[[0-9;]*[A-Za-z]", ""
+    return [ordered]@{ exit = $(if ($done) { $p.ExitCode } else { "timeout ${seconds}s" }); seconds = [math]::Round($sw.Elapsed.TotalSeconds, 1); text = $text }
+}
+function Tail([string]$t, [int]$n) { @(($t -split "`r?`n") | Where-Object { $_.Trim() } | Select-Object -Last $n) }
 function DefenderState {
     try {
         $s = Get-MpComputerStatus; $p = Get-MpPreference
         return [ordered]@{ AMServiceEnabled = $s.AMServiceEnabled; AntivirusEnabled = $s.AntivirusEnabled
             RealTimeProtectionEnabled = $s.RealTimeProtectionEnabled; BehaviorMonitorEnabled = $s.BehaviorMonitorEnabled
-            IoavProtectionEnabled = $s.IoavProtectionEnabled; IsTamperProtected = $s.IsTamperProtected
-            AMRunningMode = $s.AMRunningMode; SignatureVersion = $s.AntivirusSignatureVersion; SignatureAge = $s.AntivirusSignatureAge
-            ExclusionPath = @($p.ExclusionPath); ExclusionProcess = @($p.ExclusionProcess)
-            DisableRealtimeMonitoring = $p.DisableRealtimeMonitoring; MAPSReporting = $p.MAPSReporting }
+            IoavProtectionEnabled = $s.IoavProtectionEnabled; OnAccessProtectionEnabled = $s.OnAccessProtectionEnabled
+            IsTamperProtected = $s.IsTamperProtected; AMRunningMode = $s.AMRunningMode
+            EngineVersion = $s.AMEngineVersion; SignatureVersion = $s.AntivirusSignatureVersion; SignatureAge = $s.AntivirusSignatureAge
+            ExclusionPath = @($p.ExclusionPath); ExclusionProcess = @($p.ExclusionProcess); ExclusionExtension = @($p.ExclusionExtension)
+            DisableRealtimeMonitoring = $p.DisableRealtimeMonitoring; MAPSReporting = $p.MAPSReporting; SubmitSamplesConsent = $p.SubmitSamplesConsent }
     } catch { return @{ error = "$_" } }
 }
-function Eicar([string]$label) {
+function Detections($since) {
+    @(Get-MpThreatDetection -ErrorAction SilentlyContinue | Where-Object { $_.InitialDetectionTime -ge $since } |
+        ForEach-Object { $t = Get-MpThreat -ThreatID $_.ThreatID -ErrorAction SilentlyContinue
+            [ordered]@{ threat = "$($t.ThreatName)"; resources = @($_.Resources); action_ok = $_.ActionSuccess; when = "$($_.InitialDetectionTime)" } })
+}
+function Eicar([string]$dir, [string]$label) {
     # Témoin : un fichier EICAR, assemblé ici pour que le script lui-même ne soit pas un échantillon.
     $parts = @('X5O!P%@AP[4\PZX54(P^)7CC)7}$', 'EICAR-STANDARD-ANTIVIRUS', '-TEST-FILE!$H+H*')
-    $f = Join-Path $env:RUNNER_TEMP "h1-eicar-$label.com"
-    try { [IO.File]::WriteAllText($f, ($parts -join "")) } catch { return "write blocked: $_" }
+    New-Item -ItemType Directory -Force $dir | Out-Null
+    $f = Join-Path $dir "h1-eicar-$label.com"
+    try { [IO.File]::WriteAllText($f, ($parts -join "")) } catch { return "write blocked" }
     $deadline = (Get-Date).AddSeconds(20)
     while ((Get-Date) -lt $deadline) {
         if (-not (Test-Path $f)) { return "quarantined" }
@@ -82,181 +133,244 @@ function Eicar([string]$label) {
         Start-Sleep -Milliseconds 500
     }
     Remove-Item $f -Force -ErrorAction SilentlyContinue
-    return "NOT detected (realtime off)"
+    return "NOT detected"
 }
+function Launcher {
+    @((Join-Path $Root "hermes-agent\.hermes\bin\hermes.exe"), (Join-Path $Bin "hermes.exe"), (Join-Path $Bin "hermes.cmd")) |
+        Where-Object { Test-Path $_ } | Select-Object -First 1
+}
+function PathEntries([string]$raw) { @(($raw -split ";") | Where-Object { $_ }) }
+function Finish([bool]$ok) { $R.ok = $ok; Save; if ($ok) { exit 0 } else { exit 1 } }
 
-# ---------------------------------------------------------------- sentinelles : la personne a déjà Hermes
-New-Item -ItemType Directory -Force (Join-Path $UserHome "bin"), $AppDataHermes, $Xdg[0], $Xdg[1] | Out-Null
-"# config Hermes de la personne (sentinelle)" | Set-Content (Join-Path $UserHome "config.yaml")
-"sentinelle" | Set-Content (Join-Path $UserHome "sentinel.txt")
-"@echo hermes de la personne" | Set-Content (Join-Path $UserHome "bin\hermes.cmd")
-"sentinelle" | Set-Content (Join-Path $AppDataHermes "sentinel.txt")
-foreach ($d in $Xdg) { "sentinelle" | Set-Content (Join-Path $d "sentinel.txt") }
-$k = EnvKey
-$k.SetValue("Path", "%LOCALAPPDATA%\hermes\bin;" + (RawUserPath), [Microsoft.Win32.RegistryValueKind]::ExpandString)
-$k.SetValue("HERMES_HOME", $UserHome, [Microsoft.Win32.RegistryValueKind]::String)
-$k.SetValue("HERMES_GIT_BASH_PATH", "C:\fake\bash.exe", [Microsoft.Win32.RegistryValueKind]::String)
-$k.Close()
-Register-ScheduledTask -TaskName "Hermes_Gateway" -Action (New-ScheduledTaskAction -Execute "cmd.exe" -Argument "/c exit 0") -Force | Out-Null
-$env:HERMES_HOME = $UserHome             # l'environnement hérité de la personne
-$env:H1_USER_HERMES_HOME = $UserHome
-$S0 = Sentinels; $Env0 = EnvSnapshot
-$Tasks0 = @(Get-ScheduledTask | ForEach-Object { $_.TaskPath + $_.TaskName }); $Svc0 = @(Get-Service | ForEach-Object Name)
-$R.user_path_before = @((RawUserPath) -split ";"); $R.user_path_kind_before = UserPathKind
-$R.hermes_resolves_before = Resolve-Hermes
-
-# ---------------------------------------------------------------- Defender armé, avec témoin
-$R.defender_initial = DefenderState
-$R.eicar_initial = Eicar "initial"
-try {
-    $p = Get-MpPreference
-    if ($p.ExclusionPath) { Remove-MpPreference -ExclusionPath $p.ExclusionPath -ErrorAction Stop }
-    if ($p.ExclusionProcess) { Remove-MpPreference -ExclusionProcess $p.ExclusionProcess -ErrorAction Stop }
-    Set-MpPreference -DisableRealtimeMonitoring $false -DisableBehaviorMonitoring $false -DisableIOAVProtection $false -SubmitSamplesConsent NeverSend -ErrorAction Stop
-} catch { $R.defender_enable_error = "$_" }
-$j = Start-Job { Update-MpSignature -ErrorAction Stop }
-if (Wait-Job $j -Timeout 360) { try { Receive-Job $j -ErrorAction Stop | Out-Null; $R.defender_update = "ok" } catch { $R.defender_update = "$_" } } else { Stop-Job $j; $R.defender_update = "timeout" }
-$R.defender_armed = DefenderState
-$R.eicar_armed = Eicar "armed"
-$tDef = Get-Date
-Save
-
+switch ($Phase) {
+# ---------------------------------------------------------------- la personne a déjà Hermes ; Defender
+"setup" {
+    New-Item -ItemType Directory -Force (Join-Path $UserHome "bin"), $AppDataHermes, $Xdg[0], $Xdg[1] | Out-Null
+    "# config Hermes de la personne (sentinelle)" | Set-Content (Join-Path $UserHome "config.yaml")
+    "sentinelle" | Set-Content (Join-Path $UserHome "sentinel.txt")
+    "@echo hermes de la personne" | Set-Content (Join-Path $UserHome "bin\hermes.cmd")
+    "sentinelle" | Set-Content (Join-Path $AppDataHermes "sentinel.txt")
+    foreach ($d in $Xdg) { "sentinelle" | Set-Content (Join-Path $d "sentinel.txt") }
+    $k = EnvKey
+    # PATH de la personne : REG_EXPAND_SZ avec une variable, comme sur un vrai poste.
+    $k.SetValue("Path", "%LOCALAPPDATA%\hermes\bin;%USERPROFILE%\h1-outils;" + (RawUserPath), [Microsoft.Win32.RegistryValueKind]::ExpandString)
+    $k.SetValue("HERMES_HOME", $UserHome, [Microsoft.Win32.RegistryValueKind]::String)
+    $k.SetValue("HERMES_GIT_BASH_PATH", "C:\fake\bash.exe", [Microsoft.Win32.RegistryValueKind]::String)
+    $k.Close()
+    Register-ScheduledTask -TaskName "Hermes_Gateway" -Action (New-ScheduledTaskAction -Execute "cmd.exe" -Argument "/c exit 0") -Force | Out-Null
+    $R.sentinels = Sentinels; $R.env = EnvSnapshot; $R.runkeys = RunKeys
+    $R.tasks = @(Get-ScheduledTask | ForEach-Object { $_.TaskPath + $_.TaskName }); $R.services = @(Get-Service | ForEach-Object Name)
+    $R.path = [ordered]@{ raw = RawUserPath; kind = UserPathKind }
+    $R.hermes_resolves = Resolve-Hermes
+    $R.c_free_gb = [math]::Round((Get-PSDrive C).Free / 1GB, 1)
+    $R.defender_initial = DefenderState
+    Save
+    # Signatures à jour, sur les deux variantes
+    $j = Start-Job { Update-MpSignature -ErrorAction Stop }
+    if (Wait-Job $j -Timeout 300) { try { Receive-Job $j -ErrorAction Stop | Out-Null; $R.defender_update = "ok" } catch { $R.defender_update = "$_" } } else { Stop-Job $j; $R.defender_update = "timeout" }
+    if ($env:H1_DEFENDER -eq "armed") {
+        # Temps réel armé comme sur un PC, sans exclusion qui couvre le profil ; le runner garde les siennes.
+        $p = Get-MpPreference
+        $targets = @($Root, $env:TEMP, $env:LOCALAPPDATA, $env:APPDATA, $HOME)
+        $cover = @(@($p.ExclusionPath) | Where-Object { $x = "$_".TrimEnd('\', '*'); $x -and @($targets | Where-Object { $_.StartsWith($x, [StringComparison]::OrdinalIgnoreCase) }).Count })
+        $procs = @(@($p.ExclusionProcess) | Where-Object { (Split-Path "$_" -Leaf) -match '^(powershell|pwsh|python\d*|uv|uvx|node|npm|git|bash|cmd|hermes)(\.exe)?$' })
+        $work = (Split-Path $env:GITHUB_WORKSPACE -Qualifier) + "\a"
+        $keep = @($env:RUNNER_TOOL_CACHE, $work, $env:RUNNER_TEMP)
+        $runner = Get-Process -Name Runner.Worker -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($runner -and $runner.Path) { $keep += (Split-Path (Split-Path $runner.Path)) }
+        $keep = @($keep | Where-Object { $_ } | Sort-Object -Unique)
+        try {
+            if ($cover) { Remove-MpPreference -ExclusionPath $cover -ErrorAction Stop }
+            if ($procs) { Remove-MpPreference -ExclusionProcess $procs -ErrorAction Stop }
+            if ($cover) { Add-MpPreference -ExclusionPath $keep -ErrorAction Stop }
+            Set-MpPreference -DisableRealtimeMonitoring $false -DisableBehaviorMonitoring $false -DisableIOAVProtection $false `
+                -DisableScriptScanning $false -MAPSReporting Advanced -SubmitSamplesConsent SendSafeSamples -ErrorAction Stop
+        } catch { $R.defender_arm_error = "$_" }
+        $R.defender_arm = [ordered]@{ removed_paths = $cover; removed_processes = $procs; runner_paths_kept = $(if ($cover) { $keep } else { @() }) }
+    }
+    $R.defender_ready = DefenderState
+    $R.eicar = [ordered]@{ temp = Eicar $env:TEMP "temp"; localappdata = Eicar (Join-Path $env:LOCALAPPDATA "h1-eicar") "lad" }
+    Remove-Item (Join-Path $env:LOCALAPPDATA "h1-eicar") -Recurse -Force -ErrorAction SilentlyContinue
+    $R.t_defender = Now
+    Finish $true
+}
 # ---------------------------------------------------------------- installation épinglée, silencieuse
-$inst = Join-Path $Out "install.ps1"
-Invoke-WebRequest "https://raw.githubusercontent.com/NousResearch/hermes-agent/$Sha/scripts/install.ps1" -OutFile $inst -UseBasicParsing
-$got = (Get-FileHash $inst -Algorithm SHA256).Hash.ToLower()
-$R.install_ps1_sha256 = @{ expected = $Expected; got = $got; ok = ($got -eq $Expected) }
-if ($got -ne $Expected) { Save; throw "install.ps1 SHA-256 mismatch" }
-$free0 = (Get-PSDrive C).Free
-$t0 = Now
-$sw = [Diagnostics.Stopwatch]::StartNew()
-$instArgs = @("-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", $inst, "-Commit", $Sha,
-          "-NonInteractive", "-SkipBrowser", "-SkipComputerUse", "-HermesHome", $Root)
-$proc = Start-Process powershell.exe -ArgumentList $instArgs -WindowStyle Hidden -Wait -PassThru `
-    -RedirectStandardOutput (Join-Path $Out "install.out.log") -RedirectStandardError (Join-Path $Out "install.err.log")
-$sw.Stop()
-$R.install = [ordered]@{ seconds = [math]::Round($sw.Elapsed.TotalSeconds); exit = $proc.ExitCode
-    c_drive_used_mb = [math]::Round(($free0 - (Get-PSDrive C).Free) / 1MB)
-    out_tail = @(Get-Content (Join-Path $Out "install.out.log") -Tail 30); err_tail = @(Get-Content (Join-Path $Out "install.err.log") -Tail 15) }
-Save
-if ($proc.ExitCode -ne 0) { throw "install failed ($($proc.ExitCode))" }
-
-$R.size_root = Py @("$Here\h1_disk.py", "size", $Root)
-$R.written_outside_root = Py @("$Here\h1_disk.py", "newfiles", "$t0", "--root", $HOME, "--root", $env:ProgramData,
-    "--exclude", $Root, "--exclude", $Out)
-$S1 = Sentinels; $Env1 = EnvSnapshot
-$R.install_user_env_changes = DiffMap $Env0 $Env1
-$R.install_sentinel_changes = DiffMap $S0 $S1
-$R.install_new_tasks = @(Get-ScheduledTask | ForEach-Object { $_.TaskPath + $_.TaskName } | Where-Object { $Tasks0 -notcontains $_ })
-$R.install_new_services = @(Get-Service | ForEach-Object Name | Where-Object { $Svc0 -notcontains $_ })
-$R.user_path_after_install = @((RawUserPath) -split ";"); $R.user_path_kind_after_install = UserPathKind
-$R.path_head_is_bibo_bin = (((RawUserPath) -split ";")[0].TrimEnd("\") -eq (Join-Path $Root "bin"))
-$R.hermes_resolves_after_install = Resolve-Hermes
-
-# Defender : détections pendant l'installation, puis un scan du dossier.
-$R.defender_detections_install = @(Get-MpThreatDetection -ErrorAction SilentlyContinue | Where-Object { $_.InitialDetectionTime -ge $tDef } |
-    ForEach-Object { [ordered]@{ resources = @($_.Resources); action = $_.ActionSuccess; threat = $_.ThreatID } })
-$uvs = @(Get-ChildItem -Path $Root -Filter uv.exe -Recurse -ErrorAction SilentlyContinue | ForEach-Object FullName)
-$R.uv_exe_present = $uvs
-$sw = [Diagnostics.Stopwatch]::StartNew()
-$j = Start-Job -ArgumentList $Root { param($r) Start-MpScan -ScanType CustomScan -ScanPath $r -ErrorAction Stop }
-if (Wait-Job $j -Timeout 1500) { try { Receive-Job $j -ErrorAction Stop | Out-Null; $scan = "done" } catch { $scan = "$_" } } else { Stop-Job $j; $scan = "timeout" }
-$R.defender_scan = [ordered]@{ result = $scan; seconds = [math]::Round($sw.Elapsed.TotalSeconds)
-    detections = @(Get-MpThreatDetection -ErrorAction SilentlyContinue | Where-Object { $_.InitialDetectionTime -ge $tDef } |
-        ForEach-Object { [ordered]@{ resources = @($_.Resources); threat = $_.ThreatID } }) }
-$R.defender_end = DefenderState
-$R.eicar_end = Eicar "end"
-Save
-
-# ---------------------------------------------------------------- la parade de Bibo : PATH rendu, appel par chemin complet
-$launcher = @((Join-Path $Root "hermes-agent\.hermes\bin\hermes.exe"), (Join-Path $Root "bin\hermes.exe"), (Join-Path $Root "bin\hermes.cmd")) |
-    Where-Object { Test-Path $_ } | Select-Object -First 1
-$R.launcher = $launcher
-$bin = (Join-Path $Root "bin")
-$k = EnvKey
-$kind = $k.GetValueKind("Path")
-$kept = @(($k.GetValue("Path", "", "DoNotExpandEnvironmentNames") -split ";") | Where-Object { $_ -and ($_.TrimEnd("\") -ne $bin) })
-$k.SetValue("Path", ($kept -join ";"), $kind)
-$k.Close()
-$R.user_path_after_fix = @((RawUserPath) -split ";"); $R.user_path_kind_after_fix = UserPathKind
-$R.hermes_resolves_after_fix = Resolve-Hermes
-$env:HERMES_HOME = $Root
-$v = & $launcher --version 2>&1 | Out-String
-$R.full_path_call = @{ exit = $LASTEXITCODE; first_line = ($v -split "`n" | Where-Object { $_.Trim() } | Select-Object -First 1) }
-$R.path_readded_after_version = (((RawUserPath) -split ";") | Where-Object { $_.TrimEnd("\") -eq $bin }).Count -gt 0
-$env:HERMES_HOME = $UserHome
-Save
-
+"install" {
+    $S = Load "setup"
+    $inst = Join-Path $Out "install.ps1"
+    Invoke-WebRequest "https://raw.githubusercontent.com/NousResearch/hermes-agent/$Sha/scripts/install.ps1" -OutFile $inst -UseBasicParsing
+    $got = (Get-FileHash $inst -Algorithm SHA256).Hash.ToLower()
+    $R.install_ps1_sha256 = [ordered]@{ expected = $env:H1_INSTALL_PS1_SHA256; got = $got; ok = ($got -eq $env:H1_INSTALL_PS1_SHA256) }
+    if (-not $R.install_ps1_sha256.ok) { Finish $false }
+    $free0 = (Get-PSDrive C).Free
+    $R.t0 = Now; Save
+    $argv = @("-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", $inst, "-Commit", $Sha,
+              "-NonInteractive", "-SkipBrowser", "-SkipComputerUse", "-HermesHome", $Root)
+    $run = RunTimed "powershell.exe" $argv 3000 "install"
+    $R.install = [ordered]@{ seconds = $run.seconds; exit = $run.exit; c_drive_used_mb = [math]::Round(($free0 - (Get-PSDrive C).Free) / 1MB)
+        tail = Tail $run.text 40 }
+    $R.processes_left = RootProcesses
+    Save
+    Write-Host ((Tail $run.text 60) -join "`n")
+    $R.size_root = Py @("$Here\h1_disk.py", "size", $Root)
+    $R.written_outside_root = Py @("$Here\h1_disk.py", "newfiles", "$($R.t0)", "--root", $HOME, "--root", $env:ProgramData,
+        "--exclude", $Root, "--exclude", $Out, "--exclude", (Join-Path $env:LOCALAPPDATA "Microsoft\Windows\WebCache"))
+    $R.user_env_changes = DiffMap $S.env (EnvSnapshot)
+    $R.sentinel_changes = DiffMap $S.sentinels (Sentinels)
+    $R.runkey_changes = DiffMap $S.runkeys (RunKeys)
+    $R.new_tasks = @(Get-ScheduledTask | ForEach-Object { $_.TaskPath + $_.TaskName } | Where-Object { @($S.tasks) -notcontains $_ })
+    $R.new_services = @(Get-Service | ForEach-Object Name | Where-Object { @($S.services) -notcontains $_ })
+    $R.path = [ordered]@{ raw = RawUserPath; kind = UserPathKind }
+    $R.path_head_is_bibo_bin = ((PathEntries $R.path.raw)[0].TrimEnd("\") -eq $Bin)
+    $R.path_kind_changed = ($R.path.kind -ne $S.path.kind)
+    $R.person_entries_expanded = @(PathEntries $S.path.raw | Where-Object { $_ -like "*%*" -and (PathEntries $R.path.raw) -notcontains $_ })
+    $R.hermes_resolves = Resolve-Hermes
+    $R.launcher = Launcher
+    $R.c_free_gb = [math]::Round((Get-PSDrive C).Free / 1GB, 1)
+    Finish ("$($run.exit)" -eq "0" -and [bool]$R.launcher)
+}
+# ---------------------------------------------------------------- Defender : verdict sur ce qui a été installé
+"defender" {
+    $S = Load "setup"
+    $since = [DateTimeOffset]::FromUnixTimeMilliseconds([long]($S.t_defender * 1000)).LocalDateTime
+    $R.mode = $env:H1_DEFENDER
+    $R.detections_until_now = Detections $since
+    $R.uv_exe = @(Get-ChildItem -Path $Root -Filter uv.exe -Recurse -ErrorAction SilentlyContinue | ForEach-Object { [ordered]@{ path = $_.FullName; bytes = $_.Length } })
+    $R.state_before_scan = DefenderState
+    Save
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    $j = Start-Job -ArgumentList $Root { param($r) Start-MpScan -ScanType CustomScan -ScanPath $r -ErrorAction Stop }
+    if (Wait-Job $j -Timeout 1080) { try { Receive-Job $j -ErrorAction Stop | Out-Null; $scan = "done" } catch { $scan = "$_" } } else { Stop-Job $j; $scan = "timeout 18 min" }
+    $R.scan = [ordered]@{ result = $scan; seconds = [math]::Round($sw.Elapsed.TotalSeconds) }
+    $R.detections_total = Detections $since
+    $R.eicar_end = Eicar $env:TEMP "end"
+    $R.state_end = DefenderState
+    if ($env:H1_DEFENDER -eq "armed") {
+        # On rend la VM comme on l'a trouvée pour la suite du job (sonde, mutations).
+        $init = $S.defender_initial
+        try {
+            $now = @((Get-MpPreference).ExclusionPath)
+            $extra = @($now | Where-Object { @($init.ExclusionPath) -notcontains $_ })
+            if ($extra) { Remove-MpPreference -ExclusionPath $extra -ErrorAction Stop }
+            if ($S.defender_arm.removed_paths) { Add-MpPreference -ExclusionPath @($S.defender_arm.removed_paths) -ErrorAction Stop }
+            if ($S.defender_arm.removed_processes) { Add-MpPreference -ExclusionProcess @($S.defender_arm.removed_processes) -ErrorAction Stop }
+            Set-MpPreference -DisableRealtimeMonitoring ([bool]$init.DisableRealtimeMonitoring) -MAPSReporting $init.MAPSReporting -SubmitSamplesConsent $init.SubmitSamplesConsent -ErrorAction Stop
+        } catch { $R.restore_error = "$_" }
+        $R.state_restored = DefenderState
+    }
+    $R.launcher_still_there = [bool](Launcher)
+    $R.uv_still_there = @($R.uv_exe | Where-Object { Test-Path $_.path }).Count
+    Finish ([bool](Launcher))
+}
+# ---------------------------------------------------------------- la parade de Bibo : PATH rendu à l'identique
+"pathfix" {
+    $S = Load "setup"
+    $cur = [ordered]@{ raw = RawUserPath; kind = UserPathKind }
+    $kept = @(PathEntries $cur.raw | Where-Object { $_.TrimEnd("\") -ne $Bin })
+    $expanded0 = @(PathEntries $S.path.raw | ForEach-Object { [Environment]::ExpandEnvironmentVariables($_) })
+    $expandedKept = @($kept | ForEach-Object { [Environment]::ExpandEnvironmentVariables($_) })
+    # Mutation calculée sans l'écrire : la parade de la spec (retirer l'entrée, garder le reste tel quel).
+    $R.mutation_filter_only = [ordered]@{ raw_equal = (($kept -join ";") -eq $S.path.raw); kind_equal = ($cur.kind -eq $S.path.kind) }
+    $R.mutation_filter_only.red = -not ($R.mutation_filter_only.raw_equal -and $R.mutation_filter_only.kind_equal)
+    $k = EnvKey
+    if (($expandedKept -join ";") -eq ($expanded0 -join ";")) {
+        $k.SetValue("Path", $S.path.raw, [Microsoft.Win32.RegistryValueKind]$S.path.kind); $R.branch = "restored_exact"
+    } else {
+        $k.SetValue("Path", ($kept -join ";"), [Microsoft.Win32.RegistryValueKind]$cur.kind); $R.branch = "filtered (PATH changed by someone else meanwhile)"
+    }
+    $k.Close()
+    $R.path_after = [ordered]@{ raw = RawUserPath; kind = UserPathKind }
+    $R.path_identical_to_before = ($R.path_after.raw -eq $S.path.raw -and $R.path_after.kind -eq $S.path.kind)
+    $R.hermes_resolves = Resolve-Hermes
+    $l = Launcher
+    if (-not $l) { $R.error = "no launcher"; Finish $false }
+    $v = RunTimed $l @("--version") 300 "version" @{ HERMES_HOME = $Root }
+    $R.full_path_call = [ordered]@{ exit = $v.exit; seconds = $v.seconds; first_line = (Tail $v.text 3) }
+    $R.path_readded_after_version = @(PathEntries (RawUserPath) | Where-Object { $_.TrimEnd("\") -eq $Bin }).Count -gt 0
+    Finish ($R.path_identical_to_before -and -not $R.path_readded_after_version)
+}
 # ---------------------------------------------------------------- la gateway, contre le faux fournisseur
-& python "$Here\h1_probe.py" --root $Root --out $Out --scan-home *> (Join-Path $Out "probe-main.log")
-$R.probe_main_exit = $LASTEXITCODE
-$rep = Join-Path $Out "report-main.json"
-$R.probe_main = if (Test-Path $rep) { Get-Content $rep -Raw | ConvertFrom-Json } else { @{ crash = @(Get-Content (Join-Path $Out "probe-main.log") -Tail 40) } }
-$R.path_readded_by_hermes = (((RawUserPath) -split ";") | Where-Object { $_.TrimEnd("\") -eq $bin }).Count -gt 0
-Save
-
-if ($Mutations) {
+"probe" {
+    & python "$Here\h1_probe.py" --root $Root --out $Out --scan-home *> (Join-Path $Out "probe-main.log")
+    $R.exit = $LASTEXITCODE
+    Get-Content (Join-Path $Out "probe-main.log") -Tail 40 | Write-Host
+    $rep = Load "report-main"
+    $R.failed = if ($rep) { @($rep.failed) } else { @("no report") }
+    $R.path_readded_by_hermes = @(PathEntries (RawUserPath) | Where-Object { $_.TrimEnd("\") -eq $Bin }).Count -gt 0
+    $R.processes_left = RootProcesses
+    Finish ($R.exit -eq 0 -and -not $R.path_readded_by_hermes)
+}
+"mutations" {
     $R.mutations = [ordered]@{}
     foreach ($m in "tools_default", "env_toolsets", "approvals_off", "approvals_smart", "yolo_env", "no_caps",
-                   "title_on", "bg_review_on", "image_auto", "cwd_context", "no_purge", "home_inherited") {
+                   "title_on", "memory_on", "image_auto", "cwd_context", "no_purge", "home_inherited") {
+        "mutations $m $(Get-Date -Format HH:mm:ss)" | Set-Content (Join-Path $Out "phase.txt")
         & python "$Here\h1_probe.py" --root $Root --out $Out --mutation $m *> (Join-Path $Out "probe-$m.log")
         $code = $LASTEXITCODE
-        $rp = Join-Path $Out "report-$m.json"
-        $failed = if (Test-Path $rp) { (Get-Content $rp -Raw | ConvertFrom-Json).failed } else { @("crash: " + ((Get-Content (Join-Path $Out "probe-$m.log") -Tail 3) -join " | ")) }
-        $R.mutations[$m] = [ordered]@{ exit = $code; red = ($code -ne 0); failed = @($failed) }
+        $rp = Load "report-$m"
+        $R.mutations[$m] = [ordered]@{ exit = $code; failed = $(if ($rp) { @($rp.failed) } else { @("crash") })
+            expected = $(if ($rp) { $rp.expected_red } else { $null }); killed_as_expected = [bool]($rp -and $rp.killed_as_expected) }
+        Write-Host "mutation ${m}: exit $code, killed_as_expected=$($R.mutations[$m].killed_as_expected), failed=$($R.mutations[$m].failed -join ',')"
         Save
     }
+    $R.survivors = @($R.mutations.Keys | Where-Object { -not $R.mutations[$_].killed_as_expected })
+    Finish ($R.survivors.Count -eq 0)
 }
-
 # ---------------------------------------------------------------- désinstallation
-$S2 = Sentinels
-function Paths([string]$text) {
-    $clean = $text -replace "$([char]27)\[[0-9;]*m", ""
-    return @([regex]::Matches($clean, "[A-Za-z]:\\[^\r\n]*") | ForEach-Object { $_.Value.Trim() })
+"uninstall" {
+    $S = Load "setup"; $I = Load "install"
+    $l = Launcher
+    $R.mode = $env:H1_UNINSTALL
+    $S2 = Sentinels
+    function Paths([string]$text) { @([regex]::Matches($text, "[A-Za-z]:\\[^\r\n]*") | ForEach-Object { $_.Value.Trim().TrimEnd(".", ":", ")") }) }
+    if ($l) {
+        $d1 = RunTimed $l @("uninstall", "--full", "--dry-run") 300 "uninstall-dry" @{ HERMES_HOME = $Root }
+        $p1 = Paths $d1.text
+        $R.dry_run_bibo = [ordered]@{ exit = $d1.exit; paths = $p1; outside_root = @($p1 | Where-Object { -not (Underroot $_) }) }
+        $R.guard_allows_full = ($R.dry_run_bibo.outside_root.Count -eq 0)
+        $d2 = RunTimed $l @("uninstall", "--full", "--dry-run") 300 "uninstall-dry-inherited" @{ HERMES_HOME = $UserHome }
+        $p2 = Paths $d2.text
+        $R.dry_run_inherited = [ordered]@{ exit = $d2.exit; outside_root = @($p2 | Where-Object { -not (Underroot $_) }) }
+        $S2b = Sentinels
+        $R.sentinels_touched_by_inherited_dry_run = DiffMap $S2 $S2b
+        if ($env:H1_UNINSTALL -eq "full") {
+            $u = RunTimed $l @("uninstall", "--full", "--yes") 900 "uninstall-full" @{ HERMES_HOME = $Root }
+            $R.full = [ordered]@{ exit = $u.exit; seconds = $u.seconds; tail = Tail $u.text 45; root_exists_after = (Test-Path $Root) }
+            $R.sentinels_touched_by_full = DiffMap $S2b (Sentinels)
+            $R.mutation_full_red = (@($R.sentinels_touched_by_full.Keys).Count -gt 0)
+        }
+    }
+    # La désinstallation de Bibo : ses processus, son dossier, son entrée de PATH, rien d'autre.
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    KillRoot
+    if (Test-Path $Root) { Remove-Item $Root -Recurse -Force -ErrorAction SilentlyContinue }
+    if (Test-Path $Root) { & cmd.exe /c rmdir /s /q "$Root" 2>&1 | Out-Null }
+    $k = EnvKey
+    $kind = UserPathKind
+    $kept = @(PathEntries (RawUserPath) | Where-Object { -not (Underroot ([Environment]::ExpandEnvironmentVariables($_))) })
+    if ($kind -ne "absent") { $k.SetValue("Path", ($kept -join ";"), [Microsoft.Win32.RegistryValueKind]$kind) }
+    $k.Close()
+    $R.bounded = [ordered]@{ seconds = [math]::Round($sw.Elapsed.TotalSeconds, 1); root_exists = (Test-Path $Root); processes_left = RootProcesses }
+    $R.final = [ordered]@{
+        sentinel_changes_since_setup = DiffMap $S.sentinels (Sentinels)
+        user_env_changes_since_setup = DiffMap $S.env (EnvSnapshot)
+        runkey_changes_since_setup = DiffMap $S.runkeys (RunKeys)
+        path_identical_to_setup = ((RawUserPath) -eq $S.path.raw -and (UserPathKind) -eq $S.path.kind)
+        hermes_resolves = Resolve-Hermes
+        new_tasks_left = @(Get-ScheduledTask | ForEach-Object { $_.TaskPath + $_.TaskName } | Where-Object { @($S.tasks) -notcontains $_ })
+    }
+    # Ce que l'installation a laissé hors du dossier et qui est toujours là
+    $left = @(@($I.written_outside_root.paths) | Where-Object { $_ -and (Test-Path -LiteralPath $_) })
+    $R.final.outside_left_total = $left.Count
+    $R.final.outside_left_hermes = @($left | Where-Object { $_ -match '(?i)hermes|\\uv\\|npm-cache|\\npm\\|\.cache\\|pnpm|node-gyp|electron' } | Select-Object -First 80)
+    $R.final.outside_left_groups = @($left | ForEach-Object { ($_ -split '\\' | Select-Object -First 7) -join '\' } | Group-Object | Sort-Object Count -Descending |
+        Select-Object -First 25 | ForEach-Object { "$($_.Count) $($_.Name)" })
+    $ok = (-not $R.bounded.root_exists) -and $R.final.path_identical_to_setup
+    if ($env:H1_UNINSTALL -eq "bounded") {
+        $ok = $ok -and (@($R.final.sentinel_changes_since_setup.Keys).Count -eq 0) -and (@($R.final.user_env_changes_since_setup.Keys).Count -eq 0)
+    } else {
+        $ok = $ok -and $R.mutation_full_red
+    }
+    Finish $ok
 }
-$env:HERMES_HOME = $Root
-$dry = & $launcher uninstall --full --dry-run 2>&1 | Out-String
-$p1 = Paths $dry
-$env:HERMES_HOME = $UserHome
-$dryU = & $launcher uninstall --full --dry-run 2>&1 | Out-String
-$p2 = Paths $dryU
-$R.uninstall_dry_run = [ordered]@{
-    bibo_home = [ordered]@{ paths = $p1; outside_root = @($p1 | Where-Object { -not $_.StartsWith($Root, "OrdinalIgnoreCase") }) }
-    inherited_home = [ordered]@{ paths = $p2; outside_root = @($p2 | Where-Object { -not $_.StartsWith($Root, "OrdinalIgnoreCase") }) } }
-$R.uninstall_dry_run.guard_allows_full = ($R.uninstall_dry_run.bibo_home.outside_root.Count -eq 0)
-$R.uninstall_dry_run.guard_refuses_inherited = ($R.uninstall_dry_run.inherited_home.outside_root.Count -gt 0)
-$env:HERMES_HOME = $Root
-$sw = [Diagnostics.Stopwatch]::StartNew()
-$u = & $launcher uninstall --full --yes 2>&1 | Out-String
-$R.uninstall_full = [ordered]@{ exit = $LASTEXITCODE; seconds = [math]::Round($sw.Elapsed.TotalSeconds)
-    tail = @(($u -replace "$([char]27)\[[0-9;]*m", "") -split "`n" | Where-Object { $_.Trim() } | Select-Object -Last 40)
-    root_exists_after = (Test-Path $Root) }
-if (Test-Path $Root) { $R.uninstall_full.root_left = Py @("$Here\h1_disk.py", "size", $Root) }
-$env:HERMES_HOME = $UserHome
-$S3 = Sentinels
-$R.uninstall_sentinel_changes = DiffMap $S2 $S3
-$R.probe_sentinel_changes = DiffMap $S1 $S2
-
-# La désinstallation bornée de Bibo : ses processus, son dossier, son entrée de PATH.
-Get-Process | Where-Object { $_.Path -and $_.Path.StartsWith($Root, "OrdinalIgnoreCase") } | Stop-Process -Force -ErrorAction SilentlyContinue
-if (Test-Path $Root) { Remove-Item $Root -Recurse -Force -ErrorAction SilentlyContinue }
-$R.bounded_cleanup = [ordered]@{ root_exists = (Test-Path $Root); bibo_on_path = ((RawUserPath) -split ";" | Where-Object { $_.TrimEnd("\") -eq $bin }).Count }
-Save
-
-# ---------------------------------------------------------------- verdict du job
-$ok = ($R.probe_main_exit -eq 0)
-if ($Mutations) {
-    $survivors = @($R.mutations.Keys | Where-Object { -not $R.mutations[$_].red })
-    $R.mutation_survivors = $survivors
-    $ok = $ok -and ($survivors.Count -eq 0)
 }
-Save
-$md = @("## H1 $($R.os)", "", "- install: $($R.install.seconds) s, exit $($R.install.exit), root $([math]::Round($R.size_root.bytes/1MB)) Mo / $($R.size_root.files) fichiers",
-        "- probe main: exit $($R.probe_main_exit), failed: $($R.probe_main.failed -join ', ')",
-        "- Defender armé: RTP=$($R.defender_armed.RealTimeProtectionEnabled), EICAR=$($R.eicar_armed), détections=$(@($R.defender_scan.detections).Count) scan=$($R.defender_scan.result)",
-        "- PATH: tête Bibo=$($R.path_head_is_bibo_bin), hermes après install=$($R.hermes_resolves_after_install), après parade=$($R.hermes_resolves_after_fix)",
-        "- uninstall --full: exit $($R.uninstall_full.exit), dossier restant=$($R.uninstall_full.root_exists_after), sentinelles touchées: $(@($R.uninstall_sentinel_changes.Keys) -join ', ')")
-if ($Mutations) { $md += "- mutations rouges: $(@($R.mutations.Keys | Where-Object { $R.mutations[$_].red }).Count)/$($R.mutations.Count), survivantes: $($R.mutation_survivors -join ', ')" }
-$md -join "`n" | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
-if (-not $ok) { exit 1 }
-exit 0

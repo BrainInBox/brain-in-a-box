@@ -29,8 +29,13 @@ from mock_openai import ANSWER, Mock  # noqa: E402
 IS_WIN = os.name == "nt"
 REQUIRED = ["code_vu", "etat", "consigne", "libelle", "cible", "confiance", "question", "choix",
             "precedente", "action_sensible", "suspect", "resume_etape", "element"]
-MUTATIONS = ["tools_default", "env_toolsets", "approvals_off", "approvals_smart", "yolo_env", "no_caps",
-             "title_on", "bg_review_on", "image_auto", "cwd_context", "no_purge", "home_inherited"]
+# Chaque mutation retire une protection ; la preuve doit alors rougir, et sur le critère attendu.
+EXPECT = {"tools_default": "tools_empty", "env_toolsets": "tools_empty",
+          "approvals_off": "approval_denied_by_bibo", "approvals_smart": "approval_denied_by_bibo",
+          "yolo_env": "approval_denied_by_bibo", "no_caps": "approval_denied_by_bibo",
+          "title_on": "one_call_per_turn", "memory_on": "one_call_per_turn", "image_auto": "image_sent_native",
+          "cwd_context": "no_local_context", "no_purge": "purge_spec_list", "home_inherited": "default_home_untouched"}
+MUTATIONS = list(EXPECT)
 SCHEMA = (Path(__file__).resolve().parent / "schema.json").read_text(encoding="utf-8") \
     if (Path(__file__).resolve().parent / "schema.json").exists() else "{}"
 
@@ -100,10 +105,22 @@ def clean_env(home, extra=None, keep_home=False):
 
 
 def run(cmd, env, timeout=300, cwd=None):
+    """Sortie dans un fichier, pas dans un tube : un petit-enfant resté ouvert ne bloque pas l'attente."""
+    import tempfile
     t = time.time()
-    p = subprocess.run([str(c) for c in cmd], env=env, cwd=cwd, capture_output=True, timeout=timeout)
-    out = p.stdout.decode("utf-8", "replace") + p.stderr.decode("utf-8", "replace")
-    return p.returncode, out, time.time() - t
+    with tempfile.TemporaryFile() as f:
+        p = subprocess.Popen([str(c) for c in cmd], env=env, cwd=cwd, stdin=subprocess.DEVNULL, stdout=f, stderr=f)
+        try:
+            code = p.wait(timeout)
+        except subprocess.TimeoutExpired:
+            if IS_WIN:
+                subprocess.run(["taskkill", "/T", "/F", "/PID", str(p.pid)], capture_output=True)
+            else:
+                p.kill()
+            code = f"timeout {timeout}s"
+        f.seek(0)
+        out = f.read().decode("utf-8", "replace")
+    return code, out, time.time() - t
 
 
 def runtime_command(launcher, module, env):
@@ -250,9 +267,11 @@ def profile_config(mock_url, mutation, tools=None):
         cfg["approvals"]["mode"] = "smart"
     if mutation == "title_on":
         del cfg["auxiliary"]["title_generation"]
-    if mutation == "bg_review_on":
+    if mutation == "memory_on":
+        # Mémoire par défaut, relecture de fond permise, et son déclencheur au plus court.
         del cfg["auxiliary"]["background_review"]
-        del cfg["memory"]
+        cfg["memory"] = {"nudge_interval": 1}
+        cfg["skills"] = {"creation_nudge_interval": 1}
     if mutation == "image_auto":
         del cfg["agent"]["image_input_mode"]
         del cfg["model"]["supports_vision"]
@@ -476,6 +495,7 @@ def main():
         (p / ".env").write_text(f"OPENAI_API_KEY=h1-fake-key\nOPENAI_BASE_URL={mock.url}/v1\n"
                                 "H1_FAKE_OPENROUTER_KEY=sk-or-v1-h1-fake-not-a-secret\n", encoding="utf-8")
     keep_before = {n: hashlib.sha256((prof / n).read_bytes()).hexdigest() for n in ("config.yaml", ".env")}
+    shutil.copy(prof / "config.yaml", out / f"config-{tag}-before.yaml")
     baselines = {p: {q.relative_to(p).as_posix() for q in p.rglob("*")} for p in (prof, prof_appr)}
 
     cwd = root / f"guide-cwd-{tag}"
@@ -495,7 +515,7 @@ def main():
     our_texts = {i: prompt_text(TXT, i) for i in range(1, 7)}
     turns = []
 
-    def turn(gw, sid, i, label):
+    def turn(gw, sid, i, label, record=True):
         start = len(gw.events)
         n_before = len(mock.snapshot())
         t_attach = time.time()
@@ -520,7 +540,8 @@ def main():
                 "attach_result_keys": sorted((att or {}).keys()),
                 "calls": [measure_call(c, list(our_texts.values())) for c in calls],
                 "sent_sha256": hashlib.sha256(images[i]).hexdigest()}
-        turns.append(info)
+        if record:
+            turns.append(info)
         log(f"turn {label}: status={info['status']} json={why} posts={info['posts']} latency={info['latency_ms']}ms")
         return info
 
@@ -604,7 +625,6 @@ def main():
     except Exception:
         pass
     meas["gateway2_exit"] = gw2.close()
-    mock.close()
 
     # --- mesures et critères du tour
     main_turns = [t for t in turns]
@@ -715,6 +735,8 @@ def main():
         after_spec = after_all = scan(small_roots, t0, needles, exclude, known)
     keep_after = {n: hashlib.sha256((prof / n).read_bytes()).hexdigest() if (prof / n).exists() else None
                   for n in ("config.yaml", ".env")}
+    if (prof / "config.yaml").exists():
+        shutil.copy(prof / "config.yaml", out / f"config-{tag}-after.yaml")
     cfg_after = {}
     try:
         cfg_after = json.loads((prof / "config.yaml").read_text(encoding="utf-8"))
@@ -736,9 +758,55 @@ def main():
            "env_unchanged": keep_after[".env"] == keep_before[".env"]})
     user_hits = [h for h in before["hits"] if Path(h["path"]).is_relative_to(user_home) or Path(h["path"]).is_relative_to(home / ".hermes")]
     check("default_home_untouched", not user_hits, {"hits": [h["path"] for h in user_hits][:10]})
+    # La config réécrite par Hermes garde-t-elle les protections ?
+    safety = {"approvals.mode": (cfg_after.get("approvals") or {}).get("mode"),
+              "platform_toolsets.cli": (cfg_after.get("platform_toolsets") or {}).get("cli"),
+              "memory.memory_enabled": (cfg_after.get("memory") or {}).get("memory_enabled"),
+              "auxiliary.background_review.enabled": ((cfg_after.get("auxiliary") or {}).get("background_review") or {}).get("enabled"),
+              "onboarding_seen": (cfg_after.get("onboarding") or {}).get("seen")} if isinstance(cfg_after, dict) else {}
+    meas["config_after_session"] = safety
+    if mutation in ("", "no_purge", "image_auto", "cwd_context", "no_caps", "yolo_env", "env_toolsets", "home_inherited", "title_on"):
+        check("config_safety_kept", safety.get("approvals.mode") == "manual" and safety.get("platform_toolsets.cli") == []
+              and safety.get("memory.memory_enabled") is False, safety)
+
+    # Ce qui part chez le fournisseur sur la personne elle-même (nom de compte, chemins).
+    first = next((r for r in all_posts), None)
+    raw_first = json.dumps(first["body"]) if first else ""
+    user = os.environ.get("USERNAME") or os.environ.get("USER") or ""
+    meas["identity_in_request"] = {"account_name": user, "account_name_occurrences": raw_first.count(user) if user else None,
+                                   "home_path_occurrences": raw_first.count(json.dumps(str(home))[1:-1]),
+                                   "reasoning_effort": (first["body"] or {}).get("reasoning_effort") if first else None}
+
+    # Séance suivante, après la purge : la note « premier message » revient-elle ?
+    if not mutation:
+        n0 = len(mock.snapshot())
+        gw3 = Gateway(gw_cmd, env, cwd, "main-after-purge", out, capabilities=True)
+        s5 = gw3.request("session.create", {"cols": 100, "cwd": str(cwd), "source": "tui"})
+        info = turn(gw3, s5["session_id"], 1, "after-purge-1", record=False)
+        posts3 = [r for r in mock.snapshot()[n0:] if r["method"] == "POST"]
+        raw3 = "\n".join(json.dumps(r["body"]) for r in posts3)
+        meas["next_seance_after_purge"] = {"status": info["status"], "json": info["json"], "posts": info["posts"],
+                                           "system_note_in_request": "[System note" in raw3,
+                                           "first_message_note": "very first message ever" in raw3,
+                                           "user_extra_tokens": [c["user_extra_tokens"] for c in info["calls"]],
+                                           "latency_ms": info["latency_ms"], "ready_s": round(gw3.ready_s, 2)}
+        try:
+            gw3.request("session.close", {"session_id": s5["session_id"]}, 30)
+        except Exception:
+            pass
+        gw3.close()
+        purge_spec(prof)
+        purge_new(prof, baselines[prof])
+        after_second = scan(small_roots, t0, needles, exclude, known)
+        check("purge_second_seance", not after_second["hits"],
+              {"residual": [(h["path"], h["needles"]) for h in after_second["hits"]][:20]})
+    mock.close()
 
     report["ok"] = all(c["ok"] for c in crit.values())
     report["failed"] = [k for k, c in crit.items() if not c["ok"]]
+    if mutation:
+        report["expected_red"] = EXPECT[mutation]
+        report["killed_as_expected"] = EXPECT[mutation] in report["failed"]
     (out / f"report-{tag}.json").write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
     log(f"RESULT {tag}: {'PASS' if report['ok'] else 'FAIL'} failed={report['failed']}")
     sys.exit(0 if report["ok"] else 1)

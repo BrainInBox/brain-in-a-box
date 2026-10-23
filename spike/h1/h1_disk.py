@@ -36,6 +36,7 @@ def size(d):
 def newfiles(since, roots, exclude):
     groups = defaultdict(lambda: [0, 0])
     total = count = 0
+    paths = []
     for r in roots:
         r = Path(r)
         if not r.exists():
@@ -58,11 +59,13 @@ def newfiles(since, roots, exclude):
                 key = str(Path(r, *rel[:3])) if len(rel) > 3 else str(Path(r, *rel[:-1]) if len(rel) > 1 else r)
                 groups[key][0] += st.st_size
                 groups[key][1] += 1
+                if len(paths) < 5000:
+                    paths.append(p)
                 total += st.st_size
                 count += 1
     ordered = sorted(groups.items(), key=lambda kv: -kv[1][0])
     return {"files": count, "bytes": total,
-            "groups": [{"path": k, "bytes": v[0], "files": v[1]} for k, v in ordered[:60]]}
+            "groups": [{"path": k, "bytes": v[0], "files": v[1]} for k, v in ordered[:60]], "paths": paths}
 
 
 def hashes(paths):

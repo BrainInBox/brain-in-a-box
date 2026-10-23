@@ -43,11 +43,17 @@ zsh -lic 'command -v hermes; readlink "$(command -v hermes)"' > "$OUT/which-herm
 python3 "$HERE/h1_probe.py" --root "$ROOT" --out "$OUT" --scan-home > "$OUT/probe-main.log" 2>&1
 pec=$?
 tail -30 "$OUT/probe-main.log"
+MUTS="tools_default env_toolsets approvals_off approvals_smart yolo_env no_caps title_on memory_on image_auto cwd_context no_purge home_inherited"
+for m in $MUTS; do
+    python3 "$HERE/h1_probe.py" --root "$ROOT" --out "$OUT" --mutation "$m" > "$OUT/probe-$m.log" 2>&1
+    echo "mutation $m exit $?"
+done
 
 L="$ROOT/hermes-agent/.hermes/bin/hermes"; [ -x "$L" ] || L="$ROOT/bin/hermes"
 J hashes "${SENT[@]}" > "$OUT/sent2.json"
 HERMES_HOME="$ROOT" "$L" uninstall --full --dry-run > "$OUT/uninstall-dry.txt" 2>&1
 HERMES_HOME="$USERHOME" "$L" uninstall --full --dry-run > "$OUT/uninstall-dry-inherited.txt" 2>&1
+J hashes "${SENT[@]}" > "$OUT/sent2b.json"
 s=$(date +%s)
 HERMES_HOME="$ROOT" "$L" uninstall --full --yes > "$OUT/uninstall-full.txt" 2>&1
 uec=$?
@@ -74,9 +80,17 @@ res = {"install": {"exit": int(sys.argv[3]), "seconds": int(sys.argv[4]), "tail"
                              "inherited_outside_root": [p for p in dryi if not p.startswith(root)]},
        "uninstall_full": {"exit": int(sys.argv[6]), "seconds": int(sys.argv[7]), "root_exists_after": pathlib.Path(root).exists(),
                           "root_left": ld("root_left.json"), "tail": (out / "uninstall-full.txt").read_text().splitlines()[-40:]},
-       "uninstall_sentinel_changes": diff(s2, s3), "probe_sentinel_changes": diff(s1, s2)}
+       "uninstall_sentinel_changes": diff(s2, s3), "probe_sentinel_changes": diff(s1, s2),
+       "inherited_dry_run_sentinel_changes": diff(s2, ld("sent2b.json") or {})}
+muts = {}
+for m in "tools_default env_toolsets approvals_off approvals_smart yolo_env no_caps title_on memory_on image_auto cwd_context no_purge home_inherited".split():
+    r = ld(f"report-{m}.json") or {}
+    muts[m] = {"killed_as_expected": bool(r.get("killed_as_expected")), "expected": r.get("expected_red"), "failed": r.get("failed")}
+res["mutations"] = muts
+res["survivors"] = [m for m, v in muts.items() if not v["killed_as_expected"]]
+print("survivors:", res["survivors"])
 (out / "macos.json").write_text(json.dumps(res, indent=1, ensure_ascii=False))
 print(json.dumps({k: res[k] for k in ("install_sentinel_changes", "uninstall_sentinel_changes", "uninstall_dry_run")}, indent=1)[:4000])
 EOF
 { echo "## H1 macOS"; echo "- install: exit $ec, ${dur} s; probe main: exit $pec; uninstall --full: exit $uec"; } >> "$GITHUB_STEP_SUMMARY"
-[ $pec -eq 0 ]
+[ $pec -eq 0 ] && python3 -I -c "import json,sys; sys.exit(1 if json.load(open('$OUT/macos.json'))['survivors'] else 0)"

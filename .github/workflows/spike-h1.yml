@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: read
+  statuses: write   # le pouls des jobs Windows (le premier passage a perdu ses runners sans journal)
 
 env:
   # Hermes v0.22.5 (tag du 23/10/2026), et les empreintes de ses installateurs à ce commit.
@@ -19,36 +20,92 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-2022, windows-2025]
+        include:
+          - os: windows-2022
+            defender: static
+            uninstall: bounded
+            mutations: true
+          - os: windows-2025
+            defender: armed
+            uninstall: full
+            mutations: false
     runs-on: ${{ matrix.os }}
     timeout-minutes: 170
+    env:
+      H1_OS: ${{ matrix.os }}
+      H1_DEFENDER: ${{ matrix.defender }}
+      H1_UNINSTALL: ${{ matrix.uninstall }}
+    defaults:
+      run:
+        shell: powershell
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: python -m pip install --disable-pip-version-check tiktoken==0.8.0
-      - name: H1
-        shell: powershell
+      - run: python -m pip install --disable-pip-version-check tiktoken==0.8.0 pyyaml==6.0.2
+      - name: parse
         run: |
-          if ("${{ matrix.os }}" -eq "windows-2025") { & .\spike\h1\h1_windows.ps1 -Mutations } else { & .\spike\h1\h1_windows.ps1 }
-          exit $LASTEXITCODE
+          foreach ($f in Get-ChildItem spike\h1\*.ps1) {
+            $e = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$null, [ref]$e)
+            if ($e) { $e | ForEach-Object { Write-Host "$($f.Name): $_ ($($_.Extent.StartLineNumber))" }; exit 1 }
+          }
+      - name: pouls
+        env:
+          HB_TOKEN: ${{ github.token }}
+        run: Start-Process powershell.exe -WindowStyle Hidden -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "$pwd\spike\h1\heartbeat.ps1")
+      - name: setup
+        timeout-minutes: 15
+        run: .\spike\h1\h1_windows.ps1 -Phase setup
+      - name: install
+        timeout-minutes: 55
+        run: .\spike\h1\h1_windows.ps1 -Phase install
       - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: h1-${{ matrix.os }}
-          path: ${{ runner.temp }}/h1out
-          retention-days: 14
+        if: ${{ !cancelled() }}
+        with: { name: "h1-${{ matrix.os }}", path: "${{ runner.temp }}/h1out", retention-days: 14, overwrite: true }
+      - name: defender
+        if: ${{ !cancelled() }}
+        timeout-minutes: 25
+        run: .\spike\h1\h1_windows.ps1 -Phase defender
+      - name: pathfix
+        if: ${{ !cancelled() }}
+        timeout-minutes: 8
+        run: .\spike\h1\h1_windows.ps1 -Phase pathfix
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with: { name: "h1-${{ matrix.os }}", path: "${{ runner.temp }}/h1out", retention-days: 14, overwrite: true }
+      - name: probe
+        if: ${{ !cancelled() }}
+        timeout-minutes: 25
+        run: .\spike\h1\h1_windows.ps1 -Phase probe
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with: { name: "h1-${{ matrix.os }}", path: "${{ runner.temp }}/h1out", retention-days: 14, overwrite: true }
+      - name: mutations
+        if: ${{ !cancelled() && matrix.mutations }}
+        timeout-minutes: 50
+        run: .\spike\h1\h1_windows.ps1 -Phase mutations
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && matrix.mutations }}
+        with: { name: "h1-${{ matrix.os }}", path: "${{ runner.temp }}/h1out", retention-days: 14, overwrite: true }
+      - name: uninstall
+        if: ${{ !cancelled() }}
+        timeout-minutes: 20
+        run: .\spike\h1\h1_windows.ps1 -Phase uninstall
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with: { name: "h1-${{ matrix.os }}", path: "${{ runner.temp }}/h1out", retention-days: 14, overwrite: true }
 
   macos:
     runs-on: macos-15
-    timeout-minutes: 120
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: python3 -m pip install --disable-pip-version-check tiktoken==0.8.0
+      - run: python3 -m pip install --disable-pip-version-check tiktoken==0.8.0 pyyaml==6.0.2
       - name: H1
         run: bash spike/h1/h1_macos.sh
       - uses: actions/upload-artifact@v4
