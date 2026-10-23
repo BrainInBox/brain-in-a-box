@@ -1,0 +1,84 @@
+name: spike-guide-v2-modeles
+
+# Preuve M1 du guide v2 (P0), branche jetable. Le corpus de 30 écrans inventés est rendu sur une VM
+# Windows : Sage imité en WinForms, montré sur le bureau de la VM, ses éléments lus par UIA ; Odoo
+# imité et une page ClickFix en HTML, rendus hors écran par Edge sans tête. Puis le juge est essayé
+# avec un faux Claude, et chaque protection retirée doit le faire rougir. Aucun jeton ici : le jeton
+# de « Real Claude » ne sort que pour master (environnement terrain-claude).
+
+on:
+  push:
+    branches: [spike/guide-v2-modeles]
+
+permissions:
+  contents: read
+
+jobs:
+  rendu:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Sage imité (WinForms), capturé sur le bureau de la VM, éléments lus par UIA
+        shell: pwsh
+        run: |
+          $fw = "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319"
+          & "$fw\csc.exe" /nologo /codepage:65001 /target:exe /out:sage.exe `
+            /r:"$fw\WPF\UIAutomationClient.dll" /r:"$fw\WPF\UIAutomationTypes.dll" /r:"$fw\WPF\WindowsBase.dll" `
+            /r:System.Windows.Forms.dll /r:System.Drawing.dll spike/modeles/sage.cs
+          if ($LASTEXITCODE) { throw "csc $LASTEXITCODE" }
+          .\sage.exe "$env:RUNNER_TEMP\corpus"
+          if ($LASTEXITCODE) { throw "sage.exe $LASTEXITCODE" }
+
+      - name: Odoo imité et ClickFix (HTML), rendus hors écran par Edge sans tête
+        shell: pwsh
+        run: |
+          python -I spike/modeles/ecrans_web.py "$env:RUNNER_TEMP\pages"
+          if ($LASTEXITCODE) { throw "pages" }
+          python -I spike/modeles/rendre_web.py "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe" "$env:RUNNER_TEMP\pages" "$env:RUNNER_TEMP\corpus"
+          if ($LASTEXITCODE) { throw "rendu" }
+          python -I spike/modeles/regards.py normaliser --rendu "$env:RUNNER_TEMP\corpus"
+          if ($LASTEXITCODE) { throw "normaliser" }
+          (Get-ChildItem "$env:RUNNER_TEMP\corpus").Count
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corpus-modeles
+          path: ${{ runner.temp }}/corpus
+          retention-days: 7
+
+  auto-test:
+    needs: rendu
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: corpus-modeles
+          path: corpus
+
+      - name: Le juge et le faux Claude, sans mutation (vert attendu)
+        run: python3 -I spike/modeles/regards.py auto-test --rendu corpus --dossier "$RUNNER_TEMP/auto"
+
+      - name: Chaque protection retirée fait rougir l'auto-test
+        run: |
+          echo "| mutation | issue |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          survivantes=""
+          for m in code suspect etat c3 seuil libelle bornes filtre tolerance negatif_large verdict_negatifs seuil90; do
+            if BIBO_MUTATION=$m python3 -I spike/modeles/regards.py auto-test --rendu corpus --dossier "$RUNNER_TEMP/auto-$m" > "$RUNNER_TEMP/$m.json"; then
+              survivantes="$survivantes $m"
+              echo "| $m | SURVIT |" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "| $m | tuée : $(cat "$RUNNER_TEMP/$m.json") |" >> "$GITHUB_STEP_SUMMARY"
+            fi
+            cat "$RUNNER_TEMP/$m.json"
+          done
+          test -z "$survivantes" || { echo "mutations survivantes :$survivantes"; exit 1; }
