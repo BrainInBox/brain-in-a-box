@@ -1,25 +1,27 @@
-// The download page. Without this script everything still works: the links go to
-// the Releases page and the three systems are shown one after the other.
+// The download page. Without this script everything still works: the links download the newest
+// preview from app-latest, and the three systems are shown one after the other.
 'use strict';
 
 const REPO = 'BrainInBox/brain-in-a-box';
 const API = `https://api.github.com/repos/${REPO}/releases?per_page=30`;
-const DOWNLOADS = `https://github.com/${REPO}/releases/download/`;
-const RELEASE_PAGE = `https://github.com/${REPO}/releases/tag/`;
+// The release .github/workflows/release.yml refreshes with each preview: the same files, named
+// without their version. The buttons point there, whether GitHub's API answers or not.
+const LATEST = `https://github.com/${REPO}/releases/download/app-latest/`;
 const TAG = /^app-v(\d+)\.(\d+)\.(\d+)-preview\.(\d+)$/;
-// How each file of an app preview is named (.github/workflows/release.yml).
+// How each file of an app preview ends (release.yml); under app-latest, Brain-in-a-Box_ and this.
 const FILES = {
-  mac: '_macos-universal.dmg',
-  windows: '_windows-x64-setup.exe',
-  appimage: '_linux-x86_64.AppImage',
-  deb: '_linux-amd64.deb',
-  sums: 'SHA256SUMS',
+  mac: 'macos-universal.dmg',
+  windows: 'windows-x64-setup.exe',
+  appimage: 'linux-x86_64.AppImage',
+  deb: 'linux-amd64.deb',
 };
 const MAIN = {
-  mac: { label: 'Télécharger pour Mac', file: 'mac', meta: 'macOS 13 ou plus récent · puce Apple et Intel' },
-  windows: { label: 'Télécharger pour Windows', file: 'windows', meta: 'Windows 10 ou 11 · 64 bits' },
+  windows: { label: 'Télécharger pour Windows', file: 'windows', meta: 'Windows 10 ou 11 · 64 bits · gratuit' },
+  mac: { label: 'Télécharger pour Mac', file: 'mac', meta: 'macOS 13 ou plus récent · puce Apple et Intel · gratuit' },
   linux: { label: 'Télécharger pour Linux', file: 'appimage', meta: 'AppImage · Ubuntu 22.04+, Debian 12 · x86-64' },
 };
+// The address a phone sends to the computer.
+const HOME = 'https://brain-in-a-box.vercel.app/';
 
 document.documentElement.classList.add('js');
 
@@ -34,7 +36,8 @@ function detectSystem() {
   return 'unknown';
 }
 
-// ── The newest app preview, from GitHub's public API ───────────────────────
+// ── The newest app preview, from GitHub's public API: its number, date and sizes ──
+// Only what the page says: the links never depend on it (60 calls an hour per address).
 
 function compareTags(a, b) {
   for (let i = 0; i < 4; i++) {
@@ -62,15 +65,12 @@ async function newestPreview() {
       .sort(compareTags);
     if (!previews.length) return null;
     const { r, n } = previews[0];
-    const prefix = DOWNLOADS + encodeURIComponent(r.tag_name) + '/';
-    const files = {};
+    const sizes = {};
     for (const [kind, suffix] of Object.entries(FILES)) {
-      const asset = (r.assets || []).find((a) => a && typeof a.name === 'string' && a.name.endsWith(suffix)
-        && typeof a.browser_download_url === 'string' && a.browser_download_url.startsWith(prefix));
-      if (asset) files[kind] = { url: asset.browser_download_url, name: asset.name, size: Number(asset.size) || 0 };
+      const asset = (r.assets || []).find((a) => a && typeof a.name === 'string' && a.name.endsWith(`_${suffix}`));
+      if (asset) sizes[kind] = Number(asset.size) || 0;
     }
-    const page = typeof r.html_url === 'string' && r.html_url === RELEASE_PAGE + encodeURIComponent(r.tag_name) ? r.html_url : null;
-    return { version: `${n[0]}.${n[1]}.${n[2]}-preview.${n[3]}`, date: r.published_at, files, page };
+    return { number: n[3], date: r.published_at, sizes };
   } catch {
     return null;
   } finally {
@@ -90,47 +90,78 @@ function frenchDate(iso) {
   return new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }).format(d);
 }
 
-function fillLinks(release) {
-  for (const a of document.querySelectorAll('[data-dl]')) {
-    const file = release.files[a.dataset.dl];
-    if (file) a.href = file.url;
-  }
-  for (const el of document.querySelectorAll('[data-file]')) {
-    const file = release.files[el.dataset.file];
-    if (file) el.textContent = file.name;
-  }
-  const deb = release.files.deb;
-  for (const cmd of deb ? document.querySelectorAll('[data-deb-cmd]') : []) {
-    cmd.textContent = cmd.textContent.replace(/\.\/\S+\.deb$/, `./${deb.name}`);
-  }
+function showVersion(release) {
   const date = frenchDate(release.date);
-  document.getElementById('version').textContent = `Préversion ${release.version}${date ? `, du ${date}` : ''}`;
-  document.getElementById('announce-text').textContent = `Préversion ${release.version} de l’app disponible${date ? ` depuis le ${date}` : ''}.`;
-  if (release.page) document.getElementById('announce-link').href = release.page;
+  const version = document.getElementById('version');
+  version.textContent = `Préversion n°\u00a0${release.number}${date ? `, du ${date}` : ''}`;
 }
 
 // The big buttons (top of the page, and the last call at the bottom) are for the visitor's system.
 function mainButtons(system, release) {
-  const main = MAIN[system];
   if (system === 'mobile') {
-    // Neither the app nor the command line installs on a phone.
-    for (const el of document.querySelectorAll('[data-dl-main], .dl-actions, [data-dl-main-meta]')) el.hidden = true;
-    for (const msg of document.querySelectorAll('[data-dl-mobile]')) msg.hidden = false;
+    // Neither the app nor the command line installs on a phone: the link goes to the computer. No
+    // installer to download there either, the install guide's buttons included.
+    for (const el of document.querySelectorAll('[data-dl-main], [data-top-dl], .dl-actions, [data-dl-main-meta], .dl-others, .dl-version, [data-dl-warn], .dl-privacy, a[data-dl]:not([data-dl="sums"])')) el.hidden = true;
+    for (const msg of document.querySelectorAll('[data-dl-mobile], [data-phone]')) msg.hidden = false;
     return;
   }
+  const main = MAIN[system];
   if (!main) return;
-  const file = release && release.files[main.file];
+  const size = release && release.sizes[main.file];
   for (const label of document.querySelectorAll('[data-dl-main-label]')) label.textContent = main.label;
-  // Without the API's answer the button opens the Releases page: say which file to take there.
-  const meta = file
-    ? `${main.meta} · ${megabytes(file.size)}`
-    : `${main.meta} · sur GitHub, prends le fichier qui finit par ${FILES[main.file]}`;
-  for (const el of document.querySelectorAll('[data-dl-main-meta]')) el.textContent = meta;
-  if (file) for (const btn of document.querySelectorAll('[data-dl-main]')) btn.href = file.url;
+  for (const el of document.querySelectorAll('[data-dl-main-meta]')) el.textContent = size ? `${main.meta} · ${megabytes(size)}` : main.meta;
+  for (const btn of document.querySelectorAll('[data-dl-main]')) btn.href = `${LATEST}Brain-in-a-Box_${FILES[main.file]}`;
   // The others under the button: the one the button already gives goes away.
   const own = document.querySelector(`.dl-others li[data-for="${system}"]`);
   if (own) own.hidden = true;
   document.getElementById('dl-others-label').textContent = 'Autres systèmes\u00a0:';
+}
+
+// ── Once the download has started: what comes next, for this system ───────────
+
+function nextSteps(system) {
+  const next = document.querySelector('[data-next]');
+  if (!next || !MAIN[system]) return;
+  for (const list of next.querySelectorAll('[data-next-for]')) list.hidden = list.dataset.nextFor !== system;
+  for (const btn of document.querySelectorAll('[data-dl-main]')) {
+    btn.addEventListener('click', () => {
+      next.hidden = false;
+      for (const warn of document.querySelectorAll('[data-dl-warn]')) warn.hidden = true;
+      // The steps come into view, under the button or from the bottom of the page; the download goes on.
+      next.focus({ preventScroll: true });
+      const still = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      next.scrollIntoView({ behavior: still ? 'auto' : 'smooth', block: btn.closest('.hero') ? 'nearest' : 'center' });
+    });
+  }
+}
+
+// ── On a phone: send the link to oneself ─────────────────────────────────────
+
+function phoneLink() {
+  const done = document.querySelector('[data-copy-done]');
+  const share = document.querySelector('[data-share]');
+  const copy = document.querySelector('[data-copy-link]');
+  const say = (text) => { if (done) done.textContent = text; };
+  if (share && navigator.share) {
+    share.hidden = false;
+    share.addEventListener('click', async () => {
+      try {
+        await navigator.share({ title: 'Brain in a Box', text: 'Bibo, à installer sur mon ordinateur\u00a0:', url: HOME });
+      } catch {
+        // Closed without sharing: nothing to say.
+      }
+    });
+  }
+  if (copy) {
+    copy.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(HOME);
+        say('Lien copié. Colle-le dans un message pour toi (WhatsApp, e-mail), puis ouvre-le sur ton ordinateur.');
+      } catch {
+        say('Je n’ai pas pu copier. Recopie l’adresse ci-dessus, ou fais-en une capture.');
+      }
+    });
+  }
 }
 
 // ── Tabs: the links to each system become tabs ────────────────────────────
@@ -270,14 +301,17 @@ function followPointer() {
 async function start() {
   const system = detectSystem();
   followPointer();
-  for (const nav of document.querySelectorAll('[data-tabs]')) setupTabs(nav, MAIN[system] ? system : 'mac');
+  // A phone, or a system not recognized: Windows first, as most of the people Bibo is for.
+  for (const nav of document.querySelectorAll('[data-tabs]')) setupTabs(nav, MAIN[system] ? system : 'windows');
   addCopyButtons();
   openLinkedDetails();
   window.addEventListener('hashchange', openLinkedDetails);
   mainButtons(system, null);
+  nextSteps(system);
+  phoneLink();
   const release = await newestPreview();
   if (!release) return;
-  fillLinks(release);
+  showVersion(release);
   mainButtons(system, release);
 }
 
