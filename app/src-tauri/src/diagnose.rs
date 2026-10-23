@@ -480,8 +480,18 @@ fn http_status(url: &str) -> Option<u16> {
     if cfg!(target_os = "linux") && !sys::is_executable(&sys::curl()) {
         return connects(url).then_some(0);
     }
-    let args = ["-sS", "-o", sys::NULL_DEVICE, "-m", "8", "-w", "%{http_code}", url];
+    let args = curl_args(&["-sS", "-o", sys::NULL_DEVICE, "-m", "8", "-w", "%{http_code}"], url, steps::system_proxy(url));
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
     http_code(&sys::run(&sys::curl(), &args, PROBE_TIMEOUT).stdout)
+}
+
+/// curl's arguments for `url`, through the proxy Windows sends it through (steps::system_proxy): curl.exe
+/// never reads the system's, and behind a company's proxy nothing would answer it.
+fn curl_args(args: &[&str], url: &str, proxy: Option<String>) -> Vec<String> {
+    let mut all: Vec<String> = args.iter().map(|a| a.to_string()).collect();
+    all.extend(proxy.map(|p| steps::curl_proxy_args(&p)).unwrap_or_default());
+    all.push(url.to_string());
+    all
 }
 
 /// The site's port 443 accepts a connection within 8 s, name lookup included.
@@ -517,8 +527,10 @@ fn speed() -> Option<f64> {
     let max = (SPEED_BYTES + SPEED_BYTES / 2).to_string();
     let args = [
         "-sS", "-L", "-r", &range, "--max-filesize", &max, "-o", sys::NULL_DEVICE, "-m", "8", "-w",
-        "%{http_code} %{size_download} %{time_starttransfer} %{time_total}", SPEED_URL,
+        "%{http_code} %{size_download} %{time_starttransfer} %{time_total}",
     ];
+    let args = curl_args(&args, SPEED_URL, steps::system_proxy(SPEED_URL));
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
     parse_speed(&sys::run(&sys::curl(), &args, PROBE_TIMEOUT).stdout)
 }
 
@@ -973,7 +985,7 @@ fn check_agents(etat: &str) -> Check {
         Status::Error,
         format!(
             "Je ne sais plus avec quelle IA tu travailles : ton choix (~/.brain-in-a-box/agents.json) {}. \
-             Je n'installe rien : écris à l'équipe, elle t'aidera.",
+             Je n'installe rien : demande de l'aide à la personne qui t'a conseillé Bibo.",
             steps::agents_said(etat)
         ),
     )
@@ -1714,6 +1726,16 @@ mod tests {
         fake_brain(tmp.path());
         let done = decide(tmp.path(), &Facts { speed: Some(100_000.0), ..healthy_facts() });
         assert_eq!(by_id(&done, "network").status, Status::Ok);
+    }
+
+    /// Behind a company's proxy, the probes go through it as the downloads do (curl.exe reads no system
+    /// proxy): the address stays the last word.
+    #[test]
+    fn the_probes_go_through_the_system_proxy() {
+        let direct = curl_args(&["-sS", "-m", "8"], "https://github.com", None);
+        assert_eq!(direct, ["-sS", "-m", "8", "https://github.com"]);
+        let via = curl_args(&["-sS", "-m", "8"], "https://github.com", Some("http://proxy.corp:8080/".into()));
+        assert_eq!(via, ["-sS", "-m", "8", "--proxy", "http://proxy.corp:8080/", "--proxy-anyauth", "--proxy-user", ":", "--ssl-revoke-best-effort", "https://github.com"]);
     }
 
     #[test]

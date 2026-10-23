@@ -97,6 +97,14 @@ if ($again.Count) { throw "Claude alone: this change's run did not leave the ins
 $apart = Differ $m.Snap $b.Snap
 $want = @($touched | Where-Object { Test-Path -LiteralPath $_ }) + @(if ($touched.Count) { "$H\.brain-in-a-box\installed.json" }) +
         $editedSkills + @(if ($editedSkills.Count) { "$H\.brain-in-a-box\skills.json" })
+# The reflection's task starts pythonw.exe (no black window at 12:00 and 23:00), master's python.exe: the one
+# difference of its own a change may make, said here, until master starts it so too.
+if ((Get-Content -Raw "$T\master\install.ps1").Contains('Register-BrainTask "BrainReflection" $Py ') -and $m.Snap["task BrainReflection"] -ne $b.Snap["task BrainReflection"]) {
+    if ($b.Snap["task BrainReflection"] -ne ($m.Snap["task BrainReflection"] -replace '\\python\.exe ', '\pythonw.exe ')) {
+        throw "Claude alone: BrainReflection starts $($b.Snap['task BrainReflection']), master's $($m.Snap['task BrainReflection'])"
+    }
+    $want += "task BrainReflection"
+}
 if ((($apart | Sort-Object) -join "`n") -cne (($want | Sort-Object) -join "`n")) {
     throw "Claude alone: master's files and this change's differ in $($apart -join ', '), not just in $($want -join ', ')"
 }
