@@ -163,4 +163,6 @@ jobs:
           "CALQUE_TAURI=$PWD\calque-tauri\target\debug\calque-tauri.exe" >> $env:GITHUB_ENV
 
       - name: Each protection taken out turns a desktop test red
+        env:
+          MATRIX_OS: ${{ matrix.os }}
         run: python -I mutations.py

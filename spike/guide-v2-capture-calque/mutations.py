@@ -8,6 +8,8 @@ import sys
 import time
 
 TEMP = os.environ.get("RUNNER_TEMP", os.getcwd())
+# windows-2022 or windows-2025: some protections only matter on one of them.
+OS = os.environ.get("MATRIX_OS", "")
 FW = os.path.join(os.environ.get("WINDIR", "C:\\Windows"), "Microsoft.NET", "Framework64", "v4.0.30319", "csc.exe")
 
 P = "src/prims.rs"
@@ -16,6 +18,7 @@ N = "src/navigateur.rs"
 K = "src/calque.rs"
 V = "src/veille.rs"
 TA = "calque-tauri/src/main.rs"
+TE = "src/tests.rs"
 
 APPLI = "bureau_w1_appli_composee"
 EDGE = "bureau_w1_edge"
@@ -27,7 +30,7 @@ DIALOGUE = "bureau_w4_dialogue"
 HOOK = "aucun_hook_clavier_souris"
 
 MUTATIONS = [
-    # (name, expected to turn red?, file, old, new, tests)
+    # (name, expected to turn red? (or {os: bool}), file, old, new, tests)
     ("W1 BitBlt de l'écran quand PrintWindow échoue (admin)", True, P,
      "    if !unsafe { PrintWindow(h, canvas.dc, PRINT_WINDOW_FLAGS(PW_RENDERFULLCONTENT)) }.as_bool() {\n        return None;\n    }\n",
      "    if !unsafe { PrintWindow(h, canvas.dc, PRINT_WINDOW_FLAGS(PW_RENDERFULLCONTENT)) }.as_bool() {\n        return screen_copy(outer).map(|s| (s, outer));\n    }\n",
@@ -41,6 +44,9 @@ MUTATIONS = [
      ".filter(|&h| !nav || h == front || owned_by(h, front))", ".filter(|&h| { let _ = nav; h == front })", [APPLI]),
     ("W1 navigateur : toutes ses fenêtres (autres sites)", True, C,
      ".filter(|&h| !nav || h == front || owned_by(h, front))", ".filter(|&h| { let _ = (nav, owned_by(h, front)); true })", [EDGE]),
+    ("W1 navigateur : le site ni avant ni après (tout onglet passe)", True, N,
+     [("        if avant.as_deref() != Some(permis) {\n            return Err(Refus::Domaine(avant));\n        }\n", "        let _ = (&avant, permis);\n"),
+      ("        if apres.as_deref() != Some(permis) {\n            return Err(Refus::Domaine(apres));\n        }\n", "        let _ = &apres;\n")], None, [EDGE]),
     ("W1 bande des onglets pas noircie", True, N,
      "masquer_bande(&mut c, bande, frame(self.front));", "let _ = (bande, frame(self.front));", [EDGE]),
     ("W1 site revérifié après la capture : retiré", True, N,
@@ -49,6 +55,10 @@ MUTATIONS = [
      "        let avant = self.domaine();\n        if avant.as_deref() != Some(permis) {\n            return Err(Refus::Domaine(avant));\n        }\n", "", [EDGE]),
     ("W3 pas de WDA_EXCLUDEFROMCAPTURE", True, K,
      "    unsafe { SetWindowDisplayAffinity(h, WDA_EXCLUDEFROMCAPTURE) }\n", "    let _ = h;\n    Ok(())\n", [CALQUE]),
+    ("W3 Win32 par alpha par pixel (UpdateLayeredWindow) au lieu de la clé de couleur", {"windows-2022": True, "windows-2025": False}, TE,
+     "const WIN32_RETENU: Sorte = Sorte::Win32(Mode::Cle);", "const WIN32_RETENU: Sorte = Sorte::Win32(Mode::Ulw);", [CALQUE]),
+    ("W3 Win32 clé de couleur fausse (le fond du calque peint)", True, K,
+     "SetLayeredWindowAttributes(h, COLORREF(CLE), 0, LWA_COLORKEY)", "SetLayeredWindowAttributes(h, COLORREF(0x00ff_ffff), 0, LWA_COLORKEY)", [CALQUE]),
     ("W3 pas de WS_EX_TRANSPARENT", True, K,
      "WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST", "WS_EX_LAYERED | WS_EX_TOPMOST", [CALQUE]),
     ("W3 activé à l'affichage (ni WS_EX_NOACTIVATE ni SW_SHOWNOACTIVATE)", True, K,
@@ -59,10 +69,13 @@ MUTATIONS = [
     ("W3 ni WS_EX_TOPMOST ni remise au-dessus", True, K,
      [("WS_EX_TRANSPARENT | WS_EX_TOPMOST | WS_EX_TOOLWINDOW", "WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW"),
       ("                SetTimer(Some(h), 1, REHAUSSE_MS, None);\n", "")], None, [CALQUE]),
-    ("W3 Tauri sans set_ignore_cursor_events", True, TA,
-     "            win.set_ignore_cursor_events(true)?;\n", "", [TAURI]),
+    ("W3 Tauri sans set_ignore_cursor_events (ordre retenu)", True, TA,
+     "                    win.set_ignore_cursor_events(true)?;\n                    r\n", "                    r\n", [TAURI]),
     ("W3 Tauri sans WDA_EXCLUDEFROMCAPTURE", True, TA,
-     "let excluded = unsafe { SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE) }.is_ok();", "let excluded = false;", [TAURI]),
+     "let exclure = || unsafe { SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE) }.map_err(|e| e.code());",
+     "let exclure = || Ok::<(), windows::core::HRESULT>(());", [TAURI]),
+    ("W3 Tauri affinité posée après set_ignore_cursor_events (ordre « apres »)", {"windows-2022": True, "windows-2025": False}, TE,
+     'const TAURI_RETENU: &str = "avant";', 'const TAURI_RETENU: &str = "apres";', [TAURI]),
     ("W3 Tauri focusable et activé", True, TA,
      [(".focusable(false)", ".focusable(true)"), (".focused(false)", ".focused(true)")], None, [TAURI]),
     ("W4 tout changement compte (seuil de part retiré)", True, V,
@@ -157,6 +170,8 @@ if red:
 results = []
 for m in MUTATIONS:
     name, expect_red, path = m[0], m[1], m[2]
+    if isinstance(expect_red, dict):
+        expect_red = expect_red[OS]
     pairs = m[3] if isinstance(m[3], list) else [(m[3], m[4])]
     tests_m = m[-1]
     text, new, why = apply(path, pairs)

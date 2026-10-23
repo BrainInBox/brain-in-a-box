@@ -22,8 +22,8 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, MOUSEINPUT, MOUSE_EVENT_FLAGS, VIRTUAL_KEY, VK_CONTROL, VK_ESCAPE, VK_LWIN, VK_SHIFT,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumChildWindows, GetAncestor, GetForegroundWindow, SetCursorPos, SetWindowPos, WindowFromPoint, GA_ROOT, SWP_NOACTIVATE, SWP_NOZORDER, WDA_EXCLUDEFROMCAPTURE,
-    WDA_NONE, WINDOW_DISPLAY_AFFINITY,
+    EnumChildWindows, GetAncestor, GetForegroundWindow, SetCursorPos, SetWindowPos, ShowWindow, WindowFromPoint, GA_ROOT, SWP_NOACTIVATE, SWP_NOZORDER,
+    SW_SHOWMINNOACTIVE, WDA_EXCLUDEFROMCAPTURE, WDA_NONE, WINDOW_DISPLAY_AFFINITY,
 };
 
 use crate::calque::{anneau, Calque, Mode, ANNEAU, EPAISSEUR, MARGE};
@@ -56,10 +56,11 @@ fn centile(v: &[f32], p: f32) -> f32 {
     s.get(((s.len().max(1) - 1) as f32 * p).round() as usize).copied().unwrap_or(f32::NAN)
 }
 
-/// The other site's red (its page and its icon): what must never be in the image.
-const BANQUE: [u8; 3] = [0xe0, 0x00, 0x00];
+/// The other site's colour (its page and its icon), magenta: what must never be in the image. Not red:
+/// Edge paints a red badge of its own on its « Settings and more » button.
+const BANQUE: [u8; 3] = [0xff, 0x00, 0xff];
 
-fn rouges(img: &Rgba, z: Option<Zone>) -> usize {
+fn banque_px(img: &Rgba, z: Option<Zone>) -> usize {
     img.count_in(z.unwrap_or((0, 0, img.w as i32, img.h as i32)), BANQUE)
 }
 
@@ -152,8 +153,20 @@ struct Desk {
     nonce: String,
 }
 
+/// The runner's own console (hosted-compute-agent) lies on the desktop: minimized, so that no click of
+/// the proofs lands in it (a click there puts it in « Select » mode, which stops the agent's writes).
+fn consoles_reduites() {
+    for h in top_windows() {
+        if visible(h) && class(h) == "ConsoleWindowClass" {
+            // SAFETY: another program's window, minimized, not activated.
+            let _ = unsafe { ShowWindow(h, SW_SHOWMINNOACTIVE) };
+        }
+    }
+}
+
 fn desk() -> Desk {
     static N: AtomicUsize = AtomicUsize::new(0);
+    consoles_reduites();
     atelier();
     Desk { nonce: format!("{}-{}", std::process::id(), N.fetch_add(1, Ordering::SeqCst)) }
 }
@@ -258,12 +271,19 @@ fn pointer((x, y): (i32, i32)) {
     unsafe { SetCursorPos(x, y) }.unwrap();
 }
 
+fn pas_une_console(at: (i32, i32)) {
+    let h = dessus_a(at);
+    assert_ne!(class(h), "ConsoleWindowClass", "a click about to land in a console « {} »", title(h));
+}
+
 fn clic(at: (i32, i32)) {
+    pas_une_console(at);
     pointer(at);
     send(&[souris(MOUSEEVENTF_LEFTDOWN), souris(MOUSEEVENTF_LEFTUP)]);
 }
 
 fn clic_droit(at: (i32, i32)) {
+    pas_une_console(at);
     pointer(at);
     send(&[souris(MOUSEEVENTF_RIGHTDOWN), souris(MOUSEEVENTF_RIGHTUP)]);
 }
@@ -431,7 +451,7 @@ fn sonde_admin() {
 }
 
 fn page(banque: bool) -> String {
-    let (titre, fond) = if banque { ("Banque", "e00000") } else { ("Odoo Factures", "2e7d32") };
+    let (titre, fond) = if banque { ("Banque", "ff00ff") } else { ("Odoo Factures", "2e7d32") };
     format!(
         "<!doctype html><meta charset=utf-8><title>{titre}</title>\
          <link rel=icon href=\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23{fond}'/%3E%3C/svg%3E\">\
@@ -471,8 +491,8 @@ fn serveur() -> u16 {
     port
 }
 
-/// C1: in Edge, the app is the browser and the site of its tab. The other tab's icon (red) is in the tab
-/// strip, painted black; Edge's other window (red) is left out; another site is a pause in less than 1 s,
+/// C1: in Edge, the app is the browser and the site of its tab. The other tab's icon (magenta) is in the
+/// tab strip, painted black; Edge's other window (magenta) is left out; another site is a pause in less than 1 s,
 /// and an image taken while the site changes is never sent.
 #[test]
 #[ignore = "a Windows desktop (VM)"]
@@ -540,8 +560,9 @@ fn bureau_w1_edge() {
 
     let brut = composer(pid, w1).unwrap();
     let bz = brut.zone(bande);
-    let rouge_bande = rouges(&brut.img, Some(bz));
-    mesure(T, "temoin_icone_rouge_dans_bande", rouge_bande);
+    let rouge_bande = banque_px(&brut.img, Some(bz));
+    mesure(T, "temoin_icone_banque_dans_bande", rouge_bande);
+    mesure(T, "banque_hors_bande_avant_masque", banque_px(&brut.img, None) - rouge_bande);
     match autres_rouges(&brut.img, bz) {
         None => mesure(T, "autres_rouges_hors_bande", "aucun"),
         Some((n, z, moy)) => {
@@ -549,17 +570,17 @@ fn bureau_w1_edge() {
             mesure(T, "autres_rouges_hors_bande", format!("{n} px, boîte {z:?}, moyenne {moy:?}, élément UIA au centre {:?}", nav.element_au(at)));
         }
     }
-    assert!(rouge_bande >= 20, "witness: the other tab's red icon is in the tab strip");
+    assert!(rouge_bande >= 20, "witness: the other tab's icon is in the tab strip");
     mesure(T, "fenetres", brut.fenetres.len());
     assert!(brut.fenetres.iter().all(|&(h, _)| h != w2), "Edge's other window is left out");
-    assert_eq!(rouges(&brut.img, None), rouge_bande, "nothing red but the icon");
+    assert_eq!(banque_px(&brut.img, None), rouge_bande, "nothing of the other site but its icon");
 
     let c = nav.regarder("odoo.localhost").unwrap();
     let bz = c.zone(bande);
-    mesure(T, "rouge_apres_masque", rouges(&c.img, None));
+    mesure(T, "banque_apres_masque", banque_px(&c.img, None));
     mesure(T, "bande_noire", format!("{}/{}", c.img.black_in(bz), c.img.area(bz)));
     mesure(T, "vert", format!("{}/{}", c.img.count(GREEN), c.img.pixels()));
-    assert_eq!(rouges(&c.img, None), 0, "not a pixel of the other site");
+    assert_eq!(banque_px(&c.img, None), 0, "not a pixel of the other site");
     assert_eq!(c.img.black_in(bz), c.img.area(bz), "the tab strip black");
     assert!(c.img.count(GREEN) * 10 > c.img.pixels() * 4, "the page");
 
@@ -598,7 +619,7 @@ fn bureau_w1_edge() {
         if attendu == "banque.localhost" {
             assert!(matches!(r, Err(Refus::Domaine(_))), "another site: a pause");
         } else {
-            assert_eq!(rouges(&r.unwrap().img, None), 0);
+            assert_eq!(banque_px(&r.unwrap().img, None), 0);
         }
     }
     mesure(T, "pause_max_ms", centile(&pauses, 1.0));
@@ -698,6 +719,7 @@ enum Sorte {
 
 /// The overlay the guide would take: the Win32 one by colour key, and Tauri's in this order.
 const WIN32_RETENU: Sorte = Sorte::Win32(Mode::Cle);
+const TAURI_RETENU: &str = "avant";
 const TAURI_MODES: [&str; 3] = ["apres", "avant", "lwa"];
 
 impl Sorte {
@@ -948,7 +970,7 @@ fn bureau_w3_calque() {
     cle.unwrap();
 }
 
-/// Each order of calqueTauri's calls, as the guide would make it (calque-tauri, built by the workflow).
+/// Each order of calque-tauri's calls, as the guide would make it (calque-tauri, built by the workflow).
 fn verifier_tauri(d: &Desk, echelle: u32) -> Vec<(&'static str, Result<(), String>)> {
     TAURI_MODES
         .iter()
@@ -965,7 +987,8 @@ fn verifier_tauri(d: &Desk, echelle: u32) -> Vec<(&'static str, Result<(), Strin
 fn bureau_w3_calque_tauri() {
     let d = desk();
     let r = verifier_tauri(&d, 100);
-    assert!(r.iter().any(|(_, r)| r.is_ok()), "no order of Tauri's calls makes an overlay that holds: {r:?}");
+    let retenu = r.iter().find(|(m, _)| *m == TAURI_RETENU).map(|(_, r)| r.clone()).unwrap();
+    retenu.unwrap();
 }
 
 /// At 125 and 150 %, when the VM lets its scale change: the overlay again, and how PrintWindow draws a
@@ -1033,9 +1056,10 @@ fn bureau_w3_echelles() {
             fautes.push(format!("{pct} % {}: {e}", WIN32_RETENU.nom()));
         }
         if CalqueTauri::exe().is_some() {
-            let r = verifier_tauri(&d, pct);
-            if !r.iter().any(|(_, r)| r.is_ok()) {
-                fautes.push(format!("{pct} % tauri: {r:?}"));
+            for (m, r) in verifier_tauri(&d, pct) {
+                if let (true, Err(e)) = (m == TAURI_RETENU, r) {
+                    fautes.push(format!("{pct} % tauri-{m}: {e}"));
+                }
             }
         }
     }
