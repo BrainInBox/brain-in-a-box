@@ -8,7 +8,6 @@ user's brain and ~/.claude are never read nor written.
 
     python3 -I -m unittest discover -s engine/tests -v
 """
-import base64
 import contextlib
 import importlib.util
 import io
@@ -1151,7 +1150,7 @@ class Language(Run):
         title = "Ton cerveau : le résumé de ta journée a échoué"
         self.assertEqual(notify.call_args_list, [
             mock.call("Ouvre Bibo et reconnecte ton compte Claude.", title),
-            mock.call("Rien, ta limite d'usage de Claude est atteinte : le prochain résumé rattrapera.", title)],
+            mock.call("Ta limite d'usage de Claude est atteinte : rien à faire, le prochain résumé rattrapera.", title)],
             "once when it starts failing, again after a success")
         os.environ.pop("BRAIN_NO_NOTIFY")
         with mock.patch.object(dr.sys, "platform", "darwin"), mock.patch.object(dr.subprocess, "run") as run:
@@ -1172,8 +1171,12 @@ class Language(Run):
             dr.notify(msg, title)
         argv, kw = run.call_args.args[0], run.call_args.kwargs
         self.assertTrue(argv[0].startswith("C:\\Win") and argv[0].endswith("powershell.exe"), argv[0])
-        self.assertEqual(argv[1:4], ["-NoProfile", "-NonInteractive", "-EncodedCommand"])
-        script = base64.b64decode(argv[4]).decode("utf-16-le")
+        # The script in clear, as the app runs PowerShell: an encoded command is what security software flags.
+        self.assertEqual(argv[1:4], ["-NoProfile", "-NonInteractive", "-Command"])
+        self.assertEqual(len(argv), 5)
+        script = argv[4]
+        self.assertNotIn("\n", script, "one line: the command line takes it whole")
+        self.assertNotIn('"', script, "nothing the command line would have to escape")
         self.assertIn("ToastNotificationManager", script)
         self.assertIn(".Show(", script)
         self.assertEqual((kw["env"]["BRAIN_NOTIFY_TITLE"], kw["env"]["BRAIN_NOTIFY_TEXT"]), (title, msg))
@@ -1186,9 +1189,8 @@ class Language(Run):
         """Up to the toast itself (shown in a desktop session; a runner may have none): the types load, the
         words are put in."""
         env = dict(os.environ, BRAIN_NOTIFY_TITLE="Ton cerveau : « essai »", BRAIN_NOTIFY_TEXT="<b>rien</b> & 'x'")
-        script = dr.TOAST + "\n[Console]::Out.Write($toast.Content.GetXml())"
-        p = subprocess.run([dr.powershell(), "-NoProfile", "-NonInteractive", "-EncodedCommand",
-                            base64.b64encode(script.encode("utf-16-le")).decode("ascii")],
+        script = dr.TOAST + "; " + dr.NOTIFIER + "; [Console]::Out.Write($toast.Content.GetXml())"
+        p = subprocess.run([dr.powershell(), "-NoProfile", "-NonInteractive", "-Command", script],
                            env=env, capture_output=True, timeout=120)
         out = p.stdout.decode("utf-8", "replace")
         self.assertEqual(p.returncode, 0, p.stderr.decode("utf-8", "replace")[-800:])

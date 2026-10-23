@@ -41,12 +41,14 @@ this program's warnings too in French. Claude answers with Sonnet: see MODEL.
 Environment: BRAIN_DIR (vault, default ~/Documents/Brain), BRAIN_GIT_ROOTS
 (extra repos to scan, os.pathsep-separated), HERMES_DB, CLAUDE_BIN, CODEX_BIN,
 BRAIN_CODEX_MODEL, BRAIN_NO_NOTIFY=1 (no desktop notification when the reflection
-starts failing: macOS' own, a Windows toast, notify-send on Linux when it is there).
+starts failing: macOS' own; a Windows toast, which Windows shows only when the task
+runs in the person's open session, not under install.ps1's default S4U task, where the
+morning line says it instead; notify-send on Linux when it is there).
 For tests and trials: --projects DIR reads the transcripts from DIR instead of
 ~/.claude/projects, --logs DIR keeps the state, error log and run lock there
 instead of ~/.claude/logs.
 """
-import argparse, base64, glob, hashlib, json, os, re, sqlite3, subprocess, sys, tempfile, time, unicodedata
+import argparse, glob, hashlib, json, os, re, sqlite3, subprocess, sys, tempfile, time, unicodedata
 from collections import namedtuple
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -1155,6 +1157,15 @@ def what_to_do(reason):
     return "dis à Claude « le résumé de ma journée échoue, regarde pourquoi »."
 
 
+def notice(reason):
+    """The notification's words, in French: what to do, or that there is nothing to do."""
+    if _kind(reason) == "quota":
+        who = "Codex" if str(reason).startswith("codex: ") else "Claude"
+        return f"Ta limite d'usage de {who} est atteinte : rien à faire, le prochain résumé rattrapera."
+    todo = what_to_do(reason)
+    return todo[0].upper() + todo[1:]
+
+
 def status_text(st, lang=None):
     """The warning at the top of memory.md while the reflection fails or an evening waits, in French
     in a French vault: what to do first, the error itself as a detail."""
@@ -1176,18 +1187,20 @@ def status_text(st, lang=None):
 
 
 # A toast from Windows PowerShell 5.1, which every Windows 10 and 11 has: nothing to install. The
-# words come from the environment, never in the script. SHOW puts it on screen under PowerShell's
-# name, the one Windows knows from its Start menu entry.
-TOAST = """$ErrorActionPreference = 'Stop'
-$m = [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]
-$xml = $m::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02)
-$text = $xml.GetElementsByTagName('text')
-$null = $text.Item(0).AppendChild($xml.CreateTextNode($env:BRAIN_NOTIFY_TITLE))
-$null = $text.Item(1).AppendChild($xml.CreateTextNode($env:BRAIN_NOTIFY_TEXT))
-$toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
-"""
-SHOW = ("$m::CreateToastNotifier('{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe')"
-        ".Show($toast)\n")
+# script is fixed and in clear, one line given to -Command as the app does (an encoded command is
+# what security software flags); the words come from the environment, never in the script. The
+# notifier shows it under PowerShell's name, the one Windows knows from its Start menu entry.
+TOAST = "; ".join([
+    "$ErrorActionPreference = 'Stop'",
+    "$m = [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]",
+    "$xml = $m::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02)",
+    "$text = $xml.GetElementsByTagName('text')",
+    "$null = $text.Item(0).AppendChild($xml.CreateTextNode($env:BRAIN_NOTIFY_TITLE))",
+    "$null = $text.Item(1).AppendChild($xml.CreateTextNode($env:BRAIN_NOTIFY_TEXT))",
+    "$toast = [Windows.UI.Notifications.ToastNotification]::new($xml)"])
+NOTIFIER = ("$n = $m::CreateToastNotifier("
+            "'{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe')")
+SHOW = "$n.Show($toast)"
 
 
 def powershell():
@@ -1207,8 +1220,8 @@ def notify(msg, title="Brain: daily reflection failed"):
                             "display notification (item 1 of argv) with title (item 2 of argv)",
                             "-e", "end run", msg, title], capture_output=True, timeout=10)
         elif sys.platform == "win32":
-            script = base64.b64encode((TOAST + SHOW).encode("utf-16-le")).decode("ascii")
-            subprocess.run([powershell(), "-NoProfile", "-NonInteractive", "-EncodedCommand", script],
+            script = "; ".join([TOAST, NOTIFIER, SHOW])
+            subprocess.run([powershell(), "-NoProfile", "-NonInteractive", "-Command", script],
                            env=dict(os.environ, BRAIN_NOTIFY_TITLE=title, BRAIN_NOTIFY_TEXT=msg),
                            capture_output=True, stdin=subprocess.DEVNULL, timeout=60, creationflags=NO_WINDOW)
         elif sys.platform.startswith("linux"):
@@ -1390,8 +1403,7 @@ def record(day, slot, reason, answer, chosen, lang, missed):
         set_status_block(status_text(st, lang))
         if started:
             if lang == "fr":
-                todo = what_to_do(reason)
-                notify(todo[0].upper() + todo[1:], "Ton cerveau : le résumé de ta journée a échoué")
+                notify(notice(reason), "Ton cerveau : le résumé de ta journée a échoué")
             else:
                 notify(f"{day} {slot}: {reason}")
     save_state(st)
