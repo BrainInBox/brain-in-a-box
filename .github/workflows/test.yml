@@ -492,6 +492,58 @@ jobs:
           print("linux:", d["os"], len(ids), "checks, to do:", d["todo"])
           PY
 
+  # The guide v2's elements (capture/uia.rs, uia_win.rs) on a real desktop, the screen at 100, 125 and
+  # 150 % (.github/ci/echelle.cs, as Settings sets it): an ERP-like window (tests/fixtures/guide/
+  # atelier_uia.cs, compiled there by Windows' own csc) as a program unaware of the scale, aware of it
+  # and per monitor; an Odoo-like page in Edge; dialogs; at 100 %, a RemoteApp of the VM itself.
+  # Boxes against the screen, the password field blacked, no customer listed. Made-up data only;
+  # nothing written but the programs and the pages.
+  app-uia:
+    name: app-uia (${{ matrix.os }}, ${{ matrix.echelle }} %)
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+        echelle: [100, 125, 150]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: app/src-tauri
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build the tests
+        run: cargo test --locked --lib --no-run
+      - name: The screen, 1920x1080 at ${{ matrix.echelle }} %
+        run: |
+          & "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /target:exe "/out:$env:RUNNER_TEMP\echelle.exe" ..\..\.github\ci\echelle.cs
+          if ($LASTEXITCODE) { exit 1 }
+          & "$env:RUNNER_TEMP\echelle.exe" taille 1920 1080
+          if ($LASTEXITCODE) { exit 1 }
+          & "$env:RUNNER_TEMP\echelle.exe" pour ${{ matrix.echelle }}
+          if ($LASTEXITCODE) { exit 1 }
+      - name: A RemoteApp of the VM itself (mstsc)
+        if: matrix.echelle == 100
+        timeout-minutes: 5
+        run: |
+          ../../.github/ci/remoteapp.ps1
+          "BIBO_LOIN_PID=$((Get-Process mstsc | Select-Object -First 1).Id)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: The elements of a real desktop's programs
+        env:
+          ECHELLE: ${{ matrix.echelle }}
+        run: |
+          $skip = if ($env:ECHELLE -ne '100') { '--skip', 'uia_remoteapp' } else { @() }
+          cargo test --locked --lib -- --ignored uia_ --test-threads=1 --nocapture @skip 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\uia.txt"
+          $code = $LASTEXITCODE
+          $lines = @('```') + @(Get-Content "$env:RUNNER_TEMP\uia.txt" | Where-Object { $_ -match '^MESURE |test result|panicked|\.\.\. (ok|FAILED)' }) + @('```')
+          $lines | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          exit $code
+
   # The app's own install path on a real Windows, without its window: Claude Code, then the
   # brain (install.ps1 from this commit, no console, no question) on a PC with only the Store's
   # python stub, Documents protected against ransomware and a TEMP every account can write to.
