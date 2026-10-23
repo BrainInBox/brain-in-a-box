@@ -70,12 +70,16 @@
   // Bibo: &sleep=3 makes it doze off after 3 s without activity instead of 45.
   // The login: &jamais=1 never logs in (Claude, or Codex), &hint=20 says what to do after 20 s without a login instead of 3 min,
   // &deco=1 (installe, motscles): Claude Code there but not logged in, until its login window opens.
-  // &guide=1: the guide works here (guide_offert) once Claude Code is installed and logged in, the brain's folder
-  // made (guide.rs, #70): under a failure too. &version=0.1.76: a preview's version.
-  // Back (installe, motscles): &incomplet=1 the install stopped half way (brain_complete), the guide working
-  // all the same (D1, #70); &lent=1 Claude Code takes 10 s to say it is logged in, then says nothing (detect.rs'
-  // limit). &obsidian=absent: « Voir mes notes » finds no Obsidian (winget blocked, say).
-  // The diagnosis: &alerte=network|disk is a warning on that line (claude.ai silent, a disk nearly full).
+  // &guide=1: the guide works here (guide_offert "dossier") once Claude Code is installed and logged in, the
+  // brain's folder made (guide.rs): under a failure too. &version=0.1.76: a preview's version.
+  // Back (installe, motscles): &incomplet=1 the install stopped half way, the folder there and Claude logged in:
+  // guide_offert says "dossier" (D1); &lent=1 Claude Code takes 10 s to say it is logged in, then says nothing
+  // (detect.rs' limit). &obsidian=absent: « Voir mes notes » finds no Obsidian (winget blocked, say).
+  // The diagnosis: &alerte=network|disk is a warning on that line (claude.ai silent, a disk nearly full);
+  // &reseau=lent a network under 2 Mbit/s, &reseau=filtre a filter answering 403 for github.com; &compte=api
+  // Claude Code on a key paid per message, &compte=gratuit on claude.ai without its plan said (a free
+  // account); &winget=absent (Windows) no winget for Obsidian. Each diagnosis says how long and how much to
+  // download (headline), as diagnose.rs counts it.
   // Windows: &os=windows shows the PC's words and checks (manque, installe, motscles, echec with &fail=brain):
   // Python and Git instead of Apple's tools, install.ps1's sections under the brain step.
   // Linux: &os=linux shows the words and checks of an Ubuntu (manque, installe, motscles, echec):
@@ -99,9 +103,9 @@
     const LABELS = {
       macos: 'Version de macOS', windows: 'Version de Windows', python: 'Python (pour les automatismes)',
       git: 'Git (l’historique de tes notes)', disk: 'Espace disque', network: 'Connexion internet',
-      clt: 'Outils Apple (git, python3)', linux: 'Système', paquets: 'Outils de base (git, python3, curl)', bun: 'Bun (le moteur de la mémoire)', claude: 'Claude Code',
+      clt: 'Outils Apple (git, python3)', linux: 'Système', paquets: 'Outils de base (git, python3, curl)', bun: 'Le moteur de la mémoire', claude: 'Claude Code',
       claude_auth: 'Connexion à Claude', obsidian: 'Obsidian (pour lire tes notes)',
-      brain_vault: 'Ton dossier Brain', brain_hooks: 'Les automatismes de Claude',
+      winget: 'Outil d’installation de Microsoft', brain_vault: 'Le dossier de tes notes', brain_hooks: 'Les automatismes de Claude',
       brain_skills: 'Les compétences de Claude', brain_memory: 'La mémoire de recherche', voyage: 'Recherche par le sens',
       codex: 'Codex', codex_auth: 'Connexion à Codex', agents: 'Ton choix d’IA', brain_codex_hooks: 'Les automatismes de Codex',
       brain_codex_instructions: 'Tes consignes pour Codex', brain_codex_skills: 'Les compétences de Codex',
@@ -115,21 +119,20 @@
     const C = (id, status, detail) => ({ id, label: LABELS[id], status, detail, fix: FIX[id] || null });
     const ALL_STEPS = WIN ? ['claude', 'brain'] : LIN ? ['paquets', 'claude', 'bun', 'obsidian', 'brain'] : ['claude', 'clt', 'bun', 'obsidian', 'brain'];
     const TOOLS_MISSING = WIN
-      ? [C('python', 'missing', 'Pas encore installé. Je l’installe : par winget (Microsoft), sinon depuis son site officiel.'),
-        C('git', 'missing', 'Pas encore installé. Je l’installe : par winget (Microsoft), sinon depuis son site officiel.')]
+      ? [C('python', 'missing', 'Pas encore installé : je l’installe pour toi.'), C('git', 'missing', 'Pas encore installé : je l’installe pour toi.')]
       : LIN ? [C('paquets', 'missing', 'Il manque git et curl. Je les installe : ton ordinateur te demandera ton mot de passe.')]
         : [C('clt', 'missing', 'Pas encore installés. Apple s’en charge, il suffit de cliquer.')];
     const MISSING = [
       ...TOOLS_MISSING,
       C('bun', 'missing', 'Pas encore installé.'),
       C('claude', 'missing', 'Pas encore installé.'),
-      C('claude_auth', 'warn', 'Tu te connecteras une fois Claude Code installé.'),
+      C('claude_auth', 'missing', 'Tu te connecteras une fois Claude Code installé.'),
       C('obsidian', 'missing', 'Pas encore installé.'),
       C('brain_vault', 'missing', 'Pas encore créé.'),
       C('brain_hooks', 'missing', 'Pas encore branchés.'),
       C('brain_skills', 'missing', 'Pas encore installées.'),
       C('brain_memory', 'missing', 'Pas encore créée.'),
-      C('voyage', 'warn', 'Recherche par mots-clés seulement. Une clé Voyage permet de chercher par le sens.'),
+      C('voyage', 'missing', 'Ton cerveau retrouve tes notes par mots-clés. La recherche par le sens est une option, à ajouter après si tu veux.'),
     ];
     const OK = {
       clt: C('clt', 'ok', 'git et python3 sont là.'),
@@ -236,13 +239,82 @@
     }
 
     function diagnosis() {
-      const d = { ...diagnosisOfClaude(), advice: advice() };
-      if (!chosen) return d;
-      // What the agents chosen change: their checks, a choice still to record, their steps.
-      const installed = scenario === 'installe' || scenario === 'motscles';
-      const checks = forAgents(d.checks, () => installed && FILE_AGENTS.includes('codex'));
-      const todo = forSteps(ALL_STEPS).filter((s) => checks.some((c) => c.status === 'missing' && c.fix === s));
-      return { ...d, checks, todo };
+      let d = { ...diagnosisOfClaude(), advice: advice() };
+      if (chosen) {
+        // What the agents chosen change: their checks, a choice still to record, their steps.
+        const installed = scenario === 'installe' || scenario === 'motscles';
+        const checks = forAgents(d.checks, () => installed && FILE_AGENTS.includes('codex'));
+        const todo = forSteps(ALL_STEPS).filter((s) => checks.some((c) => c.status === 'missing' && c.fix === s));
+        d = { ...d, checks, todo };
+      }
+      return measured(d);
+    }
+
+    // diagnose.rs' sentences for Claude's account (&compte=), winget (&winget=absent) and the network (&reseau=).
+    const COMPTES = {
+      api: "Claude Code est connecté à un compte payé à chaque message (clé API, passerelle…), pas à un abonnement : je ne m'en sers ni pour le guide ni pour le résumé du soir. Rien ne bloque : tout le reste s'installe. Pour passer à ton abonnement Claude Pro ou Max, demande de l'aide à la personne qui t'a conseillé Bibo.",
+      gratuit: "Tu es connecté, mais Claude ne me dit pas quel est ton abonnement. Ton cerveau demande Claude Pro (environ 20\u00a0€ par mois) ou Max : un compte gratuit ne suffit pas. Si tu as Pro ou Max, tout va bien.",
+    };
+    const STORE = "Ouvre le Microsoft Store, cherche « Programme d'installation d'application (App Installer) » et clique sur « Obtenir (Get) » ou « Mettre à jour (Update) ». S'il n'y a que « Ouvrir (Open) », redémarre ton PC. Puis clique sur Revérifier.";
+    const SANS_WINGET = {
+      winget: C('winget', 'warn', `Il me manque l'outil d'installation de Microsoft pour installer Obsidian : je continue sans. ${STORE}`),
+      obsidian: C('obsidian', 'warn', "Pas installé : je ne peux pas l'installer sans l'outil d'installation de Microsoft (voir sa ligne). Tu peux aussi le télécharger toi-même, gratuitement, sur obsidian.md."),
+    };
+    const FILTRE = "Ce réseau bloque github.com, d'où je télécharge ton cerveau. Au travail ou à l'école, demande au service informatique d'autoriser github.com. Sinon, connecte-toi à un autre réseau, puis clique sur Revérifier.";
+    // What each piece downloads (Mo), the steps' own work (min), the speed: diagnose.rs' piece_mb and minutes.
+    const MB = { claude: 300, codex: 100, clt: 800, paquets: 50, python: 30, git: 70, bun: 45, obsidian: WIN ? 340 : LIN ? 110 : 235, brain_memory: 100 };
+    const WORK = { brain: 8, clt: 5, claude: 2, codex: 2, paquets: 2 };
+    const MACHINE = WIN || LIN ? 'PC' : 'Mac';
+    const fmtMinutes = (m) => {
+      if (m <= 57) return `environ ${Math.max(5, Math.floor((m + 2) / 5) * 5)}\u00a0minutes`;
+      if (m > 299) return 'plusieurs heures';
+      const r = Math.floor((m + 5) / 10) * 10;
+      return r % 60 === 0 ? `environ ${r / 60}\u00a0h` : `environ ${Math.floor(r / 60)}\u00a0h\u00a0${r % 60}`;
+    };
+    const fmtMb = (mb) => {
+      const fifties = Math.max(1, Math.ceil(mb / 50)) * 50;
+      if (fifties < 1000) return `${fifties}\u00a0Mo`;
+      const tenths = Math.ceil(mb / 100);
+      return tenths % 10 === 0 ? `${tenths / 10}\u00a0Go` : `${Math.floor(tenths / 10)},${tenths % 10}\u00a0Go`;
+    };
+    const STEP_NAMES = { claude: 'Claude', codex: 'Codex', brain: 'ton cerveau', clt: "les outils d'Apple", paquets: 'les outils de base', bun: 'le moteur de la mémoire', obsidian: 'Obsidian' };
+    function installing(todo) {
+      let parts = todo.filter((s) => STEP_NAMES[s]).map((s) => STEP_NAMES[s]);
+      // The brain step brings the tools along.
+      if (todo.includes('brain')) parts = parts.filter((p) => ['Claude', 'Codex', 'ton cerveau'].includes(p));
+      return parts.length < 2 ? parts.join('') : `${parts.slice(0, -1).join(', ')} et ${parts[parts.length - 1]}`;
+    }
+
+    // As diagnose.rs' decide() ends: the lines the parameters change, then what is left to download, how
+    // long, and the sentence over the list.
+    function measured(d) {
+      const reseau = P.get('reseau');
+      let checks = d.checks.map((c) => (c.id === 'claude_auth' && Object.hasOwn(COMPTES, P.get('compte') || '') ? C('claude_auth', 'warn', COMPTES[P.get('compte')]) : c));
+      if (WIN && P.get('winget') === 'absent' && checks.some((c) => c.id === 'obsidian' && c.status === 'missing')) {
+        checks = checks.flatMap((c) => (c.id === 'git' ? [c, SANS_WINGET.winget] : c.id === 'obsidian' ? [SANS_WINGET.obsidian] : [c]));
+      }
+      const { todo } = d;
+      const mb = todo.length ? checks.filter((c) => c.status === 'missing' && todo.includes(c.fix)).reduce((n, c) => n + (MB[c.id] || 0), 0) + (todo.includes('brain') ? 10 : 0) : 0;
+      const minutes = todo.length ? todo.reduce((n, s) => n + (WORK[s] || 1), 0) + Math.ceil((mb * 1e6) / (reseau === 'lent' ? 1e5 : 2.5e6) / 60) : 0;
+      const slow = reseau === 'lent' && mb > 0;
+      const time = fmtMinutes(minutes);
+      const size = fmtMb(mb);
+      checks = checks.map((c) => {
+        if (c.id !== 'network') return c;
+        if (reseau === 'filtre' && todo.includes('brain')) return C('network', 'error', FILTRE);
+        if (slow) return C('network', 'warn', `${c.detail.replace(/\.$/, '')}, mais lentement : prévois ${time} en tout, avec ${size} à télécharger. En données mobiles, attends d'avoir un Wi-Fi.`);
+        return c;
+      });
+      const red = checks.filter((c) => c.status === 'error').length;
+      const what = installing(todo);
+      let headline = `Ton ${MACHINE} est prêt. J'installe ${what} : ${time} et ${size} à télécharger.`;
+      if (red === 1) headline = "Une chose bloque l'installation : la ligne en rouge dit quoi faire. Ensuite, clique sur Revérifier.";
+      else if (red > 1) headline = "Des choses bloquent l'installation : les lignes en rouge disent quoi faire. Ensuite, clique sur Revérifier.";
+      else if (!todo.length) headline = `Tout est déjà installé sur ton ${MACHINE}.`;
+      else if (slow) headline = `Ton ${MACHINE} est prêt, mais ta connexion est lente. J'installe ${what} : prévois ${time}, avec ${size} à télécharger. En données mobiles, attends d'avoir un Wi-Fi.`;
+      // claude.ai silent (&alerte=network): not every site answers.
+      const online = d.online && P.get('alerte') !== 'network';
+      return { ...d, checks, online, can_install: red === 0, headline, download_mb: mb, minutes };
     }
 
     function diagnosisOfClaude() {
@@ -262,7 +334,7 @@
       if (Object.hasOwn(CLAUDE_ONLY, scenario)) {
         const todo = CLAUDE_ONLY[scenario];
         const checks = MISSING.map((c) => {
-          if (c.id === 'claude_auth') return C('claude_auth', 'warn', 'Pas encore connecté. Tu le feras en un clic.');
+          if (c.id === 'claude_auth') return C('claude_auth', 'missing', 'Pas encore connecté. Tu le feras en un clic.');
           return c.id === 'voyage' || todo.includes(c.fix) ? c : OK[c.id];
         });
         return { os: SYSTEM, arch: ARCH, ram_gb: 16, disk_free_gb: 182.4, online: true, todo, can_install: true, checks: [...ONLINE, ...checks] };
@@ -412,6 +484,8 @@
       'repair-terminal': { todo: ['obsidian', 'brain'], fail: 'obsidian', status: 'unsupported', rounds: [] },
     };
     const REPAIR = REPAIRS[scenario] || null;
+    // steps.rs' LINK_HOSTS: the only hosts open_link opens.
+    const LINK_HOSTS = ['dashboard.voyageai.com', 'docs.voyageai.com', 'claude.com', 'claude.ai', 'obsidian.md', 'chatgpt.com'];
     // Who repairs (repair.rs, agents.json or the window's choice): named only when Codex is listed, the
     // first one preferred.
     let AGENTS = FILE_AGENTS;
@@ -487,6 +561,8 @@
         return { status: 'ok', message: 'Ton cerveau trouvera tes notes par le sens.' };
       },
       async claude_logged_in() {
+        // How many times the window asked (dev/screens.mjs reads it).
+        window.__auths = (window.__auths || 0) + 1;
         if (P.get('lent')) { await wait(10000); return false; }
         await wait(150); if (loginOpened) loginPolls += 1; return loggedIn();
       },
@@ -577,14 +653,23 @@
       async open_repair_terminal({ step }) { console.log('open_repair_terminal', step); await wait(T(300)); },
       async start_onboarding() { await wait(100); },
       async open_vault() { await wait(100); if (P.get('obsidian') === 'absent') throw 'Obsidian n’est pas encore installé.'; },
-      async brain_complete() { await wait(20); return P.get('incomplet') !== '1'; },
       async brain_folder() { await wait(50); return WIN ? 'C:\\Users\\aminata\\Documents\\Brain' : 'Documents/Brain'; },
-      // The links opened, in turn (dev/screens.mjs reads them).
-      async open_link({ url }) { (window.__liens ||= []).push(url); console.log('open_link', url); },
-      // The guide (guide-mock.html has its window): offered once the brain and Claude Code are there.
-      // &guide=1: Claude Code installed and logged in, the brain's folder made: the guide works here (D1, guide.rs
-      // in #70), even if a later step fails.
-      async guide_offert() { await wait(50); return scenario === 'installe' || scenario === 'motscles' || (P.get('guide') === '1' && stepsRun.has('claude') && loggedIn()); },
+      // The links asked, in turn (dev/screens.mjs reads them); refused as steps.rs refuses them, off its LINK_HOSTS.
+      async open_link({ url }) {
+        (window.__liens ||= []).push(url);
+        console.log('open_link', url);
+        const host = /^https:\/\/([^/?#]+)/.exec(url);
+        if (!host || !LINK_HOSTS.includes(host[1])) throw "Ce lien n'est pas autorisé.";
+      },
+      // The guide (guide-mock.html has its window), as guide.rs offers it: true with a whole brain; "dossier"
+      // with the brain's folder only and Claude Code logged in (D1): back on an install that stopped
+      // (&incomplet=1), or under a failure once Claude Code is installed (&guide=1); else false.
+      async guide_offert() {
+        await wait(50);
+        const back = scenario === 'installe' || scenario === 'motscles';
+        if (back && P.get('incomplet') !== '1') return true;
+        return (back || (P.get('guide') === '1' && stepsRun.has('claude'))) && loggedIn() ? 'dossier' : false;
+      },
       async guide_open() { console.log('guide_open'); await wait(100); },
     };
 

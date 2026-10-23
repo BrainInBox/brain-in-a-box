@@ -43,7 +43,7 @@ const SCENARIOS = [
   's=echec&go=done',
   's=echec&go=done&os=linux',
   's=echec&go=done&fail=brain&os=windows',
-  's=manque&go=login&nth=1&click=next,next,next,skip',
+  's=manque&go=done&click=next,next,next,skip',
   's=repair-ok&go=done',
   's=repair-user-action&go=done',
   's=repair-low&go=done',
@@ -100,8 +100,8 @@ const SCENARIOS = [
   // A beginner's day one: the preview's number on the welcome, the login put off twice (the end asks for
   // it first), a login that never comes (what to do, after 3 min: here 20 s), the guide under a failure.
   's=manque&go=welcome&version=0.1.76&os=windows',
-  's=manque&go=done&click=skip,skip&os=windows',
-  's=manque&go=done&nth=2&click=skip,skip&jamais=1&hint=20',
+  's=manque&go=done&click=skip&os=windows',
+  's=manque&go=done&nth=2&click=skip&jamais=1&hint=20',
   's=login-early&go=done&jamais=1&hint=20',
   's=echec&go=done&fail=brain&os=windows&guide=1',
   // The reviews': back without Claude's login (asked first, then the guide), the subscription's page, a
@@ -117,11 +117,21 @@ const SCENARIOS = [
   's=installe&go=welcome&incomplet=1&os=windows',
   's=installe&go=welcome&lent=1&os=windows',
   's=installe&go=done&click=vault&obsidian=absent&os=windows',
+  // The diagnosis says it all: the lines for later (« Plus tard »), an account paid per message, a claude.ai
+  // account without its plan said, no winget (and the Store), a filter on github.com, a slow network.
+  's=manque&go=diag&click=detail&os=windows',
+  's=installe&go=diag&compte=api&os=windows',
+  's=installe&go=diag&compte=gratuit',
+  's=manque&go=diag&winget=absent&os=windows&click=store',
+  's=manque&go=diag&reseau=filtre&os=windows',
+  's=manque&go=diag&reseau=lent&os=windows',
 ];
 
 // Where Codex can be chosen (&porte=1, as the tests open it): what some screens must say, or not.
 const has = (shots, start, text) => shots.some((s) => s.startsWith(`== ${start}`) && s.includes(text));
 const last = (shots, start) => shots.filter((s) => s.startsWith(`== ${start}`)).pop() || '';
+// The main button of that screen, the last time it showed ('' without one).
+const mainOf = (shots, start) => shots.mains[shots.findLastIndex((s) => s.startsWith(`== ${start}`))] ?? '';
 const CODEX_CHECKS = [
   {
     name: 'Codex on an API key, login put off: the end connects it, never opens the onboarding',
@@ -143,7 +153,7 @@ const CODEX_CHECKS = [
   },
   {
     name: 'Claude preferred, both logins put off: the end connects Claude first, never opens the onboarding, the note says Codex\'s state',
-    query: 's=manque&porte=1&choix=both&resume=claude&codex=billed&click=skip,skip,skip&go=done',
+    query: 's=manque&porte=1&choix=both&resume=claude&codex=billed&click=skip,skip&go=done',
     ok: (shots) => {
       const done = last(shots, 'done');
       return done.includes('Presque prêt') && done.includes('[Connecter mon compte Claude]') && !done.includes('[Présente-toi à') && done.includes('clé API');
@@ -203,6 +213,11 @@ const CODEX_CHECKS = [
     ok: (shots) => has(shots, 'login', 'J’attends ta connexion') && !shots.some((s) => s.includes('Si ton navigateur affiche un code')),
   },
   {
+    name: 'Nothing to click at the end (Codex on settings no login fixes): Bibo may doze off, the control of the check that he stays awake',
+    query: 's=manque&porte=1&choix=codex&codex=system&os=windows&click=skip&go=done',
+    ok: (shots) => mainOf(shots, 'done') === '' && shots.asleep,
+  },
+  {
     name: 'One account rule everywhere: a personal ChatGPT plan, and both accounts for both',
     query: 's=manque&porte=1&go=choice',
     ok: (shots) => has(shots, 'welcome', 'abonnement ChatGPT personnel (pas un compte d’entreprise)')
@@ -241,7 +256,7 @@ const CLAUDE_CHECKS = [
   },
   {
     name: '« Presque prêt »: one button, the subscription\'s page, nothing that takes a bank card',
-    query: 's=manque&go=done&click=skip,skip&os=windows',
+    query: 's=manque&go=done&click=skip&os=windows',
     ok: (shots) => {
       const done = last(shots, 'done');
       return done.includes('[Connecter mon compte Claude]') && done.includes('[Je n’ai pas encore Claude Pro]') && !done.includes('[Recherche par le sens]')
@@ -266,12 +281,81 @@ const CLAUDE_CHECKS = [
     ok: (shots) => has(shots, 'install', 'sur le chargeur') && shots.filter((s) => s.includes('Oups, ça a coincé')).every((s) => !s.includes('jusqu’à la fin')),
   },
   {
-    name: 'Back on an install that stopped half way: the welcome says it, and how to finish it; the guide stays',
+    name: 'D1, back on an install that stopped half way (guide_offert "dossier"): not finished, « Vérifier mon PC » first, the guide already there, Claude\'s login not read again',
     query: 's=installe&go=welcome&incomplet=1&os=windows',
     ok: (shots) => {
       const welcome = last(shots, 'welcome');
-      return welcome.includes('Ton installation n’est pas finie') && welcome.includes('«\u00a0Vérifier mon PC\u00a0»')
-        && welcome.includes('[Vérifier mon PC]') && welcome.includes('[Guide-moi dans un logiciel]');
+      return welcome.includes('Ton installation n’est pas finie. Je peux déjà te guider dans un logiciel.') && welcome.includes('«\u00a0Vérifier mon PC\u00a0»')
+        && mainOf(shots, 'welcome') === 'Vérifier mon PC' && welcome.includes('[Guide-moi dans un logiciel]') && shots.auths === 0;
+    },
+  },
+  {
+    name: 'D1 under a failure: the folder there and Claude logged in, the guide is offered',
+    query: 's=echec&go=done&fail=brain&os=windows&guide=1',
+    ok: (shots) => has(shots, 'install', '[Essayer le guide quand même]'),
+  },
+  {
+    name: '« Plus tard » once for Claude\'s login: the end says what is missing, never asks « Plus tard » again',
+    query: 's=manque&go=done&click=skip&os=windows',
+    ok: (shots) => last(shots, 'done').includes('Presque prêt') && !shots.some((s) => s.startsWith('== login') && s.includes('[Plus tard]')),
+  },
+  {
+    name: 'Bibo stays awake where a click is awaited: the welcome, the end that is ready',
+    query: 's=manque&go=welcome&version=0.1.76&os=windows',
+    ok: (shots) => mainOf(shots, 'welcome') === 'Vérifier mon PC' && !shots.asleep,
+  },
+  {
+    name: 'Bibo stays awake on the end that is ready, the guide its main button',
+    query: 's=installe&go=done',
+    ok: (shots) => mainOf(shots, 'done') === 'Guide-moi dans un logiciel' && !shots.asleep,
+  },
+  {
+    name: 'The diagnosis says how long and how much to download (diagnose.rs\' headline), never « 10 à 20 minutes »',
+    query: 's=manque&go=diag&click=detail&os=windows',
+    ok: (shots) => {
+      const diag = last(shots, 'diag');
+      return diag.includes('environ 15\u00a0minutes et 900\u00a0Mo à télécharger') && !shots.some((s) => s.startsWith('== diag') && s.includes('10 à 20 minutes'))
+        && diag.includes('Connexion à Claude\u00a0: Plus tard');
+    },
+  },
+  {
+    name: 'An orange line unfolds the list: an account paid per message, said with who to ask, « Revérifier » there',
+    query: 's=installe&go=diag&compte=api&os=windows',
+    ok: (shots) => {
+      const diag = last(shots, 'diag');
+      return diag.includes('[Masquer le détail]') && diag.includes('payé à chaque message') && diag.includes('[Revérifier]') && diag.includes('ligne en orange');
+    },
+  },
+  {
+    name: 'A claude.ai account without its plan said: unfolded, the price of Claude Pro',
+    query: 's=installe&go=diag&compte=gratuit',
+    ok: (shots) => last(shots, 'diag').includes('[Masquer le détail]') && last(shots, 'diag').includes('Claude Pro (environ 20\u00a0€ par mois)'),
+  },
+  {
+    name: 'No winget: the list unfolded, a button to App Installer in the Store (an https page), and a way if it does not open',
+    query: 's=manque&go=diag&winget=absent&os=windows&click=store',
+    ok: (shots) => {
+      const diag = last(shots, 'diag');
+      return shots.links.join() === 'https://apps.microsoft.com/detail/9NBLGGH4NNS1' && diag.includes('[Masquer le détail]')
+        && diag.includes('App Installer') && diag.includes('[Revérifier]') && /\[Ouvrir le Microsoft Store/.test(shots.find((s) => s.startsWith('== diag') && s.includes('[Ouvrir le Microsoft Store')) || '');
+    },
+  },
+  {
+    name: 'A filter on github.com: blocked, the headline says the red line tells what to do',
+    query: 's=manque&go=diag&reseau=filtre&os=windows',
+    ok: (shots) => {
+      const diag = last(shots, 'diag');
+      return diag.includes('Je ne peux pas installer pour l’instant.') && diag.includes('Une chose bloque l’installation') && diag.includes('bloque github.com')
+        && mainOf(shots, 'diag') === 'Revérifier';
+    },
+  },
+  {
+    name: 'A slow network: how long, the Wi-Fi, « Revérifier »; never « 10 à 20 minutes »',
+    query: 's=manque&go=diag&reseau=lent&os=windows',
+    ok: (shots) => {
+      const diag = last(shots, 'diag');
+      return diag.includes('ta connexion est lente') && diag.includes('prévois environ 2\u00a0h\u00a040') && diag.includes('attends d’avoir un Wi-Fi')
+        && diag.includes('[Revérifier]') && !diag.includes('10 à 20');
     },
   },
   {
@@ -554,8 +638,9 @@ async function screens(mockText, scripts, query) {
 
   // Each screen once, in the order it first shows: a login polled ten times is one screen.
   const shots = [];
-  // When each screen first showed, in the run's own milliseconds.
+  // When each screen first showed, in the run's own milliseconds, and its main button then.
   shots.at = [];
+  shots.mains = [];
   // The install bar's widths, each new one in turn (bibo.js draws the same one on Bibo's box).
   const bars = [];
   const snap = () => {
@@ -569,6 +654,7 @@ async function screens(mockText, scripts, query) {
     if (!shots.includes(text)) {
       shots.push(text);
       shots.at.push(t.now());
+      shots.mains.push(doc.body.querySelector('.actions')?.querySelector('[data-act="next"]')?.textContent ?? '');
     }
   };
   // Promises settle between two timers, as in the window.
@@ -586,6 +672,9 @@ async function screens(mockText, scripts, query) {
   shots.refused = ctx.__refused || 0;
   shots.bars = bars.map((w) => parseFloat(w));
   shots.links = ctx.__liens || [];
+  // How many times the window read Claude's login, and whether Bibo dozed off by the end (app.js' own sleep).
+  shots.auths = ctx.__auths || 0;
+  shots.asleep = Boolean(doc.body.querySelector('.hero')?.children[0]?.classList.contains('asleep'));
   return shots;
 }
 

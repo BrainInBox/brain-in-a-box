@@ -358,6 +358,9 @@ body.big .plan { justify-content: center; text-align: left; }
 
 .check.is-error { background: rgba(192, 57, 43, 0.07); }
 
+/* An orange line unfolds the list: it says what to do, and is found at a glance. */
+.check.is-warn { background: rgba(163, 95, 9, 0.07); }
+
 /* Bibo's advice: which AI, from what is already there. */
 .advice {
   padding: 8px 12px;

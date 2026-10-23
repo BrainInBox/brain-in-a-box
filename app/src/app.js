@@ -52,39 +52,33 @@ const ROOT_STEPS = ['paquets', 'obsidian'];
 const STEPS = {
   paquets: {
     name: 'Outils de base',
-    short: 'les outils de base',
     what: 'git, python3 et curl, des outils du système.',
     running: 'Tape ton mot de passe dans la fenêtre du système.',
     say: ['Ton ordinateur va te demander ton mot de passe.', 'C’est pour installer les outils du système qui manquent.'],
   },
   clt: {
     name: 'Outils Apple',
-    short: 'les outils Apple',
     what: 'Les outils de base fournis par Apple.',
     running: 'Clique sur « Installer » (Install), puis « Accepter » (Agree). Apple télécharge ensuite ses outils, 5 à 15 min : ne t’inquiète pas si sa fenêtre annonce d’abord plus d’une heure.',
     say: ['Une fenêtre Apple va s’ouvrir : clique sur Installer.', 'Je t’attends. Tu ne la vois pas ? Regarde dans le Dock.'],
   },
   bun: {
     name: 'Bun',
-    short: 'le moteur de ta mémoire',
     what: 'Le moteur de ta mémoire.',
     say: ['J’installe Bun.', 'C’est le moteur de ta mémoire.'],
   },
   claude: {
     name: 'Claude Code',
-    short: 'Claude Code',
     what: `Claude, directement sur ton ${OS.machine}.`,
     say: ['J’installe Claude Code.', 'L’outil officiel d’Anthropic.'],
   },
   codex: {
     name: 'Codex',
-    short: 'Codex',
     what: `Codex, directement sur ton ${OS.machine}.`,
     say: ['J’installe Codex.', 'L’outil officiel d’OpenAI.'],
   },
   obsidian: {
     name: 'Obsidian',
-    short: 'Obsidian',
     what: 'Pour feuilleter ton cerveau.',
     // Linux: its official package, installed as root once the system has the password.
     say: ['J’installe Obsidian.', SYSTEM === 'linux'
@@ -93,7 +87,6 @@ const STEPS = {
   },
   brain: {
     name: 'Ton cerveau',
-    short: 'ton cerveau',
     // On Windows, install.ps1 brings Python, Git, Bun and Obsidian too.
     what: WINDOWS ? 'Tes notes, ta mémoire, tes automatismes, et Obsidian.' : 'Tes notes, ta mémoire et tes automatismes.',
     say: ['Je prépare ton cerveau.', WINDOWS ? 'C’est l’étape la plus longue : 10 à 20 minutes.' : 'C’est l’étape la plus longue.'],
@@ -102,7 +95,6 @@ const STEPS = {
   // only searches by keywords.
   voyage: {
     name: 'Recherche par le sens',
-    short: 'la recherche par le sens',
     what: 'Ton cerveau apprend à retrouver tes notes par le sens.',
     say: ['J’active la recherche par le sens.', 'Ton cerveau relit tes notes : quelques minutes.'],
     step: 'brain',
@@ -117,12 +109,12 @@ const state = {
   // chosen), and what it preselects, the preferred one first.
   offer: { open: false, agents: [] },
   // guide_offert: the guide can work here (guide.rs says when), the welcome leads to it (G0); read again
-  // at the end and on a failure.
+  // on a failure.
   guide: false,
   // Claude's login, read with the guide at the start: without it the welcome asks for it before the guide.
   claudeOn: false,
-  // brain_complete, read with the guide at the start: false, the install stopped half way (the guide works
-  // without the rest, D1), and the welcome says so.
+  // guide_offert said "dossier": the install stopped half way, the guide works without the rest (D1), and
+  // the welcome says so.
   brainWhole: true,
   // The app's version (tauri.conf.json, 0.1.<n> for preview n), said small on the welcome; '' unknown.
   version: '',
@@ -179,7 +171,7 @@ function listFr(items) {
 }
 
 function stepInfo(id) {
-  return Object.hasOwn(STEPS, id) ? STEPS[id] : { name: id, short: id, what: '', say: [`J’installe ${id}.`, ''] };
+  return Object.hasOwn(STEPS, id) ? STEPS[id] : { name: id, what: '', say: [`J’installe ${id}.`, ''] };
 }
 
 // The run_step id behind a row of the install screen.
@@ -308,7 +300,7 @@ function focusMain() {
 // on a screen that waits for the user. Just for fun: nothing depends on it.
 
 // dev/mock.html shortens it to try it out (&sleep=3). Never at the diagnosis, which waits for « Tout
-// installer »: a sleeping Bibo there read as « it is over ».
+// installer », nor where a main button waits for its click: a sleeping Bibo there read as « it is over ».
 const SLEEP_MS = Number(window.BIBO_SLEEP_MS) || 45000;
 const CALM_SCREENS = ['welcome', 'choice', 'done'];
 const HOP_GAP_MS = 1500;
@@ -344,8 +336,7 @@ function setMood(mood) {
 }
 
 function calm() {
-  // The end that still asks for Claude's login waits for a click, as the diagnosis does.
-  return CALM_SCREENS.includes(document.body.dataset.screen) && !document.querySelector('.login-steps');
+  return CALM_SCREENS.includes(document.body.dataset.screen) && !ui.actions.querySelector('[data-act="next"]:not(:disabled)');
 }
 
 // A class for a moment: blink, hop, giggle, waking.
@@ -453,8 +444,11 @@ function onPoke() {
 function showWelcome() {
   screen('welcome', { big: true });
   if (state.guide) {
-    const check = state.offer.open ? button('Choisir mon IA', showChoice, { kind: 'secondary', act: 'check' })
-      : button(`Vérifier mon ${OS.machine}`, runDiagnosis, { kind: 'secondary', act: 'check' });
+    // An install that stopped half way (D1): finishing it comes first, the guide works already. Else the guide
+    // first, the check of the machine still there.
+    const finish = !state.brainWhole;
+    const check = state.offer.open ? button('Choisir mon IA', showChoice, finish ? { act: 'next' } : { kind: 'secondary', act: 'check' })
+      : button(`Vérifier mon ${OS.machine}`, runDiagnosis, finish ? { act: 'next' } : { kind: 'secondary', act: 'check' });
     if (!state.claudeOn) {
       // Back, Claude's login put off: the guide needs it, so it comes first.
       say('idle', 'Content de te revoir !', 'Il manque ton compte Claude : connecte-le, puis je pourrai te guider pas à pas dans un logiciel.');
@@ -469,12 +463,16 @@ function showWelcome() {
       addVersion();
       return;
     }
-    // Back, the guide ready: the guide first, the check of the machine still there. An install that stopped
-    // half way is said: the guide works without the rest, the memory and the evening's summary do not.
-    if (state.brainWhole) say('idle', 'Content de te revoir !', 'Je peux te guider pas à pas dans un logiciel : tu me montres ta fenêtre, je te dis où cliquer.');
-    else say('idle', 'Content de te revoir !', `Ton installation n’est pas finie : clique sur « ${check.textContent} » pour la reprendre. Le guide marche déjà : je peux te guider pas à pas dans un logiciel.`);
-    const guide = button('Guide-moi dans un logiciel', () => openGuide(guide), { act: 'next' });
-    ui.actions.append(check, guide);
+    const guide = button('Guide-moi dans un logiciel', () => openGuide(guide), finish ? { kind: 'secondary', act: 'guide' } : { act: 'next' });
+    if (finish) {
+      // The memory and the evening's summary wait for the rest.
+      say('idle', 'Content de te revoir !', 'Ton installation n’est pas finie. Je peux déjà te guider dans un logiciel.');
+      ui.screen.append(h('p', { class: 'note' }, `Pour la finir, clique sur « ${check.textContent} ».`));
+      ui.actions.append(guide, check);
+    } else {
+      say('idle', 'Content de te revoir !', 'Je peux te guider pas à pas dans un logiciel : tu me montres ta fenêtre, je te dis où cliquer.');
+      ui.actions.append(check, guide);
+    }
     addVersion();
     return;
   }
@@ -692,7 +690,7 @@ function riskyChecks(d) {
 }
 
 // The diagnosis' lines, folded: a dozen names of tools read as a dozen problems. Unfolded by itself
-// when something is red, or a warning the install may trip on.
+// when a line is red or orange: it says what to do.
 function detailToggle(d) {
   const line = sysLine(d);
   const body = h('div', { class: 'detail', id: 'diag-detail' }, line ? h('p', { class: 'sys' }, line) : null, checkList(d.checks));
@@ -703,8 +701,37 @@ function detailToggle(d) {
     toggle.textContent = open ? 'Masquer le détail' : 'Voir le détail';
     toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
   }
-  paint(!d.can_install || d.checks.some((c) => c.status === 'error') || riskyChecks(d).length > 0);
+  paint(!d.can_install || d.checks.some((c) => c.status === 'error' || c.status === 'warn'));
   return [toggle, body];
+}
+
+// What diagnose.rs' headline says after its first sentence (the machine ready, or ready on a slow network,
+// which the title says here): what gets installed, how long it takes, how much it downloads.
+function installWords(d) {
+  const headline = String(d.headline || '');
+  const cut = headline.indexOf('. ');
+  return cut < 0 ? headline : headline.slice(cut + 2);
+}
+
+// No winget: the line says what to do in the Microsoft Store, this button opens App Installer's page there
+// (an https page, as open_link wants). Under it, where it went, or how to get there without it.
+const STORE_APP_INSTALLER = 'https://apps.microsoft.com/detail/9NBLGGH4NNS1';
+// winget's line, as diagnose.rs names it.
+const STORE_LINE = 'Outil d’installation de Microsoft';
+
+function storeLink() {
+  const box = h('div', { class: 'links' });
+  const link = button('Ouvrir le Microsoft Store', async () => {
+    link.disabled = true;
+    try {
+      await invoke('open_link', { url: STORE_APP_INSTALLER });
+      box.replaceChildren(h('p', { class: 'note' }, `La page d’App Installer s’est ouverte dans ton navigateur : clique sur son bouton pour l’ouvrir dans le Microsoft Store. Puis fais ce que dit la ligne « ${STORE_LINE} ».`));
+    } catch {
+      box.replaceChildren(h('p', { class: 'note' }, `Je n’ai pas pu l’ouvrir. Ouvre le menu Démarrer (Start), tape « Microsoft Store », puis fais ce que dit la ligne « ${STORE_LINE} ».`));
+    }
+  }, { kind: 'secondary', small: true, act: 'store' });
+  box.append(link);
+  return box;
 }
 
 function showDiagnosis() {
@@ -713,27 +740,36 @@ function showDiagnosis() {
   // Where Codex can be chosen, the advice comes with that choice instead.
   if (!state.offer.open) ui.screen.append(...adviceLines(d.advice));
   ui.screen.append(...detailToggle(d));
+  if (d.checks.some((c) => c.id === 'winget')) ui.screen.append(storeLink());
   const change = changeButton();
   if (change) ui.actions.append(change);
+  const orange = d.checks.filter((c) => c.status === 'warn').length;
+  // An orange line can be set right before the install (winget, the network): « Revérifier » next to it.
+  const recheck = () => button('Revérifier', runDiagnosis, { kind: 'secondary', act: 'recheck' });
+  const read = orange > 1 ? ' Lis les lignes en orange, ci-dessous.' : orange ? ' Lis la ligne en orange, ci-dessous.' : '';
+  const risky = riskyChecks(d);
 
   if (!d.can_install) {
-    say('worried', 'Je ne peux pas installer pour l’instant.', 'Règle d’abord ce qui est en rouge, puis clique sur Revérifier.');
+    say('worried', 'Je ne peux pas installer pour l’instant.', d.headline);
     ui.actions.append(button('Revérifier', runDiagnosis, { act: 'next' }));
-  } else if (d.todo.length === 0 && canAddMeaning()) {
-    say('happy', 'Tout est déjà installé !', 'Ton cerveau cherche par mots-clés : tu peux lui apprendre à chercher par le sens.');
-    ui.actions.append(
-      button('Activer la recherche par le sens', () => addMeaning(showDiagnosis), { kind: 'secondary', act: 'voyage' }),
-      button('Continuer', checkLogin, { act: 'next' }));
   } else if (d.todo.length === 0) {
-    say('happy', 'Tout est déjà installé !', `Ton ${OS.machine} a tout ce qu’il faut.`);
+    const meaning = canAddMeaning();
+    say('happy', 'Tout est déjà installé !', (meaning ? 'Ton cerveau cherche par mots-clés : tu peux lui apprendre à chercher par le sens.' : `Ton ${OS.machine} a tout ce qu’il faut.`) + read);
+    if (orange) ui.actions.append(recheck());
+    if (meaning) ui.actions.append(button('Activer la recherche par le sens', () => addMeaning(showDiagnosis), { kind: 'secondary', act: 'voyage' }));
     ui.actions.append(button('Continuer', checkLogin, { act: 'next' }));
-  } else if (riskyChecks(d).length) {
-    say('idle', 'J’ai fait le tour : un point à vérifier.', `${riskyChecks(d).map((c) => `${String(c.detail || '')} ${RISKY_ADVICE[c.id]}`).join(' ')} Tu peux installer quand même (10 à 20 minutes), ou faire ça puis cliquer sur « Revérifier ».`);
-    ui.actions.append(
-      button('Revérifier', runDiagnosis, { kind: 'secondary', act: 'recheck' }),
-      button('Tout installer', startInstall, { act: 'next' }));
+  } else if (risky.length) {
+    // A slow network (all the sites answer, slowly) is said by the headline: how long, and the Wi-Fi.
+    const slow = risky.some((c) => c.id === 'network') && d.online;
+    const said = risky.filter((c) => !(c.id === 'network' && slow)).map((c) => `${String(c.detail || '')} ${RISKY_ADVICE[c.id]}`);
+    const title = risky.length > 1 ? 'J’ai fait le tour : deux points à vérifier.' : slow ? 'J’ai fait le tour : ta connexion est lente.' : 'J’ai fait le tour : un point à vérifier.';
+    const words = said.length ? [...said, 'Tu peux installer quand même, ou faire ça puis cliquer sur « Revérifier ».', installWords(d)]
+      : [installWords(d), 'Tu peux installer quand même, ou te brancher sur un Wi-Fi puis cliquer sur « Revérifier ».'];
+    say('idle', title, words.join(' '));
+    ui.actions.append(recheck(), button('Tout installer', startInstall, { act: 'next' }));
   } else {
-    say('idle', `J’ai fait le tour : ton ${OS.machine} est prêt.`, `J’installe ${listFr(d.todo.map((id) => stepInfo(id).short))} : 10 à 20 minutes. Si tu peux, branche-toi sur un Wi-Fi : il y a beaucoup à télécharger.`);
+    say('idle', `J’ai fait le tour : ton ${OS.machine} est prêt.`, installWords(d) + read);
+    if (orange) ui.actions.append(recheck());
     ui.actions.append(button('Tout installer', startInstall, { act: 'next' }));
   }
   focusMain();
@@ -1111,7 +1147,11 @@ async function askLoginInline(gen) {
 
     say('idle', 'Connecte ton compte Claude maintenant', 'Comme ça, si une étape coince, Claude pourra m’aider à la réparer.');
     ui.screen.querySelector('.steps').after(card);
-    ui.actions.append(button('Plus tard', finish, { kind: 'ghost', act: 'skip' }), connect);
+    // Put off here, it is put off for the session: the end says what is missing, without asking again.
+    ui.actions.append(button('Plus tard', () => {
+      state.loginSkipped = true;
+      finish();
+    }, { kind: 'ghost', act: 'skip' }), connect);
     card.scrollIntoView({ block: 'nearest' });
     focusMain();
   });
@@ -2636,11 +2676,9 @@ function start() {
   // Claude's login only where the guide is offered: the welcome asks for it first when it is not there.
   // Within LOGIN_READ_MS: Claude Code slow to answer held the welcome up to 10 s, empty, then read as « not
   // logged in ». Past it, the guide is offered: its window asks for the login itself.
-  const guide = readGuide().then(async () => {
-    if (!state.guide) return;
-    const [said, whole] = await Promise.all([within(LOGIN_READ_MS, loginState('claude'), true), readBrainWhole()]);
-    state.claudeOn = loggedIn('claude', said);
-    state.brainWhole = whole;
+  // "dossier" comes with Claude logged in: read once, in guide.rs.
+  const guide = readGuide().then(async (offre) => {
+    if (offre === true) state.claudeOn = loggedIn('claude', await within(LOGIN_READ_MS, loginState('claude'), true));
   });
   Promise.all([readOffer(), guide, readVersion()]).then(showWelcome);
 }
@@ -2648,15 +2686,6 @@ function start() {
 // `promise`'s answer, or `fallback` once `ms` went by without one.
 function within(ms, promise, fallback) {
   return Promise.race([promise, new Promise((resolve) => { setTimeout(() => resolve(fallback), ms); })]);
-}
-
-// Whether the install went to its end (detect.rs, files read only). Unreadable: nothing to say.
-async function readBrainWhole() {
-  try {
-    return (await invoke('brain_complete')) !== false;
-  } catch {
-    return true;
-  }
 }
 
 // Where the brain is, as the window says it (« Voir mes notes »): install.ps1 may have put it elsewhere
@@ -2677,13 +2706,19 @@ async function readVersion() {
   }
 }
 
-// Nothing to run: whether the guide can work here (guide.rs, files read only).
+// Whether the guide can work here (guide.rs): true with a whole brain; "dossier" with the brain's folder
+// only, Claude logged in (D1); false. Its answer, for start().
 async function readGuide() {
+  let offre = false;
   try {
-    state.guide = (await invoke('guide_offert')) === true;
+    offre = await invoke('guide_offert');
   } catch {
-    state.guide = false;
+    offre = false;
   }
+  state.guide = offre === true || offre === 'dossier';
+  state.brainWhole = offre !== 'dossier';
+  if (offre === 'dossier') state.claudeOn = true;
+  return offre;
 }
 
 // Closed (as shipped), or unreadable: nothing is asked, every screen as before Codex.
