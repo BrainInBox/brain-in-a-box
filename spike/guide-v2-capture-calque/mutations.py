@@ -76,6 +76,8 @@ MUTATIONS = [
      "let exclure = || Ok::<(), windows::core::HRESULT>(());", [TAURI]),
     ("W3 Tauri affinité posée après set_ignore_cursor_events (ordre « apres »)", {"windows-2022": True, "windows-2025": False}, TE,
      'const TAURI_RETENU: &str = "avant";', 'const TAURI_RETENU: &str = "apres";', [TAURI]),
+    ("W3 Tauri pas de remise au-dessus toutes les 250 ms", True, TA,
+     "std::thread::sleep(Duration::from_millis(250));", "std::thread::sleep(Duration::from_secs(3600));", [TAURI]),
     ("W3 Tauri focusable et activé", True, TA,
      [(".focusable(false)", ".focusable(true)"), (".focused(false)", ".focused(true)")], None, [TAURI]),
     ("W4 tout changement compte (seuil de part retiré)", True, V,
@@ -125,7 +127,10 @@ csc("atelier.cs", ATELIER, True)
 
 def run(exe, test):
     if test != ADMIN:
-        rc = subprocess.run([exe, "--ignored", "--exact", "tests::" + test, "--test-threads=1", "--nocapture"], capture_output=True, text=True, timeout=900)
+        # --include-ignored: the desktop tests are ignored, the code checks (no hook) are not.
+        rc = subprocess.run([exe, "--include-ignored", "--exact", "tests::" + test, "--test-threads=1", "--nocapture"], capture_output=True, text=True, timeout=900)
+        if "running 1 test" not in rc.stdout:
+            return 1, "the test did not run\n" + rc.stdout + rc.stderr
         return rc.returncode, (rc.stdout + rc.stderr)
     admin = subprocess.Popen([ATELIER, "fenetre", "Atelier Admin", "80", "80", "500", "400", "1e88e5"])
     try:

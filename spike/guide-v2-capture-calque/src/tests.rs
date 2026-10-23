@@ -23,7 +23,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumChildWindows, GetAncestor, GetForegroundWindow, SetCursorPos, SetWindowPos, ShowWindow, WindowFromPoint, GA_ROOT, SWP_NOACTIVATE, SWP_NOZORDER,
-    SW_SHOWMINNOACTIVE, WDA_EXCLUDEFROMCAPTURE, WDA_NONE, WINDOW_DISPLAY_AFFINITY,
+    HWND_TOP, SWP_NOMOVE, SWP_NOSIZE, SW_SHOWMINNOACTIVE, WDA_EXCLUDEFROMCAPTURE, WDA_NONE, WINDOW_DISPLAY_AFFINITY,
 };
 
 use crate::calque::{anneau, Calque, Mode, ANNEAU, EPAISSEUR, MARGE};
@@ -182,8 +182,21 @@ impl Desk {
         let pid = child.id();
         let p = Program(child);
         let h = until_some(&format!("« {titre} » on screen"), || find_window(|h| pid_of(h) == pid && title(h) == titre));
+        devant_tous(h);
         (p, h)
     }
+}
+
+/// A test window put on top of the others (not activated: Windows keeps that for the user's click). The
+/// runner's desktop has windows of its own that come over ours (its console, a « System Properties »).
+fn devant_tous(h: HWND) {
+    for o in top_windows().into_iter().take_while(|&o| o != h).filter(|&o| visible(o) && pid_of(o) != pid_of(h)) {
+        if frame(o).zip(frame(h)).is_some_and(|(a, b)| a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom) {
+            eprintln!("obstacle: {} « {} » over « {} »", class(o), title(o), title(h));
+        }
+    }
+    // SAFETY: a window of ours, moved up in the order only.
+    let _ = unsafe { SetWindowPos(h, Some(HWND_TOP), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE) };
 }
 
 fn find_window(pred: impl Fn(HWND) -> bool) -> Option<HWND> {
@@ -743,6 +756,99 @@ impl Sorte {
     }
 }
 
+/// Bibo's pastille, as in the guide: a small window of this process that the user clicks. Clicked, it gives
+/// this process the right to put windows in front, as Bibo has it when the user just typed in its bar.
+struct Pastille {
+    id: u64,
+    tid: u32,
+    thread: Option<JoinHandle<()>>,
+}
+
+impl Pastille {
+    fn ouvrir(r: RECT) -> Pastille {
+        use std::sync::Once;
+        use windows::core::w;
+        use windows::Win32::Foundation::{LRESULT, WPARAM};
+        use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+        use windows::Win32::System::Threading::GetCurrentThreadId;
+        use windows::Win32::UI::WindowsAndMessaging::{
+            CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW, RegisterClassW, TranslateMessage, MSG, WNDCLASSW, WS_BORDER,
+            WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
+        };
+        unsafe extern "system" fn proc_(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+            // SAFETY: the default behaviour of a plain window.
+            unsafe { DefWindowProcW(h, msg, wp, lp) }
+        }
+        static CLASS: Once = Once::new();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let thread = std::thread::spawn(move || {
+            let _p = Physical::enter();
+            // SAFETY: this module's instance and a class of static strings, registered once; the window
+            // is destroyed on this thread.
+            unsafe {
+                let instance = GetModuleHandleW(None).unwrap();
+                CLASS.call_once(|| {
+                    RegisterClassW(&WNDCLASSW { lpfnWndProc: Some(proc_), hInstance: instance.into(), lpszClassName: w!("BiboPastille"), ..Default::default() });
+                });
+                let h = CreateWindowExW(
+                    WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
+                    w!("BiboPastille"),
+                    w!("Bibo pastille"),
+                    WS_POPUP | WS_VISIBLE | WS_BORDER,
+                    r.left,
+                    r.top,
+                    r.right - r.left,
+                    r.bottom - r.top,
+                    None,
+                    None,
+                    Some(instance.into()),
+                    None,
+                )
+                .unwrap();
+                tx.send((id_of(h), GetCurrentThreadId())).unwrap();
+                let mut msg = MSG::default();
+                while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+                    let _ = TranslateMessage(&msg);
+                    DispatchMessageW(&msg);
+                }
+                let _ = DestroyWindow(h);
+            }
+        });
+        let (id, tid) = rx.recv().unwrap();
+        Pastille { id, tid, thread: Some(thread) }
+    }
+}
+
+impl Drop for Pastille {
+    fn drop(&mut self) {
+        use windows::Win32::Foundation::WPARAM;
+        use windows::Win32::UI::WindowsAndMessaging::{PostThreadMessageW, WM_QUIT};
+        // SAFETY: the pastille's thread, told to end.
+        let _ = unsafe { PostThreadMessageW(self.tid, WM_QUIT, WPARAM(0), LPARAM(0)) };
+        if let Some(t) = self.thread.take() {
+            let _ = t.join();
+        }
+    }
+}
+
+/// The user clicks Bibo's pastille, then Bibo puts the app back in front: this process (and the overlay's,
+/// when it is another) may still put a window in front when the overlay shows.
+fn bibo_vient_d_avoir_la_main(t: &str, s: RECT, tb: RECT, win: HWND) -> Result<Pastille, String> {
+    use windows::Win32::UI::WindowsAndMessaging::{AllowSetForegroundWindow, SetForegroundWindow, ASFW_ANY};
+    let pr = RECT { left: s.right - 240, top: tb.top - 90, right: s.right - 40, bottom: tb.top - 30 };
+    let pastille = Pastille::ouvrir(pr);
+    sleep(300);
+    clic(centre(pr));
+    let ph = handle(pastille.id);
+    let eue = within(Duration::from_secs(5), || (devant() == ph).then_some(())).is_some();
+    // SAFETY: plain values; this process is in front.
+    let rendue = unsafe { AllowSetForegroundWindow(ASFW_ANY).is_ok() && SetForegroundWindow(win).as_bool() };
+    let revenue = within(Duration::from_secs(5), || (devant() == win).then_some(())).is_some();
+    mesure(t, "pastille", format!("devant {eue}, rendue {rendue}, appli revenue {revenue}"));
+    check(eue && revenue, "Bibo never had the focus, or never gave it back")?;
+    Ok(pastille)
+}
+
 fn ring_area(r: RECT) -> i64 {
     let (o, i) = anneau(r);
     area(o) - area(i)
@@ -769,7 +875,12 @@ fn clic_recu(win: HWND, at: (i32, i32)) -> Option<String> {
 
 /// The first click on a window just opened: tried again while it is not yet listening.
 fn premier_clic(win: HWND, at: (i32, i32)) -> Option<String> {
-    (0..5).find_map(|_| clic_recu(win, at))
+    (0..5).find_map(|_| {
+        if dessus_a(at) != win {
+            devant_tous(win);
+        }
+        clic_recu(win, at)
+    })
 }
 
 fn verifier_calque(d: &Desk, echelle: u32, sorte: Sorte) -> Result<(), String> {
@@ -806,11 +917,13 @@ fn verifier_calque(d: &Desk, echelle: u32, sorte: Sorte) -> Result<(), String> {
     let zf = zone_of(f, s);
     let bleu_avant = avant.count_in(zf, BLUE) as i64;
 
+    let pastille = bibo_vient_d_avoir_la_main(&t, s, tb, win)?;
     let calque = sorte.ouvrir(vec![b, tb_cible]);
     // A web view draws its page a moment after the window shows.
     sleep(if tauri { 3000 } else { 500 });
     mesure(&t, "devant_apres_calque", class(devant()));
     verifier!(devant() == win, "the overlay took the focus");
+    drop(pastille);
     mesure(&t, "z_calque_vs_barre_avant", format!("{:?} < {:?}", z_index(calque.hwnd()), z_index(tray)));
 
     let pw = composer(pid, win).unwrap();
@@ -892,6 +1005,27 @@ fn verifier_calque(d: &Desk, echelle: u32, sorte: Sorte) -> Result<(), String> {
     verifier!(r3.is_some(), "the app not clicked back");
     verifier!(dessus == 10, format!("the taskbar over the overlay {} times in 10", 10 - dessus));
     verifier!(ntb2 * 100 >= ring_area(tb_cible) * (part - 10), "the ring hidden by the taskbar in use");
+
+    // Another window always on top, opened after the overlay, over the ring (a call's small window, a
+    // notification): the overlay goes back over it.
+    let zd = (ob.left - 30, ob.top - 30, ob.right - ob.left + 60, ob.bottom - ob.top + 60);
+    let (_dessus, dw) = d.open("dessus", &format!("Dessus{echelle}{}", sorte.nom()), zd, MAGENTA);
+    sleep(600);
+    let mut au_dessus = 0;
+    for _ in 0..10 {
+        sleep(200);
+        if z_index(calque.hwnd()) < z_index(dw) {
+            au_dessus += 1;
+        }
+    }
+    mesure(&t, "calque_au_dessus_fenetre_toujours_devant_sur_10", au_dessus);
+    calque.affinite(WDA_NONE);
+    sleep(400);
+    let nd = screen_copy(s).unwrap().count_in(autour, ANNEAU) as i64;
+    calque.affinite(WDA_EXCLUDEFROMCAPTURE);
+    mesure(&t, "temoin_anneau_sur_fenetre_toujours_devant", format!("{nd}/{}", ring_area(b)));
+    verifier!(au_dessus == 10, format!("a window always on top over the overlay {} times in 10", 10 - au_dessus));
+    verifier!(nd * 100 >= ring_area(b) * part, "the ring hidden by a window always on top");
     drop(calque);
     if fautes.is_empty() {
         Ok(())
@@ -965,9 +1099,9 @@ fn bureau_w3_calque() {
     let d = desk();
     let ulw = verifier_calque(&d, 100, Sorte::Win32(Mode::Ulw));
     mesure("w3.win32-ulw.100", "verdict", format!("{ulw:?}"));
-    let cle = verifier_calque(&d, 100, WIN32_RETENU);
-    mesure("w3.win32-cle.100", "verdict", format!("{cle:?}"));
-    cle.unwrap();
+    let retenu = verifier_calque(&d, 100, WIN32_RETENU);
+    mesure(&format!("w3.{}.100", WIN32_RETENU.nom()), "verdict", format!("{retenu:?}"));
+    retenu.unwrap();
 }
 
 /// Each order of calque-tauri's calls, as the guide would make it (calque-tauri, built by the workflow).

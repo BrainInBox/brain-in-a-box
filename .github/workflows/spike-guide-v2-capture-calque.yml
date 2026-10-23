@@ -125,7 +125,7 @@ jobs:
             echo "### Mesures (${{ matrix.os }})"
             echo
             echo '```'
-            grep -h '^MESURE\|^test tests::\|^calque\|panicked' "$RUNNER_TEMP"/*.log || true
+            grep -h '^MESURE\|^test tests::\|^calque\|^obstacle\|panicked' "$RUNNER_TEMP"/*.log || true
             echo '```'
           } | tee -a "$GITHUB_STEP_SUMMARY"
 
