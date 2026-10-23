@@ -17,6 +17,12 @@ $AppDataHermes = Join-Path $env:APPDATA "Hermes"
 $Xdg = @((Join-Path $HOME ".cache\hermes"), (Join-Path $HOME ".local\share\hermes"))
 $Shortcuts = @((Join-Path ([Environment]::GetFolderPath('Programs')) 'Hermes.lnk'), (Join-Path ([Environment]::GetFolderPath('Desktop')) 'Hermes.lnk'))
 $env:H1_USER_HERMES_HOME = $UserHome
+# H1_CONTAIN=1 : la parade de Bibo, tout ce que uv et node écrivent par défaut dans le profil va sous son dossier.
+$Contain = @{}
+if ($env:H1_CONTAIN -eq "1") {
+    $Contain = @{ UV_PYTHON_INSTALL_DIR = (Join-Path $Root "uv-python"); UV_CACHE_DIR = (Join-Path $Root "cache\uv") }
+    foreach ($k in $Contain.Keys) { [Environment]::SetEnvironmentVariable($k, $Contain[$k], "Process") }
+}
 $env:HERMES_HOME = $UserHome             # l'environnement hérité de la personne
 "$Phase $(Get-Date -Format HH:mm:ss)" | Set-Content (Join-Path $Out "phase.txt")
 $R = [ordered]@{ phase = $Phase; os = (Get-CimInstance Win32_OperatingSystem).Caption; build = [Environment]::OSVersion.Version.ToString() }
@@ -212,7 +218,13 @@ switch ($Phase) {
     $R.t0 = Now; Save
     $argv = @("-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", $inst, "-Commit", $Sha,
               "-NonInteractive", "-SkipBrowser", "-SkipComputerUse", "-HermesHome", $Root)
-    $run = RunTimed "powershell.exe" $argv 3000 "install"
+    $envs = @{}
+    if ($env:H1_CONTAIN -eq "1") {
+        $tmp = Join-Path $Root "tmp"; New-Item -ItemType Directory -Force $tmp | Out-Null
+        $envs = @{ TEMP = $tmp; TMP = $tmp }
+    }
+    $R.contained = [ordered]@{ on = ($env:H1_CONTAIN -eq "1"); env = $Contain; temp = $envs.TEMP }
+    $run = RunTimed "powershell.exe" $argv 3000 "install" $envs
     $R.install = [ordered]@{ seconds = $run.seconds; exit = $run.exit; c_drive_used_mb = [math]::Round(($free0 - (Get-PSDrive C).Free) / 1MB)
         tail = Tail $run.text 40 }
     $R.processes_left = RootProcesses
@@ -242,6 +254,18 @@ switch ($Phase) {
     $R.mode = $env:H1_DEFENDER
     $R.detections_until_now = Detections $since
     $R.uv_exe = @(Get-ChildItem -Path $Root -Filter uv.exe -Recurse -ErrorAction SilentlyContinue | ForEach-Object { [ordered]@{ path = $_.FullName; bytes = $_.Length } })
+    $removedStatic = @()
+    if ($env:H1_DEFENDER -ne "armed") {
+        # L'image exclut C:\ : un scan du dossier n'y verrait rien. On retire l'exclusion le temps du scan.
+        $removedStatic = @(@((Get-MpPreference).ExclusionPath) | Where-Object { $x = "$_".TrimEnd('\', '*'); $x -and $Root.StartsWith($x, [StringComparison]::OrdinalIgnoreCase) })
+        if ($removedStatic) { Remove-MpPreference -ExclusionPath $removedStatic -ErrorAction SilentlyContinue }
+        # Témoin : un EICAR posé dans le dossier scanné doit être trouvé par le scan (temps réel coupé ici).
+        $parts = @('X5O!P%@AP[4\PZX54(P^)7CC)7}$', 'EICAR-STANDARD-ANTIVIRUS', '-TEST-FILE!$H+H*')
+        $witness = Join-Path $Root "h1-witness\eicar.com"
+        New-Item -ItemType Directory -Force (Split-Path $witness) | Out-Null
+        try { [IO.File]::WriteAllText($witness, ($parts -join "")); $R.scan_witness_written = $true } catch { $R.scan_witness_written = "$_" }
+    }
+    $R.removed_for_scan = $removedStatic
     $R.state_before_scan = DefenderState
     Save
     $sw = [Diagnostics.Stopwatch]::StartNew()
@@ -249,6 +273,11 @@ switch ($Phase) {
     if (Wait-Job $j -Timeout 1080) { try { Receive-Job $j -ErrorAction Stop | Out-Null; $scan = "done" } catch { $scan = "$_" } } else { Stop-Job $j; $scan = "timeout 18 min" }
     $R.scan = [ordered]@{ result = $scan; seconds = [math]::Round($sw.Elapsed.TotalSeconds) }
     $R.detections_total = Detections $since
+    if ($env:H1_DEFENDER -ne "armed") {
+        $R.scan_witness_found = @($R.detections_total | Where-Object { @($_.resources) -match 'h1-witness' }).Count -gt 0
+        Remove-Item (Join-Path $Root "h1-witness") -Recurse -Force -ErrorAction SilentlyContinue
+        if ($removedStatic) { Add-MpPreference -ExclusionPath $removedStatic -ErrorAction SilentlyContinue }
+    }
     $R.eicar_end = Eicar $env:TEMP "end"
     $R.state_end = DefenderState
     if ($env:H1_DEFENDER -eq "armed") {
@@ -309,7 +338,7 @@ switch ($Phase) {
 "mutations" {
     $R.mutations = [ordered]@{}
     foreach ($m in "tools_default", "env_toolsets", "approvals_off", "approvals_smart", "yolo_env", "no_caps",
-                   "title_on", "memory_on", "image_auto", "cwd_context", "no_purge", "home_inherited") {
+                   "bibo_approves", "title_on", "memory_on", "image_auto", "cwd_context", "no_purge", "home_inherited") {
         "mutations $m $(Get-Date -Format HH:mm:ss)" | Set-Content (Join-Path $Out "phase.txt")
         & python "$Here\h1_probe.py" --root $Root --out $Out --mutation $m *> (Join-Path $Out "probe-$m.log")
         $code = $LASTEXITCODE
@@ -334,12 +363,15 @@ switch ($Phase) {
         $p1 = Paths $d1.text
         $R.dry_run_bibo = [ordered]@{ exit = $d1.exit; paths = $p1; outside_root = @($p1 | Where-Object { -not (Underroot $_) }) }
         $R.guard_allows_full = ($R.dry_run_bibo.outside_root.Count -eq 0)
-        $d2 = RunTimed $l @("uninstall", "--full", "--dry-run") 300 "uninstall-dry-inherited" @{ HERMES_HOME = $UserHome }
-        $p2 = Paths $d2.text
-        $R.dry_run_inherited = [ordered]@{ exit = $d2.exit; outside_root = @($p2 | Where-Object { -not (Underroot $_) }) }
-        $S2b = Sentinels
-        $R.sentinels_touched_by_inherited_dry_run = DiffMap $S2 $S2b
+        $S2b = $S2
         if ($env:H1_UNINSTALL -eq "full") {
+            # Mutation : le hermes de Bibo lancé avec le HERMES_HOME de la personne, ne serait-ce qu'en --dry-run.
+            $d2 = RunTimed $l @("uninstall", "--full", "--dry-run") 300 "uninstall-dry-inherited" @{ HERMES_HOME = $UserHome }
+            $p2 = Paths $d2.text
+            $R.dry_run_inherited = [ordered]@{ exit = $d2.exit; outside_root = @($p2 | Where-Object { -not (Underroot $_) }) }
+            $S2b = Sentinels
+            $R.sentinels_touched_by_inherited_dry_run = DiffMap $S2 $S2b
+            $R.user_path_after_inherited_dry_run = RawUserPath
             $u = RunTimed $l @("uninstall", "--full", "--yes") 900 "uninstall-full" @{ HERMES_HOME = $Root }
             $R.full = [ordered]@{ exit = $u.exit; seconds = $u.seconds; tail = Tail $u.text 45; root_exists_after = (Test-Path $Root) }
             $R.sentinels_touched_by_full = DiffMap $S2b (Sentinels)
@@ -368,14 +400,17 @@ switch ($Phase) {
     # Ce que l'installation a laissé hors du dossier et qui est toujours là
     $left = @(@($I.written_outside_root.paths) | Where-Object { $_ -and (Test-Path -LiteralPath $_) })
     $R.final.outside_left_total = $left.Count
-    $R.final.outside_left_hermes = @($left | Where-Object { $_ -match '(?i)hermes|\\uv\\|npm-cache|\\npm\\|\.cache\\|pnpm|node-gyp|electron' } | Select-Object -First 80)
+    $hl = @($left | Where-Object { $_ -match '(?i)hermes|\\uv\\|\\uv-|node-compile-cache|npm-cache|\\npm\\|pnpm|node-gyp|electron' })
+    $R.final.outside_left_hermes_count = $hl.Count
+    $R.final.outside_left_hermes = @($hl | Select-Object -First 40)
     $R.final.outside_left_groups = @($left | ForEach-Object { ($_ -split '\\' | Select-Object -First 7) -join '\' } | Group-Object | Sort-Object Count -Descending |
         Select-Object -First 25 | ForEach-Object { "$($_.Count) $($_.Name)" })
     $ok = (-not $R.bounded.root_exists) -and $R.final.path_identical_to_setup
     if ($env:H1_UNINSTALL -eq "bounded") {
-        $ok = $ok -and (@($R.final.sentinel_changes_since_setup.Keys).Count -eq 0) -and (@($R.final.user_env_changes_since_setup.Keys).Count -eq 0)
+        $ok = $ok -and (@($R.final.sentinel_changes_since_setup.Keys).Count -eq 0) -and (@($R.final.user_env_changes_since_setup.Keys).Count -eq 0) -and ($hl.Count -eq 0)
     } else {
-        $ok = $ok -and $R.mutation_full_red
+        # Job de mutation : le PATH et les sentinelles sont abîmés exprès ; on vérifie seulement que ça se voit.
+        $ok = $R.mutation_full_red -and (-not $R.bounded.root_exists)
     }
     Finish $ok
 }

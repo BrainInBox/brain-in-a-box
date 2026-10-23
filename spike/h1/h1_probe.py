@@ -33,6 +33,7 @@ REQUIRED = ["code_vu", "etat", "consigne", "libelle", "cible", "confiance", "que
 EXPECT = {"tools_default": "tools_empty", "env_toolsets": "tools_empty",
           "approvals_off": "approval_denied_by_bibo", "approvals_smart": "approval_denied_by_bibo",
           "yolo_env": "approval_denied_by_bibo", "no_caps": "approval_denied_by_bibo",
+          "bibo_approves": "approval_denied_by_bibo",
           "title_on": "one_call_per_turn", "memory_on": "one_call_per_turn", "image_auto": "image_sent_native",
           "cwd_context": "no_local_context", "no_purge": "purge_spec_list", "home_inherited": "default_home_untouched"}
 MUTATIONS = list(EXPECT)
@@ -137,8 +138,9 @@ def runtime_command(launcher, module, env):
 
 
 class Gateway:
-    def __init__(self, cmd, env, cwd, label, out, capabilities=True):
+    def __init__(self, cmd, env, cwd, label, out, capabilities=True, approval_choice="deny"):
         self.label, self.out = label, out
+        self.approval_choice = approval_choice
         self.lock, self.cond = threading.Lock(), threading.Condition()
         self.next_id, self.pending, self.events, self.server_requests = 0, {}, [], []
         self.stderr_tail = []
@@ -184,7 +186,7 @@ class Gateway:
                 # Question du serveur : Bibo refuse toute approbation, et n'implémente rien d'autre.
                 self.server_requests.append({"t": time.time(), "method": method, "params": frame.get("params")})
                 if method == "approval":
-                    self._write({"jsonrpc": "2.0", "id": frame["id"], "result": {"choice": "deny"}})
+                    self._write({"jsonrpc": "2.0", "id": frame["id"], "result": {"choice": self.approval_choice}})
                 else:
                     self._write({"jsonrpc": "2.0", "id": frame["id"],
                                  "error": {"code": -32601, "message": "not implemented by Bibo"}})
@@ -600,7 +602,8 @@ def main():
 
     # --- G2 : variante avec le terminal, pour provoquer une approbation
     sentinel.unlink(missing_ok=True)
-    gw2 = Gateway(gw_cmd, env_appr, cwd, f"{tag}-appr", out, capabilities=caps)
+    gw2 = Gateway(gw_cmd, env_appr, cwd, f"{tag}-appr", out, capabilities=caps,
+                  approval_choice="once" if mutation == "bibo_approves" else "deny")
     s4 = gw2.request("session.create", {"cols": 100, "cwd": str(cwd), "source": "tui"})
     n_before = len(mock.snapshot())
     start = len(gw2.events)
@@ -765,7 +768,7 @@ def main():
               "auxiliary.background_review.enabled": ((cfg_after.get("auxiliary") or {}).get("background_review") or {}).get("enabled"),
               "onboarding_seen": (cfg_after.get("onboarding") or {}).get("seen")} if isinstance(cfg_after, dict) else {}
     meas["config_after_session"] = safety
-    if mutation in ("", "no_purge", "image_auto", "cwd_context", "no_caps", "yolo_env", "env_toolsets", "home_inherited", "title_on"):
+    if mutation in ("", "no_purge", "image_auto", "cwd_context", "no_caps", "yolo_env", "env_toolsets", "home_inherited", "title_on", "bibo_approves"):
         check("config_safety_kept", safety.get("approvals.mode") == "manual" and safety.get("platform_toolsets.cli") == []
               and safety.get("memory.memory_enabled") is False, safety)
 

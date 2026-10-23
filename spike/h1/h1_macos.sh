@@ -45,7 +45,7 @@ zsh -lic 'command -v hermes; readlink "$(command -v hermes)"' > "$OUT/which-herm
 python3 "$HERE/h1_probe.py" --root "$ROOT" --out "$OUT" --scan-home > "$OUT/probe-main.log" 2>&1
 pec=$?
 tail -30 "$OUT/probe-main.log"
-MUTS="tools_default env_toolsets approvals_off approvals_smart yolo_env no_caps title_on memory_on image_auto cwd_context no_purge home_inherited"
+MUTS="tools_default env_toolsets approvals_off approvals_smart yolo_env no_caps bibo_approves title_on memory_on image_auto cwd_context no_purge home_inherited"
 for m in $MUTS; do
     python3 "$HERE/h1_probe.py" --root "$ROOT" --out "$OUT" --mutation "$m" > "$OUT/probe-$m.log" 2>&1
     echo "mutation $m exit $?"
@@ -85,7 +85,7 @@ res = {"install": {"exit": int(sys.argv[3]), "seconds": int(sys.argv[4]), "tail"
        "uninstall_sentinel_changes": diff(s2, s3), "probe_sentinel_changes": diff(s1, s2),
        "inherited_dry_run_sentinel_changes": diff(s2, ld("sent2b.json") or {})}
 muts = {}
-for m in "tools_default env_toolsets approvals_off approvals_smart yolo_env no_caps title_on memory_on image_auto cwd_context no_purge home_inherited".split():
+for m in "tools_default env_toolsets approvals_off approvals_smart yolo_env no_caps bibo_approves title_on memory_on image_auto cwd_context no_purge home_inherited".split():
     r = ld(f"report-{m}.json") or {}
     muts[m] = {"killed_as_expected": bool(r.get("killed_as_expected")), "expected": r.get("expected_red"), "failed": r.get("failed")}
 res["mutations"] = muts

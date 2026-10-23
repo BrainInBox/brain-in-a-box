@@ -24,10 +24,12 @@ jobs:
           - os: windows-2022
             defender: static
             uninstall: bounded
+            contain: "1"
             mutations: true
           - os: windows-2025
             defender: armed
             uninstall: full
+            contain: "0"
             mutations: false
     runs-on: ${{ matrix.os }}
     timeout-minutes: 170
@@ -35,6 +37,7 @@ jobs:
       H1_OS: ${{ matrix.os }}
       H1_DEFENDER: ${{ matrix.defender }}
       H1_UNINSTALL: ${{ matrix.uninstall }}
+      H1_CONTAIN: ${{ matrix.contain }}
     defaults:
       run:
         shell: powershell
