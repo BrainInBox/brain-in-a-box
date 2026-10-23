@@ -1,6 +1,6 @@
 """Tests of the advice at the start (engine/hooks/_conseil.py): each sentence on made-up homes, Codex
 never offered while it is closed (and offered once a copy of the gate opens it, as the other test
-benches do), Hermes said, no login file ever opened.
+benches do), Hermes said, no login file ever opened, only a subscription counted as one, the price said.
 
     python3 -I -m unittest discover -s engine/tests -v
 """
@@ -73,21 +73,34 @@ class Conseil(unittest.TestCase):
         (self.home / ".codex" / "auth.json").write_text('{"tokens": "secret"}', encoding="utf-8")
 
     def ask(self, claude=False, codex=False, ouvert=False):
-        return _conseil.conseil(claude=[sys.executable, str(FAKE)] if claude else [],
+        if claude is True:
+            claude = [sys.executable, str(FAKE)]
+        return _conseil.conseil(claude=claude or [],
                                 codex=["codex"] if codex else [], applications=[str(self.apps)],
                                 codex_ouvert=OUVERT if ouvert else frozenset())
+
+    def says(self, status):
+        """A claude whose `claude auth status` prints `status`."""
+        script = self.root / "auth_status.py"
+        script.write_text("print(%r)\n" % status, encoding="utf-8")
+        return [sys.executable, str(script)]
 
     def test_closed_gate_the_four_sentences_and_never_codex(self):
         p = _conseil.REGLES["phrases"]
         self.auth("claude.ai")
         self.assertEqual(self.ask(claude=True)["phrase"], p["claude_connecte"])
-        self.auth("none")
+        # Logged in, billed per use: a Claude user, told what the brain needs.
+        self.auth("api_key")
         self.assertEqual(self.ask(claude=True)["phrase"], p["claude_vu"])
+        # Installed and nobody logged in, as Bibo leaves it: nothing says its user uses Claude.
+        self.auth("none")
+        c = self.ask(claude=True)
+        self.assertEqual(c["phrase"], p["rien"])
+        self.assertFalse(c["vu"]["claude"])
         self.assertEqual(self.ask()["phrase"], p["rien"])
         self.app("ChatGPT")
         c = self.ask()
-        self.assertEqual((c["conseil"], c["phrase"]), ("claude", p["chatgpt_bientot"]))
-        self.assertIn("arrive bientôt", c["phrase"])
+        self.assertEqual((c["conseil"], c["phrase"]), ("claude", p["chatgpt"]))
         self.app("Claude")
         self.assertEqual(self.ask()["phrase"], p["claude_vu"])
         self.codex_login()
@@ -160,11 +173,56 @@ class Conseil(unittest.TestCase):
     def test_a_chatgpt_user_is_told_which_subscription(self):
         self.app("ChatGPT")
         p = self.ask()["phrase"]
-        self.assertIn("abonnement Claude Pro ou Max", p)
-        self.assertIn("ton abonnement ChatGPT ne suffit pas", p)
+        self.assertIn("Il te faut Claude Pro (environ 20\u00a0€ par mois), en plus de ChatGPT ou à sa place.", p)
         self.assertIn("ce que ChatGPT sait de toi", p)
         for phrase in _conseil.REGLES["phrases"].values():
             self.assertNotIn(" y apporter", phrase)
+
+    def test_the_price_is_said_and_nothing_promised_while_codex_is_closed(self):
+        p = _conseil.REGLES["phrases"]
+        for key in ("rien", "claude_vu", "chatgpt"):
+            # A no-break space: « 20 » and « € » stay on one line.
+            self.assertIn("Claude Pro (environ 20\u00a0€ par mois)", p[key], key)
+        for key, phrase in p.items():
+            for wrong in ("bientôt", "il te faudra", "Il lui faut", "20 €"):
+                self.assertNotIn(wrong, phrase, key)
+        closed = {r["phrase"] for r in _conseil.REGLES["regles"] if r["si"].get("porte") is False}
+        self.assertFalse([k for k in closed if "Codex" in p[k]], closed)
+
+    def test_a_claude_user_is_not_told_to_pay_twice(self):
+        p = _conseil.REGLES["phrases"]
+        # Seen, its plan unknown: the Claude desktop app's subscriber must not read « pay again ».
+        self.assertIn("Si tu as Claude Pro ou Max, c'est bon. Sinon, il te faut Claude Pro", p["claude_vu"])
+        # Logged in to claude.ai: a free account is one too (its plan is not read), so no « abonnement ».
+        self.assertIn("connecté à ton compte Claude", p["claude_connecte"])
+        self.assertNotIn("abonnement", p["claude_connecte"])
+
+    def test_only_a_subscription_counts_as_logged_in(self):
+        status = '{"loggedIn": true, "authMethod": "claude.ai", "subscriptionType": %s}'
+        # claude.ai, its plan read or not: Claude Code says null for a free account as for a plan it
+        # has not read yet (its profile not fetched), and counts null as a plan itself.
+        for plan in ('"pro"', '"max"', '"team"', '"enterprise"', "null"):
+            self.assertEqual(_conseil.connexion(status % plan), "abonne", plan)
+        self.assertEqual(_conseil.connexion('{"authMethod": "claude.ai"}'), "abonne")
+        # "oauth_token" is any token given to Claude Code: the setup-token of a subscription, or a
+        # gateway's ANTHROPIC_AUTH_TOKEN, billed.
+        self.assertEqual(_conseil.connexion('note\n{"authMethod": "oauth_token"}', jeton=True), "abonne")
+        self.assertEqual(_conseil.connexion('note\n{"authMethod": "oauth_token"}'), "facture")
+        for billed in ("api_key", "api_key_helper", "third_party"):
+            self.assertEqual(_conseil.connexion('{"authMethod": "%s"}' % billed), "facture", billed)
+        for nothing in ('{"authMethod": "none"}', '{"loggedIn": true}', '{"authMethod": 4}', "Not logged in", "", "{oops", None):
+            self.assertIsNone(_conseil.connexion(nothing), nothing)
+        # Through `claude auth status`, run as the questions are: the setup-token reaches it when it is
+        # set, and only then is "oauth_token" a subscription.
+        p = _conseil.REGLES["phrases"]
+        oauth = self.says('{"loggedIn": true, "authMethod": "oauth_token"}')
+        c = self.ask(claude=oauth)
+        self.assertEqual((c["vu"]["claude"], c["vu"]["claude_connecte"], c["phrase"]), (True, False, p["claude_vu"]))
+        os.environ["CLAUDE_CODE_OAUTH_TOKEN"] = "fake-setup-token-for-the-tests"
+        c = self.ask(claude=oauth)
+        self.assertEqual((c["vu"]["claude_connecte"], c["phrase"]), (True, p["claude_connecte"]))
+        c = self.ask(claude=self.says(status % "null"))
+        self.assertEqual((c["vu"]["claude_connecte"], c["phrase"]), (True, p["claude_connecte"]))
 
     def test_no_login_file_is_ever_opened(self):
         self.codex_login()
@@ -227,7 +285,7 @@ class Conseil(unittest.TestCase):
                 rc = im.main(["conseil"])
         self.assertEqual(rc, 0)
         lines = out.getvalue().strip().split("\n")
-        self.assertEqual(lines, [_conseil.REGLES["phrases"]["chatgpt_bientot"], _conseil.REGLES["phrases"]["hermes_lu"]])
+        self.assertEqual(lines, [_conseil.REGLES["phrases"]["chatgpt"], _conseil.REGLES["phrases"]["hermes_lu"]])
 
 
 if __name__ == "__main__":

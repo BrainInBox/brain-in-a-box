@@ -109,7 +109,7 @@ const STEPS = {
   },
 };
 
-const CHECK_STATUS = { ok: 'OK', missing: 'À installer', warn: 'À noter', error: 'Bloquant' };
+const CHECK_STATUS = { ok: 'OK', missing: 'À installer', later: 'Plus tard', warn: 'À noter', error: 'Bloquant' };
 const STEP_STATUS = { pending: 'En attente', running: 'En cours…', done: 'Fait', failed: 'Échec' };
 
 const state = {
@@ -664,9 +664,11 @@ function adviceLines(a) {
 
 function checkList(checks) {
   return h('ul', { class: 'checks card' }, checks.map((c) => {
-    const status = Object.hasOwn(CHECK_STATUS, c.status) ? c.status : 'warn';
+    // Missing, with no step to bring it (the login, the search by meaning): for later, nothing to worry about.
+    const said = c.status === 'missing' && !c.fix ? 'later' : c.status;
+    const status = Object.hasOwn(CHECK_STATUS, said) ? said : 'warn';
     return h('li', { class: `check is-${status}` },
-      icon(status),
+      icon(status === 'later' ? 'pending' : status),
       h('span', { class: 'check-label' }, String(c.label), h('span', { class: 'sr-only' }, ` : ${CHECK_STATUS[status]}`)),
       h('span', { class: 'check-detail' }, String(c.detail || '')));
   }));
@@ -748,7 +750,7 @@ function startInstall() {
 
 function keywordsOnly() {
   const voyage = state.diag.checks.find((c) => c.id === 'voyage');
-  return Boolean(voyage) && voyage.status === 'warn';
+  return Boolean(voyage) && voyage.status !== 'ok';
 }
 
 // The brain is there (before the install, or thanks to it) but finds notes by keywords only.
