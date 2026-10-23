@@ -23,7 +23,10 @@ gbrain-selfupdate.sh of the user's own, as in gbrain-update-check.py.
 
 A green or orange line is shown once per run, a red one once a day while its
 cause lasts (shown.json, next to etat.json), in whichever session starts first,
-Claude Code's or Codex's. Silent when the session is resumed, cleared or compacted.
+Claude Code's or Codex's. An update gbrain rolled back by itself (it still works,
+nothing to do) is said once per failed version, not as a red. Silent when the
+session is resumed, cleared or compacted. Claude is given the line between
+<ligne> tags: it holds « » of its own, the words to say.
 
 The brain, in every session wherever it starts (the vault's CLAUDE.md is read only in the vault):
 where the notes are (_vault_write.brain_dir: BRAIN_DIR, else ~/Documents/Brain, else ~/Brain), the
@@ -53,8 +56,11 @@ RUN_ID = re.compile(r"\d{8}-\d{4}(-\d{1,2})?", re.A)
 # What to say to Claude: words the controle skill answers to.
 SAY_WHAT = "dis « qu'est-ce que le contrôle a fait ? »"
 CHECK_NOW = "dis « contrôle mon cerveau »"
+UNDO = "dis « annule le contrôle »"
 WHY_LATE = "dis « pourquoi gbrain n'est pas à jour ? » pour que je regarde"
 GBRAIN = "gbrain (la recherche dans tes notes)"
+# Keys of what is said once, then never again while it lasts (shown.json keeps them as SEEN).
+ONCE, SEEN = "info:", "vu"
 HERE = os.path.dirname(os.path.abspath(__file__))
 # What each session is told of the person's lessons: each one costs every session its tokens.
 LESSONS_MAX, LESSON_CHARS = 30, 300
@@ -148,34 +154,33 @@ def check_lines(etat, now, home):
     if not etat:
         return reds, None, None
     when = "Cette nuit" if etat.get("mode") == "nuit" else "Au dernier contrôle"
-    # Said every day until it is done, not only the night it was found: hidden, it stays in the history.
+    # Said every day until it is done (« c'est changé »: controle secret-change), not only the night it was
+    # found: hidden, it stays in the history.
     secrets = num(etat.get("secrets_a_changer"))
     if secrets == 1:
         reds.insert(0, ("secret", "Un mot de passe ou une clé était écrit en clair dans tes notes : je l'ai caché, "
-                                  "mais il reste dans leur historique, alors change-le (%s pour savoir lequel)."
-                        % SAY_WHAT))
+                                  "mais il reste dans leur historique, alors change-le, puis dis « c'est changé » ; "
+                                  "pour savoir lequel, %s." % SAY_WHAT))
     elif secrets > 1:
         reds.insert(0, ("secret", "%d mots de passe ou clés étaient écrits en clair dans tes notes : je les ai "
-                                  "cachés, mais ils restent dans leur historique, alors change-les (%s pour savoir "
-                                  "lesquels)." % (secrets, SAY_WHAT)))
+                                  "cachés, mais ils restent dans leur historique, alors change-les, puis dis « c'est "
+                                  "changé » ; pour savoir lesquels, %s." % (secrets, SAY_WHAT)))
     run = etat.get("run") if isinstance(etat.get("run"), str) and RUN_ID.fullmatch(etat["run"]) else None
     if not run or etat.get("rapport_reecrit") is not True or any(k == "controle" for k, _ in reds):
         return reds, None, None   # a quiet night rewrites no report, and says nothing
     fixed, look = num(etat.get("corrections")), num(etat.get("a_voir"))
+    # gbrain's own alert is said by update_lines(), from last-update.json.
     alerts = [a for a in etat.get("alertes") or [] if isinstance(a, dict) and a.get("code") != "gbrain"]
-    done = "j'ai fait %d petite%s correction%s dans tes notes (tu peux %s)" % (
-        fixed, s(fixed), s(fixed), "les annuler" if fixed > 1 else "l'annuler")
-    waiting = "%d point%s attend%s ton avis" % (look, s(look), s(look, "ent"))
-    if fixed and look:
-        line = "%s, %s et %s : %s pour les voir." % (when, done, waiting, SAY_WHAT)
+    # Never « tout va bien » next to something to look at.
+    news = " et ".join(n for n in ("%d point%s attend%s ton avis" % (look, s(look), s(look, "ent")) if look else "",
+                                    "un souci est à regarder" if alerts else "") if n)
+    done = "j'ai fait %d petite%s correction%s dans tes notes" % (fixed, s(fixed), s(fixed))
+    if fixed and not news:
+        line = "%s, %s : tout va bien, rien à faire (si tu n'en veux pas, %s)." % (when, done, UNDO)
     elif fixed:
-        line = "%s, %s : tout va bien, rien à faire." % (when, done)
-    elif look:
-        line = "%s, j'ai vérifié tes notes : rien à corriger, mais %s ; %s pour l%s voir." % (
-            when, waiting, SAY_WHAT, "es" if look > 1 else "e")
-    elif alerts:
-        line = "%s, j'ai vérifié tes notes : rien à corriger, mais un souci est à regarder ; %s pour le voir." % (
-            when, SAY_WHAT)
+        line = "%s, %s, mais %s : %s pour tout voir, et annuler ce que tu ne veux pas." % (when, done, news, SAY_WHAT)
+    elif news:
+        line = "%s, j'ai vérifié tes notes : rien à corriger, mais %s ; %s pour tout voir." % (when, news, SAY_WHAT)
     else:
         line = None
     return reds, line, run
@@ -190,11 +195,8 @@ def update_lines(info, now):
             reds.append(("gbrain:broken", "%s ne marche plus depuis une mise à jour ratée : dis « répare gbrain » et "
                                           "je t'aide à le remettre en route." % GBRAIN))
         elif status == "rolled_back":
-            tag, cur = version(info.get("tag")), version(info.get("after"))
-            reds.append(("gbrain:rolled_back",
-                         "La mise à jour de %s vers %s a raté : je suis revenu à la version %s, qui marche, donc "
-                         "rien à faire (dis « gbrain est à jour ? » pour en savoir plus)." % (GBRAIN, tag, cur)
-                         if tag and cur else
+            # It works: said once per version that failed, and no version number.
+            reds.append((ONCE + "gbrain:rolled_back:%s" % (version(info.get("tag")) or "?"),
                          "La dernière mise à jour de %s a raté : je suis revenu à la version d'avant, qui marche, "
                          "donc rien à faire (dis « gbrain est à jour ? » pour en savoir plus)." % GBRAIN))
         elif late > LATE_DAYS:
@@ -317,7 +319,7 @@ def check_part(home):
     shown = read_json(shown_path) or {}
     seen = shown.get("rouge") if isinstance(shown.get("rouge"), dict) else {}
     today = datetime.now().strftime("%Y-%m-%d")
-    parts = [(k, text) for k, text in reds if seen.get(k) != today]
+    parts = [(k, text) for k, text in reds if seen.get(k) not in (today, SEEN)]
     if line and shown.get("run") != run:
         parts.append(("run", line))
     parts = parts[:2]
@@ -327,16 +329,17 @@ def check_part(home):
         if k == "run":
             shown["run"] = run
         else:
-            seen[k] = today
+            seen[k] = SEEN if k.startswith(ONCE) else today
     shown["rouge"] = {k: v for k, v in seen.items() if k in {r for r, _ in reds}}
     os.makedirs(state, mode=0o700, exist_ok=True)
     write_shown(shown_path, shown)
 
     text = " · ".join(t for _, t in parts)
-    said = ("Contrôle du cerveau. Commence ta première réponse par cette ligne, telle quelle, puis réponds "
-            "normalement à la demande : « %s ». N'agis pas dessus sans que la personne le demande." % text)
+    said = ("Contrôle du cerveau. Commence ta première réponse par le texte entre <ligne> et </ligne>, tel quel et "
+            "sans ces balises, puis réponds normalement à la demande. N'agis pas dessus sans que la personne le "
+            "demande.\n<ligne>%s</ligne>" % text)
     # A red one is shown even if Claude forgets the line.
-    return said, text if any(k != "run" for k, _ in parts) else None
+    return said, text if any(k != "run" and not k.startswith(ONCE) for k, _ in parts) else None
 
 
 def quietly(part, *args):

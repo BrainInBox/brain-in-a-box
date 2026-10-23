@@ -954,6 +954,16 @@ class SecretsLifecycle(Sandbox):
         for word in ("annuler", "reprendre", "secret-change", "maintenant)", "gbrain maintenant", "gbrain:*"):
             self.assertNotIn(word, line.replace("controle maintenant)", ""))
 
+    def test_repairing_gbrain_names_the_installer_already_here(self):
+        """« répare gbrain »: Claude runs the installer the computer already has (Bibo's and install.ps1's copy),
+        after a yes; nothing for the person to type, no command or address to make up."""
+        with open(SKILL, encoding="utf-8") as f:
+            row = next(ln for ln in f.read().splitlines() if ln.startswith("|") and "répare gbrain" in ln)
+        for named in ("~/.brain-in-a-box/src/install.sh", "~/.brain-in-a-box/src/install.ps1", "yes"):
+            self.assertIn(named, row)
+        self.assertNotIn("same command", row)
+        self.assertNotRegex(row, r"https?:|\birm\b|\bcurl\b|\biex\b")
+
     def test_change_it_lasts_until_done(self):
         token = "gh" + "p_" + "canariDURE" + "x7Y8" * 7
         self.small_vault({"Projects/vieux.md": "# Vieux\n\ntoken: %s\n" % token})
@@ -1209,35 +1219,78 @@ class SessionStart(unittest.TestCase):
     def line(self, out):
         ctx = out["hookSpecificOutput"]["additionalContext"]
         self.assertEqual(out["hookSpecificOutput"]["hookEventName"], "SessionStart")
-        return re.search(r"« (.*) »", ctx).group(1)
+        # Between tags, alone: the line holds « » of its own (the words to say).
+        return re.search(r"\n<ligne>(.*)</ligne>(?:\n|$)", ctx).group(1)
 
     def test_the_line_follows_etat_json_once_per_run(self):
         self.etat()
         out = self.hook()
-        self.assertEqual(self.line(out), "Cette nuit, j'ai fait 7 petites corrections dans tes notes (tu peux les "
-                                         "annuler) et 2 points attendent ton avis : %s pour les voir." % ASK)
-        self.assertIn("Commence ta première réponse par cette ligne", out["hookSpecificOutput"]["additionalContext"])
+        self.assertEqual(self.line(out), "Cette nuit, j'ai fait 7 petites corrections dans tes notes, mais 2 points "
+                                         "attendent ton avis : %s pour tout voir, et annuler ce que tu ne veux pas."
+                         % ASK)
+        self.assertIn("Commence ta première réponse par le texte entre <ligne> et </ligne>",
+                      out["hookSpecificOutput"]["additionalContext"])
         self.assertNotIn("systemMessage", out, "green and orange are said once, by Claude")
         self.assertIsNone(self.hook(), "once per run")
         self.etat(run="20261015-0402", corrections=1, a_voir=0, rapport="Profil/controle.md")
-        self.assertEqual(self.line(self.hook()), "Cette nuit, j'ai fait 1 petite correction dans tes notes (tu peux "
-                                                 "l'annuler) : tout va bien, rien à faire.")
+        self.assertEqual(self.line(self.hook()), "Cette nuit, j'ai fait 1 petite correction dans tes notes : tout va "
+                                                 "bien, rien à faire (si tu n'en veux pas, dis « annule le contrôle »).")
         self.etat(run="20261015-1630", mode="maintenant", corrections=0, a_voir=1)
         self.assertEqual(self.line(self.hook()), "Au dernier contrôle, j'ai vérifié tes notes : rien à corriger, mais "
-                                                 "1 point attend ton avis ; %s pour le voir." % ASK)
+                                                 "1 point attend ton avis ; %s pour tout voir." % ASK)
         self.etat(run="20261016-0401", corrections=0, a_voir=0, rapport_reecrit=False)
         self.assertIsNone(self.hook(), "a quiet night says nothing")
 
+    def test_a_problem_is_never_hidden_behind_good_news(self):
+        """An orange alert of the night (the evening summary failing, a refused commit…) is said whatever else
+        the night did: never « tout va bien » next to it."""
+        trouble = [{"niveau": "orange", "code": "reflexion"}]
+        cases = {(2, 0): "Cette nuit, j'ai fait 2 petites corrections dans tes notes, mais un souci est à regarder : "
+                         "%s pour tout voir, et annuler ce que tu ne veux pas." % ASK,
+                 (2, 1): "Cette nuit, j'ai fait 2 petites corrections dans tes notes, mais 1 point attend ton avis et "
+                         "un souci est à regarder : %s pour tout voir, et annuler ce que tu ne veux pas." % ASK,
+                 (0, 3): "Cette nuit, j'ai vérifié tes notes : rien à corriger, mais 3 points attendent ton avis et un "
+                         "souci est à regarder ; %s pour tout voir." % ASK,
+                 (0, 0): "Cette nuit, j'ai vérifié tes notes : rien à corriger, mais un souci est à regarder ; %s pour "
+                         "tout voir." % ASK}
+        for n, ((fixed, look), want) in enumerate(cases.items()):
+            with self.subTest(fixed=fixed, look=look):
+                self.etat(run="20261014-04%02d" % n, corrections=fixed, a_voir=look,
+                          alertes=trouble + [{"niveau": "rouge", "code": "contrat"}])
+                self.assertEqual(self.line(self.hook()), want)
+        # gbrain's own alert is said by its own line (last-update.json), not twice.
+        self.etat(run="20261014-0500", corrections=2, a_voir=0, alertes=[{"niveau": "rouge", "code": "gbrain"}])
+        self.assertIn("tout va bien", self.line(self.hook()))
+
+    def test_a_rolled_back_update_is_said_once_without_versions(self):
+        """gbrain went back to the version that works by itself: nothing to do, so said once per failed version,
+        in plain words, and never as an alarm."""
+        said = ("La dernière mise à jour de gbrain (la recherche dans tes notes) a raté : je suis revenu à la version "
+                "d'avant, qui marche, donc rien à faire (dis « gbrain est à jour ? » pour en savoir plus).")
+        self.update(status="rolled_back", tag="v0.60.150.0", after="v0.60.140.0")
+        out = self.hook()
+        self.assertEqual(self.line(out), said)
+        self.assertNotIn("systemMessage", out)
+        self.assertIsNone(self.hook())
+        shown_path = os.path.join(self.state, "shown.json")
+        with open(shown_path, encoding="utf-8") as f:
+            shown = json.load(f)
+        with open(shown_path, "w", encoding="utf-8") as f:   # the next days
+            json.dump(dict(shown, rouge={k: "2000-01-01" if v != "vu" else v for k, v in shown["rouge"].items()}), f)
+        self.assertIsNone(self.hook(), "said once, not every day")
+        self.update(status="rolled_back", tag="v0.60.160.0", after="v0.60.140.0")
+        self.assertEqual(self.line(self.hook()), said, "another version failed: said again")
+
     def test_red_once_a_day_while_it_lasts(self):
         self.etat(secrets_a_changer=1)
-        self.update(status="rolled_back", tag="v0.60.150.0", after="v0.60.140.0")
+        self.update(status="broken")
         out = self.hook()
         text = self.line(out)
         self.assertEqual(text.split(" · "), [
             "Un mot de passe ou une clé était écrit en clair dans tes notes : je l'ai caché, mais il reste dans leur "
-            "historique, alors change-le (%s pour savoir lequel)." % ASK,
-            "La mise à jour de gbrain (la recherche dans tes notes) vers v0.60.150.0 a raté : je suis revenu à la "
-            "version v0.60.140.0, qui marche, donc rien à faire (dis « gbrain est à jour ? » pour en savoir plus)."],
+            "historique, alors change-le, puis dis « c'est changé » ; pour savoir lequel, %s." % ASK,
+            "gbrain (la recherche dans tes notes) ne marche plus depuis une mise à jour ratée : dis « répare gbrain » "
+            "et je t'aide à le remettre en route."],
             "two at most, reds first")
         self.assertEqual(out["systemMessage"], text)
         out = self.hook()
@@ -1254,15 +1307,11 @@ class SessionStart(unittest.TestCase):
         self.assertEqual(self.line(self.hook()), "gbrain (la recherche dans tes notes) a 16 jours de retard sur ses "
                                                  "mises à jour : il marche toujours, mais dis « pourquoi gbrain n'est "
                                                  "pas à jour ? » pour que je regarde.")
-        self.update(status="broken")
-        self.assertEqual(self.line(self.hook()), "gbrain (la recherche dans tes notes) ne marche plus depuis une mise "
-                                                 "à jour ratée : dis « répare gbrain » et je t'aide à le remettre en "
-                                                 "route.")
         self.etat(secrets_a_changer=3)
         os.unlink(os.path.join(self.state, "shown.json"))
         self.assertTrue(self.line(self.hook()).startswith(
             "3 mots de passe ou clés étaient écrits en clair dans tes notes : je les ai cachés, mais ils restent dans "
-            "leur historique, alors change-les (%s pour savoir lesquels)." % ASK))
+            "leur historique, alors change-les, puis dis « c'est changé » ; pour savoir lesquels, %s." % ASK))
 
     def test_dead_mans_switches(self):
         os.makedirs(os.path.join(self.home, "DEV", "gbrain", ".git"))
@@ -1323,7 +1372,9 @@ class SessionStart(unittest.TestCase):
                  "rapport_reecrit": True, "alertes": []}
         etats = [dict(night, alertes=[{"code": "vault_absent"}]), dict(night, dernier_succes=stamp(80)),
                  dict(night, secrets_a_changer=1), dict(night, secrets_a_changer=4),
-                 dict(night, alertes=[{"code": "lecons"}]), dict(night, mode="maintenant", corrections=2)]
+                 dict(night, alertes=[{"code": "lecons"}]), dict(night, mode="maintenant", corrections=2),
+                 dict(night, corrections=2, alertes=[{"code": "reflexion"}]),
+                 dict(night, corrections=1, a_voir=1, alertes=[{"code": "reflexion"}])]
         etats += [dict(night, corrections=c, a_voir=v) for c in (0, 1, 3) for v in (0, 1, 2) if c or v]
         lines = []
         for etat in etats:
@@ -1335,9 +1386,14 @@ class SessionStart(unittest.TestCase):
         os.makedirs(os.path.join(self.home, ".brain-in-a-box", "pending"))
         open(os.path.join(self.home, ".brain-in-a-box", "pending", "gbrain-nightly.sh"), "w").close()
         lines += [text for _, text in cs.check_lines(dict(night, dernier_succes=stamp(80)), now, self.home)[0]]
-        self.assertGreaterEqual(len(set(lines)), 19)
+        self.assertGreaterEqual(len(set(lines)), 20)
+        with open(SKILL, encoding="utf-8") as f:
+            described = f.read().split("---")[1]
         for line in lines:
             with self.subTest(line):
+                self.assertNotRegex(line, r"\d+\.\d+\.\d+", "no version number")
+                for words in re.findall(r"dis « ([^»]+) »", line):
+                    self.assertIn(words.rstrip(" ?"), described, "words the controle skill answers to")
                 for jargon in ("/controle", "Détail", "détail", ".md", "tape ", "annulable", "retour arrière",
                                "point de santé", "masqué"):
                     self.assertNotIn(jargon, line)
@@ -1360,7 +1416,7 @@ class SessionStart(unittest.TestCase):
         self.assertEqual(text.split(" · "), [
             "La dernière mise à jour de gbrain (la recherche dans tes notes) a raté : je suis revenu à la version "
             "d'avant, qui marche, donc rien à faire (dis « gbrain est à jour ? » pour en savoir plus).",
-            "Cette nuit, j'ai vérifié tes notes : rien à corriger, mais 2 points attendent ton avis ; %s pour les "
+            "Cette nuit, j'ai vérifié tes notes : rien à corriger, mais 2 points attendent ton avis ; %s pour tout "
             "voir." % ASK])
         self.assertNotIn("rm -rf", json.dumps(out, ensure_ascii=False))
 

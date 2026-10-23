@@ -260,7 +260,8 @@ recap_in(){ echo "{\"session_id\":\"$1$(date +%s)\",\"cwd\":\"/Users/builder/pro
 recap_in frrecap "$H" "$FRB"
 [ "$(head -3 "$FRB/Journal/$DAY.md" 2>/dev/null)" = "$(printf '# %s — Journal\n\n## 📊 Sessions avec Claude' "$DAY")" ] \
   && grep -q "sid:.frrecap" "$FRB/Journal/$DAY.md" && ! grep -q "sid:.frrecap" "$J" \
-  && ok "a French brain in BRAIN_DIR: the session goes there, under « Journal » and « Sessions avec Claude »" \
+  && grep -q "^  - outils : " "$FRB/Journal/$DAY.md" \
+  && ok "a French brain in BRAIN_DIR: the session goes there, under « Journal » and « Sessions avec Claude », in French" \
   || no "a French brain in BRAIN_DIR: wrong journal or titles ($(head -3 "$FRB/Journal/$DAY.md" 2>&1 | tr '\n' '|'))"
 NB="$H/no-brain"; mkdir -p "$NB"
 recap_in nobrain "$NB" ""; recap_in gone "$NB" "$NB/gone"
@@ -546,8 +547,8 @@ etat 20261014-0407; out=$(cs); rc=$?
 import json, sys
 d = json.load(sys.stdin)
 h = d["hookSpecificOutput"]
-line = ("\u00ab Cette nuit, j\x27ai fait 3 petites corrections dans tes notes (tu peux les annuler) : tout va bien, "
-        "rien \u00e0 faire. \u00bb")
+line = ("\n<ligne>Cette nuit, j\x27ai fait 3 petites corrections dans tes notes : tout va bien, rien \u00e0 faire "
+        "(si tu n\x27en veux pas, dis \u00ab annule le contr\u00f4le \u00bb).</ligne>")
 sys.exit(0 if h["hookEventName"] == "SessionStart" and line in h["additionalContext"] and "systemMessage" not in d else 1)' \
   && ok "the night's line, as SessionStart JSON (additionalContext, no systemMessage for green)" || no "wrong or no SessionStart JSON: $out"
 out=$(cs); [ -z "$out" ] && ok "said once: a second session says nothing" || no "said twice: $out"
@@ -1012,17 +1013,21 @@ print("  bad: %s" % ", ".join(bad)) if bad else None
 sys.exit(1 if bad else 0)
 PY
   # The brain is not always ~/Documents/Brain (BRAIN_DIR; ~/Brain when Windows guards Documents): no skill writes
-  # that path in, and one that sends Claude to the brain's folders says which, as the session start names it.
+  # that path in, and one that sends Claude to the brain's folders says which, as the session start names it, then
+  # the same fallbacks (a Mac's or a Linux's install sets no BRAIN_DIR).
   python3 - "$REPO/skills" <<'PY' && ok "skills: the brain is the folder the session start names, no Documents/Brain written in" \
     || no "skills: a brain path written in (see above)"
 import re, sys
 from pathlib import Path
 root = Path(sys.argv[1])
-bad = [str(f.relative_to(root)) for f in sorted(root.rglob("*")) if f.is_file()
-       and re.search(r"Documents[/\\]+Brain", f.read_text(encoding="utf-8", errors="replace"))]
+FALLBACK = "else `$BRAIN_DIR`, else `~/Documents/Brain` or `~/Brain`, the one with a `Profile/` folder"
+def text(f):
+    return re.sub(r"\s+", " ", f.read_text(encoding="utf-8", errors="replace"))
+bad = [str(f.relative_to(root)) for f in sorted(root.rglob("*"))
+       if f.is_file() and re.search(r"Documents[/\\]+Brain", text(f).replace(FALLBACK, ""))]
 bad += ["%s does not say where the brain is" % n for n in ("brain-boost", "controle", "convert-documents-to-markdown",
                                                              "quick-research")
-        if "Brain: this person's notes are in" not in (root / n / "SKILL.md").read_text(encoding="utf-8")]
+        if "Brain: this person's notes are in …\"), " + FALLBACK not in text(root / n / "SKILL.md")]
 print("  " + "; ".join(bad)) if bad else None
 sys.exit(1 if bad else 0)
 PY
