@@ -149,7 +149,8 @@ d=$(mktemp -d) && curl -fsSL --proto '=http,https' --max-time 60 --max-filesize 
 
 ## Keeping the answer
 
-Only if the user asks: save it as a note in their brain,
-`~/Documents/Brain/Resources/<topic>.md`, with today's date at the top and the
-full source list. It then shows up in Obsidian, and in `gbq query` after the
+Only if the user asks: save it as a note in their brain, `Resources/<topic>.md`,
+with today's date at the top and the full source list. The brain is the folder
+your session start names ("Brain: this person's notes are in …"), else
+`$BRAIN_DIR`. It then shows up in Obsidian, and in `gbq query` after the
 nightly run.

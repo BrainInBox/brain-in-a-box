@@ -1,6 +1,6 @@
 ---
 name: controle
-description: The brain's night check (notes vault + gbrain memory) - what it fixed by itself last night, what needs the user's opinion, whether gbrain is up to date, and undoing one fix or a whole night. Use when the user types /controle, says "contrôle mon cerveau", "vérifie mes notes", "qu'est-ce que le contrôle a fait", "annule le contrôle (de cette nuit)", "c'est un faux positif", "gbrain est à jour ?", "pourquoi gbrain n'est pas à jour", "regroupe mes leçons", "check my brain", "undo last night's check", or when the first line of the session mentions the night check.
+description: The brain's night check (notes vault + gbrain memory) - what it fixed by itself last night, what needs the user's opinion, whether gbrain is up to date, and undoing one fix or a whole night. Use when the user types /controle, says "contrôle mon cerveau", "vérifie mes notes", "qu'est-ce que le contrôle a fait", "annule le contrôle (de cette nuit)", "c'est un faux positif", "gbrain est à jour ?", "pourquoi gbrain n'est pas à jour", "répare gbrain", "regroupe mes leçons", "check my brain", "undo last night's check", or when the first line of the session mentions the night check.
 allowed-tools: Bash(~/.local/bin/controle statut), Bash(~/.local/bin/controle essai), Bash(~/.local/bin/controle maintenant), Bash(~/.local/bin/controle gbrain), Bash(~/.local/bin/controle lecons)
 ---
 
@@ -22,7 +22,7 @@ in 3 short lines. The script is the only one that fixes: never edit a note yours
 
 | The user wants | Run |
 |---|---|
-| what happened last night | `~/.local/bin/controle statut`, then read the report it names (in the brain folder: `$BRAIN_DIR`, else ~/Documents/Brain) |
+| what happened last night | `~/.local/bin/controle statut`, then read the report it names, in the brain: the folder your session start names ("Brain: this person's notes are in …"), else `$BRAIN_DIR` |
 | a check now | `~/.local/bin/controle maintenant`, with a 10-minute timeout (it usually takes 1 to 5 minutes) |
 | to see what a check would do, without changing anything | `~/.local/bin/controle essai` |
 | to undo one fix | `~/.local/bin/controle annuler <ID> --essai`, show the result, then `~/.local/bin/controle annuler <ID>` |
@@ -31,6 +31,7 @@ in 3 short lines. The script is the only one that fixes: never edit a note yours
 | they changed a secret the report says to change | `~/.local/bin/controle secret-change <S1-ID>` |
 | to stop the fixes for a while / resume | `~/.local/bin/controle pause` / `~/.local/bin/controle reprendre` (paused, it still reports) |
 | gbrain's version, delay, blocked versions | `~/.local/bin/controle gbrain` |
+| gbrain no longer starts after an update ("répare gbrain") | `~/.local/bin/controle gbrain`, then offer to run the installation again (the same command as the first time): it repairs gbrain and keeps the notes |
 | to update gbrain now (same 7-day rule) | `~/.local/bin/controle gbrain maintenant`, in the background: it can take 45 minutes |
 | to retry gbrain updates after 3 failures paused them | `~/.local/bin/controle gbrain reprendre`, in the background |
 | to group lessons into rules | see "Lessons" below |

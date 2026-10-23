@@ -1,6 +1,7 @@
 """Writing into the vault, shared by the hooks that put text from elsewhere in
 a note: daily-reflection (Claude's answer) and session-recap (a session's first
-prompt, its folder, the files it touched).
+prompt, its folder, the files it touched). And where the vault is (brain_dir),
+for every session start and the session recap.
 
 That text can come from a web page or a document. Obsidian runs some markdown
 on view (Dataview's inline `$= ...`, Templater's <% %>), loads HTML and images,
@@ -18,6 +19,16 @@ import time
 import unicodedata
 
 from _redact import redact
+
+
+def brain_dir(home):
+    """The brain: BRAIN_DIR when it is set, else ~/Documents/Brain, else ~/Brain (where install.ps1 puts it
+    when Windows protects Documents). None without a Profile folder there: a brain is never made up."""
+    chosen = os.environ.get("BRAIN_DIR", "").strip()
+    for d in [chosen] if chosen else [os.path.join(home, "Documents", "Brain"), os.path.join(home, "Brain")]:
+        if os.path.isdir(os.path.join(d, "Profile")):
+            return d
+    return None
 
 
 def clean_item(text, limit):

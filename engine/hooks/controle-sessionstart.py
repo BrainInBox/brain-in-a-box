@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """SessionStart: one line about the night check and gbrain's updates, at most, then the brain.
 
-The night check's line. Reads two state files: etat.json, written by controle.py in
+The night check's line, for a beginner: each part one sentence that says what is fine, what is
+not and what to do (a sentence to say to Claude, in the controle skill's own words), or that there
+is nothing to do; no file, no command, the detail stays in the report.
+
+Reads two state files: etat.json, written by controle.py in
 ~/.brain-in-a-box/controle (or $BRAIN_CONTROLE_DIR), and last-update.json,
 written by gbrain_update.py in ~/.gbrain (or $GBRAIN_HOME/.gbrain). Never the
 vault, never the network, never Claude. The line is made of fixed sentences
@@ -22,12 +26,12 @@ cause lasts (shown.json, next to etat.json), in whichever session starts first,
 Claude Code's or Codex's. Silent when the session is resumed, cleared or compacted.
 
 The brain, in every session wherever it starts (the vault's CLAUDE.md is read only in the vault):
-where the notes are (BRAIN_DIR, else ~/Documents/Brain, else ~/Brain), the language to speak (a
-fixed name, _langue.py: what Profile/soul.md names, else the computer's) and the LESSONS_MAX latest
-lessons of Profile/lessons.md. Those are the person's own notes, written from their corrections:
-told as such, each one a line cleaned as the journal's are, the whole bounded (CONTEXT_MAX, the
-oldest left out first). Again after /clear and a compaction, which lose them; not in a resumed
-session, which has them.
+where the notes are (_vault_write.brain_dir: BRAIN_DIR, else ~/Documents/Brain, else ~/Brain), the
+language to speak (a fixed name, _langue.py: what Profile/soul.md names, else the computer's) and the
+LESSONS_MAX latest lessons of Profile/lessons.md. Those are the person's own notes, written from
+their corrections: told as such, each one a line cleaned as the journal's are, the whole bounded
+(CONTEXT_MAX, the oldest left out first). Again after /clear and a compaction, which lose them; not
+in a resumed session, which has them.
 
 Silent in a headless run (claude -p), and a part that fails says nothing. With --agent codex
 (Codex's hooks.json), only in a session _agents.codex_hook() lets through; Codex takes the
@@ -46,7 +50,11 @@ LATE_DAYS = 14
 # Matched whole (fullmatch: no newline after it), ASCII digits only.
 VERSION = re.compile(r"v?\d+(\.\d+){2,3}", re.A)
 RUN_ID = re.compile(r"\d{8}-\d{4}(-\d{1,2})?", re.A)
-REPORTS = ("Profile/controle.md", "Profil/controle.md")
+# What to say to Claude: words the controle skill answers to.
+SAY_WHAT = "dis « qu'est-ce que le contrôle a fait ? »"
+CHECK_NOW = "dis « contrôle mon cerveau »"
+WHY_LATE = "dis « pourquoi gbrain n'est pas à jour ? » pour que je regarde"
+GBRAIN = "gbrain (la recherche dans tes notes)"
 HERE = os.path.dirname(os.path.abspath(__file__))
 # What each session is told of the person's lessons: each one costs every session its tokens.
 LESSONS_MAX, LESSON_CHARS = 30, 300
@@ -120,51 +128,54 @@ def own_updater():
 
 def check_lines(etat, now, home):
     """(reds, line of the run or None, run id) from etat.json."""
-    reds, report = [], (etat or {}).get("rapport")
-    report = report if report in REPORTS else REPORTS[0]
+    reds = []
     last = parsed((etat or {}).get("dernier_succes"), "%Y-%m-%dT%H:%M:%S") if etat else None
     codes = {a.get("code") for a in (etat or {}).get("alertes") or [] if isinstance(a, dict)}
     base = last or mtime("controle.py")
     n = days_since(base, now) if base else 0
     if "vault_absent" in codes:
-        reds.append(("controle", "Le contrôle de nuit ne trouve pas le dossier du cerveau : il ne vérifie plus rien "
-                                 "— tape /controle."))
+        reds.append(("controle", "Le contrôle de nuit ne trouve plus le dossier de ton cerveau, donc tes notes ne "
+                                 "sont plus vérifiées : %s pour que je regarde pourquoi." % CHECK_NOW))
     elif base and (now - base).total_seconds() > CHECK_DEAD_H * 3600:
         if os.path.isfile(os.path.join(home, ".brain-in-a-box", "pending", "gbrain-nightly.sh")):
-            reds.append(("controle", "Le contrôle de nuit n'a pas tourné depuis %d jour%s : le script de nuit que tu "
-                                     "as modifié est gardé, la nouvelle version attend — relance l'installation."
-                         % (n, s(n))))
+            reds.append(("controle", "Le contrôle de nuit ne tourne plus depuis %d jour%s : ton script de nuit modifié "
+                                     "est gardé et la nouvelle version attend ; relance l'installation pour la "
+                                     "prendre." % (n, s(n))))
         else:
-            reds.append(("controle", "Le contrôle de nuit n'a pas tourné depuis %d jour%s (ordinateur éteint la "
-                                     "nuit ?) — tape /controle maintenant." % (n, s(n))))
+            reds.append(("controle", "Tes notes n'ont pas été vérifiées depuis %d jour%s, sans doute parce que "
+                                     "l'ordinateur était éteint la nuit : %s pour le faire maintenant."
+                         % (n, s(n), CHECK_NOW)))
     if not etat:
         return reds, None, None
-    who = "Contrôle de cette nuit" if etat.get("mode") == "nuit" else "Dernier contrôle"
-    # Said every day until it is done, not only the night it was found.
+    when = "Cette nuit" if etat.get("mode") == "nuit" else "Au dernier contrôle"
+    # Said every day until it is done, not only the night it was found: hidden, it stays in the history.
     secrets = num(etat.get("secrets_a_changer"))
     if secrets == 1:
-        reds.insert(0, ("secret", "Contrôle du cerveau : un mot de passe ou une clé était écrit en clair et déjà "
-                                  "enregistré. Je l'ai masqué, mais change-le (détail : %s)." % report))
+        reds.insert(0, ("secret", "Un mot de passe ou une clé était écrit en clair dans tes notes : je l'ai caché, "
+                                  "mais il reste dans leur historique, alors change-le (%s pour savoir lequel)."
+                        % SAY_WHAT))
     elif secrets > 1:
-        reds.insert(0, ("secret", "Contrôle du cerveau : %d mots de passe ou clés étaient écrits en clair et déjà "
-                                  "enregistrés. Je les ai masqués, mais change-les (détail : %s)." % (secrets, report)))
+        reds.insert(0, ("secret", "%d mots de passe ou clés étaient écrits en clair dans tes notes : je les ai "
+                                  "cachés, mais ils restent dans leur historique, alors change-les (%s pour savoir "
+                                  "lesquels)." % (secrets, SAY_WHAT)))
     run = etat.get("run") if isinstance(etat.get("run"), str) and RUN_ID.fullmatch(etat["run"]) else None
     if not run or etat.get("rapport_reecrit") is not True or any(k == "controle" for k, _ in reds):
         return reds, None, None   # a quiet night rewrites no report, and says nothing
     fixed, look = num(etat.get("corrections")), num(etat.get("a_voir"))
     alerts = [a for a in etat.get("alertes") or [] if isinstance(a, dict) and a.get("code") != "gbrain"]
+    done = "j'ai fait %d petite%s correction%s dans tes notes (tu peux %s)" % (
+        fixed, s(fixed), s(fixed), "les annuler" if fixed > 1 else "l'annuler")
+    waiting = "%d point%s attend%s ton avis" % (look, s(look), s(look, "ent"))
     if fixed and look:
-        line = ("%s : %d correction%s faite%s (annulable%s), %d point%s à regarder. Détail : %s — tape /controle "
-                "pour en parler." % (who, fixed, s(fixed), s(fixed), s(fixed), look, s(look), report))
+        line = "%s, %s et %s : %s pour les voir." % (when, done, waiting, SAY_WHAT)
     elif fixed:
-        line = "%s : %d correction%s faite%s (annulable%s). Détail : %s." % (who, fixed, s(fixed), s(fixed), s(fixed),
-                                                                            report)
+        line = "%s, %s : tout va bien, rien à faire." % (when, done)
     elif look:
-        line = "%s : %d point%s à regarder. Détail : %s — tape /controle pour en parler." % (who, look, s(look),
-                                                                                              report)
+        line = "%s, j'ai vérifié tes notes : rien à corriger, mais %s ; %s pour l%s voir." % (
+            when, waiting, SAY_WHAT, "es" if look > 1 else "e")
     elif alerts:
-        line = ("%s : rien de corrigé, mais un point de santé est à regarder. Détail : %s — tape /controle pour en "
-                "parler." % (who, report))
+        line = "%s, j'ai vérifié tes notes : rien à corriger, mais un souci est à regarder ; %s pour le voir." % (
+            when, SAY_WHAT)
     else:
         line = None
     return reds, line, run
@@ -176,24 +187,27 @@ def update_lines(info, now):
     if info:
         status, late = info.get("status"), num(info.get("retard_jours"))
         if status == "broken":
-            reds.append(("gbrain:broken", "gbrain ne démarre plus après une mise à jour ratée : relance l'installation."))
+            reds.append(("gbrain:broken", "%s ne marche plus depuis une mise à jour ratée : dis « répare gbrain » et "
+                                          "je t'aide à le remettre en route." % GBRAIN))
         elif status == "rolled_back":
             tag, cur = version(info.get("tag")), version(info.get("after"))
             reds.append(("gbrain:rolled_back",
-                         "gbrain : la mise à jour vers %s a échoué, retour arrière fait, tu restes en %s — tape "
-                         "/controle gbrain." % (tag, cur) if tag and cur else
-                         "gbrain : la dernière mise à jour a échoué, retour arrière fait — tape /controle gbrain."))
+                         "La mise à jour de %s vers %s a raté : je suis revenu à la version %s, qui marche, donc "
+                         "rien à faire (dis « gbrain est à jour ? » pour en savoir plus)." % (GBRAIN, tag, cur)
+                         if tag and cur else
+                         "La dernière mise à jour de %s a raté : je suis revenu à la version d'avant, qui marche, "
+                         "donc rien à faire (dis « gbrain est à jour ? » pour en savoir plus)." % GBRAIN))
         elif late > LATE_DAYS:
-            reds.append(("gbrain:late", "gbrain a %d jours de retard sur ses mises à jour — tape /controle gbrain."
-                         % late))
+            reds.append(("gbrain:late", "%s a %d jours de retard sur ses mises à jour : il marche toujours, mais %s."
+                         % (GBRAIN, late, WHY_LATE)))
     home = os.path.expanduser("~")
     if os.path.isdir(os.path.join(home, "DEV", "gbrain", ".git")) and not own_updater():
         base = parsed((info or {}).get("derniere_verif_ok"), "%Y-%m-%dT%H:%M:%SZ", timezone.utc) \
             or mtime("gbrain_update.py", timezone.utc)
         if base and (now - base).total_seconds() > UPDATE_DEAD_H * 3600:
             n = days_since(base, now)
-            reds.append(("maj", "La vérification des mises à jour de gbrain ne tourne plus depuis %d jour%s — tape "
-                                "/controle gbrain." % (n, s(n))))
+            reds.append(("maj", "Les mises à jour de %s ne sont plus vérifiées depuis %d jour%s : il marche "
+                                "toujours, mais %s." % (GBRAIN, n, s(n), WHY_LATE)))
     return reds
 
 
@@ -210,16 +224,6 @@ def write_shown(path, shown):
         except OSError:
             pass
         raise
-
-
-def vault_dir(home):
-    """The brain: BRAIN_DIR when it is set, else ~/Documents/Brain, else ~/Brain (where install.ps1
-    puts it when Windows protects Documents). None without a Profile folder there."""
-    chosen = os.environ.get("BRAIN_DIR", "").strip()
-    for d in [chosen] if chosen else [os.path.join(home, "Documents", "Brain"), os.path.join(home, "Brain")]:
-        if os.path.isdir(os.path.join(d, "Profile")):
-            return d
-    return None
 
 
 def recent_lessons(vault):
@@ -272,10 +276,11 @@ def brain_context(home, room=CONTEXT_MAX):
     to speak, and the latest lessons, in room characters at most (the oldest lessons left out).
     The language is a fixed name (_langue.py): no text of soul.md gets through. The lessons are
     the person's own notes, framed as such."""
-    vault = vault_dir(home)
+    sys.path.insert(0, HERE)
+    from _vault_write import brain_dir
+    vault = brain_dir(home)
     if not vault:
         return None
-    sys.path.insert(0, HERE)
     import _langue
     soul = _langue.de_soul(vault)
     if soul in _langue.LANGUES:

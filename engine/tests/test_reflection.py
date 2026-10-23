@@ -8,6 +8,7 @@ user's brain and ~/.claude are never read nor written.
 
     python3 -I -m unittest discover -s engine/tests -v
 """
+import base64
 import contextlib
 import importlib.util
 import io
@@ -1160,6 +1161,58 @@ class Language(Run):
         self.assertIn("display notification (item 1 of argv) with title (item 2 of argv)", argv)
         self.assertEqual(argv[-2:], ["Ouvre Bibo.", "Ton cerveau : le résumé de ta journée a échoué"],
                          "both in argv, never in the script")
+
+    def test_the_notification_on_windows_too_with_nothing_to_install(self):
+        """A toast from Windows PowerShell 5.1 (in every Windows 10 and 11), without a console: the words go
+        through the environment, never into the script."""
+        os.environ.pop("BRAIN_NO_NOTIFY")
+        msg, title = "Ouvre Bibo et reconnecte ton compte Claude.", "Ton cerveau : le résumé de ta journée a échoué"
+        with mock.patch.object(dr.sys, "platform", "win32"), mock.patch.dict(os.environ, {"SystemRoot": r"C:\Win"}), \
+                mock.patch.object(dr.subprocess, "run") as run:
+            dr.notify(msg, title)
+        argv, kw = run.call_args.args[0], run.call_args.kwargs
+        self.assertTrue(argv[0].startswith("C:\\Win") and argv[0].endswith("powershell.exe"), argv[0])
+        self.assertEqual(argv[1:4], ["-NoProfile", "-NonInteractive", "-EncodedCommand"])
+        script = base64.b64decode(argv[4]).decode("utf-16-le")
+        self.assertIn("ToastNotificationManager", script)
+        self.assertIn(".Show(", script)
+        self.assertEqual((kw["env"]["BRAIN_NOTIFY_TITLE"], kw["env"]["BRAIN_NOTIFY_TEXT"]), (title, msg))
+        for words in (msg, title, "reconnecte"):
+            self.assertNotIn(words, " ".join(argv) + script)
+        self.assertEqual(kw["creationflags"], dr.NO_WINDOW)
+
+    @unittest.skipUnless(os.name == "nt", "Windows' own PowerShell")
+    def test_the_toast_is_made_on_this_windows(self):
+        """Up to the toast itself (shown in a desktop session; a runner may have none): the types load, the
+        words are put in."""
+        env = dict(os.environ, BRAIN_NOTIFY_TITLE="Ton cerveau : « essai »", BRAIN_NOTIFY_TEXT="<b>rien</b> & 'x'")
+        script = dr.TOAST + "\n[Console]::Out.Write($toast.Content.GetXml())"
+        p = subprocess.run([dr.powershell(), "-NoProfile", "-NonInteractive", "-EncodedCommand",
+                            base64.b64encode(script.encode("utf-16-le")).decode("ascii")],
+                           env=env, capture_output=True, timeout=120)
+        out = p.stdout.decode("utf-8", "replace")
+        self.assertEqual(p.returncode, 0, p.stderr.decode("utf-8", "replace")[-800:])
+        self.assertIn("ToastText02", out)
+        self.assertIn("&lt;b", out)   # the words are text in the toast, never its markup
+        self.assertIn("&amp;", out)
+        self.assertNotIn("<b>", out)
+
+    def test_the_notification_on_linux_when_notify_send_is_there(self):
+        os.environ.pop("BRAIN_NO_NOTIFY")
+        os.environ.pop("DBUS_SESSION_BUS_ADDRESS", None)
+        bus = "/run/user/%s/bus" % (os.getuid() if hasattr(os, "getuid") else 0)
+        with mock.patch.object(dr.sys, "platform", "linux"), mock.patch.object(dr.subprocess, "run") as run, \
+                mock.patch.object(dr, "which", return_value="/usr/bin/notify-send") as which, \
+                mock.patch.object(dr.os.path, "exists", side_effect=lambda p: p == bus):
+            dr.notify("Rien à faire.", "Ton cerveau")
+        which.assert_called_with("notify-send")
+        self.assertEqual(run.call_args.args[0], ["/usr/bin/notify-send", "Ton cerveau", "Rien à faire."])
+        if hasattr(os, "getuid"):   # a timer started without the session's bus finds it
+            self.assertEqual(run.call_args.kwargs["env"]["DBUS_SESSION_BUS_ADDRESS"], "unix:path=" + bus)
+        with mock.patch.object(dr.sys, "platform", "linux"), mock.patch.object(dr.subprocess, "run") as run, \
+                mock.patch.object(dr, "which", return_value=None):
+            dr.notify("Rien à faire.")
+        run.assert_not_called()
 
     def test_soul_in_english_keeps_english_titles_and_the_computer_is_still_named(self):
         self.fresh_day("English by default.")

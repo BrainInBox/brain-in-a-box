@@ -175,7 +175,7 @@ class Payloads(Bench):
                     self.assertEqual((code, err), (0, ""))
                     if hook == "controle-sessionstart":
                         answer = self.answered(event, out)
-                        self.assertIn("Contrôle de cette nuit : 2 corrections faites",
+                        self.assertIn("Cette nuit, j'ai fait 2 petites corrections",
                                       answer["hookSpecificOutput"]["additionalContext"])
                         self.assertIn("mot de passe ou une clé", answer["systemMessage"])
                     elif hook == "correction-detector":
@@ -344,7 +344,7 @@ class Claude(Bench):
                                                       "transcript_path": "/x/claude.jsonl"}])
         said = {hook: out for hook, _, out, _ in before[0]}
         self.assertIn("CORRECTION DETECTED", said["correction-detector"])
-        self.assertIn("Contrôle de cette nuit", json.loads(said["controle-sessionstart"])["systemMessage"])
+        self.assertIn("Cette nuit, j'ai fait 2 petites", json.loads(said["controle-sessionstart"])["systemMessage"])
         for agents in (None, ["claude"], ["codex"]):
             with self.subTest(agents=agents):
                 self.choose(agents)

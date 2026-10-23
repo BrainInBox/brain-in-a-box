@@ -18,7 +18,7 @@ import time
 import unittest
 from collections import Counter
 from contextlib import contextmanager, redirect_stdout
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -899,6 +899,14 @@ def later(days):
     return (datetime.now() + timedelta(days=days)).replace(microsecond=0).isoformat()
 
 
+class KitHeadings(unittest.TestCase):
+    def test_the_session_recaps_heading_is_the_kits_in_both_languages(self):
+        # session-recap.py titles its section in the brain's language: neither title is the user's text.
+        for heading in ("📊 Claude Sessions", "📊 Sessions avec Claude"):
+            self.assertTrue(rules.empty_note("## %s\n" % heading, "2026-09-01"), heading)
+        self.assertFalse(rules.empty_note("## 📊 Mes réunions\n", "2026-09-01"))
+
+
 class Deletions(Sandbox):
     def test_notes_with_properties_or_a_title_are_not_empty(self):
         self.small_vault({
@@ -1140,6 +1148,8 @@ class WindowsPaths(Sandbox):
 # --------------------------------------------------------------------------- the SessionStart line
 
 HOOK = os.path.join(HOOKS, "controle-sessionstart.py")
+# What a beginner says to Claude to hear more: the controle skill's own words.
+ASK = "dis « qu'est-ce que le contrôle a fait ? »"
 
 
 def stamp(hours_ago, utc=False):
@@ -1204,14 +1214,17 @@ class SessionStart(unittest.TestCase):
     def test_the_line_follows_etat_json_once_per_run(self):
         self.etat()
         out = self.hook()
-        self.assertEqual(self.line(out), "Contrôle de cette nuit : 7 corrections faites (annulables), 2 points à "
-                                         "regarder. Détail : Profile/controle.md — tape /controle pour en parler.")
+        self.assertEqual(self.line(out), "Cette nuit, j'ai fait 7 petites corrections dans tes notes (tu peux les "
+                                         "annuler) et 2 points attendent ton avis : %s pour les voir." % ASK)
         self.assertIn("Commence ta première réponse par cette ligne", out["hookSpecificOutput"]["additionalContext"])
         self.assertNotIn("systemMessage", out, "green and orange are said once, by Claude")
         self.assertIsNone(self.hook(), "once per run")
         self.etat(run="20261015-0402", corrections=1, a_voir=0, rapport="Profil/controle.md")
-        self.assertEqual(self.line(self.hook()), "Contrôle de cette nuit : 1 correction faite (annulable). "
-                                                 "Détail : Profil/controle.md.")
+        self.assertEqual(self.line(self.hook()), "Cette nuit, j'ai fait 1 petite correction dans tes notes (tu peux "
+                                                 "l'annuler) : tout va bien, rien à faire.")
+        self.etat(run="20261015-1630", mode="maintenant", corrections=0, a_voir=1)
+        self.assertEqual(self.line(self.hook()), "Au dernier contrôle, j'ai vérifié tes notes : rien à corriger, mais "
+                                                 "1 point attend ton avis ; %s pour le voir." % ASK)
         self.etat(run="20261016-0401", corrections=0, a_voir=0, rapport_reecrit=False)
         self.assertIsNone(self.hook(), "a quiet night says nothing")
 
@@ -1221,14 +1234,15 @@ class SessionStart(unittest.TestCase):
         out = self.hook()
         text = self.line(out)
         self.assertEqual(text.split(" · "), [
-            "Contrôle du cerveau : un mot de passe ou une clé était écrit en clair et déjà enregistré. Je l'ai "
-            "masqué, mais change-le (détail : Profile/controle.md).",
-            "gbrain : la mise à jour vers v0.60.150.0 a échoué, retour arrière fait, tu restes en v0.60.140.0 — tape "
-            "/controle gbrain."], "two at most, reds first")
+            "Un mot de passe ou une clé était écrit en clair dans tes notes : je l'ai caché, mais il reste dans leur "
+            "historique, alors change-le (%s pour savoir lequel)." % ASK,
+            "La mise à jour de gbrain (la recherche dans tes notes) vers v0.60.150.0 a raté : je suis revenu à la "
+            "version v0.60.140.0, qui marche, donc rien à faire (dis « gbrain est à jour ? » pour en savoir plus)."],
+            "two at most, reds first")
         self.assertEqual(out["systemMessage"], text)
         out = self.hook()
         self.assertNotIn("systemMessage", out)
-        self.assertTrue(self.line(out).startswith("Contrôle de cette nuit : 7 corrections"), "then the run's line")
+        self.assertTrue(self.line(out).startswith("Cette nuit, j'ai fait 7 petites corrections"), "then the run's line")
         self.assertIsNone(self.hook())
         with open(os.path.join(self.state, "shown.json"), encoding="utf-8") as f:
             shown = json.load(f)
@@ -1237,11 +1251,18 @@ class SessionStart(unittest.TestCase):
             json.dump(shown, f)
         self.assertEqual(len(self.line(self.hook()).split(" · ")), 2, "the next day, again")
         self.update(status="up_to_date", retard_jours=16)
-        self.assertEqual(self.line(self.hook()), "gbrain a 16 jours de retard sur ses mises à jour — tape "
-                                                 "/controle gbrain.")
+        self.assertEqual(self.line(self.hook()), "gbrain (la recherche dans tes notes) a 16 jours de retard sur ses "
+                                                 "mises à jour : il marche toujours, mais dis « pourquoi gbrain n'est "
+                                                 "pas à jour ? » pour que je regarde.")
         self.update(status="broken")
-        self.assertEqual(self.line(self.hook()), "gbrain ne démarre plus après une mise à jour ratée : relance "
-                                                 "l'installation.")
+        self.assertEqual(self.line(self.hook()), "gbrain (la recherche dans tes notes) ne marche plus depuis une mise "
+                                                 "à jour ratée : dis « répare gbrain » et je t'aide à le remettre en "
+                                                 "route.")
+        self.etat(secrets_a_changer=3)
+        os.unlink(os.path.join(self.state, "shown.json"))
+        self.assertTrue(self.line(self.hook()).startswith(
+            "3 mots de passe ou clés étaient écrits en clair dans tes notes : je les ai cachés, mais ils restent dans "
+            "leur historique, alors change-les (%s pour savoir lesquels)." % ASK))
 
     def test_dead_mans_switches(self):
         os.makedirs(os.path.join(self.home, "DEV", "gbrain", ".git"))
@@ -1254,9 +1275,10 @@ class SessionStart(unittest.TestCase):
         self.update(derniere_verif_ok=stamp(73, utc=True))
         out = self.hook()
         self.assertEqual(out["systemMessage"].split(" · "), [
-            "Le contrôle de nuit n'a pas tourné depuis 2 jours (ordinateur éteint la nuit ?) — tape /controle "
-            "maintenant.",
-            "La vérification des mises à jour de gbrain ne tourne plus depuis 3 jours — tape /controle gbrain."])
+            "Tes notes n'ont pas été vérifiées depuis 2 jours, sans doute parce que l'ordinateur était éteint la "
+            "nuit : dis « contrôle mon cerveau » pour le faire maintenant.",
+            "Les mises à jour de gbrain (la recherche dans tes notes) ne sont plus vérifiées depuis 3 jours : il "
+            "marche toujours, mais dis « pourquoi gbrain n'est pas à jour ? » pour que je regarde."])
 
     def test_never_ran_counts_from_the_install(self):
         os.makedirs(os.path.join(self.home, "DEV", "gbrain", ".git"))
@@ -1266,15 +1288,17 @@ class SessionStart(unittest.TestCase):
         self.installed("controle.py", 100)
         self.installed("gbrain_update.py", 100)
         out = self.hook()
-        self.assertIn("n'a pas tourné depuis 4 jours", out["systemMessage"])
-        self.assertIn("ne tourne plus depuis 4 jours", out["systemMessage"])
+        self.assertIn("pas été vérifiées depuis 4 jours", out["systemMessage"])
+        self.assertIn("ne sont plus vérifiées depuis 4 jours", out["systemMessage"])
 
     def test_a_dead_check_says_why_when_it_knows(self):
         self.installed("controle.py", 200)
         self.etat(dernier_succes=stamp(100), alertes=[{"niveau": "rouge", "code": "vault_absent"}])
         out = self.hook()
-        self.assertIn("ne trouve pas le dossier du cerveau", out["systemMessage"])
-        self.assertNotIn("ordinateur éteint", out["systemMessage"])
+        self.assertEqual(out["systemMessage"], "Le contrôle de nuit ne trouve plus le dossier de ton cerveau, donc "
+                                               "tes notes ne sont plus vérifiées : dis « contrôle mon cerveau » pour "
+                                               "que je regarde pourquoi.")
+        self.assertNotIn("éteint", out["systemMessage"])
         os.unlink(os.path.join(self.state, "shown.json"))
         self.etat(dernier_succes=stamp(100))
         pending = os.path.join(self.home, ".brain-in-a-box", "pending")
@@ -1282,8 +1306,43 @@ class SessionStart(unittest.TestCase):
         with open(os.path.join(pending, "gbrain-nightly.sh"), "w", encoding="utf-8", newline="") as f:
             f.write("#!/bin/zsh\n")
         out = self.hook()
-        self.assertIn("la nouvelle version attend — relance l'installation", out["systemMessage"])
-        self.assertNotIn("ordinateur éteint", out["systemMessage"])
+        self.assertEqual(out["systemMessage"], "Le contrôle de nuit ne tourne plus depuis 4 jours : ton script de nuit "
+                                               "modifié est gardé et la nouvelle version attend ; relance "
+                                               "l'installation pour la prendre.")
+        self.assertNotIn("éteint", out["systemMessage"])
+
+    def test_every_line_is_plain_words_and_says_what_to_do(self):
+        """Read by a beginner: one sentence, no file, command nor jargon, and what to do in it (a sentence to
+        say to Claude, or nothing). The detail stays in the report."""
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("controle_sessionstart", HOOK)
+        cs = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cs)
+        now = datetime.now()
+        night = {"run": "20261014-0407", "mode": "nuit", "dernier_succes": stamp(3), "rapport": "Profile/controle.md",
+                 "rapport_reecrit": True, "alertes": []}
+        etats = [dict(night, alertes=[{"code": "vault_absent"}]), dict(night, dernier_succes=stamp(80)),
+                 dict(night, secrets_a_changer=1), dict(night, secrets_a_changer=4),
+                 dict(night, alertes=[{"code": "lecons"}]), dict(night, mode="maintenant", corrections=2)]
+        etats += [dict(night, corrections=c, a_voir=v) for c in (0, 1, 3) for v in (0, 1, 2) if c or v]
+        lines = []
+        for etat in etats:
+            reds, line, _ = cs.check_lines(etat, now, self.home)
+            lines += [text for _, text in reds] + ([line] if line else [])
+        for info in ({"status": "broken"}, {"status": "rolled_back", "tag": "v1.2.3", "after": "v1.2.2"},
+                     {"status": "rolled_back"}, {"status": "up_to_date", "retard_jours": 20}):
+            lines += [text for _, text in cs.update_lines(info, datetime.now(timezone.utc))]
+        os.makedirs(os.path.join(self.home, ".brain-in-a-box", "pending"))
+        open(os.path.join(self.home, ".brain-in-a-box", "pending", "gbrain-nightly.sh"), "w").close()
+        lines += [text for _, text in cs.check_lines(dict(night, dernier_succes=stamp(80)), now, self.home)[0]]
+        self.assertGreaterEqual(len(set(lines)), 19)
+        for line in lines:
+            with self.subTest(line):
+                for jargon in ("/controle", "Détail", "détail", ".md", "tape ", "annulable", "retour arrière",
+                               "point de santé", "masqué"):
+                    self.assertNotIn(jargon, line)
+                self.assertRegex(line, r"dis « [^»]+ »|rien à faire|relance l'installation")
+                self.assertTrue(line.endswith(".") and ". " not in line, "one sentence")
 
     def test_no_update_switch_without_the_kits_updater(self):
         self.installed("gbrain_update.py", 100)
@@ -1299,9 +1358,10 @@ class SessionStart(unittest.TestCase):
         out = self.hook()
         text = self.line(out)
         self.assertEqual(text.split(" · "), [
-            "gbrain : la dernière mise à jour a échoué, retour arrière fait — tape /controle gbrain.",
-            "Contrôle de cette nuit : 2 points à regarder. Détail : Profile/controle.md — tape /controle pour en "
-            "parler."])
+            "La dernière mise à jour de gbrain (la recherche dans tes notes) a raté : je suis revenu à la version "
+            "d'avant, qui marche, donc rien à faire (dis « gbrain est à jour ? » pour en savoir plus).",
+            "Cette nuit, j'ai vérifié tes notes : rien à corriger, mais 2 points attendent ton avis ; %s pour les "
+            "voir." % ASK])
         self.assertNotIn("rm -rf", json.dumps(out, ensure_ascii=False))
 
     def test_silent_when_it_must_be(self):
@@ -1372,7 +1432,7 @@ class SessionStart(unittest.TestCase):
         self.vault("".join("## 2026-10-%02d\n- **l%02d** -> rule: %s 🧠\n" % (1 + i, i, "w" * 330) for i in range(30)))
         out = self.hook()
         ctx, lessons = self.brain(out)
-        self.assertIn("Contrôle de cette nuit", ctx)
+        self.assertIn("Cette nuit, j'ai fait 7 petites corrections", ctx)
         self.assertLessEqual(len(ctx.encode("utf-16-le")) // 2, 9000)
         self.assertGreater(len(lessons), 20)
         self.assertLess(len(lessons), 30)
@@ -1412,7 +1472,7 @@ class SessionStart(unittest.TestCase):
         self.etat()
         self.vault("## 2026-10-01\n- **one** -> rule: x\n")
         out = self.hook()
-        self.assertIn("Contrôle de cette nuit : 7 corrections", self.line(out))
+        self.assertIn("Cette nuit, j'ai fait 7 petites corrections", self.line(out))
         ctx, lessons = self.brain(out)
         self.assertIn("\n\nBrain: this person's notes are in", ctx, "after the night's line")
         self.assertEqual(lessons, ["- [2026-10-01] **one** -> rule: x"])

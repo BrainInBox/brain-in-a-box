@@ -15,9 +15,10 @@ yourself. Ask them to type something only when it must stay out of the chat
 
 ## What already works (nothing to set up)
 
-- **Notes vault**: `~/Documents/Brain`, plain markdown the user browses in
-  Obsidian. Their profile is in `Profile/`, session summaries in `Journal/`,
-  recent context in `Profile/memory.md`.
+- **Notes vault** (the brain): the folder your session start names ("Brain:
+  this person's notes are in …"), else `$BRAIN_DIR`. Plain markdown the user
+  browses in Obsidian. Their profile is in `Profile/`, session summaries in
+  `Journal/`, recent context in `Profile/memory.md`.
 - **Memory search**: `~/.local/bin/gbq query "<question>"` finds past notes,
   decisions and sessions. Search before asking the user to repeat themselves.
 - **Corrections stick**: when the user corrects you, a hook flags it and you

@@ -581,7 +581,7 @@ def codex_runs_the_kits_hooks():
     print("facts: what each hook was given by Codex 0.162.1 in a codex exec run:", seen)
     check(len(seen) == 3 and all(r["file"] is True and r["source"] == "exec" for r in seen),
           "from the first hook (SessionStart), Codex has written the session file and it says exec")
-    check("CORRECTION DETECTED" not in dump and "Contrôle de cette nuit" not in dump,
+    check("CORRECTION DETECTED" not in dump and "Cette nuit, j'ai fait" not in dump,
           "an exec run: no reminder, no night check's line reach the model")
     check(not os.path.exists(os.path.join(home, ".claude", "logs", "sessions.log")), "an exec run: nothing logged")
     check(sorted(_agents.vus(home)) == ["controle-sessionstart", "correction-detector", "session-logger"],
@@ -589,7 +589,7 @@ def codex_runs_the_kits_hooks():
     seen, dump = session(typed)
     check("CORRECTION DETECTED" in dump, "as if typed in the terminal: correction-detector's reminder reached "
                                          "the model, Codex took its answer")
-    check("Contrôle de cette nuit : 2 corrections faites" in dump,
+    check("Cette nuit, j'ai fait 2 petites corrections" in dump,
           "as if typed in the terminal: the night check's line reached the model, Codex took its answer, "
           "systemMessage included")
     B.mock.reset()

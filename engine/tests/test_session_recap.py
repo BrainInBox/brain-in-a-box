@@ -201,17 +201,21 @@ class Codex(unittest.TestCase):
     def setUp(self):
         self.root = Path(tempfile.mkdtemp(prefix="biab-recap-codex-"))
         self.home, self.codex_home = self.root / "home", self.root / "home" / ".codex"
-        self.journals, self.locks = self.root / "Journal", self.root / "locks"
+        self.brain, self.locks = self.root / "Brain", self.root / "locks"
+        self.journals = self.brain / "Journal"
         self.home.mkdir()
+        (self.brain / "Profile").mkdir(parents=True)
         day = time.strftime("%Y-%m-%d")
         self.journal = self.journals / f"{day}.md"
         self.day = day
         saved = dict(os.environ)
         self.addCleanup(lambda: (os.environ.clear(), os.environ.update(saved)))
-        os.environ.update(HOME=str(self.home), USERPROFILE=str(self.home))
-        for p in (mock.patch.object(rc, "JOURNAL_DIR", self.journals), mock.patch.object(rc, "LOCK_DIR", self.locks)):
-            p.start()
-            self.addCleanup(p.stop)
+        os.environ.update(HOME=str(self.home), USERPROFILE=str(self.home), BRAIN_DIR=str(self.brain), LANG="en_US.UTF-8")
+        for k in ("LC_ALL", "LC_MESSAGES"):
+            os.environ.pop(k, None)
+        p = mock.patch.object(rc, "LOCK_DIR", self.locks)
+        p.start()
+        self.addCleanup(p.stop)
 
     def tearDown(self):
         shutil.rmtree(self.root, ignore_errors=True)
@@ -366,8 +370,115 @@ class Codex(unittest.TestCase):
                                    capture_output=True, timeout=60)
                 self.assertIn("LOADED " + loaded, p.stdout.decode("utf-8", "replace"),
                               p.stderr.decode("utf-8", "replace")[-800:])
-                journal = self.home / "Documents" / "Brain" / "Journal" / f"{self.day}.md"
+                journal = self.journals / f"{self.day}.md"
                 self.assertIn("sid:`%s`" % rc.shown_id(sid, agent), journal.read_text(encoding="utf-8"))
+
+
+class Brain(unittest.TestCase):
+    """Where a session goes: the brain the session start names (BRAIN_DIR, else Documents/Brain, else ~/Brain,
+    each with its Profile folder), never one made up. And its titles: in the brain's language (_langue.py, as
+    the reflection: soul.md's, else the computer's), a section already there kept in its own."""
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp(prefix="biab-recap-brain-"))
+        self.addCleanup(shutil.rmtree, str(self.root), True)
+        self.home = self.root / "home"
+        self.home.mkdir()
+        self.day = time.strftime("%Y-%m-%d")
+        saved = dict(os.environ)
+        self.addCleanup(lambda: (os.environ.clear(), os.environ.update(saved)))
+        os.environ.update(HOME=str(self.home), USERPROFILE=str(self.home), LANG="en_US.UTF-8")
+        for k in ("BRAIN_DIR", "LC_ALL", "LC_MESSAGES"):
+            os.environ.pop(k, None)
+        p = mock.patch.object(rc, "LOCK_DIR", self.root / "locks")
+        p.start()
+        self.addCleanup(p.stop)
+        self.tx = self.root / "claude.jsonl"
+        self.tx.write_text(json.dumps({"type": "assistant", "timestamp": DAY + "T10:00:00Z", "message": {"content": [
+            {"type": "tool_use", "name": "Read", "input": {}}] * 3}}) + "\n", encoding="utf-8")
+        self.n = 0
+
+    def brain(self, where, soul=None):
+        (where / "Profile").mkdir(parents=True)
+        if soul is not None:
+            (where / "Profile" / "soul.md").write_text(soul, encoding="utf-8")
+        return where
+
+    def stop(self, cwd="/w/proj"):
+        """A Claude Code session's Stop hook; the id its block shows."""
+        self.n += 1
+        sid = "brain%03d-%d" % (self.n, os.getpid())
+        payload = {"session_id": sid, "cwd": cwd, "transcript_path": str(self.tx)}
+        with mock.patch.object(sys, "argv", ["session-recap.py"]), \
+                mock.patch.object(sys, "stdin", io.StringIO(json.dumps(payload))), contextlib.suppress(SystemExit):
+            rc.main()
+        return "sid:`%s`" % sid[:8]
+
+    def journal(self, brain):
+        path = brain / "Journal" / f"{self.day}.md"
+        return path.read_text(encoding="utf-8") if path.exists() else None
+
+    def test_a_french_brain_titles_its_journal_in_french(self):
+        brain = self.brain(self.home / "Documents" / "Brain", "# Soul\n\n## Langue\nfrançais\n")
+        sid = self.stop()
+        text = self.journal(brain)
+        self.assertTrue(text.startswith(f"# {self.day} — Journal\n\n## 📊 Sessions avec Claude\n- **"), text)
+        self.assertIn(sid, text)
+
+    def test_the_computers_language_when_soul_md_names_none(self):
+        os.environ["LANG"] = "fr_FR.UTF-8"
+        unnamed = self.brain(self.root / "a", "## Language\n{{LANGUAGE}}\n")
+        english = self.brain(self.root / "b", "## Language\nEnglish, please\n")
+        for brain, title, section in ((unnamed, "Journal", "📊 Sessions avec Claude"),
+                                      (english, "Daily", "📊 Claude Sessions")):
+            with self.subTest(brain.name):
+                os.environ["BRAIN_DIR"] = str(brain)
+                self.stop()
+                self.assertTrue(self.journal(brain).startswith(f"# {self.day} — {title}\n\n## {section}\n- **"))
+
+    def test_a_section_already_there_is_kept_in_its_own_language(self):
+        french = self.brain(self.root / "fr", "## Langue\nfrançais\n")
+        english = self.brain(self.root / "en", "## Language\nEnglish\n")
+        for brain, there in ((french, "## 📊 Claude Sessions"), (english, "## 📊 Sessions avec Claude")):
+            with self.subTest(brain.name):
+                os.environ["BRAIN_DIR"] = str(brain)
+                (brain / "Journal").mkdir()
+                (brain / "Journal" / f"{self.day}.md").write_text(f"# mine\n\n{there}\n- s1\n", encoding="utf-8")
+                sid = self.stop()
+                text = self.journal(brain)
+                self.assertEqual(text.count("📊"), 1, text)
+                self.assertTrue(text.startswith(f"# mine\n\n{there}\n- s1\n- **"), text)
+                self.assertIn(sid, text)
+
+    def test_the_brain_is_brain_dir_else_documents_else_home_brain(self):
+        home_brain = self.brain(self.home / "Brain")
+        self.assertIn(self.stop(), self.journal(home_brain), "install.ps1's ~/Brain when Windows guards Documents")
+        documents = self.brain(self.home / "Documents" / "Brain")
+        sid = self.stop()
+        self.assertIn(sid, self.journal(documents), "Documents/Brain first")
+        self.assertNotIn(sid, self.journal(home_brain))
+        chosen = self.brain(self.root / "chosen")
+        os.environ["BRAIN_DIR"] = str(chosen)
+        sid = self.stop()
+        self.assertIn(sid, self.journal(chosen), "BRAIN_DIR names the brain")
+        self.assertNotIn(sid, self.journal(documents))
+        os.environ["BRAIN_DIR"] = str(self.root / "gone")
+        sid = self.stop()
+        self.assertFalse((self.root / "gone").exists(), "a brain is never made")
+        for brain in (home_brain, documents, chosen):
+            self.assertNotIn(sid, self.journal(brain), brain)
+
+    def test_no_brain_no_folder(self):
+        self.stop()
+        self.assertEqual(list(self.home.iterdir()), [], "nothing made in the home folder")
+
+    def test_a_session_in_the_brain_says_brain(self):
+        brain = self.root / "cerveau"
+        for cwd, said in ((str(brain), "Brain"), (str(brain / "Projects"), "Brain"),
+                          (str(self.root / "cerveau-2"), None), ("/w/proj", "/w/proj"), ("/w/a\x00b", None)):
+            with self.subTest(cwd):
+                shown = rc.short_cwd(cwd, str(brain))
+                self.assertEqual(shown, said) if said else self.assertNotEqual(shown, "Brain")
 
 
 def rc_sentinel():

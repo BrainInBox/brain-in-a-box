@@ -41,12 +41,12 @@ this program's warnings too in French. Claude answers with Sonnet: see MODEL.
 Environment: BRAIN_DIR (vault, default ~/Documents/Brain), BRAIN_GIT_ROOTS
 (extra repos to scan, os.pathsep-separated), HERMES_DB, CLAUDE_BIN, CODEX_BIN,
 BRAIN_CODEX_MODEL, BRAIN_NO_NOTIFY=1 (no desktop notification when the reflection
-starts failing).
+starts failing: macOS' own, a Windows toast, notify-send on Linux when it is there).
 For tests and trials: --projects DIR reads the transcripts from DIR instead of
 ~/.claude/projects, --logs DIR keeps the state, error log and run lock there
 instead of ~/.claude/logs.
 """
-import argparse, glob, hashlib, json, os, re, sqlite3, subprocess, sys, tempfile, time, unicodedata
+import argparse, base64, glob, hashlib, json, os, re, sqlite3, subprocess, sys, tempfile, time, unicodedata
 from collections import namedtuple
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -1175,14 +1175,52 @@ def status_text(st, lang=None):
             f"the period since. Backfill: `python3 ~/.claude/hooks/brain/daily-reflection.py --day YYYY-MM-DD`.")
 
 
+# A toast from Windows PowerShell 5.1, which every Windows 10 and 11 has: nothing to install. The
+# words come from the environment, never in the script. SHOW puts it on screen under PowerShell's
+# name, the one Windows knows from its Start menu entry.
+TOAST = """$ErrorActionPreference = 'Stop'
+$m = [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]
+$xml = $m::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02)
+$text = $xml.GetElementsByTagName('text')
+$null = $text.Item(0).AppendChild($xml.CreateTextNode($env:BRAIN_NOTIFY_TITLE))
+$null = $text.Item(1).AppendChild($xml.CreateTextNode($env:BRAIN_NOTIFY_TEXT))
+$toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
+"""
+SHOW = ("$m::CreateToastNotifier('{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe')"
+        ".Show($toast)\n")
+
+
+def powershell():
+    """Windows PowerShell by its full path: never a powershell.exe of the current folder or the PATH."""
+    return os.path.join(os.environ.get("SystemRoot") or r"C:\Windows", "System32", "WindowsPowerShell", "v1.0",
+                        "powershell.exe")
+
+
 def notify(msg, title="Brain: daily reflection failed"):
-    if os.environ.get("BRAIN_NO_NOTIFY") or sys.platform != "darwin":
+    """A desktop notification, when it can: macOS' own, a Windows toast, notify-send on Linux."""
+    if os.environ.get("BRAIN_NO_NOTIFY"):
         return
-    # Both go in argv: nothing is interpolated into the AppleScript source.
     try:
-        subprocess.run(["/usr/bin/osascript", "-e", "on run argv", "-e",
-                        "display notification (item 1 of argv) with title (item 2 of argv)",
-                        "-e", "end run", msg, title], capture_output=True, timeout=10)
+        if sys.platform == "darwin":
+            # Both go in argv: nothing is interpolated into the AppleScript source.
+            subprocess.run(["/usr/bin/osascript", "-e", "on run argv", "-e",
+                            "display notification (item 1 of argv) with title (item 2 of argv)",
+                            "-e", "end run", msg, title], capture_output=True, timeout=10)
+        elif sys.platform == "win32":
+            script = base64.b64encode((TOAST + SHOW).encode("utf-16-le")).decode("ascii")
+            subprocess.run([powershell(), "-NoProfile", "-NonInteractive", "-EncodedCommand", script],
+                           env=dict(os.environ, BRAIN_NOTIFY_TITLE=title, BRAIN_NOTIFY_TEXT=msg),
+                           capture_output=True, stdin=subprocess.DEVNULL, timeout=60, creationflags=NO_WINDOW)
+        elif sys.platform.startswith("linux"):
+            exe = which("notify-send") if which else None
+            if not exe:
+                return
+            # A timer or cron starts it without the session's bus: the user's own is at its usual place.
+            env, uid = dict(os.environ), getattr(os, "getuid", None)
+            bus = "/run/user/%d/bus" % uid() if uid else None
+            if bus and not env.get("DBUS_SESSION_BUS_ADDRESS") and os.path.exists(bus):
+                env["DBUS_SESSION_BUS_ADDRESS"] = "unix:path=" + bus
+            subprocess.run([exe, title, msg], env=env, capture_output=True, stdin=subprocess.DEVNULL, timeout=10)
     except Exception:
         pass
 
