@@ -183,10 +183,10 @@ async fn start_claude() -> Result<(), String> {
     off_main(steps::start_claude).await
 }
 
-/// The report of a failed install, masked, on the Desktop: where it went.
+/// The report of a failed install, masked, on the Desktop: where it went, and the sentence that says so.
 #[tauri::command]
-async fn save_report(text: String) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || rapport::save(&text).map(|p| p.display().to_string()))
+async fn save_report(text: String) -> Result<rapport::Saved, String> {
+    tauri::async_runtime::spawn_blocking(move || rapport::save(&text))
         .await
         .unwrap_or_else(|e| Err(format!("Erreur interne : {e}")))
 }

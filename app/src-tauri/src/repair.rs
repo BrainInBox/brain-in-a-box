@@ -240,6 +240,13 @@ const STOPS: &[(&str, &str)] = &[
     ("choix_ia", "Rien n'a changé dans ton cerveau : envoie le rapport à la personne qui t'a conseillé Bibo."),
 ];
 
+/// The sites the install downloads from, the ones a company's network has to let through.
+pub(crate) const SITES: &[&str] = &["python.org", "github.com", "claude.ai", "bun.sh"];
+
+fn withheld(_message: &str) -> bool {
+    false
+}
+
 /// The window's sentence for a stop of install.ps1: what happened, then what to do. None for a cause it
 /// does not know (an older or newer install.ps1, a line a program printed).
 pub fn stop_message(id: &str) -> Option<String> {
@@ -373,9 +380,12 @@ pub enum RepairState {
     /// Codex, before the brain step put the kit's list of its features next to the hooks: it cannot
     /// be asked yet, and nothing is wrong with it.
     NotYet,
+    /// The step stopped on what no AI can change from here (a company's rule, the choice of AI): the
+    /// step's sentence says what to do, nobody is asked.
+    Withheld,
 }
 
-#[derive(Serialize, Clone, Copy, Debug)]
+#[derive(Serialize, Clone, Copy, Debug, PartialEq)]
 pub struct RepairStatus {
     pub state: RepairState,
     /// Claude can still help interactively, in Terminal.
@@ -387,7 +397,7 @@ pub struct RepairStatus {
 
 impl RepairStatus {
     fn of(state: RepairState) -> Self {
-        let terminal_fallback = !matches!(state, RepairState::Absent | RepairState::Offline | RepairState::Agents);
+        let terminal_fallback = !matches!(state, RepairState::Absent | RepairState::Offline | RepairState::Agents | RepairState::Withheld);
         RepairStatus { state, terminal_fallback, engine: None }
     }
 }
@@ -697,6 +707,10 @@ impl Session {
 
     fn record_result(&self, r: &StepResult) {
         lock(&self.traces).entry(r.id.clone()).or_default().result = Some(r.clone());
+    }
+
+    fn withheld(&self, _step: &str) -> Option<RepairStatus> {
+        None
     }
 
     fn failure(&self, step: &str) -> Option<Failure> {
@@ -4556,6 +4570,67 @@ pub(crate) mod tests {
         }
         assert_eq!(stop_message("pas_une_cause"), None);
         assert_eq!(stop_message("disque_plein"), None, "a cause install.ps1 never stops on has no stop sentence");
+    }
+
+    /// What each stop says fits the PC it happens on: Python by the classic installer (python.org's first
+    /// button is the install manager, in English), winget broken as well as missing, a company's network
+    /// or its Store; PowerShell blocked at any step, not only the brain's.
+    #[test]
+    fn the_stops_say_what_fits() {
+        let say = |id| stop_message(id).unwrap();
+        for id in ["python_absent", "antivirus_bloque"] {
+            assert!(say(id).contains("python.org/downloads/windows") && say(id).contains("« Windows installer (64-bit) »") && say(id).contains("« Install Now »"), "{id}: {}", say(id));
+            assert!(!say(id).contains("« Download »"), "{id}");
+        }
+        assert!(say("winget_absent").contains("Installe ou mets à jour") && say("winget_absent").contains("service informatique"), "{}", say("winget_absent"));
+        assert!(say("reseau").contains("service informatique"), "{}", say("reseau"));
+        assert!(!say("powershell_verrouille").contains("cerveau"), "{}", say("powershell_verrouille"));
+        assert!(!say("strategie_entreprise").contains("installer Python 3 sur ce PC"), "not only Python: {}", say("strategie_entreprise"));
+    }
+
+    /// The sites to let through, one list for every sentence: each host the install downloads from
+    /// (install.ps1's, the app's, Claude Code's installer, Bun's packages, Claude itself) is one of them,
+    /// or under one.
+    #[test]
+    fn one_list_of_sites_covers_every_download() {
+        let covered = |host: &str| SITES.iter().any(|s| host == *s || host.ends_with(&format!(".{s}")));
+        let url = Regex::new(r"https://([a-z0-9.-]+)").unwrap();
+        // Links shown to the user, Codex's (Claude's only, on Windows), Voyage's (only with a key).
+        let not_downloads = ["claude.com", "obsidian.md", "git-scm.com", "developers.openai.com", "api.voyageai.com", "dashboard.voyageai.com", "go.microsoft.com"];
+        let sources = [include_str!("../../../install.ps1"), include_str!("steps.rs")];
+        let mut hosts: Vec<&str> = sources.iter().flat_map(|s| url.captures_iter(s).map(|c| c.get(1).unwrap().as_str())).collect();
+        hosts.extend(["downloads.claude.ai", "registry.npmjs.org", "api.anthropic.com", "objects.githubusercontent.com", "codeload.github.com"]);
+        for host in hosts.into_iter().filter(|h| !not_downloads.contains(h) && !h.ends_with(".invalid") && !h.contains("openai") && !h.contains("chatgpt")) {
+            assert!(covered(host), "{host} is not among the sites to let through");
+        }
+        let proxy = stop_message("proxy_entreprise").unwrap();
+        let it = ACTIONS.iter().find(|e| e.id == "demander_informatique").unwrap().user_text("brain");
+        for s in SITES {
+            assert!(proxy.contains(s) && it.contains(s), "{s}: {proxy} / {it}");
+        }
+        assert!(proxy.contains("sous-domaines") && it.contains("sous-domaines"));
+    }
+
+    /// A stop that is the company's (or the choice of AI) leaves Claude out: the window keeps « Réessayer »
+    /// first and the sentence that says whom to ask; nothing of the subscription spent for nothing.
+    #[test]
+    fn a_stop_for_the_it_service_is_not_offered_to_claude() {
+        for id in ["powershell_verrouille", "strategie_entreprise", "proxy_entreprise", "choix_ia"] {
+            assert!(withheld(&stop_message(id).unwrap()), "{id}");
+        }
+        for id in ["acces_documents_refuse", "reseau", "python_absent", "antivirus_bloque", "winget_absent", "sources_abimees"] {
+            assert!(!withheld(&stop_message(id).unwrap()), "{id}");
+        }
+        assert!(!withheld("L'installation de ton cerveau s'est arrêtée avant la fin."));
+        let status = RepairStatus::of(RepairState::Withheld);
+        assert!(!status.terminal_fallback);
+        assert_eq!(serde_json::to_value(status).unwrap()["state"], "withheld");
+        // Recorded as the step's failure, it is what the window is told.
+        let s = Session::default();
+        s.record_result(&StepResult { id: "brain".into(), ok: false, message: stop_message("proxy_entreprise").unwrap() });
+        assert_eq!(s.withheld("brain"), Some(RepairStatus::of(RepairState::Withheld)));
+        s.record_result(&StepResult { id: "brain".into(), ok: false, message: stop_message("reseau").unwrap() });
+        assert_eq!(s.withheld("brain"), None);
     }
 
     /// A company's PC: nothing of its security is for the user to turn off; the VPN to cut is one's own.

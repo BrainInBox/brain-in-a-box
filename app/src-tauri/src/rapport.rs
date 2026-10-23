@@ -6,18 +6,37 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use serde::Serialize;
+
 use crate::{repair, steps, sys};
 
 pub const FILE: &str = "rapport-bibo.txt";
 /// A report is a few dozen lines: anything bigger is not one.
 const MAX_BYTES: usize = 1_000_000;
 
+/// Where the report went, and the window's sentence for it.
+#[derive(Serialize, Debug)]
+pub struct Saved {
+    pub path: String,
+    pub message: String,
+}
+
 /// Writes `text`, masked, to the Desktop (the home folder when there is none, or when the system keeps
-/// the app out of it) and returns where.
-pub fn save(text: &str) -> Result<PathBuf, String> {
+/// the app out of it) and says where.
+pub fn save(text: &str) -> Result<Saved, String> {
     let home = sys::home();
     let mask = repair::masker();
-    save_in(&[desktop(&home), home], &mask(text))
+    let desk = desktop(&home);
+    let file = save_in(&[desk.clone(), home.clone()], &mask(text))?;
+    Ok(Saved { message: saved_message(&file, file.parent() == Some(desk.as_path()), &home), path: file.display().to_string() })
+}
+
+fn saved_message(_file: &Path, _on_desktop: bool, _home: &Path) -> String {
+    "Le rapport est sur ton Bureau. Envoie-le à la personne qui t'a conseillé Bibo.".into()
+}
+
+fn header(_secs: u64) -> String {
+    String::new()
 }
 
 /// The first of `dirs` that takes the file. The text is already masked.
@@ -144,6 +163,19 @@ mod tests {
         let err = save_in(&[dir.path().join("absent")], "x").unwrap_err();
         assert!(err.starts_with("Je n'ai pas pu enregistrer le rapport"), "{err}");
         assert!(save_in(&[dir.path().to_path_buf()], &"x".repeat(MAX_BYTES + 1)).is_err());
+    }
+
+    /// The file says what it is to whoever opens it; the window says where it is: the Desktop, or the home
+    /// folder when there was none (never « sur ton Bureau » then).
+    #[test]
+    fn the_report_says_what_it_is_and_where() {
+        let h = header(0);
+        assert!(h.starts_with("Rapport d'installation de Bibo, le 1970-01-01 à 00:00 (UTC), version "), "{h}");
+        assert!(h.contains("Ni mot de passe ni clé") && h.contains("conseillé Bibo") && h.ends_with("\n\n"), "{h}");
+        let home = Path::new("/home/jo");
+        assert_eq!(saved_message(&home.join("Bureau").join(FILE), true, home), "Le rapport est sur ton Bureau. Envoie-le à la personne qui t'a conseillé Bibo.");
+        let m = saved_message(&home.join(FILE), false, home);
+        assert!(m.starts_with("Le rapport est dans ton dossier personnel") && m.contains(FILE) && !m.contains("Bureau"), "{m}");
     }
 
     #[cfg(unix)]

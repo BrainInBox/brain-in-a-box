@@ -830,8 +830,7 @@ fn brain(voyage_key: Option<&str>, log: &mut dyn FnMut(String)) -> Step {
     // before it was saved. Otherwise install.ps1 chooses.
     let dir = detect::chosen_brain_dir().map(|d| d.to_string_lossy().into_owned());
     let choice = agents::installer_env(&agents);
-    let mut env = vec![("VOYAGE_API_KEY", key), ("BRAIN_DIR", dir.as_deref())];
-    env.extend(choice.iter().map(|(k, v)| (*k, Some(v.as_str()))));
+    let env = brain_ps1_env(key, dir.as_deref(), &choice);
     let mut sections = Sections::default();
     let mut stop = Stop::default();
     let started = Instant::now();
@@ -856,6 +855,13 @@ fn brain(voyage_key: Option<&str>, log: &mut dyn FnMut(String)) -> Step {
         return Err(incomplete(&missing));
     }
     installed(&detect::brain_dir_shown(&home), detect::embedding_model(&home).is_some(), key.is_some(), &missing_tools(&home))
+}
+
+#[cfg(any(windows, test))]
+fn brain_ps1_env<'a>(key: Option<&'a str>, dir: Option<&'a str>, choice: &'a [(&'static str, String)]) -> Vec<(&'a str, Option<&'a str>)> {
+    let mut env = vec![("VOYAGE_API_KEY", key), ("BRAIN_DIR", dir)];
+    env.extend(choice.iter().map(|(k, v)| (*k, Some(v.as_str()))));
+    env
 }
 
 /// The brain is in place: said with what it searches by, and what could not come along. Without Python
@@ -1220,7 +1226,7 @@ pub fn start_onboarding() -> Result<(), String> {
         return Err("Ton cerveau n'est pas encore installé.".into());
     };
     let guide = onboarding_guide(&home)?;
-    open_in_terminal("onboarding", &onboarding_script(&sys::tool_path(), &vault, &guide, &claude))
+    open_in_terminal("onboarding", &onboarding_script(&sys::tool_path(), &vault, &guide, &claude, onboarding_mode(&vault, &home)))
 }
 
 /// « Parler à Claude »: Claude Code in the brain's folder, with no prompt, in a terminal window of the
@@ -1228,13 +1234,17 @@ pub fn start_onboarding() -> Result<(), String> {
 /// desktop's on Linux. Started there, Claude reads the brain's CLAUDE.md and lessons, and the kit's hooks run.
 pub fn start_claude() -> Result<(), String> {
     let home = sys::home();
-    let Some(claude) = detect::claude_bin() else {
+    open_window("claude", &talk_to_claude(detect::claude_bin(), detect::vault(&home), detect::claude_logged_in)?)
+}
+
+fn talk_to_claude(claude: Option<PathBuf>, vault: Option<PathBuf>, _logged_in: impl FnOnce() -> bool) -> Result<String, String> {
+    let Some(claude) = claude else {
         return Err("Claude Code n'est pas encore installé.".into());
     };
-    let Some(vault) = detect::vault(&home) else {
+    let Some(vault) = vault else {
         return Err("Ton cerveau n'est pas encore installé.".into());
     };
-    open_window("claude", &claude_in_brain_script(&sys::tool_path(), &vault, &claude))
+    Ok(claude_in_brain_script(&sys::tool_path(), &vault, &claude))
 }
 
 fn start_codex_onboarding(home: &Path) -> Result<(), String> {
@@ -1300,6 +1310,10 @@ fn onboarding_prompt(guide: &Path, vault: &Path) -> String {
 /// for its protected paths (.git, .claude).
 const ONBOARDING_MODE: [&str; 2] = ["--permission-mode", "acceptEdits"];
 
+fn onboarding_mode(_vault: &Path, _home: &Path) -> &'static [&'static str] {
+    &ONBOARDING_MODE
+}
+
 fn login_script(path: &std::ffi::OsStr, claude: &Path) -> String {
     claude_script(path, claude, "auth login")
 }
@@ -1315,13 +1329,13 @@ fn claude_script(path: &std::ffi::OsStr, claude: &Path, subcommand: &str) -> Str
 }
 
 #[cfg(not(windows))]
-fn onboarding_script(path: &std::ffi::OsStr, vault: &Path, guide: &Path, claude: &Path) -> String {
+fn onboarding_script(path: &std::ffi::OsStr, vault: &Path, guide: &Path, claude: &Path, mode: &[&str]) -> String {
     format!(
         "#!/bin/bash\nexport PATH={}\ncd {} || exit 1\n{} {} {}\necho\necho 'Tu peux fermer cette fenêtre.'\n",
         sh_quote(&path.to_string_lossy()),
         sh_quote(&vault.to_string_lossy()),
         sh_quote(&claude.to_string_lossy()),
-        ONBOARDING_MODE.join(" "),
+        mode.join(" "),
         sh_quote(&onboarding_prompt(guide, vault))
     )
 }
@@ -1394,14 +1408,14 @@ fn claude_script(path: &std::ffi::OsStr, claude: &Path, subcommand: &str) -> Str
 }
 
 #[cfg(windows)]
-fn onboarding_script(path: &std::ffi::OsStr, vault: &Path, guide: &Path, claude: &Path) -> String {
+fn onboarding_script(path: &std::ffi::OsStr, vault: &Path, guide: &Path, claude: &Path, mode: &[&str]) -> String {
     format!(
         "$ErrorActionPreference = 'Stop'\r\n$env:Path = {}\r\nSet-Location -LiteralPath {}\r\n& {} {} {}\r\n\
          Write-Host ''\r\nWrite-Host 'Tu peux fermer cette fenêtre.'\r\n",
         ps_quote(&path.to_string_lossy()),
         ps_quote(&vault.to_string_lossy()),
         ps_quote(&claude.to_string_lossy()),
-        ONBOARDING_MODE.join(" "),
+        mode.join(" "),
         ps_quote(&onboarding_prompt(guide, vault))
     )
 }
@@ -1790,6 +1804,18 @@ fn download(
     timeout: Duration,
     log: &mut dyn FnMut(String),
 ) -> Result<(), String> {
+    download_via(url, dest, what, size, timeout, None, log)
+}
+
+fn download_via(
+    url: &str,
+    dest: &Path,
+    what: &str,
+    size: Option<u64>,
+    timeout: Duration,
+    _proxy: Option<&str>,
+    log: &mut dyn FnMut(String),
+) -> Result<(), String> {
     log(format!("Je télécharge {what}…"));
     let args = curl_download_args(url, dest);
     let (tx, rx) = mpsc::channel();
@@ -1829,6 +1855,17 @@ fn curl_download_args(url: &str, dest: &Path) -> Vec<String> {
     args.extend([dest.to_string_lossy().into_owned(), url.to_string()]);
     args
 }
+
+fn curl_proxy_args(_proxy: &str) -> Vec<String> {
+    Vec::new()
+}
+
+fn proxy_url(_said: &str) -> Option<String> {
+    None
+}
+
+/// Runs Claude Code's installer (install.ps1, next to it).
+const INSTALLER_WRAPPER: &str = "& (Join-Path $PSScriptRoot 'install.ps1')\r\nexit $LASTEXITCODE\r\n";
 
 fn progress(got: u64, size: Option<u64>) -> String {
     let mb = got / 1_000_000;
@@ -2259,7 +2296,7 @@ mod tests {
         let guide = onboarding_guide(&home).unwrap();
         assert!(fs::read_to_string(&guide).unwrap().contains("ONBOARDING"), "built-in guide written");
         let path = bin.clone().into_os_string();
-        fs::write(&script, onboarding_script(&path, &vault, &guide, &bin.join("claude"))).unwrap();
+        fs::write(&script, onboarding_script(&path, &vault, &guide, &bin.join("claude"), &ONBOARDING_MODE)).unwrap();
         let o = bash(&script);
         assert!(o.ok(), "{}", o.stderr);
         assert!(o.stdout.contains("Tu peux fermer cette fenêtre."));
@@ -2911,7 +2948,7 @@ mod tests {
         assert!(update.contains(r"& 'C:\Users\Jo O''Brien\.local\bin\claude.exe' update"), "{update}");
         let vault = Path::new(r"C:\Users\Jo O'Brien\Documents\Brain");
         let guide = Path::new(r"C:\Users\Jo O'Brien\.brain-in-a-box\src\onboarding\ONBOARDING.md");
-        let onboarding = onboarding_script(&path, vault, guide, claude);
+        let onboarding = onboarding_script(&path, vault, guide, claude, &ONBOARDING_MODE);
         assert!(onboarding.contains(r"Set-Location -LiteralPath 'C:\Users\Jo O''Brien\Documents\Brain'"), "{onboarding}");
         assert!(onboarding.contains(r"\claude.exe' --permission-mode acceptEdits 'Lis C:\Users\Jo O''Brien\.brain-in-a-box\src\onboarding\ONBOARDING.md et suis-le pour me personnaliser. Mon cerveau est dans C:\Users\Jo O''Brien\Documents\Brain. Parle-moi en français"), "{onboarding}");
         let talk = claude_in_brain_script(&path, vault, claude);
@@ -2952,8 +2989,36 @@ mod tests {
         let p = onboarding_prompt(guide, vault);
         assert!(p.starts_with("Lis /k/onboarding/ONBOARDING.md et suis-le pour me personnaliser."), "{p}");
         assert!(p.contains("Mon cerveau est dans /Users/jo/Brain.") && p.contains("français") && p.contains("mots simples"), "{p}");
-        assert!(!p.contains("Documents") && !p.contains("personalize"), "{p}");
+        assert!(!p.contains("personalize"), "{p}");
+        // The guide may still name ~/Documents/Brain: Claude is told it means this folder, where it works.
+        assert!(p.contains("Quand le guide dit ~/Documents/Brain, c'est ce dossier-là."), "{p}");
         assert_eq!(ONBOARDING_MODE, ["--permission-mode", "acceptEdits"]);
+    }
+
+    /// The interview accepts edits only in a brain that is a folder of its own, the kit's: never the home
+    /// folder, a parent of it, Documents or a drive (Windows' PowerShell profile is in Documents, and
+    /// acceptEdits lets Claude write it, or rm, without asking).
+    #[test]
+    fn the_interview_accepts_edits_only_in_a_folder_of_its_own() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("jo");
+        let kit_brain = |d: &Path| {
+            fs::create_dir_all(d.join("Profile")).unwrap();
+            fs::write(d.join("CLAUDE.md"), "# Brain").unwrap();
+        };
+        for d in [home.join("Documents/Brain"), home.join("Brain"), dir.path().join("D/notes/Brain")] {
+            kit_brain(&d);
+            assert_eq!(onboarding_mode(&d, &home), ONBOARDING_MODE, "{}", d.display());
+        }
+        for d in [home.clone(), home.join("Documents"), home.join("Desktop"), dir.path().to_path_buf()] {
+            kit_brain(&d);
+            assert!(onboarding_mode(&d, &home).is_empty(), "{}", d.display());
+        }
+        let bare = home.join("Notes");
+        fs::create_dir_all(&bare).unwrap();
+        assert!(onboarding_mode(&bare, &home).is_empty(), "not the kit's brain");
+        assert!(onboarding_mode(Path::new("/"), &home).is_empty());
+        assert!(onboarding_mode(Path::new("Brain"), &home).is_empty(), "a relative path");
     }
 
     /// « Parler à Claude »: Claude Code in the brain, nothing typed for the user, no option.
@@ -2973,6 +3038,15 @@ mod tests {
         let o = bash(&script);
         assert!(o.ok() && o.stdout.contains("Tu peux fermer cette fenêtre."), "{}", o.stderr);
         assert_eq!(fs::read_to_string(&out).unwrap(), format!("{}\nargs=0\n", vault.display()));
+        // Before Claude, in French: what to type, the question it asks in English, how to end.
+        let before = &o.stdout[..o.stdout.find("Tu peux fermer").unwrap()];
+        assert!(before.contains("Claude t'écoute") && before.contains("trust") && before.contains("ferme cette fenêtre"), "{}", o.stdout);
+        // Not logged in: Claude Code would open on its login menu, in English, API billing among its choices.
+        let claude = Some(bin.join("claude"));
+        let err = talk_to_claude(claude.clone(), Some(vault.clone()), || false).unwrap_err();
+        assert!(err.contains("Connecte d'abord"), "{err}");
+        assert!(talk_to_claude(claude, Some(vault.clone()), || true).unwrap().contains("Claude t'écoute"));
+        assert_eq!(talk_to_claude(None, Some(vault), || true).unwrap_err(), "Claude Code n'est pas encore installé.");
     }
 
     /// Windows Terminal runs the script from its folder, which goes as an option of its own: the words of
@@ -3045,6 +3119,11 @@ mod tests {
             ("Invoke-RestMethod : The remote server returned an error: (407) Proxy Authentication Required.", "proxy_entreprise"),
             ("This program is blocked by group policy. For more information, contact your system administrator.", "strategie_entreprise"),
             ("Ce programme est bloqué par une stratégie de groupe.", "strategie_entreprise"),
+            // An execution policy a company imposes (AllSigned, Restricted) wins over -ExecutionPolicy Bypass.
+            ("File C:\\Users\\Jo\\.brain-in-a-box\\src\\install.ps1 cannot be loaded because running scripts is disabled on this system. For more information, see about_Execution_Policies at https:/go.microsoft.com/fwlink/?LinkID=135170.", "powershell_verrouille"),
+            ("File C:\\x\\install.ps1 cannot be loaded. The file C:\\x\\install.ps1 is not digitally signed. You cannot run this script on the current system.", "powershell_verrouille"),
+            ("Impossible de charger le fichier C:\\x\\install.ps1, car l'exécution de scripts est désactivée sur ce système. Pour plus d'informations, consultez about_Execution_Policies à l'adresse https://go.microsoft.com/fwlink/?LinkID=135170.", "powershell_verrouille"),
+            ("Le fichier C:\\x\\install.ps1 n'est pas signé numériquement. Vous ne pouvez pas exécuter ce script sur le système actuel.", "powershell_verrouille"),
             ("Operation did not complete successfully because the file contains a virus or potentially unwanted software.", "antivirus_bloque"),
         ] {
             assert_eq!(refusal(line), Some(cause), "{line}");
@@ -3052,6 +3131,32 @@ mod tests {
             assert!(m.contains("service informatique"), "{cause}: {m}");
         }
         assert_eq!(refusal("Downloading Claude Code 2.1.300…"), None);
+    }
+
+    /// A refusal install.ps1 got past (Git's installer blocked, a warning) says nothing of a later stop in
+    /// another section; within one, the last refusal is the one said.
+    #[test]
+    fn a_refusal_counts_in_its_own_section_the_last_one_said() {
+        let mut stop = Stop::default();
+        for l in [
+            "=== Preflight ===",
+            "  [!]  Git : son installeur officiel n'a pas tourne : This program is blocked by group policy.",
+            "  [OK] python (C:\\Python314\\python.exe)",
+            "=== Brain vault (C:\\Users\\jo\\Brain) ===",
+            "+ FullyQualifiedErrorId : System.IO.IOException",
+        ] {
+            stop.see(l);
+        }
+        assert!(stop.message(false).starts_with("L'installation de ton cerveau s'est arrêtée avant la fin."), "{}", stop.message(false));
+        let mut stop = Stop::default();
+        stop.see("=== Memoire gbrain (2 a 5 minutes la premiere fois) ===");
+        stop.see("Invoke-RestMethod : The remote server returned an error: (407) Proxy Authentication Required.");
+        stop.see("This program is blocked by group policy. For more information, contact your system administrator.");
+        assert_eq!(Some(stop.message(false)), repair::stop_message("strategie_entreprise"));
+        // install.ps1's own word wins over any refusal, whatever comes after.
+        stop.see("BIAB_ARRET=reseau");
+        stop.see("=== Verification ===");
+        assert_eq!(Some(stop.message(false)), repair::stop_message("reseau"));
     }
 
     /// The brain installed without Git or Bun works by keywords: done, saying what comes later; without
@@ -3062,6 +3167,8 @@ mod tests {
         let m = installed(at, false, false, &["Git", "Bun"]).unwrap();
         assert!(m.starts_with("Ton cerveau est installé dans C:\\Users\\jo\\Brain et il marche : il retrouve tes notes par mots-clés."), "{m}");
         assert!(m.contains("Git et Bun n'ont pas pu s'installer") && m.contains("la recherche par le sens viendra plus tard"), "{m}");
+        // The step succeeded: the window shows no « Réessayer » then. Bibo's check, another day, brings them.
+        assert!(!m.contains("Réessayer") && m.contains("rouvre Bibo"), "{m}");
         let m = installed(at, true, true, &["Bun"]).unwrap();
         assert!(m.contains("Bun n'a pas pu s'installer") && m.contains("mots-clés"), "{m}");
         let m = installed(at, true, false, &["Obsidian"]).unwrap();
@@ -3131,6 +3238,114 @@ mod tests {
         assert_eq!(installer_ended("Claude Code", Ended::Code(0), None), Ok(()));
         assert_eq!(PACE.stall, Duration::from_secs(5 * 60));
         assert_eq!(PACE.limit, Duration::from_secs(60 * 60));
+    }
+
+    /// A proxy that lets no tunnel through (407, NTLM asked; then 403), and hands over each request it got.
+    fn refusing_proxy() -> (String, mpsc::Receiver<String>) {
+        use std::io::{BufRead, BufReader};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            for conn in listener.incoming().take(8) {
+                let Ok(mut conn) = conn else { continue };
+                let _ = conn.set_read_timeout(Some(Duration::from_secs(10)));
+                let mut reader = BufReader::new(conn.try_clone().unwrap());
+                loop {
+                    let (mut head, mut line) = (String::new(), String::new());
+                    while reader.read_line(&mut line).is_ok_and(|n| n > 0) && line != "\r\n" {
+                        head.push_str(&line);
+                        line.clear();
+                    }
+                    if head.is_empty() {
+                        break;
+                    }
+                    let answered = head.contains("Proxy-Authorization:");
+                    let _ = tx.send(head);
+                    let reply = if answered {
+                        "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    } else {
+                        "HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: NTLM\r\nContent-Length: 0\r\n\r\n"
+                    };
+                    if conn.write_all(reply.as_bytes()).is_err() || answered {
+                        break;
+                    }
+                }
+            }
+        });
+        (format!("http://{addr}/"), rx)
+    }
+
+    /// Behind a company's proxy, a download goes through it, offering the user's own Windows login when it
+    /// asks (curl.exe ignores the system's proxy by itself); refused, the sentence says what to ask the IT
+    /// service. Without a proxy, the connection, and the window's button.
+    #[test]
+    fn a_download_goes_through_the_proxy_and_says_so_when_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("x");
+        let url = "https://brain-in-a-box.invalid/x";
+        let (proxy, asked) = refusing_proxy();
+        let err = download_via(url, &dest, "l'installeur", None, Duration::from_secs(60), Some(&proxy), &mut |_| {}).unwrap_err();
+        assert_eq!(Some(err), repair::stop_message("proxy_entreprise"));
+        let heads: Vec<String> = asked.try_iter().collect();
+        assert!(heads.first().is_some_and(|h| h.starts_with("CONNECT brain-in-a-box.invalid:443 ")), "{heads:?}");
+        #[cfg(windows)]
+        assert!(heads.iter().any(|h| h.contains("Proxy-Authorization: NTLM ")), "the user's Windows login offered: {heads:?}");
+        let err = download_via(url, &dest, "l'installeur", None, Duration::from_secs(60), None, &mut |_| {}).unwrap_err();
+        assert!(err.contains("connexion internet") && err.contains("« Réessayer »"), "{err}");
+    }
+
+    /// The system's proxy for a site, as PowerShell says it: a plain http:// address, or nothing.
+    #[test]
+    fn the_system_proxy_is_read_plainly() {
+        assert_eq!(proxy_url("http://proxy.corp.local:8080/\r\n"), Some("http://proxy.corp.local:8080/".to_string()));
+        let long = format!("http://{}/", "x".repeat(300));
+        for odd in ["", "https://claude.ai/install.ps1", "proxy:8080", "http://a b:80/", "http://x\"y/", "http://p:1/\nhttp://q:2/", long.as_str()] {
+            assert_eq!(proxy_url(odd), None, "{odd:?}");
+        }
+        assert_eq!(curl_proxy_args("http://p:8080/"), ["--proxy", "http://p:8080/", "--proxy-anyauth", "--proxy-user", ":"]);
+    }
+
+    /// Claude Code's installer downloads with Windows PowerShell's web requests, which never offer the
+    /// user's Windows login to a proxy that asks for it (407): it runs after a line that does.
+    #[test]
+    fn claude_codes_installer_runs_with_the_windows_login_for_a_proxy() {
+        assert!(
+            INSTALLER_WRAPPER.starts_with("try { [Net.WebRequest]::DefaultWebProxy.Credentials = [Net.CredentialCache]::DefaultNetworkCredentials } catch {}\r\n"),
+            "{INSTALLER_WRAPPER}"
+        );
+        assert!(INSTALLER_WRAPPER.contains("& (Join-Path $PSScriptRoot 'install.ps1')\r\n") && INSTALLER_WRAPPER.ends_with("exit $LASTEXITCODE\r\n"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn the_wrapper_runs_the_installer_with_the_windows_login() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("install.ps1"),
+            "Write-Output ([Net.WebRequest]::DefaultWebProxy.Credentials -eq [Net.CredentialCache]::DefaultNetworkCredentials)\r\nexit 3\r\n",
+        )
+        .unwrap();
+        let wrapper = dir.path().join("lance.ps1");
+        fs::write(&wrapper, INSTALLER_WRAPPER).unwrap();
+        let args = ps1_args(&wrapper);
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        let o = sys::run(&sys::powershell(), &args, Duration::from_secs(60));
+        assert_eq!((o.code, o.stdout.trim()), (3, "True"), "{}", o.stderr);
+        // Its stop is the installer's: a throw ends the run with an error code.
+        fs::write(dir.path().join("install.ps1"), "throw 'Failed to get latest version: (407) Proxy Authentication Required.'\r\n").unwrap();
+        let o = sys::run(&sys::powershell(), &args, Duration::from_secs(60));
+        assert!(o.code != 0 && o.stderr.contains("(407)"), "{} {}", o.code, o.stderr);
+    }
+
+    /// The app keeps the PC awake itself while install.ps1 runs: it says so (install.ps1 then compiles
+    /// nothing for it, see Set-Awake).
+    #[test]
+    fn install_ps1_is_told_the_app_runs_it() {
+        let choice = vec![("BIAB_AGENTS", "claude".to_string())];
+        let env = brain_ps1_env(Some("k"), None, &choice);
+        assert!(env.contains(&("BIAB_APP", Some("1"))), "{env:?}");
+        assert!(env.contains(&("VOYAGE_API_KEY", Some("k"))) && env.contains(&("BRAIN_DIR", None)) && env.contains(&("BIAB_AGENTS", Some("claude"))), "{env:?}");
     }
 
     /// The computer stays awake while a step runs, and is let go after.

@@ -3,7 +3,8 @@
 # Python is the one someone can act on (no winget, a company rule, a proxy, an antivirus, the network);
 # winget's install for all accounts only on an administrator's account (a standard one would be asked a
 # password it does not have); Bun installed even without Git; a Documents an antivirus closes sends a new
-# brain to the profile's folder. Under pwsh on macOS, Linux and Windows; install.ps1 whole runs in test.yml.
+# brain to the profile's folder; a proxy offered the Windows login; the PC kept awake, and let go on any stop.
+# Under pwsh on macOS, Linux and Windows; install.ps1 whole runs in test.yml.
 #   pwsh -NoProfile -File .github/ci/install-ps1-arrets.ps1
 $ErrorActionPreference = "Stop"
 $Kit = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
@@ -206,12 +207,46 @@ try {
               "a folder the user chose, closed: BIAB_ARRET=acces_documents_refuse, nothing put elsewhere: $thrown"
     } else { Write-Output "skip  a Documents an antivirus closes (Windows only)" }
 
-    # The machine stays awake while install.ps1 runs, and lets go at the end and when it stops.
+    # _agents.py that does not answer: its sources are damaged (the app downloads them again), not the user's choice.
+    $agentsLine = @($ps1 -split "\r?\n" | Where-Object { $_ -match "_agents\.py n'a pas repondu" })
+    Check ($agentsLine.Count -eq 1 -and $agentsLine[0].Contains('-Arret "sources_abimees"')) "_agents.py silent: sources_abimees: $agentsLine"
+
+    # A proxy that asks for the Windows login (407): Windows PowerShell's web requests offer it, before any download.
+    $cred = '[Net.WebRequest]::DefaultWebProxy.Credentials = [Net.CredentialCache]::DefaultNetworkCredentials'
+    $at = $ps1.IndexOf($cred)
+    Check ($at -gt 0 -and $at -lt $ps1.IndexOf("Invoke-WebRequest")) "the proxy is offered the Windows login before any download"
+    if ($at -gt 0 -and $Win) {
+        $credLine = ($ps1.Substring($ps1.LastIndexOf("`n", $at) + 1) -split "\r?\n")[0]
+        . ([scriptblock]::Create($credLine))
+        Check ([Net.WebRequest]::DefaultWebProxy.Credentials -eq [Net.CredentialCache]::DefaultNetworkCredentials) "the Windows login set for the proxy: $credLine"
+    }
+
+    # The machine stays awake while install.ps1 runs, and lets go at the end and on any stop (a trap, not only
+    # Fail's: a Copy-Item that throws too). Launched by the app, which keeps the PC awake itself, it compiles
+    # nothing for it (Add-Type, which an antivirus may watch).
     $first = $ps1.IndexOf("`nSet-Awake `$true"); $home1 = $ps1.IndexOf("`n`$H = `$env:USERPROFILE")
-    Check ((Has "Set-Awake") -and $first -gt 0 -and $first -lt $home1 -and $ps1.TrimEnd().EndsWith("Set-Awake `$false") -and
-           ${function:Fail}.ToString().Contains('Set-Awake $false')) "no sleep during the install: Set-Awake on first, off at the end and in Fail"
-    $null = Said { Set-Awake $true; Set-Awake $false }
-    Check $true "Set-Awake does not throw here ($(if ($Win) { 'Windows' } else { 'not Windows: nothing to do' }))"
+    Check ((Has "Set-Awake") -and $first -gt 0 -and $first -lt $home1 -and $ps1.TrimEnd().EndsWith("Set-Awake `$false")) "no sleep during the install: Set-Awake on first, off at the end"
+    $env:BIAB_APP = "1"
+    $null = Said { Set-Awake $true }
+    Remove-Item Env:BIAB_APP
+    Check (-not ("BiabVeille.Etat" -as [type])) "launched by the app (BIAB_APP=1): Set-Awake compiles nothing"
+    if ($Win) {
+        $null = Said { Set-Awake $true }
+        $on = [BiabVeille.Etat]::SetThreadExecutionState([int]::MinValue -bor 1)
+        $null = Said { Set-Awake $false }
+        $off = [BiabVeille.Etat]::SetThreadExecutionState([int]::MinValue)
+        Check ($on -eq [uint32]2147483649 -and $off -eq [uint32]2147483648) "Set-Awake holds the PC awake, then lets go (the state before each call): $on, $off"
+    } else { Write-Output "skip  Set-Awake's state (Windows only)" }
+    $traps = @($ast.EndBlock.Traps | Where-Object { $_ })
+    $trapAt = if ($traps.Count) { $traps[0].Extent.StartOffset } else { -1 }
+    Check ($traps.Count -eq 1 -and $trapAt -gt $first -and $trapAt -lt $home1) "a trap right after Set-Awake `$true ($($traps.Count))"
+    if ($traps.Count) {
+        $script:Awake = @()
+        function Set-Awake([bool]$On) { $script:Awake += $On }
+        $caught = ""
+        try { & ([scriptblock]::Create($traps[0].Extent.Text + "`nthrow 'arret'")) } catch { $caught = "$_" }
+        Check ($caught -ceq "arret" -and $Awake.Count -eq 1 -and $Awake[0] -eq $false) "any stop lets the PC sleep again, and stops all the same: $caught ; $Awake"
+    }
     # The reflection at 12:00 and 23:00 opens no black window (pythonw), as the nightly at 04:00.
     Check ($ps1.Contains('Register-BrainTask "BrainReflection" $Pyw ') -and $ps1.Contains('Register-BrainTask "BrainNightly" $Pyw ')) "BrainReflection runs pythonw.exe"
 } finally {
