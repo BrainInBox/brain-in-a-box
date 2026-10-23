@@ -103,7 +103,9 @@ JOBS = {"ref": ("tous", ()), "macos": ("macos", ("macos-neuf", "macos-montee")),
         "linux": ("linux", ("linux-neuf", "linux-reinstallation")),
         "claude": ("macos+windows", ("macos-claude", "windows-claude")),
         "app-macos": ("macos", ("macos-app", "macos-app-codex")), "app-windows": ("windows", ("windows-app", "windows-app-codex")),
-        "app-linux-build": ("linux", ("linux-app", "linux-app-codex")), "app-linux": ("linux", ("linux-app", "linux-app-codex"))}
+        "app-linux-build": ("linux", ("linux-app", "linux-app-codex")), "app-linux": ("linux", ("linux-app", "linux-app-codex")),
+        # install.ps1's pinned installers against their latest release (.github/ci/epingles.py): no result file.
+        "epingles": ("windows", ())}
 JOB_RESULTS = ("success", "failure", "cancelled", "skipped")
 ETAPE_RE = re.compile(r"^[a-z0-9][a-z0-9.-]{0,40}$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -295,24 +297,28 @@ def settings_hook(home, event, name):
 
 
 def session_line(t, argv, env, etat, outputs):
-    """The session's first line after a night: its JSON (when the night has something to say), and
-    never twice for one run. Returns what the first session got."""
+    """The session's first line after a night: its JSON, with the night's line when the night has
+    something to say, and that line never twice for one run (what the hook says of the brain comes
+    at every start). Returns what the first session got."""
     stdin = json.dumps({"source": "startup", "session_id": "terrain"})
     rc1, first = run(argv, env=env, stdin=stdin, timeout=60)
     rc2, second = run(argv, env=env, stdin=stdin, timeout=60)
     outputs += [first, second]
     t.check(rc1 == 0 and rc2 == 0, "le hook de démarrage de session a fini en erreur")
-    if first.strip():
+    told = []
+    for out in (first, second):
         try:
-            event = json.loads(first)["hookSpecificOutput"]["hookEventName"]
-        except (ValueError, KeyError, TypeError):
+            said = json.loads(out)["hookSpecificOutput"] if out.strip() else {"hookEventName": "SessionStart"}
+            told.append("Contrôle du cerveau" in str(said.get("additionalContext", "")))
+            event = said["hookEventName"]
+        except (ValueError, KeyError, TypeError, AttributeError):
+            told.append(False)
             event = None
         t.check(event == "SessionStart", "le hook de démarrage a écrit autre chose que son JSON")
-    else:
-        said = (etat.get("rapport_reecrit") and (etat.get("corrections") or etat.get("a_voir"))) \
-            or etat.get("secrets_a_changer")
-        t.check(not said, "rien au démarrage de session après une nuit qui a corrigé ou signalé")
-    t.check(not second.strip(), "la ligne de démarrage revient une deuxième fois pour la même nuit")
+    night = (etat.get("rapport_reecrit") and (etat.get("corrections") or etat.get("a_voir"))) \
+        or etat.get("secrets_a_changer")
+    t.check(told[0] or not night, "rien au démarrage de session après une nuit qui a corrigé ou signalé")
+    t.check(not told[1], "la ligne de démarrage revient une deuxième fois pour la même nuit")
     return first
 
 
@@ -345,6 +351,10 @@ def quarantine_private(t, etat):
 # --------------------------------------------------------------------------- nuits
 
 def nuits(t, opts):
+    # The trapped vault is a git repository, as the kit's: without git, said with what the installer did.
+    t("git")
+    t.check(shutil.which("git"), "git introuvable : le coffre piégé est un dépôt git, les nuits ne se jouent pas sans lui ; "
+            "l'installation : %s" % pourquoi_sans_git(opts))
     work = workdir(opts, "nuits")
     vault, etat = work / "Brain", work / "etat"
     env = base_env(opts, work)
@@ -715,6 +725,8 @@ def vrai_claude(t, opts):
     rv = work / "Brain-reflexion"
     init_repo(str(rv))
     write(str(rv), "Profile/memory.md", "---\ntype: memory\n---\n\n# Mémoire\n\n## Recent context\n\n")
+    # A French vault on a computer in English (the VMs): the journal follows soul.md.
+    write(str(rv), "Profile/soul.md", "# Soul\n\n## Language\nFrançais par défaut.\n")
     write(str(rv), "Journal/.gitkeep", "")
     vault_piege.commit_all(str(rv), "vault", days_ago=1)
     day = date.today().isoformat()
@@ -744,11 +756,14 @@ def vrai_claude(t, opts):
     jpath = rv / "Journal" / ("%s.md" % day)
     t.check(jpath.is_file() and read(jpath).strip(), "la réflexion n'a pas écrit le journal du jour")
     texts = {"le journal": read(jpath), "memory.md": read(rv, "Profile/memory.md")}
+    t.check(texts["le journal"].startswith("# %s — Journal\n" % day) and "## Ce que j'ai fait\n" in texts["le journal"]
+            and "What I did" not in texts["le journal"], "le journal d'un cerveau en français n'a pas ses titres en "
+            "français")
     for where, text in texts.items():
         t.check("`" not in text, "un backquote a été écrit dans %s" % where)
         t.check("<%" not in text, "une commande Templater (<%%) a été écrite dans %s" % where)
     sweep(t, dict(texts, **{"les sorties de la réflexion": out}))
-    t.details["reflexion_suspect"] = "addressed to an AI" in texts["le journal"]
+    t.details["reflexion_suspect"] = any(s in texts["le journal"] for s in ("addressed to an AI", "s'adressait à une IA"))
 
     # importer-memoire, the repository's: a synthetic ChatGPT export (its secrets, a phrase to an AI
     # with a canary, files never to be opened), then a pasted answer; one request each.
@@ -1024,8 +1039,24 @@ def check_settings(t, home):
 # a list of what found Git (empty: nothing did).
 SONDES_GIT = ("get_command", "where", "bash", "dossiers", "find_git", "app_paths", "desinstallation",
               "path_machine", "path_user")
-# install.ps1's line in install.log for each winget attempt (Winget-Install).
+# install.ps1's lines in install.log (Winget-Install, Official-Install, Install-Missing): each winget attempt,
+# winget's source updated, winget left out (absent, its source still broken, blocked by the company's policy,
+# or it does not start: « winget : n'a pas demarre » for its attempt), Git's official installer and how it
+# ended, then the way Git came (older installers wrote only the winget attempts).
 WINGET_GIT = re.compile(r"^> winget install -e --id Git\.Git (?P<args>.*?)\r?\nwinget : code (?P<code>-?\d+)\r?$", re.M)
+WINGET_SOURCE_MAJ = re.compile(r"^> winget source update --name winget\r?\nwinget : code (?P<code>-?\d+)\r?$", re.M)
+WINGET_SANS_GIT = re.compile(r"^> (?P<dit>winget(?: absent :| : sa source est en panne,| : bloque par la politique de l'entreprise,| : il ne demarre pas,)"
+                             r" Git non installe par winget)\r?$", re.M)
+OFFICIEL_GIT = re.compile(r"^> installeur officiel : Git (?P<version>\S+) \((?P<arch>\w+)\) (?P<url>\S+)\r?\n"
+                          r"installeur officiel : (?P<fin>[^\r\n]*?)\r?$", re.M)
+VOIE_GIT = re.compile(r"^> Git : (?:(?P<absent>absent)|(?P<exe>.+?)(?: \((?P<via>winget|installeur officiel)\))?)\r?$", re.M)
+# winget's codes for a source that does not open (install.ps1's $WINGET_SOURCE_CODES).
+SOURCE_WINGET = {-1978335222: "index corrompu", -1978335221: "sources corrompues", -1978335217: "données de la source manquantes",
+                 -1978335169: "source altérée", -1978335163: "source impossible à ouvrir",
+                 -1978335157: "sources impossibles à ouvrir"}
+# winget blocked by the company's policy (install.ps1's $WINGET_POLICY_CODES): no other installer then.
+POLICY_WINGET = {-1978335174: "bloqué par la politique de l'entreprise",
+                 -1978334961: "installation bloquée par la politique de l'entreprise"}
 # Where Claude Code 2.1 looks for Git Bash on Windows: CLAUDE_CODE_GIT_BASH_PATH, these two, then
 # bin\bash.exe two folders above the git.exe on its PATH. None: no Bash tool, PowerShell instead.
 BASH_CLAUDE = (r"C:\Program Files\Git\bin\bash.exe", r"C:\Program Files (x86)\Git\bin\bash.exe")
@@ -1060,6 +1091,31 @@ def preuve_sans_git(t, path):
     t.check(isinstance(p.get("winget"), dict) and p["winget"].get("version"), "pas de winget sur la VM")
     t.check(isinstance(p.get("fin_epoch"), int), "la preuve ne dit pas quand Git a été retiré")
     return p
+
+
+def code_winget(code):
+    code = int(code)
+    if code in SOURCE_WINGET:
+        return "%d (0x%08X, source de winget en panne : %s)" % (code, code & 0xFFFFFFFF, SOURCE_WINGET[code])
+    if code in POLICY_WINGET:
+        return "%d (0x%08X, %s)" % (code, code & 0xFFFFFFFF, POLICY_WINGET[code])
+    return "%d (0x%08X)" % (code, code & 0xFFFFFFFF) if code < 0 else str(code)
+
+
+def chemin_git(texte):
+    """What install.log says of the ways install.ps1 took for Git, in order, in a few words."""
+    dit = [(m.start(), "winget %s : code %s" % ("--scope user" if m.group("args").endswith("--scope user") else "(portée du paquet)",
+                                                code_winget(m.group("code")))) for m in WINGET_GIT.finditer(texte)]
+    dit += [(m.start(), "winget source update : code %s" % code_winget(m.group("code"))) for m in WINGET_SOURCE_MAJ.finditer(texte)]
+    dit += [(m.start(), m.group("dit")) for m in WINGET_SANS_GIT.finditer(texte)]
+    dit += [(m.start(), "installeur officiel de Git %s (%s) : %s" % (m.group("version"), m.group("arch"), m.group("fin")))
+            for m in OFFICIEL_GIT.finditer(texte)]
+    return " ; ".join(d for _, d in sorted(dit)) or "install.log ne dit rien de Git"
+
+
+def pourquoi_sans_git(opts):
+    log = opts.home / ".brain-in-a-box" / "install.log"
+    return chemin_git(read(log)) if log.is_file() else "pas de journal d'installation (%s)" % log
 
 
 def git_de_session(t):
@@ -1118,9 +1174,10 @@ def claude_et_git_bash(t, opts, env):
 
 
 def check_git(t, opts):
-    """Windows started without Git: the installer brought it through winget, a new process finds it, the
-    vault has its history, Claude Code finds Git Bash and the kit's gbq runs there. Then the harness's
-    own git calls (coffre, gbrain) go to that Git, as a new terminal's would. Codex chosen alone (app-codex):
+    """Windows started without Git: the installer brought it (winget, or Git's official installer when winget
+    could not), a new process finds it, the vault has its history, Claude Code finds Git Bash and the kit's
+    gbq runs there. Then the harness's own git calls (coffre, gbrain) go to that Git, as a new terminal's
+    would. Codex chosen alone (app-codex):
     no Claude Code, and Codex runs its commands through PowerShell, not Git Bash: gbq.cmd is check_rest's."""
     git = t.details["git"] = {}
     claude = opts.parcours != "app-codex"
@@ -1130,12 +1187,23 @@ def check_git(t, opts):
                                                                 d.get("secondes")) for d in p.get("desinstalle") or []],
                     "path_retire": p.get("path_retire"), "winget": p["winget"].get("version")}
 
-    t("git-winget")
+    t("git-installe")
     log = opts.home / ".brain-in-a-box" / "install.log"
-    essais = list(WINGET_GIT.finditer(read(log))) if log.is_file() else []
-    t.check(essais, "install.log ne dit pas que l'installeur a demandé Git à winget")
+    texte = read(log) if log.is_file() else ""
+    essais = list(WINGET_GIT.finditer(texte))
     git["winget"] = ["%s : code %s" % (m.group("args"), m.group("code")) for m in essais]
-    t.check(any(m.group("code") == "0" for m in essais), "winget n'a pas installé Git : %s" % " ; ".join(git["winget"]))
+    git["officiel"] = ["Git %s (%s) : %s" % (m.group("version"), m.group("arch"), m.group("fin")) for m in OFFICIEL_GIT.finditer(texte)]
+    voies = list(VOIE_GIT.finditer(texte))
+    voie = voies[-1] if voies else None
+    if voie:
+        t.check(not voie.group("absent"), "l'installeur n'a pas installé Git : %s" % chemin_git(texte))
+        t.check(voie.group("via"), "Git trouvé (%s) sans que winget ni son installeur officiel l'aient installé : %s"
+                % (voie.group("exe"), chemin_git(texte)))
+        git["voie"] = voie.group("via")
+    else:   # an installer from before the official one: its winget attempts only
+        t.check(essais, "install.log ne dit pas que l'installeur a demandé Git à winget")
+        t.check(any(m.group("code") == "0" for m in essais), "winget n'a pas installé Git : %s" % chemin_git(texte))
+        git["voie"] = "winget"
 
     t("git-nouveau-processus")
     exe, version, env = git_de_session(t)
@@ -1162,11 +1230,15 @@ def check_git(t, opts):
     os.environ["PATH"] = dossier + os.pathsep + os.environ.get("PATH", "")
     # Where it went, not only what was asked: the VM's user is an administrator, Git's installer then
     # installs for all users whatever the scope winget asked for.
-    reussi = next(m.group("args") for m in essais if m.group("code") == "0")
-    git["resume"] = "Git absent au départ, installé par winget (portée demandée : %s) dans %s, %s dans un nouveau " \
-                    "processus, coffre versionné (« brain init »)%s" % (
-                        "utilisateur" if "--scope user" in reussi else "celle du paquet",
-                        os.path.dirname(dossier), version, ", Git Bash trouvé par Claude Code, gbq y répond" if claude else "")
+    if git["voie"] == "winget":
+        reussi = next((m.group("args") for m in essais if m.group("code") == "0"), "")
+        par = "winget (portée demandée : %s)" % ("utilisateur" if "--scope user" in reussi else "celle du paquet")
+    else:
+        par = "son installeur officiel (%s ; avant lui : %s)" % (git["officiel"][-1] if git["officiel"] else "?",
+                                                                 " ; ".join(git["winget"]) or "winget absent ou en panne")
+    git["resume"] = "Git absent au départ, installé par %s dans %s, %s dans un nouveau processus, coffre versionné " \
+                    "(« brain init »)%s" % (par, os.path.dirname(dossier), version,
+                                           ", Git Bash trouvé par Claude Code, gbq y répond" if claude else "")
 
 
 def check_git_bash(t, opts, git, exe, env):

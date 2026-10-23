@@ -6,8 +6,9 @@
 //! (include_str!) and applies it to what it probes itself: one source for both.
 //!
 //! Nothing secret is read. Codex's auth.json and Hermes's .env are looked for, never opened; of
-//! `claude auth status`, the diagnosis keeps authMethod and nothing else. While the kit's gate keeps
-//! Codex closed on this system (agents::codex_open), no rule offers Codex.
+//! `claude auth status`, the diagnosis keeps authMethod and the plan's name (detect::login_of), nothing
+//! else. While the kit's gate keeps Codex closed on this system (agents::codex_open), no rule offers
+//! Codex.
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -17,13 +18,12 @@ use std::sync::LazyLock;
 
 use serde::{Deserialize, Serialize};
 
+use crate::detect::{self, ClaudeLogin};
 use crate::model::Advice;
-use crate::{agents, codex, detect, sys};
+use crate::{agents, codex, sys};
 
 const SOURCE: &str = include_str!("../../../engine/hooks/_conseil.py");
 const OPEN: &str = "CONSEIL_JSON = r\"\"\"";
-/// What `claude auth status` says of a login with a Pro or Max subscription.
-const SUBSCRIBED: [&str; 2] = ["claude.ai", "oauth_token"];
 
 #[derive(Deserialize)]
 struct Rules {
@@ -60,7 +60,8 @@ fn block(text: &str) -> Option<&str> {
 pub struct Facts {
     /// Codex may be chosen on this system (_agents.py's gate).
     pub porte: bool,
-    /// Claude Code or the Claude desktop app is on this computer.
+    /// The Claude desktop app is on this computer, or Claude Code is logged in: installed alone,
+    /// Claude Code says nothing of its user (the app installs it too).
     pub claude: bool,
     /// Claude Code is logged in with a subscription.
     pub claude_connecte: bool,
@@ -103,18 +104,18 @@ pub fn decide(f: &Facts) -> Option<Advice> {
     })
 }
 
-/// This computer's facts. `method`: authMethod of `claude auth status`, when the diagnosis read it.
-pub fn probe(home: &Path, method: Option<&str>) -> Facts {
+/// This computer's facts. `login`: what `claude auth status` said, when the diagnosis read it.
+pub fn probe(home: &Path, login: ClaudeLogin) -> Facts {
     let env = |k: &str| std::env::var_os(k);
     let codex_home = codex_home(home, &env);
     let codex = codex::Setup::for_user(codex_home.as_deref().unwrap_or(&home.join(".codex"))).ok().is_some_and(|s| codex::find(&s).is_some());
     let place = Place { home, env: &env, applications: None, path: sys::tool_path() };
-    probe_with(&place, detect::claude_bin().is_some(), method, codex, codex_home.as_deref(), agents::codex_open(home))
+    probe_with(&place, detect::claude_bin().is_some(), login, codex, codex_home.as_deref(), agents::codex_open(home))
 }
 
 /// The advice now, for the screen that asks who the brain works with (before any diagnosis).
 pub fn now(home: &Path) -> Option<Advice> {
-    decide(&probe(home, detect::claude_auth_method().as_deref()))
+    decide(&probe(home, detect::claude_login()))
 }
 
 /// What the probes look at: a home, an environment, and (tests) the folders holding macOS apps.
@@ -125,13 +126,14 @@ struct Place<'a> {
     path: OsString,
 }
 
-fn probe_with(p: &Place, claude_bin: bool, method: Option<&str>, codex_bin: bool, codex_home: Option<&Path>, porte: bool) -> Facts {
+fn probe_with(p: &Place, claude_bin: bool, login: ClaudeLogin, codex_bin: bool, codex_home: Option<&Path>, porte: bool) -> Facts {
     let auth = codex_home.is_some_and(|h| there(&h.join("auth.json")));
     let (claude_app, chatgpt_app) = apps(p);
     Facts {
         porte,
-        claude: claude_bin || claude_app,
-        claude_connecte: claude_bin && method.is_some_and(|m| SUBSCRIBED.contains(&m)),
+        claude: claude_app || (claude_bin && login.is_logged_in()),
+        // claude.ai counts whatever its plan, as _conseil.connexion does: the diagnosis says the rest.
+        claude_connecte: claude_bin && matches!(login, ClaudeLogin::Subscribed | ClaudeLogin::Unconfirmed),
         chatgpt: codex_bin || auth || chatgpt_app,
         chatgpt_connecte: auth,
         hermes: hermes(p),
@@ -242,8 +244,10 @@ mod tests {
             assert_eq!(a.conseil, "claude", "{f:?}");
             assert!(!a.text.contains("travailler avec Codex"), "{f:?}: {}", a.text);
         }
+        // ChatGPT's user is told what Claude costs, and nothing is promised of Codex.
         let chatgpt = decide(&Facts { chatgpt: true, ..Facts::default() }).unwrap();
-        assert!(chatgpt.text.contains("arrive bientôt"), "{}", chatgpt.text);
+        assert!(chatgpt.text.contains("Claude Pro (environ 20\u{a0}€ par mois)"), "{}", chatgpt.text);
+        assert!(!chatgpt.text.contains("Codex"), "{}", chatgpt.text);
         let opened = decide(&Facts { porte: true, chatgpt: true, ..Facts::default() }).unwrap();
         assert_eq!(opened.conseil, "codex");
         let both = decide(&Facts { porte: true, claude: true, chatgpt: true, ..Facts::default() }).unwrap();
@@ -303,32 +307,36 @@ mod tests {
         let apps = home.join("Applications");
         let p = place(home, &no_env, vec![apps.clone()]);
         let codex_home = home.join(".codex");
-        assert_eq!(probe_with(&p, false, None, false, Some(&codex_home), false), Facts::default());
+        let out = ClaudeLogin::LoggedOut;
+        assert_eq!(probe_with(&p, false, out, false, Some(&codex_home), false), Facts::default());
 
-        // Claude Code logged in with a subscription; an API key is not one.
-        assert!(probe_with(&p, true, Some("claude.ai"), false, Some(&codex_home), false).claude_connecte);
-        assert!(probe_with(&p, true, Some("oauth_token"), false, Some(&codex_home), false).claude_connecte);
-        for other in [Some("api_key"), Some("none"), None] {
-            let f = probe_with(&p, true, other, false, Some(&codex_home), false);
-            assert!(f.claude && !f.claude_connecte, "{other:?}");
+        // Claude Code logged in with a subscription; an API key is not one, yet whoever logged in uses
+        // Claude.
+        for login in [ClaudeLogin::Subscribed, ClaudeLogin::Unconfirmed] {
+            let f = probe_with(&p, true, login, false, Some(&codex_home), false);
+            assert!(f.claude && f.claude_connecte, "{login:?}");
         }
+        let f = probe_with(&p, true, ClaudeLogin::Billed, false, Some(&codex_home), false);
+        assert!(f.claude && !f.claude_connecte);
+        // Installed and nobody logged in (the app installs it too): no sign of a Claude user.
+        assert_eq!(probe_with(&p, true, out, false, Some(&codex_home), false), Facts::default());
         // A login read without Claude Code is no login of it.
-        assert!(!probe_with(&p, false, Some("claude.ai"), false, Some(&codex_home), false).claude_connecte);
+        assert_eq!(probe_with(&p, false, ClaudeLogin::Subscribed, false, Some(&codex_home), false), Facts::default());
 
         fs::create_dir_all(apps.join("Claude.app/Contents")).unwrap();
         fs::write(apps.join("Claude.app/Contents/Info.plist"), "").unwrap();
-        let f = probe_with(&p, false, None, false, Some(&codex_home), false);
+        let f = probe_with(&p, false, out, false, Some(&codex_home), false);
         assert!(f.claude && !f.chatgpt);
         fs::create_dir_all(apps.join("Codex.app/Contents")).unwrap();
         fs::write(apps.join("Codex.app/Contents/Info.plist"), "").unwrap();
-        assert!(probe_with(&p, false, None, false, Some(&codex_home), false).chatgpt);
+        assert!(probe_with(&p, false, out, false, Some(&codex_home), false).chatgpt);
 
         fs::create_dir_all(&codex_home).unwrap();
         fs::write(codex_home.join("auth.json"), "{}").unwrap();
-        let f = probe_with(&p, false, None, false, Some(&codex_home), true);
+        let f = probe_with(&p, false, out, false, Some(&codex_home), true);
         assert!(f.chatgpt && f.chatgpt_connecte && f.porte);
         // CODEX_HOME that is not a full path: nowhere to look.
-        assert!(!probe_with(&p, false, None, false, None, false).chatgpt_connecte);
+        assert!(!probe_with(&p, false, out, false, None, false).chatgpt_connecte);
         assert_eq!(codex_home_of(home, Some("relative/codex")), None);
         assert_eq!(codex_home_of(home, Some("  ")), Some(home.join(".codex")));
     }
@@ -389,7 +397,7 @@ mod tests {
         let h = home.to_path_buf();
         std::thread::spawn(move || {
             let p = place(&h, &no_env, Vec::new());
-            let _ = tx.send(probe_with(&p, false, None, false, Some(&h.join(".codex")), false));
+            let _ = tx.send(probe_with(&p, false, ClaudeLogin::LoggedOut, false, Some(&h.join(".codex")), false));
         });
         let f = rx.recv_timeout(std::time::Duration::from_secs(10)).expect("a probe opened a login file");
         assert!(f.chatgpt_connecte && !f.hermes);
@@ -449,8 +457,42 @@ mod tests {
             let local = home.join("AppData").join("Local").into_os_string();
             let env = move |k: &str| (k == "LOCALAPPDATA").then(|| local.clone());
             let p = Place { home, env: &env, applications: apps_here.then(|| vec![home.join("Applications")]), path: OsString::new() };
-            let ours = probe_with(&p, false, None, false, Some(&home.join(".codex")), false);
+            let ours = probe_with(&p, false, ClaudeLogin::LoggedOut, false, Some(&home.join(".codex")), false);
             assert_eq!(serde_json::to_value(ours).unwrap(), t, "{}", home.display());
+        }
+    }
+
+    /// `claude auth status` read by the app (detect::login_of) and by the kit (_conseil.connexion):
+    /// the same login, with the setup-token given or not, one billed per use counted as a
+    /// subscription by neither.
+    #[test]
+    fn the_app_and_the_command_read_a_login_alike() {
+        let plans = ["\"pro\"", "\"max\"", "\"team\"", "\"enterprise\"", "\"free\"", "\"\"", "null", "4"];
+        let mut said: Vec<String> = plans.iter().map(|p| format!(r#"{{"authMethod":"claude.ai","subscriptionType":{p}}}"#)).collect();
+        said.extend(["claude.ai", "oauth_token", "api_key", "api_key_helper", "third_party", "none"].map(|m| format!(r#"note{{"authMethod":"{m}"}}"#)));
+        said.extend([r#"{"loggedIn":true}"#, r#"{"authMethod":4}"#, "Not logged in", "", "{oops"].map(String::from));
+        let cases: Vec<(String, bool)> = said.iter().flat_map(|s| [(s.clone(), false), (s.clone(), true)]).collect();
+        let script = "import json, sys\nsys.path.insert(0, sys.argv[1])\nimport _conseil\n\
+                      print(json.dumps([_conseil.connexion(s, j) for s, j in json.loads(sys.stdin.read())]))";
+        let mut child = Command::new(python())
+            .args(["-I", "-c", script, &hooks().to_string_lossy()])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        use std::io::Write;
+        child.stdin.take().unwrap().write_all(json!(cases).to_string().as_bytes()).unwrap();
+        let out = child.wait_with_output().unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        let theirs: Vec<Value> = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(theirs.len(), cases.len());
+        for ((s, token), t) in cases.iter().zip(theirs) {
+            let ours = match detect::login_of(s, *token) {
+                ClaudeLogin::Subscribed | ClaudeLogin::Unconfirmed => json!("abonne"),
+                ClaudeLogin::Billed => json!("facture"),
+                ClaudeLogin::LoggedOut => Value::Null,
+            };
+            assert_eq!(ours, t, "{s} {token}");
         }
     }
 }

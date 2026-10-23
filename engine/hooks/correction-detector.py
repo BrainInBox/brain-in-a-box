@@ -108,7 +108,11 @@ if CODEX:
 else:
     brain = Path(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
 if not (brain / "Profile" / "lessons.md").exists():
-    brain = Path.home() / "Documents" / "Brain"
+    # The brain each session start names (controle-sessionstart.py): BRAIN_DIR, else Documents/Brain,
+    # else ~/Brain (install.ps1's when Windows guards Documents).
+    mine = [Path(os.environ["BRAIN_DIR"].strip())] if os.environ.get("BRAIN_DIR", "").strip() else \
+        [Path.home() / "Documents" / "Brain", Path.home() / "Brain"]
+    brain = next((d for d in mine if (d / "Profile").is_dir()), mine[0])
 
 if is_strong:
     banner = "⚠️ CORRECTION DETECTED"

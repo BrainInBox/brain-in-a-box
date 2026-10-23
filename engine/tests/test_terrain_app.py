@@ -52,24 +52,29 @@ def neuf(installe):
         "bienvenue": {"titre": "Salut, moi c’est Bibo" + NB + "!",
                       "texte": "Je vais installer ton second cerveau pour Claude. 10 à 20 minutes, tu n’as aucune commande à taper.",
                       "boutons": {"Vérifier mon Mac": "diag-en-cours"}},
-        # Opened again with the brain and Claude Code there.
+        # Opened again with the brain and Claude Code there, Claude logged in (the guide's fake Claude says so).
         "retour": {"titre": "Content de te revoir" + NB + "!",
-                   "texte": "Ton second cerveau est installé. Je peux aussi te guider pas à pas dans un logiciel : tu me montres ta fenêtre, je te dis où cliquer.",
+                   "texte": "Je peux te guider pas à pas dans un logiciel : tu me montres ta fenêtre, je te dis où cliquer.",
                    "boutons": {"Vérifier mon Mac": "diag-en-cours", "Guide-moi dans un logiciel": None}},
+        # The same, the login put off: the welcome asks for it before the guide.
+        "retour-sans-compte": {"titre": "Content de te revoir" + NB + "!",
+                               "texte": "Il manque ton compte Claude" + NB + ": connecte-le, puis je pourrai te guider pas à pas dans un logiciel.",
+                               "boutons": {"Vérifier mon Mac": "diag-en-cours", "Connecter mon compte Claude": None}},
         "diag-en-cours": {"titre": "Je regarde ton Mac…", "texte": "Ça prend quelques secondes.",
                           "apres": (3, lambda: "deja" if installe() else "diag")},
-        "diag": {"titre": "J’ai fait le tour.", "texte": "Il manque Claude Code, Bun, Obsidian et ton cerveau. Je m’en occupe.",
-                 "boutons": {"Revérifier": "diag-en-cours", "Tout installer": "voyage"},
-                 "textes": ["macOS 26.6 · Puce Apple · 7 Go de mémoire", "Mon conseil" + NB + ":",
-                            "Ton cerveau marche avec Claude" + NB + ": il te faudra un abonnement Claude Pro ou Max.",
-                            "Claude Code", "À installer"]},
+        # The lines folded: the robot unfolds them, then installs.
+        "diag": {"titre": "J’ai fait le tour" + NB + ": ton Mac est prêt.",
+                 "texte": "J’installe Claude Code, le moteur de ta mémoire, Obsidian et ton cerveau" + NB + ": 10 à 20 minutes. Branche-toi sur un Wi-Fi si tu peux.",
+                 "boutons": {"Voir le détail": "diag-detail", "Tout installer": "claude"},
+                 "textes": ["Mon conseil" + NB + ":", "Ton cerveau marche avec Claude" + NB + ": il te faudra un abonnement Claude Pro ou Max."]},
+        "diag-detail": {"titre": "J’ai fait le tour" + NB + ": ton Mac est prêt.",
+                        "texte": "J’installe Claude Code, le moteur de ta mémoire, Obsidian et ton cerveau" + NB + ": 10 à 20 minutes. Branche-toi sur un Wi-Fi si tu peux.",
+                        "boutons": {"Masquer le détail": "diag", "Tout installer": "claude"},
+                        "textes": ["Mon conseil" + NB + ":", "Ton cerveau marche avec Claude" + NB + ": il te faudra un abonnement Claude Pro ou Max.",
+                                   "macOS 26.6 · Puce Apple · 7 Go de mémoire", "Claude Code", "À installer"]},
         "deja": {"titre": "Tout est déjà installé" + NB + "!",
                  "texte": "Ton cerveau cherche par mots-clés" + NB + ": tu peux lui apprendre à chercher par le sens.",
                  "boutons": {"Activer la recherche par le sens": None, "Continuer": "verif"}},
-        "voyage": {"titre": "Une option avant de commencer",
-                   "texte": "Ton cerveau retrouve tes notes par mots-clés. Avec une clé Voyage AI, il les retrouve aussi par le sens.",
-                   "boutons": {"Ouvrir Voyage AI": None, "Vérifier": None, "Passer (recherche par mots-clés)": "claude",
-                               "Continuer avec cette clé": None}},
         "claude": {"titre": "J’installe Claude Code.", "texte": "Étape 1 sur 4. L’outil officiel d’Anthropic.", "apres": (30, "verif-inline")},
         "verif-inline": {"titre": "Je vérifie ton compte Claude…", "apres": (2, "login-inline")},
         "login-inline": {"titre": "Connecte ton compte Claude maintenant",
@@ -83,14 +88,16 @@ def neuf(installe):
         "login": {"titre": "Dernière étape" + NB + ": ton compte Claude",
                   "texte": "Connecte-toi pour que Claude puisse travailler avec ton cerveau.",
                   "boutons": {"Plus tard": "fini", "Connecter mon compte Claude": None}},
-        "fini": {"titre": "Ton second cerveau est prêt" + NB + "!", "texte": "Claude retient maintenant ce que tu lui apprends.",
-                 "boutons": {"Activer la recherche par le sens": None, "Importer ma mémoire": "import-verif",
-                             "Ouvrir mon cerveau dans Obsidian": None, "Personnaliser mon cerveau (15 min)": None}},
+        # Claude's login put off: the end asks for it first.
+        "fini": {"titre": "Presque prêt" + NB + ": il manque ton compte Claude",
+                 "texte": "Connecte-le pour que Claude puisse travailler avec ton cerveau. Il faut un abonnement Claude Pro ou Max.",
+                 "boutons": {"Importer ma mémoire": "import-verif", "Voir mes notes": None, "Recherche par le sens": None,
+                             "Connecter mon compte Claude": None}},
         # « Importer ma mémoire »: the robot goes to the copy-paste and back, no AI asked.
         "import-verif": {"titre": "Je prépare l’import…", "apres": (3, "import-choix")},
         "import-choix": {"titre": "D’où vient ta mémoire" + NB + "?",
                          "texte": "ChatGPT ou Claude savent déjà des choses sur toi. Claude en tire l’essentiel, je le range dans ton cerveau.",
-                         "boutons": {"Retour": "fini", "Je copie-colle une réponse": "import-collage", "Choisir mon fichier d’export": None}},
+                         "boutons": {"Retour": "fini", "Choisir mon fichier d’export": None, "Je copie-colle (2 min)": "import-collage"}},
         "import-collage": {"titre": "Demande-lui ce qu’il sait de toi", "texte": "Trois étapes, deux minutes. Rien ne part avant que tu valides.",
                            "boutons": {"Copier la phrase": None, "Ouvrir ChatGPT": None, "Ouvrir Claude": None, "Retour": "import-choix",
                                        "Continuer": None},
@@ -110,11 +117,12 @@ def neuf_codex(installe):
                   "boutons": {"Claude": "diag-en-cours", "Codex": "diag-en-cours", "Les deux": "resume"},
                   "textes": ["Mon conseil" + NB + ":", "Ton cerveau marche avec Claude" + NB + ": il te faudra un abonnement Claude Pro ou Max."]}
     # Where Codex can be chosen, the advice is on the choice screen.
-    e["diag"] = dict(e["diag"], textes=[x for x in e["diag"]["textes"] if "conseil" not in x and "Pro ou Max" not in x])
+    texte = "J’installe Codex, le moteur de ta mémoire, Obsidian et ton cerveau" + NB + ": 10 à 20 minutes. Branche-toi sur un Wi-Fi si tu peux."
+    for k in ("diag", "diag-detail"):
+        e[k] = dict(e[k], texte=texte, textes=[x for x in e[k]["textes"] if "conseil" not in x and "Pro ou Max" not in x],
+                    boutons=dict(e[k]["boutons"], **{"Tout installer": "codex"}))
     e["resume"] = {"titre": "Lequel écrit le résumé de chaque soir" + NB + "?", "boutons": {"Retour": "choix", "Claude": None, "Codex": None}}
-    e["diag"] = dict(e["diag"], texte="Il manque Codex, Bun, Obsidian et ton cerveau. Je m’en occupe.")
     e["import-choix"] = dict(e["import-choix"], texte="ChatGPT ou Claude savent déjà des choses sur toi. Codex en tire l’essentiel, je le range dans ton cerveau.")
-    e["voyage"] = dict(e["voyage"], boutons=dict(e["voyage"]["boutons"], **{"Passer (recherche par mots-clés)": "codex"}))
     e["codex"] = {"titre": "J’installe Codex.", "texte": "Étape 1 sur 4. L’outil officiel d’OpenAI.", "apres": (30, "bun")}
     e["installe"] = dict(e["installe"], apres=(2, "verif-codex"))
     e["deja"] = dict(e["deja"], boutons={"Activer la recherche par le sens": None, "Continuer": "verif-codex"})
@@ -123,9 +131,9 @@ def neuf_codex(installe):
                         "texte": "Connecte Codex à ton compte ChatGPT pour qu’il puisse travailler avec ton cerveau.",
                         "boutons": {"Plus tard": "fini", "Connecter Codex à mon compte ChatGPT": None}}
     # The ChatGPT login put off: Codex's login comes first, the onboarding after it (§4.3).
-    e["fini"] = dict(e["fini"], texte="Codex retient maintenant ce que tu lui apprends.",
-                     boutons={"Activer la recherche par le sens": None, "Importer ma mémoire": "import-verif",
-                              "Ouvrir mon cerveau dans Obsidian": None, "Connecter Codex à mon compte ChatGPT": None},
+    e["fini"] = dict(e["fini"], titre="Ton second cerveau est prêt" + NB + "!", texte="Codex retient maintenant ce que tu lui apprends.",
+                     boutons={"Importer ma mémoire": "import-verif", "Voir mes notes": None, "Recherche par le sens": None,
+                              "Connecter Codex à mon compte ChatGPT": None},
                      textes=["Pense à connecter Codex à ton compte ChatGPT. S’il te le demande au premier lancement, "
                              "choisis « Sign in with ChatGPT », jamais une clé API : elle serait facturée."])
     return e
@@ -203,6 +211,9 @@ class FauxPilote(ta.Pilote):
         self.guide, self.guide_depuis, self.saisies, self.appels = None, 0.0, [], 0
         self.anneau, self.trace, self.guide_prudent = True, None, False
         self.anneau_apercu, self.modeles_faux = False, None
+        # The places of the buttons and the screen's usable area, as the Windows driver reads them: a function
+        # (screen, label) -> [x, y, w, h] or None. None: no places (macOS, Linux).
+        self.places, self.zone = None, None
 
     def aller(self, etat):
         self.etat = etat() if callable(etat) else etat
@@ -234,8 +245,10 @@ class FauxPilote(ta.Pilote):
         line = re.search(r"^CODEX_OUVERT = .*$", gate.read_text(encoding="utf-8"), re.M) if gate.is_file() else None
         self.portes.append(line.group(0) if line else None)
         self.marqueurs.append((gate.parents[2] / ta.MARQUEUR).is_file())
-        # Claude Code and the brain installed: the guide's welcome (Codex alone has no Claude Code).
-        self.aller("retour" if self.fait and not self.codex else "bienvenue")
+        # Claude Code and the brain installed: the guide's welcome (Codex alone has no Claude Code), which asks
+        # for Claude's login first unless the guide's fake Claude is there (it says it is logged in).
+        connecte = self.home is not None and (Path(self.home) / ".claude" / "fake" / "scenario").is_file()
+        self.aller(("retour" if connecte else "retour-sans-compte") if self.fait and not self.codex else "bienvenue")
 
     def vivante(self):
         return self.etat is not None
@@ -351,9 +364,11 @@ class FauxPilote(ta.Pilote):
         spec = self.spec()
         dialogues = [dict(self.dialogue)] if self.dialogue else []
         late = self.h.now - self.depuis < spec.get("boutons_apres", 0)   # the tree shows the words first
+        boutons = [] if late else list(spec.get("boutons", {}))
+        places = {b: self.places(self.etat, b) for b in boutons} if self.places else None
         return ta.Ecran(fenetre=True, titre=spec["titre"], texte=spec.get("texte", ""),
-                        boutons=[] if late else [(b, True) for b in spec.get("boutons", {})], textes=spec.get("textes", []),
-                        dialogues=dialogues)
+                        boutons=[(b, True) for b in boutons], textes=spec.get("textes", []),
+                        dialogues=dialogues, places={b: r for b, r in (places or {}).items() if r}, zone=self.zone)
 
     def cliquer(self, libelle, processus=None):
         self.clics.append((processus, libelle) if processus else libelle)
@@ -529,28 +544,31 @@ class Walk(Base):
         p = FauxPilote(self.h)
         pa = self.parcours(p)
         took = pa.premier_lancement({"HOME": "/h"})
-        self.assertEqual(p.clics, ["Vérifier mon Mac", "Tout installer", "Passer (recherche par mots-clés)",
-                                   "Plus tard", "Plus tard", "Importer ma mémoire", "Je copie-colle une réponse", "Retour", "Retour"])
+        self.assertEqual(p.clics, ["Vérifier mon Mac", "Voir le détail", "Tout installer",
+                                   "Plus tard", "Plus tard", "Importer ma mémoire", "Je copie-colle (2 min)", "Retour", "Retour"])
         self.assertGreater(took, 500)
         shots = p.captures
-        self.assertEqual(shots[:5], ["01-bienvenue.png", "02-diagnostic-en-cours.png", "03-diagnostic.png",
-                                     "04-voyage.png", "05-etape-claude.png"])
+        # Search by meaning is no longer on the way: the install comes right after the diagnosis.
+        self.assertEqual(shots[:4], ["01-bienvenue.png", "02-diagnostic-en-cours.png", "03-diagnostic.png", "04-etape-claude.png"])
         for name in ("etape-bun", "etape-obsidian", "etape-brain", "etape-brain-2min", "etape-brain-4min",
                      "etape-brain-6min", "connexion-installation", "connexion", "fini", "import-choix", "import-collage"):
             self.assertTrue(any(re.match(r"^\d\d-%s\.png$" % name, s) for s in shots), name)
         self.assertEqual(shots, sorted(shots))
         self.assertEqual(sorted(os.listdir(self.shots)), shots)
         self.assertEqual(self.t.vus[0], "app-lancement")
-        for step in ("app-bienvenue", "app-diagnostic", "app-voyage", "app-etape-claude", "app-connexion-installation",
+        self.assertNotIn("app-voyage", self.t.vus)
+        for step in ("app-bienvenue", "app-diagnostic", "app-etape-claude", "app-connexion-installation",
                      "app-etape-brain", "app-connexion", "app-fini"):
             self.assertIn(step, self.t.vus)
         for step in self.t.vus:
             self.assertRegex(step, terrain.ETAPE_RE)
-        self.assertIn("Il manque Claude Code, Bun, Obsidian et ton cerveau.", self.t.details["diagnostic"]["bibo"])
+        self.assertIn("J'installe Claude Code, le moteur de ta mémoire, Obsidian et ton cerveau", self.t.details["diagnostic"]["bibo"])
+        # The lines unfolded, read: what the VM had before the app.
+        self.assertIn("Claude Code", self.t.details["diagnostic"]["textes"])
         b = pa.bilan()
         brain = next(e for e in b["ecrans"] if e["ecran"] == "etape-brain")
         self.assertGreaterEqual(brain["duree_s"], 400)
-        self.assertEqual(b["bibo"]["titre"], "Ton second cerveau est prêt !")
+        self.assertEqual(b["bibo"]["titre"], "Presque prêt : il manque ton compte Claude")
         self.assertIn("app-import-collage", self.t.vus)
         self.assertEqual(self.t.details["conseil"], "Ton cerveau marche avec Claude : il te faudra un abonnement Claude Pro ou Max.")
         self.assertTrue(self.t.details["import"]["phrase"])
@@ -559,8 +577,8 @@ class Walk(Base):
         p = FauxPilote(self.h, codex=True)
         pa = ta.Parcours(self.t, p, self.shots, horloge=self.h, dormir=self.h.dormir, codex=True)
         pa.premier_lancement({})
-        self.assertEqual(p.clics, ["Choisir mon IA", "Codex", "Tout installer", "Passer (recherche par mots-clés)", "Plus tard",
-                                   "Importer ma mémoire", "Je copie-colle une réponse", "Retour", "Retour"])
+        self.assertEqual(p.clics, ["Choisir mon IA", "Codex", "Voir le détail", "Tout installer", "Plus tard",
+                                   "Importer ma mémoire", "Je copie-colle (2 min)", "Retour", "Retour"])
         for step in ("app-bienvenue", "app-choix", "app-diagnostic", "app-etape-codex", "app-verif-compte-codex",
                      "app-connexion-chatgpt", "app-fini"):
             self.assertIn(step, self.t.vus)
@@ -591,24 +609,24 @@ class Walk(Base):
         for change, said in (({"codex": {"titre": "J’installe Codex.", "texte": "Étape 1 sur 5.", "apres": (30, "claude")},
                                "claude": {"titre": "J’installe Claude Code.", "texte": "Étape 2 sur 5.", "apres": (30, "bun")}},
                               "l'app a installé Claude Code alors que seul Codex est choisi"),
-                             ({"voyage": {"titre": "Une option avant de commencer", "boutons": {"Passer (recherche par mots-clés)": "bun"}}},
+                             ({"diag-detail": dict(neuf_codex(lambda: False)["diag-detail"], boutons={"Tout installer": "bun"})},
                               "le parcours n'est pas passé par l'écran « etape-codex »"),
                              ({"verif-codex": {"titre": "Je vérifie ton compte Claude…", "apres": (2, "login-codex")}},
                               "écran « verif-compte » : Codex est choisi seul"),
                              ({"verif-codex": {"titre": "Je vérifie la connexion de Codex…", "apres": (2, "login")}},
                               "écran « connexion » : Codex est choisi seul"),
                              ({"fini": {"titre": "Ton second cerveau est prêt" + NB + "!", "texte": "Claude retient maintenant ce que tu lui apprends.",
-                                        "boutons": {"Ouvrir mon cerveau dans Obsidian": None, "Personnaliser mon cerveau (15 min)": None}}},
+                                        "boutons": {"Voir mes notes": None, "Guide-moi dans un logiciel": None}}},
                               "l'écran final ne nomme pas Codex"),
                              ({"choix": {"titre": "Avec quelle IA veux-tu travailler" + NB + "?", "boutons": {"Codex": "resume"}}},
                               "écran « choix-resume » : Codex est choisi seul"),
                              ({"fini": {"titre": "Ton second cerveau est prêt" + NB + "!", "texte": "Codex retient maintenant ce que tu lui apprends.",
-                                        "boutons": {"Ouvrir mon cerveau dans Obsidian": None, "Personnaliser mon cerveau (15 min)": None,
+                                        "boutons": {"Voir mes notes": None, "Présente-toi à Codex (15 min)": None,
                                                     "Connecter Codex à mon compte ChatGPT": None},
                                         "textes": ["choisis « Sign in with ChatGPT »"]}},
-                              "l'écran final propose de personnaliser le cerveau avec un Codex qui n'est pas connecté à ChatGPT"),
+                              "l'écran final propose de se présenter à un Codex qui n'est pas connecté à ChatGPT"),
                              ({"fini": {"titre": "Ton second cerveau est prêt" + NB + "!", "texte": "Codex retient maintenant ce que tu lui apprends.",
-                                        "boutons": {"Ouvrir mon cerveau dans Obsidian": None, "Connecter Codex à mon compte ChatGPT": None},
+                                        "boutons": {"Voir mes notes": None, "Connecter Codex à mon compte ChatGPT": None},
                                         "textes": ["Pense à connecter Codex : il te le demandera au premier lancement."]}},
                               "l'écran final ne dit pas de choisir « Sign in with ChatGPT »")):
             h = Horloge()
@@ -623,9 +641,13 @@ class Walk(Base):
                                              "texte": "Je vais installer ton second cerveau pour ton IA. 10 à 20 minutes, tu n’as aucune commande à taper.",
                                              "boutons": {"Vérifier mon Mac": "diag-en-cours"}}},
                               "la bienvenue ne parle pas de Claude"),
-                             ({"fini": {"titre": "Ton second cerveau est prêt" + NB + "!", "texte": "Ton IA retient maintenant ce que tu lui apprends.",
-                                        "boutons": {"Ouvrir mon cerveau dans Obsidian": None, "Personnaliser mon cerveau (15 min)": None}}},
-                              "l'écran final ne nomme pas Claude")):
+                             # Claude's login put off: « prêt » and the onboarding would open Claude Code unconnected.
+                             ({"fini": {"titre": "Ton second cerveau est prêt" + NB + "!", "texte": "Claude retient maintenant ce que tu lui apprends.",
+                                        "boutons": {"Voir mes notes": None, "Importer ma mémoire": None, "Connecter mon compte Claude": None}}},
+                              "l'écran final se dit prêt sans compte Claude"),
+                             ({"fini": dict(neuf(lambda: False)["fini"], boutons={"Voir mes notes": None, "Importer ma mémoire": None,
+                                                                                  "Présente-toi à Claude (15 min)": None, "Connecter mon compte Claude": None})},
+                              "l'écran final propose de se présenter à Claude, qui n'est pas connecté")):
             h = Horloge()
             p = FauxPilote(h, change=change)
             with self.subTest(said=said), self.assertRaises(terrain.Echec) as cm:
@@ -635,11 +657,12 @@ class Walk(Base):
     def test_the_advice_and_the_import_are_on_the_screens(self):
         # The advice at the diagnosis (the choice screen where Codex is open), « Importer ma mémoire » at the
         # end, its copy-paste showing the sentence to paste: each missing one fails, named.
-        diag = neuf(lambda: False)["diag"]
+        diag, detail = neuf(lambda: False)["diag"], neuf(lambda: False)["diag-detail"]
         fini = neuf(lambda: False)["fini"]
         collage = neuf(lambda: False)["import-collage"]
         for codex, change, said in (
-                (False, {"diag": dict(diag, textes=["Claude Code", "À installer"])}, "le diagnostic ne donne pas « Mon conseil »"),
+                (False, {"diag": dict(diag, textes=[]), "diag-detail": dict(detail, textes=["Claude Code", "À installer"])},
+                 "le diagnostic ne donne pas « Mon conseil »"),
                 (True, {"choix": dict(neuf_codex(lambda: False)["choix"], textes=[])}, "l'écran du choix ne donne pas « Mon conseil »"),
                 (False, {"fini": dict(fini, boutons={k: v for k, v in fini["boutons"].items() if k != "Importer ma mémoire"})},
                  "l'écran final n'a pas le bouton « Importer ma mémoire »"),
@@ -666,7 +689,7 @@ class Walk(Base):
                                                      "textes": ["Je prépare la phrase…"], "apres": (6, "import-collage-2")},
                                   "import-collage-2": dict(neuf(lambda: False)["import-collage"])})
         ta.Parcours(Noms(), p, self.shots, horloge=h, dormir=h.dormir).premier_lancement({})
-        self.assertEqual(p.clics[-4:], ["Importer ma mémoire", "Je copie-colle une réponse", "Retour", "Retour"])
+        self.assertEqual(p.clics[-4:], ["Importer ma mémoire", "Je copie-colle (2 min)", "Retour", "Retour"])
 
     def test_quick_reads_stand_for_full_ones_while_bibo_says_the_same(self):
         slow, quick = FauxPilote(self.h), FauxPilote(Horloge())
@@ -698,7 +721,7 @@ class Walk(Base):
         pa.premier_lancement({})
         self.assertEqual(len([n for n in quick.captures if n.endswith("-etape-bun.png")]), 1)
         # The slow one failed at the end of the install, before « Importer ma mémoire ».
-        self.assertEqual(quick.clics, slow.clics + ["Importer ma mémoire", "Je copie-colle une réponse", "Retour", "Retour"])
+        self.assertEqual(quick.clics, slow.clics + ["Importer ma mémoire", "Je copie-colle (2 min)", "Retour", "Retour"])
 
     def test_every_step_of_the_plan_is_counted(self):
         vus = lambda *etapes: {cle: ta.Ecran(True, "x", texte) for cle, texte in etapes}
@@ -720,8 +743,8 @@ class Walk(Base):
         click = next(c for c in pa.clics if c["ecran"] == "connexion")
         self.assertEqual(click["bouton"], "Plus tard")
         self.assertLessEqual(click["a_s"] - shown["debut_s"], 5, "not at the next periodic full read")
-        self.assertEqual([c["bouton"] for c in pa.clics], ["Vérifier mon Mac", "Tout installer",
-                                                           "Passer (recherche par mots-clés)", "Plus tard", "Plus tard", "Importer ma mémoire", "Je copie-colle une réponse", "Retour", "Retour"])
+        self.assertEqual([c["bouton"] for c in pa.clics], ["Vérifier mon Mac", "Voir le détail", "Tout installer",
+                                                           "Plus tard", "Plus tard", "Importer ma mémoire", "Je copie-colle (2 min)", "Retour", "Retour"])
 
     def test_opened_again_it_says_all_is_installed(self):
         p = FauxPilote(self.h)
@@ -736,19 +759,17 @@ class Walk(Base):
         self.assertIn("app-relance-deja-installe", self.t.vus)
         self.assertTrue(any(s.endswith("-relance-deja-installe.png") for s in p.captures))
 
-    def test_opened_again_the_welcome_must_offer_the_guide(self):
-        for retour, said in (({"titre": "Content de te revoir" + NB + "!", "boutons": {"Vérifier mon Mac": "diag-en-cours"}},
-                              "l'accueil ne propose pas « Guide-moi dans un logiciel »"),
+    def test_opened_again_without_claude_the_welcome_asks_for_it_before_the_guide(self):
+        # The welcome as it was: the guide first, though Claude is not logged in.
+        avant = dict(neuf(lambda: True)["retour"])
+        for retour, said in ((avant, "sans compte Claude, l'accueil ne demande pas « Connecter mon compte Claude » avant le guide"),
                              (None, "l'app ne dit pas « Content de te revoir »")):
             self.setUp()
             p = FauxPilote(self.h)
             pa = self.parcours(p)
             pa.premier_lancement({})
             p.fermer()
-            if retour:
-                p.ecrans["retour"] = retour
-            else:
-                p.ecrans["retour"] = p.ecrans["bienvenue"]
+            p.ecrans["retour-sans-compte"] = retour or p.ecrans["bienvenue"]
             with self.assertRaises(terrain.Echec) as cm:
                 pa.relance({})
             self.assertIn(said, str(cm.exception))
@@ -792,10 +813,19 @@ class Walk(Base):
         self.assertEqual(self.t.nom, "app-bienvenue")
 
     def test_a_missing_button_fails(self):
-        p = FauxPilote(self.h, change={"voyage": {"titre": "Une option avant de commencer", "boutons": {"Ouvrir Voyage AI": None}}})
+        detail = neuf(lambda: False)["diag-detail"]
+        p = FauxPilote(self.h, change={"diag-detail": dict(detail, boutons={"Masquer le détail": "diag"})})
         with self.assertRaises(terrain.Echec) as cm:
             self.parcours(p).premier_lancement({})
-        self.assertIn("l'écran « voyage » n'offre pas le bouton « Passer (recherche par mots-clés) »", str(cm.exception))
+        self.assertIn("l'écran « diagnostic » n'offre pas le bouton « Tout installer »", str(cm.exception))
+
+    def test_search_by_meaning_on_the_way_to_the_brain_fails(self):
+        # A bank card asked before anything is installed scared people off: it is an option of the end.
+        p = FauxPilote(self.h, change={"diag-detail": dict(neuf(lambda: False)["diag-detail"], boutons={"Tout installer": "voyage"}),
+                                       "voyage": {"titre": "Activons la recherche par le sens", "boutons": {"Retour": "claude"}}})
+        with self.assertRaises(terrain.Echec) as cm:
+            self.parcours(p).premier_lancement({})
+        self.assertIn("l'app demande une clé Voyage avant la fin de l'installation", str(cm.exception))
 
     def test_a_machine_with_everything_is_not_a_fresh_vm(self):
         p = FauxPilote(self.h)
@@ -821,6 +851,56 @@ class Walk(Base):
             pa.premier_lancement({})
         self.assertRegex(str(cm.exception), r"toujours sur l'écran « etape-brain » après 1\d min \(fin du temps du scénario\)")
         self.assertLess(self.h.now, 21 * 60)
+
+    def test_the_main_button_is_whole_in_the_usable_area_of_the_screen(self):
+        # The night's Windows VM: 1024 x 768, a taskbar 48 high. Each screen's buttons in a row at the bottom
+        # of the window, as the app puts them.
+        def fenetre(haut, hauteur):
+            return lambda etat, b: [400 + 150 * list(p.ecrans[etat]["boutons"]).index(b), haut + hauteur - 60, 140, 40]
+        p = FauxPilote(self.h)
+        p.machine, p.zone = "PC", [0, 0, 1024, 720]
+        p.ecrans["bienvenue"] = dict(p.ecrans["bienvenue"], boutons={"Vérifier mon PC": "diag-en-cours"})
+        # Before: 780 x 680 at (60, 50), its title bar 31 high, Bibo's buttons 20 px under the taskbar.
+        p.places = fenetre(50 + 31, 680)
+        pa = self.parcours(p)
+        with self.assertRaises(terrain.Echec) as cm:
+            pa.premier_lancement({})
+        self.assertIn("écran « bienvenue » : le bouton « Vérifier mon PC » sort de l'écran utile (21 px en bas)", str(cm.exception))
+        self.assertTrue(p.captures[-1].endswith("-bienvenue-bouton-cache.png"), p.captures)
+        # Now: 657 high, centered (lib.rs, place_main): every main button whole, each measured once.
+        p, self.h.now = FauxPilote(self.h), 0.0
+        p.machine, p.zone = "PC", [0, 0, 1024, 720]
+        p.ecrans["bienvenue"] = dict(p.ecrans["bienvenue"], boutons={"Vérifier mon PC": "diag-en-cours"})
+        p.places = fenetre(12 + 31, 657)
+        pa = self.parcours(p)
+        pa.premier_lancement({})
+        self.assertEqual(sorted(pa.principaux), ["bienvenue", "connexion", "connexion-installation", "diagnostic", "fini"])
+        self.assertEqual(pa.principaux["fini"]["bouton"], "Connecter mon compte Claude")
+        self.assertEqual(pa.principaux["diagnostic"], {"bouton": "Tout installer", "place": [550, 640, 140, 40], "zone": [0, 0, 1024, 720]})
+        self.assertEqual(pa.bilan()["boutons_principaux"], pa.principaux)
+        # A driver without places (macOS, Linux) measures nothing and fails nothing.
+        p, self.h.now = FauxPilote(self.h), 0.0
+        pa = self.parcours(p)
+        pa.premier_lancement({})
+        self.assertEqual(pa.principaux, {})
+        # Windows' driver must measure them: a tree that stops giving the places fails, it does not pass unmeasured.
+        p, self.h.now = FauxPilote(self.h), 0.0
+        p.machine, p.mesure_places = "PC", True
+        p.ecrans["bienvenue"] = dict(p.ecrans["bienvenue"], boutons={"Vérifier mon PC": "diag-en-cours"})
+        with self.assertRaises(terrain.Echec) as cm:
+            self.parcours(p).premier_lancement({})
+        self.assertIn("écran « bienvenue » : le bouton principal n'a pas été mesuré", str(cm.exception))
+
+    def test_opened_twice_the_second_one_goes_by_itself(self):
+        p = FauxPilote(self.h)
+        p.ouvrir_encore = lambda env: 0.8
+        self.parcours(p).premier_lancement({})
+        self.assertEqual(self.t.details["deuxieme_ouverture_s"], 0.8)
+        p, self.h.now = FauxPilote(self.h), 0.0
+        p.ouvrir_encore = lambda env: None
+        with self.assertRaises(terrain.Echec) as cm:
+            self.parcours(p).premier_lancement({})
+        self.assertIn("l'app ouverte une deuxième fois reste ouverte : deux Bibo à la fois", str(cm.exception))
 
     def test_no_window_fails_with_a_capture(self):
         p = FauxPilote(self.h)
@@ -999,9 +1079,9 @@ class ReadingTheWindow(unittest.TestCase):
         with open(os.path.join(REPO, "app", "src", "app.js"), encoding="utf-8") as f:
             app = ta.norm(f.read().replace("${OS.machine}", "Mac"))
         words = [start for _, start in ta.ECRANS] + list(ta.ETAPES) + list(ta.BOUTONS_ECHEC) + [
-            "Vérifier mon Mac", "Tout installer", "Passer (recherche par mots-clés)", "Plus tard", "Continuer",
-            "Personnaliser mon cerveau (15 min)", "Ouvrir mon cerveau dans Obsidian", "Importer ma mémoire",
-            "Je copie-colle une réponse", "Retour", ta.CONSEIL]
+            "Vérifier mon Mac", ta.DETAIL, "Tout installer", "Plus tard", "Continuer", "Présente-toi à", "Voir mes notes",
+            "Importer ma mémoire", "Je copie-colle (2 min)", "Retour", ta.CONSEIL] + [
+            b.replace("{machine}", "Mac") for bs in ta.PRINCIPAUX.values() for b in bs]
         for w in words:
             self.assertIn(ta.norm(w), app, w)
 
@@ -1204,6 +1284,23 @@ class WindowsReading(unittest.TestCase):
         e = self.ecran(page_uia("StatusBar", p_texte=True))
         self.assertEqual((e.titre, e.texte), ("Salut, moi c'est Bibo !", "Je vais installer ton second cerveau."))
 
+    def test_each_buttons_place_and_the_usable_area(self):
+        page = page_uia()
+        footer = [n for n in ta._aplatir(page)[::-1] if n[1].get("lt") == "content info"][0][1]
+        footer["k"][0]["b"] = [552, 676, 160, 44]
+        footer["k"][1]["b"] = [430, 676, 110, 0]     # a place without a height: none
+        e = self.ecran(page)
+        self.assertEqual(e.places, {"Vérifier mon PC": [552, 676, 160, 44]})
+        e.zone = [0, 0, 1024, 720]
+        self.assertEqual(ta.cache_du_bouton(e, "Vérifier mon PC"), "")
+        e.zone = [0, 0, 1024, 700]
+        self.assertEqual(ta.cache_du_bouton(e, "Vérifier mon PC"), "20 px en bas")
+        e.places["Vérifier mon PC"] = [-8, -4, 160, 44]
+        self.assertEqual(ta.cache_du_bouton(e, "Vérifier mon PC"), "4 px en haut, 8 px à gauche")
+        self.assertIsNone(ta.cache_du_bouton(e, "Plus tard"))
+        e.zone = None
+        self.assertIsNone(ta.cache_du_bouton(e, "Vérifier mon PC"))
+
     def test_the_window_frame_is_not_the_page(self):
         e = self.ecran(page_uia())
         self.assertIsNone(e.bouton("Close"))
@@ -1397,6 +1494,20 @@ class WindowsInstaller(Base):
 
 
 class WindowsApp(Base):
+    def test_opened_a_second_time_as_a_user_does_and_killed_if_it_stays(self):
+        p = FauxWindows(self.h, self.tmp)
+        p.exe = r"C:\Users\r\AppData\Local\Brain in a Box\brain-in-a-box.exe"
+        runs = []
+        p._run = lambda argv, timeout=120, **kw: runs.append([str(a) for a in argv]) or (0, "")
+        for fini, attendu in ((3.0, 3.0), (None, None)):
+            second = FauxSetup(self.h)
+            second.fini = None if fini is None else self.h.now + fini
+            with mock.patch.object(ta.subprocess, "Popen", return_value=second) as popen:
+                self.assertEqual(p.ouvrir_encore({"USERPROFILE": "C:\\Users\\r"}), attendu)
+            self.assertEqual(popen.call_args[0][0], [p.exe])
+            self.assertEqual(popen.call_args[1]["env"], {"USERPROFILE": "C:\\Users\\r"})
+        self.assertEqual(runs, [["taskkill", "/PID", str(second.pid), "/T", "/F"]])
+
     def test_the_window_a_dialog_in_front_and_a_click_on_it(self):
         p = FauxWindows(self.h, self.tmp)
         p.proc = FauxSetup(self.h)
@@ -1415,12 +1526,13 @@ class WindowsApp(Base):
                     {"h": 6, "classe": "Tao Thread Event Target", "titre": "", "rect": [0, 0, 16, 16],
                      "arbre": uia("Pane", "", c="Tao Thread Event Target")},
                     {"h": 5, "classe": "Tauri Window", "titre": "Brain in a Box", "rect": [130, 49, 796, 719],
-                     "arbre": page_uia()}], "devant": outil.devant}
+                     "arbre": page_uia()}], "devant": outil.devant, "zone": [0, 0, 1024, 720]}
             return {"ok": True, "comment": "Invoke"}
         p._outil = outil
         outil.devant = devant
         e = p.lire()
         self.assertEqual((e.titre, ta.cle_ecran(e)[0]), ("Salut, moi c'est Bibo !", "bienvenue"))
+        self.assertEqual(e.zone, [0, 0, 1024, 720])
         self.assertEqual(e.dialogues[0]["processus"], "SmartScreen")
         self.assertEqual(ta.bouton_autoriser(e.dialogues[0]), "Autoriser")
         p.cliquer("Autoriser", processus="SmartScreen")
@@ -1441,8 +1553,8 @@ class WindowsApp(Base):
         f.ecrans["claude"]["texte"] = "Étape 1 sur 2. L’outil officiel d’Anthropic."
         f.ecrans["brain"] = dict(f.ecrans["brain"], texte="Étape 2 sur 2. C’est l’étape la plus longue : 10 à 20 minutes.")
         self.parcours(f).premier_lancement({})
-        self.assertEqual(f.clics, ["Vérifier mon PC", "Tout installer", "Passer (recherche par mots-clés)",
-                                   "Plus tard", "Plus tard", "Importer ma mémoire", "Je copie-colle une réponse", "Retour", "Retour"])
+        self.assertEqual(f.clics, ["Vérifier mon PC", "Voir le détail", "Tout installer",
+                                   "Plus tard", "Plus tard", "Importer ma mémoire", "Je copie-colle (2 min)", "Retour", "Retour"])
         self.assertFalse([c for c in f.captures if "etape-bun" in c or "etape-obsidian" in c])
 
 
@@ -2138,7 +2250,7 @@ class Scenario(Base):
             t.check(False, "gbq query ne trouve pas Profile/lessons.md (code 127)")
         row, p, _, _, _, _ = self.run_it(check=check)
         self.assertEqual((row["statut"], row["etape"]), ("echec", "lanceurs"))
-        self.assertIn("gbq query ne trouve pas Profile/lessons.md (code 127) ; Bibo : « Ton second cerveau est prêt !",
+        self.assertIn("gbq query ne trouve pas Profile/lessons.md (code 127) ; Bibo : « Presque prêt : il manque ton compte Claude",
                       row["raison"])
         self.assertTrue(row["details"]["captures"][-1].endswith("-echec.png"))
 
@@ -2294,7 +2406,9 @@ class GuideParts(unittest.TestCase):
         self.assertEqual(ta.ANNEAU_PLEIN, "Sur l'image, « Nouveau » est entouré en rouge.")
         self.assertEqual(ta.REPONSES_GUIDE["debut"]["libelle"], "Nouveau")
         with open(os.path.join(REPO, "app", "src-tauri", "src", "lib.rs"), encoding="utf-8") as f:
-            self.assertIn('.title("%s")' % ta.GUIDE_TITRE, f.read())
+            rs = f.read()
+        self.assertIn('const GUIDE_TITLE: &str = "%s";' % ta.GUIDE_TITRE, rs)
+        self.assertIn(".title(GUIDE_TITLE)", rs)
         with open(os.path.join(REPO, "app", "src", "styles.css"), encoding="utf-8") as f:
             css = f.read()
         self.assertIn("stroke: #%02x%02x%02x;" % ta.ROUGE, css)

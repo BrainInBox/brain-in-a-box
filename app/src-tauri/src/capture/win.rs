@@ -28,8 +28,11 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use super::{from_bgra, is_terminal, lay, same_window, Found, Rate, Window};
 use crate::shot::{Rgba, MAX_SIDE};
 
-/// The shell's own windows: the desktop and the taskbar.
-const SHELL: &[&str] = &["Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd"];
+/// The shell's own windows: the desktop, the taskbar, and Start and its search (a store app's
+/// window, alone at the top only for the system's panels: a store app's own sits in an
+/// ApplicationFrameWindow). Opened while Bibo waits for the click, Start is never taken for the
+/// user's program.
+const SHELL: &[&str] = &["Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd", "Windows.UI.Core.CoreWindow"];
 
 fn handle(id: u64) -> HWND {
     HWND(id as usize as *mut c_void)
@@ -162,6 +165,11 @@ fn name(path: &str) -> String {
 
 pub fn available() -> bool {
     true
+}
+
+/// Never asked: PrintWindow is there on every Windows the app runs on.
+pub fn raison() -> &'static str {
+    "indisponible"
 }
 
 /// The window under this id, if it is another program's the guide may capture.
@@ -376,7 +384,8 @@ mod tests {
     use windows::core::w;
     use windows::Win32::Foundation::POINT;
     use windows::Win32::UI::Input::KeyboardAndMouse::{
-        EnableWindow, SendInput, INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEINPUT, MOUSE_EVENT_FLAGS,
+        EnableWindow, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, MOUSEEVENTF_LEFTDOWN,
+        MOUSEEVENTF_LEFTUP, MOUSEINPUT, MOUSE_EVENT_FLAGS, VIRTUAL_KEY, VK_ESCAPE, VK_LWIN,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DestroyWindow, GetAncestor, GetWindowDisplayAffinity, SetCursorPos, ShowWindowAsync, WindowFromPoint, GA_ROOT, SW_MINIMIZE,
@@ -449,6 +458,14 @@ mod tests {
         unsafe { SetCursorPos(x, y) }.unwrap();
         let input = |flags: MOUSE_EVENT_FLAGS| INPUT { r#type: INPUT_MOUSE, Anonymous: INPUT_0 { mi: MOUSEINPUT { dwFlags: flags, ..Default::default() } } };
         let sent = unsafe { SendInput(&[input(MOUSEEVENTF_LEFTDOWN), input(MOUSEEVENTF_LEFTUP)], size_of::<INPUT>() as i32) };
+        assert_eq!(sent, 2, "SendInput");
+    }
+
+    /// A key pressed and let go, as a hand does.
+    fn key(vk: VIRTUAL_KEY) {
+        let input = |flags: KEYBD_EVENT_FLAGS| INPUT { r#type: INPUT_KEYBOARD, Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: vk, dwFlags: flags, ..Default::default() } } };
+        // SAFETY: plain values; the inputs live for the call.
+        let sent = unsafe { SendInput(&[input(KEYBD_EVENT_FLAGS(0)), input(KEYEVENTF_KEYUP)], size_of::<INPUT>() as i32) };
         assert_eq!(sent, 2, "SendInput");
     }
 
@@ -718,6 +735,37 @@ mod tests {
         assert!(System.windows().iter().all(|f| f.window.pid != std::process::id()));
         // SAFETY: our window.
         let _ = unsafe { DestroyWindow(own) };
+        guide::fin();
+    }
+
+    /// Start opened while Bibo waits for the click (to open the program from it): Start is no window of
+    /// the user's, nor what it covers. The window back in front after it is the one that counts.
+    #[test]
+    #[ignore = "a Windows desktop (VM)"]
+    fn bureau_windows_start_is_never_the_window() {
+        struct Escape;
+        impl Drop for Escape {
+            fn drop(&mut self) {
+                key(VK_ESCAPE);
+            }
+        }
+        let d = desk();
+        let (_p, win) = d.open("fenetre", "Avant Demarrer", (80, 80, 420, 320), &[BLUE]);
+        click(center(&win));
+        until("the window in front", || front() == win.window.id);
+        let waiting = std::thread::spawn(guide::attendre_clic);
+        std::thread::sleep(Duration::from_millis(600));
+        let _closes = Escape;
+        key(VK_LWIN);
+        until("Start in front", || class(handle(front())) == "Windows.UI.Core.CoreWindow");
+        let start = handle(front());
+        eprintln!("Start: « {} », class {}, program {:?}", title(start), class(start), identity(start).map(|w| w.app));
+        assert!(listed(start) && identity(start).is_some_and(|w| w.pid != std::process::id()) && !title(start).trim().is_empty(), "only its class keeps Start out");
+        assert!(foreground().is_none() && describe(id_of(start)).is_none(), "Start is no window of the user's");
+        std::thread::sleep(Duration::from_millis(600));
+        key(VK_ESCAPE);
+        let clicked = waiting.join().unwrap().unwrap();
+        assert_eq!(clicked.id, win.window.id, "the window back in front after Start, never Start");
         guide::fin();
     }
 

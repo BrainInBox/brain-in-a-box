@@ -1,4 +1,8 @@
-# Skills — procedures your agents (and you) can invoke
+# Skills — tes procédures
+
+Une note par tâche que Claude sait refaire pour toi : quand la faire, et ses étapes. Claude les écrit quand tu lui apprends une tâche que tu refais souvent. Les procédures que Bibo t'a montrées dans un logiciel sont dans le dossier `Guides`.
+
+## In English
 
 > One file per skill. The YAML frontmatter is the [gstack](https://github.com/garrytan/gstack) **SKILL.md** format: this folder is your library of procedures, searchable with `gbq`. Claude Code only *runs* skills from `~/.claude/skills/<name>/SKILL.md`: copy one there (folder named after the skill) when it should trigger on its own. Ask Claude, the `brain-boost` skill knows how.
 

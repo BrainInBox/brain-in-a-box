@@ -1,5 +1,7 @@
 # Stack — tools, memory, env
 
+> Cette note liste, pour Claude, tes outils et ce qui est installé sur ton ordinateur. Rien à remplir.
+>
 > Capability brief. Everything below is AVAILABLE. Partly filled in by the onboarding.
 
 ## Machine

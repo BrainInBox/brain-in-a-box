@@ -6,7 +6,8 @@
 // as a screen reader sees it), presses a button as a screen reader does (Invoke), and
 // captures the whole screen.
 //
-//   pilote-windows.exe lire <pid>                  the windows of <pid>, and the one in front
+//   pilote-windows.exe lire <pid>                  the windows of <pid>, and the one in front; each button's place
+//                                                  and the screen's usable area (the taskbar left out)
 //   pilote-windows.exe cliquer <hwnd> <label> [souris|invoke]
 //                                                  the enabled button (or link) with that label: the mouse
 //                                                  on it as a user clicks, or Invoke as a screen reader does
@@ -69,6 +70,7 @@ static class PiloteWindows
     [DllImport("user32.dll")] static extern bool AttachThreadInput(uint a, uint b, bool attach);
     [DllImport("user32.dll")] static extern bool PostMessage(IntPtr h, uint msg, IntPtr w, IntPtr l);
     [DllImport("user32.dll")] static extern int GetSystemMetrics(int i);
+    [DllImport("user32.dll")] static extern bool SystemParametersInfo(uint action, uint param, ref RECT r, uint ini);
     [DllImport("user32.dll")] static extern IntPtr WindowFromPoint(POINT p);
     [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr h, uint flags);
     [DllImport("user32.dll")] static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
@@ -225,7 +227,17 @@ static class PiloteWindows
         res["fenetres"] = app;
         res["devant"] = autre;
         res["mode"] = mode;
+        res["zone"] = ZoneUtile();
         return res;
+    }
+
+    // The main screen's usable area, the taskbar left out (SPI_GETWORKAREA), in the pixels of the windows'
+    // and the buttons' places: a button below it is under the taskbar.
+    static List<object> ZoneUtile()
+    {
+        RECT r = new RECT();
+        if (!SystemParametersInfo(0x0030, 0, ref r, 0)) return null;
+        return new List<object> { r.Left, r.Top, r.Right - r.Left, r.Bottom - r.Top };
     }
 
     // ------------------------------------------------------------------ the accessibility tree
@@ -252,6 +264,7 @@ static class PiloteWindows
         cr.Add(AutomationElement.AutomationIdProperty);
         cr.Add(AutomationElement.ClassNameProperty);
         cr.Add(TogglePattern.ToggleStateProperty);
+        cr.Add(AutomationElement.BoundingRectangleProperty);
         if (Live != null) cr.Add(Live);
         return cr;
     }
@@ -312,6 +325,16 @@ static class PiloteWindows
         if (classe.Length > 0) d["c"] = classe;
         object coche = Valeur(e, TogglePattern.ToggleStateProperty, cache);
         if (coche is ToggleState) d["x"] = (int)(ToggleState)coche;
+        // A button's place on the screen: whether a user sees it whole.
+        if ((string)d["t"] == "Button" || (string)d["t"] == "Hyperlink")
+        {
+            object place = Valeur(e, AutomationElement.BoundingRectangleProperty, cache);
+            if (place is System.Windows.Rect && ((System.Windows.Rect)place).Width > 0 && ((System.Windows.Rect)place).Height > 0)
+            {
+                System.Windows.Rect b = (System.Windows.Rect)place;
+                d["b"] = new List<object> { (int)Math.Round(b.Left), (int)Math.Round(b.Top), (int)Math.Round(b.Width), (int)Math.Round(b.Height) };
+            }
+        }
         object live = Valeur(e, Live, cache);
         if (live != null)
         {

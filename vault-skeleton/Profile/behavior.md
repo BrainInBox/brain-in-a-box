@@ -1,5 +1,7 @@
 # Behavior — execution rules and format
 
+> Cette note dit comment Claude répond et agit. Rien à remplir.
+>
 > Reusable as-is. How the agent responds and acts.
 
 ## Response format

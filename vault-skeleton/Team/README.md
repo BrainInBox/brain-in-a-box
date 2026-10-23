@@ -1,4 +1,8 @@
-# Team — the humans on your team
+# Team — les personnes avec qui tu travailles
+
+Une note par personne (collègue, client, fournisseur) : son rôle, ce qu'elle fait, comment la joindre. Claude les écrit quand tu lui parles de quelqu'un. Pour en écrire une toi-même, pars de `_template.md`.
+
+## In English
 
 > One file per person. You and any AI agent can query this folder to answer "who knows X" or "who owns Y". In team mode, your `Team/` is federated with `BrainCo/Team/` — searches return both your personal contacts and the shared company roster.
 
