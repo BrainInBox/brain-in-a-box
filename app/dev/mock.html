@@ -221,19 +221,23 @@
 
     // _conseil.py's sentences (CONSEIL_JSON).
     const PHRASES = {
-      claude_connecte: 'Tu as déjà Claude Code, connecté à ton abonnement : ton cerveau travaillera avec lui.',
-      claude_vu: 'Tu utilises déjà Claude : ton cerveau travaillera avec lui (il te faudra un abonnement Pro ou Max pour Claude Code).',
+      claude_connecte: 'Tu as déjà Claude Code, connecté à ton compte Claude : ton cerveau travaillera avec lui.',
+      claude_vu: 'Tu utilises déjà Claude : ton cerveau travaillera avec lui. Si tu as Claude Pro ou Max, c\'est bon. Sinon, il te faut Claude Pro (environ 20\u00a0€ par mois).',
       chatgpt_bientot: 'Tu utilises ChatGPT : ton cerveau marche avec Claude, il te faudra un abonnement Claude Pro ou Max (ton abonnement ChatGPT ne suffit pas). Codex, l\'IA de ChatGPT, arrive bientôt ici. À la fin, tu pourras apporter à ton cerveau ce que ChatGPT sait de toi.',
-      rien: 'Ton cerveau marche avec Claude : il te faudra un abonnement Claude Pro ou Max.',
+      rien: 'Ton cerveau marche avec Claude : il te faut un abonnement Claude Pro (environ 20\u00a0€ par mois) ou Max.',
       codex: 'Tu utilises ChatGPT : ton cerveau peut travailler avec Codex, l\'IA de ChatGPT, sur ton abonnement ChatGPT. À la fin, tu pourras apporter à ton cerveau ce que ChatGPT sait de toi.',
       les_deux: 'Tu as Claude et ChatGPT : ton cerveau peut travailler avec les deux, Claude d\'abord.',
       hermes: 'J\'ai vu Hermes : je ne l\'installe pas et n\'y touche pas. Ses meilleures compétences arrivent dans Claude avec ton cerveau.',
       hermes_lu: 'J\'ai vu Hermes : je ne l\'installe pas et n\'y touche pas. Ses meilleures compétences arrivent dans Claude avec ton cerveau, et chaque soir ton cerveau lit aussi ses conversations.',
     };
-    // Claude Code connected where the scenario has it, seen where it is not connected, else nothing.
+    // Claude Code connected where the scenario has it, seen where it is not connected, else nothing. As
+    // advice.rs: a key paid per message (&compte=api) is no subscription, only a sign of a Claude user;
+    // logged out (&deco=1), no sign at all.
     function advice() {
+      const back = scenario === 'installe' || scenario === 'motscles' || REPAIR;
       const which = Object.hasOwn(PHRASES, P.get('conseil') || '') ? P.get('conseil')
-        : scenario === 'installe' || scenario === 'motscles' || REPAIR ? 'claude_connecte' : Object.hasOwn(CLAUDE_ONLY, scenario) ? 'claude_vu' : 'rien';
+        : back && P.get('deco') ? 'rien' : back && P.get('compte') === 'api' ? 'claude_vu' : back ? 'claude_connecte'
+          : Object.hasOwn(CLAUDE_ONLY, scenario) ? 'claude_vu' : 'rien';
       const hermes = { 1: PHRASES.hermes, lu: PHRASES.hermes_lu }[P.get('hermes')] || null;
       return { conseil: { codex: 'codex', les_deux: 'les_deux' }[which] || 'claude', text: PHRASES[which], hermes };
     }
@@ -307,11 +311,11 @@
       });
       const red = checks.filter((c) => c.status === 'error').length;
       const what = installing(todo);
-      let headline = `Ton ${MACHINE} est prêt. J'installe ${what} : ${time} et ${size} à télécharger.`;
+      let headline = `J'installe ${what} : ${time} et ${size} à télécharger.`;
       if (red === 1) headline = "Une chose bloque l'installation : la ligne en rouge dit quoi faire. Ensuite, clique sur Revérifier.";
       else if (red > 1) headline = "Des choses bloquent l'installation : les lignes en rouge disent quoi faire. Ensuite, clique sur Revérifier.";
       else if (!todo.length) headline = `Tout est déjà installé sur ton ${MACHINE}.`;
-      else if (slow) headline = `Ton ${MACHINE} est prêt, mais ta connexion est lente. J'installe ${what} : prévois ${time}, avec ${size} à télécharger. En données mobiles, attends d'avoir un Wi-Fi.`;
+      else if (slow) headline = `Ta connexion est lente. J'installe ${what} : prévois ${time}, avec ${size} à télécharger. En données mobiles, attends d'avoir un Wi-Fi.`;
       // claude.ai silent (&alerte=network): not every site answers.
       const online = d.online && P.get('alerte') !== 'network';
       return { ...d, checks, online, can_install: red === 0, headline, download_mb: mb, minutes };
@@ -659,7 +663,10 @@
         (window.__liens ||= []).push(url);
         console.log('open_link', url);
         const host = /^https:\/\/([^/?#]+)/.exec(url);
-        if (!host || !LINK_HOSTS.includes(host[1])) throw "Ce lien n'est pas autorisé.";
+        if (!host || !LINK_HOSTS.includes(host[1])) {
+          (window.__refusLiens ||= []).push(url);
+          throw "Ce lien n'est pas autorisé.";
+        }
       },
       // The guide (guide-mock.html has its window), as guide.rs offers it: true with a whole brain; "dossier"
       // with the brain's folder only and Claude Code logged in (D1): back on an install that stopped

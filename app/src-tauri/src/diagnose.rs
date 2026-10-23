@@ -1150,25 +1150,25 @@ fn installing(todo: &[String]) -> String {
 }
 
 /// The sentence over the list: what blocks, else that all is there, else what gets installed, how
-/// long it takes and how much it downloads.
+/// long it takes and how much it downloads. Never « prêt »: the window shows it whole under its own
+/// title, which says whether the machine is ready or has an orange line to read first.
 fn headline(checks: &[Check], todo: &[String], download_mb: u32, minutes: u32, slow: bool) -> String {
-    let machine = sys::MACHINE;
     match checks.iter().filter(|c| c.status == Status::Error).count() {
         0 => {}
         1 => return "Une chose bloque l'installation : la ligne en rouge dit quoi faire. Ensuite, clique sur Revérifier.".into(),
         _ => return "Des choses bloquent l'installation : les lignes en rouge disent quoi faire. Ensuite, clique sur Revérifier.".into(),
     }
     if todo.is_empty() {
-        return format!("Tout est déjà installé sur ton {machine}.");
+        return format!("Tout est déjà installé sur ton {}.", sys::MACHINE);
     }
     let (what, time, size) = (installing(todo), fmt_minutes(minutes), fmt_mb(download_mb));
     if slow {
         format!(
-            "Ton {machine} est prêt, mais ta connexion est lente. J'installe {what} : prévois {time}, avec {size} \
-             à télécharger. En données mobiles, attends d'avoir un Wi-Fi."
+            "Ta connexion est lente. J'installe {what} : prévois {time}, avec {size} à télécharger. En données \
+             mobiles, attends d'avoir un Wi-Fi."
         )
     } else {
-        format!("Ton {machine} est prêt. J'installe {what} : {time} et {size} à télécharger.")
+        format!("J'installe {what} : {time} et {size} à télécharger.")
     }
 }
 
@@ -1613,12 +1613,9 @@ mod tests {
         assert!(d.can_install, "{:?}", d.checks);
         let orange: Vec<&str> = d.checks.iter().filter(|c| c.status == Status::Warn).map(|c| c.id.as_str()).collect();
         assert!(orange.is_empty(), "{orange:?}");
-        let machine = sys::MACHINE;
-        assert!(
-            d.headline.starts_with(&format!("Ton {machine} est prêt. J'installe Claude et ton cerveau : environ ")),
-            "{}",
-            d.headline
-        );
+        // The window shows it whole under its own title, which says whether the machine is ready (an
+        // orange line there is « un point à vérifier »): never « prêt » here.
+        assert!(d.headline.starts_with("J'installe Claude et ton cerveau : environ ") && !d.headline.contains("prêt"), "{}", d.headline);
         // A fast enough network: nothing said of Wi-Fi (a PC on a cable would wonder why).
         assert!(d.headline.ends_with(" à télécharger.") && !d.headline.contains("Wi-Fi"), "{}", d.headline);
         // Claude Code (300 Mo), the brain's memory and the kit, and each tool of the system.
@@ -1699,7 +1696,7 @@ mod tests {
         // The time is the whole install's (downloads and work), the volume the downloads'.
         let whole = format!("prévois {} en tout, avec {} à télécharger.", fmt_minutes(d.minutes), fmt_mb(d.download_mb));
         assert!(net.detail.contains(&whole), "{}", net.detail);
-        assert!(d.headline.contains("ta connexion est lente") && d.headline.contains("attends d'avoir un Wi-Fi"), "{}", d.headline);
+        assert!(d.headline.starts_with("Ta connexion est lente. J'installe ") && d.headline.contains("attends d'avoir un Wi-Fi"), "{}", d.headline);
         // « compte » would read as the Claude account.
         assert!(!net.detail.contains("compte") && !d.headline.contains("compte"), "{}", d.headline);
         // Past 5 h: « plusieurs heures », with no « environ » before it.

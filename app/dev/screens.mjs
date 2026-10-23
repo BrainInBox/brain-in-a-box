@@ -118,13 +118,18 @@ const SCENARIOS = [
   's=installe&go=welcome&lent=1&os=windows',
   's=installe&go=done&click=vault&obsidian=absent&os=windows',
   // The diagnosis says it all: the lines for later (« Plus tard »), an account paid per message, a claude.ai
-  // account without its plan said, no winget (and the Store), a filter on github.com, a slow network.
+  // account without its plan said, no winget (and the way to the Store), a filter on github.com, a slow network.
   's=manque&go=diag&click=detail&os=windows',
   's=installe&go=diag&compte=api&os=windows',
   's=installe&go=diag&compte=gratuit',
-  's=manque&go=diag&winget=absent&os=windows&click=store',
+  's=manque&go=diag&winget=absent&os=windows',
   's=manque&go=diag&reseau=filtre&os=windows',
   's=manque&go=diag&reseau=lent&os=windows',
+  // Their reviews': a disk nearly full and other orange lines, a slow network and a disk; the end that asks
+  // for Claude's login (« Dernière étape »).
+  's=manque&go=diag&winget=absent&alerte=disk&os=windows',
+  's=manque&go=diag&reseau=lent&alerte=disk&os=windows',
+  's=installe&deco=1&go=login&click=check',
 ];
 
 // Where Codex can be chosen (&porte=1, as the tests open it): what some screens must say, or not.
@@ -132,6 +137,8 @@ const has = (shots, start, text) => shots.some((s) => s.startsWith(`== ${start}`
 const last = (shots, start) => shots.filter((s) => s.startsWith(`== ${start}`)).pop() || '';
 // The main button of that screen, the last time it showed ('' without one).
 const mainOf = (shots, start) => shots.mains[shots.findLastIndex((s) => s.startsWith(`== ${start}`))] ?? '';
+// What Bibo says on a screen: his title and his words, the two lines after the screen's name.
+const bibo = (shot) => shot.split('\n').slice(1, 3).join('\n');
 const CODEX_CHECKS = [
   {
     name: 'Codex on an API key, login put off: the end connects it, never opens the onboarding',
@@ -259,8 +266,11 @@ const CLAUDE_CHECKS = [
     query: 's=manque&go=done&click=skip&os=windows',
     ok: (shots) => {
       const done = last(shots, 'done');
+      // The account's steps first: the import's sentence waits (its screen says it), its link stays (it asks for
+      // the account when it needs it, and terrain_app.py goes through it without one).
       return done.includes('[Connecter mon compte Claude]') && done.includes('[Je n’ai pas encore Claude Pro]') && !done.includes('[Recherche par le sens]')
-        && !done.includes('J’attends ta connexion');
+        && !done.includes('J’attends ta connexion') && !done.includes('Tu utilisais ChatGPT ou Claude') && done.includes('[Importer ma mémoire]')
+        && done.includes('[Voir mes notes]') && done.includes('Pour me retrouver plus tard');
     },
   },
   {
@@ -281,12 +291,12 @@ const CLAUDE_CHECKS = [
     ok: (shots) => has(shots, 'install', 'sur le chargeur') && shots.filter((s) => s.includes('Oups, ça a coincé')).every((s) => !s.includes('jusqu’à la fin')),
   },
   {
-    name: 'D1, back on an install that stopped half way (guide_offert "dossier"): not finished, « Vérifier mon PC » first, the guide already there, Claude\'s login not read again',
+    name: 'D1, back on an install that stopped half way (guide_offert "dossier"): not finished and what waits for it, « Finir l’installation » first, the guide already there, Claude\'s login not read again',
     query: 's=installe&go=welcome&incomplet=1&os=windows',
     ok: (shots) => {
       const welcome = last(shots, 'welcome');
-      return welcome.includes('Ton installation n’est pas finie. Je peux déjà te guider dans un logiciel.') && welcome.includes('«\u00a0Vérifier mon PC\u00a0»')
-        && mainOf(shots, 'welcome') === 'Vérifier mon PC' && welcome.includes('[Guide-moi dans un logiciel]') && shots.auths === 0;
+      return welcome.includes('Ton installation n’est pas finie\u00a0: ta mémoire et le résumé du soir l’attendent. Je peux déjà te guider dans un logiciel.')
+        && !welcome.includes('Pour la finir') && mainOf(shots, 'welcome') === 'Finir l’installation' && welcome.includes('[Guide-moi dans un logiciel]') && shots.auths === 0;
     },
   },
   {
@@ -323,7 +333,9 @@ const CLAUDE_CHECKS = [
     query: 's=installe&go=diag&compte=api&os=windows',
     ok: (shots) => {
       const diag = last(shots, 'diag');
-      return diag.includes('[Masquer le détail]') && diag.includes('payé à chaque message') && diag.includes('[Revérifier]') && diag.includes('ligne en orange');
+      // All is installed, the account is not a subscription: never « a tout ce qu'il faut », nor the advice of a subscription (advice.rs: claude_vu).
+      return diag.includes('[Masquer le détail]') && diag.includes('payé à chaque message') && diag.includes('[Revérifier]') && bibo(diag).includes('Lis la ligne en orange')
+        && !diag.includes('a tout ce qu’il faut') && diag.includes('Tu utilises déjà Claude') && !diag.includes('connecté à ton compte Claude');
     },
   },
   {
@@ -332,12 +344,12 @@ const CLAUDE_CHECKS = [
     ok: (shots) => last(shots, 'diag').includes('[Masquer le détail]') && last(shots, 'diag').includes('Claude Pro (environ 20\u00a0€ par mois)'),
   },
   {
-    name: 'No winget: the list unfolded, a button to App Installer in the Store (an https page), and a way if it does not open',
-    query: 's=manque&go=diag&winget=absent&os=windows&click=store',
+    name: 'No winget: the list unfolded, its line says what to do in the Store, and how to open the Store (no button open_link would refuse)',
+    query: 's=manque&go=diag&winget=absent&os=windows',
     ok: (shots) => {
       const diag = last(shots, 'diag');
-      return shots.links.join() === 'https://apps.microsoft.com/detail/9NBLGGH4NNS1' && diag.includes('[Masquer le détail]')
-        && diag.includes('App Installer') && diag.includes('[Revérifier]') && /\[Ouvrir le Microsoft Store/.test(shots.find((s) => s.startsWith('== diag') && s.includes('[Ouvrir le Microsoft Store')) || '');
+      return diag.includes('[Masquer le détail]') && diag.includes('App Installer') && diag.includes('[Revérifier]')
+        && diag.includes('menu Démarrer (Start), puis tape «\u00a0Microsoft Store\u00a0»') && !diag.includes('[Ouvrir le Microsoft Store');
     },
   },
   {
@@ -350,13 +362,44 @@ const CLAUDE_CHECKS = [
     },
   },
   {
-    name: 'A slow network: how long, the Wi-Fi, « Revérifier »; never « 10 à 20 minutes »',
+    name: 'A slow network: how long first, the Wi-Fi once, install now or wait, « Revérifier »; never « 10 à 20 minutes »',
     query: 's=manque&go=diag&reseau=lent&os=windows',
     ok: (shots) => {
       const diag = last(shots, 'diag');
-      return diag.includes('ta connexion est lente') && diag.includes('prévois environ 2\u00a0h\u00a040') && diag.includes('attends d’avoir un Wi-Fi')
+      const said = bibo(diag);
+      return said.includes('un point à vérifier.\nTa connexion est lente. J’installe') && said.includes('prévois environ 2\u00a0h\u00a040') && said.includes('attends d’avoir un Wi-Fi')
+        && said.split('Wi-Fi').length === 2 && said.endsWith('Tu peux installer maintenant et laisser ton PC allumé, ou attendre un réseau plus rapide.')
         && diag.includes('[Revérifier]') && !diag.includes('10 à 20');
     },
+  },
+  {
+    name: 'A slow network and a disk nearly full: both counted, the slowness said, the disk\'s advice on its line, the Wi-Fi once',
+    query: 's=manque&go=diag&reseau=lent&alerte=disk&os=windows',
+    ok: (shots) => {
+      const diag = last(shots, 'diag');
+      const said = bibo(diag);
+      return said.startsWith('J’ai fait le tour\u00a0: deux points à vérifier.\nTa connexion est lente.') && said.includes('Lis les lignes en orange')
+        && said.split('Wi-Fi').length === 2 && diag.includes('c’est juste. Pour faire de la place, vide la Corbeille (Recycle Bin)');
+    },
+  },
+  {
+    name: 'A disk nearly full and two other orange lines (no winget): all three counted, Bibo sends to them, the time before the choice',
+    query: 's=manque&go=diag&winget=absent&alerte=disk&os=windows',
+    ok: (shots) => {
+      const said = bibo(last(shots, 'diag'));
+      return said.startsWith('J’ai fait le tour\u00a0: trois points à vérifier.\nJ’installe') && said.includes('Lis les lignes en orange, ci-dessous.')
+        && said.indexOf('J’installe') < said.indexOf('Tu peux installer quand même');
+    },
+  },
+  {
+    name: 'No « 10 à 20 minutes » from the welcome to the end on a PC: the diagnosis says how long',
+    query: 's=manque&go=done&os=windows',
+    ok: (shots) => !shots.some((s) => s.includes('10 à 20')) && has(shots, 'welcome', 'combien de temps'),
+  },
+  {
+    name: 'No « 10 à 20 minutes » on a Mac either, whose diagnosis says « environ 25 minutes »',
+    query: 's=manque&go=done',
+    ok: (shots) => !shots.some((s) => s.includes('10 à 20')) && has(shots, 'diag', 'environ 25\u00a0minutes'),
   },
   {
     name: 'Back, Claude Code slow to say its login: the welcome within 3 s, the guide offered, never « Il manque ton compte »',
@@ -672,6 +715,8 @@ async function screens(mockText, scripts, query) {
   shots.refused = ctx.__refused || 0;
   shots.bars = bars.map((w) => parseFloat(w));
   shots.links = ctx.__liens || [];
+  // The links steps.rs would refuse (off its LINK_HOSTS): a button that can never open.
+  shots.refusedLinks = ctx.__refusLiens || [];
   // How many times the window read Claude's login, and whether Bibo dozed off by the end (app.js' own sleep).
   shots.auths = ctx.__auths || 0;
   shots.asleep = Boolean(doc.body.querySelector('.hero')?.children[0]?.classList.contains('asleep'));
@@ -763,6 +808,20 @@ if (!args.includes('--app')) {
   }
 }
 differ += compare(GOLDEN, want, got);
+// The mock's LINK_HOSTS are steps.rs' own: the guard under it holds only then.
+const hostsOf = (m) => (m ? [...m[1].matchAll(/["']([^"']+)["']/g)].map((x) => x[1]).join() : '');
+const rustHosts = hostsOf(fs.readFileSync(path.join(HERE, '..', 'src-tauri', 'src', 'steps.rs'), 'utf8').match(/const LINK_HOSTS: &\[&str\] = &\[([^\]]*)\]/));
+if (!rustHosts || rustHosts !== hostsOf(mockText.match(/const LINK_HOSTS = \[([^\]]*)\]/))) {
+  differ += 1;
+  console.log(`FAIL mock.html's LINK_HOSTS are not steps.rs' (${rustHosts})`);
+}
+// A link the window asks for opens: steps.rs' open_link refuses any other host, and the button would only ever
+// say « Je n'ai pas pu l'ouvrir » (the Store's page, once).
+for (const [q, shots] of got) {
+  if (!shots.refusedLinks.length) continue;
+  differ += 1;
+  console.log(`FAIL ${q}: open_link refuses ${shots.refusedLinks.join(', ')} (steps.rs' LINK_HOSTS)`);
+}
 // Windows' install is Claude Code, then the brain for most of the time: the bar moves with each of
 // install.ps1's sections (« ▸ … (n sur 13)… »), never back, from 0 to 100. A Mac's moves with its steps.
 for (const [q, least] of [['s=manque&go=done&os=windows', 6], ['s=manque&go=done', 5]]) {
