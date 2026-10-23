@@ -69,6 +69,9 @@ function Start-Process {
 }
 function Get-WinArch { return $script:Arch }
 function Refresh-Path { $script:Refreshed++ }
+# An administrator's account, as GitHub's runners have: winget may try the package's own installer (install-ps1-arrets.ps1
+# checks a standard account's).
+function Test-Admin { return $true }
 
 function New-Home {
     Remove-Item -LiteralPath (Join-Path $T "home") -Recurse -Force -ErrorAction SilentlyContinue

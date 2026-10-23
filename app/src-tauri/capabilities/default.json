@@ -41,6 +41,8 @@
     "allow-import-open-note",
     "allow-open-claude-update",
     "allow-guide-open",
-    "allow-guide-offert"
+    "allow-guide-offert",
+    "allow-start-claude",
+    "allow-save-report"
   ]
 }

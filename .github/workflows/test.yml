@@ -36,6 +36,9 @@ jobs:
       - name: "install.ps1 when winget cannot: its source updated, then the official installers, checked (pwsh)"
         run: pwsh -NoProfile -File .github/ci/install-ps1-secours.ps1
 
+      - name: "install.ps1's stops say their cause, winget for all accounts on an administrator's only, Bun without Git (pwsh)"
+        run: pwsh -NoProfile -File .github/ci/install-ps1-arrets.ps1
+
       # Each script is parsed by the shell its shebang names: the zsh scripts
       # used to be checked with bash, and new scripts were easy to forget.
       # The nightly scripts and gbq also by zsh: launchd starts the nightly with /bin/zsh,
@@ -95,6 +98,9 @@ jobs:
 
       - name: "install.ps1 when winget cannot: its source updated, then the official installers, checked (pwsh)"
         run: pwsh -NoProfile -File .github/ci/install-ps1-secours.ps1
+
+      - name: "install.ps1's stops say their cause, winget for all accounts on an administrator's only, Bun without Git (pwsh)"
+        run: pwsh -NoProfile -File .github/ci/install-ps1-arrets.ps1
 
       # As on a server a script reaches: no session for the user's systemd (a runner may keep one
       # lingering), and cron, which every Ubuntu has.
@@ -329,7 +335,7 @@ jobs:
           echo "app=$app" | tee -a "$GITHUB_OUTPUT"
           if grep -qE '^(engine/hooks/(_headless(_codex|_claude)?|_agents|_codex_rollout|_controle_judge|daily-reflection|session-recap|session-logger|correction-detector|controle-sessionstart)\.py|engine/codex-features\.json|engine/tests/(codex_mock|mock_openai|codex_captures)\.py|\.github/workflows/test\.yml|install\.sh|install\.ps1|engine/codex/[^/]+|engine/CLAUDE\.global\.template\.md|engine/install_skills\.py|skills/[^/]+/SKILL\.md)$' <<< "$files"; then codex=true; else codex=false; fi
           echo "codex=$codex" | tee -a "$GITHUB_OUTPUT"
-          if grep -qE '^(install\.ps1|\.github/workflows/test\.yml|\.github/ci/(poste-neuf|sans-git|winget-casse|install-ps1-secours)\.ps1)$' <<< "$files"; then winget=true; else winget=false; fi
+          if grep -qE '^(install\.ps1|\.github/workflows/test\.yml|\.github/ci/(poste-neuf|sans-git|winget-casse|install-ps1-secours|install-ps1-arrets)\.ps1)$' <<< "$files"; then winget=true; else winget=false; fi
           echo "winget=$winget" | tee -a "$GITHUB_OUTPUT"
 
   # The launcher without tools for Codex (engine/hooks/_headless_codex.py) with the real Codex CLI,
@@ -779,6 +785,13 @@ jobs:
           pwsh -NoProfile -File .github/ci/install-ps1-secours.ps1
           if ($LASTEXITCODE) { throw "install-ps1-secours.ps1 exited $LASTEXITCODE" }
 
+      # Here too a Documents an antivirus closes (a deny of this account's writes), which needs Windows.
+      - name: "install.ps1's stops say their cause, and a closed Documents sends a new brain to the profile (pwsh)"
+        if: ${{ !cancelled() }}
+        run: |
+          pwsh -NoProfile -File .github/ci/install-ps1-arrets.ps1
+          if ($LASTEXITCODE) { throw "install-ps1-arrets.ps1 exited $LASTEXITCODE" }
+
   # A real install on a real Windows, the way a user runs it: no Python but the
   # Microsoft Store stub (what broke installs in the field), so Python comes from winget.
   # The memory is gbrain, as on macOS, at the release engine/gbrain-pin.json pins: this job
@@ -858,6 +871,11 @@ jobs:
           # Git for Windows' autocrlf would turn LF notes into CRLF whenever the night check undoes a fix.
           if ((git -C "$H\Documents\Brain" config core.autocrlf) -ne 'false') { throw 'the vault repo rewrites line ends' }
           Get-ScheduledTask -TaskName BrainNightly, BrainReflection | Format-Table TaskName, State
+          # No black window at 12:00 and 23:00: the reflection runs pythonw.exe, as the nightly does.
+          foreach ($t in 'BrainNightly', 'BrainReflection') {
+            $exe = (Get-ScheduledTask -TaskName $t).Actions.Execute
+            if ($exe -notlike '*\pythonw.exe') { throw "$t starts $exe" }
+          }
           if (Get-ScheduledTask -TaskName BrainSearchReindex -ErrorAction SilentlyContinue) { throw 'the old BrainSearchReindex task is still there' }
           if (-not (Get-ScheduledTask -TaskName BrainNightly).Settings.StartWhenAvailable) { throw 'a missed nightly would not catch up' }
           if (-not (Test-Path "$H\.local\bin\claude.exe")) { throw 'Claude Code not installed' }
@@ -1376,3 +1394,33 @@ jobs:
           if ($out -match '=== Codex') { throw 'the Codex section ran with Claude alone' }
           if ((Get-FileHash "$C\hooks.json").Hash -ne $before) { throw "Codex's hooks.json changed with Claude alone" }
           if (((Get-Content "$H\.brain-in-a-box\agents.json" -Raw | ConvertFrom-Json).agents -join ',') -ne 'claude') { throw 'agents.json does not say Claude alone' }
+
+      # Last, it writes into the vault: the reflection as its task starts it (pythonw.exe, S4U, no console),
+      # on a session of today, with a Claude Code nobody logged in to. It fails, and says so where the night
+      # check and the next session read it: its state and its error log.
+      - name: The reflection's task runs without a window and still writes its state
+        run: |
+          $H = $env:USERPROFILE
+          $now = [DateTime]::UtcNow
+          $p = "$H\.claude\projects\ci-reflection"
+          New-Item -ItemType Directory $p -Force | Out-Null
+          $lines = foreach ($i in 0..3) {
+            $who = if ($i % 2) { 'assistant' } else { 'user' }
+            $content = if ($who -eq 'user') { "the lighthouse keeper asks about storms $i" } else { , @{ type = 'text'; text = "noted, storm $i" } }
+            @{ type = $who; timestamp = $now.AddSeconds($i - 10).ToString('yyyy-MM-ddTHH:mm:ss.fffZ'); cwd = "$H\Documents\Brain"; message = @{ role = $who; content = $content } } | ConvertTo-Json -Compress -Depth 5
+          }
+          [IO.File]::WriteAllLines("$p\ci.jsonl", [string[]]$lines)
+          $state = "$H\.claude\logs\daily-reflection.state.json"
+          $before = if (Test-Path $state) { (Get-Item $state).LastWriteTimeUtc } else { [DateTime]::MinValue }
+          if ((Get-ScheduledTask -TaskName BrainReflection).Actions.Execute -notlike '*\pythonw.exe') { throw 'BrainReflection does not start pythonw.exe' }
+          Start-ScheduledTask -TaskName BrainReflection
+          Start-Sleep -Seconds 3
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          while ((Get-ScheduledTask -TaskName BrainReflection).State -eq 'Running' -and $sw.Elapsed.TotalSeconds -lt 1000) { Start-Sleep -Seconds 3 }
+          $info = Get-ScheduledTaskInfo -TaskName BrainReflection
+          Get-Content "$H\.claude\logs\daily-reflection-errors.log" -Tail 5 -ErrorAction SilentlyContinue
+          if ($info.LastTaskResult -ne 0) { throw "BrainReflection LastTaskResult $($info.LastTaskResult)" }
+          if (-not (Test-Path $state) -or (Get-Item $state).LastWriteTimeUtc -le $before) { throw 'the reflection run under pythonw.exe did not write its state' }
+          $st = Get-Content $state -Raw | ConvertFrom-Json
+          $st | ConvertTo-Json -Compress
+          if (-not ($st.last_error -or $st.last_ok)) { throw 'the state says neither a run nor a failure' }
