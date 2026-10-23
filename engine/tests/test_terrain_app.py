@@ -139,9 +139,48 @@ def neuf_codex(installe):
     return e
 
 
-def guide_ecrans(etape_textes):
-    """The guide's window (app/src/guide.js), as Bibo words it, in paste mode: next screen per button, or
-    (seconds, next screen) by itself; a capture pasted on « coller-* » goes to « lecture »."""
+def guide_ecrans(etape_textes, via=None, colle_au_choix=False):
+    """The guide's window (app/src/guide.js), as Bibo words it: next screen per button, or (seconds, next
+    screen) by itself. via None: paste mode, a capture pasted on « coller-* » goes to « lecture ». via "clic"
+    (Windows) or "selecteur" (macOS): Bibo takes the window in photo, shown by the user's gesture (montrer).
+    colle_au_choix: paste mode where Bibo first waits for the window (X11), a capture pasted there instead."""
+    e = guide_collage(etape_textes)
+    if colle_au_choix:
+        e["comment"]["boutons"]["J’ai compris"] = "choisir"
+        e["choisir"] = guide_ecrans([], "clic")["choisir"]
+        # The capture pasted before the goal: its preview once the goal is given.
+        e["lecture-choix"] = {"titre": "Je lis ton image…", "apres": (1, "objectif")}
+        e["objectif"] = dict(e["objectif"], boutons=dict(e["objectif"]["boutons"], Continuer="apercu"))
+    if via is None:
+        return e
+    e["comment"]["boutons"]["J’ai compris"] = "choisir"
+    if via == "clic":
+        e["choisir"] = {"titre": "Montre-moi ta fenêtre.", "texte": "Clique une fois dans la fenêtre de ton logiciel : je la reconnais tout seul.",
+                        "textes": ["Temps pour cliquer : 45 s"],
+                        "boutons": {"Mon logiciel n’est pas encore ouvert": None, "J’ai déjà une capture": None, "Arrêter le guide": None,
+                                    "Choisir dans une liste": None}, "montrer": "fenetre"}
+        e["fenetre"] = {"titre": "C’est bien celle-ci ?", "textes": ["Atelier Demo", ta.TITRE_LOGICIEL],
+                        "boutons": {"Arrêter le guide": None, "Non, une autre": "choisir", "Oui, c’est elle": "objectif"}}
+        e["objectif"] = dict(e["objectif"], texte="Dis-moi ce que tu veux faire dans ton logiciel : je te guide une étape à la fois.")
+    else:
+        e["choisir"] = {"titre": "Montre-moi ta fenêtre.",
+                        "texte": "Clique sur « Choisir la fenêtre » : ton Mac te montre tes fenêtres. Clique sur celle de ton logiciel, "
+                                 "puis sur le bouton qui apparaît au milieu (en anglais : « Share This Window »).",
+                        "boutons": {"J’ai déjà une capture": None, "Arrêter le guide": None, "Choisir la fenêtre": "selecteur"}}
+        e["selecteur"] = {"titre": "Choisis ta fenêtre.", "texte": "Clique sur la fenêtre de ton logiciel, puis sur le bouton qui apparaît au milieu.",
+                          "boutons": {"J’ai déjà une capture": None, "Arrêter le guide": None}, "montrer": "objectif"}
+    e["objectif"] = dict(e["objectif"], boutons=dict(e["objectif"]["boutons"], Continuer="photo"))
+    e["photo"] = {"titre": "Je prends ta fenêtre en photo…", "apres": (1, "apercu")}
+    e["apercu"] = dict(e["apercu"], boutons={"Autre fenêtre": None, "Cacher une zone": None, "Envoyer à Claude": "regarde"})
+    e["etape"] = dict(e["etape"], boutons={"Arrêter le guide": None, "Je suis bloqué": None, "C’est fait": "photo"})
+    e["photo-noire"] = {"titre": "Ton logiciel ne me laisse pas le prendre en photo.", "texte": "Fais une capture toi-même et colle-la ici : je te montre comment.",
+                        "boutons": {"Arrêter le guide": None, "Choisir une autre fenêtre": None}}
+    e["apercu-meme"] = {"titre": "Ta fenêtre n’a pas changé depuis la dernière photo.", "texte": "As-tu fait l’étape dans ton logiciel ? Fais-la, puis reprends la photo.",
+                        "boutons": {"Envoyer quand même": None, "Cacher une zone": None, "Reprendre la photo": "photo"}}
+    return e
+
+
+def guide_collage(etape_textes):
     return {
         "charge": {"titre": "Je prépare le guide…", "texte": "Je vérifie Claude Code sur ton Mac.", "apres": (1, "comment")},
         "comment": {"titre": "Comment je regarde ton écran", "texte": "Avant de commencer, quatre choses à savoir.",
@@ -211,6 +250,12 @@ class FauxPilote(ta.Pilote):
         self.guide, self.guide_depuis, self.saisies, self.appels = None, 0.0, [], 0
         self.anneau, self.trace, self.guide_prudent = True, None, False
         self.anneau_apercu, self.modeles_faux = False, None
+        # The user's program, Bibo taking its window in photo: via None (paste mode), "clic" or "selecteur";
+        # its photos, black, or the same after the step (the step not done in the program).
+        self.via, self.photo_noire, self.pas_change = None, False, False
+        # Bibo never sees the window shown; Bibo waits for the window, where the robot pastes (Linux).
+        self.jamais_vue, self.colle_au_choix = False, False
+        self.photos, self.etape_faite, self.gestes, self.programme = 0, False, [], None
         # The places of the buttons and the screen's usable area, as the Windows driver reads them: a function
         # (screen, label) -> [x, y, w, h] or None. None: no places (macOS, Linux).
         self.places, self.zone = None, None
@@ -297,10 +342,13 @@ class FauxPilote(ta.Pilote):
                   ta.ANNEAU_POINTILLE if self.guide_prudent else ta.ANNEAU_PLEIN,
                   "Mode prudent : ton compte Claude ne me donne pas accès à Opus." if self.guide_prudent else "",
                   "1 capture envoyée à Claude, sur 40 pour cette fois."]
-        ecrans = guide_ecrans([x for x in textes if x])
+        ecrans = guide_ecrans([x for x in textes if x], self.via, self.colle_au_choix)
         spec = ecrans[self.guide]
         if "apres" in spec and self.h.now - self.guide_depuis >= spec["apres"][0]:
             nxt = spec["apres"][1]
+            if self.guide == "photo":
+                self.photos += 1
+                nxt = "photo-noire" if self.photo_noire else "apercu-meme" if self.photos > 1 and not self.etape_faite else nxt
             self.aller_guide(("etape" if self.appels == 1 else "fin") if nxt == "reponse" else nxt)
             spec = ecrans[self.guide]
         return spec
@@ -313,8 +361,10 @@ class FauxPilote(ta.Pilote):
             return ta.Ecran()
         spec = self.guide_spec()
         tape = [x for k, x in self.saisies if k == "taper"]
-        boutons = [(b, not (self.guide == "objectif" and b == "Continuer" and tape != [ta.LOGICIEL_GUIDE, ta.OBJECTIF_GUIDE]))
-                   for b in spec.get("boutons", {})]
+        # The program's field filled in by Bibo from the window (Windows): the goal alone.
+        attendu = [ta.OBJECTIF_GUIDE] if spec.get("texte", "").startswith("Dis-moi ce que tu veux faire dans ton logiciel") \
+            else [ta.LOGICIEL_GUIDE, ta.OBJECTIF_GUIDE]
+        boutons = [(b, not (self.guide == "objectif" and b == "Continuer" and tape != attendu)) for b in spec.get("boutons", {})]
         return ta.Ecran(fenetre=True, titre=spec["titre"], texte=spec.get("texte", ""), boutons=boutons, textes=spec.get("textes", []))
 
     def taper(self, texte):
@@ -327,9 +377,17 @@ class FauxPilote(ta.Pilote):
         self.saisies.append(("coller", hashlib.sha256(png).hexdigest()[:8]))
         if self.guide in ("coller-debut", "coller-fait"):
             self.aller_guide("lecture")
+        elif self.guide == "choisir" and self.colle_au_choix:
+            self.aller_guide("lecture-choix")
+
+    def logiciel(self, dossier):
+        if self.via:
+            self.programme = FauxLogiciel(self, dossier)
+        return self.programme
 
     def cliquer_guide(self, libelle):
-        nxt = next((v for b, v in guide_ecrans([])[self.guide].get("boutons", {}).items() if ta.norm(b) == ta.norm(libelle)), None)
+        nxt = next((v for b, v in guide_ecrans([], self.via, self.colle_au_choix)[self.guide].get("boutons", {}).items()
+                    if ta.norm(b) == ta.norm(libelle)), None)
         home = Path(self.home)
         fake = home / ".claude" / "fake"
         if libelle == "Envoyer à Claude":
@@ -411,6 +469,34 @@ class FauxPilote(ta.Pilote):
 
     def arbre(self):
         return {"app": [], "faux": True}
+
+
+class FauxLogiciel:
+    """The user's program for FauxPilote: the window shown on the wait for it moves the guide on, as Bibo
+    sees it; « Nouveau » clicked in it changes what the next photo shows."""
+
+    def __init__(self, pilote, dossier):
+        self.p, self.via, self.dossier, self.titre = pilote, pilote.via, dossier, ta.TITRE_LOGICIEL
+        self.ouvert, self.ferme = False, False
+
+    def ouvrir(self):
+        self.ouvert = True
+        self.p.ignores = ("atelier-demo",)
+
+    def montrer(self):
+        self.p.gestes.append(("montrer", self.p.guide))
+        nxt = guide_ecrans([], self.via).get(self.p.guide, {}).get("montrer")
+        if nxt and not self.p.jamais_vue:
+            self.p.aller_guide(nxt)
+        return ta.CLIC_SOURIS
+
+    def faire_etape(self):
+        self.p.gestes.append(("Nouveau", self.p.guide))
+        self.p.etape_faite = not self.p.pas_change
+        return ta.CLIC_SOURIS
+
+    def fermer(self):
+        self.ferme = True
 
 
 def capture_guide(anneau, pointille=False):
@@ -2327,6 +2413,80 @@ class Guide(Scenario):
         self.assertEqual((home / ".local" / "bin" / "claude").read_text(), "x")
         self.assertFalse((home / ".local" / "bin" / "claude.terrain-vrai").exists())
 
+    def test_on_windows_bibo_photographs_the_program_clicked_in(self):
+        # The night as a user of a program of their own: one click in its window, the program's name Bibo's,
+        # the goal typed, two photos Bibo takes (none pasted), the step done in the program in between.
+        p = FauxPilote(self.h, home=Path(self.tmp) / "home")
+        p.via = "clic"
+        row, p, _, _, _, home = self.run_it(pilote=p)
+        self.assertEqual(row["statut"], "ok", row["raison"])
+        d = row["details"]["guide"]
+        self.assertEqual([e for e in d["ecrans"] if e not in ta.ATTENTES_GUIDE],
+                         ["comment", "choisir", "fenetre", "objectif", "apercu", "etape", "apercu", "fin", "enregistrer", "enregistre"])
+        self.assertEqual((d["capture"], d["collages"], d["gestes"]), ("clic", [], ["choisir", "Nouveau"]))
+        self.assertEqual(p.gestes, [("montrer", "choisir"), ("Nouveau", "etape")])
+        self.assertEqual(p.saisies, [("taper", ta.OBJECTIF_GUIDE)], "the program's name is Bibo's, from the window")
+        self.assertEqual(d["saisie"], "clavier, le logiciel rempli par Bibo")
+        for b in ("J'ai compris", "Oui, c'est elle", "Continuer", "Envoyer à Claude", "C'est fait"):
+            self.assertIn(b, p.clics)
+        self.assertEqual((d["etape"]["niveau"], len(d["etape"]["entoures"])), ("plein", 1))
+        self.assertEqual(d["note"], "atelier-demo-faire-une-facture.md")
+        self.assertIn("guide : la fenêtre d'Atelier Demo montrée d'un clic, deux photos prises par Bibo, l'étape entourée", row["raison"])
+        self.assertTrue(p.programme.ouvert and p.programme.ferme)
+        self.assertEqual(p.ignores, (), "the program's windows are dialogs again once it is closed")
+        self.assertIn({"ecran": "logiciel", "bouton": "Nouveau"}, [{k: c[k] for k in ("ecran", "bouton")} for c in row["details"]["clics"]])
+
+    def test_on_macos_the_window_is_picked_in_the_systems_picker(self):
+        p = FauxPilote(self.h, home=Path(self.tmp) / "home")
+        p.via = "selecteur"
+        row, p, _, _, _, _ = self.run_it(pilote=p)
+        self.assertEqual(row["statut"], "ok", row["raison"])
+        d = row["details"]["guide"]
+        self.assertEqual([e for e in d["ecrans"] if e not in ta.ATTENTES_GUIDE],
+                         ["comment", "choisir", "objectif", "apercu", "etape", "apercu", "fin", "enregistrer", "enregistre"])
+        self.assertIn("selecteur", d["ecrans"])
+        self.assertIn("Choisir la fenêtre", p.clics)
+        self.assertEqual(p.gestes, [("montrer", "selecteur"), ("Nouveau", "etape")])
+        # A program in a browser: its name not found in the window, typed.
+        self.assertEqual([x for k, x in p.saisies if k == "taper"], [ta.LOGICIEL_GUIDE, ta.OBJECTIF_GUIDE])
+        self.assertEqual((d["capture"], d["collages"]), ("selecteur", []))
+        self.assertIn("guide : la fenêtre d'Atelier Demo choisie dans le sélecteur de macOS, deux photos prises par Bibo", row["raison"])
+
+    def test_where_bibo_could_take_the_window_linux_pastes(self):
+        # The X11 of the night's VM: Bibo waits for a click, the robot pastes there (the paste is Linux's walk).
+        p = FauxPilote(self.h, home=Path(self.tmp) / "home")
+        p.colle_au_choix = True
+        row, p, _, _, _, _ = self.run_it(pilote=p)
+        self.assertEqual(row["statut"], "ok", row["raison"])
+        d = row["details"]["guide"]
+        self.assertEqual((d["capture"], d["collages"]), ("collage", ["debut", "fait"]))
+        self.assertIn("choisir", d["ecrans"])
+        self.assertIn("guide : deux captures collées, l'étape entourée", row["raison"])
+
+    def test_a_black_photo_of_the_program_fails(self):
+        p = FauxPilote(self.h, home=Path(self.tmp) / "home")
+        p.via, p.photo_noire = "clic", True
+        row, p, _, _, _, _ = self.run_it(pilote=p)
+        self.assertEqual((row["statut"], row["etape"]), ("echec", "app-guide-photo-noire"))
+        self.assertIn("la photo de la fenêtre d'Atelier Demo est noire", row["raison"])
+        self.assertTrue(p.programme.ferme, "closed all the same")
+
+    def test_the_step_not_done_in_the_program_fails(self):
+        p = FauxPilote(self.h, home=Path(self.tmp) / "home")
+        p.via, p.pas_change = "clic", True
+        row, _, _, _, _, _ = self.run_it(pilote=p)
+        self.assertEqual((row["statut"], row["etape"]), ("echec", "app-guide-apercu-meme"))
+        self.assertIn("le clic sur « Nouveau » dans Atelier Demo n'a rien changé", row["raison"])
+
+    def test_a_window_bibo_never_sees_shown_fails_on_its_screen(self):
+        # The click in the window never seen: the gesture tried three times, then the night says so.
+        p = FauxPilote(self.h, home=Path(self.tmp) / "home")
+        p.via, p.jamais_vue = "clic", True
+        row, p, _, _, _, _ = self.run_it(pilote=p)
+        self.assertEqual((row["statut"], row["etape"]), ("echec", "app-guide-choisir"))
+        self.assertIn("« montrer » ne change rien sur l'écran « choisir » du guide (3 essais)", row["raison"])
+        self.assertEqual(len(p.gestes), 3)
+
     def test_without_opus_sonnet_and_its_dotted_ring(self):
         p = FauxPilote(self.h, home=Path(self.tmp) / "home")
         p.guide_prudent = True
@@ -2397,12 +2557,15 @@ class GuideParts(unittest.TestCase):
     def test_the_screens_and_the_words_the_robot_reads_are_the_guides(self):
         with open(os.path.join(REPO, "app", "src", "guide.js"), encoding="utf-8") as f:
             js = ta.norm(f.read())
-        for _, start in ta.ECRANS_GUIDE:
+        for start in [x[1] for x in ta.ECRANS_GUIDE + ta.PHOTO_RATEE]:
             self.assertIn(ta.norm(start), js, start)
         for word in ("J'ai compris", "Continuer", "Envoyer à Claude", "C'est fait", "Enregistrer cette procédure",
                      "Enregistrer dans mon cerveau", "Fermer le guide", "Refaire la capture", ta.PRUDENT,
-                     "Sur l'image, « ${e.libelle} » est entouré en rouge.", ta.ANNEAU_POINTILLE):
+                     "Sur l'image, « ${e.libelle} » est entouré en rouge.", ta.ANNEAU_POINTILLE,
+                     ta.CHOISIR_LISTE, ta.CHOISIR_FENETRE, "Oui, c'est elle", "Réessayer", ta.PROGRAMME_CONNU):
             self.assertIn(ta.norm(word), js, word)
+        # The paste's screen offers neither button of the wait for the window (cle_guide tells them apart so).
+        self.assertIn(ta.norm("Choisir ma fenêtre"), js)
         self.assertEqual(ta.ANNEAU_PLEIN, "Sur l'image, « Nouveau » est entouré en rouge.")
         self.assertEqual(ta.REPONSES_GUIDE["debut"]["libelle"], "Nouveau")
         with open(os.path.join(REPO, "app", "src-tauri", "src", "lib.rs"), encoding="utf-8") as f:
@@ -2414,6 +2577,120 @@ class GuideParts(unittest.TestCase):
         self.assertIn("stroke: #%02x%02x%02x;" % ta.ROUGE, css)
         self.assertIn("border: 3px solid #%02x%02x%02x;" % ta.ROUGE, css)
         self.assertEqual(ta.VERT, ta.ecrans().VERT)
+
+    def test_the_wait_for_the_window_and_the_paste_share_their_words_not_their_buttons(self):
+        titre = "Montre-moi ta fenêtre."
+        ecran = lambda *boutons: ta.Ecran(fenetre=True, titre=titre, boutons=[(b, True) for b in boutons])
+        self.assertEqual(ta.cle_guide(ecran("Arrêter le guide", "Choisir dans une liste")), "choisir")
+        self.assertEqual(ta.cle_guide(ecran("Arrêter le guide", "Choisir la fenêtre")), "choisir")
+        self.assertEqual(ta.cle_guide(ecran("Arrêter le guide", "Choisir ma fenêtre")), "coller-debut")
+        self.assertEqual(ta.cle_guide(ta.Ecran(fenetre=True, titre="Ton logiciel ne me laisse pas le prendre en photo.")), "photo-noire")
+        self.assertEqual(ta.cle_guide(ta.Ecran(fenetre=True, titre="Choisis ta fenêtre dans la liste.")), "inconnu")
+        self.assertEqual(ta.cle_guide(ta.Ecran(fenetre=True, titre="Choisis ta fenêtre.")), "selecteur")
+
+    def test_the_windows_program_is_compiled_opened_and_clicked_by_name(self):
+        tmp = Path(tempfile.mkdtemp(prefix="atelier-"))
+        self.addCleanup(shutil.rmtree, str(tmp), True)
+        h = Horloge()
+        p = ta.PiloteWindows(tmp, outil="pilote-windows.exe", horloge=h, dormir=h.dormir)
+        calls = []
+
+        def run(argv, timeout=120, env=None, creationflags=0, entree=None):
+            argv = [str(a) for a in argv]
+            calls.append(argv)
+            Path(next(a for a in argv if a.startswith("/out:"))[len("/out:"):]).write_bytes(b"MZ")
+            return 0, ""
+
+        def outil(args, timeout=120, entree=None):
+            args = [str(a) for a in args]
+            calls.append(args)
+            if args[0] == "fenetres":
+                # Its window shows on the second look.
+                shown = len([c for c in calls if c[0] == "fenetres"]) > 1
+                return {"ok": True, "fenetres": [{"h": 31, "pid": 4242, "titre": "Brain in a Box"}]
+                        + ([{"h": 77, "pid": 4242, "titre": ta.TITRE_LOGICIEL}] if shown else [])}
+            return {"ok": True, "comment": "clic souris"}
+        p._run, p._outil = run, outil
+        logiciel = p.logiciel(tmp / "logiciel")
+        self.assertEqual(logiciel.via, "clic")
+        proc = types.SimpleNamespace(pid=4242, poll=lambda: None, kill=lambda: calls.append(["kill"]), wait=lambda timeout: 0)
+        with mock.patch.object(ta.subprocess, "Popen", return_value=proc) as popen:
+            logiciel.ouvrir()
+        d = tmp / "logiciel"
+        self.assertEqual(calls[0][1:5], ["/nologo", "/target:winexe", "/optimize+", "/out:%s" % (d / "atelier-demo.exe")])
+        self.assertTrue(all(ord(c) < 128 for c in (d / "atelier-demo.cs").read_text(encoding="ascii")))
+        # The drawn list shrunk to 800 × 500: « Nouveau » at (230, 120), « Importer » at (374, 120), 130 × 40 each.
+        self.assertEqual(popen.call_args[0][0], [str(d / "atelier-demo.exe"), ta.TITRE_LOGICIEL, str(d / "liste.png"), str(d / "facture.png"),
+                                                 "40", "60", "800", "500", "144", "75", "81", "25", "234", "75", "81", "25"])
+        self.assertEqual(ta.ecrans().lire_png((d / "liste.png").read_bytes())[:2], (1280, 800))
+        self.assertEqual((logiciel.h, p.ignores), (77, ("atelier-demo",)))
+        self.assertEqual(logiciel.montrer(), "clic souris")
+        self.assertEqual(logiciel.faire_etape(), "clic souris")
+        self.assertEqual([c for c in calls if c[0] == "cliquer"], [["cliquer", "77", "Importer", "souris"], ["cliquer", "77", "Nouveau", "souris"]])
+        logiciel.fermer()
+        self.assertEqual(calls[-1], ["kill"])
+
+    def test_the_program_in_front_is_no_dialog_over_the_app(self):
+        tmp = Path(tempfile.mkdtemp(prefix="devant-"))
+        self.addCleanup(shutil.rmtree, str(tmp), True)
+        h = Horloge()
+        p = ta.PiloteWindows(tmp, outil="pilote-windows.exe", horloge=h, dormir=h.dormir)
+        p.proc = types.SimpleNamespace(pid=7, poll=lambda: None)
+        devant = {"h": 77, "pid": 4242, "classe": "WindowsForms10.Window.8.app.0.1", "exe": r"C:\r\logiciel\atelier-demo.exe",
+                  "arbre": uia("Window", ta.TITRE_LOGICIEL, [uia("Button", "Importer"), uia("Button", "Nouveau")])}
+        p._outil = lambda args, timeout=120, entree=None: {"ok": True, "fenetres": [], "devant": devant, "zone": [0, 0, 1024, 720]}
+        self.assertEqual([d["processus"] for d in p.lire().dialogues], ["atelier-demo"])
+        p.ignores = ("atelier-demo",)
+        self.assertEqual(p.lire().dialogues, [])
+        mac = ta.PiloteMac(tmp)
+        asked = []
+        mac._osa = lambda req, timeout=90: asked.append(req) or {"app": [], "dialogues": [], "devant": "Google Chrome"}
+        mac.ignores = ("Google Chrome",)
+        mac.lire()
+        self.assertIn("Google Chrome", asked[0]["ignorer"])
+        self.assertIn("ControlCenter", asked[0]["ignorer"], "macOS's picker is no dialog either")
+
+    def test_on_a_mac_the_program_is_a_page_picked_in_the_systems_picker(self):
+        tmp = Path(tempfile.mkdtemp(prefix="atelier-mac-"))
+        self.addCleanup(shutil.rmtree, str(tmp), True)
+        chrome = tmp / "Google Chrome"
+        chrome.write_text("")
+        p = ta.PiloteMac(tmp)
+        asked = []
+        frame = {"pos": [40, 60], "size": [800, 540]}
+        share = {"n": "", "pos": [380, 100], "size": [120, 28]}
+        replies = {"cadre": lambda r: frame, "boutons": lambda r: {"boutons": [] if len(asked) < 6 else [share]},
+                   "souris": lambda r: {"ok": True}, "cliquer": lambda r: {"ok": True, "comment": "clic souris"}}
+        p._osa = lambda req, timeout=90: asked.append(req) or replies[req["op"]](req)
+        logiciel = p.logiciel(tmp / "logiciel")
+        self.assertEqual(logiciel.via, "selecteur")
+        proc = types.SimpleNamespace(pid=4242, poll=lambda: None, kill=lambda: None, wait=lambda timeout: 0)
+        with mock.patch.object(ta, "CHROME_MAC", str(chrome)), mock.patch.object(ta.subprocess, "Popen", return_value=proc) as popen:
+            logiciel.ouvrir()
+        argv = popen.call_args[0][0]
+        self.assertEqual(argv[0], str(chrome))
+        for flag in ("--no-first-run", "--force-renderer-accessibility", "--window-position=40,60", "--window-size=800,540",
+                     "--app=" + (tmp / "logiciel" / "atelier.html").as_uri(), "--user-data-dir=%s" % (tmp / "logiciel" / "profil")):
+            self.assertIn(flag, argv)
+        page = (tmp / "logiciel" / "atelier.html").read_text(encoding="utf-8")
+        self.assertIn("<title>%s</title>" % ta.TITRE_LOGICIEL, page)
+        self.assertIn('<button id=nouveau type=button style="left:144px;top:75px;width:81px;height:25px;background:rgb(20,160,60)', page)
+        self.assertEqual(ta.VERT, (20, 160, 60))
+        self.assertEqual(p.ignores, ("Google Chrome",))
+        with mock.patch.object(ta.time, "sleep"):
+            self.assertEqual(logiciel.montrer(), "sélecteur de macOS : « Share This Window »")
+        clicks = [r for r in asked if r["op"] == "souris" and r["clic"]]
+        self.assertEqual(clicks, [{"op": "souris", "x": 380 + 120 * 0.75, "y": 114.0, "clic": True}])
+        hovers = [r for r in asked if r["op"] == "souris" and not r["clic"]]
+        self.assertTrue(hovers and all(40 < r["x"] < 840 and 60 < r["y"] < 600 for r in hovers), hovers)
+        # macOS 14: a button of the window's own size over it, clicked where the pointer is.
+        asked.clear()
+        replies["boutons"] = lambda r: {"boutons": [dict(frame, n="")]}
+        with mock.patch.object(ta.time, "sleep"):
+            self.assertEqual(logiciel.montrer(), "sélecteur de macOS : la fenêtre, sous le sélecteur")
+        self.assertEqual([r for r in asked if r["op"] == "souris" and r["clic"]], [{"op": "souris", "x": 440.0, "y": 60 + 0.12 * 540, "clic": True}])
+        self.assertEqual(logiciel.faire_etape(), "clic souris")
+        self.assertEqual(asked[-1], {"op": "cliquer", "processus": "Google Chrome", "fenetre": None, "libelle": "Nouveau"})
 
     def test_the_traces_are_the_guides_images_and_pngs_of_the_app(self):
         tmp = Path(tempfile.mkdtemp(prefix="traces-"))
