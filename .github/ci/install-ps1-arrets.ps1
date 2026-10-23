@@ -55,8 +55,8 @@ function Invoke-WebRequest {
 function Start-Process {
     [CmdletBinding()]
     param([string]$FilePath, [string[]]$ArgumentList, [switch]$Wait, [switch]$PassThru)
-    # What Start-Process throws when Windows refuses to start a program: its reason inside.
-    # Start-Process keeps only Windows' sentence, in Windows' language (StartProcessCommand); a reason in an inner exception too.
+    # What Start-Process throws when Windows refuses to start a program: Windows' sentence, in Windows' language
+    # (StartProcessCommand keeps only that); or its code in an inner exception.
     if ($script:Refused -is [string]) { throw [InvalidOperationException]::new("This command cannot be run due to the error: $($script:Refused)") }
     if ($script:Refused) { throw [InvalidOperationException]::new("This command cannot be run", [ComponentModel.Win32Exception]::new($script:Refused)) }
     return [pscustomobject]@{ ExitCode = $script:ExitCode }
@@ -77,6 +77,7 @@ function New-Home {
     $script:WingetBlocked = $false; $script:WingetDown = $false; $script:WingetExe = $null; $script:OfficialArret = ""
     $script:WingetCalls = @(); $script:WingetCodes = @(); $script:Serve = $null; $script:Refused = 0
     $script:ExitCode = 0; $script:Arch = "x64"; $script:Admin = $false; $script:Proxy = $false
+    $OFFICIAL_INSTALLERS.Python.x64 = @($PythonPin)   # the real pin: a case that needs the stand-in to run says so
     $env:TEMP = Join-Path $T "temp"; $env:TMP = $env:TEMP
 }
 $Fake = Join-Path $T "fake-installer.exe"
@@ -152,11 +153,12 @@ try {
     Check ($r -and $WingetCalls.Count -eq 2 -and $WingetCalls[1] -ceq ($UserArgs -replace ' --scope user$', '')) "an administrator's account: the package's own installer next: $($WingetCalls -join ' | ')"
     # The real check, on this runner: an administrator on Windows (GitHub's), nobody elsewhere.
     $real = @($ast.EndBlock.Statements | Where-Object { $_ -is [Management.Automation.Language.FunctionDefinitionAst] -and $_.Name -eq "Test-Admin" })
-    $isAdmin = if ($real.Count) { & $real[0].Body.GetScriptBlock() } else { "(no Test-Admin)" }
+    $isAdmin = if ($real.Count) { & ($real[0].Body.GetScriptBlock()) } else { "(no Test-Admin)" }
     Check ($isAdmin -eq $Win) "Test-Admin on this runner: $isAdmin"
 
     # Without Git: Bun is installed all the same, gbrain waits for Git.
-    New-Home; $savedPath = @{ PATH = $env:PATH; Path = [Environment]::GetEnvironmentVariable("Path") }
+    # Install-Gbrain puts Bun's folder on $env:Path: a variable of its own on macOS and Linux (names keep their case there).
+    New-Home; $pathBefore = $env:PATH; $pathMixed = [Environment]::GetEnvironmentVariable("Path")
     $BUNBIN = Join-Path $T "bun-bin"; $BUN_VERSION = "1.4.3"; $Git = $null; $script:BunThere = $false; $script:Logged = @()
     function Get-BunVersion([string]$Bun) { if ($script:BunThere) { return [version]"1.4.3" } }
     function Invoke-Logged([string]$Exe, [string[]]$ArgList, [string]$Dir = "") {
@@ -168,8 +170,8 @@ try {
     $out = Said { $script:r = Install-Gbrain }
     Check (-not $r -and $BunThere -and $Logged.Count -eq 1 -and $out -match "\[OK\] bun 1\.4\.3" -and $out -match "gbrain a besoin de Git") `
           "no Git: Bun installed anyway, gbrain waits for Git: $($Logged -join ' | ') ; $($out.Trim() -replace '\r?\n', ' / ')"
-    $env:PATH = $savedPath.PATH
-    if (-not $Win) { if ($null -eq $savedPath.Path) { Remove-Item Env:Path -ErrorAction SilentlyContinue } else { $env:Path = $savedPath.Path } }
+    $env:PATH = $pathBefore
+    if (-not $Win) { if ($null -eq $pathMixed) { Remove-Item Env:Path -ErrorAction SilentlyContinue } else { $env:Path = $pathMixed } }
 
     # A new brain where the kit chose Documents, closed by an antivirus: in the profile's folder instead; a
     # folder the user chose stays theirs, and the stop says why.
