@@ -1,0 +1,97 @@
+# Throwaway (branch spike/guide-v2-uia, deleted afterwards; code kept in refs/keep/spike-guide-v2-uia):
+# proof W2 of the guide v2 on Windows VMs. Bibo's list of the front app's commands from UI Automation:
+# its time, its boxes against the image at 100, 125 and 150 %, the password field blacked, no client's
+# name from a table, a remote desktop's empty tree; cua-driver as the witness. Fixtures and public demo
+# pages only; no image kept, no secret.
+name: spike-guide-v2-uia
+
+on:
+  push:
+    branches: [spike/guide-v2-uia]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: spike-guide-v2-uia-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  sonde:
+    if: contains(github.event.head_commit.message, '[sonde]')
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2025, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: The desktop
+        run: |
+          [System.Environment]::OSVersion.VersionString
+          (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion').DisplayVersion
+          "session $((Get-Process -Id $PID).SessionId)"
+          (Get-Item "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe").VersionInfo.ProductVersion
+          Get-CimInstance Win32_VideoController | ForEach-Object { "video: $($_.Name) $($_.CurrentHorizontalResolution)x$($_.CurrentVerticalResolution)" }
+
+      - name: The scale, set as Settings does
+        run: |
+          $fw = "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319"
+          & "$fw\csc.exe" /nologo /target:exe "/out:$env:RUNNER_TEMP\echelle.exe" spike\guide-v2-uia\echelle.cs
+          $e = "$env:RUNNER_TEMP\echelle.exe"
+          & $e info
+          & $e taille 1920 1080; "exit $LASTEXITCODE"
+          & $e info
+          foreach ($p in 125, 150, 100) { & $e pour $p; "pour $p : exit $LASTEXITCODE" }
+          & $e info
+
+      - name: The Odoo demo answers
+        run: |
+          $r = Invoke-WebRequest -Uri https://demo.odoo.com/ -UseBasicParsing -SessionVariable s -MaximumRedirection 10
+          "status $($r.StatusCode), $($r.BaseResponse.ResponseUri)$($r.BaseResponse.RequestMessage.RequestUri)"
+
+      - name: "Witness: cua-driver 0.21.0 (Hermes's pin), not embedded"
+        env:
+          CUA_DRIVER_RS_TELEMETRY_ENABLED: "0"
+        run: |
+          $zip = Join-Path $env:RUNNER_TEMP 'cua.zip'
+          Invoke-WebRequest -Uri https://github.com/trycua/cua/releases/download/cua-driver-rs-v0.21.0/cua-driver-rs-0.21.0-windows-x86_64-binary.zip -OutFile $zip -UseBasicParsing
+          $got = (Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash.ToLowerInvariant()
+          if ($got -ne 'd63f6a78e65afc06524048f5557fed36cdf01f0a8a680236e93c9a2fb3587f44') { throw "cua-driver: SHA-256 $got" }
+          Expand-Archive $zip -DestinationPath "$env:RUNNER_TEMP\cua"
+          Get-ChildItem -Recurse "$env:RUNNER_TEMP\cua" | Select-Object -First 20 | ForEach-Object { "$($_.FullName) $($_.Length)" }
+          $cua = (Get-ChildItem -Recurse "$env:RUNNER_TEMP\cua" -Filter cua-driver.exe | Select-Object -First 1).FullName
+          & $cua --version
+          $n = Start-Process notepad.exe -PassThru
+          Start-Sleep 3
+          $h = (Get-Process -Id $n.Id).MainWindowHandle
+          "notepad pid $($n.Id) hwnd $h"
+          & $cua call list_windows '{}' 2>&1 | Select-Object -First 30
+          $t = Measure-Command { $o = & $cua call get_window_state "{`"pid`":$($n.Id),`"window_id`":$h,`"include_screenshot`":false}" 2>&1 }
+          "get_window_state: $([int]$t.TotalMilliseconds) ms"
+          $o | Select-Object -First 60
+          Stop-Process -Id $n.Id
+
+      - name: A RemoteApp from the VM itself
+        continue-on-error: true
+        timeout-minutes: 6
+        run: |
+          ./spike/guide-v2-uia/bureau-distance.ps1 -Mode remoteapp
+          ./spike/guide-v2-uia/arbre.ps1 -Process mstsc -Depth 4
+          Get-Process | Where-Object { $_.SessionId -ne (Get-Process -Id $PID).SessionId -and $_.SessionId -ne 0 } | Select-Object -First 15 | ForEach-Object { "session $($_.SessionId): $($_.ProcessName)" }
+
+      - name: A whole remote desktop, failing that
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 6
+        run: |
+          Get-Process mstsc -ErrorAction SilentlyContinue | Stop-Process
+          ./spike/guide-v2-uia/bureau-distance.ps1 -Mode bureau
+          ./spike/guide-v2-uia/arbre.ps1 -Process mstsc -Depth 5
