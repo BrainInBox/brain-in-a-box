@@ -1,0 +1,25 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Bibo calque</title>
+<style>
+  html, body { margin: 0; background: transparent; overflow: hidden; }
+  div { position: fixed; box-sizing: border-box; border-style: solid; border-color: #00e676; }
+</style>
+<script>
+  // Rings around the rectangles given by the app (« x,y,w,h;… », physical pixels of the screen), as
+  // calque.rs draws them: 6 px away, 6 px thick.
+  addEventListener("DOMContentLoaded", () => {
+    const r = devicePixelRatio, M = 6, T = 6;
+    for (const s of String(window.__ANNEAUX || "").split(";").filter(Boolean)) {
+      const [x, y, w, h] = s.split(",").map(Number);
+      const d = document.createElement("div");
+      d.style.left = (x - M - T) / r + "px";
+      d.style.top = (y - M - T) / r + "px";
+      d.style.width = (w + 2 * (M + T)) / r + "px";
+      d.style.height = (h + 2 * (M + T)) / r + "px";
+      d.style.borderWidth = T / r + "px";
+      document.body.appendChild(d);
+    }
+  });
+</script>
+<body></body>

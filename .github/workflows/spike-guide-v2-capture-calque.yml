@@ -39,7 +39,8 @@ jobs:
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             spike/guide-v2-capture-calque/target
-          key: spikev2cc-${{ matrix.os }}-${{ hashFiles('spike/guide-v2-capture-calque/Cargo.lock') }}
+            spike/guide-v2-capture-calque/calque-tauri/target
+          key: spikev2cc-${{ matrix.os }}-${{ hashFiles('spike/guide-v2-capture-calque/Cargo.lock', 'spike/guide-v2-capture-calque/calque-tauri/Cargo.lock') }}
 
       - name: The desktop
         shell: pwsh
@@ -55,7 +56,10 @@ jobs:
           Get-CimInstance Win32_VideoController | ForEach-Object { "video: $($_.Name) $($_.CurrentHorizontalResolution)x$($_.CurrentVerticalResolution)" }
 
       - name: Build
-        run: cargo test --locked --no-run
+        run: |
+          cargo test --locked --no-run
+          cargo build --locked --manifest-path calque-tauri/Cargo.toml
+          echo "CALQUE_TAURI=$(cygpath -w "$PWD/calque-tauri/target/debug/calque-tauri.exe")" >> "$GITHUB_ENV"
 
       - name: Unit tests
         run: cargo test --locked 2>&1 | tee "$RUNNER_TEMP/unit.log"
@@ -89,6 +93,10 @@ jobs:
       - name: W3, the overlay at 100 %
         if: always()
         run: cargo test --locked -- --ignored --exact tests::bureau_w3_calque --test-threads=1 --nocapture 2>&1 | tee "$RUNNER_TEMP/w3.log"
+
+      - name: W3, the overlay made by Tauri, at 100 %
+        if: always()
+        run: cargo test --locked -- --ignored --exact tests::bureau_w3_calque_tauri --test-threads=1 --nocapture 2>&1 | tee "$RUNNER_TEMP/w3-tauri.log"
 
       - name: W4, idleness without a hook
         if: always()
@@ -137,10 +145,14 @@ jobs:
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             spike/guide-v2-capture-calque/target
-          key: spikev2cc-mut-${{ hashFiles('spike/guide-v2-capture-calque/Cargo.lock') }}
+            spike/guide-v2-capture-calque/calque-tauri/target
+          key: spikev2cc-mut-${{ hashFiles('spike/guide-v2-capture-calque/Cargo.lock', 'spike/guide-v2-capture-calque/calque-tauri/Cargo.lock') }}
 
       - name: Build
-        run: cargo test --locked --no-run
+        run: |
+          cargo test --locked --no-run
+          cargo build --locked --manifest-path calque-tauri/Cargo.toml
+          "CALQUE_TAURI=$PWD\calque-tauri\target\debug\calque-tauri.exe" >> $env:GITHUB_ENV
 
       - name: Each protection taken out turns a desktop test red
         run: python -I mutations.py

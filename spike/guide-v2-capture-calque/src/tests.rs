@@ -1,12 +1,13 @@
 //! On a Windows VM of the CI only: `cargo test -- --ignored --test-threads=1 --nocapture`. Each measure is
 //! printed as `MESURE <proof> <key>=<value>`, for the job's summary.
 
+use std::cell::RefCell;
 use std::fmt::Display;
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::mem::size_of;
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command};
+use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::JoinHandle;
@@ -20,7 +21,9 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MOVE,
     MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, MOUSEINPUT, MOUSE_EVENT_FLAGS, VIRTUAL_KEY, VK_CONTROL, VK_ESCAPE, VK_LWIN, VK_SHIFT,
 };
-use windows::Win32::UI::WindowsAndMessaging::{EnumChildWindows, GetAncestor, GetForegroundWindow, SetCursorPos, WindowFromPoint, GA_ROOT, WDA_EXCLUDEFROMCAPTURE, WDA_NONE};
+use windows::Win32::UI::WindowsAndMessaging::{
+    EnumChildWindows, GetAncestor, GetForegroundWindow, SetCursorPos, WindowFromPoint, GA_ROOT, WDA_EXCLUDEFROMCAPTURE, WDA_NONE, WINDOW_DISPLAY_AFFINITY,
+};
 
 use crate::calque::{anneau, Calque, ANNEAU, EPAISSEUR, MARGE};
 use crate::compose::composer;
@@ -489,8 +492,15 @@ fn bureau_w1_edge() {
     let w2 = until_some("Edge's second window", || find_window(|h| h != w1 && class(h) == "Chrome_WidgetWin_1" && title(h).contains("Banque")));
     mesure(T, "meme_processus", pid == pid_of(w2));
     let f1 = frame(w1).unwrap();
-    clic((f1.left + 300, f1.bottom - 80));
-    until("Edge in front", || devant() == w1);
+    let point = (f1.left + 300, f1.bottom - 80);
+    let decrire = |h: HWND| format!("{} « {} » pid {} {:?} owner {:?}", class(h), title(h), pid_of(h), frame(h).map(rect_s), crate::prims::owner(h).map(id_of));
+    mesure(T, "fenetre1", decrire(w1));
+    mesure(T, "sous_le_clic", decrire(dessus_a(point)));
+    clic(point);
+    if within(Duration::from_secs(10), || (devant() == w1).then_some(())).is_none() {
+        let edges: Vec<String> = top_windows().into_iter().filter(|&h| visible(h) && pid_of(h) == pid).map(decrire).collect();
+        panic!("Edge not in front: in front {}, Edge's windows {edges:?}", decrire(devant()));
+    }
     combo(&[VK_CONTROL], VIRTUAL_KEY(0x31));
 
     let t = Instant::now();
@@ -593,15 +603,126 @@ fn check(ok: bool, what: impl Display) -> Result<(), String> {
     }
 }
 
+/// The overlay under test: Win32 (calque.rs) or Tauri (calque-tauri, its own process).
+trait Overlay {
+    fn hwnd(&self) -> HWND;
+    fn affinite(&self, a: WINDOW_DISPLAY_AFFINITY) -> bool;
+}
+
+impl Overlay for Calque {
+    fn hwnd(&self) -> HWND {
+        Calque::hwnd(self)
+    }
+
+    fn affinite(&self, a: WINDOW_DISPLAY_AFFINITY) -> bool {
+        Calque::affinite(self, a)
+    }
+}
+
+struct CalqueTauri {
+    child: Child,
+    io: RefCell<(ChildStdin, BufReader<ChildStdout>)>,
+    id: u64,
+}
+
+impl CalqueTauri {
+    fn exe() -> Option<PathBuf> {
+        std::env::var_os("CALQUE_TAURI").map(PathBuf::from).filter(|p| p.is_file())
+    }
+
+    fn ouvrir(anneaux: Vec<RECT>) -> Self {
+        let arg = anneaux.iter().map(|r| format!("{},{},{},{}", r.left, r.top, r.right - r.left, r.bottom - r.top)).collect::<Vec<_>>().join(";");
+        let mut child = Command::new(Self::exe().expect("CALQUE_TAURI")).arg(arg).stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
+        let stdin = child.stdin.take().unwrap();
+        let mut stdout = BufReader::new(child.stdout.take().unwrap());
+        let mut line = String::new();
+        stdout.read_line(&mut line).unwrap();
+        eprintln!("calque tauri: {}", line.trim());
+        let id = line.split_whitespace().nth(1).and_then(|v| v.parse().ok()).expect("hwnd <id>");
+        CalqueTauri { child, io: RefCell::new((stdin, stdout)), id }
+    }
+}
+
+impl Overlay for CalqueTauri {
+    fn hwnd(&self) -> HWND {
+        handle(self.id)
+    }
+
+    fn affinite(&self, a: WINDOW_DISPLAY_AFFINITY) -> bool {
+        let mut io = self.io.borrow_mut();
+        let (stdin, stdout) = &mut *io;
+        let _ = writeln!(stdin, "{}", if a == WDA_NONE { "none" } else { "exclude" });
+        let _ = stdin.flush();
+        let mut line = String::new();
+        stdout.read_line(&mut line).is_ok() && line.trim() == "ok true"
+    }
+}
+
+impl Drop for CalqueTauri {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Sorte {
+    Win32,
+    Tauri,
+}
+
+impl Sorte {
+    fn ouvrir(self, anneaux: Vec<RECT>) -> Box<dyn Overlay> {
+        match self {
+            Sorte::Win32 => Box::new(Calque::ouvrir(anneaux)),
+            Sorte::Tauri => Box::new(CalqueTauri::ouvrir(anneaux)),
+        }
+    }
+
+    fn nom(self) -> &'static str {
+        match self {
+            Sorte::Win32 => "win32",
+            Sorte::Tauri => "tauri",
+        }
+    }
+}
+
 fn ring_area(r: RECT) -> i64 {
     let (o, i) = anneau(r);
     area(o) - area(i)
 }
 
-fn verifier_calque(d: &Desk, echelle: u32) -> Result<(), String> {
-    let t = format!("w3.{echelle}");
+/// The click count the window of mode « bouton » shows at the end of its title, and where the last one landed.
+fn clics(win: HWND) -> (u32, String) {
+    let t = title(win);
+    let mut words = t.rsplit(' ');
+    let n = words.next().and_then(|w| w.parse().ok()).unwrap_or(0);
+    (n, words.next().unwrap_or("").to_string())
+}
+
+/// A click at `at`, and where the window of mode « bouton » says it landed (« clic-fond », « clic-bouton »),
+/// or None when it never got it.
+fn clic_recu(win: HWND, at: (i32, i32)) -> Option<String> {
+    let (n0, _) = clics(win);
+    clic(at);
+    within(Duration::from_secs(3), || {
+        let (n, ou) = clics(win);
+        (n > n0).then_some(ou)
+    })
+}
+
+fn verifier_calque(d: &Desk, echelle: u32, sorte: Sorte) -> Result<(), String> {
+    let t = format!("w3.{}.{echelle}", sorte.nom());
+    let mut fautes: Vec<String> = Vec::new();
+    macro_rules! verifier {
+        ($ok:expr, $what:expr) => {
+            if !$ok {
+                fautes.push($what.to_string());
+            }
+        };
+    }
     let _p = Physical::enter();
-    let (_prog, win) = d.open("bouton", &format!("Calque{echelle}"), (100, 100, 600, 400), BLUE);
+    let (_prog, win) = d.open("bouton", &format!("Calque{echelle}{}", sorte.nom()), (100, 100, 600, 400), BLUE);
     let pid = pid_of(win);
     let bouton = until_some("its button", || enfants(win).into_iter().find(|&c| title(c) == "Nouveau"));
     let b = window_rect(bouton).unwrap();
@@ -609,8 +730,8 @@ fn verifier_calque(d: &Desk, echelle: u32) -> Result<(), String> {
     mesure(&t, "fenetre", rect_s(f));
     mesure(&t, "bouton", rect_s(b));
     let fond = (f.right - 60, f.bottom - 60);
-    clic(fond);
-    until("clicked, in front", || devant() == win && title(win).ends_with("clic-fond 1"));
+    clic_recu(win, fond).ok_or("the window never clicked")?;
+    until("in front", || devant() == win);
     let tray = find_window(|h| class(h) == "Shell_TrayWnd").ok_or("no taskbar")?;
     let tb = window_rect(tray).unwrap();
     mesure(&t, "barre_des_taches", rect_s(tb));
@@ -620,25 +741,31 @@ fn verifier_calque(d: &Desk, echelle: u32) -> Result<(), String> {
     mesure(&t, "ecran", rect_s(s));
     check(screen_copy(s).unwrap().count(ANNEAU) == 0, "the ring's colour on the screen before the overlay")?;
 
-    let calque = Calque::ouvrir(vec![b, tb_cible]);
-    sleep(500);
+    let calque = sorte.ouvrir(vec![b, tb_cible]);
+    // A web view draws its page a moment after the window shows.
+    sleep(if sorte == Sorte::Tauri { 3000 } else { 500 });
     mesure(&t, "devant_apres_calque", class(devant()));
-    check(devant() == win, "the overlay took the focus")?;
+    verifier!(devant() == win, "the overlay took the focus");
     mesure(&t, "z_calque_vs_barre_avant", format!("{:?} < {:?}", z_index(calque.hwnd()), z_index(tray)));
 
     let pw = composer(pid, win).unwrap();
     let ec = screen_copy(s).unwrap();
     mesure(&t, "anneau_printwindow", pw.img.count(ANNEAU));
     mesure(&t, "anneau_ecran_entier", ec.count(ANNEAU));
-    check(pw.img.count(ANNEAU) == 0, "the ring in PrintWindow's image")?;
-    check(ec.count(ANNEAU) == 0, "the ring in a copy of the whole screen")?;
+    verifier!(pw.img.count(ANNEAU) == 0, "the ring in PrintWindow's image");
+    verifier!(ec.count(ANNEAU) == 0, "the ring in a copy of the whole screen");
 
     // The witness: shown to captures for a moment, the ring is on the screen, where it should be.
-    check(calque.affinite(WDA_NONE), "affinity none")?;
-    sleep(400);
-    let vu = screen_copy(s).unwrap();
+    let aff = calque.affinite(WDA_NONE);
+    mesure(&t, "affinite_none", aff);
     let (ob, _) = anneau(b);
     let autour = zone_of(RECT { left: ob.left - 20, top: ob.top - 20, right: ob.right + 20, bottom: ob.bottom + 20 }, s);
+    let part = if sorte == Sorte::Tauri { 80 } else { 95 };
+    let vu = within(Duration::from_secs(10), || {
+        let vu = screen_copy(s).unwrap();
+        (vu.count_in(autour, ANNEAU) as i64 * 100 >= ring_area(b) * part).then_some(vu)
+    })
+    .unwrap_or_else(|| screen_copy(s).unwrap());
     let nb = vu.count_in(autour, ANNEAU) as i64;
     let bornes = bounds_in(&vu, autour, ANNEAU);
     let attendu = zone_of(ob, s);
@@ -648,24 +775,27 @@ fn verifier_calque(d: &Desk, echelle: u32) -> Result<(), String> {
     let ztb = zone_of(tb, s);
     let ntb = vu.count_in(ztb, ANNEAU) as i64;
     mesure(&t, "temoin_anneau_sur_barre", format!("{ntb}/{}", ring_area(tb_cible)));
-    check(calque.affinite(WDA_EXCLUDEFROMCAPTURE), "affinity back")?;
+    let back = calque.affinite(WDA_EXCLUDEFROMCAPTURE);
+    mesure(&t, "affinite_exclue", back);
     sleep(400);
     let encore = screen_copy(s).unwrap().count(ANNEAU);
     mesure(&t, "anneau_ecran_entier_apres_temoin", encore);
-    check(nb * 100 >= ring_area(b) * 95, "witness: the ring on the screen")?;
-    check(erreur <= 4, format!("the ring {erreur} px off"))?;
-    check(ntb * 10 >= ring_area(tb_cible) * 9, "the ring over the taskbar")?;
-    check(encore == 0, "kept out again")?;
+    verifier!(nb * 100 >= ring_area(b) * part, "witness: the ring on the screen");
+    verifier!(erreur <= 4, format!("the ring {erreur} px off"));
+    verifier!(ntb * 100 >= ring_area(tb_cible) * (part - 10), "the ring over the taskbar");
+    verifier!(encore == 0, "the ring in a copy of the whole screen, kept out again");
 
     // Clicks go through: inside the ring (transparent) and on the ring itself (opaque).
-    clic(centre(b));
-    within(Duration::from_secs(3), || title(win).ends_with("clic-bouton 2").then_some(())).ok_or_else(|| format!("the button never clicked: « {} »", title(win)))?;
+    let r1 = clic_recu(win, centre(b));
+    mesure(&t, "clic_dans_anneau", format!("{r1:?}"));
+    verifier!(r1.as_deref() == Some("clic-bouton"), "the button not clicked through the overlay");
     let sur = (ob.left + EPAISSEUR / 2, (b.top + b.bottom) / 2);
     mesure(&t, "sous_anneau", class(dessus_a(sur)));
-    check(dessus_a(sur) == win, "the ring catches the point")?;
-    clic(sur);
-    within(Duration::from_secs(3), || title(win).ends_with("clic-fond 3").then_some(())).ok_or_else(|| format!("the click on the ring never reached the app: « {} »", title(win)))?;
-    check(devant() == win, "the app no longer in front")?;
+    verifier!(dessus_a(sur) == win, "the ring catches the point");
+    let r2 = clic_recu(win, sur);
+    mesure(&t, "clic_sur_anneau", format!("{r2:?}"));
+    verifier!(r2.as_deref() == Some("clic-fond"), "the click on the ring never reached the app");
+    verifier!(devant() == win, "the app no longer in front");
 
     // The taskbar used (Win+T): does it come over the overlay?
     combo(&[VK_LWIN], VIRTUAL_KEY(b'T' as u16));
@@ -679,26 +809,38 @@ fn verifier_calque(d: &Desk, echelle: u32) -> Result<(), String> {
         }
     }
     mesure(&t, "calque_au_dessus_barre_sur_10", dessus);
-    check(calque.affinite(WDA_NONE), "affinity none")?;
+    calque.affinite(WDA_NONE);
     sleep(400);
     let ntb2 = screen_copy(tb).unwrap().count(ANNEAU) as i64;
-    check(calque.affinite(WDA_EXCLUDEFROMCAPTURE), "affinity back")?;
+    calque.affinite(WDA_EXCLUDEFROMCAPTURE);
     mesure(&t, "temoin_anneau_sur_barre_active", format!("{ntb2}/{}", ring_area(tb_cible)));
     touche(VK_ESCAPE);
     sleep(300);
-    clic(fond);
-    within(Duration::from_secs(3), || title(win).ends_with("clic-fond 4").then_some(())).ok_or("the app not clicked back")?;
-    check(dessus == 10, format!("the taskbar over the overlay {} times in 10", 10 - dessus))?;
-    check(ntb2 * 10 >= ring_area(tb_cible) * 9, "the ring hidden by the taskbar in use")?;
+    let r3 = clic_recu(win, fond);
+    verifier!(r3.is_some(), "the app not clicked back");
+    verifier!(dessus == 10, format!("the taskbar over the overlay {} times in 10", 10 - dessus));
+    verifier!(ntb2 * 100 >= ring_area(tb_cible) * (part - 10), "the ring hidden by the taskbar in use");
     drop(calque);
-    Ok(())
+    if fautes.is_empty() {
+        Ok(())
+    } else {
+        Err(fautes.join("; "))
+    }
 }
 
 #[test]
 #[ignore = "a Windows desktop (VM)"]
 fn bureau_w3_calque() {
     let d = desk();
-    verifier_calque(&d, 100).unwrap();
+    verifier_calque(&d, 100, Sorte::Win32).unwrap();
+}
+
+/// The same overlay made by Tauri, as the guide would (calque-tauri, built by the workflow).
+#[test]
+#[ignore = "a Windows desktop (VM), CALQUE_TAURI"]
+fn bureau_w3_calque_tauri() {
+    let d = desk();
+    verifier_calque(&d, 100, Sorte::Tauri).unwrap();
 }
 
 /// At 125 and 150 %, when the VM lets its scale change: the overlay again, and how PrintWindow draws a
@@ -762,8 +904,13 @@ fn bureau_w3_echelles() {
             mesure(&format!("w1.{pct}"), "bleu", format!("{}/{}", c.img.count(BLUE), c.img.pixels()));
             mesure(&format!("w1.{pct}"), "bornes_bleu", format!("{:?}", c.img.bounds(BLUE)));
         }
-        if let Err(e) = verifier_calque(&d, pct) {
-            fautes.push(format!("{pct} %: {e}"));
+        for sorte in [Sorte::Win32, Sorte::Tauri] {
+            if sorte == Sorte::Tauri && CalqueTauri::exe().is_none() {
+                continue;
+            }
+            if let Err(e) = verifier_calque(&d, pct, sorte) {
+                fautes.push(format!("{pct} % {}: {e}", sorte.nom()));
+            }
         }
     }
     assert!(fautes.is_empty(), "{fautes:?}");

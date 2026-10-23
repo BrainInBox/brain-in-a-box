@@ -15,11 +15,13 @@ C = "src/compose.rs"
 N = "src/navigateur.rs"
 K = "src/calque.rs"
 V = "src/veille.rs"
+TA = "calque-tauri/src/main.rs"
 
 APPLI = "bureau_w1_appli_composee"
 EDGE = "bureau_w1_edge"
 ADMIN = "admin"
 CALQUE = "bureau_w3_calque"
+TAURI = "bureau_w3_calque_tauri"
 CALME = "bureau_w4_calme_60s"
 DIALOGUE = "bureau_w4_dialogue"
 HOOK = "aucun_hook_clavier_souris"
@@ -46,7 +48,7 @@ MUTATIONS = [
     ("W1 site vérifié avant la capture : retiré (attendu : survit, l'après suffit)", False, N,
      "        let avant = self.domaine();\n        if avant.as_deref() != Some(permis) {\n            return Err(Refus::Domaine(avant));\n        }\n", "", [EDGE]),
     ("W3 pas de WDA_EXCLUDEFROMCAPTURE", True, K,
-     "let excluded = unsafe { SetWindowDisplayAffinity(h, WDA_EXCLUDEFROMCAPTURE) }.is_ok();", "let excluded = false;", [CALQUE]),
+     "    unsafe { SetWindowDisplayAffinity(h, WDA_EXCLUDEFROMCAPTURE) }\n", "    let _ = h;\n    Ok(())\n", [CALQUE]),
     ("W3 pas de WS_EX_TRANSPARENT", True, K,
      "WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST", "WS_EX_LAYERED | WS_EX_TOPMOST", [CALQUE]),
     ("W3 activé à l'affichage (ni WS_EX_NOACTIVATE ni SW_SHOWNOACTIVATE)", True, K,
@@ -57,6 +59,12 @@ MUTATIONS = [
     ("W3 ni WS_EX_TOPMOST ni remise au-dessus", True, K,
      [("WS_EX_TRANSPARENT | WS_EX_TOPMOST | WS_EX_TOOLWINDOW", "WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW"),
       ("                SetTimer(Some(h), 1, REHAUSSE_MS, None);\n", "")], None, [CALQUE]),
+    ("W3 Tauri sans set_ignore_cursor_events", True, TA,
+     "            win.set_ignore_cursor_events(true)?;\n", "", [TAURI]),
+    ("W3 Tauri sans WDA_EXCLUDEFROMCAPTURE", True, TA,
+     "let excluded = unsafe { SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE) }.is_ok();", "let excluded = false;", [TAURI]),
+    ("W3 Tauri focusable et activé", True, TA,
+     [(".focusable(false)", ".focusable(true)"), (".focused(false)", ".focused(true)")], None, [TAURI]),
     ("W4 tout changement compte (seuil de part retiré)", True, V,
      "if change < SEUIL_PART {", "if change <= 0.0 {", [CALME]),
     ("W4 pas d'attente que l'image tienne", True, V,
@@ -68,6 +76,11 @@ MUTATIONS = [
     ("W4 un hook clavier", True, V,
      "/// How long since the last key", "#[allow(dead_code)]\nconst _CROCHET: &str = \"SetWindowsHookExW(WH_KEYBOARD_LL)\";\n\n/// How long since the last key", [HOOK]),
 ]
+
+def build_tauri():
+    out = subprocess.run(["cargo", "build", "--locked", "--manifest-path", "calque-tauri/Cargo.toml"], capture_output=True, text=True)
+    return out.returncode == 0, out.stderr[-3000:]
+
 
 def build():
     out = subprocess.run(["cargo", "test", "--locked", "--no-run", "--message-format=json"], capture_output=True, text=True)
@@ -153,7 +166,11 @@ for m in MUTATIONS:
         continue
     open(path, "w", encoding="utf-8", newline="\n").write(new)
     try:
-        exe_m, err = build()
+        if path.startswith("calque-tauri/"):
+            ok, err = build_tauri()
+            exe_m = exe if ok else None
+        else:
+            exe_m, err = build()
         if not exe_m:
             print("== %s: does not build\n%s" % (name, err))
             results.append((name, expect_red, "ne compile pas"))
@@ -168,6 +185,8 @@ for m in MUTATIONS:
         results.append((name, expect_red, "ROUGE" if reds else "survit"))
     finally:
         open(path, "w", encoding="utf-8", newline="\n").write(text)
+        if path.startswith("calque-tauri/"):
+            build_tauri()
 
 print("\nMUTATIONS")
 bad = []

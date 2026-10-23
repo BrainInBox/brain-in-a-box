@@ -13,7 +13,7 @@ use windows::Win32::Graphics::Gdi::{GetDC, ReleaseDC, AC_SRC_ALPHA, AC_SRC_OVER,
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW, PostThreadMessageW, RegisterClassW, SendMessageW, SetTimer, SetWindowDisplayAffinity,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW, GetWindowDisplayAffinity, PostThreadMessageW, RegisterClassW, SendMessageW, SetTimer, SetWindowDisplayAffinity,
     SetWindowPos, ShowWindow, TranslateMessage, UpdateLayeredWindow, HWND_TOPMOST, MSG, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE,
     SW_SHOWNOACTIVATE, ULW_ALPHA, WDA_EXCLUDEFROMCAPTURE, WINDOW_DISPLAY_AFFINITY, WM_APP, WM_QUIT, WM_TIMER, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE,
     WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
@@ -45,6 +45,12 @@ pub fn anneau(r: RECT) -> (RECT, RECT) {
         RECT { left: r.left - o, top: r.top - o, right: r.right + o, bottom: r.bottom + o },
         RECT { left: r.left - MARGE, top: r.top - MARGE, right: r.right + MARGE, bottom: r.bottom + MARGE },
     )
+}
+
+/// WDA_EXCLUDEFROMCAPTURE on the overlay.
+fn exclure(h: HWND) -> windows::core::Result<()> {
+    // SAFETY: our window.
+    unsafe { SetWindowDisplayAffinity(h, WDA_EXCLUDEFROMCAPTURE) }
 }
 
 unsafe extern "system" fn proc_(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
@@ -116,13 +122,18 @@ impl Calque {
             }
             .unwrap();
             let drawn = dessiner(h, ecran, &anneaux);
+            let avant = exclure(h);
             // SAFETY: our window.
-            let excluded = unsafe { SetWindowDisplayAffinity(h, WDA_EXCLUDEFROMCAPTURE) }.is_ok();
             unsafe {
                 let _ = ShowWindow(h, SW_SHOWNOACTIVATE);
                 SetTimer(Some(h), 1, REHAUSSE_MS, None);
             }
-            eprintln!("calque: drawn {drawn}, excluded {excluded}");
+            // Asked again once shown, when Windows refused it before.
+            let apres = avant.is_err().then(|| exclure(h));
+            let mut lue = 0u32;
+            // SAFETY: a u32 for the call.
+            let _ = unsafe { GetWindowDisplayAffinity(h, &mut lue) };
+            eprintln!("calque: drawn {drawn}, excluded before showing {avant:?}, after {apres:?}, affinity read {lue:#x}");
             tx.send((id_of(h), unsafe { GetCurrentThreadId() }, ecran)).unwrap();
             let mut msg = MSG::default();
             // SAFETY: this thread's queue, until WM_QUIT.
