@@ -33,7 +33,7 @@
   //     remote            the brain is pushed every night   refusee     the first save holds a command
   //     filtre            Bibo's filter cut the answer, Claude saw nothing wrong
   //     prudent           no Opus for this account: Sonnet answers, cautious       sans-modele   neither model
-  //     auth, billed, vieux, arrete, installer   what guide_status says instead of « ready »
+  //     auth, billed, sans-forfait, vieux, arrete, installer   what guide_status says instead of « ready »
   //   &vu=0 the first time (G1); &os=windows|linux that system's words; &depose=1 drops a file instead of pasting
   //   (&depose=jpeg, a JPEG); &taille=1 every capture after the first is of another, small size (the hidden zones
   //   are not painted on it); &meme=1 the second capture is the first one again; &vide=1 the first paste holds no
@@ -54,6 +54,10 @@
   //   refuses it), vide (macOS 14: the picker gives no name); &rate=noire|reduite|fermee[:n] the n-th photo
   //   (default the first) black (and every one after, of that window: a protected program), of a minimized
   //   window, of a closed one.
+  // The waits for a click or the picker are numbered by the page, its stops too (guide.rs, Waits), as Rust
+  // keeps them: a wait whose number was stopped, or used, is over at once; a stop names the waits it stops.
+  // &course=1: each wait reaches Rust after what the page did next (its stop comes first); &base=<n>: the
+  // status' number, a page opened again after n waits.
   // Driving, for screenshots and app/dev/screens.mjs: &go=<screen> clicks through to that screen
   // (objectif, coller, apercu, cacher, regarde, etape, question, pas-ici, bloque, confirmer, coince, abandon,
   // fin, enregistrer, enregistre, erreur, connexion, choisir, fenetre, liste, photo, reduite, introuvable…),
@@ -182,7 +186,7 @@
     };
     const script = (SCRIPTS[g] || SCRIPTS.ok).slice();
     const kinds = KINDS[g] || ['liste', 'facture', 'facture', 'validee'];
-    const STATUS = { billed: 'billed', vieux: 'unsupported', arrete: 'arrete' };
+    const STATUS = { billed: 'billed', 'sans-forfait': 'sans_forfait', vieux: 'unsupported', arrete: 'arrete' };
     // How guide.rs says the capture comes (Capture::of): Bibo's photo, or a paste and why (never shown).
     const CAPTURES = {
       clic: { mode: 'auto', via: 'clic', secondes: 45 },
@@ -307,13 +311,25 @@
       const t = ms === Infinity ? 0 : setTimeout(resolve, ms);
       cancel = () => { clearTimeout(t); reject({ kind: 'annule' }); };
     });
+    // The waits as guide.rs numbers them: the highest stopped, the highest begun, the one running. A wait
+    // without a number (a page of before) runs whatever stop came first, as Rust's did.
+    const BASE = Number(P.get('base')) || 0;
+    let stoppedMax = BASE;
+    let begunMax = BASE;
+    let waiting = null;
+    async function beginWait(attente) {
+      if (P.get('course')) await wait(400);
+      if (typeof attente === 'number' && attente <= Math.max(stoppedMax, begunMax)) throw { kind: 'annule' };
+      if (typeof attente === 'number') begunMax = attente;
+      waiting = typeof attente === 'number' ? attente : 0;
+    }
 
     const handlers = {
       async guide_status() {
         await wait(T(600));
-        if (g === 'installer') return { ia: 'ready', capture: CAPTURE, cerveau: false, complet: false, vu: true };
+        if (g === 'installer') return { ia: 'ready', capture: CAPTURE, cerveau: false, complet: false, vu: true, attentes: BASE };
         // &complet=0: the brain's folder only, the install stopped before the end (D1): no summary runs.
-        return { ia: logged ? STATUS[g] || 'ready' : 'not_logged_in', capture: CAPTURE, cerveau: true, complet: P.get('complet') !== '0', vu: P.get('vu') !== '0' };
+        return { ia: logged ? STATUS[g] || 'ready' : 'not_logged_in', capture: CAPTURE, cerveau: true, complet: P.get('complet') !== '0', vu: P.get('vu') !== '0', attentes: BASE };
       },
       async guide_compris() { await wait(50); },
       async guide_commencer({ logiciel, objectif }) {
@@ -348,7 +364,8 @@
       },
       // ── The automatic capture (capture/, guide.rs) ──
       // « Clique dans la fenêtre de ton logiciel »: the user clicks in theirs a moment later (a gesture).
-      async guide_attendre_clic() {
+      async guide_attendre_clic({ attente } = {}) {
+        await beginWait(attente);
         const which = P.get('clic') || 'odoo';
         if (which === 'aucun') {
           await stoppable(45000);
@@ -368,10 +385,11 @@
       },
       // A window of the list or the click; no id: the system's picker (macOS), where the user picks a
       // window and its button (two gestures).
-      async guide_choisir({ id }) {
+      async guide_choisir({ id, attente }) {
         await wait(T(200));
         if (id == null) {
           if (CAPTURE.via !== 'selecteur') throw { kind: 'fenetre_introuvable' };
+          await beginWait(attente);
           await stoppable(T(1500));
           forgotten();
           if (P.get('selecteur') === 'refuse') throw { kind: 'selecteur_refuse', raison: 'The user declined TCCs for application, window, display capture' };
@@ -457,7 +475,11 @@
         shown = view(a, 'fait');
         return shown;
       },
-      async guide_annuler() { if (cancel) cancel(); },
+      // The waits up to that number (all of them without one), and the question.
+      async guide_annuler({ attente } = {}) {
+        if (typeof attente === 'number') stoppedMax = Math.max(stoppedMax, attente);
+        if (cancel && (typeof attente !== 'number' || waiting === null || waiting <= attente)) cancel();
+      },
       async guide_fin() {},
       async guide_brouillon() {
         await wait(T(150));

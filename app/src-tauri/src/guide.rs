@@ -29,7 +29,7 @@ use serde_json::{json, Value};
 
 use crate::capture::{self, Fenetre, Pick, Rate, Screen, Window};
 use crate::claude::{self, ClaudeError, RateLimit, MIN_CLAUDE, REQUIRED_FLAGS};
-use crate::detect::{self, parse_version};
+use crate::detect::{self, parse_version, ClaudeLogin};
 use crate::shot::{self, Rgb, Rgba, Zone};
 use crate::{agents, diagnose, perms, redact, sys};
 
@@ -111,6 +111,9 @@ pub enum Ia {
     Unsupported,
     /// Logged in with a key or a provider that would be billed: only a subscription is used.
     Billed,
+    /// A claude.ai account whose plan Claude Code does not say: a free one most often (detect::login_of),
+    /// or a plan not read yet, which logging in again reads.
+    SansForfait,
     /// It once started outside the expected setup since the app started: not asked again until then.
     Arrete,
 }
@@ -153,6 +156,9 @@ pub struct Status {
     pub vu: bool,
     /// The account cannot use Opus: Sonnet answers, in the cautious mode (known once asked, this run).
     pub prudent: bool,
+    /// The page numbers its waits for a click or the picker from there on (`Waits`): a page opened again
+    /// never reuses a number of the one before.
+    pub attentes: u64,
 }
 
 /// The image exactly as it will leave, for « Voici ce que Claude va voir ».
@@ -993,11 +999,24 @@ struct Guide {
     /// The windows last shown in the list, or the one clicked: the only ones that may be chosen, as
     /// they were then (an id seen once is not enough).
     offered: Mutex<Vec<Window>>,
-    /// « Arrêter » while Bibo waits for the click.
-    stop_waiting: AtomicBool,
+    /// The page's waits for a click or the system's picker, and their stops.
+    waits: Mutex<Waits>,
     /// Moved on by each list, each wait and the end: a wait's windows become the ones offered only if
     /// nothing came after it began (see `offer`).
     offers: AtomicU64,
+}
+
+/// The page numbers each wait for a click or the picker, and its stop names the number it stops: the
+/// two calls come in no set order, and a stop that comes first ends its wait as soon as it begins,
+/// never 45 s later (C4's review, sécu 3). A wait has its flag of its own: the next wait stops one the
+/// page left running, and a late stop of an older wait never stops a newer one.
+#[derive(Default)]
+struct Waits {
+    /// The highest number stopped, and the highest begun: a wait numbered at or under either is over.
+    stopped: u64,
+    begun: u64,
+    /// The wait running: its number (None: the desk tests', without a page) and its flag.
+    current: Option<(Option<u64>, std::sync::Arc<AtomicBool>)>,
 }
 
 /// Each image that may leave has its number, never given twice.
@@ -1307,17 +1326,32 @@ fn check_cli(claude: &Path) -> Result<String, Ia> {
     if !help.ok() || !has_flags(&help.stdout) {
         return Err(Ia::Unsupported);
     }
-    match detect::claude_auth_method().as_deref() {
-        Some("claude.ai") => Ok(detect::fmt_version(version)),
-        None | Some("none") => Err(Ia::NotLoggedIn),
-        Some(_) => Err(Ia::Billed),
+    ia_of(detect::claude_login())?;
+    Ok(detect::fmt_version(version))
+}
+
+/// The login as the diagnosis reads it (detect::login_of): only a subscription asks Claude. A
+/// subscription's setup-token is one (passed on to Claude Code, `child_env`); a claude.ai account whose
+/// plan Claude Code does not say is not, nor a login billed per use.
+fn ia_of(login: ClaudeLogin) -> Result<(), Ia> {
+    match login {
+        ClaudeLogin::Subscribed => Ok(()),
+        ClaudeLogin::Unconfirmed => Err(Ia::SansForfait),
+        ClaudeLogin::Billed => Err(Ia::Billed),
+        ClaudeLogin::LoggedOut => Err(Ia::NotLoggedIn),
     }
 }
 
 /// The child's environment: the repair's short list, and no error report sent to a third party (R13).
-fn child_env(home: &Path, user: &str, path: &str, tmp: &Path) -> Vec<(&'static str, String)> {
+/// A subscription's setup-token, when the app has one (`check_cli` counts it as the subscription), goes
+/// with it as the kit passes it on (_headless_claude.TOKEN_VAR): the only credential, to a Claude
+/// without tools.
+fn child_env(home: &Path, user: &str, path: &str, tmp: &Path, setup_token: Option<String>) -> Vec<(&'static str, String)> {
     let mut env = claude::child_env(home, user, path, tmp);
     env.push(("DISABLE_ERROR_REPORTING", "1".into()));
+    if let Some(token) = setup_token {
+        env.push(("CLAUDE_CODE_OAUTH_TOKEN", token));
+    }
     env
 }
 
@@ -1352,6 +1386,8 @@ struct Ctx<'a> {
     work: PathBuf,
     path: String,
     user: String,
+    /// The subscription's setup-token the app was given, if any (`child_env`).
+    setup_token: Option<String>,
     cancel: &'a AtomicBool,
     check: &'a dyn Fn() -> Result<String, Ia>,
     online: &'a dyn Fn() -> bool,
@@ -1387,6 +1423,7 @@ impl Guide {
             complet: detect::brain(home, &agents::current(home)).complete(),
             vu: home.join(STORE).join("vu").is_file(),
             prudent: self.launch.prudent.load(Ordering::SeqCst),
+            attentes: { let w = lock(&self.waits); w.stopped.max(w.begun) },
         }
     }
 
@@ -1460,7 +1497,7 @@ impl Guide {
     }
 
     fn end(&self) {
-        self.stop_waiting.store(true, Ordering::SeqCst);
+        self.stop_waits(None);
         *lock(&self.session) = None;
         *lock(&self.staged) = None;
         let mut offered = lock(&self.offered);
@@ -1508,17 +1545,56 @@ impl Guide {
         Ok(())
     }
 
+    /// A wait begins, numbered by the page (`Waits`): over at once if its stop came first, or if a newer
+    /// one began. One the page left running stops.
+    fn begin_wait(&self, attente: Option<u64>) -> Result<std::sync::Arc<AtomicBool>, GuideError> {
+        let mut w = lock(&self.waits);
+        if attente.is_some_and(|n| n <= w.stopped.max(w.begun)) {
+            return Err(GuideError::Annule);
+        }
+        if let Some((_, older)) = w.current.take() {
+            older.store(true, Ordering::SeqCst);
+        }
+        w.begun = w.begun.max(attente.unwrap_or(0));
+        let stop = std::sync::Arc::new(AtomicBool::new(false));
+        w.current = Some((attente, stop.clone()));
+        Ok(stop)
+    }
+
+    /// The wait over: no longer the one a stop stops.
+    fn end_wait(&self, stop: &std::sync::Arc<AtomicBool>) {
+        let mut w = lock(&self.waits);
+        if w.current.as_ref().is_some_and(|(_, s)| std::sync::Arc::ptr_eq(s, stop)) {
+            w.current = None;
+        }
+    }
+
+    /// « Arrêter », the page gone elsewhere: the waits numbered up to `attente`, now or when they begin.
+    /// Without a number (a question stopped, the guide closed), the wait running, whatever its number.
+    fn stop_waits(&self, attente: Option<u64>) {
+        let mut w = lock(&self.waits);
+        if let Some(n) = attente {
+            w.stopped = w.stopped.max(n);
+        }
+        if let Some((number, stop)) = &w.current {
+            if attente.is_none_or(|n| number.is_none_or(|m| m <= n)) {
+                stop.store(true, Ordering::SeqCst);
+            }
+        }
+    }
+
     /// « Clique dans la fenêtre de ton logiciel »: the window that comes to the front within 45 s,
     /// which becomes the only one that may be chosen. Stopped, it leaves the windows offered as they
     /// are: the page stopped it for the list, asked for at the same time, and a line of it is chosen next.
-    fn wait_click(&self, screen: &dyn Screen) -> Result<Fenetre, GuideError> {
+    fn wait_click(&self, screen: &dyn Screen, attente: Option<u64>) -> Result<Fenetre, GuideError> {
         if !screen.available() || screen.picker() {
             return Err(GuideError::CaptureIndisponible);
         }
+        let stop = self.begin_wait(attente)?;
         let turn = self.turn();
-        self.stop_waiting.store(false, Ordering::SeqCst);
-        let clicked = screen.clicked(&self.stop_waiting);
-        if self.stop_waiting.load(Ordering::SeqCst) {
+        let clicked = screen.clicked(&stop);
+        self.end_wait(&stop);
+        if stop.load(Ordering::SeqCst) {
             return Err(GuideError::Annule);
         }
         self.offer(turn, clicked.iter().map(|f| f.window.clone()).collect())?;
@@ -1526,13 +1602,14 @@ impl Guide {
     }
 
     /// « Oui » (or a line of the list): the window kept for the session, if it is still the one
-    /// offered, and not a terminal. On macOS, no id: the window the user picks in the system's picker.
-    fn choose(&self, screen: &dyn Screen, id: Option<u64>) -> Result<Fenetre, GuideError> {
+    /// offered, and not a terminal. On macOS, no id: the window the user picks in the system's picker,
+    /// a wait numbered as a click's (`attente`).
+    fn choose(&self, screen: &dyn Screen, id: Option<u64>, attente: Option<u64>) -> Result<Fenetre, GuideError> {
         if !screen.available() {
             return Err(GuideError::CaptureIndisponible);
         }
         let offered = match id {
-            None if screen.picker() => self.picked(screen)?,
+            None if screen.picker() => self.picked(screen, attente)?,
             // A window of the list or the click; on macOS, of the picker only.
             Some(id) if !screen.picker() => lock(&self.offered).iter().find(|w| w.id == id).cloned().ok_or(GuideError::FenetreIntrouvable)?,
             _ => return Err(GuideError::FenetreIntrouvable),
@@ -1548,11 +1625,12 @@ impl Guide {
 
     /// The system's picker: the window the user picks there becomes the one offered. « Arrêter », or
     /// the guide closed meanwhile: nothing is kept.
-    fn picked(&self, screen: &dyn Screen) -> Result<Window, GuideError> {
+    fn picked(&self, screen: &dyn Screen, attente: Option<u64>) -> Result<Window, GuideError> {
+        let stop = self.begin_wait(attente)?;
         let turn = self.turn();
-        self.stop_waiting.store(false, Ordering::SeqCst);
-        let picked = screen.pick(&self.stop_waiting);
-        let stopped = self.stop_waiting.load(Ordering::SeqCst);
+        let picked = screen.pick(&stop);
+        self.end_wait(&stop);
+        let stopped = stop.load(Ordering::SeqCst);
         match picked {
             Pick::Choisie(f) if !stopped => {
                 self.offer(turn, vec![f.window.clone()])?;
@@ -1709,7 +1787,7 @@ impl Guide {
             return Err(GuideError::Annule);
         }
         let work = WorkDir::new(&ctx.work).map_err(internal)?;
-        let env = child_env(&ctx.home, &ctx.user, &ctx.path, &work.0.join("tmp"));
+        let env = child_env(&ctx.home, &ctx.user, &ctx.path, &work.0.join("tmp"), ctx.setup_token.clone());
         let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (*k, v.as_str())).collect();
         let place = claude::Place { env: &env, cwd: &work.0, limit: CALL_LIMIT, cancel: ctx.cancel };
         let prudent = run.model == MODEL_PRUDENT;
@@ -2143,14 +2221,26 @@ pub fn fenetres() -> Result<Vec<Fenetre>, GuideError> {
 }
 
 /// « Clique dans la fenêtre de ton logiciel » (Windows, X11): the window clicked within 45 s.
-pub fn attendre_clic() -> Result<Fenetre, GuideError> {
-    GUIDE.wait_click(&capture::System)
+/// `attente`: the page's number for this wait (`Waits`).
+pub fn attendre(attente: u64) -> Result<Fenetre, GuideError> {
+    GUIDE.wait_click(&capture::System, Some(attente))
 }
 
-/// The window chosen, from the list or the click: kept with its process and program (R22). On macOS,
-/// no id: the system's picker.
+/// The desk tests' wait for a click (capture/win.rs, x11.rs): no page, so no number.
+#[cfg(all(test, any(windows, target_os = "linux")))]
+pub fn attendre_clic() -> Result<Fenetre, GuideError> {
+    GUIDE.wait_click(&capture::System, None)
+}
+
+/// The window chosen, from the list or the click: kept with its process and program (R22).
 pub fn choisir(id: Option<u64>) -> Result<Fenetre, GuideError> {
-    GUIDE.choose(&capture::System, id)
+    GUIDE.choose(&capture::System, id, None)
+}
+
+/// macOS 14 and later: the window the user picks in the system's picker, a wait the page numbers as a
+/// click's.
+pub fn choisir_au_selecteur(attente: Option<u64>) -> Result<Fenetre, GuideError> {
+    GUIDE.choose(&capture::System, None, attente)
 }
 
 /// The chosen window, captured now: its preview, as a pasted capture's.
@@ -2180,6 +2270,7 @@ pub fn envoyer(envoi: &Envoi, on_progress: &mut dyn FnMut(Progress)) -> Result<E
         work: sys::work_root().map_err(internal)?,
         user: claude::login_name(&home),
         path: sys::tool_path().to_string_lossy().into_owned(),
+        setup_token: setup_token(),
         home,
         cancel: &CANCEL,
         check: &check,
@@ -2189,14 +2280,23 @@ pub fn envoyer(envoi: &Envoi, on_progress: &mut dyn FnMut(Progress)) -> Result<E
     GUIDE.send(&ctx, envoi, on_progress)
 }
 
+/// The setup-token in the app's environment (what detect::login_of counts as the subscription), its
+/// whitespace dropped as the kit drops it (a token copied across lines).
+fn setup_token() -> Option<String> {
+    let token: String = std::env::var("CLAUDE_CODE_OAUTH_TOKEN").ok()?.split_whitespace().collect();
+    (!token.is_empty()).then_some(token)
+}
+
 /// After « On dirait que rien n'a changé »: « Oui, c'est fait » (true) or « Je réessaie ».
 pub fn trancher(faite: bool) -> Result<Etape, GuideError> {
     GUIDE.decide(faite)
 }
 
-pub fn annuler() {
+/// « Arrêter », or the page gone elsewhere: the question, and the waits numbered up to `attente` (all
+/// of them without a number).
+pub fn annuler(attente: Option<u64>) {
     CANCEL.store(true, Ordering::SeqCst);
-    GUIDE.stop_waiting.store(true, Ordering::SeqCst);
+    GUIDE.stop_waits(attente);
 }
 
 /// G10: the procedure drafted from the session's steps, for the user to read before anything is written.
@@ -2776,6 +2876,7 @@ mod tests {
                 work: self.work.path().to_path_buf(),
                 path: "/usr/bin:/bin".into(),
                 user: "jo".into(),
+                setup_token: None,
                 cancel: &cancel,
                 check: &check,
                 online: &online,
@@ -3029,8 +3130,12 @@ mod tests {
         picker: bool,
         picked: Mutex<Option<Pick>>,
         forgotten: AtomicUsize,
-        /// A wait held open: it says it began, then waits for the test's go, its stop unseen.
+        /// A wait held open: it says it began, then waits for the test's go, and ends as its flag says then.
         gate: Mutex<Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>>,
+        /// The waits the screen was asked for: a click's, the picker's; the held ones that ended stopped.
+        waits: AtomicUsize,
+        picks: AtomicUsize,
+        stops_seen: AtomicUsize,
     }
 
     impl Screen for FakeScreen {
@@ -3041,6 +3146,7 @@ mod tests {
             self.picker
         }
         fn pick(&self, cancel: &AtomicBool) -> Pick {
+            self.picks.fetch_add(1, Ordering::SeqCst);
             if self.stopped_meanwhile {
                 cancel.store(true, Ordering::SeqCst);
             }
@@ -3053,9 +3159,16 @@ mod tests {
             lock(&self.windows).clone()
         }
         fn clicked(&self, cancel: &AtomicBool) -> Option<capture::Found> {
-            if let Some((began, go)) = lock(&self.gate).take() {
+            self.waits.fetch_add(1, Ordering::SeqCst);
+            // Taken out first: the lock is not held while the wait is (another wait may come meanwhile).
+            let gate = lock(&self.gate).take();
+            if let Some((began, go)) = gate {
                 began.send(()).unwrap();
                 go.recv().unwrap();
+                if cancel.load(Ordering::SeqCst) {
+                    self.stops_seen.fetch_add(1, Ordering::SeqCst);
+                    return None;
+                }
                 return lock(&self.clicked).clone();
             }
             if self.stopped_meanwhile {
@@ -3093,9 +3206,9 @@ mod tests {
         assert_eq!(list.iter().map(|f| (f.id, f.app.as_str(), f.reduite)).collect::<Vec<_>>(), [(11, "odoo", false), (12, "excel", true)]);
         assert_eq!(list[0].titre.chars().count(), 60, "the title cut");
         // A window never shown is not chosen, whatever its id.
-        assert_eq!(b.guide.choose(&screen, Some(13)), Err(GuideError::FenetreIntrouvable));
-        assert_eq!(b.guide.choose(&screen, None), Err(GuideError::FenetreIntrouvable));
-        assert_eq!(b.guide.choose(&screen, Some(11)).unwrap().id, 11);
+        assert_eq!(b.guide.choose(&screen, Some(13), None), Err(GuideError::FenetreIntrouvable));
+        assert_eq!(b.guide.choose(&screen, None, None), Err(GuideError::FenetreIntrouvable));
+        assert_eq!(b.guide.choose(&screen, Some(11), None).unwrap().id, 11);
         assert_eq!(lock(&b.guide.session).as_ref().unwrap().fenetre.as_ref().map(|w| w.pid), Some(100));
     }
 
@@ -3107,13 +3220,13 @@ mod tests {
         let screen = screen_with(vec![window(11, 100, "odoo.exe", "Odoo")]);
         b.guide.list(&screen).unwrap();
         *lock(&screen.windows) = vec![window(11, 666, "odoo.exe", "Odoo")];
-        assert_eq!(b.guide.choose(&screen, Some(11)), Err(GuideError::FenetreIntrouvable), "another process under the id");
+        assert_eq!(b.guide.choose(&screen, Some(11), None), Err(GuideError::FenetreIntrouvable), "another process under the id");
         *lock(&screen.windows) = vec![window(11, 100, "piege.exe", "Odoo")];
-        assert_eq!(b.guide.choose(&screen, Some(11)), Err(GuideError::FenetreIntrouvable), "another program");
+        assert_eq!(b.guide.choose(&screen, Some(11), None), Err(GuideError::FenetreIntrouvable), "another program");
         assert!(lock(&b.guide.session).as_ref().is_none_or(|s| s.fenetre.is_none()));
 
         *lock(&screen.windows) = vec![window(11, 100, "odoo.exe", "Odoo")];
-        b.guide.choose(&screen, Some(11)).unwrap();
+        b.guide.choose(&screen, Some(11), None).unwrap();
         assert_eq!(b.guide.look(&screen).unwrap().largeur, 900);
         for now in [vec![], vec![window(11, 101, "odoo.exe", "Odoo")], vec![window(11, 100, "autre.exe", "Odoo")]] {
             *lock(&screen.windows) = now;
@@ -3132,7 +3245,7 @@ mod tests {
         let b = Bench::new();
         let screen = screen_with(vec![window(11, 100, "odoo.exe", "Odoo")]);
         b.guide.list(&screen).unwrap();
-        b.guide.choose(&screen, Some(11)).unwrap();
+        b.guide.choose(&screen, Some(11), None).unwrap();
         let first = b.guide.look(&screen).unwrap();
 
         *lock(&screen.windows) = vec![capture::Found { reduite: true, ..window(11, 100, "odoo.exe", "Odoo") }];
@@ -3163,7 +3276,7 @@ mod tests {
         let b = Bench::new();
         let screen = screen_with(vec![capture::Found { terminal: true, ..window(5, 9, "cmd.exe", "Invite de commandes") }]);
         assert!(b.guide.list(&screen).unwrap()[0].terminal);
-        assert_eq!(b.guide.choose(&screen, Some(5)), Err(GuideError::Terminal));
+        assert_eq!(b.guide.choose(&screen, Some(5), None), Err(GuideError::Terminal));
         assert_eq!(b.guide.look(&screen), Err(GuideError::SansFenetre));
     }
 
@@ -3172,27 +3285,27 @@ mod tests {
         let b = Bench::new();
         let odoo = window(11, 100, "odoo.exe", "Odoo");
         let screen = FakeScreen { clicked: Mutex::new(Some(odoo.clone())), ..screen_with(vec![odoo.clone()]) };
-        assert_eq!(b.guide.wait_click(&screen).unwrap().id, 11);
-        assert_eq!(b.guide.choose(&screen, Some(11)).unwrap().app, "odoo");
+        assert_eq!(b.guide.wait_click(&screen, None).unwrap().id, 11);
+        assert_eq!(b.guide.choose(&screen, Some(11), None).unwrap().app, "odoo");
 
         *lock(&screen.clicked) = None;
-        assert_eq!(b.guide.wait_click(&screen), Err(GuideError::AucunClic));
-        assert_eq!(b.guide.choose(&screen, Some(11)), Err(GuideError::FenetreIntrouvable), "only the window clicked last may be chosen");
+        assert_eq!(b.guide.wait_click(&screen, None), Err(GuideError::AucunClic));
+        assert_eq!(b.guide.choose(&screen, Some(11), None), Err(GuideError::FenetreIntrouvable), "only the window clicked last may be chosen");
 
         // « Arrêter » before a click: set again at each wait, whatever stopped the last one.
-        b.guide.stop_waiting.store(true, Ordering::SeqCst);
+        b.guide.stop_waits(None);
         *lock(&screen.clicked) = Some(odoo.clone());
-        assert_eq!(b.guide.wait_click(&screen).unwrap().id, 11);
+        assert_eq!(b.guide.wait_click(&screen, None).unwrap().id, 11);
         let stopped = FakeScreen { stopped_meanwhile: true, ..FakeScreen { clicked: Mutex::new(Some(odoo.clone())), ..screen_with(vec![odoo.clone()]) } };
-        assert_eq!(b.guide.wait_click(&stopped), Err(GuideError::Annule));
+        assert_eq!(b.guide.wait_click(&stopped, None), Err(GuideError::Annule));
 
         // « Choisir dans une liste » while Bibo waits: the page stops the wait and asks for the list at
         // once. The wait ends after the list was made: a line of it is still chosen.
         let excel = window(12, 200, "excel.exe", "Budget.xlsx");
         let stopped = FakeScreen { stopped_meanwhile: true, ..screen_with(vec![odoo, excel]) };
         assert_eq!(b.guide.list(&stopped).unwrap().len(), 2);
-        assert_eq!(b.guide.wait_click(&stopped), Err(GuideError::Annule));
-        assert_eq!(b.guide.choose(&stopped, Some(12)).unwrap().app, "excel");
+        assert_eq!(b.guide.wait_click(&stopped, None), Err(GuideError::Annule));
+        assert_eq!(b.guide.choose(&stopped, Some(12), None).unwrap().app, "excel");
     }
 
     /// The page's stop and the wait it stops cross: the stop came first, the wait began after it and goes
@@ -3205,15 +3318,83 @@ mod tests {
         let (began_tx, began) = std::sync::mpsc::channel();
         let (go, go_rx) = std::sync::mpsc::channel();
         let screen = FakeScreen { clicked: Mutex::new(Some(odoo.clone())), gate: Mutex::new(Some((began_tx, go_rx))), ..screen_with(vec![odoo, excel]) };
-        b.guide.stop_waiting.store(true, Ordering::SeqCst);
+        b.guide.stop_waits(None);
         std::thread::scope(|s| {
-            let waiting = s.spawn(|| b.guide.wait_click(&screen));
+            let waiting = s.spawn(|| b.guide.wait_click(&screen, None));
             began.recv().unwrap();
             assert_eq!(b.guide.list(&screen).unwrap().len(), 2);
             go.send(()).unwrap();
             assert_eq!(waiting.join().unwrap(), Err(GuideError::Annule), "nobody waits for it any more");
         });
-        assert_eq!(b.guide.choose(&screen, Some(12)).unwrap().app, "excel", "a line of the list");
+        assert_eq!(b.guide.choose(&screen, Some(12), None).unwrap().app, "excel", "a line of the list");
+    }
+
+    /// Sécu 3 of C4's review: the page numbers each wait, its stop too. The two calls cross: a stop that
+    /// came first ends its wait as it begins, never after 45 s of a wait nobody looks at any more.
+    #[test]
+    fn a_stop_that_comes_first_ends_its_wait_at_once() {
+        let b = Bench::new();
+        let odoo = window(11, 100, "odoo.exe", "Odoo");
+        let screen = FakeScreen { clicked: Mutex::new(Some(odoo.clone())), ..screen_with(vec![odoo.clone()]) };
+        b.guide.stop_waits(Some(3));
+        assert_eq!(b.guide.wait_click(&screen, Some(3)), Err(GuideError::Annule));
+        assert_eq!(b.guide.wait_click(&screen, Some(2)), Err(GuideError::Annule), "an older one too");
+        assert_eq!(screen.waits.load(Ordering::SeqCst), 0, "no wait at all");
+        assert_eq!(b.guide.wait_click(&screen, Some(4)).unwrap().id, 11, "the next one waits");
+        assert_eq!(b.guide.wait_click(&screen, Some(4)), Err(GuideError::Annule), "a number is used once");
+        assert_eq!(b.guide.status(b.home.path(), &|| Ok("x".into()), &screen).attentes, 4, "a page opened again numbers from there");
+
+        // The picker (macOS) is a wait of the same kind.
+        let picker = FakeScreen { picker: true, picked: Mutex::new(Some(Pick::Choisie(odoo.clone()))), ..screen_with(vec![odoo.clone()]) };
+        b.guide.stop_waits(Some(6));
+        assert_eq!(b.guide.choose(&picker, None, Some(5)), Err(GuideError::Annule));
+        assert_eq!(picker.picks.load(Ordering::SeqCst), 0);
+        assert_eq!(b.guide.choose(&picker, None, Some(7)).unwrap().id, 11);
+
+        // The guide closed, then opened again: its new page numbers from the status' number on.
+        b.guide.end();
+        assert_eq!(b.guide.status(b.home.path(), &|| Ok("x".into()), &screen).attentes, 7, "the numbers are kept");
+        assert_eq!(b.guide.wait_click(&screen, Some(8)).unwrap().id, 11);
+    }
+
+    /// A late stop of an older wait never stops the one running; a new wait stops the one the page left
+    /// running (its result is nobody's).
+    #[test]
+    fn each_wait_is_stopped_by_its_own_number() {
+        let b = Bench::new();
+        let odoo = window(11, 100, "odoo.exe", "Odoo");
+        let gated = || {
+            let (began_tx, began) = std::sync::mpsc::channel();
+            let (go, go_rx) = std::sync::mpsc::channel();
+            let screen = FakeScreen { clicked: Mutex::new(Some(odoo.clone())), gate: Mutex::new(Some((began_tx, go_rx))), ..screen_with(vec![odoo.clone()]) };
+            (screen, began, go)
+        };
+        let (screen, began, go) = gated();
+        std::thread::scope(|s| {
+            let waiting = s.spawn(|| b.guide.wait_click(&screen, Some(5)));
+            began.recv().unwrap();
+            b.guide.stop_waits(Some(4));
+            go.send(()).unwrap();
+            assert_eq!(waiting.join().unwrap().map(|f| f.id), Ok(11), "the stop of wait 4 is not wait 5's");
+        });
+        let (screen, began, go) = gated();
+        std::thread::scope(|s| {
+            let left = s.spawn(|| b.guide.wait_click(&screen, Some(6)));
+            began.recv().unwrap();
+            assert_eq!(b.guide.wait_click(&screen, Some(7)).map(|f| f.id), Ok(11), "the new one");
+            go.send(()).unwrap();
+            assert_eq!(left.join().unwrap(), Err(GuideError::Annule), "the one left running");
+            assert_eq!(screen.stops_seen.load(Ordering::SeqCst), 1, "stopped, not left to its 45 s");
+        });
+        let (screen, began, go) = gated();
+        std::thread::scope(|s| {
+            let waiting = s.spawn(|| b.guide.wait_click(&screen, Some(8)));
+            began.recv().unwrap();
+            b.guide.stop_waits(Some(8));
+            go.send(()).unwrap();
+            assert_eq!(waiting.join().unwrap(), Err(GuideError::Annule), "its own stop");
+            assert_eq!(screen.stops_seen.load(Ordering::SeqCst), 1);
+        });
     }
 
     /// macOS: the window is the one the user picks in the system's picker; there is no list nor
@@ -3230,13 +3411,13 @@ mod tests {
         };
         let screen = FakeScreen { picker: true, picked: Mutex::new(Some(Pick::Choisie(picked.clone()))), ..screen_with(vec![picked.clone()]) };
         assert_eq!(b.guide.list(&screen), Err(GuideError::CaptureIndisponible), "no list");
-        assert_eq!(b.guide.wait_click(&screen), Err(GuideError::CaptureIndisponible), "no click");
-        assert_eq!(b.guide.choose(&screen, Some(1)), Err(GuideError::FenetreIntrouvable), "an id is no choice");
-        let f = b.guide.choose(&screen, None).unwrap();
+        assert_eq!(b.guide.wait_click(&screen, None), Err(GuideError::CaptureIndisponible), "no click");
+        assert_eq!(b.guide.choose(&screen, Some(1), None), Err(GuideError::FenetreIntrouvable), "an id is no choice");
+        let f = b.guide.choose(&screen, None, None).unwrap();
         assert_eq!((f.id, f.app.as_str(), f.titre.as_str()), (1, "Google Chrome", "Odoo"));
         assert_eq!(lock(&b.guide.session).as_ref().unwrap().fenetre, Some(picked.window.clone()));
         assert_eq!(b.guide.look(&screen).unwrap().largeur, 900);
-        assert_eq!(b.guide.choose(&screen, Some(1)), Err(GuideError::FenetreIntrouvable), "the window picked, but by its id: no");
+        assert_eq!(b.guide.choose(&screen, Some(1), None), Err(GuideError::FenetreIntrouvable), "the window picked, but by its id: no");
 
         // Closed, refused, nobody chose: the window picked before stays the one captured.
         for (then, said) in [
@@ -3245,7 +3426,7 @@ mod tests {
             (Pick::Arrete, GuideError::AucunClic),
         ] {
             *lock(&screen.picked) = Some(then);
-            assert_eq!(b.guide.choose(&screen, None), Err(said));
+            assert_eq!(b.guide.choose(&screen, None, None), Err(said));
             assert_eq!(lock(&b.guide.session).as_ref().unwrap().fenetre, Some(picked.window.clone()));
         }
         assert!(b.guide.look(&screen).is_ok());
@@ -3253,7 +3434,7 @@ mod tests {
         // A terminal picked is refused (R6); the guide closed puts the picker away.
         let term = capture::Found { window: Window { id: 2, pid: 9, app: "com.apple.Terminal".into() }, terminal: true, ..picked.clone() };
         let screen = FakeScreen { picker: true, picked: Mutex::new(Some(Pick::Choisie(term.clone()))), ..screen_with(vec![term]) };
-        assert_eq!(b.guide.choose(&screen, None), Err(GuideError::Terminal));
+        assert_eq!(b.guide.choose(&screen, None, None), Err(GuideError::Terminal));
         b.guide.close(&screen);
         assert_eq!(screen.forgotten.load(Ordering::SeqCst), 1);
         assert!(lock(&b.guide.session).is_none());
@@ -3271,11 +3452,11 @@ mod tests {
             terminal: false,
         };
         let screen = FakeScreen { picker: true, stopped_meanwhile: true, picked: Mutex::new(Some(Pick::Choisie(picked.clone()))), ..screen_with(vec![picked]) };
-        assert_eq!(b.guide.choose(&screen, None), Err(GuideError::Annule));
+        assert_eq!(b.guide.choose(&screen, None, None), Err(GuideError::Annule));
         assert!(lock(&b.guide.session).as_ref().is_none_or(|s| s.fenetre.is_none()));
         assert_eq!(b.guide.look(&screen), Err(GuideError::SansFenetre));
         *lock(&screen.picked) = Some(Pick::Arrete);
-        assert_eq!(b.guide.choose(&screen, None), Err(GuideError::Annule));
+        assert_eq!(b.guide.choose(&screen, None, None), Err(GuideError::Annule));
     }
 
     #[test]
@@ -3283,8 +3464,8 @@ mod tests {
         let b = Bench::new();
         let screen = FakeScreen { off: true, ..screen_with(vec![window(11, 100, "odoo.exe", "Odoo")]) };
         assert_eq!(b.guide.list(&screen), Err(GuideError::CaptureIndisponible));
-        assert_eq!(b.guide.wait_click(&screen), Err(GuideError::CaptureIndisponible));
-        assert_eq!(b.guide.choose(&screen, Some(11)), Err(GuideError::CaptureIndisponible));
+        assert_eq!(b.guide.wait_click(&screen, None), Err(GuideError::CaptureIndisponible));
+        assert_eq!(b.guide.choose(&screen, Some(11), None), Err(GuideError::CaptureIndisponible));
         assert_eq!(b.guide.look(&screen), Err(GuideError::CaptureIndisponible));
         assert_eq!(b.paste(800, 600).largeur, 800, "the paste still works");
     }
@@ -3297,7 +3478,7 @@ mod tests {
         let screen = screen_with(vec![window(11, 100, "odoo.exe", "Odoo")]);
         assert_eq!(b.guide.look(&screen), Err(GuideError::SansFenetre));
         b.guide.list(&screen).unwrap();
-        b.guide.choose(&screen, Some(11)).unwrap();
+        b.guide.choose(&screen, Some(11), None).unwrap();
         b.guide.start(None, "Odoo", "Faire une facture").unwrap();
         let a = b.guide.look(&screen).unwrap();
         assert_eq!((a.largeur, a.hauteur, a.noir, a.meme), (900, 700, false, false));
@@ -3317,7 +3498,7 @@ mod tests {
         assert!(b.guide.look(&screen).is_ok(), "a new objective keeps the window");
         b.guide.end();
         assert_eq!(b.guide.look(&screen), Err(GuideError::SansFenetre));
-        assert_eq!(b.guide.choose(&screen, Some(11)), Err(GuideError::FenetreIntrouvable), "the list is forgotten too");
+        assert_eq!(b.guide.choose(&screen, Some(11), None), Err(GuideError::FenetreIntrouvable), "the list is forgotten too");
     }
 
     #[test]
@@ -3603,7 +3784,13 @@ mod tests {
     fn the_status_says_what_stops_the_guide() {
         let b = Bench::new();
         let screen = FakeScreen::default();
-        for (check, ia) in [(Err(Ia::Absent), Ia::Absent), (Err(Ia::NotLoggedIn), Ia::NotLoggedIn), (Err(Ia::Billed), Ia::Billed), (Ok("2.1.305".to_string()), Ia::Ready)] {
+        for (check, ia) in [
+            (Err(Ia::Absent), Ia::Absent),
+            (Err(Ia::NotLoggedIn), Ia::NotLoggedIn),
+            (Err(Ia::Billed), Ia::Billed),
+            (Err(Ia::SansForfait), Ia::SansForfait),
+            (Ok("2.1.305".to_string()), Ia::Ready),
+        ] {
             assert_eq!(b.guide.status(b.home.path(), &|| check.clone(), &screen).ia, ia);
         }
         let s = b.guide.status(b.home.path(), &|| Ok("x".into()), &screen);
@@ -3639,11 +3826,30 @@ mod tests {
     #[cfg(not(windows))]
     #[test]
     fn the_guides_environment_turns_error_reports_off_and_the_repairs_does_not_change() {
-        let env = child_env(Path::new("/Users/jo"), "jo", "/bin", Path::new("/t"));
+        let env = child_env(Path::new("/Users/jo"), "jo", "/bin", Path::new("/t"), None);
         let repair = claude::child_env(Path::new("/Users/jo"), "jo", "/bin", Path::new("/t"));
         assert_eq!(env[..repair.len()], repair[..]);
         assert_eq!(env[repair.len()..], [("DISABLE_ERROR_REPORTING", "1".to_string())]);
         assert!(!repair.iter().any(|(k, _)| *k == "DISABLE_ERROR_REPORTING"));
+        // A subscription's setup-token: the only credential that goes with it.
+        let with = child_env(Path::new("/Users/jo"), "jo", "/bin", Path::new("/t"), Some("sk-ant-oat01-x".into()));
+        assert_eq!(with[env.len()..], [("CLAUDE_CODE_OAUTH_TOKEN", "sk-ant-oat01-x".to_string())]);
+    }
+
+    /// The login as the diagnosis reads it (detect::login_of, C5): a subscription's setup-token is the
+    /// subscription, not a login billed per use; a claude.ai account whose plan Claude Code does not say
+    /// (a free one) does not ask Claude.
+    #[test]
+    fn only_a_subscription_asks_claude() {
+        let ia = |status: &str, token: bool| ia_of(detect::login_of(status, token));
+        assert_eq!(ia(include_str!("../tests/fixtures/repair/auth-status-claude-ai.json"), false), Ok(()));
+        assert_eq!(ia(r#"{"loggedIn":true,"authMethod":"oauth_token"}"#, true), Ok(()), "the setup-token");
+        assert_eq!(ia(r#"{"loggedIn":true,"authMethod":"claude.ai","subscriptionType":null}"#, false), Err(Ia::SansForfait));
+        assert_eq!(ia(r#"{"loggedIn":true,"authMethod":"claude.ai"}"#, false), Err(Ia::SansForfait));
+        assert_eq!(ia(r#"{"loggedIn":true,"authMethod":"oauth_token"}"#, false), Err(Ia::Billed), "a gateway's token");
+        assert_eq!(ia(r#"{"loggedIn":true,"authMethod":"api_key"}"#, true), Err(Ia::Billed));
+        assert_eq!(ia(include_str!("../tests/fixtures/repair/auth-status-none.json"), false), Err(Ia::NotLoggedIn));
+        assert_eq!(serde_json::to_value(Ia::SansForfait).unwrap(), "sans_forfait");
     }
 
     #[test]

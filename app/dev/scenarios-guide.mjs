@@ -133,6 +133,15 @@ export const GUIDE_SCENARIOS = [
   'g=ok&vu=0&go=comment&click=note-entreprise&copie=0',
   'g=ok&go=arreter&arret=1&colle-arret=1',
   'g=ok&cap=clic&os=windows&rate=fermee:2&go=arreter&arret=choisir:2',
+  // The follow-ups (chantier B). A claude.ai account whose plan Claude Code does not say: no guide, the price
+  // and the way on; logging in again reads the plan. The waits numbered (sécu 3 of C4): the page's stop comes
+  // before its wait reaches Rust, for the list or a capture pasted meanwhile, and the wait ends at once; a
+  // page opened again numbers from the status on.
+  'g=sans-forfait&go=forfait',
+  'g=sans-forfait&go=forfait&click=next',
+  'g=ok&cap=clic&os=windows&course=1&go=liste&click=liste',
+  'g=ok&cap=selecteur&course=1&go=coller&click=next,deja-capture',
+  'g=ok&cap=clic&os=windows&base=7&go=objectif',
 ];
 
 // The guide's window sizes, as the page asks Rust for them, in turn: the image made wide to hide a zone

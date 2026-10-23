@@ -15,6 +15,7 @@ const COPY_KEYS = SYSTEM === 'macos' ? 'Cmd + C' : 'Ctrl + C';
 const LOGIN_POLL_MS = 3000;
 const HAPPY_MS = 4500;
 const PRIVACY_URL = 'https://claude.ai/settings/data-privacy-controls';
+const UPGRADE_URL = 'https://claude.ai/upgrade';
 // shot.rs: the grey band under the image, its code inside; Claude's zones never reach it.
 const BAND = 28;
 const OBJECTIF_MAX = 300;
@@ -127,6 +128,9 @@ const G = {
   early: false,
   // Rust waits for a click or the system's picker: leaving the screen stops it.
   waiting: false,
+  // The number of the last wait (guide.rs, Waits): its stop names it, whichever call reaches Rust first.
+  // The status says where to number from (a page opened again never reuses a number).
+  attente: 0,
 };
 const gui = {};
 
@@ -167,7 +171,7 @@ function screen(name) {
   // Away from the wait for a click or the system's picker (a paste, the list, the end): Rust stops waiting.
   if (G.waiting) {
     G.waiting = false;
-    invoke('guide_annuler').catch(() => {});
+    invoke('guide_annuler', { attente: G.attente }).catch(() => {});
   }
   G.gen += 1;
   document.body.dataset.screen = name;
@@ -315,6 +319,7 @@ async function boot() {
   }
   if (gen !== G.gen) return;
   G.status = s;
+  G.attente = Math.max(G.attente, Number(s.attentes) || 0);
   const c = s.capture || {};
   G.auto = c.mode === 'auto' && ['clic', 'selecteur'].includes(c.via) ? c.via : null;
   G.secondes = Number(c.secondes) > 0 ? Number(c.secondes) : G.secondes;
@@ -366,13 +371,41 @@ function showUnavailable(ia) {
     focusMain();
     return;
   }
+  if (ia === 'sans_forfait') return showPlan();
   screen(ia === 'billed' ? 'facture' : 'arrete');
   if (ia === 'billed') {
-    say('worried', 'Claude est connecté avec une clé qui serait facturée : je ne m’en sers pas.', 'Le guide passe seulement par ton abonnement Claude.');
+    say('worried', 'Claude est connecté à un compte payé à chaque message : je ne m’en sers pas.',
+      'Le guide passe seulement par ton abonnement Claude Pro ou Max. Pour y passer, demande de l’aide à la personne qui t’a conseillé Bibo.');
   } else {
     say('worried', 'Claude ne s’est pas lancé comme prévu : je préfère arrêter le guide.', 'Relance l’app pour réessayer.');
   }
   gui.actions.append(button('Fermer le guide', closeGuide, { kind: 'secondary', act: 'next' }));
+  focusMain();
+}
+
+// A claude.ai account whose plan Claude Code does not say (guide.rs, Ia::SansForfait): a free one most
+// often, which Claude Code cannot use. Logging in again reads the plan, the one just taken too.
+function showPlan() {
+  screen('forfait');
+  say('worried', 'Le guide demande Claude Pro ou Max.', 'Claude ne me dit pas quel est ton abonnement, et un compte gratuit ne suffit pas.');
+  gui.screen.append(
+    note('Pas encore abonné ? Claude Pro coûte environ 20 € par mois : clique « Voir Claude Pro ».'),
+    note('Déjà abonné, ou tu viens de le faire ? Clique « Me reconnecter » : Claude relira ton abonnement.'));
+  const again = button('Me reconnecter', async () => {
+    again.disabled = true;
+    try {
+      await invoke('open_claude_login');
+    } catch (e) {
+      say('worried', 'La fenêtre ne s’est pas ouverte.', errText(e));
+      again.disabled = false;
+      return;
+    }
+    say('thinking', 'Reconnecte-toi dans la fenêtre noire.', 'Suis ce qu’elle dit, puis reviens ici.');
+    gui.actions.replaceChildren(stopButton('Fermer le guide'), button('C’est fait, on y va', boot, { act: 'next' }));
+    focusMain();
+  }, { act: 'next' });
+  gui.actions.append(stopButton('Fermer le guide'),
+    button('Voir Claude Pro', () => invoke('open_link', { url: UPGRADE_URL }).catch(() => {}), { kind: 'secondary', act: 'abonnement' }), again);
   focusMain();
 }
 
@@ -532,10 +565,11 @@ async function waitClick(gen, left) {
     n = Math.max(0, n - 1);
     left.textContent = `${n} s`;
   }, 1000);
+  G.attente += 1;
   G.waiting = true;
   let f;
   try {
-    f = await invoke('guide_attendre_clic');
+    f = await invoke('guide_attendre_clic', { attente: G.attente });
   } catch (e) {
     clearInterval(timer);
     if (gen !== G.gen) return;
@@ -552,10 +586,11 @@ async function waitClick(gen, left) {
 async function pickWindow(gen, pick) {
   pick.disabled = true;
   say('idle', 'Choisis ta fenêtre.', `Clique sur la fenêtre de ton logiciel, puis sur ${SHARE_BUTTON}.`);
+  G.attente += 1;
   G.waiting = true;
   let f;
   try {
-    f = await invoke('guide_choisir', { id: null });
+    f = await invoke('guide_choisir', { id: null, attente: G.attente });
   } catch (e) {
     if (gen !== G.gen) return;
     G.waiting = false;
@@ -1406,11 +1441,12 @@ function zoomBox(look, e) {
 
 // ── Errors (§2) ─────────────────────────────────────────────────────────────
 
-// When the limit ends: the hour today, else its day too (the 7-day window may end next week).
+// When the limit ends: the hour today, else its day too (the 7-day window may end next week). The hour
+// as French writes it: « 15 h 30 », « 9 h ».
 function reprise(unix) {
   if (!unix) return '';
   const d = new Date(unix * 1000);
-  const hour = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  const hour = `${d.getHours()}\u00a0h${d.getMinutes() ? `\u00a0${String(d.getMinutes()).padStart(2, '0')}` : ''}`;
   const day = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
   const days = Math.round((day(d) - day(new Date())) / 86400000);
   if (days <= 0) return hour;
@@ -1419,17 +1455,20 @@ function reprise(unix) {
   return `${d.toLocaleDateString('fr-FR', when)} ${hour}`;
 }
 
-// The brain's summaries, at noon and at night, run on the same subscription (critique 10): a limit
-// reached at lunchtime is no mystery. Said only once the install went through: before, none runs.
+// The brain's summaries run on the same subscription (critique 10, C6): at noon, at night, each first
+// catching up an evening the computer was off. A limit reached at lunchtime is no mystery. Said only once
+// the install went through: before, none runs.
 function summaries() {
-  return G.status && G.status.complet ? ' Les résumés automatiques de ton cerveau, à midi et le soir, comptent aussi dans cette limite.' : '';
+  return G.status && G.status.complet
+    ? ` Les résumés de ton cerveau comptent aussi dans cette limite : celui de midi, celui du soir, et le rattrapage d’un soir où ton ${MACHINE} était éteint.`
+    : '';
 }
 
 // What Bibo says of an error, as words only.
 function errorWords(e) {
   const kind = (e && e.kind) || '';
   switch (kind) {
-    case 'quota': return { title: e.reprise ? `Ton abonnement est à sa limite jusqu’à ${reprise(e.reprise)}.` : 'Ton abonnement est à sa limite pour l’instant.', text: `${e.reprise ? 'Reviens après cette heure et relance le guide.' : 'Reviens plus tard et relance le guide.'}${summaries()}` };
+    case 'quota': return { title: e.reprise ? `Ton abonnement Claude est à sa limite jusqu’à ${reprise(e.reprise)}.` : 'Ton abonnement Claude est à sa limite pour l’instant.', text: `${e.reprise ? 'Reviens après cette heure et relance le guide.' : 'Reviens plus tard et relance le guide.'}${summaries()}` };
     case 'hors_ligne': return { title: 'Pas d’internet : je ne peux pas demander à Claude.', text: 'Vérifie ton Wi-Fi, puis réessaie.' };
     case 'api': return { title: 'Claude ne répond pas pour l’instant.', text: 'Réessaie dans un moment.' };
     case 'delai': return { title: 'Claude met trop de temps.', text: 'Tu peux réessayer : ça compte une capture de plus.' };

@@ -289,6 +289,21 @@
 ### g=ok&cap=clic&os=windows&rate=fermee:2&go=arreter&arret=choisir:2
 22 93 94 95 96 97 98 99 10 11 100 120 146
 
+### g=sans-forfait&go=forfait
+1 147
+
+### g=sans-forfait&go=forfait&click=next
+1 147 148 149
+
+### g=ok&cap=clic&os=windows&course=1&go=liste&click=liste
+22 93 112 113
+
+### g=ok&cap=selecteur&course=1&go=coller&click=next,deja-capture
+1 107 108 150
+
+### g=ok&cap=clic&os=windows&base=7&go=objectif
+22 93 94 95 96
+
 #1
 == charge
 Je prépare le guide…
@@ -890,8 +905,8 @@ Quelque chose sur cette capture l’a gêné (un code, un mot de passe, un messa
 
 #52
 == erreur
-Ton abonnement est à sa limite jusqu’à mercredi 21 octobre 03:00.
-Reviens après cette heure et relance le guide. Les résumés automatiques de ton cerveau, à midi et le soir, comptent aussi dans cette limite.
+Ton abonnement Claude est à sa limite jusqu’à mercredi 21 octobre 3 h.
+Reviens après cette heure et relance le guide. Les résumés de ton cerveau comptent aussi dans cette limite : celui de midi, celui du soir, et le rattrapage d’un soir où ton Mac était éteint.
 [Toujours au-dessus]
 [Fermer le guide]
 
@@ -1063,8 +1078,8 @@ Suis les étapes dans la fenêtre noire.
 
 #69
 == facture
-Claude est connecté avec une clé qui serait facturée : je ne m’en sers pas.
-Le guide passe seulement par ton abonnement Claude.
+Claude est connecté à un compte payé à chaque message : je ne m’en sers pas.
+Le guide passe seulement par ton abonnement Claude Pro ou Max. Pour y passer, demande de l’aide à la personne qui t’a conseillé Bibo.
 [Toujours au-dessus]
 [Fermer le guide]
 
@@ -1114,15 +1129,15 @@ Si ton écran te le demande lui-même, ne le fais pas non plus : c’est souven
 
 #75
 == erreur
-Ton abonnement est à sa limite jusqu’à 17:30.
-Reviens après cette heure et relance le guide. Les résumés automatiques de ton cerveau, à midi et le soir, comptent aussi dans cette limite.
+Ton abonnement Claude est à sa limite jusqu’à 17 h 30.
+Reviens après cette heure et relance le guide. Les résumés de ton cerveau comptent aussi dans cette limite : celui de midi, celui du soir, et le rattrapage d’un soir où ton Mac était éteint.
 [Toujours au-dessus]
 [Fermer le guide]
 
 #76
 == erreur
-Ton abonnement est à sa limite jusqu’à demain 15:30.
-Reviens après cette heure et relance le guide. Les résumés automatiques de ton cerveau, à midi et le soir, comptent aussi dans cette limite.
+Ton abonnement Claude est à sa limite jusqu’à demain 15 h 30.
+Reviens après cette heure et relance le guide. Les résumés de ton cerveau comptent aussi dans cette limite : celui de midi, celui du soir, et le rattrapage d’un soir où ton Mac était éteint.
 [Toujours au-dessus]
 [Fermer le guide]
 
@@ -1821,7 +1836,7 @@ L’Outil Capture (Snipping Tool) en garde aussi une copie dans Images › Captu
 
 #133
 == erreur
-Ton abonnement est à sa limite jusqu’à mercredi 21 octobre 03:00.
+Ton abonnement Claude est à sa limite jusqu’à mercredi 21 octobre 3 h.
 Reviens après cette heure et relance le guide.
 [Toujours au-dessus]
 [Fermer le guide]
@@ -1992,3 +2007,48 @@ On perdra où on en est.
 [Toujours au-dessus]
 [Oui, arrêter]
 [Non, je continue]
+
+#147
+== forfait
+Le guide demande Claude Pro ou Max.
+Claude ne me dit pas quel est ton abonnement, et un compte gratuit ne suffit pas.
+[Toujours au-dessus]
+Pas encore abonné ? Claude Pro coûte environ 20 € par mois : clique « Voir Claude Pro ».
+Déjà abonné, ou tu viens de le faire ? Clique « Me reconnecter » : Claude relira ton abonnement.
+[Fermer le guide]
+[Voir Claude Pro]
+[Me reconnecter]
+
+#148
+== forfait
+Le guide demande Claude Pro ou Max.
+Claude ne me dit pas quel est ton abonnement, et un compte gratuit ne suffit pas.
+[Toujours au-dessus]
+Pas encore abonné ? Claude Pro coûte environ 20 € par mois : clique « Voir Claude Pro ».
+Déjà abonné, ou tu viens de le faire ? Clique « Me reconnecter » : Claude relira ton abonnement.
+[Fermer le guide]
+[Voir Claude Pro]
+[Me reconnecter (inactif)]
+
+#149
+== forfait
+Reconnecte-toi dans la fenêtre noire.
+Suis ce qu’elle dit, puis reviens ici.
+[Toujours au-dessus]
+Pas encore abonné ? Claude Pro coûte environ 20 € par mois : clique « Voir Claude Pro ».
+Déjà abonné, ou tu viens de le faire ? Clique « Me reconnecter » : Claude relira ton abonnement.
+[Fermer le guide]
+[C’est fait, on y va]
+
+#150
+== coller
+Montre-moi ta fenêtre.
+Fais une capture de la fenêtre de ton logiciel, puis colle-la ici.
+[Toujours au-dessus]
+Appuie en même temps sur ⌘ Cmd, ⌃ Ctrl, ⇧ Maj et 4, puis sur la barre d’espace : un petit appareil photo apparaît.
+Clique sur la fenêtre de ton logiciel : l’image est copiée, sans fichier.
+Reviens ici et appuie sur Cmd + V.
+Tu t’es trompé ? Appuie sur Échap (esc) et recommence.
+Tu peux aussi glisser le fichier de ta capture sur cette fenêtre.
+[Arrêter le guide]
+[Choisir ma fenêtre]
