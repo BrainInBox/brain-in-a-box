@@ -2687,7 +2687,10 @@ class GuideParts(unittest.TestCase):
             logiciel.ouvrir()
         argv = popen.call_args[0][0]
         self.assertEqual(argv[0], str(chrome))
-        for flag in ("--no-first-run", "--force-renderer-accessibility", "--window-position=40,60", "--window-size=800,540",
+        # Not as high as 60: macOS 26's picker drew that window lower than it is, with its « Share This
+        # Window » button, which accessibility still gave at the window's real place. The desk test's is at 80.
+        self.assertGreaterEqual(ta.PLACE_LOGICIEL_MAC[1], 80)
+        for flag in ("--no-first-run", "--force-renderer-accessibility", "--window-position=40,100", "--window-size=800,540",
                      "--app=" + (tmp / "logiciel" / "atelier.html").as_uri(), "--user-data-dir=%s" % (tmp / "logiciel" / "profil")):
             self.assertIn(flag, argv)
         page = (tmp / "logiciel" / "atelier.html").read_text(encoding="utf-8")
@@ -2697,8 +2700,8 @@ class GuideParts(unittest.TestCase):
         self.assertEqual(p.ignores, ("Google Chrome",))
         with mock.patch.object(ta.time, "sleep"):
             said = logiciel.montrer()
-        self.assertEqual(said, "sélecteur de macOS : « Share This Window » (clic à 470, 114 ; boutons lus : "
-                               "sans nom [900, 300, 160, 28], x [700, 90, 20, 20], sans nom [380, 100, 120, 28])")
+        self.assertEqual(said, "sélecteur de macOS : « Share This Window » (clic à 470, 114 ; fenêtre [40, 60, 800, 540] ; "
+                               "boutons lus : sans nom [900, 300, 160, 28], x [700, 90, 20, 20], sans nom [380, 100, 120, 28])")
         clicks = [r for r in asked if r["op"] == "souris" and r["clic"]]
         self.assertEqual(clicks, [{"op": "souris", "x": 380 + 120 * 0.75, "y": 114.0, "clic": True}])
         hovers = [r for r in asked if r["op"] == "souris" and not r["clic"]]

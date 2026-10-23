@@ -3580,6 +3580,11 @@ def rendre_vrai_claude(exe, vrai):
 TITRE_LOGICIEL = "Atelier Demo - Factures clients"
 TAILLE_LOGICIEL = (800, 500)
 PLACE_LOGICIEL = (40, 60)
+# On macOS, lower: macOS 26's picker drew the window placed at 60 points 20 points lower, with its « Share
+# This Window » button, which accessibility still gave at the window's real place (the night of 2026-10-23:
+# 3 clicks in the middle of that button fell 3 points over the drawn one). The desk test's window, at 80,
+# is picked (app/src-tauri/tests/fixtures/guide/pilote_mac.py).
+PLACE_LOGICIEL_MAC = (40, 100)
 # « Importer », as ecrans_guide.liste draws it next to « Nouveau ».
 IMPORTER = {"x": 374, "y": 120, "largeur": 130, "hauteur": 40}
 
@@ -3765,7 +3770,7 @@ class LogicielMac(Logiciel):
         page = self.dossier / "atelier.html"
         page.write_text(PAGE_ATELIER % {"titre": self.titre, "w": TAILLE_LOGICIEL[0], "h": TAILLE_LOGICIEL[1], "boutons": boutons},
                         encoding="utf-8")
-        x, y = PLACE_LOGICIEL
+        x, y = PLACE_LOGICIEL_MAC
         try:
             self.proc = subprocess.Popen(
                 [CHROME_MAC, "--user-data-dir=" + str(self.dossier / "profil"), "--no-first-run", "--no-default-browser-check",
@@ -3813,7 +3818,7 @@ class LogicielMac(Logiciel):
             bx, by, how = x + w / 2 + 40, y + h / 2, "le milieu de la fenêtre (aucun bouton du sélecteur lu)"
         self.p._osa({"op": "souris", "x": bx, "y": by, "clic": True})
         lus = ", ".join("%s %s" % ("/".join(x for x in (b.get("n"), b.get("d")) if x) or "sans nom", b["pos"] + b["size"]) for b in boutons)
-        return "sélecteur de macOS : %s (clic à %d, %d ; boutons lus : %s)" % (how, bx, by, lus or "aucun")
+        return "sélecteur de macOS : %s (clic à %d, %d ; fenêtre %s ; boutons lus : %s)" % (how, bx, by, f["pos"] + f["size"], lus or "aucun")
 
     def faire_etape(self):
         res = self.p._osa({"op": "cliquer", "processus": self.processus, "fenetre": None, "libelle": "Nouveau"})
