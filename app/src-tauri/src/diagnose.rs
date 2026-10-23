@@ -1735,7 +1735,7 @@ mod tests {
         let direct = curl_args(&["-sS", "-m", "8"], "https://github.com", None);
         assert_eq!(direct, ["-sS", "-m", "8", "https://github.com"]);
         let via = curl_args(&["-sS", "-m", "8"], "https://github.com", Some("http://proxy.corp:8080/".into()));
-        assert_eq!(via, ["-sS", "-m", "8", "--proxy", "http://proxy.corp:8080/", "--proxy-anyauth", "--proxy-user", ":", "https://github.com"]);
+        assert_eq!(via, ["-sS", "-m", "8", "--proxy", "http://proxy.corp:8080/", "--proxy-anyauth", "--proxy-user", ":", "--ssl-revoke-best-effort", "https://github.com"]);
     }
 
     #[test]

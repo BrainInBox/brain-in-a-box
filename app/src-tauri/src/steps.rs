@@ -1353,18 +1353,20 @@ const ONBOARDING_MODE: [&str; 2] = ["--permission-mode", "acceptEdits"];
 /// let Claude write, unasked, Windows PowerShell's profile there (Documents\WindowsPowerShell), which runs
 /// at the next start of PowerShell, or remove anything of Documents. Elsewhere Claude asks, as by default.
 fn onboarding_mode(vault: &Path, home: &Path) -> &'static [&'static str] {
-    let shared = [home.join("Documents"), home.join("Desktop")];
-    let own = vault.is_absolute()
-        && vault.parent().is_some()
-        && !home.starts_with(vault)
-        && !shared.iter().any(|d| d == vault)
-        && vault.join("CLAUDE.md").is_file()
-        && vault.join("Profile").is_dir();
-    if own {
+    if own_brain(vault, home, &[home.join("Documents"), home.join("Desktop")]) {
         &ONBOARDING_MODE
     } else {
         &[]
     }
+}
+
+fn own_brain(vault: &Path, home: &Path, shared: &[PathBuf]) -> bool {
+    vault.is_absolute()
+        && vault.parent().is_some()
+        && !home.starts_with(vault)
+        && !shared.iter().any(|d| d == vault)
+        && vault.join("CLAUDE.md").is_file()
+        && vault.join("Profile").is_dir()
 }
 
 fn login_script(path: &std::ffi::OsStr, claude: &Path) -> String {
@@ -3121,6 +3123,39 @@ mod tests {
         assert!(onboarding_mode(Path::new("Brain"), &home).is_empty(), "a relative path");
     }
 
+    /// Documents and the Desktop where Windows put them (OneDrive moves both, and the PowerShell profile
+    /// with Documents), and under any other name for them: a link to Documents, Documents in other
+    /// letters. Neither one, nor a folder that holds one, is a brain of its own.
+    #[test]
+    fn the_interview_sees_documents_where_windows_put_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("jo");
+        let documents = home.join("OneDrive").join("Documents");
+        let shared = [documents.clone(), home.join("OneDrive").join("Bureau")];
+        let kit_brain = |d: &Path| {
+            fs::create_dir_all(d.join("Profile")).unwrap();
+            fs::write(d.join("CLAUDE.md"), "# Brain").unwrap();
+        };
+        for d in [documents.clone(), home.join("OneDrive"), shared[1].clone()] {
+            kit_brain(&d);
+            assert!(!own_brain(&d, &home, &shared), "{}", d.display());
+        }
+        let brain = documents.join("Brain");
+        kit_brain(&brain);
+        assert!(own_brain(&brain, &home, &shared));
+        #[cfg(unix)]
+        {
+            let link = dir.path().join("lien");
+            std::os::unix::fs::symlink(&documents, &link).unwrap();
+            assert!(!own_brain(&link, &home, &shared), "a link to Documents");
+        }
+        #[cfg(windows)]
+        {
+            let upper = PathBuf::from(documents.to_string_lossy().to_uppercase());
+            assert!(!own_brain(&upper, &home, &shared), "Documents in capitals: {}", upper.display());
+        }
+    }
+
     /// « Parler à Claude »: Claude Code in the brain, nothing typed for the user, no option.
     #[cfg(not(windows))]
     #[test]
@@ -3423,7 +3458,13 @@ mod tests {
         for odd in ["", "https://claude.ai/install.ps1", "proxy:8080", "http://a b:80/", "http://x\"y/", "http://p:1/\nhttp://q:2/", long.as_str()] {
             assert_eq!(proxy_url(odd), None, "{odd:?}");
         }
-        assert_eq!(curl_proxy_args("http://p:8080/"), ["--proxy", "http://p:8080/", "--proxy-anyauth", "--proxy-user", ":"]);
+        // A proxy that opens HTTPS to look inside signs with the company's certificate, often without a
+        // revocation list: Windows' curl.exe (Schannel) then fails (0x80092012) unless the check is best
+        // effort (a revoked certificate still fails).
+        assert_eq!(
+            curl_proxy_args("http://p:8080/"),
+            ["--proxy", "http://p:8080/", "--proxy-anyauth", "--proxy-user", ":", "--ssl-revoke-best-effort"]
+        );
     }
 
     /// Claude Code's installer downloads with Windows PowerShell's web requests, which never offer the
