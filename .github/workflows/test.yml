@@ -33,6 +33,9 @@ jobs:
       - name: install.ps1's Codex functions against stand-ins (pwsh)
         run: pwsh -NoProfile -File .github/ci/install-ps1-codex.ps1
 
+      - name: "install.ps1 when winget cannot: its source updated, then the official installers, checked (pwsh)"
+        run: pwsh -NoProfile -File .github/ci/install-ps1-secours.ps1
+
       # Each script is parsed by the shell its shebang names: the zsh scripts
       # used to be checked with bash, and new scripts were easy to forget.
       # The nightly scripts and gbq also by zsh: launchd starts the nightly with /bin/zsh,
@@ -89,6 +92,9 @@ jobs:
 
       - name: install.ps1's Codex functions against stand-ins (pwsh)
         run: pwsh -NoProfile -File .github/ci/install-ps1-codex.ps1
+
+      - name: "install.ps1 when winget cannot: its source updated, then the official installers, checked (pwsh)"
+        run: pwsh -NoProfile -File .github/ci/install-ps1-secours.ps1
 
       # As on a server a script reaches: no session for the user's systemd (a runner may keep one
       # lingering), and cron, which every Ubuntu has.
@@ -305,6 +311,7 @@ jobs:
     outputs:
       app: ${{ steps.diff.outputs.app }}
       codex: ${{ steps.diff.outputs.codex }}
+      winget: ${{ steps.diff.outputs.winget }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -314,7 +321,7 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
         run: |
-          if [ "$EVENT" != pull_request ]; then printf 'app=true\ncodex=true\n' >> "$GITHUB_OUTPUT"; exit 0; fi
+          if [ "$EVENT" != pull_request ]; then printf 'app=true\ncodex=true\nwinget=true\n' >> "$GITHUB_OUTPUT"; exit 0; fi
           # The pull request's merge commit: its first parent is master.
           files=$(git diff --name-only HEAD^1 HEAD)
           echo "$files"
@@ -322,6 +329,8 @@ jobs:
           echo "app=$app" | tee -a "$GITHUB_OUTPUT"
           if grep -qE '^(engine/hooks/(_headless(_codex|_claude)?|_agents|_codex_rollout|_controle_judge|daily-reflection|session-recap|session-logger|correction-detector|controle-sessionstart)\.py|engine/codex-features\.json|engine/tests/(codex_mock|mock_openai|codex_captures)\.py|\.github/workflows/test\.yml|install\.sh|install\.ps1|engine/codex/[^/]+|engine/CLAUDE\.global\.template\.md|engine/install_skills\.py|skills/[^/]+/SKILL\.md)$' <<< "$files"; then codex=true; else codex=false; fi
           echo "codex=$codex" | tee -a "$GITHUB_OUTPUT"
+          if grep -qE '^(install\.ps1|\.github/workflows/test\.yml|\.github/ci/(poste-neuf|sans-git|winget-casse|install-ps1-secours)\.ps1)$' <<< "$files"; then winget=true; else winget=false; fi
+          echo "winget=$winget" | tee -a "$GITHUB_OUTPUT"
 
   # The launcher without tools for Codex (engine/hooks/_headless_codex.py) with the real Codex CLI,
   # pinned, in ChatGPT mode against a local fake server (engine/tests/mock_openai.py): fake tokens,
@@ -351,10 +360,14 @@ jobs:
         with:
           persist-credentials: false
 
+      # The installer of Codex's release, as install.sh and install.ps1 take it, checked against the
+      # SHA-256 they pin (chatgpt.com/codex/install.sh and .ps1 answer 404 since 2026-10-22).
       - name: Codex 0.162.1 from the official installer (macOS, Linux)
         if: runner.os != 'Windows'
         run: |
-          curl -fsSL https://chatgpt.com/codex/install.sh -o "$RUNNER_TEMP/codex-install.sh"
+          curl -fsSL --retry 2 "https://github.com/openai/codex/releases/download/rust-v$CODEX_RELEASE/install.sh" -o "$RUNNER_TEMP/codex-install.sh"
+          want=$(sed -n 's/^CODEX_INSTALLER_SHA256=\([0-9a-f]\{64\}\)$/\1/p' install.sh)
+          echo "$want  $RUNNER_TEMP/codex-install.sh" | shasum -a 256 -c -
           sh "$RUNNER_TEMP/codex-install.sh"
           [ "$("$HOME/.local/bin/codex" --version)" = "codex-cli $CODEX_RELEASE" ]
 
@@ -362,7 +375,12 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://chatgpt.com/codex/install.ps1 | iex"
+          $f = Join-Path $env:RUNNER_TEMP 'codex-install.ps1'
+          Invoke-WebRequest -Uri "https://github.com/openai/codex/releases/download/rust-v$env:CODEX_RELEASE/install.ps1" -OutFile $f -UseBasicParsing
+          $want = [regex]::Match((Get-Content -Raw install.ps1), '(?m)^\$CODEX_INSTALLER_SHA256 = "([0-9a-f]{64})"').Groups[1].Value
+          $got = (Get-FileHash -Algorithm SHA256 -LiteralPath $f).Hash.ToLowerInvariant()
+          if (-not $want -or $got -ne $want) { throw "Codex's installer: SHA-256 $got, install.ps1 pins $want" }
+          powershell -NoProfile -ExecutionPolicy Bypass -File $f
           if ($LASTEXITCODE) { exit 1 }
           $v = & (Join-Path $env:LOCALAPPDATA 'Programs\OpenAI\Codex\bin\codex.exe') --version
           if ($v -ne "codex-cli $env:CODEX_RELEASE") { throw "codex --version said: $v" }
@@ -674,6 +692,85 @@ jobs:
             apt-get install -y -q python3 /bundle/deb/*.deb >/dev/null
             brain-in-a-box --diagnose | python3 -I -c "$CHECK" deb
             APPIMAGE_EXTRACT_AND_RUN=1 /bundle/appimage/*.AppImage --diagnose | python3 -I -c "$CHECK" AppImage'
+
+  # A Windows whose winget cannot open its source (a GitHub VM's on 2026-10-22: 0x8A15000F), with no Git
+  # and no Python but the Store stub: install.ps1, run as the app runs it (no console, nothing to read),
+  # updates winget's source once, tries once more, then brings Python and Git with their official
+  # installers, pinned and checked, and says so in its log. Runs when install.ps1, this workflow or the
+  # fresh PC's helpers change, and on every push to master.
+  windows-winget-casse:
+    needs: changes
+    if: needs.changes.outputs.winget == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Fresh install, no Git, no Python, winget's source broken, no console
+        timeout-minutes: 30
+        run: |
+          . .github/ci/poste-neuf.ps1
+          & .github/ci/sans-git.ps1 -Preuve "$env:RUNNER_TEMP\sans-git.json"
+          . .github/ci/winget-casse.ps1
+          powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File install.ps1 *>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\install.txt"
+          if ($LASTEXITCODE) { throw "install.ps1 exited $LASTEXITCODE" }
+
+      - name: Python and Git from their official installers, Git's history and Bash there, the log says which way
+        if: ${{ !cancelled() }}
+        run: |
+          $H = $env:USERPROFILE
+          $out = Get-Content "$env:RUNNER_TEMP\install.txt" -Raw
+          $log = Get-Content "$H\.brain-in-a-box\install.log" -Raw
+          $log
+          # winget: Python's install, its source updated once, one more try; Git and Obsidian not asked again.
+          $calls = @(Get-Content "$env:RUNNER_TEMP\winget-casse\appels.txt")
+          $py = 'install -e --id Python.Python.3.12 --source winget --silent --accept-package-agreements --accept-source-agreements --scope user'
+          if (($calls -join '|') -cne "$py|source update --name winget|$py") { throw "winget was asked: $($calls -join ' | ')" }
+          # Python 3.14.8 for this user, the hooks on it.
+          $hook = (@((Get-Content "$H\.claude\settings.json" -Raw | ConvertFrom-Json).hooks.UserPromptSubmit.hooks)[0]).command
+          if ($hook -ne "$env:LOCALAPPDATA\Programs\Python\Python314\python.exe") { throw "the hooks run $hook" }
+          $v = & $hook -c "import sys; print(sys.version.split()[0])"
+          if ($v -ne '3.14.8') { throw "Python $v" }
+          # Git 2.56.0.2, put there after the runner's was taken away; a new process finds it.
+          $proof = Get-Content "$env:RUNNER_TEMP\sans-git.json" -Raw | ConvertFrom-Json
+          $git = @("$env:ProgramFiles\Git\cmd\git.exe", "$env:LOCALAPPDATA\Programs\Git\cmd\git.exe") | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+          if (-not $git) { throw 'no git.exe where Find-Git looks' }
+          if ((Get-Item -LiteralPath (Split-Path -Parent $git)).CreationTimeUtc -lt [DateTimeOffset]::FromUnixTimeSeconds($proof.fin_epoch).UtcDateTime) { throw "$git was there before" }
+          $gv = & $git --version
+          if ($gv -ne 'git version 2.56.0.windows.2') { throw "git: $gv" }
+          $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
+          if (-not (Get-Command git -CommandType Application -ErrorAction SilentlyContinue)) { throw 'a new process does not find git' }
+          # What its absence cost on 2026-10-22: the vault's history, Git Bash for Claude Code, gbrain.
+          $root = @(& $git -C "$H\Documents\Brain" rev-list --max-parents=0 HEAD)
+          if ($root.Count -ne 1 -or (& $git -C "$H\Documents\Brain" log -1 --format=%s $root[0]) -ne 'brain init') { throw 'the vault has no history' }
+          if (-not (Test-Path -LiteralPath (Join-Path (Split-Path -Parent (Split-Path -Parent $git)) 'bin\bash.exe'))) { throw 'no Git Bash next to git' }
+          if ((Get-Content "$H\.brain-search\engine").Trim() -ne 'gbrain') { throw "the memory is $(Get-Content "$H\.brain-search\engine"), not gbrain" }
+          # The log and the screen say which way worked; nothing of the installers left behind.
+          foreach ($l in "> installeur officiel : Python 3.14.8 (x64) https://www.python.org/ftp/python/3.14.8/python-3.14.8-amd64.exe`r`ninstalleur officiel : code 0",
+                         "> Python : $hook (installeur officiel)",
+                         "> winget : sa source est en panne, Git non installe par winget",
+                         "> installeur officiel : Git 2.56.0.2 (x64) https://github.com/git-for-windows/git/releases/download/v2.56.0.windows.2/Git-2.56.0.2-64-bit.exe`r`ninstalleur officiel : code 0",
+                         "> winget : sa source est en panne, Obsidian non installe par winget") {
+            if (-not $log.Contains($l)) { throw "install.log does not say: $l" }
+          }
+          if ($log -notmatch '(?m)^> Git : .+\\git\.exe \(installeur officiel\)\r?$') { throw 'install.log does not say Git came from its official installer' }
+          foreach ($l in "winget : sa source ne s'ouvre pas, je la mets a jour", 'Python 3.14.8 : installeur officiel', 'Git 2.56.0.2 : installeur officiel',
+                         '[OK] git (', '[!]  Obsidian non installe (optionnel') {
+            if (-not $out.Contains($l)) { throw "the install did not say: $l" }
+          }
+          if ($out.Contains('Git absent')) { throw 'the install said Git absent' }
+          if (Get-ChildItem -LiteralPath "$H\.brain-in-a-box" -Directory -Filter 'installeur-*') { throw 'an installer folder was left behind' }
+
+      - name: "install.ps1 when winget cannot: its functions against stand-ins (pwsh)"
+        if: ${{ !cancelled() }}
+        run: |
+          pwsh -NoProfile -File .github/ci/install-ps1-secours.ps1
+          if ($LASTEXITCODE) { throw "install-ps1-secours.ps1 exited $LASTEXITCODE" }
 
   # A real install on a real Windows, the way a user runs it: no Python but the
   # Microsoft Store stub (what broke installs in the field), so Python comes from winget.

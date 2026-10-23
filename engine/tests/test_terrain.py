@@ -569,6 +569,17 @@ class Workflow(unittest.TestCase):
         # Green again on a scheduled night: the issue is closed, not left open with a comment.
         self.assertIn('gh issue close \\"$open\\"', runs)
 
+    def test_the_installers_install_ps1_pins_are_checked_every_night(self):
+        job = self.jobs["epingles"]
+        runs = [st for st in job["steps"] if "run" in st]
+        self.assertEqual(len(runs), 1)
+        self.assertIn("python3 -I .github/ci/epingles.py", runs[0]["run"])
+        # Releases read only: GitHub's API with the read-only token, in that step alone; python.org without one.
+        self.assertEqual(runs[0]["env"], {"GH_TOKEN": "${{ github.token }}"})
+        self.assertEqual([st for st in job["steps"] if "github.token" in json.dumps(st)], runs)
+        self.assertNotIn("permissions", job)
+        self.assertEqual(self.wf["permissions"], {"contents": "read"})
+
 
     def test_the_app_jobs_get_the_app_as_a_user_and_never_a_claude_token(self):
         for name, os_name, ref in (("app-macos", "macos", '"$TERRAIN_REF"'), ("app-windows", "windows", '"$env:TERRAIN_REF"'),
@@ -849,15 +860,113 @@ class WindowsWithoutGit(unittest.TestCase):
         self.assertIn('Note-Winget "> winget $($a -join \' \')`r`nwinget : code $code"', ps1)
         self.assertIn('if ($script:LogOpen) { Add-Content -LiteralPath $LOG -Value "`r`n$t" -Encoding utf8 }', ps1)
         # The journal opens once the choice of agents is accepted (a refused one leaves nothing in it), with
-        # Python's attempts kept until then, and before Git's.
-        order = [ps1.index(s) for s in ('Winget-Install "Python.Python.3.12"', "# <<< agents", 'install =====" -Encoding utf8',
-                                        "foreach ($n in $WingetNotes) { Note-Winget $n }", 'Winget-Install "Git.Git"')]
+        # Python's attempts kept until then, and before Git's; or before Python's failure stops the install.
+        opener = ps1[ps1.index("function Open-Log {"):]
+        opener = opener[:opener.index("\n}\n")]
+        self.assertIn('install =====" -Encoding utf8', opener)
+        self.assertIn("foreach ($n in $script:WingetNotes) { Note-Winget $n }", opener)
+        order = [ps1.index(s) for s in ("function Open-Log {", 'Install-Missing "Python" "Python.Python.3.12"',
+                                        'if (-not $Py) { Open-Log; Fail "Python introuvable.', "# <<< agents", "\nOpen-Log\n",
+                                        'Install-Missing "Git" "Git.Git"')]
         self.assertEqual(order, sorted(order))
+        # The lines the harness reads when winget could not (WINGET_SOURCE_MAJ, WINGET_SANS_GIT, OFFICIEL_GIT, VOIE_GIT).
+        for line in ('Note-Winget "> winget absent : $label non installe par winget"',
+                     'Note-Winget "> winget : sa source est en panne, $label non installe par winget"',
+                     '$null = Invoke-Winget @("source", "update", "--name", "winget")',
+                     'Note-Winget "> installeur officiel : $Label $($o.Version) ($arch) $url`r`ninstalleur officiel : $end"',
+                     '$end = "code $($p.ExitCode)"',
+                     '$end = "empreinte SHA-256 $hex, attendue $sha : rien n\'est lance"',
+                     'Note-Winget "> $Label : $(if (-not $p) { \'absent\' } elseif ($via) { "$p ($via)" } else { $p })"',
+                     '$via = if (Official-Install $Label) { "installeur officiel" } else { "" }'):
+            self.assertIn(line, ps1)
+        codes = re.search(r"^\$WINGET_SOURCE_CODES = @\(([-0-9, ]+)\)$", ps1, re.M).group(1)
+        self.assertEqual(sorted(int(c) for c in codes.split(",")), sorted(terrain.SOURCE_WINGET))
         args = "install -e --id Git.Git --source winget --silent --accept-package-agreements --accept-source-agreements"
         log = "\r\n===== 2026-10-15 01:20:00 install =====\r\n\r\n> winget %s --scope user\r\nwinget : code -1978335216\r\n" \
               "\r\n> winget %s\r\nwinget : code 0\r\n\r\n> winget install -e --id Python.Python.3.12 x\r\nwinget : code 0\r\n" % (args, args)
         found = [(m.group("args").endswith("--scope user"), m.group("code")) for m in terrain.WINGET_GIT.finditer(log)]
         self.assertEqual(found, [(True, "-1978335216"), (False, "0")])
+
+    def test_winget_left_out_for_its_company_s_policy_or_because_it_does_not_start_is_said(self):
+        with open(os.path.join(HERE, "..", "..", "install.ps1"), encoding="utf-8") as f:
+            ps1 = f.read()
+        for line in ('Note-Winget "> winget : bloque par la politique de l\'entreprise, $label non installe par winget"',
+                     'Note-Winget "> winget : il ne demarre pas, $label non installe par winget"'):
+            self.assertIn(line, ps1)
+        codes = re.search(r"^\$WINGET_POLICY_CODES = @\(([-0-9, ]+)\)$", ps1, re.M)
+        self.assertTrue(codes, "install.ps1 has no $WINGET_POLICY_CODES")
+        self.assertEqual(sorted(int(c) for c in codes.group(1).split(",")), sorted(terrain.POLICY_WINGET))
+        args = "install -e --id Git.Git --source winget --silent --accept-package-agreements --accept-source-agreements --scope user"
+        for code, said in ((-1978335174, "-1978335174 (0x8A15003A, bloqué par la politique de l'entreprise)"),
+                           (-1978334961, "-1978334961 (0x8A15010F, installation bloquée par la politique de l'entreprise)")):
+            log = "\r\n> winget %s\r\nwinget : code %d\r\n\r\n> Git : absent\r\n" % (args, code)
+            self.assertEqual(terrain.chemin_git(log), "winget --scope user : code " + said)
+        for dit in ("winget : bloque par la politique de l'entreprise, Git non installe par winget",
+                    "winget : il ne demarre pas, Git non installe par winget"):
+            self.assertEqual(terrain.chemin_git("\r\n> %s\r\n\r\n> Git : absent\r\n" % dit), dit)
+
+    def broken_winget_log(self, home, end):
+        """install.log as install.ps1 writes it when winget's source does not open (2026-10-22): Python's attempt,
+        the source updated, one more try, then Git without winget, through its official installer."""
+        (home / ".brain-in-a-box").mkdir(parents=True, exist_ok=True)
+        py = "install -e --id Python.Python.3.12 --source winget --silent --accept-package-agreements --accept-source-agreements --scope user"
+        url = "https://github.com/git-for-windows/git/releases/download/v2.56.0.windows.2/Git-2.56.0.2-64-bit.exe"
+        log = ("\r\n> winget %s\r\nwinget : code -1978335217\r\n\r\n> winget source update --name winget\r\nwinget : code -1978335217\r\n"
+               "\r\n> winget %s\r\nwinget : code -1978335217\r\n\r\n> installeur officiel : Python 3.14.8 (x64) https://www.python.org/x.exe"
+               "\r\ninstalleur officiel : code 0\r\n\r\n> Python : C:\\py\\python.exe (installeur officiel)\r\n"
+               "\r\n===== 2026-10-22 06:07:07 install =====\r\n"
+               "\r\n> winget : sa source est en panne, Git non installe par winget\r\n"
+               "\r\n> installeur officiel : Git 2.56.0.2 (x64) %s\r\n%s" % (py, py, url, end))
+        # Bytes: in text mode, Windows would write each \r\n as \r\r\n.
+        (home / ".brain-in-a-box" / "install.log").write_bytes(log.encode("utf-8"))
+
+    def test_git_from_its_official_installer_when_winget_could_not(self):
+        home = Path(self.tmp) / "home"
+        git_dir = Path(tempfile.mkdtemp(dir=self.tmp)) / "cmd"
+        git_dir.mkdir()
+        exe = str(git_dir / "git.exe")
+
+        def run(argv, **kw):
+            return (0, "abc123\n") if "rev-list" in argv else (0, "brain init\n")
+
+        def check(end):
+            self.broken_winget_log(home, end)
+            t = terrain.Etapes()
+            with mock.patch.dict(os.environ, {terrain.terrain_app.SANS_GIT: self.proof()}), \
+                    mock.patch.object(terrain, "git_de_session", lambda t: (exe, "git version 2.56.0.windows.2", {})), \
+                    mock.patch.object(terrain, "run", run):
+                terrain.check_git(t, types.SimpleNamespace(home=home, parcours="app-codex"))
+            return t.details["git"]
+        git = check("installeur officiel : code 0\r\n\r\n> Git : %s (installeur officiel)\r\n" % exe)
+        self.assertEqual(git["voie"], "installeur officiel")
+        self.assertTrue(git["resume"].startswith("Git absent au départ, installé par son installeur officiel (Git 2.56.0.2 (x64) : "
+                                                 "code 0 ; avant lui : winget absent ou en panne) dans "), git["resume"])
+        # Not installed: the reason says each way, in order, winget's codes in words.
+        for end, why in (("installeur officiel : empreinte SHA-256 %s, attendue %s : rien n'est lance\r\n\r\n> Git : absent\r\n"
+                          % ("1" * 64, "2" * 64), "installeur officiel de Git 2.56.0.2 (x64) : empreinte SHA-256 1111"),
+                         ("installeur officiel : code 1603\r\n\r\n> Git : absent\r\n", "(x64) : code 1603")):
+            with self.assertRaises(terrain.Echec) as cm:
+                check(end)
+            self.assertIn("l'installeur n'a pas installé Git : winget source update : code -1978335217 (0x8A15000F, source de "
+                          "winget en panne : données de la source manquantes) ; winget : sa source est en panne, Git non installe par "
+                          "winget ; installeur officiel de Git", str(cm.exception))
+            self.assertIn(why, str(cm.exception))
+
+    def test_the_nights_without_git_say_so_and_why(self):
+        # The night of 2026-10-22: no Git after the install, the trapped vault could not be made (FileNotFoundError).
+        home = Path(self.tmp) / "home"
+        self.broken_winget_log(home, "installeur officiel : telechargement impossible : no network\r\n\r\n> Git : absent\r\n")
+        empty = Path(self.tmp) / "vide"
+        empty.mkdir()
+        with mock.patch.dict(os.environ, {"PATH": str(empty)}):
+            with self.assertRaises(terrain.Echec) as cm:
+                terrain.nuits(terrain.Etapes(), types.SimpleNamespace(home=home, vm=False, parcours="neuf"))
+        why = str(cm.exception)
+        self.assertTrue(why.startswith("git introuvable : le coffre piégé est un dépôt git, les nuits ne se jouent pas sans lui ; "
+                                       "l'installation : winget source update : code -1978335217 (0x8A15000F, source de winget en panne : "
+                                       "données de la source manquantes) ; winget : sa source"), why)
+        self.assertTrue(why.endswith("; winget : sa source est en panne, Git non installe par winget ; installeur officiel de Git "
+                                     "2.56.0.2 (x64) : telechargement impossible : no network"), why)
 
     def test_a_fresh_windows_install_and_the_app_check_git_first(self):
         called = []
@@ -1224,6 +1333,15 @@ class Reports(Sandbox):
                                "--jobs", "ref=success,linux=failure")
         self.assertIn("1 échec(s)", out)
         self.assertIn("| linux | ? | job | linux-failure |", out)
+
+    def test_a_pin_of_install_ps1_left_behind_its_release_opens_the_issue(self):
+        # The job epingles (.github/ci/epingles.py) writes no result file: red when Git for Windows or Python,
+        # whose installers install.ps1 falls back on, has had a newer release out for 14 days.
+        self.assertEqual(terrain.parse_jobs("ref=success,epingles=failure"), {"ref": "success", "epingles": "failure"})
+        rc, out = self.terrain("issue", *self.green(), "--attendus", "macos-neuf,macos-claude", "--date", "2026-11-05",
+                               "--jobs", "ref=success,macos=success,claude=success,epingles=failure")
+        self.assertIn("Terrain du 2026-11-05 : 1 échec(s).", out)
+        self.assertIn("| windows | ? | job | epingles-failure |", out)
 
     def test_the_summary_table(self):
         files, _ = self.files()
