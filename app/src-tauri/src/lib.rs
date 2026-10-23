@@ -10,6 +10,7 @@ mod guide;
 mod import;
 mod model;
 mod perms;
+mod rapport;
 mod redact;
 mod remedies;
 mod repair;
@@ -174,6 +175,20 @@ async fn open_codex_login() -> Result<(), String> {
 #[tauri::command]
 async fn start_onboarding() -> Result<(), String> {
     off_main(steps::start_onboarding).await
+}
+
+/// « Parler à Claude »: Claude Code in the brain, in a terminal window, with no prompt.
+#[tauri::command]
+async fn start_claude() -> Result<(), String> {
+    off_main(steps::start_claude).await
+}
+
+/// The report of a failed install, masked, on the Desktop: where it went, and the sentence that says so.
+#[tauri::command]
+async fn save_report(text: String) -> Result<rapport::Saved, String> {
+    tauri::async_runtime::spawn_blocking(move || rapport::save(&text))
+        .await
+        .unwrap_or_else(|e| Err(format!("Erreur interne : {e}")))
 }
 
 #[tauri::command]
@@ -863,7 +878,9 @@ pub fn run() {
             guide_annuler,
             guide_fin,
             guide_brouillon,
-            guide_enregistrer
+            guide_enregistrer,
+            start_claude,
+            save_report
         ])
         .run(tauri::generate_context!())
         .expect("error while running Brain in a Box");
