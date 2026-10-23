@@ -8,7 +8,8 @@
 # Each line: source capture, crop x y width height (in the capture's pixels), output.
 # A source without its number (macos/bienvenue) is the first capture of that screen
 # (macos/03-bienvenue.png): the robot numbers them in order, and the count before a screen
-# changes from night to night. A source with its number and .png is that file.
+# changes from night to night. A source with its number and .png is that file. That first capture can
+# catch a line still fading in, pale: look at each image, and crop that one from another night's captures.
 # The crops follow the app's window at its usual place on the robot's screens
 # (1024x768 on macOS and Windows, 1280x900 on Linux). If a window moved, fix its line.
 set -euo pipefail
