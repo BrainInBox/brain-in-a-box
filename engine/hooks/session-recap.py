@@ -4,11 +4,12 @@ Stop hook: extracts lightweight stats from a Claude session and appends them to 
 Journal/YYYY-MM-DD.md under its sessions section.
 
 The brain is the one each session start names (_vault_write.brain_dir: BRAIN_DIR, else
-~/Documents/Brain, else ~/Brain, with its Profile folder): where there is none, nothing is
+~/Documents/Brain, else ~/Brain, with its Profile or Profil folder): where there is none, nothing is
 written and no folder is made. A new journal and its section are titled in the brain's language,
 as the reflection picks it (_langue.py: what Profile/soul.md names, else the computer's): "Journal"
 and "📊 Sessions avec Claude" in French, "Daily" and "📊 Claude Sessions" otherwise. A section
-already there, in either language, is the one used.
+already there, in either language, is the one used. A block's lines are in the brain's language
+too; its sid:`…`, by which it is found again, is the same in both.
 
 Idempotent (replaces the session's earlier block). No LLM call.
 
@@ -24,9 +25,10 @@ from collections import Counter
 from datetime import datetime
 
 LOCK_DIR = Path(tempfile.gettempdir()) / "claude-session-locks"
-# (the day's title, the sessions' section); _controle_rules.AUTO_HEADINGS knows both sections.
-ENGLISH = ("Daily", "## 📊 Claude Sessions")
-FRENCH = ("Journal", "## 📊 Sessions avec Claude")
+# (the day's title, the sessions' section, a block's lines); _controle_rules.AUTO_HEADINGS knows both
+# sections.
+ENGLISH = ("Daily", "## 📊 Claude Sessions", ("tools:", "intent:", "files:", "infra/cli:"))
+FRENCH = ("Journal", "## 📊 Sessions avec Claude", ("outils :", "demande :", "fichiers :", "commandes :"))
 # Claude Code's session ids are UUIDs. The id names the lock file and goes in the journal:
 # anything else is refused.
 SID_RE = re.compile(r"[A-Za-z0-9_-]{1,128}")
@@ -265,7 +267,7 @@ def shown_id(session_id, agent):
     return session_id if agent == "codex" else session_id[:8]
 
 
-def render_entry(stats, session_id, cwd, agent="claude", brain=None):
+def render_entry(stats, session_id, cwd, agent="claude", brain=None, names=ENGLISH):
     end = fmt_time(stats["last_ts"])
     dur_str, resumed = fmt_duration(stats["first_ts"], stats["last_ts"])
     header_time = (f"~{end}" if resumed else f"{fmt_time(stats['first_ts'])}–{end}")
@@ -279,16 +281,17 @@ def render_entry(stats, session_id, cwd, agent="claude", brain=None):
     prompt = clean_item(stats["first_prompt"], 140)
     signals = ", ".join(f"{s}×{n}" for s, n in stats["signals"].most_common(5))
 
+    tools, intent, files, cli = names[2]
     lines = [
         f"- **{header_time}** ({dur_str}) `{cwd_s}` {model} · sid:`{shown_id(session_id, agent)}`",
-        f"  - tools: {top_tools or '—'}",
+        f"  - {tools} {top_tools or '—'}",
     ]
     if prompt:
-        lines.append(f"  - intent: {prompt}")
+        lines.append(f"  - {intent} {prompt}")
     if files_s != "—":
-        lines.append(f"  - files: {files_s}")
+        lines.append(f"  - {files} {files_s}")
     if signals:
-        lines.append(f"  - infra/cli: {signals}")
+        lines.append(f"  - {cli} {signals}")
     return "\n".join(lines)
 
 
@@ -394,8 +397,9 @@ def main():
         sys.exit(0)
 
     day = time.strftime("%Y-%m-%d")
-    entry = render_entry(stats, sid, cwd, agent, brain)
-    upsert_session(Path(brain) / "Journal" / f"{day}.md", sid, entry, agent, titles(brain))
+    names = titles(brain)
+    entry = render_entry(stats, sid, cwd, agent, brain, names)
+    upsert_session(Path(brain) / "Journal" / f"{day}.md", sid, entry, agent, names)
     sys.exit(0)
 
 

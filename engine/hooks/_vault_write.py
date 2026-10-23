@@ -23,10 +23,11 @@ from _redact import redact
 
 def brain_dir(home):
     """The brain: BRAIN_DIR when it is set, else ~/Documents/Brain, else ~/Brain (where install.ps1 puts it
-    when Windows protects Documents). None without a Profile folder there: a brain is never made up."""
+    when Windows protects Documents). None without a Profile folder there (or Profil, an older brain's, as
+    the night check and the import accept it): a brain is never made up."""
     chosen = os.environ.get("BRAIN_DIR", "").strip()
     for d in [chosen] if chosen else [os.path.join(home, "Documents", "Brain"), os.path.join(home, "Brain")]:
-        if os.path.isdir(os.path.join(d, "Profile")):
+        if any(os.path.isdir(os.path.join(d, p)) for p in ("Profile", "Profil")):
             return d
     return None
 

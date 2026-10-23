@@ -59,6 +59,14 @@ class Entry(unittest.TestCase):
         self.assertEqual(rc.render_entry(st, "a1b2c3d4-e5f6-7890", "proj"), want)
         self.assertEqual(rc.render_entry(st, "a1b2c3d4-e5f6-7890", "proj", "claude"), want)
 
+    def test_a_french_brains_block_is_in_french(self):
+        st = stats(files=["/p/a.ts"])
+        st["signals"]["ssh"] = 2
+        lines = rc.render_entry(st, "a1b2c3d4-e5f6-7890", "proj", names=rc.FRENCH).splitlines()
+        self.assertTrue(lines[0].endswith(" · sid:`a1b2c3d4`"), "the id stays as it is: the block is found by it")
+        self.assertEqual(lines[1:], ["  - outils : Read 2, Edit 1", "  - demande : build the login page",
+                                     "  - fichiers : a.ts", "  - commandes : ssh×2"])
+
     def test_nothing_obsidian_runs_or_loads(self):
         e = rc.render_entry(stats(RUNS, ["/p/<img src=x>.md", "/p/`$= 1`.md"]), "a1b2c3d4-e5f6", "$= dv.el('b', 2)")
         for bad in ("<%", "<img", "![", "%%", "<!--"):
@@ -424,6 +432,9 @@ class Brain(unittest.TestCase):
         text = self.journal(brain)
         self.assertTrue(text.startswith(f"# {self.day} — Journal\n\n## 📊 Sessions avec Claude\n- **"), text)
         self.assertIn(sid, text)
+        self.assertIn("\n  - outils : Read 3\n", text, "its lines in French too")
+        for english in ("tools:", "intent:", "files:", "infra/cli:"):
+            self.assertNotIn(english, text)
 
     def test_the_computers_language_when_soul_md_names_none(self):
         os.environ["LANG"] = "fr_FR.UTF-8"
@@ -467,6 +478,12 @@ class Brain(unittest.TestCase):
         self.assertFalse((self.root / "gone").exists(), "a brain is never made")
         for brain in (home_brain, documents, chosen):
             self.assertNotIn(sid, self.journal(brain), brain)
+
+    def test_a_brain_with_a_profil_folder_is_a_brain(self):
+        """Profil, the French name an older brain may have, as the night check and the import accept it."""
+        brain = self.home / "Documents" / "Brain"
+        (brain / "Profil").mkdir(parents=True)
+        self.assertIn(self.stop(), self.journal(brain) or "")
 
     def test_no_brain_no_folder(self):
         self.stop()
