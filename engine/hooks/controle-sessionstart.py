@@ -132,8 +132,8 @@ def own_updater():
         return False
 
 
-def check_lines(etat, now, home):
-    """(reds, line of the run or None, run id) from etat.json."""
+def check_lines(etat, now, home, trouble=False):
+    """(reds, line of the run or None, run id) from etat.json. trouble: update_lines() has a red to say."""
     reds = []
     last = parsed((etat or {}).get("dernier_succes"), "%Y-%m-%dT%H:%M:%S") if etat else None
     codes = {a.get("code") for a in (etat or {}).get("alertes") or [] if isinstance(a, dict)}
@@ -171,12 +171,14 @@ def check_lines(etat, now, home):
     fixed, look = num(etat.get("corrections")), num(etat.get("a_voir"))
     # gbrain's own alert is said by update_lines(), from last-update.json.
     alerts = [a for a in etat.get("alertes") or [] if isinstance(a, dict) and a.get("code") != "gbrain"]
-    # Never « tout va bien » next to something to look at.
+    # Never « tout va bien » next to something to look at, nor next to a red said by its own line.
     news = " et ".join(n for n in ("%d point%s attend%s ton avis" % (look, s(look), s(look, "ent")) if look else "",
                                     "un souci est à regarder" if alerts else "") if n)
     done = "j'ai fait %d petite%s correction%s dans tes notes" % (fixed, s(fixed), s(fixed))
+    calm = not (trouble or secrets or "gbrain" in codes)
     if fixed and not news:
-        line = "%s, %s : tout va bien, rien à faire (si tu n'en veux pas, %s)." % (when, done, UNDO)
+        fine = " : tout va bien, rien à faire" if calm else ""
+        line = "%s, %s%s (si tu n'en veux pas, %s)." % (when, done, fine, UNDO)
     elif fixed:
         line = "%s, %s, mais %s : %s pour tout voir, et annuler ce que tu ne veux pas." % (when, done, news, SAY_WHAT)
     elif news:
@@ -312,8 +314,9 @@ def check_part(home):
     gbrain = os.path.join(os.environ.get("GBRAIN_HOME", "").strip() or home, ".gbrain")
     etat = read_json(os.path.join(state, "etat.json"))
     info = read_json(os.path.join(gbrain, "last-update.json"))
-    reds, line, run = check_lines(etat, datetime.now(), home)
-    reds += update_lines(info, datetime.now(timezone.utc))
+    gbrain_reds = update_lines(info, datetime.now(timezone.utc))
+    reds, line, run = check_lines(etat, datetime.now(), home, any(not k.startswith(ONCE) for k, _ in gbrain_reds))
+    reds += gbrain_reds
 
     shown_path = os.path.join(state, "shown.json")
     shown = read_json(shown_path) or {}

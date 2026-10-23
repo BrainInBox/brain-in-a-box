@@ -1258,9 +1258,25 @@ class SessionStart(unittest.TestCase):
                 self.etat(run="20261014-04%02d" % n, corrections=fixed, a_voir=look,
                           alertes=trouble + [{"niveau": "rouge", "code": "contrat"}])
                 self.assertEqual(self.line(self.hook()), want)
-        # gbrain's own alert is said by its own line (last-update.json), not twice.
+        # gbrain's own alert is said by its own line (last-update.json), not twice, and not next to « tout va bien ».
         self.etat(run="20261014-0500", corrections=2, a_voir=0, alertes=[{"niveau": "rouge", "code": "gbrain"}])
-        self.assertIn("tout va bien", self.line(self.hook()))
+        self.assertEqual(self.line(self.hook()), "Cette nuit, j'ai fait 2 petites corrections dans tes notes (si tu "
+                                                 "n'en veux pas, dis « annule le contrôle »).")
+
+    def test_good_news_is_never_said_next_to_a_red(self):
+        """A secret to change, gbrain broken or late have their own line: the night's line then says what it
+        did, never « tout va bien, rien à faire » next to them."""
+        done = "Cette nuit, j'ai fait 2 petites corrections dans tes notes (si tu n'en veux pas, dis « annule le contrôle »)."
+        shown = os.path.join(self.state, "shown.json")
+        for n, (etat, update) in enumerate([({"secrets_a_changer": 1}, {}), ({}, {"status": "broken"}),
+                                             ({}, {"retard_jours": 16})]):
+            with self.subTest(etat=etat, update=update):
+                if os.path.exists(shown):
+                    os.unlink(shown)
+                self.etat(run="20261014-06%02d" % n, corrections=2, a_voir=0, **etat)
+                self.update(**update)
+                parts = self.line(self.hook()).split(" · ")
+                self.assertEqual((len(parts), parts[-1]), (2, done))
 
     def test_a_rolled_back_update_is_said_once_without_versions(self):
         """gbrain went back to the version that works by itself: nothing to do, so said once per failed version,
