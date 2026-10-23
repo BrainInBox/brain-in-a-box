@@ -17,6 +17,8 @@ use windows::Win32::Foundation::{HWND, LPARAM, RECT};
 use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED};
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::*;
+use windows::Win32::Graphics::Gdi::{MonitorFromWindow, MONITOR_DEFAULTTONEAREST};
+use windows::Win32::UI::HiDpi::{GetDpiForMonitor, GetDpiForWindow, MDT_EFFECTIVE_DPI};
 use windows::Win32::UI::WindowsAndMessaging::EnumWindows;
 
 use super::{cloaked, frame, minimized, pid_of, visible, Physical};
@@ -44,6 +46,8 @@ pub struct Liste {
     /// Nodes that came back from the other process (after the filter).
     pub nodes: usize,
     pub windows: usize,
+    /// Windows or levels UIA did not give (a timeout, a window gone).
+    pub errors: Vec<String>,
 }
 
 fn kind(t: UIA_CONTROLTYPE_ID) -> Option<&'static str> {
@@ -85,7 +89,11 @@ const KEPT: [UIA_CONTROLTYPE_ID; 9] = [
 
 struct Uia {
     auto: IUIAutomation,
+    /// The whole subtree in one call (filtered on the types that matter).
     cache: IUIAutomationCacheRequest,
+    /// One level of the same filtered view, its elements live to go down: what lies under a command
+    /// or a table is never walked, not even by the other process.
+    kids: IUIAutomationCacheRequest,
 }
 
 thread_local! {
@@ -104,11 +112,6 @@ fn uia() -> windows::core::Result<Uia> {
             a2.SetTransactionTimeout(2000)?;
         }
     }
-    // SAFETY: a request of ours, filled before use.
-    let cache = unsafe { auto.CreateCacheRequest()? };
-    for p in [UIA_ControlTypePropertyId, UIA_NamePropertyId, UIA_BoundingRectanglePropertyId, UIA_IsOffscreenPropertyId, UIA_IsPasswordPropertyId] {
-        unsafe { cache.AddProperty(p)? };
-    }
     let mut filter: Option<IUIAutomationCondition> = None;
     for t in KEPT.iter().chain(DATA.iter()).chain([UIA_DocumentControlTypeId, UIA_TitleBarControlTypeId].iter()) {
         // SAFETY: a condition on a property UIA defines.
@@ -118,12 +121,22 @@ fn uia() -> windows::core::Result<Uia> {
             Some(before) => unsafe { auto.CreateOrCondition(&before, &c)? },
         });
     }
-    unsafe {
-        cache.SetTreeScope(TreeScope_Subtree)?;
-        cache.SetAutomationElementMode(AutomationElementMode_None)?;
-        cache.SetTreeFilter(filter.as_ref().unwrap())?;
-    }
-    Ok(Uia { auto, cache })
+    let request = |scope: TreeScope, mode: AutomationElementMode| -> windows::core::Result<IUIAutomationCacheRequest> {
+        // SAFETY: a request of ours, filled before use.
+        unsafe {
+            let r = auto.CreateCacheRequest()?;
+            for p in [UIA_ControlTypePropertyId, UIA_NamePropertyId, UIA_BoundingRectanglePropertyId, UIA_IsOffscreenPropertyId, UIA_IsPasswordPropertyId] {
+                r.AddProperty(p)?;
+            }
+            r.SetTreeScope(scope)?;
+            r.SetAutomationElementMode(mode)?;
+            r.SetTreeFilter(filter.as_ref().unwrap())?;
+            Ok(r)
+        }
+    };
+    let cache = request(TreeScope_Subtree, AutomationElementMode_None)?;
+    let kids = request(TreeScope(TreeScope_Element.0 | TreeScope_Children.0), AutomationElementMode_Full)?;
+    Ok(Uia { auto, cache, kids })
 }
 
 /// A name as sent: on one line, its spaces collapsed, cut to 40 characters.
@@ -139,12 +152,15 @@ struct Walk<'a> {
     out: Vec<Element>,
     passwords: Vec<RECT>,
     nodes: usize,
+    errors: usize,
     frame: RECT,
     browser: bool,
     hidden: &'a [RECT],
 }
 
-fn walk(el: &IUIAutomationElement, in_data: bool, in_doc: bool, in_bar: bool, w: &mut Walk) {
+/// What one node gives: maybe a command, maybe a password field. Whether to go under it, and
+/// what it is for the nodes under it: (in a table, in a page, in the title bar).
+fn visit(el: &IUIAutomationElement, in_data: bool, in_doc: bool, in_bar: bool, w: &mut Walk) -> Option<(bool, bool, bool)> {
     w.nodes += 1;
     // SAFETY: cached properties of an element of ours.
     let t = unsafe { el.CachedControlType() }.unwrap_or_default();
@@ -163,13 +179,39 @@ fn walk(el: &IUIAutomationElement, in_data: bool, in_doc: bool, in_bar: bool, w:
             w.out.push(Element { kind: k, name, rect, titlebar: bar });
         }
         if matches!(t, UIA_EditControlTypeId | UIA_ComboBoxControlTypeId) {
-            return;
+            return None;
         }
     }
-    if let Ok(children) = unsafe { el.GetCachedChildren() } {
-        for i in 0..unsafe { children.Length() }.unwrap_or(0) {
-            if let Ok(c) = unsafe { children.GetElement(i) } {
-                walk(&c, data, doc, bar, w);
+    Some((data, doc, bar))
+}
+
+fn children(el: &IUIAutomationElement) -> Vec<IUIAutomationElement> {
+    let Ok(all) = (unsafe { el.GetCachedChildren() }) else { return Vec::new() };
+    (0..unsafe { all.Length() }.unwrap_or(0)).filter_map(|i| unsafe { all.GetElement(i) }.ok()).collect()
+}
+
+/// The subtree came back whole: walked here.
+fn walk(el: &IUIAutomationElement, in_data: bool, in_doc: bool, in_bar: bool, w: &mut Walk) {
+    if let Some((data, doc, bar)) = visit(el, in_data, in_doc, in_bar, w) {
+        for c in children(el) {
+            walk(&c, data, doc, bar, w);
+        }
+    }
+}
+
+/// One level at a time: a page or a title bar is asked for its own level; a command, a field, a
+/// table or a list never is (nothing of a table's rows is read, nor walked by the other process).
+fn walk_pruned(u: &Uia, el: &IUIAutomationElement, in_data: bool, in_doc: bool, in_bar: bool, w: &mut Walk) {
+    if let Some((data, doc, bar)) = visit(el, in_data, in_doc, in_bar, w) {
+        for c in children(el) {
+            // SAFETY: cached property of an element of ours.
+            let t = unsafe { c.CachedControlType() }.unwrap_or_default();
+            if kind(t).is_some() || DATA.contains(&t) {
+                visit(&c, data, doc, bar, w);
+            } else if let Ok(c) = unsafe { c.BuildUpdatedCache(&u.kids) } {
+                walk_pruned(u, &c, data, doc, bar, w);
+            } else {
+                w.errors += 1;
             }
         }
     }
@@ -201,6 +243,11 @@ pub fn is_remote(app: &str) -> bool {
 
 /// The commands of the program's windows on screen, in physical pixels.
 pub fn commands(pid: u32, app: &str, hidden: &[RECT]) -> Result<Liste, String> {
+    commands_by(pid, app, hidden, true)
+}
+
+/// `pruned`: one level at a time (the default); else the whole subtree in one call.
+pub fn commands_by(pid: u32, app: &str, hidden: &[RECT], pruned: bool) -> Result<Liste, String> {
     let _physical = Physical::enter();
     UIA.with(|cell| {
         let mut slot = cell.borrow_mut();
@@ -211,13 +258,23 @@ pub fn commands(pid: u32, app: &str, hidden: &[RECT]) -> Result<Liste, String> {
         let mut liste = Liste::default();
         for h in windows_of(pid) {
             let Some(f) = frame(h) else { continue };
-            // SAFETY: a window handle; the subtree comes back cached.
-            let root = match unsafe { u.auto.ElementFromHandleBuildCache(h, &u.cache) } {
+            // SAFETY: a window handle; its subtree, or its first level, comes back cached.
+            let root = match unsafe { u.auto.ElementFromHandleBuildCache(h, if pruned { &u.kids } else { &u.cache }) } {
                 Ok(r) => r,
-                Err(_) => continue,
+                Err(e) => {
+                    liste.errors.push(format!("{:?}: {e}", h.0));
+                    continue;
+                }
             };
-            let mut w = Walk { out: Vec::new(), passwords: Vec::new(), nodes: 0, frame: f, browser: is_browser(app), hidden };
-            walk(&root, false, false, false, &mut w);
+            let mut w = Walk { out: Vec::new(), passwords: Vec::new(), nodes: 0, errors: 0, frame: f, browser: is_browser(app), hidden };
+            if pruned {
+                walk_pruned(u, &root, false, false, false, &mut w);
+            } else {
+                walk(&root, false, false, false, &mut w);
+            }
+            if w.errors > 0 {
+                liste.errors.push(format!("{:?}: {} levels not given", h.0, w.errors));
+            }
             liste.elements.extend(w.out);
             liste.passwords.extend(w.passwords);
             liste.nodes += w.nodes;
@@ -231,6 +288,23 @@ pub fn commands(pid: u32, app: &str, hidden: &[RECT]) -> Result<Liste, String> {
 /// accessibility): no command but the window's own buttons, or the program shows another computer.
 pub fn repli_pixels(app: &str, liste: &Liste) -> bool {
     liste.elements.iter().all(|e| e.titlebar) || is_remote(app)
+}
+
+/// Image pixels to a screen pixel for this window's capture. PrintWindow draws a window Windows
+/// stretches (a program unaware of the scale) at its own size, not the screen's: 96 / 144 at 150 %.
+pub fn image_ratio(h: HWND) -> f64 {
+    let _physical = Physical::enter();
+    // SAFETY: a window handle, plain values.
+    unsafe {
+        let own = GetDpiForWindow(h);
+        let (mut x, mut y) = (0, 0);
+        let screen = GetDpiForMonitor(MonitorFromWindow(h, MONITOR_DEFAULTTONEAREST), MDT_EFFECTIVE_DPI, &mut x, &mut y).map(|_| x).unwrap_or(own);
+        if own == 0 || screen == 0 {
+            1.0
+        } else {
+            own as f64 / screen as f64
+        }
+    }
 }
 
 /// A screen box in the image of a window whose frame starts at `origin`, `ratio` image pixels to a
@@ -284,11 +358,12 @@ mod tests {
     use std::time::{Duration, Instant};
     use windows::Win32::Foundation::POINT;
     use windows::Win32::Graphics::Gdi::{MonitorFromPoint, MONITOR_DEFAULTTOPRIMARY};
-    use windows::Win32::UI::HiDpi::{GetAwarenessFromDpiAwarenessContext, GetDpiForMonitor, GetDpiForWindow, GetWindowDpiAwarenessContext, MDT_EFFECTIVE_DPI};
+    use windows::Win32::UI::HiDpi::{GetAwarenessFromDpiAwarenessContext, GetWindowDpiAwarenessContext};
     use windows::Win32::UI::Input::KeyboardAndMouse::{SendInput, INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEINPUT, MOUSE_EVENT_FLAGS};
     use windows::Win32::UI::WindowsAndMessaging::SetCursorPos;
 
     const RED: [u8; 3] = [0xe5, 0x39, 0x35];
+    const PURPLE: [u8; 3] = [0x8e, 0x24, 0xaa];
     const CLIENTS: [&str; 30] = [
         "Boulangerie Martin", "Garage Dupont", "Pharmacie Leroy", "Plomberie Moreau", "Cafe Lefebvre",
         "Fleuriste Garnier", "Librairie Fournier", "Menuiserie Girard", "Coiffure Bonnet", "Epicerie Lambert",
@@ -328,14 +403,35 @@ mod tests {
         (l, t.elapsed().as_secs_f64() * 1000.0)
     }
 
-    /// p50, p90 and max of 20 lists in a row; the p90.
+    /// p50, p90 and max of 20 lists in a row, one level at a time (Bibo's way), then the whole
+    /// subtree in one call (to compare): the p90 of the first. Both give the same list.
     fn latency(test: &str, pid: u32, app: &str) -> f64 {
-        let mut ms: Vec<f64> = (0..20).map(|_| timed(pid, app).1).collect();
-        ms.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        mesure(test, "ms_p50", format!("{:.1}", ms[9]));
-        mesure(test, "ms_p90", format!("{:.1}", ms[17]));
-        mesure(test, "ms_max", format!("{:.1}", ms[19]));
-        ms[17]
+        let mut p90 = 0.0;
+        for (pruned, tag) in [(true, ""), (false, "_sous_arbre")] {
+            let mut ms: Vec<f64> = (0..20)
+                .map(|_| {
+                    let t = Instant::now();
+                    commands_by(pid, app, &[], pruned).unwrap();
+                    t.elapsed().as_secs_f64() * 1000.0
+                })
+                .collect();
+            ms.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            mesure(test, &format!("ms_p50{tag}"), format!("{:.1}", ms[9]));
+            mesure(test, &format!("ms_p90{tag}"), format!("{:.1}", ms[17]));
+            mesure(test, &format!("ms_max{tag}"), format!("{:.1}", ms[19]));
+            if pruned {
+                p90 = ms[17];
+            }
+        }
+        let a = commands_by(pid, app, &[], true).unwrap();
+        let b = commands_by(pid, app, &[], false).unwrap();
+        let names = |l: &Liste| l.elements.iter().map(|e| format!("{} {}", e.kind, e.name)).collect::<Vec<_>>();
+        mesure(test, "noeuds_par_niveau_sous_arbre", format!("{} {}", a.nodes, b.nodes));
+        mesure(test, "meme_liste", names(&a) == names(&b));
+        if names(&a) != names(&b) {
+            println!("DIFF {test} par niveau {:?}\nDIFF {test} sous-arbre {:?}", names(&a), names(&b));
+        }
+        p90
     }
 
     /// Every node of the window's tree (test only: the oracle of what is data), with whether it lies
@@ -402,9 +498,9 @@ mod tests {
         g
     }
 
-    fn origin_ratio(h: HWND, img: &Rgba) -> ((i32, i32), f64) {
+    fn origin_ratio(h: HWND, _img: &Rgba) -> ((i32, i32), f64) {
         let f = frame(h).unwrap();
-        ((f.left, f.top), img.w as f64 / (f.right - f.left) as f64)
+        ((f.left, f.top), image_ratio(h))
     }
 
     /// cua-driver (Hermes's screen driver), the witness, on the same window, when the job gives it.
@@ -466,7 +562,14 @@ mod tests {
                 mesure(test, "s_jusqu_a_la_liste", format!("{:.1}", start.elapsed().as_secs_f64()));
                 return l;
             }
-            assert!(start.elapsed() < wait, "{test}: never there; last: {:?}", l.elements.iter().map(|e| (e.kind, e.name.clone())).collect::<Vec<_>>());
+            assert!(
+                start.elapsed() < wait,
+                "{test}: never there; last: {:?}, {} nodes, {} windows, errors {:?}",
+                l.elements.iter().map(|e| (e.kind, e.name.clone())).collect::<Vec<_>>(),
+                l.nodes,
+                l.windows,
+                l.errors
+            );
             std::thread::sleep(Duration::from_millis(250));
         }
     }
@@ -493,7 +596,7 @@ mod tests {
         // SAFETY: a window handle.
         let awareness = unsafe { GetAwarenessFromDpiAwarenessContext(GetWindowDpiAwarenessContext(h)) };
         mesure(&test, "dpi_fenetre", format!("{} (awareness {})", unsafe { GetDpiForWindow(h) }, awareness.0));
-        until("drawn", || grab(&win.window).is_ok_and(|i| count(&i, BLUE) > 1000));
+        until("drawn", || grab(&win.window).is_ok_and(|i| count(&i, GREEN) > 1000));
         let (first, ms) = timed(pid, &app);
         mesure(&test, "ms_premier_appel", format!("{ms:.1}"));
         mesure(&test, "elements_premier_appel", first.elements.len());
@@ -502,11 +605,11 @@ mod tests {
 
         let mut img = grab(&win.window).unwrap();
         let (origin, ratio) = origin_ratio(h, &img);
-        mesure(&test, "image", format!("{}x{} ratio {ratio:.3}", img.w, img.h));
+        mesure(&test, "image", format!("{}x{} ratio {ratio:.3}, noir {:.2}", img.w, img.h, crate::shot::black_share(&img)));
         print_list(&test, &l, origin, ratio);
 
         let mut worst = 0;
-        for (colour, kind, name) in [(GREEN, "bouton", "Nouveau"), (BLUE, "bouton", "Enregistrer"), (RED, "bouton", "Supprimer")] {
+        for (colour, kind, name) in [(GREEN, "bouton", "Nouveau"), (PURPLE, "bouton", "Enregistrer"), (RED, "bouton", "Supprimer")] {
             let e = named(&l, kind, name).unwrap_or_else(|| panic!("{test}: {name}"));
             worst = worst.max(gap(&test, &img, colour, e, origin, ratio));
         }
@@ -608,7 +711,7 @@ mod tests {
         mesure(&test, "image", format!("{}x{} ratio {ratio:.3}", img.w, img.h));
         print_list(&test, &l, origin, ratio);
         let mut worst = 0;
-        for (colour, name) in [(GREEN, "Nouveau"), (BLUE, "Enregistrer"), (RED, "Supprimer")] {
+        for (colour, name) in [(GREEN, "Nouveau"), (PURPLE, "Enregistrer"), (RED, "Supprimer")] {
             let e = named(&l, "bouton", name).unwrap_or_else(|| panic!("{test}: {name}"));
             worst = worst.max(gap(&test, &img, colour, e, origin, ratio));
         }

@@ -72,7 +72,7 @@ static class AtelierUia
 
         Control[] top = {
             Flat("Nouveau", 0x2e7d32, 16, 40, 120, 36),
-            Flat("Enregistrer", 0x1e88e5, 150, 40, 120, 36),
+            Flat("Enregistrer", 0x8e24aa, 150, 40, 120, 36),
             Flat("Supprimer", 0xe53935, 284, 40, 120, 36),
             Flat("Exporter toutes les factures du trimestre vers le cabinet comptable", 0x6d4c41, 418, 40, 220, 36),
         };
