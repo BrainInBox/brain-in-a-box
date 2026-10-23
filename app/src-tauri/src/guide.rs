@@ -1,8 +1,9 @@
 //! The guide (docs/proposals/guide.md): the user shows Bibo a window of a program, says what they
 //! want to do in it, and their own Claude says the next action, one at a time, pointed on the image.
 //!
-//! The user pastes the capture (§G2, « Colle une capture »), or, on Windows, Bibo captures the window
-//! they clicked in (capture/, phase 2a): that window alone, checked to be still theirs before each look.
+//! Bibo captures the window the user clicked in (Windows, X11) or picked in the system's picker (macOS
+//! 14 and later), capture/: that window alone, checked to be still theirs before each look. Elsewhere,
+//! or when the window draws nothing Bibo can see, the user pastes a capture (§G2, « Colle une capture »).
 //! Claude runs as the repair's does (claude.rs: no tool, checked line by line), with the capture on
 //! stdin and Opus (phase 0, §15), or Sonnet in a cautious mode when the account cannot use Opus
 //! (decision 8, §22: never a full ellipse, a question when in doubt). Its answer is trusted for
@@ -114,19 +115,40 @@ pub enum Ia {
     Arrete,
 }
 
-/// How the capture comes. v1: pasted, everywhere; the system's picker and the click come later.
+/// How the capture comes: Bibo takes the chosen window itself, or the user pastes one (macOS 13,
+/// Wayland, X11 without a compositing manager). The window never names the reason.
 #[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum Capture {
+    Auto {
+        /// "clic": a click in the window (Windows, X11); "selecteur": the system's picker (macOS 14+).
+        via: &'static str,
+        /// How long Bibo waits for the click: the window counts it down. The picker waits on its own.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        secondes: Option<u64>,
+    },
     Collage { raison: &'static str },
+}
+
+impl Capture {
+    fn of(screen: &dyn Screen) -> Self {
+        match (screen.available(), screen.picker()) {
+            (true, true) => Capture::Auto { via: "selecteur", secondes: None },
+            (true, false) => Capture::Auto { via: "clic", secondes: Some(capture::CLIC_SECONDES) },
+            (false, _) => Capture::Collage { raison: screen.raison() },
+        }
+    }
 }
 
 #[derive(Serialize, Clone, Copy, Debug)]
 pub struct Status {
     pub ia: Ia,
     pub capture: Capture,
-    /// The brain is installed.
+    /// The brain's folder is there: the guide can work (D1).
     pub cerveau: bool,
+    /// The whole install went through, the brain's summaries at noon and at night with it: they count
+    /// in the subscription's limit too.
+    pub complet: bool,
     /// « Comment je regarde ton écran » was read once.
     pub vu: bool,
     /// The account cannot use Opus: Sonnet answers, in the cautious mode (known once asked, this run).
@@ -344,7 +366,7 @@ pub enum GuideError {
     /// The window drew nothing Bibo can see (DirectX, a program run as administrator, a protected
     /// window): no image leaves, the user pastes a capture instead.
     CaptureNoire,
-    /// No click in a window within 15 s, or no choice in the system's picker for too long.
+    /// No click in a window within 45 s, or no choice in the system's picker for too long.
     AucunClic,
     /// The system's picker closed without a window (macOS): « Tu as fermé la fenêtre de choix ».
     SelecteurFerme,
@@ -973,6 +995,9 @@ struct Guide {
     offered: Mutex<Vec<Window>>,
     /// « Arrêter » while Bibo waits for the click.
     stop_waiting: AtomicBool,
+    /// Moved on by each list, each wait and the end: a wait's windows become the ones offered only if
+    /// nothing came after it began (see `offer`).
+    offers: AtomicU64,
 }
 
 /// Each image that may leave has its number, never given twice.
@@ -1349,7 +1374,7 @@ struct Run {
 }
 
 impl Guide {
-    fn status(&self, home: &Path, check: &dyn Fn() -> Result<String, Ia>) -> Status {
+    fn status(&self, home: &Path, check: &dyn Fn() -> Result<String, Ia>, screen: &dyn Screen) -> Status {
         let ia = match check() {
             Ok(_) if self.launch.unsupported.load(Ordering::SeqCst) => Ia::Arrete,
             Ok(_) => Ia::Ready,
@@ -1357,8 +1382,9 @@ impl Guide {
         };
         Status {
             ia,
-            capture: Capture::Collage { raison: "a_venir" },
+            capture: Capture::of(screen),
             cerveau: detect::vault(home).is_some(),
+            complet: detect::brain(home, &agents::current(home)).complete(),
             vu: home.join(STORE).join("vu").is_file(),
             prudent: self.launch.prudent.load(Ordering::SeqCst),
         }
@@ -1437,7 +1463,9 @@ impl Guide {
         self.stop_waiting.store(true, Ordering::SeqCst);
         *lock(&self.session) = None;
         *lock(&self.staged) = None;
-        lock(&self.offered).clear();
+        let mut offered = lock(&self.offered);
+        self.offers.fetch_add(1, Ordering::SeqCst);
+        offered.clear();
     }
 
     /// « Fermer le guide »: the session gone, and the window the system gave with it (macOS: the
@@ -1456,26 +1484,45 @@ impl Guide {
             return Err(GuideError::CaptureIndisponible);
         }
         let found = screen.windows();
-        *lock(&self.offered) = found.iter().map(|f| f.window.clone()).collect();
+        let mut offered = lock(&self.offered);
+        self.offers.fetch_add(1, Ordering::SeqCst);
+        *offered = found.iter().map(|f| f.window.clone()).collect();
         Ok(found.iter().map(Fenetre::from).collect())
     }
 
-    /// « Clique dans la fenêtre de ton logiciel »: the window that comes to the front within 15 s,
-    /// which becomes the only one that may be chosen.
+    /// A wait's turn, taken as it begins.
+    fn turn(&self) -> u64 {
+        self.offers.fetch_add(1, Ordering::SeqCst) + 1
+    }
+
+    /// The windows a wait found become the ones offered, if nothing came after the wait began: a list,
+    /// another wait, the end. The page's stop and the wait it stops are two calls, in no set order: a
+    /// stop that comes before the wait begins is lost, and that wait goes on; what it finds then never
+    /// replaces the list the page asked for meanwhile.
+    fn offer(&self, turn: u64, windows: Vec<Window>) -> Result<(), GuideError> {
+        let mut offered = lock(&self.offered);
+        if self.offers.load(Ordering::SeqCst) != turn {
+            return Err(GuideError::Annule);
+        }
+        *offered = windows;
+        Ok(())
+    }
+
+    /// « Clique dans la fenêtre de ton logiciel »: the window that comes to the front within 45 s,
+    /// which becomes the only one that may be chosen. Stopped, it leaves the windows offered as they
+    /// are: the page stopped it for the list, asked for at the same time, and a line of it is chosen next.
     fn wait_click(&self, screen: &dyn Screen) -> Result<Fenetre, GuideError> {
         if !screen.available() || screen.picker() {
             return Err(GuideError::CaptureIndisponible);
         }
+        let turn = self.turn();
         self.stop_waiting.store(false, Ordering::SeqCst);
         let clicked = screen.clicked(&self.stop_waiting);
-        let stopped = self.stop_waiting.load(Ordering::SeqCst);
-        let clicked = clicked.filter(|_| !stopped);
-        *lock(&self.offered) = clicked.iter().map(|f| f.window.clone()).collect();
-        match clicked {
-            Some(f) => Ok(Fenetre::from(&f)),
-            None if stopped => Err(GuideError::Annule),
-            None => Err(GuideError::AucunClic),
+        if self.stop_waiting.load(Ordering::SeqCst) {
+            return Err(GuideError::Annule);
         }
+        self.offer(turn, clicked.iter().map(|f| f.window.clone()).collect())?;
+        clicked.map(|f| Fenetre::from(&f)).ok_or(GuideError::AucunClic)
     }
 
     /// « Oui » (or a line of the list): the window kept for the session, if it is still the one
@@ -1502,12 +1549,13 @@ impl Guide {
     /// The system's picker: the window the user picks there becomes the one offered. « Arrêter », or
     /// the guide closed meanwhile: nothing is kept.
     fn picked(&self, screen: &dyn Screen) -> Result<Window, GuideError> {
+        let turn = self.turn();
         self.stop_waiting.store(false, Ordering::SeqCst);
         let picked = screen.pick(&self.stop_waiting);
         let stopped = self.stop_waiting.load(Ordering::SeqCst);
         match picked {
             Pick::Choisie(f) if !stopped => {
-                *lock(&self.offered) = vec![f.window.clone()];
+                self.offer(turn, vec![f.window.clone()])?;
                 Ok(f.window)
             }
             Pick::Choisie(_) => Err(GuideError::Annule),
@@ -1976,21 +2024,72 @@ impl Guide {
 
 // ── Entry points ────────────────────────────────────────────────────────────
 
-/// Whether the installer's welcome offers the guide (G0): the brain is whole, as the installer's own
-/// check says it, and Claude Code is there. Files are read, nothing is run, unlike `status`, whose
-/// three runs of Claude Code would hold the first screen up.
-pub fn offert() -> bool {
-    offered(&sys::home(), detect::claude_bin().is_some())
+/// What the installer's welcome offers (G0, decision D1), told apart so the welcome can say it right.
+/// `true`: the guide, with a whole brain, as before D1 (a welcome then says the brain is installed, and
+/// asks for Claude's login itself). `"dossier"`: the guide while the install is not finished, the
+/// brain's folder there and Claude logged in (a welcome must say the install is not done). `false`: no
+/// guide. A welcome that reads `true` only, as the one written before D1, never calls installed an
+/// install that stopped.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Offre {
+    Non,
+    Dossier,
+    Complet,
 }
 
-fn offered(home: &Path, claude: bool) -> bool {
-    claude && detect::brain(home, &agents::current(home)).complete()
+impl Serialize for Offre {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Offre::Non => s.serialize_bool(false),
+            Offre::Complet => s.serialize_bool(true),
+            Offre::Dossier => s.serialize_str("dossier"),
+        }
+    }
+}
+
+/// Whether the installer's welcome offers the guide (G0, decision D1): Claude Code and the brain's
+/// folder are there, and Claude Code is logged in. The guide needs nothing else of the install (memory,
+/// hooks, skills): an install that stopped once the brain's folder was made can already be guided (on
+/// Windows, gbrain and Bun come after the folder; on a Mac, the memory's index). A whole brain, as the
+/// installer's own check says it, needs no question (as before D1: the guide's window asks for the
+/// login itself); else one run of Claude Code (`auth status`), never the three of `status`, and none
+/// on a first launch, which holds no folder yet. The welcome waits for that run: past AUTH_WAIT, a
+/// Claude Code that hangs is no login, and the welcome shows the install as before D1.
+pub fn offert() -> Offre {
+    let home = sys::home();
+    offered(&home, detect::claude_bin().is_some(), &|| detect::brain(&home, &agents::current(&home)).complete(), &|| {
+        within(AUTH_WAIT, detect::claude_logged_in)
+    })
+}
+
+/// How long the welcome waits for `claude auth status` (detect's own limit is 10 s).
+const AUTH_WAIT: Duration = Duration::from_secs(3);
+
+/// The answer if it comes within `limit`, else false: the run goes on alone and its answer is dropped.
+fn within(limit: Duration, ask: fn() -> bool) -> bool {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(ask());
+    });
+    rx.recv_timeout(limit).unwrap_or(false)
+}
+
+fn offered(home: &Path, claude: bool, whole: &dyn Fn() -> bool, logged_in: &dyn Fn() -> bool) -> Offre {
+    if !claude || detect::vault(home).is_none() {
+        Offre::Non
+    } else if whole() {
+        Offre::Complet
+    } else if logged_in() {
+        Offre::Dossier
+    } else {
+        Offre::Non
+    }
 }
 
 pub fn status() -> Status {
     let home = sys::home();
     let check = || detect::claude_bin().ok_or(Ia::Absent).and_then(|c| check_cli(&c));
-    GUIDE.status(&home, &check)
+    GUIDE.status(&home, &check, &capture::System)
 }
 
 /// « J'ai compris »: the flag, an empty file.
@@ -2043,7 +2142,7 @@ pub fn fenetres() -> Result<Vec<Fenetre>, GuideError> {
     GUIDE.list(&capture::System)
 }
 
-/// « Clique dans la fenêtre de ton logiciel » (Windows): the window clicked within 15 s.
+/// « Clique dans la fenêtre de ton logiciel » (Windows, X11): the window clicked within 45 s.
 pub fn attendre_clic() -> Result<Fenetre, GuideError> {
     GUIDE.wait_click(&capture::System)
 }
@@ -2143,12 +2242,16 @@ pub enum Taille {
 }
 
 const MARGIN: f64 = 16.0;
+/// The window's title bar, above its content: the frame's size is the content's, its place the
+/// window's corner. Windows draws 31 px, macOS 28, GNOME up to 37; left out, the window went 15 px
+/// under the taskbar (G-38 to G-51, Windows 11 at 1024×768).
+const TITLE_BAR: f64 = 40.0;
 
 /// Where the guide's window goes in the screen's usable area (logical pixels): in the bottom right
-/// corner, 400 wide, 70 % of the height at most and 640 (R3).
+/// corner, 400 wide, 70 % of the height at most and 640 (R3), its title bar included.
 pub fn frame(area: Frame, taille: Taille) -> Frame {
     let room_w = (area.w - 2.0 * MARGIN).max(1.0);
-    let room_h = (area.h - 2.0 * MARGIN).max(1.0);
+    let room_h = (area.h - 2.0 * MARGIN - TITLE_BAR).max(1.0);
     let normal_h = (area.h * 0.7).clamp(420.0, 640.0).min(room_h);
     let (w, h): (f64, f64) = match taille {
         Taille::Normal => (400.0, normal_h),
@@ -2156,7 +2259,7 @@ pub fn frame(area: Frame, taille: Taille) -> Frame {
         Taille::Large => (900.0, normal_h),
     };
     let (w, h) = (w.min(room_w), h.min(room_h));
-    Frame { x: area.x + area.w - w - MARGIN, y: area.y + area.h - h - MARGIN, w, h }
+    Frame { x: area.x + area.w - w - MARGIN, y: area.y + area.h - h - MARGIN - TITLE_BAR, w, h }
 }
 
 #[cfg(test)]
@@ -2926,6 +3029,8 @@ mod tests {
         picker: bool,
         picked: Mutex<Option<Pick>>,
         forgotten: AtomicUsize,
+        /// A wait held open: it says it began, then waits for the test's go, its stop unseen.
+        gate: Mutex<Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>>,
     }
 
     impl Screen for FakeScreen {
@@ -2948,6 +3053,11 @@ mod tests {
             lock(&self.windows).clone()
         }
         fn clicked(&self, cancel: &AtomicBool) -> Option<capture::Found> {
+            if let Some((began, go)) = lock(&self.gate).take() {
+                began.send(()).unwrap();
+                go.recv().unwrap();
+                return lock(&self.clicked).clone();
+            }
             if self.stopped_meanwhile {
                 cancel.store(true, Ordering::SeqCst);
             }
@@ -3073,8 +3183,37 @@ mod tests {
         b.guide.stop_waiting.store(true, Ordering::SeqCst);
         *lock(&screen.clicked) = Some(odoo.clone());
         assert_eq!(b.guide.wait_click(&screen).unwrap().id, 11);
-        let stopped = FakeScreen { stopped_meanwhile: true, ..FakeScreen { clicked: Mutex::new(Some(odoo.clone())), ..screen_with(vec![odoo]) } };
+        let stopped = FakeScreen { stopped_meanwhile: true, ..FakeScreen { clicked: Mutex::new(Some(odoo.clone())), ..screen_with(vec![odoo.clone()]) } };
         assert_eq!(b.guide.wait_click(&stopped), Err(GuideError::Annule));
+
+        // « Choisir dans une liste » while Bibo waits: the page stops the wait and asks for the list at
+        // once. The wait ends after the list was made: a line of it is still chosen.
+        let excel = window(12, 200, "excel.exe", "Budget.xlsx");
+        let stopped = FakeScreen { stopped_meanwhile: true, ..screen_with(vec![odoo, excel]) };
+        assert_eq!(b.guide.list(&stopped).unwrap().len(), 2);
+        assert_eq!(b.guide.wait_click(&stopped), Err(GuideError::Annule));
+        assert_eq!(b.guide.choose(&stopped, Some(12)).unwrap().app, "excel");
+    }
+
+    /// The page's stop and the wait it stops cross: the stop came first, the wait began after it and goes
+    /// on. The list asked meanwhile stays the windows that may be chosen, whatever that wait finds then.
+    #[test]
+    fn a_wait_that_missed_its_stop_never_replaces_the_list() {
+        let b = Bench::new();
+        let odoo = window(11, 100, "odoo.exe", "Odoo");
+        let excel = window(12, 200, "excel.exe", "Budget.xlsx");
+        let (began_tx, began) = std::sync::mpsc::channel();
+        let (go, go_rx) = std::sync::mpsc::channel();
+        let screen = FakeScreen { clicked: Mutex::new(Some(odoo.clone())), gate: Mutex::new(Some((began_tx, go_rx))), ..screen_with(vec![odoo, excel]) };
+        b.guide.stop_waiting.store(true, Ordering::SeqCst);
+        std::thread::scope(|s| {
+            let waiting = s.spawn(|| b.guide.wait_click(&screen));
+            began.recv().unwrap();
+            assert_eq!(b.guide.list(&screen).unwrap().len(), 2);
+            go.send(()).unwrap();
+            assert_eq!(waiting.join().unwrap(), Err(GuideError::Annule), "nobody waits for it any more");
+        });
+        assert_eq!(b.guide.choose(&screen, Some(12)).unwrap().app, "excel", "a line of the list");
     }
 
     /// macOS: the window is the one the user picks in the system's picker; there is no list nor
@@ -3291,7 +3430,7 @@ mod tests {
             assert_eq!(journal.len(), 2);
             assert_eq!((journal[0]["issue"].as_str(), journal[0]["modele"].as_str()), (Some("modele_absent"), Some("opus")));
             assert_eq!((journal[1]["issue"].as_str(), journal[1]["modele"].as_str()), (Some("etape"), Some("sonnet")));
-            assert!(b.guide.status(b.home.path(), &|| Ok("2.1.305".into())).prudent);
+            assert!(b.guide.status(b.home.path(), &|| Ok("2.1.305".into()), &FakeScreen::default()).prudent);
         }
 
         // From then on, Sonnet straight away; no label, no ellipse at all.
@@ -3361,7 +3500,7 @@ mod tests {
         assert_eq!(b.send(Demande::Debut), Err(GuideError::Lancement), "an older Opus");
         // From now on, no question until the app starts again.
         assert_eq!(b.send(Demande::Debut), Err(GuideError::Indisponible { ia: Ia::Arrete }));
-        assert_eq!(b.guide.status(b.home.path(), &|| Ok("2.1.305".into())).ia, Ia::Arrete, "not « too old »: an update would not help");
+        assert_eq!(b.guide.status(b.home.path(), &|| Ok("2.1.305".into()), &FakeScreen::default()).ia, Ia::Arrete, "not « too old »: an update would not help");
         let issues: Vec<Value> = b.journal().iter().map(|e| e["issue"].clone()).collect();
         assert_eq!(issues, [json!("image_non_vue"), json!("refus"), json!("lancement")]);
         // Sonnet: the start-up line already says another model.
@@ -3403,30 +3542,90 @@ mod tests {
         assert_eq!(b.guide.paste(&png_of(1, 1, png::ColorType::Rgb, png::BitDepth::Eight, &[0; 3])), Err(GuideError::Occupe), "no capture swapped under a question");
     }
 
-    /// The welcome says « Ton second cerveau est installé » and leads to the guide only when the brain
-    /// is whole, as the installer's own check says it: a vault left by an install that failed later
-    /// (hooks, memory, skills) keeps the welcome of before, which leads to the check of the computer.
+    /// D1: the welcome leads to the guide once Claude is logged in and the brain's folder is there,
+    /// whatever else of the install is missing (an install stopped after the folder: no memory, no
+    /// hooks), and says which: a whole brain (`true`, as before D1) or the folder only (`"dossier"`).
+    /// Claude Code is asked only when it may change the answer: never on a first launch (no folder),
+    /// nor for a whole brain (offered as before).
     #[test]
-    fn the_guide_is_offered_only_with_a_whole_brain_and_claude() {
+    fn the_guide_is_offered_with_the_brains_folder_and_claude_logged_in() {
         let home = tempfile::tempdir().unwrap();
-        fs::create_dir_all(home.path().join("Documents/Brain")).unwrap();
-        assert!(!offered(home.path(), true), "the vault alone");
-        crate::detect::tests::fake_brain(home.path());
-        assert!(!offered(home.path(), false), "no Claude Code");
-        assert!(offered(home.path(), true));
-        fs::remove_dir_all(home.path().join(".gbrain")).unwrap();
-        assert!(!offered(home.path(), true), "no memory");
+        let h = home.path();
+        let asked = std::cell::Cell::new(0);
+        let logged = |yes: bool| {
+            let asked = &asked;
+            move || {
+                asked.set(asked.get() + 1);
+                yes
+            }
+        };
+        let whole = || crate::detect::brain(h, &crate::agents::current(h)).complete();
+        assert_eq!(offered(h, true, &whole, &logged(true)), Offre::Non, "no folder");
+        assert_eq!(asked.get(), 0, "Claude Code not run without the folder");
+        fs::create_dir_all(h.join("Documents/Brain")).unwrap();
+        assert_eq!(offered(h, true, &whole, &logged(true)), Offre::Dossier, "the folder alone, Claude logged in");
+        assert_eq!(offered(h, true, &whole, &logged(false)), Offre::Non, "the folder alone, Claude not logged in");
+        assert_eq!(offered(h, false, &whole, &logged(true)), Offre::Non, "no Claude Code");
+        crate::detect::tests::fake_brain(h);
+        let before = asked.get();
+        assert_eq!(offered(h, true, &whole, &logged(false)), Offre::Complet, "the whole brain: offered, the window asks for the login");
+        assert_eq!(asked.get(), before, "a whole brain needs no run of Claude Code");
+        fs::remove_dir_all(h.join(".gbrain")).unwrap();
+        assert_eq!(offered(h, true, &whole, &logged(true)), Offre::Dossier, "no memory: the guide needs none, the install is not done");
+        assert_eq!(offered(h, true, &whole, &logged(false)), Offre::Non, "no memory and no login");
+    }
+
+    /// What the welcome reads: `true` only for a whole brain, so a welcome that knows nothing else (the
+    /// one of before D1, « Ton second cerveau est installé ») never says it of an install that stopped.
+    #[test]
+    fn the_welcome_hears_true_only_for_a_whole_brain() {
+        assert_eq!(serde_json::to_value(Offre::Complet).unwrap(), json!(true));
+        assert_eq!(serde_json::to_value(Offre::Dossier).unwrap(), json!("dossier"));
+        assert_eq!(serde_json::to_value(Offre::Non).unwrap(), json!(false));
+    }
+
+    /// The welcome waits for `claude auth status` a few seconds, not detect's ten: a Claude Code that
+    /// hangs is no login.
+    #[test]
+    fn the_login_is_asked_within_a_few_seconds() {
+        assert!(within(Duration::from_secs(5), || true));
+        assert!(!within(Duration::from_secs(5), || false));
+        let start = std::time::Instant::now();
+        assert!(!within(Duration::from_millis(100), || {
+            std::thread::sleep(Duration::from_secs(3));
+            true
+        }));
+        assert!(start.elapsed() < Duration::from_secs(2), "{:?}", start.elapsed());
+        assert!(AUTH_WAIT <= Duration::from_secs(3));
     }
 
     #[test]
     fn the_status_says_what_stops_the_guide() {
         let b = Bench::new();
+        let screen = FakeScreen::default();
         for (check, ia) in [(Err(Ia::Absent), Ia::Absent), (Err(Ia::NotLoggedIn), Ia::NotLoggedIn), (Err(Ia::Billed), Ia::Billed), (Ok("2.1.305".to_string()), Ia::Ready)] {
-            assert_eq!(b.guide.status(b.home.path(), &|| check.clone()).ia, ia);
+            assert_eq!(b.guide.status(b.home.path(), &|| check.clone(), &screen).ia, ia);
         }
-        let s = b.guide.status(b.home.path(), &|| Ok("x".into()));
-        assert_eq!(serde_json::to_value(s.capture).unwrap(), json!({"mode": "collage", "raison": "a_venir"}));
-        assert!(!s.vu && !s.cerveau);
+        let s = b.guide.status(b.home.path(), &|| Ok("x".into()), &screen);
+        assert!(!s.vu && !s.cerveau && !s.complet);
+        fs::create_dir_all(b.home.path().join("Documents/Brain")).unwrap();
+        let s = b.guide.status(b.home.path(), &|| Ok("x".into()), &screen);
+        assert!(s.cerveau && !s.complet, "the folder alone: the guide works, no summary runs yet");
+        crate::detect::tests::fake_brain(b.home.path());
+        assert!(b.guide.status(b.home.path(), &|| Ok("x".into()), &screen).complet);
+    }
+
+    /// How the window gets the capture: a click (Windows, X11, with the time it waits), the system's
+    /// picker (macOS 14+), or a paste where Bibo cannot see a window (macOS 13, Wayland, X11 without
+    /// a compositing manager).
+    #[test]
+    fn the_status_says_how_the_capture_comes() {
+        let b = Bench::new();
+        let mode = |screen: &FakeScreen| serde_json::to_value(b.guide.status(b.home.path(), &|| Ok("x".into()), screen).capture).unwrap();
+        assert_eq!(mode(&FakeScreen::default()), json!({"mode": "auto", "via": "clic", "secondes": 45}));
+        assert_eq!(mode(&FakeScreen { picker: true, ..FakeScreen::default() }), json!({"mode": "auto", "via": "selecteur"}));
+        assert_eq!(mode(&FakeScreen { off: true, ..FakeScreen::default() }), json!({"mode": "collage", "raison": "indisponible"}));
+        assert_eq!(mode(&FakeScreen { off: true, picker: true, ..FakeScreen::default() })["mode"], "collage", "macOS 13: no picker");
     }
 
     #[test]
@@ -3465,12 +3664,20 @@ mod tests {
         let laptop = Frame { x: 0.0, y: 25.0, w: 1366.0, h: 743.0 };
         let f = frame(laptop, Taille::Normal);
         assert_eq!((f.w, f.h), (400.0, (743.0f64 * 0.7).max(420.0)));
-        assert_eq!((f.x + f.w + MARGIN, f.y + f.h + MARGIN), (1366.0, 768.0));
+        // Its title bar over it: the whole window above the taskbar, by the margin.
+        assert_eq!((f.x + f.w + MARGIN, f.y + TITLE_BAR + f.h + MARGIN), (1366.0, 768.0));
+        // Windows 11 at 1024×768, its taskbar 48 px high: the window's bottom (title bar of 31 px) 16 px
+        // or more above it, not 15 px under it as on G-38 to G-51.
+        let vm = Frame { x: 0.0, y: 0.0, w: 1024.0, h: 720.0 };
+        for taille in [Taille::Normal, Taille::Reduit, Taille::Large] {
+            let f = frame(vm, taille);
+            assert!(f.y >= 0.0 && f.y + 31.0 + f.h <= 720.0 - MARGIN, "{taille:?} {f:?}");
+        }
         assert_eq!(frame(Frame { x: 0.0, y: 0.0, w: 2560.0, h: 1400.0 }, Taille::Normal).h, 640.0);
         assert_eq!((frame(laptop, Taille::Reduit).w, frame(laptop, Taille::Reduit).h), (360.0, 220.0));
         assert_eq!(frame(laptop, Taille::Large).w, 900.0);
         let tiny = frame(Frame { x: 0.0, y: 0.0, w: 600.0, h: 400.0 }, Taille::Large);
-        assert!(tiny.x >= 0.0 && tiny.y >= 0.0 && tiny.w <= 568.0 && tiny.h <= 368.0, "{tiny:?}");
+        assert!(tiny.x >= 0.0 && tiny.y >= 0.0 && tiny.w <= 568.0 && tiny.h <= 368.0 - TITLE_BAR, "{tiny:?}");
     }
 
     #[test]

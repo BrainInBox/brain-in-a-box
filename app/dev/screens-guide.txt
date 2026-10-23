@@ -1,182 +1,293 @@
-# The guide's screens, paste mode (app/dev/screens.mjs --write): each scenario, the numbers
+# The guide's screens (app/dev/screens.mjs --write): each scenario, the numbers
 # of the screens it shows in their order, then the screens.
 
 ### g=ok&vu=0&go=enregistre
-1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20
+1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21
 
 ### g=ok&go=enregistre&os=windows
-21 4 5 6 22 8 9 10 11 12 23 14 15 16 17 18 19 20
+22 4 5 6 23 8 9 10 11 24 25 14 15 16 17 18 19 20 21
 
 ### g=ok&go=enregistre&os=linux
-21 4 5 6 24 8 9 10 11 12 25 14 15 16 17 18 19 20
+22 4 5 6 26 8 9 10 11 24 27 14 15 16 17 18 19 20 21
 
 ### g=ok&go=apercu&sent=1
-1 4 5 6 7 8 9 26
+1 4 5 6 7 8 9 28
 
 ### g=ok&go=apercu&nth=2&click=cacher&cache=1
-1 4 5 6 7 8 9 27 28 29
+1 4 5 6 7 8 9 29 30 31
 
 ### g=ok&go=apercu&nth=3&click=cacher,autre&cache=1&taille=1
-1 4 5 6 7 8 9 27 28 29 30
+1 4 5 6 7 8 9 29 30 31 32
 
 ### g=ok&go=apercu&depose=1
 1 4 5 6 7 8 9
 
 ### g=ok&go=apercu&nth=2&pause=1&click=arreter
-1 4 5 6 7 8 9 10 11 31
+1 4 5 6 7 8 9 10 11 33
 
 ### g=ok&go=objectif&nth=2&click=comment
-1 4 32
+1 4 34
 
 ### g=ok&go=abandon&click=bloque,next,bloque,next,bloque
-1 4 5 6 7 8 9 10 11 12 33 34 35 36 37
+1 4 5 6 7 8 9 10 11 12 35 36 14 37 38 39
 
 ### g=pointille&go=etape
-1 4 5 6 7 8 9 10 11 38
+1 4 5 6 7 8 9 10 11 40
 
 ### g=bas&go=etape
-1 4 5 6 7 8 9 10 11 39
+1 4 5 6 7 8 9 10 11 41
 
 ### g=ambigu&go=etape&nth=2
-1 4 5 6 7 8 9 10 11 12 13 40 41
+1 4 5 6 7 8 9 10 11 12 13 14 42 43
 
 ### g=pas-ici&go=etape
-1 4 5 6 7 8 9 10 11 42 43
+1 4 5 6 7 8 9 10 11 44 12
 
 ### g=bloque&go=etape
-1 4 5 6 7 8 9 10 11 44 43
+1 4 5 6 7 8 9 10 11 45 12
 
 ### g=pas-fait&go=etape&nth=2
-1 4 5 6 7 8 9 10 11 12 13 45 14
+1 4 5 6 7 8 9 10 11 12 13 14 46 15
 
 ### g=pas-fait&go=etape&nth=2&click=reessaie
-1 4 5 6 7 8 9 10 11 12 13 45 46
+1 4 5 6 7 8 9 10 11 12 13 14 46 47
 
 ### g=sensible&go=etape&nth=4
-1 4 5 6 7 8 9 10 11 12 13 14 15 47
+1 4 5 6 7 8 9 10 11 12 13 14 15 16 48
 
 ### g=suspect&go=bloque
-1 4 5 6 7 8 9 10 11 48
-
-### g=clickfix&go=bloque
 1 4 5 6 7 8 9 10 11 49
 
+### g=clickfix&go=bloque
+1 4 5 6 7 8 9 10 11 50
+
 ### g=refus&go=apercu&nth=2&cache=1
-1 4 5 6 7 8 9 10 11 50 27 28 29
+1 4 5 6 7 8 9 10 11 51 29 30 31
 
 ### g=quota&go=erreur
-1 4 5 6 7 8 9 10 11 51
-
-### g=presque-limite&go=etape
 1 4 5 6 7 8 9 10 11 52
 
+### g=presque-limite&go=etape
+1 4 5 6 7 8 9 10 11 53
+
 ### g=hors-ligne&go=etape
-1 4 5 6 7 8 9 10 11 53 12
+1 4 5 6 7 8 9 10 11 54 12
 
 ### g=delai&go=etape
-1 4 5 6 7 8 9 10 11 54 43
+1 4 5 6 7 8 9 10 11 55 12
 
 ### g=init&go=erreur
-1 4 5 6 7 8 9 10 11 55
+1 4 5 6 7 8 9 10 11 56
 
 ### g=image-non-vue&go=etape
-1 4 5 6 7 8 9 10 11 56 43
+1 4 5 6 7 8 9 10 11 57 12
 
 ### g=noire&go=apercu
-1 4 5 6 7 8 57
+1 4 5 6 7 8 58
 
 ### g=petit&go=apercu&os=windows
-21 4 5 6 22 8 58
+22 4 5 6 23 8 59
 
 ### g=budget&go=erreur
-1 4 5 6 7 8 9 10 11 12 13 59
+1 4 5 6 7 8 9 10 11 12 13 14 60
 
 ### g=budget-etape&go=abandon
-1 4 5 6 7 8 9 10 11 12 13 37
+1 4 5 6 7 8 9 10 11 12 13 14 39
 
 ### g=colle&go=apercu
-1 4 5 6 7 8 60 9
+1 4 5 6 7 8 61 9
 
 ### g=deja&go=coller
-1 4 5 6 61
+1 4 5 6 62
 
 ### g=remote&go=enregistre
-1 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 62
+1 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 63
 
 ### g=refusee&go=enregistre
-1 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 63 64 20
+1 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 64 65 21
 
 ### g=auth&go=objectif
-1 65 66 67 4
+1 66 67 68 4
 
 ### g=billed&go=facture
-1 68
-
-### g=vieux&go=vieux
 1 69
 
-### g=arrete&go=arrete
+### g=vieux&go=vieux
 1 70
 
-### g=installer&go=installer
+### g=arrete&go=arrete
 1 71
 
+### g=installer&go=installer
+1 72
+
 ### g=ok&go=apercu&nth=2&meme=1
-1 4 5 6 7 8 9 10 11 12 13 72
+1 4 5 6 7 8 9 10 11 12 13 73
 
 ### g=filtre&go=bloque
-1 4 5 6 7 8 9 10 11 73
-
-### g=quota&go=erreur&reprise=7200
 1 4 5 6 7 8 9 10 11 74
 
-### g=quota&go=erreur&reprise=86400
+### g=quota&go=erreur&reprise=7200
 1 4 5 6 7 8 9 10 11 75
 
+### g=quota&go=erreur&reprise=86400
+1 4 5 6 7 8 9 10 11 76
+
 ### g=ambigu&go=enregistrer
-1 4 5 6 7 8 9 10 11 12 13 40 41 76 77 17 78
+1 4 5 6 7 8 9 10 11 12 13 14 42 43 16 77 18 78
 
 ### g=ok&go=objectif&nth=2&click=back
 1 4 5 6 7
 
 ### g=pointille&go=etape&click=reduire
-1 4 5 6 7 8 9 10 11 38 79
+1 4 5 6 7 8 9 10 11 40 79
 
 ### g=ok&go=etape&nth=2&click=reduire
-1 4 5 6 7 8 9 10 11 12 80 13 81
+1 4 5 6 7 8 9 10 11 12 80 13 14 81
 
 ### g=ok&go=apercu&vide=1
 1 4 5 6 7 82 8 9
 
 ### g=ok&go=apercu&vide=1&os=windows
-21 4 5 6 22 83 8 9
+22 4 5 6 23 83 8 9
 
 ### g=ok&go=erreur&depose=jpeg
 1 4 5 6 7 84
 
 ### g=ok&go=etape&nth=2&lache=1
-1 4 5 6 7 8 9 10 11 12 13 14
+1 4 5 6 7 8 9 10 11 12 14 15
+
+### g=ambigu&go=etape&nth=2&lache=question
+1 4 5 6 7 8 9 10 11 12 13 14 42 43
 
 ### g=prudent&go=etape
 1 4 5 6 7 8 9 10 11 85
 
 ### g=prudent&go=etape&nth=2
-1 4 5 6 7 8 9 10 11 85 13 86
+1 4 5 6 7 8 9 10 11 85 13 14 86
 
 ### g=sans-modele&go=erreur
 1 4 5 6 7 8 9 10 11 87
 
 ### g=ok&go=apercu&os=linux&gtk=1
-21 4 5 6 24 8 9
+22 4 5 6 26 8 9
 
 ### g=ok&go=coller&nth=2&os=linux&gtk=vide
-21 4 5 6 24 8 88
+22 4 5 6 26 8 88
 
 ### g=ok&go=apercu&os=linux&gtk=1&recolle=apercu
-21 4 5 6 24 8 9 89
+22 4 5 6 26 8 9 89
 
 ### g=ok&go=cacher&click=cacher&os=linux&gtk=1&recolle=cacher
-21 4 5 6 24 8 9 27 90
+22 4 5 6 26 8 9 29 90
+
+### g=ok&cap=clic&os=windows&vu=0&go=enregistre&gestes=2
+22 91 92 93 94 95 96 97 98 99 10 11 100 101 15 16 17 18 19 20 21
+
+### g=ok&cap=clic&os=windows&clic=sage&go=etape&gestes=2
+22 93 102 103 104 105 98 101 10 11 106
+
+### g=ok&cap=selecteur&go=enregistre&gestes=2
+1 107 108 109 110 98 99 10 11 100 101 15 16 17 18 19 20 21
+
+### g=ok&cap=selecteur&selecteur=vide&go=objectif
+1 107 108 111
+
+### g=ok&cap=clic&os=windows&go=objectif&click=liste,fenetre-1
+22 93 112 113 96
+
+### g=ok&cap=clic&os=windows&clic=aucun&go=choisir&nth=2
+22 93 114
+
+### g=ok&cap=clic&os=windows&clic=terminal&go=terminal
+22 93 115
+
+### g=ok&cap=clic&os=windows&clic=ferme&go=objectif
+22 93 94 95 116 96
+
+### g=ok&cap=clic&os=windows&rate=noire&go=apercu
+22 93 94 95 96 97 98 117 8 9
+
+### g=ok&cap=clic&os=windows&rate=noire:2&go=enregistre
+22 93 94 95 96 97 98 99 10 11 100 117 8 14 15 118 16 17 18 19 20 21
+
+### g=ok&cap=clic&os=windows&rate=reduite&go=etape
+22 93 94 95 96 97 98 119 99 10 11 100
+
+### g=ok&cap=clic&os=windows&rate=fermee:2&go=etape&nth=2
+22 93 94 95 96 97 98 99 10 11 100 120 101 15
+
+### g=ok&cap=selecteur&selecteur=ferme&go=etape
+1 107 108 121 109 110 98 99 10 11 100
+
+### g=ok&cap=selecteur&selecteur=refuse&go=apercu
+1 107 108 122 8 4 5 6 9
+
+### g=ok&cap=macos_13&go=coller
+1 4 5 6 7
+
+### g=ok&cap=wayland&os=linux&go=coller
+22 4 5 6 26
+
+### g=ok&cap=sans_compositeur&os=linux&go=coller
+22 4 5 6 26
+
+### g=ok&cap=clic&os=windows&colle-avant=1&go=enregistre
+22 93 8 4 5 6 9 10 11 24 123 14 15 16 17 18 19 20 21
+
+### g=ok&cap=selecteur&colle-avant=1&go=enregistre
+1 107 8 4 5 6 9 10 11 12 124 14 15 16 17 18 19 20 21
+
+### g=ok&cap=clic&os=windows&go=apercu&nth=2&colle-etape=1
+22 93 94 95 96 97 98 99 10 11 100 8 101
+
+### g=ok&go=etape&arret=1
+1 4 5 6 7 8 9 10 11 12 125
+
+### g=ok&go=etape&compte=32
+1 4 5 6 7 8 9 10 11 126
+
+### g=ok&vu=0&go=comment&click=note-entreprise
+1 2 127
+
+### g=ok&cap=clic&os=windows&clic=pdf&go=objectif
+22 93 128 129 130
+
+### g=ok&cap=selecteur&selecteur=introuvable&go=objectif
+1 107 108 131 109
+
+### g=ok&cap=clic&os=windows&go=coller&click=deja-capture
+22 93 132
+
+### g=quota&go=erreur&complet=0
+1 4 5 6 7 8 9 10 11 133
+
+### g=ok&cap=clic&os=windows&rate=noire&go=coller&nth=2&click=auto
+22 93 94 95 96 97 98 117 134
+
+### g=ok&cap=clic&os=windows&rate=noire&go=etape&click=auto,liste,fenetre-4
+22 93 94 95 96 97 98 117 112 113 101 10 11 135
+
+### g=ok&cap=clic&os=windows&clic=arc&go=apercu
+22 93 136 137 138 139 140 98 99
+
+### g=ok&cap=clic&os=windows&go=objectif&click=pas-ouvert
+22 93 141 94 95 96
+
+### g=pas-fait&cap=clic&os=windows&go=etape&nth=2&click=nouvelle-fenetre
+22 93 94 95 96 97 98 99 10 11 100 101 142 143
+
+### g=pas-ici&cap=clic&os=windows&go=pas-ici
+22 93 94 95 96 97 98 99 10 11 144
+
+### g=ok&vu=0&go=comment&click=note-entreprise&copie=0
+1 2 145
+
+### g=ok&go=arreter&arret=1&colle-arret=1
+1 4 5 6 7 8 9 10 11 12 125
+
+### g=ok&cap=clic&os=windows&rate=fermee:2&go=arreter&arret=choisir:2
+22 93 94 95 96 97 98 99 10 11 100 120 146
 
 #1
 == charge
@@ -194,7 +305,8 @@ Je ne vois que les captures que tu colles ici, rien d’autre de ton écran.
 L’image part chez Anthropic, l’entreprise qui fait Claude, avec ton abonnement, comme un message que tu enverrais à Claude. Anthropic la garde 30 jours, ou 5 ans si tu as accepté que tes conversations servent à améliorer Claude.
 [Voir mon réglage]
 Bibo n’enregistre rien sur ton ordinateur : ni l’image, ni ce que Claude répond.
-Ton logiciel montre des clients ou des montants ? Tu peux cacher des zones avant l’envoi. Demande à ton entreprise si tu as le droit d’envoyer ces écrans.
+Pour essayer sans risque, ouvre la société de démonstration de ton logiciel. Sinon, cache noms et montants avec « Cacher une zone ». Si ces données ne sont pas à toi, vérifie que tu as le droit de les montrer.
+[Copier une note pour mon entreprise]
 [Pas maintenant]
 [J’ai compris]
 
@@ -207,7 +319,8 @@ Je ne vois que les captures que tu colles ici, rien d’autre de ton écran.
 L’image part chez Anthropic, l’entreprise qui fait Claude, avec ton abonnement, comme un message que tu enverrais à Claude. Anthropic la garde 30 jours, ou 5 ans si tu as accepté que tes conversations servent à améliorer Claude.
 [Voir mon réglage]
 Bibo n’enregistre rien sur ton ordinateur : ni l’image, ni ce que Claude répond.
-Ton logiciel montre des clients ou des montants ? Tu peux cacher des zones avant l’envoi. Demande à ton entreprise si tu as le droit d’envoyer ces écrans.
+Pour essayer sans risque, ouvre la société de démonstration de ton logiciel. Sinon, cache noms et montants avec « Cacher une zone ». Si ces données ne sont pas à toi, vérifie que tu as le droit de les montrer.
+[Copier une note pour mon entreprise]
 [Pas maintenant]
 [J’ai compris (inactif)]
 
@@ -255,11 +368,12 @@ Je ne vois que ce que tu colles ici. L’image part chez Anthropic, Bibo n’en 
 Montre-moi ta fenêtre.
 Fais une capture de la fenêtre d’Odoo, puis colle-la ici.
 [Toujours au-dessus]
-Appuie sur Cmd + Ctrl + Maj + 4, puis sur Espace.
-Clique sur la fenêtre de ton logiciel : l’image va dans le presse-papiers, sans fichier.
+Sur ce Mac, c’est toi qui fais la capture : voici comment.
+Appuie en même temps sur ⌘ Cmd, ⌃ Ctrl, ⇧ Maj et 4, puis sur la barre d’espace : un petit appareil photo apparaît.
+Clique sur la fenêtre de ton logiciel : l’image est copiée, sans fichier.
 Reviens ici et appuie sur Cmd + V.
+Tu t’es trompé ? Appuie sur Échap (esc) et recommence.
 Tu peux aussi glisser le fichier de ta capture sur cette fenêtre.
-Sur ce Mac, je ne sais pas encore voir tes fenêtres tout seul : la capture, c’est toi qui la fais.
 [Arrêter le guide]
 [Retour]
 
@@ -274,6 +388,8 @@ Un instant.
 Voici ce que Claude va voir.
 Vérifie qu’il n’y a rien que tu ne veux pas envoyer : tu peux cacher des zones.
 [Toujours au-dessus]
+Clique sur l’image pour la voir en grand.
+Tes onglets et l’adresse du site, en haut de la fenêtre, partent aussi : cache-les avec « Cacher une zone » si besoin.
 Voir exactement ce que j’envoie
 Elle part chez Anthropic avec ton abonnement Claude. Bibo n’en garde rien.
 [Autre capture]
@@ -283,7 +399,7 @@ Elle part chez Anthropic avec ton abonnement Claude. Bibo n’en garde rien.
 #10
 == regarde
 Claude regarde ta fenêtre…
-5 secondes environ.
+Environ 10 secondes.
 [Toujours au-dessus]
 Je lui montre ton image et ton objectif.
 Je vérifie d’abord Claude Code.
@@ -292,7 +408,7 @@ Je vérifie d’abord Claude Code.
 #11
 == regarde
 Claude regarde ta fenêtre…
-5 secondes environ.
+Environ 10 secondes.
 [Toujours au-dessus]
 Je lui montre ton image et ton objectif.
 Claude regarde ta fenêtre.
@@ -301,13 +417,13 @@ Claude regarde ta fenêtre.
 #12
 == etape
 Étape 1
+Fais-le dans Odoo, puis reviens cliquer « C’est fait ».
 [Réduire]
 [Toujours au-dessus]
 Clique sur « Nouveau », en haut à gauche, sous « Factures clients ».
 Le même endroit, en plus grand.
 Sur l’image, « Nouveau » est entouré en rouge.
-Clique dans ton logiciel, puis reviens ici cliquer « C’est fait ».
-1 capture envoyée à Claude, sur 40 pour cette fois.
+Tu peux aussi coller ici ta nouvelle capture (Cmd + V) : ça vaut « C’est fait ».
 [Arrêter le guide]
 [Je suis bloqué]
 [C’est fait]
@@ -317,40 +433,53 @@ Clique dans ton logiciel, puis reviens ici cliquer « C’est fait ».
 Montre-moi où tu en es.
 Fais une capture de la fenêtre d’Odoo, puis colle-la ici.
 [Toujours au-dessus]
-Appuie sur Cmd + Ctrl + Maj + 4, puis sur Espace.
-Clique sur la fenêtre de ton logiciel : l’image va dans le presse-papiers, sans fichier.
+Appuie en même temps sur ⌘ Cmd, ⌃ Ctrl, ⇧ Maj et 4, puis sur la barre d’espace : un petit appareil photo apparaît.
+Clique sur la fenêtre de ton logiciel : l’image est copiée, sans fichier.
 Reviens ici et appuie sur Cmd + V.
+Tu t’es trompé ? Appuie sur Échap (esc) et recommence.
 Tu peux aussi glisser le fichier de ta capture sur cette fenêtre.
 [Arrêter le guide]
 [Retour]
 
 #14
+== apercu
+Voici ce que Claude va voir.
+Vérifie qu’il n’y a rien que tu ne veux pas envoyer : tu peux cacher des zones.
+[Toujours au-dessus]
+Clique sur l’image pour la voir en grand.
+Voir exactement ce que j’envoie
+Elle part chez Anthropic avec ton abonnement Claude. Bibo n’en garde rien.
+[Autre capture]
+[Cacher une zone]
+[Envoyer à Claude]
+
+#15
 == etape
 Étape 2
+Fais-le dans Odoo, puis reviens cliquer « C’est fait ».
 [Réduire]
 [Toujours au-dessus]
 Clique dans le champ « Client », puis choisis ton client dans la liste.
 Le même endroit, en plus grand.
 Sur l’image, « Client » est entouré en rouge.
-2 captures envoyées à Claude, sur 40 pour cette fois.
-[Arrêter le guide]
-[Je suis bloqué]
-[C’est fait]
-
-#15
-== etape
-Étape 3
-[Réduire]
-[Toujours au-dessus]
-Clique sur « Valider », en haut à gauche.
-Le même endroit, en plus grand.
-Sur l’image, « Valider » est entouré en rouge.
-3 captures envoyées à Claude, sur 40 pour cette fois.
 [Arrêter le guide]
 [Je suis bloqué]
 [C’est fait]
 
 #16
+== etape
+Étape 3
+Fais-le dans Odoo, puis reviens cliquer « C’est fait ».
+[Réduire]
+[Toujours au-dessus]
+Clique sur « Valider », en haut à gauche.
+Le même endroit, en plus grand.
+Sur l’image, « Valider » est entouré en rouge.
+[Arrêter le guide]
+[Je suis bloqué]
+[C’est fait]
+
+#17
 == fin
 Bravo, c’est fait !
 Voici ce qu’on a fait ensemble.
@@ -362,23 +491,10 @@ Clique sur « Valider » pour créer la facture.
 [Nouvel objectif]
 [Enregistrer cette procédure]
 
-#17
+#18
 == enregistrer
 Je prépare la procédure…
 [Toujours au-dessus]
-
-#18
-== enregistrer
-Je l’écris dans ton cerveau ?
-Relis et corrige si tu veux : la prochaine fois, je m’en servirai.
-[Toujours au-dessus]
-Le titre
-Les étapes dans Odoo, une par ligneDans « Factures clients », clique sur « Nouveau ».
-Choisis le client dans le champ « Client ».
-Clique sur « Valider » pour créer la facture.
-Vérifie qu’aucun nom de client n’est dans le titre ni dans les étapes.
-[Retour]
-[Enregistrer dans mon cerveau]
 
 #19
 == enregistrer
@@ -391,9 +507,22 @@ Choisis le client dans le champ « Client ».
 Clique sur « Valider » pour créer la facture.
 Vérifie qu’aucun nom de client n’est dans le titre ni dans les étapes.
 [Retour]
-[Enregistrer dans mon cerveau (inactif)]
+[Enregistrer dans mon cerveau]
 
 #20
+== enregistrer
+Je l’écris dans ton cerveau ?
+Relis et corrige si tu veux : la prochaine fois, je m’en servirai.
+[Toujours au-dessus]
+Le titre
+Les étapes dans Odoo, une par ligneDans « Factures clients », clique sur « Nouveau ».
+Choisis le client dans le champ « Client ».
+Clique sur « Valider » pour créer la facture.
+Vérifie qu’aucun nom de client n’est dans le titre ni dans les étapes.
+[Retour]
+[Enregistrer dans mon cerveau (inactif)]
+
+#21
 == enregistre
 Enregistré dans Documents › Brain › Guides.
 Je m’en servirai la prochaine fois.
@@ -402,72 +531,94 @@ Cette note est sauvegardée avec le reste de ton cerveau.
 [Fermer le guide]
 [Nouvel objectif]
 
-#21
+#22
 == charge
 Je prépare le guide…
 Je vérifie Claude Code sur ton PC.
 [Toujours au-dessus]
 Un instant.
 
-#22
+#23
 == coller
 Montre-moi ta fenêtre.
 Fais une capture de la fenêtre d’Odoo, puis colle-la ici.
 [Toujours au-dessus]
-Appuie sur Windows + Maj + S, puis choisis « Fenêtre » en haut de l’écran.
-Clique sur la fenêtre de ton logiciel : l’image va dans le presse-papiers.
+Sur ce PC, c’est toi qui fais la capture : voici comment.
+Appuie en même temps sur ⊞ Windows, ⇧ Maj (Shift) et S. L’écran devient plus sombre : c’est normal.
+Garde le bouton gauche de la souris appuyé et encadre la fenêtre de ton logiciel, puis lâche : l’image est copiée.
 Reviens ici et appuie sur Ctrl + V.
+Tu t’es trompé ? Appuie sur Échap (Esc) et recommence.
 Tu peux aussi glisser le fichier de ta capture sur cette fenêtre.
-L’Outil Capture de Windows 11 en garde aussi une copie dans Images › Captures d’écran : tu peux l’effacer ensuite.
-Sur ce PC, je ne sais pas encore voir tes fenêtres tout seul : la capture, c’est toi qui la fais.
-[Arrêter le guide]
-[Retour]
-
-#23
-== coller
-Montre-moi où tu en es.
-Fais une capture de la fenêtre d’Odoo, puis colle-la ici.
-[Toujours au-dessus]
-Appuie sur Windows + Maj + S, puis choisis « Fenêtre » en haut de l’écran.
-Clique sur la fenêtre de ton logiciel : l’image va dans le presse-papiers.
-Reviens ici et appuie sur Ctrl + V.
-Tu peux aussi glisser le fichier de ta capture sur cette fenêtre.
-L’Outil Capture de Windows 11 en garde aussi une copie dans Images › Captures d’écran : tu peux l’effacer ensuite.
+Autre façon : clique dans la fenêtre de ton logiciel, puis appuie en même temps sur Alt et Impr. écran (PrtSc).
+L’Outil Capture (Snipping Tool) en garde aussi une copie dans Images › Captures d’écran (Pictures › Screenshots) : tu peux l’effacer ensuite.
 [Arrêter le guide]
 [Retour]
 
 #24
-== coller
-Montre-moi ta fenêtre.
-Fais une capture de la fenêtre d’Odoo, puis colle-la ici.
+== etape
+Étape 1
+Fais-le dans Odoo, puis reviens cliquer « C’est fait ».
+[Réduire]
 [Toujours au-dessus]
-Appuie sur la touche Impr. écran, puis choisis « Fenêtre ».
-Clique sur la fenêtre de ton logiciel, puis sur le rond de capture : l’image va dans le presse-papiers.
-Reviens ici et appuie sur Ctrl + V.
-Tu peux aussi glisser le fichier de ta capture sur cette fenêtre.
-L’outil de capture en garde aussi une copie dans Images › Captures d’écran : tu peux l’effacer ensuite.
-Sur ce PC, je ne sais pas encore voir tes fenêtres tout seul : la capture, c’est toi qui la fais.
+Clique sur « Nouveau », en haut à gauche, sous « Factures clients ».
+Le même endroit, en plus grand.
+Sur l’image, « Nouveau » est entouré en rouge.
+Tu peux aussi coller ici ta nouvelle capture (Ctrl + V) : ça vaut « C’est fait ».
 [Arrêter le guide]
-[Retour]
+[Je suis bloqué]
+[C’est fait]
 
 #25
 == coller
 Montre-moi où tu en es.
 Fais une capture de la fenêtre d’Odoo, puis colle-la ici.
 [Toujours au-dessus]
-Appuie sur la touche Impr. écran, puis choisis « Fenêtre ».
+Appuie en même temps sur ⊞ Windows, ⇧ Maj (Shift) et S. L’écran devient plus sombre : c’est normal.
+Garde le bouton gauche de la souris appuyé et encadre la fenêtre de ton logiciel, puis lâche : l’image est copiée.
+Reviens ici et appuie sur Ctrl + V.
+Tu t’es trompé ? Appuie sur Échap (Esc) et recommence.
+Tu peux aussi glisser le fichier de ta capture sur cette fenêtre.
+Autre façon : clique dans la fenêtre de ton logiciel, puis appuie en même temps sur Alt et Impr. écran (PrtSc).
+L’Outil Capture (Snipping Tool) en garde aussi une copie dans Images › Captures d’écran (Pictures › Screenshots) : tu peux l’effacer ensuite.
+[Arrêter le guide]
+[Retour]
+
+#26
+== coller
+Montre-moi ta fenêtre.
+Fais une capture de la fenêtre d’Odoo, puis colle-la ici.
+[Toujours au-dessus]
+Sur ce PC, c’est toi qui fais la capture : voici comment.
+Appuie sur la touche Impr. écran (Print Screen), puis choisis « Fenêtre ».
 Clique sur la fenêtre de ton logiciel, puis sur le rond de capture : l’image va dans le presse-papiers.
 Reviens ici et appuie sur Ctrl + V.
+Tu t’es trompé ? Appuie sur Échap et recommence.
 Tu peux aussi glisser le fichier de ta capture sur cette fenêtre.
 L’outil de capture en garde aussi une copie dans Images › Captures d’écran : tu peux l’effacer ensuite.
 [Arrêter le guide]
 [Retour]
 
-#26
+#27
+== coller
+Montre-moi où tu en es.
+Fais une capture de la fenêtre d’Odoo, puis colle-la ici.
+[Toujours au-dessus]
+Appuie sur la touche Impr. écran (Print Screen), puis choisis « Fenêtre ».
+Clique sur la fenêtre de ton logiciel, puis sur le rond de capture : l’image va dans le presse-papiers.
+Reviens ici et appuie sur Ctrl + V.
+Tu t’es trompé ? Appuie sur Échap et recommence.
+Tu peux aussi glisser le fichier de ta capture sur cette fenêtre.
+L’outil de capture en garde aussi une copie dans Images › Captures d’écran : tu peux l’effacer ensuite.
+[Arrêter le guide]
+[Retour]
+
+#28
 == apercu
 Voici ce que Claude va voir.
 Vérifie qu’il n’y a rien que tu ne veux pas envoyer : tu peux cacher des zones.
 [Toujours au-dessus]
+Clique sur l’image pour la voir en grand.
+Tes onglets et l’adresse du site, en haut de la fenêtre, partent aussi : cache-les avec « Cacher une zone » si besoin.
 Voir exactement ce que j’envoie
 L’image ci-dessus, puis ce texte :
 Elle part chez Anthropic avec ton abonnement Claude. Bibo n’en garde rien.
@@ -475,7 +626,7 @@ Elle part chez Anthropic avec ton abonnement Claude. Bibo n’en garde rien.
 [Cacher une zone]
 [Envoyer à Claude]
 
-#27
+#29
 == cacher (large)
 Glisse sur l’image pour cacher une zone.
 Elle sera noire pour Claude, et le restera pour tes captures suivantes de la même taille.
@@ -484,7 +635,7 @@ Aucune zone cachée pour l’instant.
 [Annuler la dernière (inactif)]
 [J’ai fini]
 
-#28
+#30
 == cacher (large)
 Glisse sur l’image pour cacher une zone.
 Elle sera noire pour Claude, et le restera pour tes captures suivantes de la même taille.
@@ -493,11 +644,12 @@ Elle sera noire pour Claude, et le restera pour tes captures suivantes de la mê
 [Annuler la dernière]
 [J’ai fini]
 
-#29
+#31
 == apercu (large)
 Voici ce que Claude va voir.
 Vérifie qu’il n’y a rien que tu ne veux pas envoyer : tu peux cacher des zones.
 [Toujours au-dessus]
+Clique sur l’image pour la voir en grand.
 1 zone cachée, gardée pour tes prochaines captures de la même taille.
 Voir exactement ce que j’envoie
 Elle part chez Anthropic avec ton abonnement Claude. Bibo n’en garde rien.
@@ -505,31 +657,35 @@ Elle part chez Anthropic avec ton abonnement Claude. Bibo n’en garde rien.
 [Cacher une zone]
 [Envoyer à Claude]
 
-#30
+#32
 == apercu
 Voici ce que Claude va voir.
 Vérifie qu’il n’y a rien que tu ne veux pas envoyer : tu peux cacher des zones.
 [Toujours au-dessus]
+Clique sur l’image pour la voir en grand.
 Cette fenêtre est toute petite : c’est la bonne ?
 Cette capture n’a pas la même taille que celle où tu as caché des zones : elles ne s’appliquent pas ici. Cache-les à nouveau si besoin.
+Tes onglets et l’adresse du site, en haut de la fenêtre, partent aussi : cache-les avec « Cacher une zone » si besoin.
 Voir exactement ce que j’envoie
 Elle part chez Anthropic avec ton abonnement Claude. Bibo n’en garde rien.
 [Autre capture]
 [Cacher une zone]
 [Envoyer à Claude]
 
-#31
+#33
 == apercu
 J’ai arrêté.
 Tu peux renvoyer la même capture, ou en faire une autre.
 [Toujours au-dessus]
+Clique sur l’image pour la voir en grand.
+Tes onglets et l’adresse du site, en haut de la fenêtre, partent aussi : cache-les avec « Cacher une zone » si besoin.
 Voir exactement ce que j’envoie
 Elle part chez Anthropic avec ton abonnement Claude. Bibo n’en garde rien.
 [Autre capture]
 [Cacher une zone]
 [Envoyer à Claude]
 
-#32
+#34
 == comment
 Comment je regarde ton écran
 [Toujours au-dessus]
@@ -537,10 +693,11 @@ Je ne vois que les captures que tu colles ici, rien d’autre de ton écran.
 L’image part chez Anthropic, l’entreprise qui fait Claude, avec ton abonnement, comme un message que tu enverrais à Claude. Anthropic la garde 30 jours, ou 5 ans si tu as accepté que tes conversations servent à améliorer Claude.
 [Voir mon réglage]
 Bibo n’enregistre rien sur ton ordinateur : ni l’image, ni ce que Claude répond.
-Ton logiciel montre des clients ou des montants ? Tu peux cacher des zones avant l’envoi. Demande à ton entreprise si tu as le droit d’envoyer ces écrans.
+Pour essayer sans risque, ouvre la société de démonstration de ton logiciel. Sinon, cache noms et montants avec « Cacher une zone ». Si ces données ne sont pas à toi, vérifie que tu as le droit de les montrer.
+[Copier une note pour mon entreprise]
 [Retour]
 
-#33
+#35
 == coince
 Qu’est-ce qui coince ?
 Dis-le-moi si tu veux, puis montre-moi ta fenêtre.
@@ -551,45 +708,46 @@ Dis-le-moi si tu veux, puis montre-moi ta fenêtre.
 [Retour]
 [Continuer]
 
-#34
+#36
 == coller
 Montre-moi ce que tu vois.
 Fais une capture de la fenêtre d’Odoo, puis colle-la ici.
 [Toujours au-dessus]
-Appuie sur Cmd + Ctrl + Maj + 4, puis sur Espace.
-Clique sur la fenêtre de ton logiciel : l’image va dans le presse-papiers, sans fichier.
+Appuie en même temps sur ⌘ Cmd, ⌃ Ctrl, ⇧ Maj et 4, puis sur la barre d’espace : un petit appareil photo apparaît.
+Clique sur la fenêtre de ton logiciel : l’image est copiée, sans fichier.
 Reviens ici et appuie sur Cmd + V.
+Tu t’es trompé ? Appuie sur Échap (esc) et recommence.
 Tu peux aussi glisser le fichier de ta capture sur cette fenêtre.
 [Arrêter le guide]
 [Retour]
 
-#35
+#37
 == etape
 Étape 1
+Fais-le dans Odoo, puis reviens cliquer « C’est fait ».
 [Réduire]
 [Toujours au-dessus]
 Clique dans le champ « Client », puis choisis ton client dans la liste.
 Le même endroit, en plus grand.
 Sur l’image, « Client » est entouré en rouge.
-2 captures envoyées à Claude, sur 40 pour cette fois.
 [Arrêter le guide]
 [Je suis bloqué]
 [C’est fait]
 
-#36
+#38
 == etape
 Étape 1
+Fais-le dans Odoo, puis reviens cliquer « C’est fait ».
 [Réduire]
 [Toujours au-dessus]
 Clique sur « Valider », en haut à gauche.
 Le même endroit, en plus grand.
 Sur l’image, « Valider » est entouré en rouge.
-3 captures envoyées à Claude, sur 40 pour cette fois.
 [Arrêter le guide]
 [Je suis bloqué]
 [C’est fait]
 
-#37
+#39
 == abandon
 On n’y arrive pas ensemble.
 Tu peux demander à quelqu’un, ou recommencer avec un objectif plus précis.
@@ -597,35 +755,35 @@ Tu peux demander à quelqu’un, ou recommencer avec un objectif plus précis.
 [Arrêter]
 [Nouvel objectif]
 
-#38
+#40
 == etape
 Étape 1
+Fais-le dans Odoo, puis reviens cliquer « C’est fait ».
 [Réduire]
 [Toujours au-dessus]
 Clique sur « Nouveau », en haut à gauche, sous « Factures clients ».
 Vérifie que le bouton s’appelle « Nouveau ».
 Le même endroit, en plus grand.
 Sur l’image, la zone à vérifier est entourée en pointillés.
-Clique dans ton logiciel, puis reviens ici cliquer « C’est fait ».
-1 capture envoyée à Claude, sur 40 pour cette fois.
+Tu peux aussi coller ici ta nouvelle capture (Cmd + V) : ça vaut « C’est fait ».
 [Arrêter le guide]
 [Je suis bloqué]
 [C’est fait]
 
-#39
+#41
 == etape
 Étape 1
+Fais-le dans Odoo, puis reviens cliquer « C’est fait ».
 [Réduire]
 [Toujours au-dessus]
 Clique sur « Nouveau », en haut à gauche, sous « Factures clients ».
 Je ne suis pas sûr de l’endroit exact, alors je ne l’entoure pas : cherche « Nouveau » sur ton écran.
-Clique dans ton logiciel, puis reviens ici cliquer « C’est fait ».
-1 capture envoyée à Claude, sur 40 pour cette fois.
+Tu peux aussi coller ici ta nouvelle capture (Cmd + V) : ça vaut « C’est fait ».
 [Arrêter le guide]
 [Je suis bloqué]
 [C’est fait]
 
-#40
+#42
 == question
 Une question avant de continuer
 [Toujours au-dessus]
@@ -633,56 +791,39 @@ Il y a deux clients « Martin » : lequel ?
 [Boulangerie Martin]
 [Martin Fleurs]
 [Aucun]
-2 captures envoyées à Claude, sur 40 pour cette fois.
 [Arrêter le guide]
 
-#41
+#43
 == etape
 Étape 2
+Fais-le dans Odoo, puis reviens cliquer « C’est fait ».
 [Réduire]
 [Toujours au-dessus]
 Clique sur « Boulangerie Martin » dans la liste du champ « Client ».
 Le même endroit, en plus grand.
 Sur l’image, « Boulangerie Martin » est entouré en rouge.
-3 captures envoyées à Claude, sur 40 pour cette fois.
-[Arrêter le guide]
-[Je suis bloqué]
-[C’est fait]
-
-#42
-== pas-ici
-Je ne vois pas ça dans cette fenêtre.
-[Toujours au-dessus]
-Ouvre le menu « Facturation » en haut, puis reviens me montrer la fenêtre.
-1 capture envoyée à Claude, sur 40 pour cette fois.
-[Arrêter le guide]
-[Nouvelle capture]
-
-#43
-== etape
-Étape 1
-[Réduire]
-[Toujours au-dessus]
-Clique sur « Nouveau », en haut à gauche, sous « Factures clients ».
-Le même endroit, en plus grand.
-Sur l’image, « Nouveau » est entouré en rouge.
-Clique dans ton logiciel, puis reviens ici cliquer « C’est fait ».
-2 captures envoyées à Claude, sur 40 pour cette fois.
 [Arrêter le guide]
 [Je suis bloqué]
 [C’est fait]
 
 #44
+== pas-ici
+Je ne vois pas ça dans cette fenêtre.
+[Toujours au-dessus]
+Ouvre le menu « Facturation » en haut, puis reviens me montrer la fenêtre.
+[Arrêter le guide]
+[Nouvelle capture]
+
+#45
 == bloque
 Ça coince.
 [Toujours au-dessus]
 Un message dit « Accès refusé » : il te manque le droit de créer des factures. Demande-le à la personne qui gère le logiciel.
-1 capture envoyée à Claude, sur 40 pour cette fois.
 [Arrêter le guide]
 [Je suis bloqué]
 [Nouvelle capture]
 
-#45
+#46
 == confirmer
 On dirait que rien n’a changé.
 Tu as bien cliqué sur « Nouveau » ?
@@ -691,56 +832,54 @@ Clique sur « Nouveau », en haut à gauche, sous « Factures clients ».
 [Je réessaie]
 [Oui, c’est fait]
 
-#46
+#47
 == etape
 Étape 1
+Fais-le dans Odoo, puis reviens cliquer « C’est fait ».
 [Réduire]
 [Toujours au-dessus]
 Clique sur « Nouveau », en haut à gauche, sous « Factures clients ».
 Le même endroit, en plus grand.
 Sur l’image, « Nouveau » est entouré en rouge.
-2 captures envoyées à Claude, sur 40 pour cette fois.
 [Arrêter le guide]
 [Je suis bloqué]
 [C’est fait]
 
-#47
+#48
 == etape
 Étape 4
+Fais-le dans Odoo, puis reviens cliquer « C’est fait ».
 [Réduire]
 [Toujours au-dessus]
 Clique sur « Envoyer par e-mail », en haut à droite.
 Attention : ce clic est définitif (supprimer, valider, envoyer, payer). Vérifie avant.
 Le même endroit, en plus grand.
 Sur l’image, « Envoyer par e-mail » est entouré en rouge.
-4 captures envoyées à Claude, sur 40 pour cette fois.
 [Arrêter le guide]
 [Je suis bloqué]
 [C’est fait]
-
-#48
-== bloque
-Méfie-toi de cet écran.
-[Toujours au-dessus]
-L’écran demande de taper un code reçu par SMS pour « débloquer » le compte : ne le fais pas.
-Cette fenêtre contient un texte qui essaie de donner des ordres. Je ne le suis pas. Ne tape aucun code ni mot de passe qu’il te demande.
-1 capture envoyée à Claude, sur 40 pour cette fois.
-[Arrêter le guide]
-[Je suis bloqué]
-[Nouvelle capture]
 
 #49
 == bloque
 Méfie-toi de cet écran.
 [Toujours au-dessus]
-Je ne te donne pas cette consigne : elle demande d’ouvrir un lien, d’appeler un numéro, de taper une commande ou de laisser quelqu’un prendre la main à distance. Ne le fais pas.
+L’écran demande de taper un code reçu par SMS pour « débloquer » le compte : ne le fais pas.
 Cette fenêtre contient un texte qui essaie de donner des ordres. Je ne le suis pas. Ne tape aucun code ni mot de passe qu’il te demande.
-1 capture envoyée à Claude, sur 40 pour cette fois.
 [Arrêter le guide]
 [Je suis bloqué]
 [Nouvelle capture]
 
 #50
+== bloque
+Méfie-toi de cet écran.
+[Toujours au-dessus]
+Je ne te donne pas cette consigne : elle demande d’ouvrir un lien, d’appeler un numéro, de taper une commande ou de laisser quelqu’un prendre la main à distance. Ne le fais pas.
+Cette fenêtre contient un texte qui essaie de donner des ordres. Je ne le suis pas. Ne tape aucun code ni mot de passe qu’il te demande.
+[Arrêter le guide]
+[Je suis bloqué]
+[Nouvelle capture]
+
+#51
 == erreur
 Claude n’a pas voulu analyser cette capture.
 Quelque chose sur cette capture l’a gêné (un code, un mot de passe, un message d’alerte ?). Cache-le, ou montre un autre écran.
@@ -749,29 +888,29 @@ Quelque chose sur cette capture l’a gêné (un code, un mot de passe, un messa
 [Nouvelle capture]
 [Cacher une zone]
 
-#51
+#52
 == erreur
 Ton abonnement est à sa limite jusqu’à mercredi 21 octobre 03:00.
-Reviens après cette heure et relance le guide.
+Reviens après cette heure et relance le guide. Les résumés automatiques de ton cerveau, à midi et le soir, comptent aussi dans cette limite.
 [Toujours au-dessus]
 [Fermer le guide]
 
-#52
+#53
 == etape
 Étape 1
+Fais-le dans Odoo, puis reviens cliquer « C’est fait ».
 [Réduire]
 [Toujours au-dessus]
 Clique sur « Nouveau », en haut à gauche, sous « Factures clients ».
 Le même endroit, en plus grand.
 Sur l’image, « Nouveau » est entouré en rouge.
-Clique dans ton logiciel, puis reviens ici cliquer « C’est fait ».
-1 capture envoyée à Claude, sur 40 pour cette fois.
+Tu peux aussi coller ici ta nouvelle capture (Cmd + V) : ça vaut « C’est fait ».
 Tu as utilisé 85 % de ton forfait des 5 dernières heures.
 [Arrêter le guide]
 [Je suis bloqué]
 [C’est fait]
 
-#53
+#54
 == erreur
 Pas d’internet : je ne peux pas demander à Claude.
 Vérifie ton Wi-Fi, puis réessaie.
@@ -779,7 +918,7 @@ Vérifie ton Wi-Fi, puis réessaie.
 [Arrêter le guide]
 [Réessayer]
 
-#54
+#55
 == erreur
 Claude met trop de temps.
 Tu peux réessayer : ça compte une capture de plus.
@@ -787,14 +926,14 @@ Tu peux réessayer : ça compte une capture de plus.
 [Arrêter le guide]
 [Réessayer]
 
-#55
+#56
 == erreur
 Claude ne s’est pas lancé comme prévu : je préfère arrêter le guide.
 Relance l’app pour réessayer.
 [Toujours au-dessus]
 [Fermer le guide]
 
-#56
+#57
 == erreur
 Claude n’a pas bien vu l’image.
 Tu peux réessayer : ça compte une capture de plus.
@@ -802,24 +941,14 @@ Tu peux réessayer : ça compte une capture de plus.
 [Arrêter le guide]
 [Réessayer]
 
-#57
-== apercu
-Voici ce que Claude va voir.
-Vérifie qu’il n’y a rien que tu ne veux pas envoyer : tu peux cacher des zones.
-[Toujours au-dessus]
-La capture est presque noire : ta fenêtre est peut-être réduite ou cachée.
-Voir exactement ce que j’envoie
-Elle part chez Anthropic avec ton abonnement Claude. Bibo n’en garde rien.
-[Autre capture]
-[Cacher une zone]
-[Envoyer à Claude]
-
 #58
 == apercu
 Voici ce que Claude va voir.
 Vérifie qu’il n’y a rien que tu ne veux pas envoyer : tu peux cacher des zones.
 [Toujours au-dessus]
-Cette fenêtre est toute petite : c’est la bonne ?
+Clique sur l’image pour la voir en grand.
+La capture est presque noire : ta fenêtre est peut-être réduite ou cachée.
+Tes onglets et l’adresse du site, en haut de la fenêtre, partent aussi : cache-les avec « Cacher une zone » si besoin.
 Voir exactement ce que j’envoie
 Elle part chez Anthropic avec ton abonnement Claude. Bibo n’en garde rien.
 [Autre capture]
@@ -827,6 +956,20 @@ Elle part chez Anthropic avec ton abonnement Claude. Bibo n’en garde rien.
 [Envoyer à Claude]
 
 #59
+== apercu
+Voici ce que Claude va voir.
+Vérifie qu’il n’y a rien que tu ne veux pas envoyer : tu peux cacher des zones.
+[Toujours au-dessus]
+Clique sur l’image pour la voir en grand.
+Cette fenêtre est toute petite : c’est la bonne ?
+Tes onglets et l’adresse du site, en haut de la fenêtre, partent aussi : cache-les avec « Cacher une zone » si besoin.
+Voir exactement ce que j’envoie
+Elle part chez Anthropic avec ton abonnement Claude. Bibo n’en garde rien.
+[Autre capture]
+[Cacher une zone]
+[Envoyer à Claude]
+
+#60
 == erreur
 On a fait beaucoup d’étapes.
 Pour ménager ton abonnement, recommence une séance.
@@ -834,7 +977,7 @@ Pour ménager ton abonnement, recommence une séance.
 [Fermer le guide]
 [Nouvel objectif]
 
-#60
+#61
 == erreur
 Je n’arrive pas à lire cette image.
 Refais une capture de la fenêtre seule, puis colle-la ici.
@@ -842,21 +985,22 @@ Refais une capture de la fenêtre seule, puis colle-la ici.
 [Arrêter le guide]
 [Réessayer]
 
-#61
+#62
 == coller
 Montre-moi ta fenêtre.
 Fais une capture de la fenêtre d’Odoo, puis colle-la ici.
 [Toujours au-dessus]
 J’ai déjà appris ça avec toi le 12/10 : je m’en sers.
-Appuie sur Cmd + Ctrl + Maj + 4, puis sur Espace.
-Clique sur la fenêtre de ton logiciel : l’image va dans le presse-papiers, sans fichier.
+Sur ce Mac, c’est toi qui fais la capture : voici comment.
+Appuie en même temps sur ⌘ Cmd, ⌃ Ctrl, ⇧ Maj et 4, puis sur la barre d’espace : un petit appareil photo apparaît.
+Clique sur la fenêtre de ton logiciel : l’image est copiée, sans fichier.
 Reviens ici et appuie sur Cmd + V.
+Tu t’es trompé ? Appuie sur Échap (esc) et recommence.
 Tu peux aussi glisser le fichier de ta capture sur cette fenêtre.
-Sur ce Mac, je ne sais pas encore voir tes fenêtres tout seul : la capture, c’est toi qui la fais.
 [Arrêter le guide]
 [Retour]
 
-#62
+#63
 == enregistre
 Enregistré dans Documents › Brain › Guides.
 Je m’en servirai la prochaine fois.
@@ -864,20 +1008,6 @@ Je m’en servirai la prochaine fois.
 Cette note est sauvegardée avec le reste de ton cerveau, et envoyée chaque nuit sur github.com.
 [Fermer le guide]
 [Nouvel objectif]
-
-#63
-== enregistrer
-Je l’écris dans ton cerveau ?
-Relis et corrige si tu veux : la prochaine fois, je m’en servirai.
-[Toujours au-dessus]
-Le titre
-Les étapes dans Odoo, une par ligneDans « Factures clients », clique sur « Nouveau ».
-Choisis le client dans le champ « Client ».
-Clique sur « Valider » pour créer la facture.
-Vérifie qu’aucun nom de client n’est dans le titre ni dans les étapes.
-L’étape 2 contient un lien, un numéro ou une commande : retire-les.
-[Retour]
-[Enregistrer dans mon cerveau]
 
 #64
 == enregistrer
@@ -891,15 +1021,21 @@ Clique sur « Valider » pour créer la facture.
 Vérifie qu’aucun nom de client n’est dans le titre ni dans les étapes.
 L’étape 2 contient un lien, un numéro ou une commande : retire-les.
 [Retour]
-[Enregistrer dans mon cerveau (inactif)]
+[Enregistrer dans mon cerveau]
 
 #65
-== connexion
-Connecte ton compte Claude pour que je puisse te guider.
-Une fenêtre noire va s’ouvrir, une seule fois : suis ce qu’elle dit, puis reviens ici.
+== enregistrer
+Je l’écris dans ton cerveau ?
+Relis et corrige si tu veux : la prochaine fois, je m’en servirai.
 [Toujours au-dessus]
-[Fermer le guide]
-[Connecter mon compte Claude]
+Le titre
+Les étapes dans Odoo, une par ligneDans « Factures clients », clique sur « Nouveau ».
+Choisis le client dans le champ « Client ».
+Clique sur « Valider » pour créer la facture.
+Vérifie qu’aucun nom de client n’est dans le titre ni dans les étapes.
+L’étape 2 contient un lien, un numéro ou une commande : retire-les.
+[Retour]
+[Enregistrer dans mon cerveau (inactif)]
 
 #66
 == connexion
@@ -907,9 +1043,17 @@ Connecte ton compte Claude pour que je puisse te guider.
 Une fenêtre noire va s’ouvrir, une seule fois : suis ce qu’elle dit, puis reviens ici.
 [Toujours au-dessus]
 [Fermer le guide]
-[Connecter mon compte Claude (inactif)]
+[Connecter mon compte Claude]
 
 #67
+== connexion
+Connecte ton compte Claude pour que je puisse te guider.
+Une fenêtre noire va s’ouvrir, une seule fois : suis ce qu’elle dit, puis reviens ici.
+[Toujours au-dessus]
+[Fermer le guide]
+[Connecter mon compte Claude (inactif)]
+
+#68
 == connexion
 J’attends que tu te connectes…
 Suis les étapes dans la fenêtre noire.
@@ -917,14 +1061,14 @@ Suis les étapes dans la fenêtre noire.
 [Fermer le guide]
 [Rouvrir la fenêtre]
 
-#68
+#69
 == facture
 Claude est connecté avec une clé qui serait facturée : je ne m’en sers pas.
 Le guide passe seulement par ton abonnement Claude.
 [Toujours au-dessus]
 [Fermer le guide]
 
-#69
+#70
 == vieux
 Ton Claude Code est trop ancien pour le guide.
 Une fenêtre noire va s’ouvrir et le mettre à jour : attends qu’elle dise que c’est fini, puis reviens ici.
@@ -932,68 +1076,55 @@ Une fenêtre noire va s’ouvrir et le mettre à jour : attends qu’elle dise 
 [Fermer le guide]
 [Mettre à jour]
 
-#70
+#71
 == arrete
 Claude ne s’est pas lancé comme prévu : je préfère arrêter le guide.
 Relance l’app pour réessayer.
 [Toujours au-dessus]
 [Fermer le guide]
 
-#71
+#72
 == installer
 Installe d’abord ton cerveau : c’est l’affaire de 15 minutes.
 Le guide se sert de ton cerveau et de Claude Code, que l’installation met sur ton Mac.
 [Toujours au-dessus]
 [Ouvrir l’installation]
 
-#72
+#73
 == apercu
 C’est la même capture que la dernière fois.
-As-tu appuyé aussi sur Ctrl ? Sans lui, la capture va sur le Bureau : glisse ce fichier ici, ou refais Cmd + Ctrl + Maj + 4 puis Espace.
+As-tu appuyé aussi sur ⌃ Ctrl ? Sans lui, la capture va sur le Bureau : glisse ce fichier ici, ou refais ⌘ Cmd + ⌃ Ctrl + ⇧ Maj + 4 puis Espace.
 [Toujours au-dessus]
+Clique sur l’image pour la voir en grand.
 Voir exactement ce que j’envoie
 Elle part chez Anthropic avec ton abonnement Claude. Bibo n’en garde rien.
 [Envoyer quand même]
 [Cacher une zone]
 [Refaire la capture]
 
-#73
+#74
 == bloque
 Je préfère ne pas te guider là-dessus.
 [Toujours au-dessus]
 Je ne te donne pas cette consigne : elle demande d’ouvrir un lien, d’appeler un numéro, de taper une commande ou de laisser quelqu’un prendre la main à distance. Ne le fais pas.
 Si ton écran te le demande lui-même, ne le fais pas non plus : c’est souvent une arnaque.
-1 capture envoyée à Claude, sur 40 pour cette fois.
 [Arrêter le guide]
 [Je suis bloqué]
 [Nouvelle capture]
 
-#74
-== erreur
-Ton abonnement est à sa limite jusqu’à 17:30.
-Reviens après cette heure et relance le guide.
-[Toujours au-dessus]
-[Fermer le guide]
-
 #75
 == erreur
-Ton abonnement est à sa limite jusqu’à demain 15:30.
-Reviens après cette heure et relance le guide.
+Ton abonnement est à sa limite jusqu’à 17:30.
+Reviens après cette heure et relance le guide. Les résumés automatiques de ton cerveau, à midi et le soir, comptent aussi dans cette limite.
 [Toujours au-dessus]
 [Fermer le guide]
 
 #76
-== etape
-Étape 3
-[Réduire]
+== erreur
+Ton abonnement est à sa limite jusqu’à demain 15:30.
+Reviens après cette heure et relance le guide. Les résumés automatiques de ton cerveau, à midi et le soir, comptent aussi dans cette limite.
 [Toujours au-dessus]
-Clique sur « Valider », en haut à gauche.
-Le même endroit, en plus grand.
-Sur l’image, « Valider » est entouré en rouge.
-4 captures envoyées à Claude, sur 40 pour cette fois.
-[Arrêter le guide]
-[Je suis bloqué]
-[C’est fait]
+[Fermer le guide]
 
 #77
 == fin
@@ -1048,27 +1179,30 @@ Le même endroit, en plus grand.
 #82
 == coller
 Je ne trouve pas d’image dans ce que tu as collé.
-As-tu appuyé aussi sur Ctrl ? Sans lui, la capture va sur le Bureau : glisse ce fichier ici, ou refais Cmd + Ctrl + Maj + 4 puis Espace.
+As-tu appuyé aussi sur ⌃ Ctrl ? Sans lui, la capture va sur le Bureau : glisse ce fichier ici, ou refais ⌘ Cmd + ⌃ Ctrl + ⇧ Maj + 4 puis Espace.
 [Toujours au-dessus]
-Appuie sur Cmd + Ctrl + Maj + 4, puis sur Espace.
-Clique sur la fenêtre de ton logiciel : l’image va dans le presse-papiers, sans fichier.
+Sur ce Mac, c’est toi qui fais la capture : voici comment.
+Appuie en même temps sur ⌘ Cmd, ⌃ Ctrl, ⇧ Maj et 4, puis sur la barre d’espace : un petit appareil photo apparaît.
+Clique sur la fenêtre de ton logiciel : l’image est copiée, sans fichier.
 Reviens ici et appuie sur Cmd + V.
+Tu t’es trompé ? Appuie sur Échap (esc) et recommence.
 Tu peux aussi glisser le fichier de ta capture sur cette fenêtre.
-Sur ce Mac, je ne sais pas encore voir tes fenêtres tout seul : la capture, c’est toi qui la fais.
 [Arrêter le guide]
 [Retour]
 
 #83
 == coller
 Je ne trouve pas d’image dans ce que tu as collé.
-Refais Windows + Maj + S, choisis « Fenêtre » et clique sur ton logiciel, puis colle ici.
+Refais ⊞ Windows + ⇧ Maj + S, encadre la fenêtre de ton logiciel, puis colle ici avec Ctrl + V.
 [Toujours au-dessus]
-Appuie sur Windows + Maj + S, puis choisis « Fenêtre » en haut de l’écran.
-Clique sur la fenêtre de ton logiciel : l’image va dans le presse-papiers.
+Sur ce PC, c’est toi qui fais la capture : voici comment.
+Appuie en même temps sur ⊞ Windows, ⇧ Maj (Shift) et S. L’écran devient plus sombre : c’est normal.
+Garde le bouton gauche de la souris appuyé et encadre la fenêtre de ton logiciel, puis lâche : l’image est copiée.
 Reviens ici et appuie sur Ctrl + V.
+Tu t’es trompé ? Appuie sur Échap (Esc) et recommence.
 Tu peux aussi glisser le fichier de ta capture sur cette fenêtre.
-L’Outil Capture de Windows 11 en garde aussi une copie dans Images › Captures d’écran : tu peux l’effacer ensuite.
-Sur ce PC, je ne sais pas encore voir tes fenêtres tout seul : la capture, c’est toi qui la fais.
+Autre façon : clique dans la fenêtre de ton logiciel, puis appuie en même temps sur Alt et Impr. écran (PrtSc).
+L’Outil Capture (Snipping Tool) en garde aussi une copie dans Images › Captures d’écran (Pictures › Screenshots) : tu peux l’effacer ensuite.
 [Arrêter le guide]
 [Retour]
 
@@ -1083,15 +1217,15 @@ Ouvre ce fichier, copie l’image, puis colle-la ici.
 #85
 == etape
 Étape 1
+Fais-le dans Odoo, puis reviens cliquer « C’est fait ».
 [Réduire]
 [Toujours au-dessus]
 Clique sur « Nouveau », en haut à gauche, sous « Factures clients ».
 Vérifie que le bouton s’appelle « Nouveau ».
 Le même endroit, en plus grand.
 Sur l’image, la zone à vérifier est entourée en pointillés.
-Clique dans ton logiciel, puis reviens ici cliquer « C’est fait ».
-Mode prudent : ton compte Claude ne me donne pas accès à Opus, son modèle le plus précis. Je passe par Sonnet : je n’entoure jamais rien en plein, vérifie chaque bouton avant de cliquer.
-1 capture envoyée à Claude, sur 40 pour cette fois.
+Tu peux aussi coller ici ta nouvelle capture (Cmd + V) : ça vaut « C’est fait ».
+Mode prudent : avec ton abonnement, je vois un peu moins précisément. Je montre l’endroit en pointillés : vérifie le nom du bouton avant de cliquer.
 [Arrêter le guide]
 [Je suis bloqué]
 [C’est fait]
@@ -1099,12 +1233,12 @@ Mode prudent : ton compte Claude ne me donne pas accès à Opus, son modèle le
 #86
 == etape
 Étape 2
+Fais-le dans Odoo, puis reviens cliquer « C’est fait ».
 [Réduire]
 [Toujours au-dessus]
 Clique dans le champ « Client », puis choisis ton client dans la liste.
 Je ne suis pas sûr de l’endroit exact, alors je ne l’entoure pas : cherche ce que dit la phrase ci-dessus sur ton écran.
-Mode prudent : ton compte Claude ne me donne pas accès à Opus, son modèle le plus précis. Je passe par Sonnet : je n’entoure jamais rien en plein, vérifie chaque bouton avant de cliquer.
-2 captures envoyées à Claude, sur 40 pour cette fois.
+Mode prudent : avec ton abonnement, je vois un peu moins précisément. Je montre l’endroit en pointillés : vérifie le nom du bouton avant de cliquer.
 [Arrêter le guide]
 [Je suis bloqué]
 [C’est fait]
@@ -1121,12 +1255,13 @@ Le guide a besoin de Claude Opus ou de Claude Sonnet dans Claude Code : regarde
 Je ne trouve pas d’image dans ce que tu as collé.
 Refais la capture avec la touche Impr. écran, en mode « Fenêtre », puis colle-la ici.
 [Toujours au-dessus]
-Appuie sur la touche Impr. écran, puis choisis « Fenêtre ».
+Sur ce PC, c’est toi qui fais la capture : voici comment.
+Appuie sur la touche Impr. écran (Print Screen), puis choisis « Fenêtre ».
 Clique sur la fenêtre de ton logiciel, puis sur le rond de capture : l’image va dans le presse-papiers.
 Reviens ici et appuie sur Ctrl + V.
+Tu t’es trompé ? Appuie sur Échap et recommence.
 Tu peux aussi glisser le fichier de ta capture sur cette fenêtre.
 L’outil de capture en garde aussi une copie dans Images › Captures d’écran : tu peux l’effacer ensuite.
-Sur ce PC, je ne sais pas encore voir tes fenêtres tout seul : la capture, c’est toi qui la fais.
 [Arrêter le guide]
 [Retour]
 
@@ -1135,6 +1270,8 @@ Sur ce PC, je ne sais pas encore voir tes fenêtres tout seul : la capture, c�
 Je ne trouve pas d’image dans ce que tu as collé.
 Refais la capture avec la touche Impr. écran, en mode « Fenêtre », puis colle-la ici.
 [Toujours au-dessus]
+Clique sur l’image pour la voir en grand.
+Tes onglets et l’adresse du site, en haut de la fenêtre, partent aussi : cache-les avec « Cacher une zone » si besoin.
 Voir exactement ce que j’envoie
 Elle part chez Anthropic avec ton abonnement Claude. Bibo n’en garde rien.
 [Autre capture]
@@ -1149,3 +1286,709 @@ Refais la capture avec la touche Impr. écran, en mode « Fenêtre », puis co
 Aucune zone cachée pour l’instant.
 [Annuler la dernière (inactif)]
 [J’ai fini]
+
+#91
+== comment
+Comment je regarde ton écran
+Avant de commencer, quatre choses à savoir.
+[Toujours au-dessus]
+Je ne vois que la fenêtre que tu choisis, et seulement quand tu me le demandes : jamais le reste de ton écran.
+L’image part chez Anthropic, l’entreprise qui fait Claude, avec ton abonnement, comme un message que tu enverrais à Claude. Anthropic la garde 30 jours, ou 5 ans si tu as accepté que tes conversations servent à améliorer Claude.
+[Voir mon réglage]
+Bibo n’enregistre rien sur ton ordinateur : ni l’image, ni ce que Claude répond.
+Pour essayer sans risque, ouvre la société de démonstration de ton logiciel. Sinon, cache noms et montants avec « Cacher une zone ». Si ces données ne sont pas à toi, vérifie que tu as le droit de les montrer.
+[Copier une note pour mon entreprise]
+[Pas maintenant]
+[J’ai compris]
+
+#92
+== comment
+Comment je regarde ton écran
+Avant de commencer, quatre choses à savoir.
+[Toujours au-dessus]
+Je ne vois que la fenêtre que tu choisis, et seulement quand tu me le demandes : jamais le reste de ton écran.
+L’image part chez Anthropic, l’entreprise qui fait Claude, avec ton abonnement, comme un message que tu enverrais à Claude. Anthropic la garde 30 jours, ou 5 ans si tu as accepté que tes conversations servent à améliorer Claude.
+[Voir mon réglage]
+Bibo n’enregistre rien sur ton ordinateur : ni l’image, ni ce que Claude répond.
+Pour essayer sans risque, ouvre la société de démonstration de ton logiciel. Sinon, cache noms et montants avec « Cacher une zone ». Si ces données ne sont pas à toi, vérifie que tu as le droit de les montrer.
+[Copier une note pour mon entreprise]
+[Pas maintenant]
+[J’ai compris (inactif)]
+
+#93
+== choisir
+Montre-moi ta fenêtre.
+Clique une fois dans la fenêtre de ton logiciel : je la reconnais tout seul.
+[Toujours au-dessus]
+Temps pour cliquer : 
+[Mon logiciel n’est pas encore ouvert]
+Il est réduit ? Clique sur son icône dans la barre des tâches (taskbar), puis dans sa fenêtre.
+[J’ai déjà une capture]
+[Arrêter le guide]
+[Choisir dans une liste]
+
+#94
+== fenetre
+C’est bien celle-ci ?
+[Toujours au-dessus]
+Microsoft Edge
+Factures clients - Odoo
+[Arrêter le guide]
+[Non, une autre]
+[Oui, c’est elle]
+
+#95
+== fenetre
+C’est bien celle-ci ?
+[Toujours au-dessus]
+Microsoft Edge
+Factures clients - Odoo
+[Arrêter le guide]
+[Non, une autre]
+[Oui, c’est elle (inactif)]
+
+#96
+== objectif
+Qu’est-ce que tu veux faire ?
+Dis-moi ce que tu veux faire dans ton logiciel : je te guide une étape à la fois.
+[Toujours au-dessus]
+Ta fenêtre :
+Microsoft Edge — Factures clients - Odoo
+[Autre fenêtre]
+Ton logiciel
+Qu’est-ce que tu veux faire dans Odoo ?
+Par exemple : « Faire une facture à un client », « Donner un accès à ma comptable ».
+Je ne regarde que cette fenêtre, et seulement quand tu me le demandes. L’image part chez Anthropic, Bibo n’en garde rien. 
+[Comment je regarde ton écran]
+[Arrêter le guide]
+[Continuer (inactif)]
+
+#97
+== objectif
+Qu’est-ce que tu veux faire ?
+Dis-moi ce que tu veux faire dans ton logiciel : je te guide une étape à la fois.
+[Toujours au-dessus]
+Ta fenêtre :
+Microsoft Edge — Factures clients - Odoo
+[Autre fenêtre]
+Ton logiciel
+Qu’est-ce que tu veux faire dans Odoo ?
+Par exemple : « Faire une facture à un client », « Donner un accès à ma comptable ».
+Je ne regarde que cette fenêtre, et seulement quand tu me le demandes. L’image part chez Anthropic, Bibo n’en garde rien. 
+[Comment je regarde ton écran]
+[Arrêter le guide]
+[Continuer]
+
+#98
+== photo
+Je prends ta fenêtre en photo…
+[Toujours au-dessus]
+Un instant.
+
+#99
+== apercu
+Voici ce que Claude va voir.
+Vérifie qu’il n’y a rien que tu ne veux pas envoyer : tu peux cacher des zones.
+[Toujours au-dessus]
+Clique sur l’image pour la voir en grand.
+Tes onglets et l’adresse du site, en haut de la fenêtre, partent aussi : cache-les avec « Cacher une zone » si besoin.
+Voir exactement ce que j’envoie
+Elle part chez Anthropic avec ton abonnement Claude. Bibo n’en garde rien.
+[Autre fenêtre]
+[Cacher une zone]
+[Envoyer à Claude]
+
+#100
+== etape
+Étape 1
+Fais-le dans Odoo, puis reviens cliquer « C’est fait ».
+[Réduire]
+[Toujours au-dessus]
+Clique sur « Nouveau », en haut à gauche, sous « Factures clients ».
+Le même endroit, en plus grand.
+Sur l’image, « Nouveau » est entouré en rouge.
+Quand tu cliques « C’est fait », je reprends moi-même la photo de ta fenêtre.
+[Arrêter le guide]
+[Je suis bloqué]
+[C’est fait]
+
+#101
+== apercu
+Voici ce que Claude va voir.
+Vérifie qu’il n’y a rien que tu ne veux pas envoyer : tu peux cacher des zones.
+[Toujours au-dessus]
+Clique sur l’image pour la voir en grand.
+Voir exactement ce que j’envoie
+Elle part chez Anthropic avec ton abonnement Claude. Bibo n’en garde rien.
+[Autre fenêtre]
+[Cacher une zone]
+[Envoyer à Claude]
+
+#102
+== fenetre
+C’est bien celle-ci ?
+[Toujours au-dessus]
+Sage 100 Comptabilité
+Sage 100 Comptabilité - DEMO SARL
+[Arrêter le guide]
+[Non, une autre]
+[Oui, c’est elle]
+
+#103
+== fenetre
+C’est bien celle-ci ?
+[Toujours au-dessus]
+Sage 100 Comptabilité
+Sage 100 Comptabilité - DEMO SARL
+[Arrêter le guide]
+[Non, une autre]
+[Oui, c’est elle (inactif)]
+
+#104
+== objectif
+Qu’est-ce que tu veux faire ?
+Dis-moi ce que tu veux faire dans ton logiciel : je te guide une étape à la fois.
+[Toujours au-dessus]
+Ta fenêtre :
+Sage 100 Comptabilité — Sage 100 Comptabilité - DEMO SARL
+[Autre fenêtre]
+Ton logiciel
+Qu’est-ce que tu veux faire dans Sage ?
+Par exemple : « Faire une facture à un client », « Donner un accès à ma comptable ».
+Je ne regarde que cette fenêtre, et seulement quand tu me le demandes. L’image part chez Anthropic, Bibo n’en garde rien. 
+[Comment je regarde ton écran]
+[Arrêter le guide]
+[Continuer (inactif)]
+
+#105
+== objectif
+Qu’est-ce que tu veux faire ?
+Dis-moi ce que tu veux faire dans ton logiciel : je te guide une étape à la fois.
+[Toujours au-dessus]
+Ta fenêtre :
+Sage 100 Comptabilité — Sage 100 Comptabilité - DEMO SARL
+[Autre fenêtre]
+Ton logiciel
+Qu’est-ce que tu veux faire dans Sage ?
+Par exemple : « Faire une facture à un client », « Donner un accès à ma comptable ».
+Je ne regarde que cette fenêtre, et seulement quand tu me le demandes. L’image part chez Anthropic, Bibo n’en garde rien. 
+[Comment je regarde ton écran]
+[Arrêter le guide]
+[Continuer]
+
+#106
+== etape
+Étape 1
+Fais-le dans Sage, puis reviens cliquer « C’est fait ».
+[Réduire]
+[Toujours au-dessus]
+Clique sur « Nouveau », en haut à gauche, sous « Factures clients ».
+Le même endroit, en plus grand.
+Sur l’image, « Nouveau » est entouré en rouge.
+Quand tu cliques « C’est fait », je reprends moi-même la photo de ta fenêtre.
+[Arrêter le guide]
+[Je suis bloqué]
+[C’est fait]
+
+#107
+== choisir
+Montre-moi ta fenêtre.
+Clique sur « Choisir la fenêtre » : ton Mac te montre tes fenêtres. Clique sur celle de ton logiciel, puis sur le bouton qui apparaît au milieu (en anglais : « Share This Window »).
+[Toujours au-dessus]
+Ton logiciel n’est pas ouvert ? Ouvre-le d’abord.
+Pendant le guide, une petite icône de partage reste en haut de ton écran : c’est normal.
+[J’ai déjà une capture]
+[Arrêter le guide]
+[Choisir la fenêtre]
+
+#108
+== choisir
+Choisis ta fenêtre.
+Clique sur la fenêtre de ton logiciel, puis sur le bouton qui apparaît au milieu (en anglais : « Share This Window »).
+[Toujours au-dessus]
+Ton logiciel n’est pas ouvert ? Ouvre-le d’abord.
+Pendant le guide, une petite icône de partage reste en haut de ton écran : c’est normal.
+[J’ai déjà une capture]
+[Arrêter le guide]
+[Choisir la fenêtre (inactif)]
+
+#109
+== objectif
+Qu’est-ce que tu veux faire ?
+Dis-moi ce que tu veux faire dans ton logiciel : je te guide une étape à la fois.
+[Toujours au-dessus]
+Ta fenêtre :
+Safari — Factures clients - Odoo
+[Autre fenêtre]
+Ton logiciel
+Qu’est-ce que tu veux faire dans Odoo ?
+Par exemple : « Faire une facture à un client », « Donner un accès à ma comptable ».
+Je ne regarde que cette fenêtre, et seulement quand tu me le demandes. L’image part chez Anthropic, Bibo n’en garde rien. 
+[Comment je regarde ton écran]
+[Arrêter le guide]
+[Continuer (inactif)]
+
+#110
+== objectif
+Qu’est-ce que tu veux faire ?
+Dis-moi ce que tu veux faire dans ton logiciel : je te guide une étape à la fois.
+[Toujours au-dessus]
+Ta fenêtre :
+Safari — Factures clients - Odoo
+[Autre fenêtre]
+Ton logiciel
+Qu’est-ce que tu veux faire dans Odoo ?
+Par exemple : « Faire une facture à un client », « Donner un accès à ma comptable ».
+Je ne regarde que cette fenêtre, et seulement quand tu me le demandes. L’image part chez Anthropic, Bibo n’en garde rien. 
+[Comment je regarde ton écran]
+[Arrêter le guide]
+[Continuer]
+
+#111
+== objectif
+Qu’est-ce que tu veux faire ?
+Dis-moi dans quel logiciel, et ce que tu veux y faire : je te guide une étape à la fois.
+[Toujours au-dessus]
+Ta fenêtre :
+celle que tu as choisie
+[Autre fenêtre]
+Ton logiciel
+Qu’est-ce que tu veux faire dans ce logiciel ?
+Par exemple : « Faire une facture à un client », « Donner un accès à ma comptable ».
+Je ne regarde que cette fenêtre, et seulement quand tu me le demandes. L’image part chez Anthropic, Bibo n’en garde rien. 
+[Comment je regarde ton écran]
+[Arrêter le guide]
+[Continuer (inactif)]
+
+#112
+== liste
+Choisis ta fenêtre dans la liste.
+Les fenêtres ouvertes sur ton PC, la dernière utilisée en haut.
+[Toujours au-dessus]
+Un instant.
+
+#113
+== liste
+Choisis ta fenêtre dans la liste.
+Les fenêtres ouvertes sur ton PC, la dernière utilisée en haut.
+[Toujours au-dessus]
+[Microsoft Edge — Factures clients - Odoo]
+[Sage 100 Comptabilité — Sage 100 Comptabilité - DEMO SARL (réduite : ouvre-la d’abord) (inactif)]
+[Windows PowerShell — Windows PowerShell (terminal : je n’y guide pas) (inactif)]
+[Explorateur de fichiers — Documents]
+[Arrêter le guide]
+[Retour]
+[Actualiser]
+
+#114
+== choisir
+Montre-moi ta fenêtre.
+Je n’ai pas vu de clic. Clique sur « Réessayer », puis une fois dans la fenêtre de ton logiciel.
+[Toujours au-dessus]
+[Mon logiciel n’est pas encore ouvert]
+Il est réduit ? Clique sur son icône dans la barre des tâches (taskbar), puis dans sa fenêtre.
+[J’ai déjà une capture]
+[Arrêter le guide]
+[Choisir dans une liste]
+[Réessayer]
+
+#115
+== terminal
+Je ne guide pas dans un terminal.
+Montre-moi plutôt la fenêtre de ton logiciel.
+[Toujours au-dessus]
+[Arrêter le guide]
+[Choisir une autre fenêtre]
+
+#116
+== choisir
+Montre-moi ta fenêtre.
+Je ne trouve plus cette fenêtre : elle s’est peut-être fermée. Clique dans la fenêtre de ton logiciel.
+[Toujours au-dessus]
+Temps pour cliquer : 
+[Mon logiciel n’est pas encore ouvert]
+Il est réduit ? Clique sur son icône dans la barre des tâches (taskbar), puis dans sa fenêtre.
+[J’ai déjà une capture]
+[Arrêter le guide]
+[Choisir dans une liste]
+
+#117
+== coller
+Ton logiciel ne me laisse pas le prendre en photo.
+Fais une capture toi-même et colle-la ici : je te montre comment.
+[Toujours au-dessus]
+Appuie en même temps sur ⊞ Windows, ⇧ Maj (Shift) et S. L’écran devient plus sombre : c’est normal.
+Garde le bouton gauche de la souris appuyé et encadre la fenêtre de ton logiciel, puis lâche : l’image est copiée.
+Reviens ici et appuie sur Ctrl + V.
+Tu t’es trompé ? Appuie sur Échap (Esc) et recommence.
+Tu peux aussi glisser le fichier de ta capture sur cette fenêtre.
+Autre façon : clique dans la fenêtre de ton logiciel, puis appuie en même temps sur Alt et Impr. écran (PrtSc).
+L’Outil Capture (Snipping Tool) en garde aussi une copie dans Images › Captures d’écran (Pictures › Screenshots) : tu peux l’effacer ensuite.
+[Arrêter le guide]
+[Retour]
+[Choisir une autre fenêtre]
+
+#118
+== coller
+Montre-moi où tu en es.
+Fais une capture de la fenêtre d’Odoo, puis colle-la ici.
+[Toujours au-dessus]
+Appuie en même temps sur ⊞ Windows, ⇧ Maj (Shift) et S. L’écran devient plus sombre : c’est normal.
+Garde le bouton gauche de la souris appuyé et encadre la fenêtre de ton logiciel, puis lâche : l’image est copiée.
+Reviens ici et appuie sur Ctrl + V.
+Tu t’es trompé ? Appuie sur Échap (Esc) et recommence.
+Tu peux aussi glisser le fichier de ta capture sur cette fenêtre.
+Autre façon : clique dans la fenêtre de ton logiciel, puis appuie en même temps sur Alt et Impr. écran (PrtSc).
+L’Outil Capture (Snipping Tool) en garde aussi une copie dans Images › Captures d’écran (Pictures › Screenshots) : tu peux l’effacer ensuite.
+[Arrêter le guide]
+[Retour]
+[Choisir une autre fenêtre]
+
+#119
+== reduite
+Ta fenêtre est réduite.
+Ouvre-la en grand : clique sur son icône dans la barre des tâches (taskbar). Puis reviens ici.
+[Toujours au-dessus]
+[Arrêter le guide]
+[Coller une capture]
+[Regarde à nouveau]
+
+#120
+== introuvable
+Je ne trouve plus ta fenêtre.
+Elle est peut-être fermée. Rouvre ton logiciel, puis montre-moi sa fenêtre.
+[Toujours au-dessus]
+[Arrêter le guide]
+[Coller une capture]
+[Choisir la fenêtre]
+
+#121
+== choisir
+Montre-moi ta fenêtre.
+Tu as fermé la fenêtre de choix. Clique sur « Choisir la fenêtre » pour recommencer.
+[Toujours au-dessus]
+Ton logiciel n’est pas ouvert ? Ouvre-le d’abord.
+Pendant le guide, une petite icône de partage reste en haut de ton écran : c’est normal.
+[J’ai déjà une capture]
+[Arrêter le guide]
+[Choisir la fenêtre]
+
+#122
+== coller
+Je ne peux pas voir tes fenêtres tout seul sur ce Mac.
+Fais une capture et colle-la ici : je te montre comment.
+[Toujours au-dessus]
+Appuie en même temps sur ⌘ Cmd, ⌃ Ctrl, ⇧ Maj et 4, puis sur la barre d’espace : un petit appareil photo apparaît.
+Clique sur la fenêtre de ton logiciel : l’image est copiée, sans fichier.
+Reviens ici et appuie sur Cmd + V.
+Tu t’es trompé ? Appuie sur Échap (esc) et recommence.
+Tu peux aussi glisser le fichier de ta capture sur cette fenêtre.
+[Arrêter le guide]
+
+#123
+== coller
+Montre-moi où tu en es.
+Fais une capture de la fenêtre d’Odoo, puis colle-la ici.
+[Toujours au-dessus]
+Appuie en même temps sur ⊞ Windows, ⇧ Maj (Shift) et S. L’écran devient plus sombre : c’est normal.
+Garde le bouton gauche de la souris appuyé et encadre la fenêtre de ton logiciel, puis lâche : l’image est copiée.
+Reviens ici et appuie sur Ctrl + V.
+Tu t’es trompé ? Appuie sur Échap (Esc) et recommence.
+Tu peux aussi glisser le fichier de ta capture sur cette fenêtre.
+Autre façon : clique dans la fenêtre de ton logiciel, puis appuie en même temps sur Alt et Impr. écran (PrtSc).
+L’Outil Capture (Snipping Tool) en garde aussi une copie dans Images › Captures d’écran (Pictures › Screenshots) : tu peux l’effacer ensuite.
+[Arrêter le guide]
+[Retour]
+[Choisir ma fenêtre]
+
+#124
+== coller
+Montre-moi où tu en es.
+Fais une capture de la fenêtre d’Odoo, puis colle-la ici.
+[Toujours au-dessus]
+Appuie en même temps sur ⌘ Cmd, ⌃ Ctrl, ⇧ Maj et 4, puis sur la barre d’espace : un petit appareil photo apparaît.
+Clique sur la fenêtre de ton logiciel : l’image est copiée, sans fichier.
+Reviens ici et appuie sur Cmd + V.
+Tu t’es trompé ? Appuie sur Échap (esc) et recommence.
+Tu peux aussi glisser le fichier de ta capture sur cette fenêtre.
+[Arrêter le guide]
+[Retour]
+[Choisir ma fenêtre]
+
+#125
+== arreter
+Arrêter le guide ?
+On perdra où on en est.
+[Réduire]
+[Toujours au-dessus]
+Clique sur « Nouveau », en haut à gauche, sous « Factures clients ».
+Le même endroit, en plus grand.
+Sur l’image, « Nouveau » est entouré en rouge.
+Tu peux aussi coller ici ta nouvelle capture (Cmd + V) : ça vaut « C’est fait ».
+[Oui, arrêter]
+[Non, je continue]
+
+#126
+== etape
+Étape 1
+Fais-le dans Odoo, puis reviens cliquer « C’est fait ».
+[Réduire]
+[Toujours au-dessus]
+Clique sur « Nouveau », en haut à gauche, sous « Factures clients ».
+Le même endroit, en plus grand.
+Sur l’image, « Nouveau » est entouré en rouge.
+Tu peux aussi coller ici ta nouvelle capture (Cmd + V) : ça vaut « C’est fait ».
+Encore 7 captures possibles pour cette séance.
+[Arrêter le guide]
+[Je suis bloqué]
+[C’est fait]
+
+#127
+== comment
+Comment je regarde ton écran
+Avant de commencer, quatre choses à savoir.
+[Toujours au-dessus]
+Je ne vois que les captures que tu colles ici, rien d’autre de ton écran.
+L’image part chez Anthropic, l’entreprise qui fait Claude, avec ton abonnement, comme un message que tu enverrais à Claude. Anthropic la garde 30 jours, ou 5 ans si tu as accepté que tes conversations servent à améliorer Claude.
+[Voir mon réglage]
+Bibo n’enregistre rien sur ton ordinateur : ni l’image, ni ce que Claude répond.
+Pour essayer sans risque, ouvre la société de démonstration de ton logiciel. Sinon, cache noms et montants avec « Cacher une zone ». Si ces données ne sont pas à toi, vérifie que tu as le droit de les montrer.
+[Note copiée : colle-la dans un message]
+[Pas maintenant]
+[J’ai compris]
+
+#128
+== fenetre
+C’est bien celle-ci ?
+[Toujours au-dessus]
+Adobe Acrobat Reader
+Facture Sage 2026-118.pdf
+[Arrêter le guide]
+[Non, une autre]
+[Oui, c’est elle]
+
+#129
+== fenetre
+C’est bien celle-ci ?
+[Toujours au-dessus]
+Adobe Acrobat Reader
+Facture Sage 2026-118.pdf
+[Arrêter le guide]
+[Non, une autre]
+[Oui, c’est elle (inactif)]
+
+#130
+== objectif
+Qu’est-ce que tu veux faire ?
+Dis-moi ce que tu veux faire dans ton logiciel : je te guide une étape à la fois.
+[Toujours au-dessus]
+Ta fenêtre :
+Adobe Acrobat Reader — Facture Sage 2026-118.pdf
+[Autre fenêtre]
+Ton logiciel
+Qu’est-ce que tu veux faire dans Adobe Acrobat Reader ?
+Par exemple : « Faire une facture à un client », « Donner un accès à ma comptable ».
+Je ne regarde que cette fenêtre, et seulement quand tu me le demandes. L’image part chez Anthropic, Bibo n’en garde rien. 
+[Comment je regarde ton écran]
+[Arrêter le guide]
+[Continuer (inactif)]
+
+#131
+== choisir
+Montre-moi ta fenêtre.
+Je ne trouve plus cette fenêtre : elle s’est peut-être fermée. Clique sur « Choisir la fenêtre » pour la choisir à nouveau.
+[Toujours au-dessus]
+Ton logiciel n’est pas ouvert ? Ouvre-le d’abord.
+Pendant le guide, une petite icône de partage reste en haut de ton écran : c’est normal.
+[J’ai déjà une capture]
+[Arrêter le guide]
+[Choisir la fenêtre]
+
+#132
+== coller
+Montre-moi ta fenêtre.
+Fais une capture de la fenêtre de ton logiciel, puis colle-la ici.
+[Toujours au-dessus]
+Appuie en même temps sur ⊞ Windows, ⇧ Maj (Shift) et S. L’écran devient plus sombre : c’est normal.
+Garde le bouton gauche de la souris appuyé et encadre la fenêtre de ton logiciel, puis lâche : l’image est copiée.
+Reviens ici et appuie sur Ctrl + V.
+Tu t’es trompé ? Appuie sur Échap (Esc) et recommence.
+Tu peux aussi glisser le fichier de ta capture sur cette fenêtre.
+Autre façon : clique dans la fenêtre de ton logiciel, puis appuie en même temps sur Alt et Impr. écran (PrtSc).
+L’Outil Capture (Snipping Tool) en garde aussi une copie dans Images › Captures d’écran (Pictures › Screenshots) : tu peux l’effacer ensuite.
+[Arrêter le guide]
+[Choisir ma fenêtre]
+
+#133
+== erreur
+Ton abonnement est à sa limite jusqu’à mercredi 21 octobre 03:00.
+Reviens après cette heure et relance le guide.
+[Toujours au-dessus]
+[Fermer le guide]
+
+#134
+== coller
+Cette fenêtre ne se laisse pas prendre en photo.
+Fais une capture toi-même et colle-la ici : je te montre comment.
+[Toujours au-dessus]
+Appuie en même temps sur ⊞ Windows, ⇧ Maj (Shift) et S. L’écran devient plus sombre : c’est normal.
+Garde le bouton gauche de la souris appuyé et encadre la fenêtre de ton logiciel, puis lâche : l’image est copiée.
+Reviens ici et appuie sur Ctrl + V.
+Tu t’es trompé ? Appuie sur Échap (Esc) et recommence.
+Tu peux aussi glisser le fichier de ta capture sur cette fenêtre.
+Autre façon : clique dans la fenêtre de ton logiciel, puis appuie en même temps sur Alt et Impr. écran (PrtSc).
+L’Outil Capture (Snipping Tool) en garde aussi une copie dans Images › Captures d’écran (Pictures › Screenshots) : tu peux l’effacer ensuite.
+[Arrêter le guide]
+[Retour]
+[Choisir une autre fenêtre]
+
+#135
+== etape
+Étape 1
+Fais-le dans Explorateur de fichiers, puis reviens cliquer « C’est fait ».
+[Réduire]
+[Toujours au-dessus]
+Clique sur « Nouveau », en haut à gauche, sous « Factures clients ».
+Le même endroit, en plus grand.
+Sur l’image, « Nouveau » est entouré en rouge.
+Quand tu cliques « C’est fait », je reprends moi-même la photo de ta fenêtre.
+[Arrêter le guide]
+[Je suis bloqué]
+[C’est fait]
+
+#136
+== fenetre
+C’est bien celle-ci ?
+[Toujours au-dessus]
+Arc
+Factures - Axonaut
+[Arrêter le guide]
+[Non, une autre]
+[Oui, c’est elle]
+
+#137
+== fenetre
+C’est bien celle-ci ?
+[Toujours au-dessus]
+Arc
+Factures - Axonaut
+[Arrêter le guide]
+[Non, une autre]
+[Oui, c’est elle (inactif)]
+
+#138
+== objectif
+Qu’est-ce que tu veux faire ?
+Dis-moi dans quel logiciel, et ce que tu veux y faire : je te guide une étape à la fois.
+[Toujours au-dessus]
+Ta fenêtre :
+Arc — Factures - Axonaut
+[Autre fenêtre]
+Ton logiciel
+Qu’est-ce que tu veux faire dans ce logiciel ?
+Par exemple : « Faire une facture à un client », « Donner un accès à ma comptable ».
+Je ne regarde que cette fenêtre, et seulement quand tu me le demandes. L’image part chez Anthropic, Bibo n’en garde rien. 
+[Comment je regarde ton écran]
+[Arrêter le guide]
+[Continuer (inactif)]
+
+#139
+== objectif
+Qu’est-ce que tu veux faire ?
+Dis-moi dans quel logiciel, et ce que tu veux y faire : je te guide une étape à la fois.
+[Toujours au-dessus]
+Ta fenêtre :
+Arc — Factures - Axonaut
+[Autre fenêtre]
+Ton logiciel
+Qu’est-ce que tu veux faire dans Odoo ?
+Par exemple : « Faire une facture à un client », « Donner un accès à ma comptable ».
+Je ne regarde que cette fenêtre, et seulement quand tu me le demandes. L’image part chez Anthropic, Bibo n’en garde rien. 
+[Comment je regarde ton écran]
+[Arrêter le guide]
+[Continuer]
+
+#140
+== objectif
+Qu’est-ce que tu veux faire ?
+Dis-moi dans quel logiciel, et ce que tu veux y faire : je te guide une étape à la fois.
+[Toujours au-dessus]
+Ta fenêtre :
+Arc — Factures - Axonaut
+[Autre fenêtre]
+Ton logiciel
+Qu’est-ce que tu veux faire dans Odoo ?
+Par exemple : « Faire une facture à un client », « Donner un accès à ma comptable ».
+Je ne regarde que cette fenêtre, et seulement quand tu me le demandes. L’image part chez Anthropic, Bibo n’en garde rien. 
+[Comment je regarde ton écran]
+[Arrêter le guide]
+[Continuer (inactif)]
+
+#141
+== ouvrir
+Ouvre ton logiciel.
+Attends qu’il soit prêt (connecte-toi si besoin), puis clique « Il est ouvert ».
+[Toujours au-dessus]
+[Arrêter le guide]
+[Il est ouvert]
+
+#142
+== confirmer
+On dirait que rien n’a changé.
+Tu as bien cliqué sur « Nouveau » ?
+[Toujours au-dessus]
+Clique sur « Nouveau », en haut à gauche, sous « Factures clients ».
+Une nouvelle fenêtre s’est ouverte ? Choisis-la : je ne regarde que celle que tu m’as montrée. 
+[Choisir une autre fenêtre]
+[Je réessaie]
+[Oui, c’est fait]
+
+#143
+== etape
+Étape 2
+Fais-le dans Odoo, puis reviens cliquer « C’est fait ».
+[Réduire]
+[Toujours au-dessus]
+Clique sur « Valider », en haut à gauche.
+Le même endroit, en plus grand.
+Sur l’image, « Valider » est entouré en rouge.
+[Arrêter le guide]
+[Je suis bloqué]
+[C’est fait]
+
+#144
+== pas-ici
+Je ne vois pas ça dans cette fenêtre.
+[Toujours au-dessus]
+Ouvre le menu « Facturation » en haut, puis reviens me montrer la fenêtre.
+Une nouvelle fenêtre s’est ouverte ? Choisis-la : je ne regarde que celle que tu m’as montrée.
+[Arrêter le guide]
+[Choisir une autre fenêtre]
+[Regarde à nouveau]
+
+#145
+== comment
+Comment je regarde ton écran
+Avant de commencer, quatre choses à savoir.
+[Toujours au-dessus]
+Je ne vois que les captures que tu colles ici, rien d’autre de ton écran.
+L’image part chez Anthropic, l’entreprise qui fait Claude, avec ton abonnement, comme un message que tu enverrais à Claude. Anthropic la garde 30 jours, ou 5 ans si tu as accepté que tes conversations servent à améliorer Claude.
+[Voir mon réglage]
+Bibo n’enregistre rien sur ton ordinateur : ni l’image, ni ce que Claude répond.
+Pour essayer sans risque, ouvre la société de démonstration de ton logiciel. Sinon, cache noms et montants avec « Cacher une zone ». Si ces données ne sont pas à toi, vérifie que tu as le droit de les montrer.
+Je n’ai pas pu la copier. Sélectionne-la ci-dessous, puis copie-la (Cmd + C).Le guide de Bibo (Brain in a Box) : ce qui part, et où
+- Quand je le lui demande, Bibo prend une image de la seule fenêtre de logiciel que j’ai choisie (ou de la capture que je colle) et l’envoie à Claude, l’IA de l’entreprise Anthropic, avec mon propre abonnement Claude, comme un message que j’enverrais à Claude.
+- Avant chaque envoi, je vois l’image exacte qui part, et je peux y cacher des zones (noms, montants).
+- Anthropic garde ces échanges 30 jours, ou 5 ans si j’ai accepté que mes conversations servent à améliorer Claude, et jusqu’à 2 ans un échange que ses contrôles de sécurité signalent. Le réglage : https://claude.ai/settings/data-privacy-controls. Le détail : https://privacy.claude.com/en/articles/10023548-how-long-do-you-store-my-data
+- Bibo n’enregistre rien sur l’ordinateur : ni l’image, ni la réponse de Claude. Si je le choisis, seule la procédure va dans mes notes, en texte, sans image.
+- Brain in a Box ne fournit pas Claude et ne reçoit aucune image. Son code est ouvert : https://github.com/BrainInBox/brain-in-a-box
+[Pas maintenant]
+[J’ai compris]
+
+#146
+== arreter
+Arrêter le guide ?
+On perdra où on en est.
+[Toujours au-dessus]
+[Oui, arrêter]
+[Non, je continue]

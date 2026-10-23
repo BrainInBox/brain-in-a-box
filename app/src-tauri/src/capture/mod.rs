@@ -22,8 +22,10 @@ mod win;
 #[cfg(target_os = "linux")]
 mod x11;
 
-/// How long Bibo waits for the click in the user's window (R4).
-const CLIC: Duration = Duration::from_secs(15);
+/// How long Bibo waits for the click in the user's window (R4): time to find the program in the
+/// taskbar. The guide's window counts it down (the status gives it).
+pub const CLIC_SECONDES: u64 = 45;
+const CLIC: Duration = Duration::from_secs(CLIC_SECONDES);
 const POLL: Duration = Duration::from_millis(100);
 /// G2: a title is cut there (a mail's subject, a document's name: no more of it than needed).
 const TITRE_MAX: usize = 60;
@@ -106,6 +108,11 @@ pub enum Pick {
 /// The system's windows, as the guide asks for them: this computer's, or a test's.
 pub trait Screen {
     fn available(&self) -> bool;
+    /// Why not, when not available: for the status and the tests, never shown (the window says « sur
+    /// ce PC », never the name of a display server).
+    fn raison(&self) -> &'static str {
+        "indisponible"
+    }
     /// The window is chosen in the system's own picker (macOS), not in Bibo's list nor by a click.
     fn picker(&self) -> bool {
         false
@@ -116,7 +123,7 @@ pub trait Screen {
     }
     /// Other programs' windows, the top one first (G2's list).
     fn windows(&self) -> Vec<Found>;
-    /// The window that comes to the front within 15 s, Bibo's left out (R4); None if none came or
+    /// The window that comes to the front within 45 s, Bibo's left out (R4); None if none came or
     /// `cancel` was set.
     fn clicked(&self, cancel: &AtomicBool) -> Option<Found>;
     /// The window under this id now, if it is one the guide may capture.
@@ -135,6 +142,10 @@ pub struct System;
 impl Screen for System {
     fn available(&self) -> bool {
         os::available()
+    }
+
+    fn raison(&self) -> &'static str {
+        os::raison()
     }
 
     #[cfg(target_os = "macos")]
@@ -183,6 +194,10 @@ mod os {
 
     pub fn available() -> bool {
         false
+    }
+
+    pub fn raison() -> &'static str {
+        "indisponible"
     }
 
     pub fn list() -> Vec<Found> {
@@ -260,17 +275,21 @@ fn is_terminal(app: &str, class: &str) -> bool {
     PROGRAMS.contains(&program) || CLASSES.contains(&class.to_lowercase().as_str())
 }
 
-/// The window that comes to the front. The one in front at the start is left out: Bibo's button was
-/// clicked there, or the user's window already was, and only a click says which one they mean.
+/// The window that comes to the front. The one in front at the start is left out, as only a click
+/// says which one the user means, until none is: Bibo's window took the focus (lib.rs gives it as the
+/// wait starts), or the taskbar or Start did. Then a click in the user's window, in front a moment ago,
+/// counts.
 fn wait_for(front: &dyn Fn() -> Option<Found>, limit: Duration, step: Duration, cancel: &AtomicBool) -> Option<Found> {
     let start = Instant::now();
-    let before = front().map(|f| f.window.id);
+    let mut before = front().map(|f| f.window.id);
     loop {
         if cancel.load(Ordering::SeqCst) {
             return None;
         }
-        if let Some(f) = front().filter(|f| Some(f.window.id) != before) {
-            return Some(f);
+        match front() {
+            Some(f) if Some(f.window.id) != before => return Some(f),
+            Some(_) => {}
+            None => before = None,
         }
         if start.elapsed() >= limit {
             return None;
@@ -552,6 +571,15 @@ mod tests {
             Some(found(if calls.get() > 5 { 2 } else { 1 }))
         };
         assert_eq!(wait_for(&front, Duration::from_secs(5), step, &never).map(|f| f.window.id), Some(2));
+
+        // The user's window already in front (clicked while Bibo got ready): Bibo takes the focus, then
+        // the click in that same window counts.
+        let calls = Cell::new(0);
+        let front = || {
+            calls.set(calls.get() + 1);
+            (!(4..=6).contains(&calls.get())).then(|| found(1))
+        };
+        assert_eq!(wait_for(&front, Duration::from_secs(1), step, &never).map(|f| f.window.id), Some(1));
 
         // Nobody clicks: given up at the limit, not before.
         let start = Instant::now();

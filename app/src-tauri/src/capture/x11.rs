@@ -321,6 +321,14 @@ pub fn available() -> bool {
     !on_wayland() && conn().is_some_and(|c| c.compositor())
 }
 
+pub fn raison() -> &'static str {
+    if on_wayland() {
+        "wayland"
+    } else {
+        "sans_compositeur"
+    }
+}
+
 /// The window under this id, if it is another program's the guide may capture.
 pub fn describe(id: u64) -> Option<Found> {
     let c = conn()?;
