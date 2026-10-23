@@ -125,6 +125,25 @@ const SCENARIOS = [
   's=installe&acces=refuse&go=access-ko',
   's=installe&acces=ok&go=done',
   's=installe&acces=1&memoire=chatgpt&go=import-offer',
+  // Point 5, the assistant on the phone, after what Hermes may do and before the memory: offered (on a
+  // Mac, on Windows, after the permissions put off); WhatsApp's code waiting; scanned, linked and its first
+  // message; linked without it, on Linux without the service; linked but never seen connected; the code
+  // expired; Hermes not starting; Telegram asked, then seen connected; Hermes Desktop not opening; put off,
+  // then the memory; and not offered when WhatsApp already reaches the assistant.
+  's=installe&acces=ok&tel=1&go=messaging',
+  's=installe&acces=ok&tel=1&go=messaging&os=windows',
+  's=installe&acces=1&tel=1&click=later,later,later&go=messaging',
+  's=installe&acces=ok&tel=1&go=whatsapp-wait',
+  's=installe&acces=ok&tel=1&wa=scan&go=whatsapp-ok',
+  's=installe&acces=ok&tel=1&wa=scan&fin=sans-bonjour&go=whatsapp-ok&os=linux',
+  's=installe&acces=ok&tel=1&wa=scan&fin=pas-connecte&go=messaging-ko',
+  's=installe&acces=ok&tel=1&wa=expire&go=messaging-ko',
+  's=installe&acces=ok&tel=1&wa=echec&go=messaging-ko',
+  's=installe&acces=ok&tel=1&tg=attente&click=telegram&go=telegram-ask',
+  's=installe&acces=ok&tel=1&click=telegram&go=telegram-ok',
+  's=installe&acces=ok&tel=1&tg=ferme&click=telegram&go=messaging-ko',
+  's=installe&acces=ok&tel=1&memoire=chatgpt&click=later&go=import-offer',
+  's=installe&acces=ok&tel=wa&memoire=chatgpt&go=import-offer',
   's=installe&memoire=chatgpt&go=import-offer',
   's=installe&memoire=claude&go=import-offer&os=windows',
   's=installe&memoire=aucun&go=import-offer&os=linux',

@@ -9,10 +9,12 @@ mod guide;
 mod hermes;
 mod hermes_access;
 mod hermes_connect;
+mod hermes_messaging;
 mod hermes_brain;
 mod import;
 mod model;
 mod perms;
+mod qr;
 mod redact;
 mod remedies;
 mod repair;
@@ -262,6 +264,48 @@ async fn hermes_access_ask(id: String) -> Result<bool, String> {
     tauri::async_runtime::spawn_blocking(move || hermes_access::ask(&id))
         .await
         .unwrap_or_else(|e| Err(format!("Erreur interne : {e}")))
+}
+
+/// Which platforms already reach the assistant (hermes_messaging.rs). None without Hermes.
+#[tauri::command]
+async fn hermes_reach() -> Option<hermes_messaging::Reach> {
+    tauri::async_runtime::spawn_blocking(hermes_messaging::reach).await.ok().flatten()
+}
+
+async fn messaging<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(f).await.unwrap_or_else(|e| Err(format!("Erreur interne : {e}")))
+}
+
+/// Starts linking the user's WhatsApp: the code to scan comes with the pairing, as SVG.
+#[tauri::command]
+async fn whatsapp_start() -> Result<hermes_messaging::Pairing, String> {
+    messaging(hermes_messaging::whatsapp_start).await
+}
+
+#[tauri::command]
+async fn whatsapp_poll(id: String) -> Result<hermes_messaging::Pairing, String> {
+    messaging(move || hermes_messaging::whatsapp_poll(&id)).await
+}
+
+/// Once the phone has scanned: saved, the gateway restarted with it, the first message sent.
+#[tauri::command]
+async fn whatsapp_finish(id: String) -> Result<hermes_messaging::Linked, String> {
+    messaging(move || hermes_messaging::whatsapp_finish(&id)).await
+}
+
+#[tauri::command]
+async fn whatsapp_cancel(id: String) {
+    let _ = messaging(move || {
+        hermes_messaging::whatsapp_cancel(&id);
+        Ok(())
+    })
+    .await;
+}
+
+/// Telegram: Hermes Desktop on its Messagerie page, the gateway installed as a service first.
+#[tauri::command]
+async fn telegram_open() -> Result<bool, String> {
+    messaging(hermes_messaging::telegram_open).await
 }
 
 /// The sentence to paste in ChatGPT or Claude.
@@ -671,6 +715,12 @@ pub fn run() {
             import_offer,
             hermes_access,
             hermes_access_ask,
+            hermes_reach,
+            whatsapp_start,
+            whatsapp_poll,
+            whatsapp_finish,
+            whatsapp_cancel,
+            telegram_open,
             import_phrase,
             import_pick,
             import_paste,
@@ -701,8 +751,14 @@ pub fn run() {
             guide_brouillon,
             guide_enregistrer
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Brain in a Box");
+        .build(tauri::generate_context!())
+        .expect("error while running Brain in a Box")
+        .run(|_, event| {
+            // Hermes's server for a pairing stops with the app, the pairing with it.
+            if let tauri::RunEvent::Exit = event {
+                hermes_messaging::stop_server();
+            }
+        });
 }
 
 #[cfg(test)]

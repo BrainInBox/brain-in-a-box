@@ -265,6 +265,9 @@ body.big .plan { justify-content: center; text-align: left; }
 
 .note { color: var(--ink-2); font-size: 14px; }
 
+/* WhatsApp's code to scan: black on white whatever the theme, crisp at any scale. */
+.qr { display: block; width: 232px; height: 232px; margin: 0 auto; background: #fff; border-radius: 10px; image-rendering: pixelated; }
+
 .card {
   background: var(--card);
   border: 1px solid var(--line);

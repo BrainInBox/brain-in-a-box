@@ -256,47 +256,89 @@
 ### s=installe&acces=1&memoire=chatgpt&go=import-offer
 56 2 57 18 330 331 332 333 334 335 336 337 338 339 350
 
+### s=installe&acces=ok&tel=1&go=messaging
+56 2 57 18 351
+
+### s=installe&acces=ok&tel=1&go=messaging&os=windows
+58 21 59 18 351
+
+### s=installe&acces=1&tel=1&click=later,later,later&go=messaging
+56 2 57 18 330 334 337 351
+
+### s=installe&acces=ok&tel=1&go=whatsapp-wait
+56 2 57 18 351 352 353 354 355
+
+### s=installe&acces=ok&tel=1&wa=scan&go=whatsapp-ok
+56 2 57 18 351 352 353 354 355 356 357
+
+### s=installe&acces=ok&tel=1&wa=scan&fin=sans-bonjour&go=whatsapp-ok&os=linux
+58 21 63 18 351 352 353 354 355 356 358
+
+### s=installe&acces=ok&tel=1&wa=scan&fin=pas-connecte&go=messaging-ko
+56 2 57 18 351 352 353 354 355 356 359
+
+### s=installe&acces=ok&tel=1&wa=expire&go=messaging-ko
+56 2 57 18 351 352 353 354 355 360
+
+### s=installe&acces=ok&tel=1&wa=echec&go=messaging-ko
+56 2 57 18 351 352 361
+
+### s=installe&acces=ok&tel=1&tg=attente&click=telegram&go=telegram-ask
+56 2 57 18 351 362 363
+
+### s=installe&acces=ok&tel=1&click=telegram&go=telegram-ok
+56 2 57 18 351 362 363 364
+
+### s=installe&acces=ok&tel=1&tg=ferme&click=telegram&go=messaging-ko
+56 2 57 18 351 362 365
+
+### s=installe&acces=ok&tel=1&memoire=chatgpt&click=later&go=import-offer
+56 2 57 18 351 350
+
+### s=installe&acces=ok&tel=wa&memoire=chatgpt&go=import-offer
+56 2 57 18 350
+
 ### s=installe&memoire=chatgpt&go=import-offer
 56 2 57 18 350
 
 ### s=installe&memoire=claude&go=import-offer&os=windows
-58 21 59 18 351
+58 21 59 18 366
 
 ### s=installe&memoire=aucun&go=import-offer&os=linux
-58 21 63 18 352
+58 21 63 18 367
 
 ### s=installe&memoire=chatgpt&go=import-ask
-56 2 57 18 350 353
+56 2 57 18 350 368
 
 ### s=installe&memoire=aucun&go=import-ask&click=ask-claude&os=windows
-58 21 59 18 352 354
+58 21 59 18 367 369
 
 ### s=installe&memoire=chatgpt&go=import-done&colle=1
-56 2 57 18 350 353 355 250 251 252 235 253
+56 2 57 18 350 368 370 250 251 252 235 253
 
 ### s=installe&memoire=chatgpt&go=done&colle=1&click=done
-56 2 57 18 350 353 355 250 251 252 235 253 356
+56 2 57 18 350 368 370 250 251 252 235 253 371
 
 ### s=installe&memoire=deja&go=done
 56 2 57 18 54
 
 ### s=installe&memoire=claude&go=done&click=later
-56 2 57 18 351 54
+56 2 57 18 366 54
 
 ### s=installe&deconnecte=1&memoire=chatgpt&click=skip&go=done
-56 2 357 18 93 358
+56 2 372 18 93 373
 
 ### s=installe&agents=codex&memoire=chatgpt&go=import-ask
-294 295 296 297 2 359 303 350 360
+294 295 296 297 2 374 303 350 375
 
 ### s=installe&memoire=claude&lien=refuse&go=import-ask
-56 2 57 18 351 361
+56 2 57 18 366 376
 
 ### s=installe&memoire=chatgpt&copie=refuse&go=import-ask
-56 2 57 18 350 362
+56 2 57 18 350 377
 
 ### s=motscles&memoire=chatgpt&click=later&add=done&key=pa-abcdefghijklmnopqrstuvwxyz&go=done&nth=2
-56 2 67 18 350 19 68 363 364 365 366 367 54
+56 2 67 18 350 19 68 378 379 380 381 382 54
 
 #1
 == welcome
@@ -4689,6 +4731,117 @@ Je t’ouvre sa page et je lui prépare ma question. Ce qu’il répond, tu le r
 [Oui, demande à ChatGPT]
 
 #351
+== messaging
+Je te rejoins sur ton téléphone ?
+Avec ça, tu m’écris sur WhatsApp comme à un ami, même loin de ton ordinateur, et c’est moi qui t’écris quand j’ai quelque chose pour toi.
+Je passe par ton propre WhatsApp, dans ta discussion avec toi-même : personne d’autre ne peut me parler. Ton assistant répond tant que ton ordinateur est allumé.
+À savoir : WhatsApp n’autorise pas officiellement ce genre d’outil, et il peut, rarement, restreindre un compte relié ainsi. Si ça t’inquiète, choisis Telegram.
+[Plus tard]
+[Plutôt Telegram]
+[Oui, sur WhatsApp]
+
+#352
+== whatsapp-wait
+Je prépare le code à scanner…
+La première fois, ça peut prendre une minute.
+[Plus tard]
+
+#353
+== whatsapp-wait
+Je prépare le code à scanner…
+La première fois, ça peut prendre une minute.
+Ouvre WhatsApp sur ton téléphone.
+Va dans « Appareils connectés » : dans Réglages sur iPhone, dans le menu ⋮ sur Android.
+Touche « Connecter un appareil », puis vise ce code.
+[Plus tard]
+
+#354
+== whatsapp-wait
+J’installe ce qu’il faut pour WhatsApp…
+La première fois, ça peut prendre une minute.
+Ouvre WhatsApp sur ton téléphone.
+Va dans « Appareils connectés » : dans Réglages sur iPhone, dans le menu ⋮ sur Android.
+Touche « Connecter un appareil », puis vise ce code.
+[Plus tard]
+
+#355
+== whatsapp-wait
+À toi : scanne ce code avec WhatsApp.
+Je vérifie tout seul dès que c’est fait.
+Ouvre WhatsApp sur ton téléphone.
+Va dans « Appareils connectés » : dans Réglages sur iPhone, dans le menu ⋮ sur Android.
+Touche « Connecter un appareil », puis vise ce code.
+[Plus tard]
+
+#356
+== whatsapp-saving
+C’est relié !
+Je m’installe pour te répondre même quand cette fenêtre est fermée. Ça peut prendre une minute.
+
+#357
+== whatsapp-ok
+C’est fait : je viens de t’écrire sur WhatsApp.
+Ouvre ta discussion avec toi-même et réponds-moi : je suis là.
+Ton assistant répond tant que ton ordinateur est allumé.
+[Continuer]
+
+#358
+== whatsapp-ok
+C’est fait : je suis sur ton WhatsApp.
+Écris-moi dans ta discussion avec toi-même : je te réponds.
+Ton assistant répond tant que ton ordinateur est allumé. S’il redémarre, ouvre Hermes pour que je revienne.
+[Continuer]
+
+#359
+== messaging-ko
+Ce n’est pas encore bon.
+Ton WhatsApp est relié, mais Hermes ne le voit pas encore connecté. Réessaie dans un instant.
+[Plus tard]
+[Réessayer]
+
+#360
+== messaging-ko
+Ce n’est pas encore bon.
+Le code a expiré avant d’être scanné : réessaie, je t’en prépare un nouveau.
+[Plus tard]
+[Réessayer]
+
+#361
+== messaging-ko
+Ce n’est pas encore bon.
+Hermes n’a pas démarré. Réessaie dans un instant.
+[Plus tard]
+[Réessayer]
+
+#362
+== telegram-ask
+J’ouvre Hermes sur la Messagerie…
+
+#363
+== telegram-ask
+À toi : crée ton assistant Telegram dans Hermes.
+Je vérifie tout seul dès que c’est fait.
+Dans Hermes, sur la page Messagerie, choisis Telegram.
+Clique sur « Créer avec un code QR ».
+Vise le code avec ton téléphone : Telegram s’ouvre, confirme.
+De retour dans Hermes, clique sur « Enregistrer et redémarrer ».
+[Plus tard]
+
+#364
+== telegram-ok
+C’est fait : je suis sur ton Telegram.
+Ouvre Telegram et écris « Bonjour » à ton assistant : il te répond.
+Ton assistant répond tant que ton ordinateur est allumé.
+[Continuer]
+
+#365
+== messaging-ko
+Ce n’est pas encore bon.
+Je n’ai pas pu ouvrir Hermes. Ouvre-le toi-même, puis va dans Messagerie.
+[Plus tard]
+[Réessayer]
+
+#366
 == import-offer
 Claude te connaît déjà.
 Je lui demande ce qu’il sait de toi ? Comme ça, je sais tout de suite qui tu es, et tu n’as rien à me réexpliquer.
@@ -4697,7 +4850,7 @@ Je t’ouvre sa page et je lui prépare ma question. Ce qu’il répond, tu le r
 [J’utilise plutôt ChatGPT]
 [Oui, demande à Claude]
 
-#352
+#367
 == import-offer
 Tu as déjà parlé à ChatGPT ou à Claude ?
 S’il te connaît, je lui demande ce qu’il sait de toi : tu n’auras rien à me réexpliquer.
@@ -4706,7 +4859,7 @@ Je t’ouvre sa page et je lui prépare ma question. Ce qu’il répond, tu le r
 [Claude]
 [ChatGPT]
 
-#353
+#368
 == import-ask
 J’ai ouvert ChatGPT avec ma question.
 Envoie-la, puis rapporte-moi sa réponse : je la range dans ton cerveau.
@@ -4723,7 +4876,7 @@ Ce que tu importes est lu sur ton Mac et ses secrets masqués. Puis Claude le tr
 [Retour]
 [Continuer (inactif)]
 
-#354
+#369
 == import-ask
 J’ai ouvert Claude avec ma question.
 Envoie-la, puis rapporte-moi sa réponse : je la range dans ton cerveau.
@@ -4740,7 +4893,7 @@ Ce que tu importes est lu sur ton PC et ses secrets masqués. Puis Claude le tri
 [Retour]
 [Continuer (inactif)]
 
-#355
+#370
 == import-ask
 J’ai ouvert ChatGPT avec ma question.
 Envoie-la, puis rapporte-moi sa réponse : je la range dans ton cerveau.
@@ -4757,7 +4910,7 @@ Ce que tu importes est lu sur ton Mac et ses secrets masqués. Puis Claude le tr
 [Retour]
 [Continuer]
 
-#356
+#371
 == done
 Ton second cerveau est prêt !
 Claude retient maintenant ce que tu lui apprends.
@@ -4769,7 +4922,7 @@ Dernière chose : présente-toi à lui. Il te pose quelques questions pour te c
 [Ouvrir mon cerveau dans Obsidian]
 [Personnaliser mon cerveau (15 min)]
 
-#357
+#372
 == diag
 Tout est déjà installé !
 Ton Mac a tout ce qu’il faut.
@@ -4790,7 +4943,7 @@ La mémoire de recherche : OKPrête.
 Recherche par le sens : OKActivée (Voyage AI)
 [Continuer]
 
-#358
+#373
 == done
 Ton second cerveau est prêt !
 Claude retient maintenant ce que tu lui apprends.
@@ -4803,7 +4956,7 @@ Pense à connecter ton compte Claude : il te le demandera au premier lancement.
 [Ouvrir mon cerveau dans Obsidian]
 [Personnaliser mon cerveau (15 min)]
 
-#359
+#374
 == diag
 Tout est déjà installé !
 Ton Mac a tout ce qu’il faut.
@@ -4825,7 +4978,7 @@ Recherche par le sens : OKActivée (Voyage AI)
 [Changer d’IA]
 [Continuer]
 
-#360
+#375
 == import-ask
 J’ai ouvert ChatGPT avec ma question.
 Envoie-la, puis rapporte-moi sa réponse : je la range dans ton cerveau.
@@ -4842,7 +4995,7 @@ Ce que tu importes est lu sur ton Mac et ses secrets masqués. Puis Codex le tri
 [Retour]
 [Continuer (inactif)]
 
-#361
+#376
 == import-ask
 Je n’ai pas pu ouvrir Claude.
 Ouvre claude.ai dans ton navigateur, colle ma question, puis rapporte-moi sa réponse.
@@ -4859,7 +5012,7 @@ Ce que tu importes est lu sur ton Mac et ses secrets masqués. Puis Claude le tr
 [Retour]
 [Continuer (inactif)]
 
-#362
+#377
 == import-ask
 J’ai ouvert ChatGPT avec ma question.
 Envoie-la, puis rapporte-moi sa réponse : je la range dans ton cerveau.
@@ -4876,7 +5029,7 @@ Ce que tu importes est lu sur ton Mac et ses secrets masqués. Puis Claude le tr
 [Retour]
 [Continuer (inactif)]
 
-#363
+#378
 == voyage
 Je vérifie ta clé auprès de Voyage…
 Crée un compte sur Voyage AI.
@@ -4890,7 +5043,7 @@ Je vérifie…
 [Retour]
 [Activer avec cette clé (inactif)]
 
-#364
+#379
 == voyage
 Clé acceptée !
 Ton cerveau trouvera tes notes par le sens.
@@ -4905,14 +5058,14 @@ Clé valide
 [Retour]
 [Activer avec cette clé]
 
-#365
+#380
 == install
 Je vérifie ton compte Claude…
 Recherche par le sensTon cerveau apprend à retrouver tes notes par le sens.En attente
 macOS va peut-être demander l’accès à ton dossier Documents : clique sur « Autoriser ».
 Détails
 
-#366
+#381
 == install
 J’active la recherche par le sens.
 Ton cerveau relit tes notes : quelques minutes.
@@ -4920,7 +5073,7 @@ Recherche par le sensTon cerveau apprend à retrouver tes notes par le sens.En c
 macOS va peut-être demander l’accès à ton dossier Documents : clique sur « Autoriser ».
 Détails
 
-#367
+#382
 == install
 C’est fait !
 Ton cerveau est installé dans Documents/Brain, avec la recherche par le sens.

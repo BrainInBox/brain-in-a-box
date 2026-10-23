@@ -797,6 +797,72 @@
       async import_open_note() { await wait(100); },
     });
 
+    // Point 5, the assistant on the phone (tel=1: no phone reaches it yet; tel=wa: WhatsApp already does;
+    // without it, no Hermes: no offer). wa=scan: the phone scans the third code shown; wa=expire: it is never
+    // scanned; wa=echec: Hermes cannot prepare it; fin=sans-bonjour: linked, the first message not sent;
+    // fin=pas-connecte: the gateway never says connected. tg=ferme: Hermes Desktop would not open;
+    // tg=attente: the Telegram assistant is not made yet.
+    // The codes are drawn like qr.rs's (same SVG), from made-up modules: nothing to scan here.
+    const fakeQr = (seed) => {
+      const n = 41;
+      const dark = [];
+      let r = seed;
+      for (let i = 0; i < n * n; i++) { r = (r * 1103515245 + 12345) % 2147483648; dark.push(r % 7 < 3); }
+      const finder = (fx, fy) => {
+        for (let y = -1; y <= 7; y++) for (let x = -1; x <= 7; x++) {
+          const [px, py] = [fx + x, fy + y];
+          if (px < 0 || py < 0 || px >= n || py >= n) continue;
+          const ring = Math.max(Math.abs(x - 3), Math.abs(y - 3));
+          dark[py * n + px] = ring !== 2 && ring !== 4;
+        }
+      };
+      finder(0, 0); finder(n - 7, 0); finder(0, n - 7);
+      let d = '';
+      dark.forEach((on, i) => { if (on) d += `M${(i % n) + 4},${Math.floor(i / n) + 4}h1v1h-1z`; });
+      const full = n + 8;
+      return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${full} ${full}" shape-rendering="crispEdges"><rect width="${full}" height="${full}" fill="white"/><path d="${d}" fill="black"/></svg>`;
+    };
+    let waPolls = 0;
+    let reachCalls = 0;
+    let telegramOpened = false;
+    Object.assign(handlers, {
+      async hermes_reach() {
+        await wait(T(100));
+        const tel = P.get('tel');
+        if (!tel) return null;
+        if (telegramOpened) reachCalls += 1;
+        return { whatsapp: tel === 'wa', telegram: telegramOpened && P.get('tg') !== 'attente' && reachCalls >= 3 };
+      },
+      async whatsapp_start() {
+        await wait(T(1200));
+        if (P.get('wa') === 'echec') throw 'Hermes n’a pas démarré. Réessaie dans un instant.';
+        waPolls = 0;
+        return { id: 'p_mock1', status: 'starting', qr: null, error: null };
+      },
+      async whatsapp_poll({ id }) {
+        await wait(T(150));
+        waPolls += 1;
+        const wa = P.get('wa');
+        if (waPolls <= 2) return { id, status: 'installing', qr: null, error: null };
+        if (wa === 'scan' && waPolls >= 12) return { id, status: 'connected', qr: null, error: null };
+        if (wa === 'expire' && waPolls >= 12) return { id, status: 'expired', qr: null, error: 'Hermes n’a pas pu relier WhatsApp. (WhatsApp QR setup expired. Start a new setup.)' };
+        return { id, status: 'waiting', qr: fakeQr(waPolls < 8 ? 18004 : 18005), error: null };
+      },
+      async whatsapp_finish({ id }) {
+        console.log('whatsapp_finish', id);
+        await wait(T(3000));
+        const fin = P.get('fin');
+        return { always_on: P.get('os') !== 'linux', connected: fin !== 'pas-connecte', hello: !fin };
+      },
+      async whatsapp_cancel({ id }) { console.log('whatsapp_cancel', id); },
+      async telegram_open() {
+        await wait(T(800));
+        if (P.get('tg') === 'ferme') throw 'Je n’ai pas pu ouvrir Hermes. Ouvre-le toi-même, puis va dans Messagerie.';
+        telegramOpened = true;
+        return P.get('os') !== 'linux';
+      },
+    });
+
     window.__TAURI__ = {
       core: {
         invoke: (cmd, args = {}) => (Object.hasOwn(handlers, cmd) ? handlers[cmd](args) : Promise.reject(`commande inconnue : ${cmd}`)),

@@ -141,6 +141,8 @@ const state = {
   importOffered: false,
   // Point 6: what Hermes may do on this computer was asked for, at the end of this run: once.
   accessOffered: false,
+  // Point 5: the assistant on the phone (WhatsApp or Telegram) was offered, in this run: once.
+  messagingOffered: false,
   // An import wrote its note in this run: the last screen offers the other one.
   memoryImported: false,
   // The Voyage key lives only here, in memory, and only once Voyage accepted it.
@@ -2281,6 +2283,157 @@ function accessGiven(todo, i) {
   focusMain();
 }
 
+// Point 5: the assistant on the phone (hermes_messaging.rs), offered once per run, after what Hermes
+// may do and before the memory, when no phone reaches it yet. WhatsApp: the user's own account, in their
+// chat with themselves; Hermes Desktop has no WhatsApp screen, so the code to scan is shown here.
+// Telegram: Hermes Desktop's own page. Either way done is when Hermes's gateway says it is connected.
+const ALWAYS_ON = 'Ton assistant répond tant que ton ordinateur est allumé.';
+
+function showMessaging() {
+  screen('messaging');
+  say('idle', 'Je te rejoins sur ton téléphone ?', 'Avec ça, tu m’écris sur WhatsApp comme à un ami, même loin de ton ordinateur, et c’est moi qui t’écris quand j’ai quelque chose pour toi.');
+  ui.screen.append(
+    h('p', { class: 'note' }, 'Je passe par ton propre WhatsApp, dans ta discussion avec toi-même : personne d’autre ne peut me parler. ' + ALWAYS_ON),
+    h('p', { class: 'note' }, 'À savoir : WhatsApp n’autorise pas officiellement ce genre d’outil, et il peut, rarement, restreindre un compte relié ainsi. Si ça t’inquiète, choisis Telegram.'));
+  ui.actions.append(
+    button('Plus tard', finishInstall, { kind: 'ghost', act: 'later' }),
+    button('Plutôt Telegram', openTelegram, { kind: 'secondary', act: 'telegram' }),
+    button('Oui, sur WhatsApp', startWhatsapp, { act: 'next' }));
+  focusMain();
+}
+
+function messagingFailed(text, retry) {
+  screen('messaging-ko');
+  say('worried', 'Ce n’est pas encore bon.', text);
+  ui.actions.append(
+    button('Plus tard', finishInstall, { kind: 'ghost', act: 'later' }),
+    button('Réessayer', retry, { act: 'next' }));
+  focusMain();
+}
+
+// Hermes prepares the code (its WhatsApp bridge, installed the first time), then shows a new one every
+// few seconds until the phone scans one: each is drawn as it comes.
+async function startWhatsapp() {
+  const gen = screen('whatsapp-wait');
+  say('working', 'Je prépare le code à scanner…', 'La première fois, ça peut prendre une minute.');
+  // Hermes's server stops with the pairing, even one still being prepared.
+  let id = '';
+  ui.actions.append(button('Plus tard', () => { invoke('whatsapp_cancel', { id }).catch(() => {}); finishInstall(); }, { kind: 'ghost', act: 'later' }));
+  let pairing;
+  try {
+    pairing = await invoke('whatsapp_start');
+  } catch (e) {
+    if (gen === view.gen) messagingFailed(errText(e), startWhatsapp);
+    return;
+  }
+  if (gen !== view.gen) return;
+  id = pairing.id;
+  const code = h('img', { class: 'qr', alt: 'Le code à scanner avec WhatsApp', width: 232, height: 232, hidden: true });
+  const steps = h('ol', { class: 'plan', hidden: true }, [
+    'Ouvre WhatsApp sur ton téléphone.',
+    'Va dans « Appareils connectés » : dans Réglages sur iPhone, dans le menu ⋮ sur Android.',
+    'Touche « Connecter un appareil », puis vise ce code.',
+  ].map((t) => h('li', {}, t)));
+  ui.screen.append(code, steps);
+  let shown = '';
+  let busy = false;
+  const show = (p) => {
+    if (gen !== view.gen || !p) return;
+    if (p.status === 'connected') {
+      finishWhatsapp(id);
+    } else if (p.status === 'expired') {
+      messagingFailed('Le code a expiré avant d’être scanné : réessaie, je t’en prépare un nouveau.', startWhatsapp);
+    } else if (p.status === 'error' || p.status === 'cancelled') {
+      messagingFailed(p.error || 'Hermes n’a pas pu préparer le code.', startWhatsapp);
+    } else if (p.qr && p.qr !== shown) {
+      if (!shown) say('idle', 'À toi : scanne ce code avec WhatsApp.', 'Je vérifie tout seul dès que c’est fait.');
+      shown = p.qr;
+      code.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(p.qr)}`;
+      code.hidden = false;
+      steps.hidden = false;
+    } else if (p.status === 'installing' && !shown) {
+      say('working', 'J’installe ce qu’il faut pour WhatsApp…', 'La première fois, ça peut prendre une minute.');
+    }
+  };
+  show(pairing);
+  every(async () => {
+    if (busy || gen !== view.gen) return;
+    busy = true;
+    try {
+      show(await invoke('whatsapp_poll', { id }));
+    } catch {
+      // Asked again in a moment.
+    } finally {
+      busy = false;
+    }
+  }, 2000);
+}
+
+// Scanned: Hermes saves the link and restarts its gateway with it, then the assistant writes first.
+async function finishWhatsapp(id) {
+  const gen = screen('whatsapp-saving');
+  say('working', 'C’est relié !', 'Je m’installe pour te répondre même quand cette fenêtre est fermée. Ça peut prendre une minute.');
+  let linked;
+  try {
+    linked = await invoke('whatsapp_finish', { id });
+  } catch (e) {
+    if (gen === view.gen) messagingFailed(errText(e), startWhatsapp);
+    return;
+  }
+  if (gen !== view.gen) return;
+  if (!linked || !linked.connected) {
+    messagingFailed('Ton WhatsApp est relié, mais Hermes ne le voit pas encore connecté. Réessaie dans un instant.', startWhatsapp);
+    return;
+  }
+  screen('whatsapp-ok');
+  if (linked.hello) say('happy', 'C’est fait : je viens de t’écrire sur WhatsApp.', 'Ouvre ta discussion avec toi-même et réponds-moi : je suis là.');
+  else say('happy', 'C’est fait : je suis sur ton WhatsApp.', 'Écris-moi dans ta discussion avec toi-même : je te réponds.');
+  ui.screen.append(h('p', { class: 'note' }, linked.always_on ? ALWAYS_ON : `${ALWAYS_ON} S’il redémarre, ouvre Hermes pour que je revienne.`));
+  ui.actions.append(button('Continuer', finishInstall, { act: 'next' }));
+  focusMain();
+}
+
+// Telegram: Hermes Desktop's page, where its own QR makes the user's bot. Checked every few seconds.
+async function openTelegram() {
+  const gen = screen('telegram-ask');
+  say('working', 'J’ouvre Hermes sur la Messagerie…');
+  let alwaysOn;
+  try {
+    alwaysOn = await invoke('telegram_open');
+  } catch (e) {
+    if (gen === view.gen) messagingFailed(errText(e), openTelegram);
+    return;
+  }
+  if (gen !== view.gen) return;
+  say('idle', 'À toi : crée ton assistant Telegram dans Hermes.', 'Je vérifie tout seul dès que c’est fait.');
+  ui.screen.append(h('ol', { class: 'plan' }, [
+    'Dans Hermes, sur la page Messagerie, choisis Telegram.',
+    'Clique sur « Créer avec un code QR ».',
+    'Vise le code avec ton téléphone : Telegram s’ouvre, confirme.',
+    'De retour dans Hermes, clique sur « Enregistrer et redémarrer ».',
+  ].map((t) => h('li', {}, t))));
+  ui.actions.append(button('Plus tard', finishInstall, { kind: 'ghost', act: 'later' }));
+  let busy = false;
+  every(async () => {
+    if (busy) return;
+    busy = true;
+    try {
+      const reach = await invoke('hermes_reach');
+      if (gen === view.gen && reach && reach.telegram) {
+        screen('telegram-ok');
+        say('happy', 'C’est fait : je suis sur ton Telegram.', 'Ouvre Telegram et écris « Bonjour » à ton assistant : il te répond.');
+        ui.screen.append(h('p', { class: 'note' }, alwaysOn ? ALWAYS_ON : `${ALWAYS_ON} S’il redémarre, ouvre Hermes pour que je revienne.`));
+        ui.actions.append(button('Continuer', finishInstall, { act: 'next' }));
+        focusMain();
+      }
+    } catch {
+      // Checked again in a moment.
+    } finally {
+      busy = false;
+    }
+  }, 4000);
+}
+
 async function finishInstall() {
   const gen = view.gen;
   if (!state.accessOffered) {
@@ -2296,6 +2449,21 @@ async function finishInstall() {
     const todo = (Array.isArray(perms) ? perms : []).filter((p) => p && Object.hasOwn(ACCESS, p.id) && p.state !== 'ok').map((p) => p.id);
     if (todo.length) {
       showAccess(todo, 0);
+      return;
+    }
+  }
+  if (!state.messagingOffered) {
+    state.messagingOffered = true;
+    let reach = null;
+    try {
+      reach = await invoke('hermes_reach');
+    } catch {
+      reach = null;
+    }
+    if (gen !== view.gen) return;
+    // Without Hermes, or a phone already reaching it: nothing to offer.
+    if (reach && typeof reach === 'object' && !reach.whatsapp && !reach.telegram) {
+      showMessaging();
       return;
     }
   }
