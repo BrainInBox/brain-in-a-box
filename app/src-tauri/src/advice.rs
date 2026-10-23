@@ -6,8 +6,9 @@
 //! (include_str!) and applies it to what it probes itself: one source for both.
 //!
 //! Nothing secret is read. Codex's auth.json and Hermes's .env are looked for, never opened; of
-//! `claude auth status`, the diagnosis keeps authMethod (detect::login_of) and nothing else. While the kit's gate keeps Codex closed on this system (agents::codex_open), no rule
-//! offers Codex.
+//! `claude auth status`, the diagnosis keeps authMethod and the plan's name (detect::login_of), nothing
+//! else. While the kit's gate keeps Codex closed on this system (agents::codex_open), no rule offers
+//! Codex.
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -131,7 +132,8 @@ fn probe_with(p: &Place, claude_bin: bool, login: ClaudeLogin, codex_bin: bool, 
     Facts {
         porte,
         claude: claude_app || (claude_bin && login.is_logged_in()),
-        claude_connecte: claude_bin && login == ClaudeLogin::Subscribed,
+        // claude.ai counts whatever its plan, as _conseil.connexion does: the diagnosis says the rest.
+        claude_connecte: claude_bin && matches!(login, ClaudeLogin::Subscribed | ClaudeLogin::Unconfirmed),
         chatgpt: codex_bin || auth || chatgpt_app,
         chatgpt_connecte: auth,
         hermes: hermes(p),
@@ -310,8 +312,10 @@ mod tests {
 
         // Claude Code logged in with a subscription; an API key is not one, yet whoever logged in uses
         // Claude.
-        let f = probe_with(&p, true, ClaudeLogin::Subscribed, false, Some(&codex_home), false);
-        assert!(f.claude && f.claude_connecte);
+        for login in [ClaudeLogin::Subscribed, ClaudeLogin::Unconfirmed] {
+            let f = probe_with(&p, true, login, false, Some(&codex_home), false);
+            assert!(f.claude && f.claude_connecte, "{login:?}");
+        }
         let f = probe_with(&p, true, ClaudeLogin::Billed, false, Some(&codex_home), false);
         assert!(f.claude && !f.claude_connecte);
         // Installed and nobody logged in (the app installs it too): no sign of a Claude user.
@@ -484,7 +488,7 @@ mod tests {
         assert_eq!(theirs.len(), cases.len());
         for ((s, token), t) in cases.iter().zip(theirs) {
             let ours = match detect::login_of(s, *token) {
-                ClaudeLogin::Subscribed => json!("abonne"),
+                ClaudeLogin::Subscribed | ClaudeLogin::Unconfirmed => json!("abonne"),
                 ClaudeLogin::Billed => json!("facture"),
                 ClaudeLogin::LoggedOut => Value::Null,
             };

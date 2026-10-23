@@ -55,8 +55,8 @@ CONSEIL_JSON = r"""
     {"si": {"hermes": true}, "phrase": "hermes"}
   ],
   "phrases": {
-    "claude_connecte": "Tu as déjà Claude Code, connecté à ton abonnement : ton cerveau travaillera avec lui.",
-    "claude_vu": "Tu utilises déjà Claude : ton cerveau travaillera avec lui. Il te faut un abonnement Claude Pro (environ 20\u00a0€ par mois) ou Max.",
+    "claude_connecte": "Tu as déjà Claude Code, connecté à ton compte Claude : ton cerveau travaillera avec lui.",
+    "claude_vu": "Tu utilises déjà Claude : ton cerveau travaillera avec lui. Si tu as Claude Pro ou Max, c'est bon. Sinon, il te faut Claude Pro (environ 20\u00a0€ par mois).",
     "chatgpt": "Tu utilises ChatGPT : ton cerveau marche avec Claude. Il te faut Claude Pro (environ 20\u00a0€ par mois), en plus de ChatGPT ou à sa place. À la fin, tu pourras apporter à ton cerveau ce que ChatGPT sait de toi.",
     "rien": "Ton cerveau marche avec Claude : il te faut un abonnement Claude Pro (environ 20\u00a0€ par mois) ou Max.",
     "codex": "Tu utilises ChatGPT : ton cerveau peut travailler avec Codex, l'IA de ChatGPT, sur ton abonnement ChatGPT. À la fin, tu pourras apporter à ton cerveau ce que ChatGPT sait de toi.",

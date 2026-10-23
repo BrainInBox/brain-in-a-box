@@ -76,6 +76,10 @@ const GIT: Item = Item("git", "Git (l'historique de tes notes)", Some("brain"));
 /// No fix step: the user installs it from the Microsoft Store.
 #[cfg(windows)]
 const WINGET: Item = Item("winget", "Outil d'installation de Microsoft", None);
+/// install.ps1 takes Python and Git from their official installers when winget cannot (#65): winget is
+/// then Obsidian's alone. A test holds it equal to install.ps1, whichever of the two changes first.
+#[cfg(any(windows, test))]
+const OFFICIAL_INSTALLERS: bool = false;
 /// The step that installs Bun and Obsidian: their own on a Mac, install.ps1's on Windows.
 const OWN_STEP_OR_BRAIN: [&str; 2] = if cfg!(windows) { ["brain", "brain"] } else { ["bun", "obsidian"] };
 const BUN: Item = Item("bun", "Le moteur de la mémoire", Some(OWN_STEP_OR_BRAIN[0]));
@@ -138,7 +142,7 @@ struct Facts {
     python: Option<detect::Python>,
     #[cfg(windows)]
     git: Found,
-    /// Looked for only when Python or Git is missing.
+    /// Looked for only when Python, Git or Obsidian is missing.
     #[cfg(windows)]
     winget: Option<Found>,
     bun: Found,
@@ -549,13 +553,16 @@ fn decide(home: &Path, f: &Facts) -> Diagnosis {
     let tools = vec![check_clt(f.clt)];
     #[cfg(target_os = "linux")]
     let tools = vec![check_paquets(&f.linux)];
-    // Looked for only when something it brings is missing: there, or not needed.
+    // Looked for only when something it brings is missing (None: not needed). There but silent,
+    // install.ps1 tries it all the same.
     #[cfg(windows)]
-    let winget = f.winget.as_ref().is_none_or(Found::answers);
+    let winget = f.winget.as_ref().is_none_or(|w| *w != Found::Absent);
     #[cfg(windows)]
     let tools = {
-        let mut tools = vec![check_python(f.python.as_ref(), winget), check_git(&f.git, winget)];
-        tools.extend(check_winget(f.python.is_none(), f.git == Found::Absent, f.obsidian == Found::Absent, winget));
+        let python_git = winget || OFFICIAL_INSTALLERS;
+        let mut tools = vec![check_python(f.python.as_ref(), python_git), check_git(&f.git, python_git)];
+        let needs = |missing: bool| missing && !OFFICIAL_INSTALLERS;
+        tools.extend(check_winget(needs(f.python.is_none()), needs(f.git == Found::Absent), f.obsidian == Found::Absent, f.winget.as_ref()));
         tools
     };
     let hosts = hosts(f);
@@ -603,12 +610,14 @@ fn decide(home: &Path, f: &Facts) -> Diagnosis {
     let slow = f.speed.is_some_and(|s| s < SLOW_BYTES_PER_S) && download_mb > 0;
     let slow_note = slow.then(|| {
         format!(
-            "compte {} en tout, avec {} à télécharger. En données mobiles, attends d'avoir un Wi-Fi.",
+            "prévois {} en tout, avec {} à télécharger. En données mobiles, attends d'avoir un Wi-Fi.",
             fmt_minutes(minutes),
             fmt_mb(download_mb)
         )
     });
-    checks.insert(network_at, check_network(&hosts, f.github, slow_note.as_deref()));
+    // A 403 for github.com is a filter, unless GitHub's file came all the same (the speed's measure).
+    let filtered = f.github == Some(403) && f.speed.is_none();
+    checks.insert(network_at, check_network(&hosts, filtered, slow_note.as_deref()));
     let can_install = checks.iter().all(|c| c.status != Status::Error);
     let headline = headline(&checks, &todo, download_mb, minutes, slow);
 
@@ -708,11 +717,11 @@ fn hosts(f: &Facts) -> Vec<(&'static str, bool)> {
     hosts
 }
 
-/// Blocks when none of the sites answers, or when a filter answers for github.com (403), where the
-/// brain comes from: only github.com's, as claude.ai turns curl away with a 403 of its own. `slow`:
-/// what a slow network means for the downloads left.
-fn check_network(hosts: &[(&str, bool)], github: Option<u16>, slow: Option<&str>) -> Check {
-    if github == Some(403) {
+/// Blocks when none of the sites answers, or when a filter answers for github.com (`filtered`: a 403),
+/// where the brain comes from: only github.com's, as claude.ai turns curl away with a 403 of its own.
+/// `slow`: what a slow network means for the downloads left.
+fn check_network(hosts: &[(&str, bool)], filtered: bool, slow: Option<&str>) -> Check {
+    if filtered {
         return NETWORK.is(
             Status::Error,
             "Ce réseau bloque github.com, d'où je télécharge ton cerveau. Au travail ou à l'école, demande au \
@@ -826,38 +835,51 @@ fn not_yet_installed(winget: bool) -> &'static str {
 #[cfg(windows)]
 fn check_obsidian_windows(found: &Found, winget: bool) -> Check {
     match found {
-        Found::Absent if !winget => OBSIDIAN.is(Status::Warn, format!("{NO_WINGET} Sinon, il est gratuit sur obsidian.md.")),
+        Found::Absent if !winget => {
+            OBSIDIAN.is(Status::Warn, format!("{NO_WINGET} Tu peux aussi le télécharger toi-même, gratuitement, sur obsidian.md."))
+        }
         _ => check_obsidian(found),
     }
 }
 
-/// install.ps1 takes Python, Git and Obsidian from winget. Without it, the brain step stops on
-/// Python, minutes into the install: said in red before it, with python.org for a PC whose Store is
-/// closed. Git and Obsidian alone are said in orange: the install goes on without them. Windows' own
-/// names, in French and in English: a PC may be either.
+/// install.ps1 takes Python, Git and Obsidian from winget (the `_missing` it would need it for). Without
+/// it, the brain step stops on Python, minutes into the install: said in red before it, with
+/// python.org for a PC whose Store is closed. Git and Obsidian alone are said in orange: the install
+/// goes on without them. There but silent (its first run on a new profile is slow): orange, and a
+/// minute to wait. Windows' own names, in French and in English: a PC may be either.
 #[cfg(windows)]
-fn check_winget(python_missing: bool, git_missing: bool, obsidian_missing: bool, winget: bool) -> Option<Check> {
+fn check_winget(python_missing: bool, git_missing: bool, obsidian_missing: bool, winget: Option<&Found>) -> Option<Check> {
     let missing: Vec<String> = [(python_missing, "Python"), (git_missing, "Git"), (obsidian_missing, "Obsidian")]
         .into_iter()
         .filter(|(m, _)| *m)
         .map(|(_, name)| name.to_string())
         .collect();
-    if missing.is_empty() || winget {
+    let winget = winget.filter(|w| !w.answers())?;
+    if missing.is_empty() {
         return None;
     }
-    let store = "Ouvre le Microsoft Store, cherche « Programme d'installation d'application (App Installer) », \
-                 clique sur « Obtenir (Get) » ou « Mettre à jour (Update) », puis sur Revérifier.";
+    let store = "Ouvre le Microsoft Store, cherche « Programme d'installation d'application (App Installer) » et clique \
+                 sur « Obtenir (Get) » ou « Mettre à jour (Update) ». S'il n'y a que « Ouvrir (Open) », redémarre ton \
+                 PC. Puis clique sur Revérifier.";
     let what = steps::list_fr(&missing);
-    Some(if python_missing {
-        WINGET.is(
+    Some(match winget {
+        Found::Absent if python_missing => WINGET.is(
             Status::Error,
             format!(
-                "Il me manque l'outil d'installation de Microsoft pour installer {what}. {store} Store bloqué (PC du \
+                "Pour installer {what}, il me faut l'outil d'installation de Microsoft. {store} Store bloqué (PC du \
                  travail) ? Installe Python depuis python.org, ou demande au service informatique."
             ),
-        )
-    } else {
-        WINGET.is(Status::Warn, format!("Il me manque l'outil d'installation de Microsoft pour installer {what} : je continue sans. {store}"))
+        ),
+        Found::Absent => {
+            WINGET.is(Status::Warn, format!("Il me manque l'outil d'installation de Microsoft pour installer {what} : je continue sans. {store}"))
+        }
+        _ => WINGET.is(
+            Status::Warn,
+            format!(
+                "L'outil d'installation de Microsoft ne répond pas encore : il me sert à installer {what}. Attends une \
+                 minute, puis clique sur Revérifier. Toujours rien ? {store}"
+            ),
+        ),
     })
 }
 
@@ -891,18 +913,25 @@ fn check_claude(found: &Found) -> Check {
     }
 }
 
-/// Only a subscription is used (never a login billed per use): a login billed per use is said,
-/// without blocking. A developer billed on purpose installs all the same.
+/// Only a subscription is used (never a login billed per use). A claude.ai account whose plan Claude
+/// Code does not say (free, or not read yet) and a login billed per use are said, without blocking:
+/// a developer billed on purpose installs all the same. The window has no button to change accounts:
+/// the person who advised Bibo can.
 fn check_claude_auth(claude_works: bool, login: ClaudeLogin) -> Check {
     match (claude_works, login) {
         (false, _) => CLAUDE_AUTH.is(Status::Missing, "Tu te connecteras une fois Claude Code installé."),
         (true, ClaudeLogin::Subscribed) => CLAUDE_AUTH.is(Status::Ok, "Tu es connecté."),
+        (true, ClaudeLogin::Unconfirmed) => CLAUDE_AUTH.is(
+            Status::Warn,
+            "Tu es connecté, mais Claude ne me dit pas quel est ton abonnement. Ton cerveau demande Claude Pro \
+             (environ 20\u{a0}€ par mois) ou Max : un compte gratuit ne suffit pas. Si tu as Pro ou Max, tout va bien.",
+        ),
         (true, ClaudeLogin::LoggedOut) => CLAUDE_AUTH.is(Status::Missing, "Pas encore connecté. Tu le feras en un clic."),
         (true, ClaudeLogin::Billed) => CLAUDE_AUTH.is(
             Status::Warn,
-            "Claude Code est connecté avec une clé API, facturée à chaque message : je ne m'en sers ni pour le guide \
-             ni pour le résumé du soir. Connecte plutôt ton abonnement Claude Pro ou Max. Développeur et c'est voulu ? \
-             Rien ne bloque : tout le reste s'installe.",
+            "Claude Code est connecté à un compte payé à chaque message (clé API, passerelle…), pas à un abonnement : \
+             je ne m'en sers ni pour le guide ni pour le résumé du soir. Rien ne bloque : tout le reste s'installe. \
+             Pour passer à ton abonnement Claude Pro ou Max, demande de l'aide à la personne qui t'a conseillé Bibo.",
         ),
     }
 }
@@ -1162,11 +1191,11 @@ fn headline(checks: &[Check], todo: &[String], download_mb: u32, minutes: u32, s
     let (what, time, size) = (installing(todo), fmt_minutes(minutes), fmt_mb(download_mb));
     if slow {
         format!(
-            "Ton {machine} est prêt, mais ta connexion est lente. J'installe {what} : compte {time}, avec {size} \
+            "Ton {machine} est prêt, mais ta connexion est lente. J'installe {what} : prévois {time}, avec {size} \
              à télécharger. En données mobiles, attends d'avoir un Wi-Fi."
         )
     } else {
-        format!("Ton {machine} est prêt. J'installe {what} : {time} et {size} à télécharger. Branche-toi sur un Wi-Fi si tu peux.")
+        format!("Ton {machine} est prêt. J'installe {what} : {time} et {size} à télécharger.")
     }
 }
 
@@ -1311,7 +1340,7 @@ mod tests {
     #[test]
     fn network_blocks_only_when_both_sites_are_down() {
         let net = |github, claude_ai| {
-            let c = check_network(&[("github.com", github), ("claude.ai", claude_ai)], github.then_some(200), None);
+            let c = check_network(&[("github.com", github), ("claude.ai", claude_ai)], false, None);
             (c.status, c.detail)
         };
         // Claude alone: word for word as before Codex.
@@ -1327,7 +1356,7 @@ mod tests {
     /// Each agent's site; none answering blocks, one of them down warns.
     #[test]
     fn the_network_check_names_each_agents_site() {
-        let three = |a: bool, b, c| check_network(&[("github.com", a), ("claude.ai", b), ("chatgpt.com", c)], a.then_some(200), None);
+        let three = |a: bool, b, c| check_network(&[("github.com", a), ("claude.ai", b), ("chatgpt.com", c)], false, None);
         assert_eq!(three(true, true, true).detail, "github.com, claude.ai et chatgpt.com répondent.");
         let down = three(true, false, false);
         assert_eq!((down.status, down.detail.as_str()), (Status::Warn, "claude.ai et chatgpt.com ne répondent pas. Une étape risque d'échouer."));
@@ -1336,8 +1365,8 @@ mod tests {
             (none.status, none.detail.as_str()),
             (Status::Error, "Pas d'internet : ni github.com, ni claude.ai, ni chatgpt.com ne répondent. Vérifie ton Wi-Fi, puis relance.")
         );
-        assert_eq!(check_network(&[("github.com", true)], Some(200), None).detail, "github.com répond.");
-        let alone = check_network(&[("github.com", false)], None, None);
+        assert_eq!(check_network(&[("github.com", true)], false, None).detail, "github.com répond.");
+        let alone = check_network(&[("github.com", false)], false, None);
         assert_eq!((alone.status, alone.detail.as_str()), (Status::Error, "Pas d'internet : github.com ne répond pas. Vérifie ton Wi-Fi, puis relance."));
         let f = Facts { agents: codex_agents(vec![Engine::Codex, Engine::Claude]), chatgpt: true, ..healthy_facts() };
         assert_eq!(hosts(&f), [("github.com", true), ("chatgpt.com", true), ("claude.ai", true)]);
@@ -1382,15 +1411,36 @@ mod tests {
         assert_eq!(check_claude_auth(true, ClaudeLogin::Subscribed).status, Status::Ok);
     }
 
+    /// claude.ai without its plan: a free account, most often (Claude Code reads the plan when it logs
+    /// in). Said in orange, with what the brain needs and its price, never blocking.
+    #[test]
+    fn a_claude_ai_account_without_a_plan_is_told_what_the_brain_needs() {
+        let c = check_claude_auth(true, ClaudeLogin::Unconfirmed);
+        assert_eq!((c.status, c.fix), (Status::Warn, None));
+        for said in ["Tu es connecté", "Claude Pro (environ 20\u{a0}€ par mois) ou Max", "un compte gratuit ne suffit pas", "Si tu as Pro ou Max, tout va bien."] {
+            assert!(c.detail.contains(said), "{said}: {}", c.detail);
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        fake_brain(tmp.path());
+        let d = decide(tmp.path(), &Facts { claude_login: ClaudeLogin::Unconfirmed, ..healthy_facts() });
+        assert!(d.can_install && d.todo.is_empty());
+        assert_eq!(by_id(&d, "claude_auth").status, Status::Warn);
+    }
+
     /// A login billed per use is not a subscription: said, never blocking, and the developer billed
     /// on purpose is told nothing stops.
     #[test]
     fn only_a_subscription_is_a_login() {
         let billed = check_claude_auth(true, ClaudeLogin::Billed);
         assert_eq!((billed.status, billed.fix), (Status::Warn, None));
-        assert!(billed.detail.contains("clé API") && billed.detail.contains("Rien ne bloque"), "{}", billed.detail);
-        // No button is named so: the text must not send the user looking for one.
-        assert!(!billed.detail.contains("Continue quand même"), "{}", billed.detail);
+        for said in ["payé à chaque message (clé API, passerelle…), pas à un abonnement", "Rien ne bloque", "la personne qui t'a conseillé Bibo"] {
+            assert!(billed.detail.contains(said), "{said}: {}", billed.detail);
+        }
+        // No button is named so, and the window cannot change the account: the text must not send the
+        // user looking for either.
+        for wrong in ["Continue quand même", "Connecte plutôt", "avec une clé API"] {
+            assert!(!billed.detail.contains(wrong), "{wrong}: {}", billed.detail);
+        }
         let tmp = tempfile::tempdir().unwrap();
         fake_brain(tmp.path());
         let d = decide(tmp.path(), &Facts { claude_login: ClaudeLogin::Billed, ..healthy_facts() });
@@ -1596,7 +1646,8 @@ mod tests {
             "{}",
             d.headline
         );
-        assert!(d.headline.ends_with("à télécharger. Branche-toi sur un Wi-Fi si tu peux."), "{}", d.headline);
+        // A fast enough network: nothing said of Wi-Fi (a PC on a cable would wonder why).
+        assert!(d.headline.ends_with(" à télécharger.") && !d.headline.contains("Wi-Fi"), "{}", d.headline);
         // Claude Code (300 Mo), the brain's memory and the kit, and each tool of the system.
         assert!(d.download_mb > 400, "{}", d.download_mb);
         assert!(d.headline.contains(&fmt_mb(d.download_mb)) && d.headline.contains(&fmt_minutes(d.minutes)), "{}", d.headline);
@@ -1629,11 +1680,10 @@ mod tests {
     #[test]
     fn a_filter_on_github_blocks_and_names_it() {
         let hosts = [("github.com", true), ("claude.ai", true)];
-        let c = check_network(&hosts, Some(403), None);
+        let c = check_network(&hosts, true, None);
         assert_eq!((c.status, c.fix), (Status::Error, None));
         assert!(c.detail.contains("bloque github.com") && c.detail.contains("Revérifier"), "{}", c.detail);
-        assert_eq!(check_network(&hosts, Some(200), None).status, Status::Ok);
-        assert_eq!(check_network(&hosts, Some(301), None).status, Status::Ok);
+        assert_eq!(check_network(&hosts, false, None).status, Status::Ok);
         let tmp = tempfile::tempdir().unwrap();
         fake_brain(tmp.path());
         let d = decide(tmp.path(), &Facts { github: Some(403), ..healthy_facts() });
@@ -1641,6 +1691,21 @@ mod tests {
         assert_eq!(by_id(&d, "network").status, Status::Error);
         let ids: Vec<&str> = d.checks.iter().map(|c| c.id.as_str()).collect();
         assert_eq!(ids.iter().position(|id| *id == "network"), Some(2), "{ids:?}");
+        for code in [200, 301, 429] {
+            assert_eq!(by_id(&decide(tmp.path(), &Facts { github: Some(code), ..healthy_facts() }), "network").status, Status::Ok);
+        }
+    }
+
+    /// github.com's 403, while GitHub's file came all the same (GitHub turning curl away, not a
+    /// filter): the downloads pass, nothing blocks.
+    #[test]
+    fn a_403_from_github_blocks_nothing_when_its_file_comes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let d = decide(tmp.path(), &Facts { github: Some(403), speed: Some(5_000_000.0), ..fresh_facts() });
+        assert!(d.can_install, "{:?}", d.checks);
+        assert_eq!(by_id(&d, "network").status, Status::Ok);
+        let blocked = decide(tmp.path(), &Facts { github: Some(403), speed: None, ..fresh_facts() });
+        assert_eq!(by_id(&blocked, "network").status, Status::Error);
     }
 
     /// Below 2 Mbit/s, the network check and the headline say how long the downloads take.
@@ -1652,16 +1717,18 @@ mod tests {
         assert!(d.can_install);
         let net = by_id(&d, "network");
         assert_eq!(net.status, Status::Warn);
-        assert!(net.detail.contains("mais lentement : compte environ ") && net.detail.contains("En données mobiles"), "{}", net.detail);
+        assert!(net.detail.contains("mais lentement : prévois environ ") && net.detail.contains("En données mobiles"), "{}", net.detail);
         assert!(d.minutes > 60, "{}", d.minutes);
         // The time is the whole install's (downloads and work), the volume the downloads'.
-        let whole = format!("compte {} en tout, avec {} à télécharger.", fmt_minutes(d.minutes), fmt_mb(d.download_mb));
+        let whole = format!("prévois {} en tout, avec {} à télécharger.", fmt_minutes(d.minutes), fmt_mb(d.download_mb));
         assert!(net.detail.contains(&whole), "{}", net.detail);
         assert!(d.headline.contains("ta connexion est lente") && d.headline.contains("attends d'avoir un Wi-Fi"), "{}", d.headline);
+        // « compte » would read as the Claude account.
+        assert!(!net.detail.contains("compte") && !d.headline.contains("compte"), "{}", d.headline);
         // Past 5 h: « plusieurs heures », with no « environ » before it.
         let crawling = decide(tmp.path(), &Facts { speed: Some(20_000.0), ..fresh_facts() });
         for said in [&by_id(&crawling, "network").detail, &crawling.headline] {
-            assert!(said.contains("compte plusieurs heures") && !said.contains("environ plusieurs"), "{said}");
+            assert!(said.contains("prévois plusieurs heures") && !said.contains("environ plusieurs"), "{said}");
         }
         // Fast, or nothing left to download: nothing said of the speed.
         let fast = decide(tmp.path(), &Facts { speed: Some(5_000_000.0), ..fresh_facts() });
@@ -1684,7 +1751,7 @@ mod tests {
             assert_eq!(parse_speed(nothing), None, "{nothing}");
         }
         // A satellite link: 3.6 s of handshakes and redirect, then 300 Ko in the 1.4 s left, still
-        // speeding up. Nothing said, rather than « compte environ 4 h » on a fast enough network.
+        // speeding up. Nothing said, rather than « prévois environ 4 h » on a fast enough network.
         assert_eq!(parse_speed("206 300000 3.6 5.0"), None);
         assert_eq!(parse_speed("206 400000 5.1 8.0"), None);
         // Cut after 3 s of data or more, the speed holds.
@@ -1697,6 +1764,15 @@ mod tests {
     fn the_speed_is_measured_on_the_file_the_mac_step_downloads() {
         let steps = include_str!("steps.rs");
         assert!(steps.contains(&format!("const OBSIDIAN_URL: &str = \"{SPEED_URL}\";")), "{SPEED_URL}");
+    }
+
+    /// What the winget line says follows install.ps1: while it takes Python and Git from winget alone, a
+    /// PC without winget stops on Python. Once it falls back on their official installers (#65), it does
+    /// not, and the line must say so: set OFFICIAL_INSTALLERS.
+    #[test]
+    fn the_winget_line_follows_install_ps1() {
+        let ps1 = include_str!("../../../install.ps1");
+        assert_eq!(OFFICIAL_INSTALLERS, ps1.contains("function Official-Install"), "install.ps1 changed: set OFFICIAL_INSTALLERS");
     }
 
     #[test]
@@ -1925,42 +2001,53 @@ mod tests {
     }
 
     /// winget absent while Python is missing: install.ps1 would stop on Python minutes into the
-    /// install. Said in red before it, the Store's names in French and in English, and python.org for
-    /// a PC whose Store is closed.
+    /// install, while it takes Python from winget alone (OFFICIAL_INSTALLERS). Said in red before it,
+    /// the Store's names in French and in English, and python.org for a PC whose Store is closed.
     #[cfg(windows)]
     #[test]
     fn no_winget_is_said_before_the_install() {
         let tmp = tempfile::tempdir().unwrap();
-        let d = decide(tmp.path(), &Facts { winget: Some(Found::Absent), ..fresh_facts() });
-        assert!(!d.can_install);
-        let w = by_id(&d, "winget");
+        // All three missing, Python among them: red, the Store's names, python.org.
+        let w = check_winget(true, true, true, Some(&Found::Absent)).unwrap();
         assert_eq!((w.status, w.fix.as_deref(), w.label.as_str()), (Status::Error, None, "Outil d'installation de Microsoft"));
-        assert!(w.detail.contains("installer Python, Git et Obsidian."), "{}", w.detail);
+        assert!(w.detail.starts_with("Pour installer Python, Git et Obsidian, il me faut"), "{}", w.detail);
         for said in [
             "« Programme d'installation d'application (App Installer) »", "« Obtenir (Get) »", "« Mettre à jour (Update) »",
-            "Revérifier", "Store bloqué (PC du travail) ? Installe Python depuis python.org",
+            "S'il n'y a que « Ouvrir (Open) », redémarre ton PC.", "Revérifier", "Store bloqué (PC du travail) ? Installe Python depuis python.org",
         ] {
             assert!(w.detail.contains(said), "{said}: {}", w.detail);
         }
-        // Each line points to it by name, wherever it stands.
-        for id in ["python", "git", "obsidian"] {
-            assert!(by_id(&d, id).detail.contains("l'outil d'installation de Microsoft (voir sa ligne)"), "{id}");
-            assert!(!by_id(&d, id).detail.contains("juste en dessous"), "{id}");
-        }
-        assert!(d.headline.starts_with("Une chose bloque"), "{}", d.headline);
+        let d = decide(tmp.path(), &Facts { winget: Some(Found::Absent), ..fresh_facts() });
+        // Each line winget would bring points to it by name, wherever it stands.
+        let points = |d: &Diagnosis, id: &str| by_id(d, id).detail.contains("l'outil d'installation de Microsoft (voir sa ligne)");
+        assert!(points(&d, "obsidian") && !by_id(&d, "obsidian").detail.contains("juste en dessous"));
+        if OFFICIAL_INSTALLERS {
+            // install.ps1 takes Python and Git from their own sites (#65): only Obsidian waits on winget.
+            assert!(d.can_install, "{:?}", d.checks);
+            let w = by_id(&d, "winget");
+            assert!(w.status == Status::Warn && w.detail.contains("pour installer Obsidian : je continue sans."), "{}", w.detail);
+            for id in ["python", "git"] {
+                assert_eq!((by_id(&d, id).status, by_id(&d, id).detail.as_str()), (Status::Missing, "Pas encore installé : je l'installe pour toi."));
+            }
+        } else {
+            assert!(!d.can_install);
+            assert_eq!(by_id(&d, "winget").detail, w.detail);
+            assert!(points(&d, "python") && points(&d, "git"));
+            assert!(d.headline.starts_with("Une chose bloque"), "{}", d.headline);
 
-        // Python there: install.ps1 goes on without Git and Obsidian. Said in orange, nothing blocks,
-        // and what will not come is not counted in the download.
-        let git_alone = Facts { python: healthy_facts().python, winget: Some(Found::Absent), ..fresh_facts() };
-        let d = decide(tmp.path(), &git_alone);
-        assert!(d.can_install, "{:?}", d.checks);
-        let w = by_id(&d, "winget");
-        assert_eq!(w.status, Status::Warn);
-        assert!(w.detail.contains("installer Git et Obsidian : je continue sans.") && !w.detail.contains("python.org"), "{}", w.detail);
-        assert_eq!((by_id(&d, "git").status, by_id(&d, "obsidian").status), (Status::Warn, Status::Warn));
-        assert!(by_id(&d, "obsidian").detail.contains("obsidian.md"));
-        let with_winget = decide(tmp.path(), &Facts { winget: None, ..git_alone });
-        assert_eq!(d.download_mb + piece_mb("git") + piece_mb("obsidian"), with_winget.download_mb);
+            // Python there: install.ps1 goes on without Git and Obsidian. Said in orange, nothing
+            // blocks, and what will not come is not counted in the download.
+            let git_alone = Facts { python: healthy_facts().python, winget: Some(Found::Absent), ..fresh_facts() };
+            let d = decide(tmp.path(), &git_alone);
+            assert!(d.can_install, "{:?}", d.checks);
+            let w = by_id(&d, "winget");
+            assert_eq!(w.status, Status::Warn);
+            assert!(w.detail.contains("installer Git et Obsidian : je continue sans.") && !w.detail.contains("python.org"), "{}", w.detail);
+            assert_eq!((by_id(&d, "git").status, by_id(&d, "obsidian").status), (Status::Warn, Status::Warn));
+            assert!(by_id(&d, "obsidian").detail.ends_with("Tu peux aussi le télécharger toi-même, gratuitement, sur obsidian.md."));
+            let with_winget = decide(tmp.path(), &Facts { winget: None, ..git_alone });
+            assert_eq!(d.download_mb + piece_mb("git") + piece_mb("obsidian"), with_winget.download_mb);
+        }
 
         // winget there, or not looked for (nothing it brings is missing): no line.
         for winget in [Some(Found::Version("v1.9.25200".into())), None] {
@@ -1968,7 +2055,23 @@ mod tests {
             assert!(d.checks.iter().all(|c| c.id != "winget"), "{:?}", d.checks);
             assert!(d.can_install);
         }
-        assert!(check_winget(false, false, false, false).is_none());
+        assert!(check_winget(false, false, false, Some(&Found::Absent)).is_none());
+
+        // There but silent (its first run on a new profile outlasts the probe): install.ps1 tries it
+        // all the same. Orange, a minute to wait, nothing blocks.
+        let d = decide(tmp.path(), &Facts { winget: Some(Found::NoVersion), ..fresh_facts() });
+        assert!(d.can_install, "{:?}", d.checks);
+        let w = by_id(&d, "winget");
+        assert_eq!(w.status, Status::Warn);
+        assert!(w.detail.contains("ne répond pas encore") && w.detail.contains("Attends une minute"), "{}", w.detail);
+        assert_eq!(by_id(&d, "python").detail, "Pas encore installé : je l'installe pour toi.");
+        assert_eq!((by_id(&d, "git").status, by_id(&d, "obsidian").status), (Status::Missing, Status::Missing));
+
+        // Once install.ps1 takes Python and Git from their own sites (OFFICIAL_INSTALLERS), winget is
+        // Obsidian's alone: orange.
+        let only_obsidian = check_winget(false, false, true, Some(&Found::Absent)).unwrap();
+        assert_eq!(only_obsidian.status, Status::Warn);
+        assert!(only_obsidian.detail.contains("pour installer Obsidian : je continue sans."), "{}", only_obsidian.detail);
     }
 
     #[cfg(windows)]

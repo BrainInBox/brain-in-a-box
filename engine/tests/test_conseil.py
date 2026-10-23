@@ -189,6 +189,14 @@ class Conseil(unittest.TestCase):
         closed = {r["phrase"] for r in _conseil.REGLES["regles"] if r["si"].get("porte") is False}
         self.assertFalse([k for k in closed if "Codex" in p[k]], closed)
 
+    def test_a_claude_user_is_not_told_to_pay_twice(self):
+        p = _conseil.REGLES["phrases"]
+        # Seen, its plan unknown: the Claude desktop app's subscriber must not read « pay again ».
+        self.assertIn("Si tu as Claude Pro ou Max, c'est bon. Sinon, il te faut Claude Pro", p["claude_vu"])
+        # Logged in to claude.ai: a free account is one too (its plan is not read), so no « abonnement ».
+        self.assertIn("connecté à ton compte Claude", p["claude_connecte"])
+        self.assertNotIn("abonnement", p["claude_connecte"])
+
     def test_only_a_subscription_counts_as_logged_in(self):
         status = '{"loggedIn": true, "authMethod": "claude.ai", "subscriptionType": %s}'
         # claude.ai, its plan read or not: Claude Code says null for a free account as for a plan it
