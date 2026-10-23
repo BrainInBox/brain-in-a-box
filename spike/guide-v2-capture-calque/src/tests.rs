@@ -22,7 +22,8 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, MOUSEINPUT, MOUSE_EVENT_FLAGS, VIRTUAL_KEY, VK_CONTROL, VK_ESCAPE, VK_LWIN, VK_SHIFT,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumChildWindows, GetAncestor, GetForegroundWindow, SetCursorPos, WindowFromPoint, GA_ROOT, WDA_EXCLUDEFROMCAPTURE, WDA_NONE, WINDOW_DISPLAY_AFFINITY,
+    EnumChildWindows, GetAncestor, GetForegroundWindow, SetCursorPos, SetWindowPos, WindowFromPoint, GA_ROOT, SWP_NOACTIVATE, SWP_NOZORDER, WDA_EXCLUDEFROMCAPTURE,
+    WDA_NONE, WINDOW_DISPLAY_AFFINITY,
 };
 
 use crate::calque::{anneau, Calque, ANNEAU, EPAISSEUR, MARGE};
@@ -491,6 +492,11 @@ fn bureau_w1_edge() {
     let _e2 = Program(c2.spawn().unwrap());
     let w2 = until_some("Edge's second window", || find_window(|h| h != w1 && class(h) == "Chrome_WidgetWin_1" && title(h).contains("Banque")));
     mesure(T, "meme_processus", pid == pid_of(w2));
+    mesure(T, "fenetre2_avant", frame(w2).map(rect_s).unwrap_or_default());
+    // Edge opens its second window over the first, whatever --window-position says: moved aside.
+    // SAFETY: another program's window, moved, not activated.
+    unsafe { SetWindowPos(w2, None, 660, 60, 360, 420, SWP_NOZORDER | SWP_NOACTIVATE) }.unwrap();
+    until("Edge's second window aside", || frame(w2).is_some_and(|r| r.left >= 640));
     let f1 = frame(w1).unwrap();
     let point = (f1.left + 300, f1.bottom - 80);
     let decrire = |h: HWND| format!("{} « {} » pid {} {:?} owner {:?}", class(h), title(h), pid_of(h), frame(h).map(rect_s), crate::prims::owner(h).map(id_of));
@@ -711,6 +717,11 @@ fn clic_recu(win: HWND, at: (i32, i32)) -> Option<String> {
     })
 }
 
+/// The first click on a window just opened: tried again while it is not yet listening.
+fn premier_clic(win: HWND, at: (i32, i32)) -> Option<String> {
+    (0..5).find_map(|_| clic_recu(win, at))
+}
+
 fn verifier_calque(d: &Desk, echelle: u32, sorte: Sorte) -> Result<(), String> {
     let t = format!("w3.{}.{echelle}", sorte.nom());
     let mut fautes: Vec<String> = Vec::new();
@@ -730,7 +741,7 @@ fn verifier_calque(d: &Desk, echelle: u32, sorte: Sorte) -> Result<(), String> {
     mesure(&t, "fenetre", rect_s(f));
     mesure(&t, "bouton", rect_s(b));
     let fond = (f.right - 60, f.bottom - 60);
-    clic_recu(win, fond).ok_or("the window never clicked")?;
+    premier_clic(win, fond).ok_or_else(|| format!("the window never clicked; in front {} « {} »", class(devant()), title(devant())))?;
     until("in front", || devant() == win);
     let tray = find_window(|h| class(h) == "Shell_TrayWnd").ok_or("no taskbar")?;
     let tb = window_rect(tray).unwrap();
@@ -825,6 +836,56 @@ fn verifier_calque(d: &Desk, echelle: u32, sorte: Sorte) -> Result<(), String> {
         Ok(())
     } else {
         Err(fautes.join("; "))
+    }
+}
+
+/// Which windows Windows lets out of captures (SetWindowDisplayAffinity), by kind and size.
+#[test]
+#[ignore = "a Windows desktop (VM)"]
+fn sonde_affinite() {
+    use windows::core::w;
+    use windows::Win32::Foundation::{COLORREF, SIZE};
+    use windows::Win32::Graphics::Gdi::{GetDC, ReleaseDC, AC_SRC_ALPHA, AC_SRC_OVER, BLENDFUNCTION};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        CreateWindowExW, DestroyWindow, SetLayeredWindowAttributes, SetWindowDisplayAffinity, ShowWindow, UpdateLayeredWindow, LWA_ALPHA, SW_SHOWNOACTIVATE,
+        ULW_ALPHA, WDA_MONITOR, WINDOW_EX_STYLE, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
+    };
+    const T: &str = "w3.affinite";
+    let _p = Physical::enter();
+    let s = screen_rect();
+    let (sw, sh) = (s.right - s.left, s.bottom - s.top);
+    for (nom, w, h) in [("ecran", sw, sh), ("ecran_moins_1", sw - 1, sh), ("moitie", sw / 2, sh / 2), ("anneau", 260, 120)] {
+        for sorte in ["ulw", "lwa", "opaque", "ulw_transparent"] {
+            let ex = match sorte {
+                "ulw" | "lwa" => WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+                "ulw_transparent" => WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+                _ => WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+            };
+            // SAFETY: a window of a system class, destroyed below.
+            let hw = unsafe { CreateWindowExW(WINDOW_EX_STYLE(ex.0), w!("STATIC"), w!("sonde"), WS_POPUP, s.left, s.top, w, h, None, None, None, None) }.unwrap();
+            if sorte.starts_with("ulw") {
+                let mut c = crate::prims::Canvas::new(w, h).unwrap();
+                c.pixels_mut().fill(0);
+                let blend = BLENDFUNCTION { BlendOp: AC_SRC_OVER as u8, BlendFlags: 0, SourceConstantAlpha: 255, AlphaFormat: AC_SRC_ALPHA as u8 };
+                // SAFETY: as in calque.rs.
+                unsafe {
+                    let screen = GetDC(None);
+                    let _ = UpdateLayeredWindow(hw, Some(screen), Some(&POINT { x: s.left, y: s.top }), Some(&SIZE { cx: w, cy: h }), Some(c.dc), Some(&POINT { x: 0, y: 0 }), COLORREF(0), Some(&blend), ULW_ALPHA);
+                    ReleaseDC(None, screen);
+                }
+            } else if sorte == "lwa" {
+                // SAFETY: our layered window.
+                let _ = unsafe { SetLayeredWindowAttributes(hw, COLORREF(0), 1, LWA_ALPHA) };
+            }
+            // SAFETY: our window.
+            let _ = unsafe { ShowWindow(hw, SW_SHOWNOACTIVATE) };
+            let ex_res = unsafe { SetWindowDisplayAffinity(hw, WDA_EXCLUDEFROMCAPTURE) };
+            let mon = unsafe { SetWindowDisplayAffinity(hw, WDA_MONITOR) };
+            let _ = unsafe { SetWindowDisplayAffinity(hw, WDA_NONE) };
+            mesure(T, format!("{nom}_{w}x{h}_{sorte}"), format!("exclure {:?} moniteur {:?}", ex_res.map_err(|e| e.code()), mon.map_err(|e| e.code())));
+            // SAFETY: our window.
+            let _ = unsafe { DestroyWindow(hw) };
+        }
     }
 }
 

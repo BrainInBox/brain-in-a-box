@@ -90,6 +90,10 @@ jobs:
           Get-Content $out
           if (-not (Select-String -Path $out -Pattern 'test result: ok' -Quiet)) { exit 1 }
 
+      - name: W3, which windows Windows keeps out of captures
+        if: always()
+        run: cargo test --locked -- --ignored --exact tests::sonde_affinite --test-threads=1 --nocapture 2>&1 | tee "$RUNNER_TEMP/w3-affinite.log"
+
       - name: W3, the overlay at 100 %
         if: always()
         run: cargo test --locked -- --ignored --exact tests::bureau_w3_calque --test-threads=1 --nocapture 2>&1 | tee "$RUNNER_TEMP/w3.log"
