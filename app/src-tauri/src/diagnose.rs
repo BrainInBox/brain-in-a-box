@@ -610,8 +610,10 @@ fn decide(home: &Path, f: &Facts) -> Diagnosis {
             fmt_mb(download_mb)
         )
     });
-    // A 403 for github.com is a filter, unless GitHub's file came all the same (the speed's measure).
-    let filtered = f.github == Some(403) && f.speed.is_none();
+    // A 403 for github.com is a filter, unless GitHub's file came all the same (the speed's measure,
+    // taken while the brain is left to install). It blocks the brain's step, whose files come from
+    // there: with the brain already in place, nothing.
+    let filtered = f.github == Some(403) && f.speed.is_none() && todo.iter().any(|s| s == "brain");
     checks.insert(network_at, check_network(&hosts, filtered, slow_note.as_deref()));
     let can_install = checks.iter().all(|c| c.status != Status::Error);
     let headline = headline(&checks, &todo, download_mb, minutes, slow);
@@ -1656,15 +1658,19 @@ mod tests {
         assert!(c.detail.contains("bloque github.com") && c.detail.contains("Revérifier"), "{}", c.detail);
         assert_eq!(check_network(&hosts, false, None).status, Status::Ok);
         let tmp = tempfile::tempdir().unwrap();
-        fake_brain(tmp.path());
-        let d = decide(tmp.path(), &Facts { github: Some(403), ..healthy_facts() });
+        let d = decide(tmp.path(), &Facts { github: Some(403), ..fresh_facts() });
         assert!(!d.can_install);
         assert_eq!(by_id(&d, "network").status, Status::Error);
         let ids: Vec<&str> = d.checks.iter().map(|c| c.id.as_str()).collect();
         assert_eq!(ids.iter().position(|id| *id == "network"), Some(2), "{ids:?}");
         for code in [200, 301, 429] {
-            assert_eq!(by_id(&decide(tmp.path(), &Facts { github: Some(code), ..healthy_facts() }), "network").status, Status::Ok);
+            assert_eq!(by_id(&decide(tmp.path(), &Facts { github: Some(code), ..fresh_facts() }), "network").status, Status::Ok);
         }
+        // The brain already there: nothing left to come from github.com, nothing blocks « Continuer ».
+        fake_brain(tmp.path());
+        let done = decide(tmp.path(), &Facts { github: Some(403), ..healthy_facts() });
+        assert!(done.todo.is_empty() && done.can_install, "{:?}", done.checks);
+        assert_eq!(by_id(&done, "network").status, Status::Ok);
     }
 
     /// github.com's 403, while GitHub's file came all the same (GitHub turning curl away, not a
