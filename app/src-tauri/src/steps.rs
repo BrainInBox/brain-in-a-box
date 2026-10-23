@@ -1325,14 +1325,20 @@ fn onboarding_guide(home: &Path) -> Result<PathBuf, String> {
 
 /// The interview's first message, in French, with the brain's real folder: it is not always
 /// Documents/Brain (install.ps1 puts a new one in the profile's folder when Windows guards Documents),
-/// which the guide may still name, and Claude writes without asking only in its working folder.
-fn onboarding_prompt(guide: &Path, vault: &Path) -> String {
-    format!(
-        "Lis {} et suis-le pour me personnaliser. Mon cerveau est dans {}. Quand le guide dit ~/Documents/Brain, c'est ce dossier-là. \
-         Parle-moi en français, avec des mots simples : je ne suis pas informaticien.",
+/// which a guide from before (sources installed earlier) still names; Claude writes without asking only
+/// in its working folder. In acceptEdits, Claude is told so: the guide has it warn of a permission asked
+/// in English before its first write, which then never comes.
+fn onboarding_prompt(guide: &Path, vault: &Path, accept_edits: bool) -> String {
+    let mut p = format!(
+        "Lis {} et suis-le pour me personnaliser. Mon cerveau est dans {}. Parle-moi en français, avec des mots simples : \
+         je ne suis pas informaticien. Si le guide dit ~/Documents/Brain, c'est ce dossier.",
         guide.display(),
         vault.display()
-    )
+    );
+    if accept_edits {
+        p.push_str(" Tu es lancé en mode acceptEdits : tu écris dans ce dossier sans demander la permission, ne m'annonce donc aucune demande.");
+    }
+    p
 }
 
 /// The interview writes the user's notes in the brain without asking each time: that is what it is for.
@@ -1383,7 +1389,7 @@ fn onboarding_script(path: &std::ffi::OsStr, vault: &Path, guide: &Path, claude:
         sh_quote(&vault.to_string_lossy()),
         sh_quote(&claude.to_string_lossy()),
         mode.join(" "),
-        sh_quote(&onboarding_prompt(guide, vault))
+        sh_quote(&onboarding_prompt(guide, vault, !mode.is_empty()))
     )
 }
 
@@ -1435,7 +1441,7 @@ fn codex_onboarding_script(path: &std::ffi::OsStr, vault: &Path, guide: &Path, c
         sh_quote(&vault.to_string_lossy()),
         sh_quote(&codex.to_string_lossy()),
         sh_quote(CODEX_LOGIN_STORE),
-        sh_quote(&onboarding_prompt(guide, vault))
+        sh_quote(&onboarding_prompt(guide, vault, false))
     )
 }
 
@@ -1464,7 +1470,7 @@ fn onboarding_script(path: &std::ffi::OsStr, vault: &Path, guide: &Path, claude:
         ps_quote(&vault.to_string_lossy()),
         ps_quote(&claude.to_string_lossy()),
         mode.join(" "),
-        ps_quote(&onboarding_prompt(guide, vault))
+        ps_quote(&onboarding_prompt(guide, vault, !mode.is_empty()))
     )
 }
 
@@ -1512,7 +1518,7 @@ fn codex_onboarding_script(path: &std::ffi::OsStr, vault: &Path, guide: &Path, c
         ps_quote(&vault.to_string_lossy()),
         ps_quote(&codex.to_string_lossy()),
         ps_quote(CODEX_LOGIN_STORE),
-        ps_quote(&onboarding_prompt(guide, vault))
+        ps_quote(&onboarding_prompt(guide, vault, false))
     )
 }
 
@@ -1905,7 +1911,7 @@ fn download_via(
 /// it: curl.exe never reads them, and without it a PC behind a company's proxy has no internet for curl.
 /// None when the site is reached directly, or PowerShell does not say in time.
 #[cfg(windows)]
-fn system_proxy(url: &str) -> Option<String> {
+pub(crate) fn system_proxy(url: &str) -> Option<String> {
     let out = ask_system_proxy(url);
     out.ok().then(|| proxy_url(&out.stdout)).flatten()
 }
@@ -1913,11 +1919,11 @@ fn system_proxy(url: &str) -> Option<String> {
 #[cfg(windows)]
 fn ask_system_proxy(url: &str) -> sys::Output {
     const ASK: &str = "$u = [Uri]$env:BIAB_URL; $p = [Net.WebRequest]::GetSystemWebProxy().GetProxy($u); if ($p -ne $u) { $p.AbsoluteUri }";
-    sys::run_with(&sys::powershell(), &["-NoProfile", "-NonInteractive", "-Command", ASK], &[("BIAB_URL", url)], None, Duration::from_secs(20))
+    sys::run_with(&sys::powershell(), &["-NoProfile", "-NonInteractive", "-Command", ASK], &[("BIAB_URL", url)], None, Duration::from_secs(10))
 }
 
 #[cfg(not(windows))]
-fn system_proxy(_url: &str) -> Option<String> {
+pub(crate) fn system_proxy(_url: &str) -> Option<String> {
     None
 }
 
@@ -1937,7 +1943,7 @@ fn curl_download_args(url: &str, dest: &Path) -> Vec<String> {
 
 /// Through the proxy, offering it the user's own Windows login when it asks (NTLM or Kerberos: -U : is
 /// Windows' own credentials for curl.exe), whichever it takes.
-fn curl_proxy_args(proxy: &str) -> Vec<String> {
+pub(crate) fn curl_proxy_args(proxy: &str) -> Vec<String> {
     ["--proxy", proxy, "--proxy-anyauth", "--proxy-user", ":"].map(String::from).to_vec()
 }
 
@@ -2392,7 +2398,7 @@ mod tests {
         assert!(o.ok(), "{}", o.stderr);
         assert!(o.stdout.contains("Tu peux fermer cette fenêtre."));
         // In the brain, accepting edits there, told in French where the brain is.
-        assert_eq!(fs::read_to_string(&out).unwrap(), format!("{}\n--permission-mode\nacceptEdits\n{}\n", vault.display(), onboarding_prompt(&guide, &vault)));
+        assert_eq!(fs::read_to_string(&out).unwrap(), format!("{}\n--permission-mode\nacceptEdits\n{}\n", vault.display(), onboarding_prompt(&guide, &vault, true)));
 
         let script = root.join("claude-login.command");
         fs::write(&script, login_script(&path, &bin.join("claude"))).unwrap();
@@ -2450,7 +2456,7 @@ mod tests {
 
         let guide = onboarding_guide(&home).unwrap();
         let seen = run("onboarding.command", codex_onboarding_script(&path, &vault, &guide, &codex, None));
-        assert_eq!(seen, format!("{}\n-c\ncli_auth_credentials_store=\"file\"\n{}\nhome=unset\n", vault.display(), onboarding_prompt(&guide, &vault)));
+        assert_eq!(seen, format!("{}\n-c\ncli_auth_credentials_store=\"file\"\n{}\nhome=unset\n", vault.display(), onboarding_prompt(&guide, &vault, false)));
 
         // A CODEX_HOME the user's shell profile exports (Terminal runs it): the folder agents.json
         // records wins, ~/.codex being Codex's own default.
@@ -3077,12 +3083,15 @@ mod tests {
     #[test]
     fn the_interview_is_asked_in_french_with_the_real_folder() {
         let (guide, vault) = (Path::new("/k/onboarding/ONBOARDING.md"), Path::new("/Users/jo/Brain"));
-        let p = onboarding_prompt(guide, vault);
+        let p = onboarding_prompt(guide, vault, false);
         assert!(p.starts_with("Lis /k/onboarding/ONBOARDING.md et suis-le pour me personnaliser."), "{p}");
         assert!(p.contains("Mon cerveau est dans /Users/jo/Brain.") && p.contains("français") && p.contains("mots simples"), "{p}");
-        assert!(!p.contains("personalize"), "{p}");
-        // The guide may still name ~/Documents/Brain: Claude is told it means this folder, where it works.
-        assert!(p.contains("Quand le guide dit ~/Documents/Brain, c'est ce dossier-là."), "{p}");
+        assert!(!p.contains("personalize") && !p.contains("acceptEdits"), "{p}");
+        // A guide from before may still name ~/Documents/Brain: Claude is told it means this folder, where it works.
+        assert!(p.contains("Si le guide dit ~/Documents/Brain, c'est ce dossier."), "{p}");
+        // In acceptEdits, no permission to announce (the guide's « Before your first write »).
+        let p = onboarding_prompt(guide, vault, true);
+        assert!(p.ends_with("Tu es lancé en mode acceptEdits : tu écris dans ce dossier sans demander la permission, ne m'annonce donc aucune demande."), "{p}");
         assert_eq!(ONBOARDING_MODE, ["--permission-mode", "acceptEdits"]);
     }
 
@@ -3159,7 +3168,12 @@ mod tests {
     #[test]
     fn no_one_is_sent_to_a_team() {
         let team = ["l'é", "quipe"].concat();
-        for (name, src) in [("steps.rs", include_str!("steps.rs")), ("repair.rs", include_str!("repair.rs")), ("root.rs", include_str!("root.rs"))] {
+        for (name, src) in [
+            ("steps.rs", include_str!("steps.rs")),
+            ("repair.rs", include_str!("repair.rs")),
+            ("root.rs", include_str!("root.rs")),
+            ("diagnose.rs", include_str!("diagnose.rs")),
+        ] {
             assert!(!src.contains(&team), "{name} still names a team");
         }
     }
