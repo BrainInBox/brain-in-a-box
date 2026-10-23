@@ -762,12 +762,14 @@ class Site(unittest.TestCase):
         # The page names Bibo's buttons as Bibo writes them (app/src/app.js): a renamed button is
         # renamed here too, or a beginner looks for a button that is not there.
         app = (ROOT / "app" / "src" / "app.js").read_text(encoding="utf-8")
-        for label in ("Guide-moi dans un logiciel", "Personnaliser mon cerveau", "Importer ma mémoire",
-                      "Ouvrir mon cerveau dans Obsidian", "Réessayer", "Copier le rapport", "Remettre comme avant",
+        for label in ("Guide-moi dans un logiciel", "Présente-toi à Claude", "Importer ma mémoire",
+                      "Voir mes notes", "Réessayer", "Copier le rapport", "Remettre comme avant",
                       "Connecter mon compte Claude"):
             with self.subTest(label=label):
                 self.assertRegex(self.html, r"(«&nbsp;|<strong>)%s(&nbsp;»|</strong>)" % re.escape(label))
-                self.assertIn("button('%s" % label, app)
+                # « Présente-toi à Claude » is written for whichever AI was chosen: `${first}` in app.js.
+                in_app = "button('%s" % label in app or "button(`%s" % label.replace("Claude", "${first}") in app
+                self.assertTrue(in_app, "no button « %s » in app.js" % label)
         # At the end of the install, the guide's button is not always this one: the page names it
         # where Bibo shows it whatever its version, when Bibo is opened again.
         trio = re.search(r'<ol class="trio">.*?</ol>', self.html, re.S).group(0)
