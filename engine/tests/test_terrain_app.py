@@ -2728,6 +2728,23 @@ class GuideParts(unittest.TestCase):
         self.assertIsNone(note)
         self.assertIn('source: "bibo-guide"', why)
 
+    def test_the_fake_claude_says_the_plan_the_guide_asks_for(self):
+        # Only a subscription asks Claude (guide.rs, detect::login_of): a claude.ai login whose plan Claude
+        # Code does not say stops the guide on « Le guide demande Claude Pro ou Max. ».
+        for prudent, plan in ((False, "max"), (True, "pro")):
+            tmp = Path(tempfile.mkdtemp(prefix="faux-claude-"))
+            self.addCleanup(shutil.rmtree, str(tmp), True)
+            home = tmp / "home"
+            exe = home / ".local" / "bin" / "claude"
+            exe.parent.mkdir(parents=True)
+            exe.write_text("vrai", encoding="utf-8")
+            ta.poser_faux_claude(home, exe, tmp, prudent)
+            p = subprocess.run([sys.executable, "-I", str(ta.FAUX_CLAUDE), "auth", "status"], capture_output=True,
+                               env=dict(os.environ, HOME=str(home), USERPROFILE=str(home)), timeout=60)
+            self.assertEqual(p.returncode, 0, p.stderr)
+            said = json.loads(p.stdout)
+            self.assertEqual((said["authMethod"], said.get("subscriptionType")), ("claude.ai", plan), prudent)
+
     @unittest.skipUnless(os.name == "nt", "the relay is compiled by the .NET Framework's csc, on Windows")
     def test_the_relay_hands_the_fake_claude_its_arguments_and_streams_as_they_are(self):
         tmp = Path(tempfile.mkdtemp(prefix="relais-"))

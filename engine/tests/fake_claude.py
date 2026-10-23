@@ -8,6 +8,7 @@ reflection passes on):
     answer.json  the structured answer put in place of the capture's one
     answers/<n>.json, scenarios/<n>   the same for the n-th `-p` run only (the import's requests)
     auth         authMethod `claude auth status` reports (default claude.ai)
+    plan         the subscriptionType it adds (pro, max...; none by default, as for a free account)
     version      what `claude --version` prints (default 2.1.296 (Claude Code))
     flags        the options `claude --help` lists (default FLAGS)
 Each `-p` run appends to calls and records argv.json, env.json, cwd.json, prompt.txt (and
@@ -102,7 +103,10 @@ def main(args):
         print("Usage: claude [options]\n" + setting("flags", FLAGS))
         return 0
     if args[:2] == ["auth", "status"]:
-        print(json.dumps({"loggedIn": True, "authMethod": setting("auth", "claude.ai")}))
+        said = {"loggedIn": True, "authMethod": setting("auth", "claude.ai")}
+        if setting("plan"):
+            said["subscriptionType"] = setting("plan")
+        print(json.dumps(said))
         return 0
     if "-p" not in args:
         return 2

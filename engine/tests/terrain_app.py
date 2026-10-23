@@ -3529,6 +3529,8 @@ def poser_faux_claude(home, exe, travail, prudent):
     (fake / "guide").mkdir(parents=True)
     (fake / "scenario").write_text("guide", encoding="utf-8")
     (fake / "version").write_text("2.1.306 (Claude Code)", encoding="utf-8")
+    # A subscription, as only one asks Claude (guide.rs): Pro, the plan Opus is refused to, when `prudent`.
+    (fake / "plan").write_text("pro" if prudent else "max", encoding="utf-8")
     for demande, answer in REPONSES_GUIDE.items():
         (fake / "guide" / (demande + ".json")).write_text(json.dumps(answer, ensure_ascii=False), encoding="utf-8")
     if prudent:
