@@ -3345,6 +3345,15 @@ mod tests {
         assert_eq!(PACE.limit, Duration::from_secs(60 * 60));
     }
 
+    /// What a passing test saw, as a notice of the CI run (GitHub reads it in the step's output): the test
+    /// harness keeps println! to itself, not a write to stdout's handle.
+    #[cfg(windows)]
+    fn ci_notice(said: &str) {
+        if std::env::var_os("GITHUB_ACTIONS").is_some() {
+            let _ = io::stdout().lock().write_all(format!("\n::notice::{}\n", said.replace(['\r', '\n'], " ")).as_bytes());
+        }
+    }
+
     /// A proxy that lets no tunnel through (407, Negotiate or NTLM asked; then 403), and hands over each
     /// request it got.
     fn refusing_proxy() -> (String, mpsc::Receiver<String>) {
@@ -3396,12 +3405,11 @@ mod tests {
         let heads: Vec<String> = asked.try_iter().collect();
         assert!(heads.first().is_some_and(|h| h.starts_with("CONNECT brain-in-a-box.invalid:443 ")), "{heads:?}");
         // Whether Windows hands curl.exe a token for the session's login depends on the machine (a runner of
-        // 2026-10-07 did, NTLM; one of 2026-10-21 did not): said in the run's summary, not asserted.
+        // 2026-10-07 did, NTLM; one of 2026-10-21 did not): said in a CI notice, not asserted.
         #[cfg(windows)]
-        if let Some(summary) = std::env::var_os("GITHUB_STEP_SUMMARY") {
+        {
             let offered = heads.iter().find_map(|h| h.lines().find(|l| l.starts_with("Proxy-Authorization:")).map(|l| l.split(' ').take(2).collect::<Vec<_>>().join(" ")));
-            let seen = format!("a_download_goes_through_the_proxy: {} request(s), the Windows login offered: {offered:?}\n", heads.len());
-            let _ = fs::OpenOptions::new().append(true).open(summary).and_then(|mut f| f.write_all(seen.as_bytes()));
+            ci_notice(&format!("a_download_goes_through_the_proxy: {} request(s), the Windows login offered: {offered:?}", heads.len()));
         }
         let err = download_via(url, &dest, "l'installeur", None, Duration::from_secs(60), None, &mut |_| {}).unwrap_err();
         assert!(err.contains("connexion internet") && err.contains("« Réessayer »"), "{err}");
@@ -3477,11 +3485,7 @@ mod tests {
         thread::sleep(Duration::from_millis(500));
         let said = fs::read_to_string(&mark).unwrap_or_default();
         let _ = fs::remove_file(&mark);
-        // Which window it was, in the CI run's summary (a passing test's output is not shown).
-        let seen = format!("a_window_of_windows_runs_its_script: Windows Terminal {:?}, the script wrote {said:?}\n", windows_terminal());
-        if let Some(summary) = std::env::var_os("GITHUB_STEP_SUMMARY") {
-            let _ = fs::OpenOptions::new().append(true).open(summary).and_then(|mut f| f.write_all(seen.as_bytes()));
-        }
+        ci_notice(&format!("a_window_of_windows_runs_its_script: Windows Terminal {:?}, the script wrote {said:?}", windows_terminal()));
         assert!(said.starts_with("wt="), "no window ran the script");
         assert_eq!(said.trim().len() > "wt=".len(), windows_terminal().is_some(), "{said}");
     }
