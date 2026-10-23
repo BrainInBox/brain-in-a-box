@@ -911,8 +911,13 @@ mod tests {
         let nobodys: Vec<&String> = commands.iter().filter(|c| !main.contains(*c) && !guide.contains(*c)).collect();
         assert!(nobodys.is_empty(), "no window may call {nobodys:?}");
         // The installer's own commands, each called by its page: one it no longer calls is a door left open
-        // for nothing, out with its rights.
-        let unused: Vec<&String> = main.difference(&guide).filter(|c| !app.contains(*c)).collect();
+        // for nothing, out with its rights. But the commands added ahead of their screen (#72's report on the
+        // Desktop and « Parler à Claude »), each until app.js calls it.
+        let ahead = ["save_report", "start_claude"];
+        for c in ahead {
+            assert!(!app.contains(c), "app.js calls {c}: out of the commands ahead of their screen");
+        }
+        let unused: Vec<&String> = main.difference(&guide).filter(|c| !app.contains(*c) && !ahead.contains(&c.as_str())).collect();
         assert!(unused.is_empty(), "app.js never calls {unused:?}");
     }
 
