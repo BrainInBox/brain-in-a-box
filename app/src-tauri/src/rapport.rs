@@ -102,9 +102,20 @@ fn desktop(home: &Path) -> PathBuf {
     known::desktop().unwrap_or_else(|| home.join("Desktop"))
 }
 
+/// Documents and the Desktop, the home folder's and where the system put them (OneDrive may hold both on
+/// Windows, and Windows PowerShell's profile with Documents): the interview leaves them to Claude's
+/// questions (steps::own_brain).
+pub(crate) fn user_folders(home: &Path) -> Vec<PathBuf> {
+    #[cfg(windows)]
+    let documents = known::documents();
+    #[cfg(not(windows))]
+    let documents = None;
+    [home.join("Documents"), home.join("Desktop"), desktop(home)].into_iter().chain(documents).collect()
+}
+
 #[cfg(windows)]
 mod known {
-    //! FOLDERID_Desktop, where Explorer shows the Desktop: OneDrive may have moved it.
+    //! FOLDERID_Desktop and FOLDERID_Documents, where Explorer shows them: OneDrive may have moved them.
     use std::ffi::{c_void, OsString};
     use std::os::windows::ffi::OsStringExt;
     use std::path::PathBuf;
@@ -120,6 +131,8 @@ mod known {
 
     /// B4BFCC3A-DB2C-424C-B029-7FE99A87C641.
     const DESKTOP: Guid = Guid { data1: 0xB4BF_CC3A, data2: 0xDB2C, data3: 0x424C, data4: [0xB0, 0x29, 0x7F, 0xE9, 0x9A, 0x87, 0xC6, 0x41] };
+    /// FDD39AD0-238F-46AF-ADB4-6C85480369C7.
+    const DOCUMENTS: Guid = Guid { data1: 0xFDD3_9AD0, data2: 0x238F, data3: 0x46AF, data4: [0xAD, 0xB4, 0x6C, 0x85, 0x48, 0x03, 0x69, 0xC7] };
 
     #[link(name = "shell32")]
     extern "system" {
@@ -131,9 +144,17 @@ mod known {
     }
 
     pub fn desktop() -> Option<PathBuf> {
+        folder(&DESKTOP)
+    }
+
+    pub fn documents() -> Option<PathBuf> {
+        folder(&DOCUMENTS)
+    }
+
+    fn folder(id: &Guid) -> Option<PathBuf> {
         let mut found: *mut u16 = null_mut();
         // SAFETY: a GUID that lives for the call; Windows hands back a string we free once, even on failure.
-        let hr = unsafe { SHGetKnownFolderPath(&DESKTOP, 0, null_mut(), &mut found) };
+        let hr = unsafe { SHGetKnownFolderPath(id, 0, null_mut(), &mut found) };
         let path = (hr == 0 && !found.is_null()).then(|| {
             // SAFETY: a NUL-terminated wide string Windows allocated.
             let len = (0..).take_while(|&i| unsafe { *found.add(i) } != 0).count();
@@ -180,6 +201,20 @@ mod tests {
         let err = save_in(&[dir.path().join("absent")], "x").unwrap_err();
         assert!(err.starts_with("Je n'ai pas pu enregistrer le rapport"), "{err}");
         assert!(save_in(&[dir.path().to_path_buf()], &"x".repeat(MAX_BYTES + 1)).is_err());
+    }
+
+    /// Documents and the Desktop the interview leaves to Claude's questions: the home folder's, and on
+    /// Windows the ones Explorer shows (OneDrive's, when it moved them).
+    #[test]
+    fn the_user_folders_are_where_the_system_put_them() {
+        let home = Path::new("/home/jo");
+        let all = user_folders(home);
+        assert!(all.contains(&home.join("Documents")) && all.contains(&home.join("Desktop")), "{all:?}");
+        #[cfg(windows)]
+        {
+            let documents = known::documents().expect("FOLDERID_Documents");
+            assert!(documents.is_absolute() && all.contains(&documents), "{all:?}");
+        }
     }
 
     /// The file says what it is to whoever opens it; the window says where it is: the Desktop, or the home

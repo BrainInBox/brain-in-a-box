@@ -35,7 +35,7 @@ use crate::detect::{self, fmt_version, Found};
 use crate::model::StepResult;
 #[cfg(target_os = "macos")]
 use crate::sys::minutes;
-use crate::{codex, config_guard, repair};
+use crate::{codex, config_guard, rapport, repair};
 use crate::{perms, sys, voyage};
 #[cfg(target_os = "linux")]
 use crate::root::{self, OBSIDIAN_DEB_SHA256};
@@ -1349,24 +1349,31 @@ fn onboarding_prompt(guide: &Path, vault: &Path, accept_edits: bool) -> String {
 const ONBOARDING_MODE: [&str; 2] = ["--permission-mode", "acceptEdits"];
 
 /// acceptEdits only where that is the brain alone: a folder of the kit's (its CLAUDE.md and Profile), never
-/// the home folder or one above it, Documents or the Desktop, a drive. A BRAIN_DIR set to Documents would
-/// let Claude write, unasked, Windows PowerShell's profile there (Documents\WindowsPowerShell), which runs
-/// at the next start of PowerShell, or remove anything of Documents. Elsewhere Claude asks, as by default.
+/// the home folder or one above it, Documents or the Desktop (where Windows put them: OneDrive moves both),
+/// a folder holding one, a drive. A BRAIN_DIR set to Documents would let Claude write, unasked, Windows
+/// PowerShell's profile there (Documents\WindowsPowerShell), which runs at the next start of PowerShell, or
+/// remove anything of Documents. Elsewhere Claude asks, as by default.
 fn onboarding_mode(vault: &Path, home: &Path) -> &'static [&'static str] {
-    if own_brain(vault, home, &[home.join("Documents"), home.join("Desktop")]) {
+    if own_brain(vault, home, &rapport::user_folders(home)) {
         &ONBOARDING_MODE
     } else {
         &[]
     }
 }
 
+/// Compared as the disk names them, a link followed and Windows' letters and short names as they are:
+/// no other name for Documents gets through.
 fn own_brain(vault: &Path, home: &Path, shared: &[PathBuf]) -> bool {
-    vault.is_absolute()
-        && vault.parent().is_some()
-        && !home.starts_with(vault)
-        && !shared.iter().any(|d| d == vault)
-        && vault.join("CLAUDE.md").is_file()
-        && vault.join("Profile").is_dir()
+    if !vault.is_absolute() {
+        return false;
+    }
+    let real = |p: &Path| fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    let brain = real(vault);
+    brain.parent().is_some()
+        && !real(home).starts_with(&brain)
+        && !shared.iter().any(|d| real(d).starts_with(&brain))
+        && brain.join("CLAUDE.md").is_file()
+        && brain.join("Profile").is_dir()
 }
 
 fn login_script(path: &std::ffi::OsStr, claude: &Path) -> String {
@@ -1944,9 +1951,11 @@ fn curl_download_args(url: &str, dest: &Path) -> Vec<String> {
 }
 
 /// Through the proxy, offering it the user's own Windows login when it asks (NTLM or Kerberos: -U : is
-/// Windows' own credentials for curl.exe), whichever it takes.
+/// Windows' own credentials for curl.exe), whichever it takes. A proxy that looks inside HTTPS signs with
+/// the company's certificate, often without a revocation list: the check is then best effort (Schannel's
+/// 0x80092012 otherwise), a revoked certificate still refused.
 pub(crate) fn curl_proxy_args(proxy: &str) -> Vec<String> {
-    ["--proxy", proxy, "--proxy-anyauth", "--proxy-user", ":"].map(String::from).to_vec()
+    ["--proxy", proxy, "--proxy-anyauth", "--proxy-user", ":", "--ssl-revoke-best-effort"].map(String::from).to_vec()
 }
 
 /// A proxy's address as PowerShell prints it: one plain http:// address, or nothing.
