@@ -1,9 +1,11 @@
-# Brain — {{NAME}}
+> Cette note est pour Claude. Pour toi : ouvre « Commence ici ».
 
-Personal second brain. Open it by running `claude` from `~/Documents/Brain/`.
+# Brain — personal second brain
+
+This folder is the person's second brain: their notes, which you read and write when started here.
 The global `~/.claude/CLAUDE.md` also applies. This file adds Brain-specific context.
 
-Language: {{LANGUAGE}}.
+Language: the one `Profile/soul.md` names. Until the onboarding fills it, the language your session start names, else the one the person writes in.
 
 ---
 
@@ -13,6 +15,7 @@ On open, read in this order BEFORE responding to anything:
 1. `Profile/soul.md` — personality, values, style
 2. `Profile/memory.md` — key decisions + recent context
 3. `Profile/lessons.md` — past corrections to never repeat
+4. `Profile/about.md` — who they are. Not a developer (or not said yet)? Plain words, no jargon nor acronym, one step at a time; they never type a command or edit a file: you do it, after saying what in one sentence.
 
 ---
 
@@ -21,7 +24,7 @@ On open, read in this order BEFORE responding to anything:
 The `correction-detector.py` hook (UserPromptSubmit) detects corrections. When it injects `⚠️ CORRECTION DETECTED`, BEFORE anything else:
 1. Apply the correction in the current response
 2. Append a line to `Profile/lessons.md` under today's header (`## YYYY-MM-DD`)
-3. Confirm visibly: `✓ noted in lessons.md`
+3. Confirm visibly, in their language: `✓ noted in lessons.md` (French: `✓ noté dans lessons.md`)
 4. Only then continue
 
 Format: `- **[short context]** → rule: [what to do] (when: [trigger])`
@@ -50,10 +53,12 @@ Always use `gbq` — it's the safe universal wrapper for every gbrain command (r
 | `Agents/` | AI agents on the team — same schema as `Team/`, both first-class |
 | `Decisions/` | One file per meaningful decision (`YYYY-MM-DD-<slug>.md`) |
 | `Skills/` | Procedures in [gstack SKILL.md format](https://github.com/garrytan/gstack) (YAML triggers + workflow) |
+| `Guides/` | Procedures Bibo's guide walked the person through in a software, saved by them (created with the first) |
 | `Journal/` | Daily notes YYYY-MM-DD.md (auto) |
 | `Projects/` | Active projects (roadmap, status) |
 | `Clients/` | Actifs/, Prospects/ |
 | `Resources/` | Templates/, reusable |
+| `Commence ici.md` | The person's map of this folder, in plain French: keep it true when the structure changes |
 
 ## Wikilinks — how the graph gets built
 

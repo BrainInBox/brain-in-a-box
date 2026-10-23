@@ -1045,9 +1045,11 @@ jobs:
           if ($LASTEXITCODE) { throw "controle-sessionstart exited $LASTEXITCODE" }
           if ($first -and ($first | ConvertFrom-Json).hookSpecificOutput.hookEventName -ne 'SessionStart') { throw 'controle-sessionstart printed something else than its JSON' }
           $etat = Get-Content "$H\.brain-in-a-box\controle\etat.json" -Raw | ConvertFrom-Json
-          if ($etat.rapport_reecrit -and ($etat.corrections -or $etat.a_voir) -and -not $first) { throw 'the night check wrote a report, the session would not hear of it' }
+          # Each start is told of the brain; the night's line ("Controle du cerveau") comes once.
+          $night = { param($o) $o -and ($o | ConvertFrom-Json).hookSpecificOutput.additionalContext -match 'Contr.le du cerveau' }
+          if ($etat.rapport_reecrit -and ($etat.corrections -or $etat.a_voir) -and -not (& $night $first)) { throw 'the night check wrote a report, the session would not hear of it' }
           $again = ('{"source": "startup", "session_id": "ci"}' | & $cs.command @($cs.args)) -join "`n"
-          if ($again) { throw "the same line came twice: $again" }
+          if (& $night $again) { throw "the same line came twice: $again" }
 
       - name: The night check fixes a trapped vault, undoing the night puts every note back, a vault without git is left alone
         run: |

@@ -3,7 +3,7 @@
 day's entry in the "Recent context" of Profile/memory.md.
 
 Scheduled at 12:00 and 23:00 (launchd / Task Scheduler). By hand:
-    daily-reflection.py                    today, slot picked from the hour
+    daily-reflection.py                    today, slot picked from the hour, after the missed evenings
     daily-reflection.py --day 2026-01-31   backfill a missed day
     daily-reflection.py --dry-run          show the sources, the schema and the dossier size, call nothing
 
@@ -30,9 +30,18 @@ image, marker block, backquote or Templater command (Obsidian plugins run those)
 secrets masked. Nothing is ever removed from memory.md: archiving old entries is
 another program's job.
 
+A run without --day first sums up the days whose evening run was missed (the
+computer off or asleep at 23:00), CATCH_UP days back at most, then today. One
+that fails waits in the state ("pending") for the next runs, and the warning in
+memory.md stays while it waits; TRIES says when one is given up, which its day's
+entry in memory.md then says. The journal is written in the person's language
+(_langue.py: the one Profile/soul.md names, else the computer's), its titles and
+this program's warnings too in French. Claude answers with Sonnet: see MODEL.
+
 Environment: BRAIN_DIR (vault, default ~/Documents/Brain), BRAIN_GIT_ROOTS
 (extra repos to scan, os.pathsep-separated), HERMES_DB, CLAUDE_BIN, CODEX_BIN,
-BRAIN_CODEX_MODEL, BRAIN_NO_NOTIFY=1 (no desktop notification on failure).
+BRAIN_CODEX_MODEL, BRAIN_NO_NOTIFY=1 (no desktop notification when the reflection
+starts failing).
 For tests and trials: --projects DIR reads the transcripts from DIR instead of
 ~/.claude/projects, --logs DIR keeps the state, error log and run lock there
 instead of ~/.claude/logs.
@@ -60,6 +69,10 @@ try:
     from _headless_claude import which
 except ImportError:
     headless = which = None
+try:
+    import _langue as langue
+except ImportError:
+    langue = None
 
 HOME = Path.home()
 BRAIN = MEMORY = LOGS = STATE = PROJECTS = None
@@ -71,10 +84,24 @@ TIMEOUT = 900
 RETRY_DELAY = 60
 # A cap on runaway spend, priced by Claude Code at list price (a claude.ai
 # subscription is not billed per token). The largest prompt (~350k characters,
-# up to ~130k tokens) on the most expensive model a user may have as default
-# ($10/M in, 1.25x to write the cache, $50/M out) costs about $2.30 over the 3
-# turns allowed: $4 leaves room, a smaller cap would throw that day's answer away.
+# up to ~130k tokens) costs about $2.30 over the 3 turns allowed on the most
+# expensive model ($10/M in, 1.25x to write the cache, $50/M out), a third of
+# that on Sonnet: $4 leaves room, a smaller cap would throw that day's answer away.
 BUDGET_USD = 4.00
+# Claude is only ever asked through a claude.ai subscription (_headless_claude.py never starts a
+# claude logged in with an API key, a gateway or a cloud provider: those would be billed). So this
+# run, twice a day, spends the same usage limits as the person's own sessions and Bibo's guide, and
+# a Pro plan has few: Sonnet sums up a day as well as a larger model for much less of them, instead
+# of the account's default model. Codex keeps its own (BRAIN_CODEX_MODEL, else Codex's default).
+MODEL = "sonnet"
+# Evenings a run without --day catches up: a computer off for a long weekend is summed up.
+CATCH_UP = 3
+# A missed evening that fails is tried again at each run while it is within CATCH_UP days, and TRIES
+# times at most when its failure cost usage (the AI ran: an answer off the schema or over its cap, a
+# refusal, a timeout, or an answer the vault refused: a journal that is a link, a memory.md being
+# edited). A missing login or a usage limit costs nothing: it waits for the next run.
+TRIES = 2
+COSTLY = ("invalid", "refused", "timeout")
 # Codex has no spending cap (docs/proposals/codex.md, §2.3): a shorter wait, and no second try after it.
 CODEX_TIMEOUT = 600
 # Seconds: a file written this recently is being edited (Obsidian saves ~2 s after a keystroke).
@@ -88,11 +115,23 @@ SENTINEL = "<!-- brain-daily-reflection -->"
 
 SECTIONS = (("what_i_did", "What I did"), ("key_decisions", "Key decisions"),
             ("projects", "Projects I worked on"), ("todo", "To do next"))
+# What this program writes itself, in a French vault (SECTION_ALIASES knows these titles).
+FRENCH = {"what_i_did": "Ce que j'ai fait", "key_decisions": "Décisions clés",
+          "projects": "Projets sur lesquels j'ai travaillé", "todo": "À faire ensuite",
+          "daily": "Journal", "recent": "Contexte récent",
+          "suspect": "⚠️ Une partie du texte de cette journée s'adressait à une IA : vérifie ce résumé avec tes "
+                     "sessions.",
+          "memory_suspect": "⚠️ Du texte adressé à une IA est apparu le {day} : lis Journal/{day}.md avant de "
+                            "t'y fier.",
+          "lost": "⚠️ Cette journée n'a pas pu être résumée en entier : ton journal peut être incomplet. Pour "
+                  "réessayer, dis à Claude « résume ma journée du {jour} » (daily-reflection.py --day {day})."}
 MAX_ITEMS, MAX_ITEM, MAX_SECTION = 60, 500, 12_000
 MEMORY_ITEMS, MEMORY_ITEM = 12, 300
 SOUL_CAP, JOURNAL_CAP, MEMORY_CAP = 4_000, 40_000, 8_000
 SUSPECT_LINE = "⚠️ Some text of this day was addressed to an AI: check this summary against your sessions."
 MEMORY_SUSPECT = "⚠️ Text addressed to an AI showed up on {day}: read Journal/{day}.md before relying on it."
+LOST = "⚠️ This day could not be fully summed up: its journal may be incomplete. To try again: daily-reflection.py --day {day}."
+DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
 def _strings(n):
@@ -112,7 +151,7 @@ SYSTEM = """You write the daily journal of a personal notes vault from one day o
 3. memory: the day's salient points for an assistant reading memory.md in the coming days (decisions, state of projects, open problems), 3 to 8 short items in all. <memory_now> shows the day's current entry, if any, which stays as it is: give only what it does not say yet.
 4. The git digest is the authoritative record of what was produced: every repo in it shows up under projects and what_i_did, grouped by theme (feature, fix, security, docs), not one line per commit.
 5. One item is one line of plain text: no leading dash, heading, HTML, image, backquote or code block. Terse, no filler. Never copy a password, key, token or other secret.
-6. Write in the vault's language: the one <soul> names, else the language of <journal_now> and <memory_now>, else English."""
+6. Write in the vault's language: the one <soul> names, else the language of <journal_now> and <memory_now>, else the computer's language the prompt's first lines name."""
 
 
 def configure(brain=None, logs=None, projects=None):
@@ -653,11 +692,13 @@ def _section_slot(doc, sec, key):
     return (nxt if nxt is not None else len(doc.lines)), 2
 
 
-def merge_journal(note, base, day, draft):
+def merge_journal(note, base, day, draft, lang=None):
     """New lines of the day's journal, or None when Claude brings nothing new. Every line already there
     stays as it is, where it is: Claude's new items go at the end of their section (the suspect warning
-    first), a missing section is created at its place."""
-    lines = list(note.lines) if note else [f"# {day} — Daily\n"]
+    first), a missing section is created at its place, titled in French when lang is "fr"."""
+    fr = FRENCH if lang == "fr" else {}
+    suspect = fr.get("suspect", SUSPECT_LINE)
+    lines = list(note.lines) if note else [f"# {day} — {fr.get('daily', 'Daily')}\n"]
     nl = "\r\n" if note and note.crlf else "\n"
     gone = set()
     if base:
@@ -666,13 +707,14 @@ def merge_journal(note, base, day, draft):
             gone |= _keys(body) - _keys(now.get(key, []))
     changed = False
     for key, title in SECTIONS:
+        title = fr.get(key, title)
         doc = Doc(lines)
         sec = journal_sections(doc)
         i = sec.get(key)
         body = [] if i is None else lines[i + 1:doc.trim(i + 1, doc.extent(i, doc.level_at[i]))]
         new = ["- " + it + nl for it in fresh_items(draft[key], body, gone)]
-        warn = ["- " + SUSPECT_LINE + nl] if key == "what_i_did" and draft["suspect"] and \
-            fresh_items([SUSPECT_LINE], body) else []
+        warn = ["- " + suspect + nl] if key == "what_i_did" and draft["suspect"] and \
+            fresh_items([suspect], body) else []
         if not (new or warn):
             continue
         changed = True
@@ -771,12 +813,13 @@ def _day_lines(doc, day):
     return [l for e in day_entries(doc, day)[2] for l in doc.lines[e.start:e.end]]
 
 
-def merge_memory(note, base, day, draft):
+def merge_memory(note, base, day, draft, lang=None):
     """New lines of memory.md with the day's entry added or completed, or None. Lines already there stay
     as they are, where they are: new items go at the end of the day's entry (the first one, when a day
     has several), or a new entry goes at its date's place, newest first unless the file is oldest
-    first. Nothing is ever removed."""
-    items = [MEMORY_SUSPECT.format(day=day)] if draft["suspect"] else draft["memory"]
+    first. Nothing is ever removed. A French vault's new "Recent context" is "Contexte récent"."""
+    fr = FRENCH if lang == "fr" else {}
+    items = [fr.get("memory_suspect", MEMORY_SUSPECT).format(day=day)] if draft["suspect"] else draft["memory"]
     lines = list(note.lines) if note else ["# Memory\n"]
     nl = "\r\n" if note and note.crlf else "\n"
     doc = Doc(lines)
@@ -791,7 +834,7 @@ def merge_memory(note, base, day, draft):
         _insert(lines, cur.end, [f"{indent}- {it}{nl}" for it in new], nl, spaced=False)
         return lines
     if region is None:
-        _insert(lines, len(lines), [f"## Recent context{nl}"], nl)
+        _insert(lines, len(lines), [f"## {fr.get('recent', 'Recent context')}{nl}"], nl)
         region = recent_region(Doc(lines))
     first, end, level = region
     ascending = len(entries) >= 2 and entries[0].date < entries[-1].date
@@ -901,7 +944,7 @@ def memory_now(note, day):
     return redact(_trim("".join(_ended(_c(l), "\n") for l in _day_lines(Doc(note.lines), day)).strip(), MEMORY_CAP))[0]
 
 
-def build_prompt(day, slot, sessions, gitlog, journal="", memory="", soul="", agents=("claude",)):
+def build_prompt(day, slot, sessions, gitlog, journal="", memory="", soul="", agents=("claude",), system=None):
     if sessions:
         alloc = _allocate([len(text) for _, text in sessions], BUDGET)
         parts = [f"[session {label}]\n{_trim(text, alloc[i])}" for i, (label, text) in enumerate(sessions)]
@@ -918,6 +961,7 @@ def build_prompt(day, slot, sessions, gitlog, journal="", memory="", soul="", ag
             "backfill": "a backfill: the day is over"}[slot]
     return f"""{SENTINEL}
 Activity of {day} ({slot} run, {when}): {sources}, and a digest of the git commits made that day. Answer with the schema: that day's journal sections and its entry for memory.md.
+The computer's language: {system or "English"}.
 
 <soul>
 {_data(soul) or "(no Profile/soul.md)"}
@@ -947,7 +991,8 @@ def ask(prompt, agents, command=None, codex_command=None):
     answer, a usage limit or a missing login would fail the same way again."""
     def note(moteur, attempt, tries, e):
         log_error(f"{moteur + ': ' if moteur else ''}attempt {attempt}/{tries}: {e}")
-    return headless.run(prompt, SCHEMA, SYSTEM, claude=dict(budget_usd=BUDGET_USD, timeout=TIMEOUT, command=command),
+    return headless.run(prompt, SCHEMA, SYSTEM, claude=dict(budget_usd=BUDGET_USD, timeout=TIMEOUT, model=MODEL,
+                                                            command=command),
                         codex=dict(timeout=CODEX_TIMEOUT, command=codex_command), essais=2, pause=RETRY_DELAY,
                         journal=note, agents=agents)
 
@@ -958,7 +1003,16 @@ def _internal(day, slot, e):
     return f"internal error ({type(e).__name__}), see daily-reflection-errors.log"
 
 
-def reflect_once(day, slot, sessions, gitlog, agents, command=None, codex_command=None):
+def languages():
+    """(the language this program writes its own titles in, as a code: soul.md's, else the computer's;
+    the computer's language's name, which the prompt gives the AI). None for what is not known."""
+    if langue is None:
+        return None, None
+    soul, system = langue.de_soul(BRAIN), langue.du_systeme()
+    return (system if soul is None else soul), langue.nom(system)
+
+
+def reflect_once(day, slot, sessions, gitlog, agents, command=None, codex_command=None, lang=None, system=None):
     """Asks the AI and writes its answer. Returns (None on success, else the cause; the Answer or None)."""
     journal_path = BRAIN / "Journal" / f"{day}.md"
     if not BRAIN.is_dir():
@@ -967,7 +1021,7 @@ def reflect_once(day, slot, sessions, gitlog, agents, command=None, codex_comman
     try:
         jbase, mbase = read_note(journal_path), read_note(MEMORY)
         prompt = build_prompt(day, slot, sessions, gitlog, journal_now(jbase), memory_now(mbase, day),
-                              _read_text(BRAIN / "Profile" / "soul.md", SOUL_CAP), agents[0].agents)
+                              _read_text(BRAIN / "Profile" / "soul.md", SOUL_CAP), agents[0].agents, system)
         answer = ask(prompt, agents, command, codex_command)
         draft = clean_answer(answer.output)
     except headless.HeadlessError as e:
@@ -981,8 +1035,8 @@ def reflect_once(day, slot, sessions, gitlog, agents, command=None, codex_comman
     # Each file on its own: a journal open in an editor must not cost the day its memory.md entry.
     done, causes = [], []
     for name, path, merge, base in (
-            ("journal", journal_path, lambda n, b: merge_journal(n, b, day, draft), jbase),
-            ("memory.md", MEMORY, lambda n, b: merge_memory(n, b, day, draft), mbase)):
+            ("journal", journal_path, lambda n, b: merge_journal(n, b, day, draft, lang), jbase),
+            ("memory.md", MEMORY, lambda n, b: merge_memory(n, b, day, draft, lang), mbase)):
         try:
             done.append(f"{name} {'updated' if update(path, merge, base) else 'unchanged'}")
         except Refused as e:
@@ -1076,25 +1130,107 @@ def set_status_block(text):
         log_error(f"status block not written: {e}")
 
 
-def notify(msg):
+def _kind(reason):
+    """The kind of HeadlessError a run's cause starts with ("auth", "quota"...), after the engine's name
+    when it is named (_headless.texte); None for a cause of another sort."""
+    m = re.match(r"(?:(?:claude|codex): )?([a-z]+): ", str(reason or ""))
+    return m.group(1) if m else None
+
+
+def _jour(day):
+    """2026-10-13 → 13/10."""
+    return f"{day[8:10]}/{day[5:7]}"
+
+
+def what_to_do(reason):
+    """What the person does about a failure, in French: the two usual causes, then the rest."""
+    kind = _kind(reason)
+    codex = str(reason).startswith("codex: ")
+    if kind == "auth":
+        return ("ouvre Bibo et reconnecte Codex à ton compte ChatGPT." if codex
+                else "ouvre Bibo et reconnecte ton compte Claude.")
+    if kind == "quota":
+        return (f"rien, ta limite d'usage de {'Codex' if codex else 'Claude'} est atteinte : le prochain résumé "
+                f"rattrapera.")
+    return "dis à Claude « le résumé de ma journée échoue, regarde pourquoi »."
+
+
+def status_text(st, lang=None):
+    """The warning at the top of memory.md while the reflection fails or an evening waits, in French
+    in a French vault: what to do first, the error itself as a detail."""
+    reason = st.get("last_error") or "unknown"
+    waiting = sorted(_pending(st))
+    if lang == "fr":
+        since = str(st.get("failing_since") or "")
+        since = f"{_jour(since)} à {since[11:16]}" if DATE.match(since) else since
+        day, _, slot = str(st.get("last_ok") or "").partition(" ")
+        ok = _jour(day) + {"midday": ", midi", "evening": ", soir"}.get(slot, "") if DATE.fullmatch(day) else "aucun"
+        late = " ; pas encore résumé : " + ", ".join(map(_jour, waiting)) if waiting else ""
+        return (f"> **⚠️ Le résumé de ta journée échoue** depuis le {since} (dernier réussi : {ok}{late}). Que faire : "
+                f"{what_to_do(reason)} Le prochain résumé qui marche rattrape les {CATCH_UP} derniers soirs. "
+                f"Détail : {reason}")
+    late = f" · not summed up yet: {', '.join(waiting)}" if waiting else ""
+    return (f"> **⚠️ Daily reflection failing** since {st['failing_since']} · last good run: "
+            f"{st.get('last_ok') or 'unknown'}{late} · cause: {reason}. Journal and memory.md do not cover "
+            f"the period since. Backfill: `python3 ~/.claude/hooks/brain/daily-reflection.py --day YYYY-MM-DD`.")
+
+
+def notify(msg, title="Brain: daily reflection failed"):
     if os.environ.get("BRAIN_NO_NOTIFY") or sys.platform != "darwin":
         return
-    # The message goes in argv: nothing is interpolated into the AppleScript source.
+    # Both go in argv: nothing is interpolated into the AppleScript source.
     try:
         subprocess.run(["/usr/bin/osascript", "-e", "on run argv", "-e",
-                        'display notification (item 1 of argv) with title "Brain: daily reflection failed"',
-                        "-e", "end run", msg], capture_output=True, timeout=10)
+                        "display notification (item 1 of argv) with title (item 2 of argv)",
+                        "-e", "end run", msg, title], capture_output=True, timeout=10)
     except Exception:
         pass
 
 
-def reflect(day, slot, dry_run=False, command=None, codex_command=None):
-    """The whole run: sources, the AI, the two files, the state and the warning in memory.md."""
+def _pending(st):
+    """The missed evenings the state says still wait, {day: {"failed": n, "costly": n}}: what of it reads."""
+    raw = st.get("pending")
+    if not isinstance(raw, dict):
+        return {}
+    count = lambda v: v if type(v) is int and v >= 0 else 0
+    return {d: {k: count(v.get(k)) for k in ("failed", "costly")}
+            for d, v in raw.items() if isinstance(d, str) and DATE.fullmatch(d) and isinstance(v, dict)}
+
+
+def _keep_pending(st, pending):
+    if pending:
+        st["pending"] = pending
+    else:
+        st.pop("pending", None)
+
+
+def give_up(day, lang, why):
+    """A missed evening no run will try again: logged, and said in its day's entry of memory.md."""
+    log_error(f"{day} backfill: given up ({why})")
+    line = (FRENCH["lost"] if lang == "fr" else LOST).format(day=day, jour=_jour(day))
+    try:
+        update(MEMORY, lambda n, b: merge_memory(n, b, day, {"suspect": False, "memory": [line]}, lang), None)
+    except (Refused, OSError) as e:
+        log_error(f"{day}: the line saying it was given up not written: {e}")
+
+
+def _rank(run):
+    """A run of the state ("2026-10-14 midday") in time order, a day's midday before its end;
+    anything else comes before every run."""
+    day, _, slot = str(run or "").partition(" ")
+    return (day, slot != "midday") if re.fullmatch(r"\d{4}-\d{2}-\d{2}", day) else ("", False)
+
+
+def reflect(day, slot, dry_run=False, command=None, codex_command=None, missed=False):
+    """The whole run: sources, the AI, the two files, the state and the warning in memory.md. Returns
+    why it failed, or None (done, or nothing to do). missed: a missed evening the catch-up asks, which
+    a failure leaves pending (see TRIES)."""
     if redact is None or headless is None:
         # Never ship raw transcripts to a model, never run the AI outside its cage, never write unclean text.
         log_error("_redact.py, _vault_write.py, _agents.py, _headless.py or _headless_claude.py not found next to "
                   "daily-reflection.py — run skipped")
-        return
+        return "run skipped"
+    lang, system = languages()
     # Read once: the sessions gathered and the AI asked come from the same choice. No AI (a file
     # the kit cannot trust): nothing is read, and the run fails below, said in memory.md.
     agents = headless.lire()
@@ -1116,7 +1252,7 @@ def reflect(day, slot, dry_run=False, command=None, codex_command=None):
             print(e)
             jbase = mbase = None
         prompt = build_prompt(day, slot, masked, gitlog, journal_now(jbase), memory_now(mbase, day),
-                              _read_text(BRAIN / "Profile" / "soul.md", SOUL_CAP), chosen)
+                              _read_text(BRAIN / "Profile" / "soul.md", SOUL_CAP), chosen, system)
         n_h = sum(1 for label, _ in masked if label.startswith("hermes"))
         n_x = sum(1 for label, _ in masked if label.startswith("codex "))
         counts = f"{len(masked) - n_h - n_x} Claude session(s), " if "claude" in chosen or "codex" not in chosen else ""
@@ -1138,14 +1274,19 @@ def reflect(day, slot, dry_run=False, command=None, codex_command=None):
     if packed:
         log_error(f"{day} {slot}: {len(packed)} compressed Codex session(s) (.jsonl.zst) not read")
     if not masked and not gitlog and chosen:
-        return
+        if missed:   # nothing to sum up: that evening is done
+            LOGS.mkdir(parents=True, exist_ok=True)
+            with open(LOGS / "daily-reflection.run.lock", "a") as run_lock:
+                _hold(run_lock)
+                record(day, slot, None, None, (), lang, missed)
+        return None
 
     # The scheduler may start the same slot twice (a Mac waking up): one run per slot and hour.
     lock = Path(tempfile.gettempdir()) / f"brain-daily-reflection-{day}-{slot}.lock"
     try:
         if time.time() - lock.lstat().st_mtime < 3600:
             print(f"{day} {slot}: already run less than an hour ago (remove {lock} to run it again)")
-            return
+            return None
     except OSError:
         pass  # absent; anything else, the open below says
     # A shared /tmp: never follow a link someone left under that name.
@@ -1157,14 +1298,14 @@ def reflect(day, slot, dry_run=False, command=None, codex_command=None):
             os.close(fd)
     except OSError as e:
         log_error(f"{day} {slot}: lock {lock}: {e}")
-        return
+        return f"lock: {e}"
 
     LOGS.mkdir(parents=True, exist_ok=True)
     # One run at a time: two runs merging into memory.md together would race
     # (a manual backfill during the 12:00 run, for instance).
     with open(LOGS / "daily-reflection.run.lock", "a") as run_lock:
         _hold(run_lock)
-        reason, answer = reflect_once(day, slot, masked, gitlog, agents, command, codex_command)
+        reason, answer = reflect_once(day, slot, masked, gitlog, agents, command, codex_command, lang, system)
         if reason:
             # It lands in memory.md, which every session reads: one clean line.
             reason = clean_item(reason, 300) or "unknown"
@@ -1173,35 +1314,110 @@ def reflect(day, slot, dry_run=False, command=None, codex_command=None):
                 lock.unlink()  # a failed slot can be run again by hand right away
             except OSError:
                 pass
+        record(day, slot, reason, answer, chosen, lang, missed)
+    return reason
 
-        st = load_state()
-        if "codex" in chosen:
-            # Which engine wrote the day, and why the preferred one did not.
-            st.update(moteur=answer and answer.moteur, secours=answer and clean_item(answer.secours, 300) or None)
-        if reason is None:
-            st.update(last_ok=f"{day} {slot}", failing_since=None, last_error=None)
-            set_status_block(None)
+
+def record(day, slot, reason, answer, chosen, lang, missed):
+    """A run's outcome in the state and in memory.md's warning, under the run lock."""
+    st = load_state()
+    if "codex" in chosen:
+        # Which engine wrote the day, and why the preferred one did not.
+        st.update(moteur=answer and answer.moteur, secours=answer and clean_item(answer.secours, 300) or None)
+    pending = _pending(st)
+    if reason is None:
+        # A day summed up again by hand never takes the last good run back: the missed evenings run from it.
+        if _rank(f"{day} {slot}") >= _rank(st.get("last_ok")):
+            st["last_ok"] = f"{day} {slot}"
+        pending.pop(day, None)
+        _keep_pending(st, pending)
+        if any(tries["failed"] for tries in pending.values()):   # still said: one that failed waits
+            set_status_block(status_text(st, lang))
         else:
-            st["failing_since"] = st.get("failing_since") or time.strftime("%Y-%m-%d %H:%M")
-            st["last_error"] = reason
-            set_status_block(
-                f"> **⚠️ Daily reflection failing** since {st['failing_since']} · last good run: "
-                f"{st.get('last_ok') or 'unknown'} · cause: {reason}. Journal and memory.md do not cover "
-                f"the period since. Backfill: `python3 ~/.claude/hooks/brain/daily-reflection.py --day YYYY-MM-DD`."
-            )
-            notify(f"{day} {slot}: {reason}")
+            st.update(failing_since=None, last_error=None)
+            set_status_block(None)
+    else:
+        if missed:
+            tries = pending.setdefault(day, {"failed": 0, "costly": 0})
+            tries["failed"] += 1
+            tries["costly"] += answer is not None or _kind(reason) in COSTLY
+            if tries["costly"] >= TRIES:
+                del pending[day]
+                give_up(day, lang, f"{tries['costly']} costly failures, the last one: {reason}")
+            _keep_pending(st, pending)
+        # Said once when it starts failing, not at every run: memory.md says it as long as it lasts.
+        started = not st.get("failing_since")
+        st["failing_since"] = st.get("failing_since") or time.strftime("%Y-%m-%d %H:%M")
+        st["last_error"] = reason
+        set_status_block(status_text(st, lang))
+        if started:
+            if lang == "fr":
+                todo = what_to_do(reason)
+                notify(todo[0].upper() + todo[1:], "Ton cerveau : le résumé de ta journée a échoué")
+            else:
+                notify(f"{day} {slot}: {reason}")
+    save_state(st)
+
+
+def missed_evenings(today, last_ok):
+    """The days before today whose end was never summed up, oldest first, CATCH_UP days back at most:
+    from the day after the last good run's, or that day itself when the run was its midday one.
+    Without a last good run, yesterday."""
+    t = datetime.strptime(today, "%Y-%m-%d")
+    try:
+        day, slot = str(last_ok).split()
+        start = datetime.strptime(day, "%Y-%m-%d") + timedelta(days=0 if slot == "midday" else 1)
+    except ValueError:
+        start = t - timedelta(days=1)
+    start = max(start, t - timedelta(days=CATCH_UP))
+    return [(start + timedelta(days=n)).strftime("%Y-%m-%d") for n in range((t - start).days)]
+
+
+def catch_up(today):
+    """The evenings to sum up before today, oldest first: those missed since the last good run and
+    those still pending, CATCH_UP days back at most. All of them are kept pending in the state first:
+    neither a catch-up stopped before one nor today's success can lose it. One out of reach is given
+    up (said on its day when it was tried)."""
+    LOGS.mkdir(parents=True, exist_ok=True)
+    first = (datetime.strptime(today, "%Y-%m-%d") - timedelta(days=CATCH_UP)).strftime("%Y-%m-%d")
+    with open(LOGS / "daily-reflection.run.lock", "a") as run_lock:
+        _hold(run_lock)
+        st = load_state()
+        pending = _pending(st)
+        for d in missed_evenings(today, st.get("last_ok")):
+            pending.setdefault(d, {"failed": 0, "costly": 0})
+        for d in sorted(pending):
+            if not first <= d < today:
+                if pending.pop(d)["failed"]:
+                    give_up(d, languages()[0], f"older than {CATCH_UP} days")
+                else:
+                    log_error(f"{d} backfill: older than {CATCH_UP} days, never tried")
+        _keep_pending(st, pending)
         save_state(st)
+    return sorted(pending)
+
+
+def scheduled(day, slot, command=None, codex_command=None):
+    """A run without --day: the missed evenings first (a computer off at 23:00), oldest first, then
+    today. One that fails stops the catch-up: the evenings left wait for the next run, and today
+    still runs."""
+    if redact is not None and headless is not None:   # else reflect() says why, once
+        for missed in catch_up(day):
+            if reflect(missed, "backfill", command=command, codex_command=codex_command, missed=True):
+                break
+    return reflect(day, slot, command=command, codex_command=codex_command)
 
 
 def parse_args():
     p = argparse.ArgumentParser(description="Daily reflection: Journal + memory.md")
-    p.add_argument("--day", default=time.strftime("%Y-%m-%d"), help="YYYY-MM-DD, default: today")
+    p.add_argument("--day", help="YYYY-MM-DD, default: today, after the evenings missed")
     p.add_argument("--slot", choices=["midday", "evening", "backfill"])
     p.add_argument("--dry-run", action="store_true", help="show sources, schema and dossier size, call nothing")
     p.add_argument("--projects", help="read the transcripts from this folder instead of ~/.claude/projects")
     p.add_argument("--logs", help="keep state, error log and run lock here instead of ~/.claude/logs")
     a = p.parse_args()
-    a.day = datetime.strptime(a.day, "%Y-%m-%d").strftime("%Y-%m-%d")  # 2026-1-5 is Journal/2026-01-05.md
+    a.catch_up = a.day is None and not a.dry_run
+    a.day = datetime.strptime(a.day or time.strftime("%Y-%m-%d"), "%Y-%m-%d").strftime("%Y-%m-%d")  # 2026-1-5: 2026-01-05
     if not a.slot:
         if a.day != time.strftime("%Y-%m-%d"):
             a.slot = "backfill"
@@ -1219,7 +1435,10 @@ def main():
     configure(logs=args.logs, projects=args.projects)
     command = [os.environ["CLAUDE_BIN"]] if os.environ.get("CLAUDE_BIN") else None
     codex_command = [os.environ["CODEX_BIN"]] if os.environ.get("CODEX_BIN") else None
-    reflect(args.day, args.slot, dry_run=args.dry_run, command=command, codex_command=codex_command)
+    if args.catch_up:
+        scheduled(args.day, args.slot, command, codex_command)
+    else:
+        reflect(args.day, args.slot, dry_run=args.dry_run, command=command, codex_command=codex_command)
 
 
 if __name__ == "__main__":
