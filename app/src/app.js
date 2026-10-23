@@ -8,6 +8,8 @@ const REPORT_LOG_LINES = 50;
 const LOGIN_POLL_MS = 3000;
 // No login this long after its window opened: what usually went wrong. dev/mock.html shortens it (&hint=).
 const LOGIN_HINT_MS = Number(window.BIBO_LOGIN_HINT_MS) || 180000;
+// How long the welcome waits for Claude's login to be read (`claude auth status`, 10 s at most in detect.rs).
+const LOGIN_READ_MS = 3000;
 const HAPPY_MS = 4500;
 // After « Réparé ! », long enough to read it.
 const FIXED_PAUSE_MS = 2500;
@@ -23,17 +25,20 @@ const CLAUDE_PLANS = 'https://claude.ai/upgrade';
 const SYSTEMS = {
   macos: {
     machine: 'Mac', terminal: 'le Terminal', inTerminal: 'dans le Terminal', window: 'fenêtre de commandes', settings: 'Réglages', paste: 'Cmd + V',
+    trash: 'la Corbeille (Trash)', files: 'le Finder',
     // The brain lives in Documents, a folder macOS guards: refusing breaks the step.
     asks: ['brain', 'macOS va peut-être demander l’accès à ton dossier Documents : clique sur « Autoriser ».'],
   },
   windows: {
     machine: 'PC', terminal: 'la fenêtre de commandes', inTerminal: 'dans une fenêtre de commandes', window: 'fenêtre de commandes', settings: 'Paramètres', paste: 'Ctrl + V',
+    trash: 'la Corbeille (Recycle Bin)', files: 'l’Explorateur de fichiers (File Explorer)',
     // winget may need an administrator's yes, in two of install.ps1's sections (WINDOWS_ASKS): {what} is
     // what that section installs.
     asks: ['brain', 'Windows va peut-être demander une autorisation pour installer {what} : clique sur « Oui » (Yes).'],
   },
   linux: {
     machine: 'PC', terminal: 'le Terminal', inTerminal: 'dans le Terminal', window: 'fenêtre de commandes', settings: 'Paramètres', paste: 'Ctrl + Maj + V',
+    trash: 'la Corbeille', files: 'ton gestionnaire de fichiers',
     // The system's packages and Obsidian's are installed as root: the system asks for the password.
     asks: ['root', 'Ton ordinateur va te demander ton mot de passe pour installer des outils du système ou Obsidian : c’est normal, tape-le.'],
   },
@@ -116,6 +121,9 @@ const state = {
   guide: false,
   // Claude's login, read with the guide at the start: without it the welcome asks for it before the guide.
   claudeOn: false,
+  // brain_complete, read with the guide at the start: false, the install stopped half way (the guide works
+  // without the rest, D1), and the welcome says so.
+  brainWhole: true,
   // The app's version (tauri.conf.json, 0.1.<n> for preview n), said small on the welcome; '' unknown.
   version: '',
   // The brain's folder as the window says it (brain_folder): never a path of its own.
@@ -461,8 +469,10 @@ function showWelcome() {
       addVersion();
       return;
     }
-    // Back, the guide ready: the guide first, the check of the machine still there.
-    say('idle', 'Content de te revoir !', 'Je peux te guider pas à pas dans un logiciel : tu me montres ta fenêtre, je te dis où cliquer.');
+    // Back, the guide ready: the guide first, the check of the machine still there. An install that stopped
+    // half way is said: the guide works without the rest, the memory and the evening's summary do not.
+    if (state.brainWhole) say('idle', 'Content de te revoir !', 'Je peux te guider pas à pas dans un logiciel : tu me montres ta fenêtre, je te dis où cliquer.');
+    else say('idle', 'Content de te revoir !', `Ton installation n’est pas finie : clique sur « ${check.textContent} » pour la reprendre. Le guide marche déjà : je peux te guider pas à pas dans un logiciel.`);
     const guide = button('Guide-moi dans un logiciel', () => openGuide(guide), { act: 'next' });
     ui.actions.append(check, guide);
     addVersion();
@@ -668,8 +678,12 @@ function changeButton(small = false) {
 }
 
 // A warning the install may trip on later (claude.ai or github.com silent or slow, a disk nearly full):
-// never folded under « prêt ».
+// never folded under « prêt », and said with what to do.
 const RISKY_CHECKS = ['network', 'disk'];
+const RISKY_ADVICE = {
+  network: 'Vérifie ton Wi-Fi. Au travail, le réseau bloque parfois ces sites : essaie depuis chez toi.',
+  disk: `Pour faire de la place, vide ${OS.trash} ou supprime de gros fichiers.`,
+};
 
 function riskyChecks(d) {
   return d.checks.filter((c) => c.status === 'warn' && RISKY_CHECKS.includes(c.id));
@@ -712,12 +726,12 @@ function showDiagnosis() {
     say('happy', 'Tout est déjà installé !', `Ton ${OS.machine} a tout ce qu’il faut.`);
     ui.actions.append(button('Continuer', checkLogin, { act: 'next' }));
   } else if (riskyChecks(d).length) {
-    say('idle', 'J’ai fait le tour : un point à vérifier.', `${riskyChecks(d).map((c) => String(c.detail || '')).join(' ')} Tu peux installer quand même (10 à 20 minutes), ou régler ça puis cliquer sur « Revérifier ».`);
+    say('idle', 'J’ai fait le tour : un point à vérifier.', `${riskyChecks(d).map((c) => `${String(c.detail || '')} ${RISKY_ADVICE[c.id]}`).join(' ')} Tu peux installer quand même (10 à 20 minutes), ou faire ça puis cliquer sur « Revérifier ».`);
     ui.actions.append(
       button('Revérifier', runDiagnosis, { kind: 'secondary', act: 'recheck' }),
       button('Tout installer', startInstall, { act: 'next' }));
   } else {
-    say('idle', `J’ai fait le tour : ton ${OS.machine} est prêt.`, `J’installe ${listFr(d.todo.map((id) => stepInfo(id).short))} : 10 à 20 minutes. Évite le partage de connexion de ton téléphone : il y a beaucoup à télécharger.`);
+    say('idle', `J’ai fait le tour : ton ${OS.machine} est prêt.`, `J’installe ${listFr(d.todo.map((id) => stepInfo(id).short))} : 10 à 20 minutes. Si tu peux, branche-toi sur un Wi-Fi : il y a beaucoup à télécharger.`);
     ui.actions.append(button('Tout installer', startInstall, { act: 'next' }));
   }
   focusMain();
@@ -1906,7 +1920,8 @@ function showLogin(engine = 'claude', rest = [], said = '') {
     if (codex) say('thinking', 'J’attends que tu te connectes…', `Suis les étapes ${OS.inTerminal}.`);
     else say('thinking', ...CLAUDE_WAIT);
     waiting.hidden = false;
-    hintLater(waiting);
+    // The hint is Claude's login (a code for its command window): Codex's goes another way.
+    if (!codex) hintLater(waiting);
     connect.textContent = 'Rouvrir la fenêtre';
     connect.className = 'btn btn-secondary';
     connect.disabled = false;
@@ -1994,9 +2009,9 @@ function stopPolling() {
 
 // Where to find Bibo again tomorrow: the installers say nothing of it.
 const FIND_ME = {
-  windows: 'Pour me retrouver plus tard : ouvre le menu Démarrer et tape « Brain in a Box ».',
+  windows: 'Pour me retrouver plus tard : ouvre le menu Démarrer (Start) et tape « Brain in a Box ».',
   // Opened from its disk image (.dmg), the app is gone once the disk is ejected: in Applications first.
-  macos: 'Pour me retrouver plus tard : si ce n’est pas fait, glisse-moi dans le dossier Applications. Ensuite, Cmd + Espace, tape « Brain in a Box », puis Entrée.',
+  macos: 'Pour me retrouver plus tard : si tu m’as ouvert depuis le fichier téléchargé (.dmg), glisse d’abord l’icône Brain in a Box sur le dossier Applications, dans sa fenêtre. Ensuite, Cmd + Espace, tape « Brain in a Box », puis Entrée.',
 }[SYSTEM];
 
 // One main button: the guide where Claude is the brain's AI and connected (what most came for), Claude's
@@ -2050,17 +2065,21 @@ function showDone() {
   }
 
   // The folder in full, in the screen rather than in Bibo's words: those are masked like the log, and a
-  // Windows profile's path would read « ~ ».
+  // Windows profile's path would read « ~ ». Said whether Obsidian opened or not: without it (winget
+  // blocked, say), the folder is the way to the notes.
   const folder = h('p', { class: 'note folder', hidden: true });
   const vault = button('Voir mes notes', async () => {
-    if (!(await act(vault, 'open_vault', 'J’ouvre Obsidian…', 'Tes notes s’ouvrent dans Obsidian.')) || !state.brainDir) return;
-    folder.textContent = `Tes notes sont dans le dossier ${state.brainDir}.`;
+    const opened = await act(vault, 'open_vault', 'J’ouvre Obsidian…', 'Tes notes s’ouvrent dans Obsidian.');
+    if (gen !== view.gen || !state.brainDir) return;
+    folder.textContent = opened ? `Tes notes sont dans le dossier ${state.brainDir}.`
+      : `Tes notes sont dans le dossier ${state.brainDir} : ouvre-le dans ${OS.files}. Obsidian, pour les lire, est gratuit sur obsidian.md.`;
     folder.hidden = false;
   }, { kind: 'ghost', small: true, act: 'vault' });
   const links = [button('Importer ma mémoire', showImport, { kind: 'ghost', small: true, act: 'import' }), vault];
   // Search by meaning takes a bank card: nothing to bring up before the account the brain needs.
   if (canAddMeaning() && !claudeOff) links.push(button('Recherche par le sens', () => addMeaning(showDone), { kind: 'ghost', small: true, act: 'voyage' }));
-  ui.screen.append(h('div', { class: 'links' }, links), folder);
+  ui.screen.append(h('p', { class: 'note' }, 'Tu utilisais ChatGPT ou Claude ? « Importer ma mémoire » apporte à ton cerveau ce qu’ils savent de toi.'),
+    h('div', { class: 'links' }, links), folder);
   if (FIND_ME) ui.screen.append(h('p', { class: 'note' }, FIND_ME));
 
   if (loginFirst) {
@@ -2125,7 +2144,7 @@ async function connectThen(btn, engine, waiting, after) {
   else say('thinking', 'J’attends que tu te connectes…', `Suis les étapes ${OS.inTerminal}.`);
   if (waiting) {
     waiting.hidden = false;
-    hintLater(waiting);
+    if (engine === 'claude') hintLater(waiting);
   }
   btn.textContent = 'Rouvrir la fenêtre';
   btn.className = 'btn btn-secondary';
@@ -2613,10 +2632,29 @@ function start() {
   window.__TAURI__.event.listen('repair-progress', onRepairProgress).catch(() => {});
   window.__TAURI__.event.listen('import-progress', onImportProgress).catch(() => {});
   // Claude's login only where the guide is offered: the welcome asks for it first when it is not there.
+  // Within LOGIN_READ_MS: Claude Code slow to answer held the welcome up to 10 s, empty, then read as « not
+  // logged in ». Past it, the guide is offered: its window asks for the login itself.
   const guide = readGuide().then(async () => {
-    state.claudeOn = state.guide && loggedIn('claude', await loginState('claude'));
+    if (!state.guide) return;
+    const [said, whole] = await Promise.all([within(LOGIN_READ_MS, loginState('claude'), true), readBrainWhole()]);
+    state.claudeOn = loggedIn('claude', said);
+    state.brainWhole = whole;
   });
   Promise.all([readOffer(), guide, readVersion()]).then(showWelcome);
+}
+
+// `promise`'s answer, or `fallback` once `ms` went by without one.
+function within(ms, promise, fallback) {
+  return Promise.race([promise, new Promise((resolve) => { setTimeout(() => resolve(fallback), ms); })]);
+}
+
+// Whether the install went to its end (detect.rs, files read only). Unreadable: nothing to say.
+async function readBrainWhole() {
+  try {
+    return (await invoke('brain_complete')) !== false;
+  } catch {
+    return true;
+  }
 }
 
 // Where the brain is, as the window says it (« Voir mes notes »): install.ps1 may have put it elsewhere

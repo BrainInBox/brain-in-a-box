@@ -232,6 +232,15 @@
 ### s=installe&go=done&click=vault&os=windows
 59 19 60 16 61 265 266 267
 
+### s=installe&go=welcome&incomplet=1&os=windows
+268
+
+### s=installe&go=welcome&lent=1&os=windows
+59
+
+### s=installe&go=done&click=vault&obsidian=absent&os=windows
+59 19 60 16 61 265 269 270
+
 #1
 == welcome
 Salut, moi c’est Bibo !
@@ -252,7 +261,7 @@ Vérification en cours
 #3
 == diag
 J’ai fait le tour : ton Mac est prêt.
-J’installe Claude Code, les outils Apple, le moteur de ta mémoire, Obsidian et ton cerveau : 10 à 20 minutes. Évite le partage de connexion de ton téléphone : il y a beaucoup à télécharger.
+J’installe Claude Code, les outils Apple, le moteur de ta mémoire, Obsidian et ton cerveau : 10 à 20 minutes. Si tu peux, branche-toi sur un Wi-Fi : il y a beaucoup à télécharger.
 Mon conseil : Ton cerveau marche avec Claude : il te faudra un abonnement Claude Pro ou Max.
 [Voir le détail]
 [Tout installer]
@@ -434,10 +443,11 @@ Un instant
 Ton second cerveau est prêt !
 Claude retient maintenant ce que tu lui apprends.
 Je peux te guider pas à pas dans n’importe quel logiciel : tu me montres ta fenêtre, je te dis où cliquer.
+Tu utilisais ChatGPT ou Claude ? « Importer ma mémoire » apporte à ton cerveau ce qu’ils savent de toi.
 [Importer ma mémoire]
 [Voir mes notes]
 [Recherche par le sens]
-Pour me retrouver plus tard : si ce n’est pas fait, glisse-moi dans le dossier Applications. Ensuite, Cmd + Espace, tape « Brain in a Box », puis Entrée.
+Pour me retrouver plus tard : si tu m’as ouvert depuis le fichier téléchargé (.dmg), glisse d’abord l’icône Brain in a Box sur le dossier Applications, dans sa fenêtre. Ensuite, Cmd + Espace, tape « Brain in a Box », puis Entrée.
 [Présente-toi à Claude (15 min)]
 [Guide-moi dans un logiciel]
 
@@ -461,7 +471,7 @@ Vérification en cours
 #20
 == diag
 J’ai fait le tour : ton PC est prêt.
-J’installe Claude Code et ton cerveau : 10 à 20 minutes. Évite le partage de connexion de ton téléphone : il y a beaucoup à télécharger.
+J’installe Claude Code et ton cerveau : 10 à 20 minutes. Si tu peux, branche-toi sur un Wi-Fi : il y a beaucoup à télécharger.
 Mon conseil : Ton cerveau marche avec Claude : il te faudra un abonnement Claude Pro ou Max.
 [Voir le détail]
 [Tout installer]
@@ -622,17 +632,18 @@ Détails
 Ton second cerveau est prêt !
 Claude retient maintenant ce que tu lui apprends.
 Je peux te guider pas à pas dans n’importe quel logiciel : tu me montres ta fenêtre, je te dis où cliquer.
+Tu utilisais ChatGPT ou Claude ? « Importer ma mémoire » apporte à ton cerveau ce qu’ils savent de toi.
 [Importer ma mémoire]
 [Voir mes notes]
 [Recherche par le sens]
-Pour me retrouver plus tard : ouvre le menu Démarrer et tape « Brain in a Box ».
+Pour me retrouver plus tard : ouvre le menu Démarrer (Start) et tape « Brain in a Box ».
 [Présente-toi à Claude (15 min)]
 [Guide-moi dans un logiciel]
 
 #36
 == diag
 J’ai fait le tour : ton PC est prêt.
-J’installe les outils de base, Claude Code, le moteur de ta mémoire, Obsidian et ton cerveau : 10 à 20 minutes. Évite le partage de connexion de ton téléphone : il y a beaucoup à télécharger.
+J’installe les outils de base, Claude Code, le moteur de ta mémoire, Obsidian et ton cerveau : 10 à 20 minutes. Si tu peux, branche-toi sur un Wi-Fi : il y a beaucoup à télécharger.
 Mon conseil : Ton cerveau marche avec Claude : il te faudra un abonnement Claude Pro ou Max.
 [Voir le détail]
 [Tout installer]
@@ -810,6 +821,7 @@ Détails
 Ton second cerveau est prêt !
 Claude retient maintenant ce que tu lui apprends.
 Je peux te guider pas à pas dans n’importe quel logiciel : tu me montres ta fenêtre, je te dis où cliquer.
+Tu utilisais ChatGPT ou Claude ? « Importer ma mémoire » apporte à ton cerveau ce qu’ils savent de toi.
 [Importer ma mémoire]
 [Voir mes notes]
 [Recherche par le sens]
@@ -883,9 +895,10 @@ Détails
 Ton second cerveau est prêt !
 Claude retient maintenant ce que tu lui apprends.
 Je peux te guider pas à pas dans n’importe quel logiciel : tu me montres ta fenêtre, je te dis où cliquer.
+Tu utilisais ChatGPT ou Claude ? « Importer ma mémoire » apporte à ton cerveau ce qu’ils savent de toi.
 [Importer ma mémoire]
 [Voir mes notes]
-Pour me retrouver plus tard : si ce n’est pas fait, glisse-moi dans le dossier Applications. Ensuite, Cmd + Espace, tape « Brain in a Box », puis Entrée.
+Pour me retrouver plus tard : si tu m’as ouvert depuis le fichier téléchargé (.dmg), glisse d’abord l’icône Brain in a Box sur le dossier Applications, dans sa fenêtre. Ensuite, Cmd + Espace, tape « Brain in a Box », puis Entrée.
 [Présente-toi à Claude (15 min)]
 [Guide-moi dans un logiciel]
 
@@ -940,9 +953,10 @@ Mon conseil : Tu as déjà Claude Code, connecté à ton abonnement : ton cerv
 Ton second cerveau est prêt !
 Claude retient maintenant ce que tu lui apprends.
 Je peux te guider pas à pas dans n’importe quel logiciel : tu me montres ta fenêtre, je te dis où cliquer.
+Tu utilisais ChatGPT ou Claude ? « Importer ma mémoire » apporte à ton cerveau ce qu’ils savent de toi.
 [Importer ma mémoire]
 [Voir mes notes]
-Pour me retrouver plus tard : ouvre le menu Démarrer et tape « Brain in a Box ».
+Pour me retrouver plus tard : ouvre le menu Démarrer (Start) et tape « Brain in a Box ».
 [Présente-toi à Claude (15 min)]
 [Guide-moi dans un logiciel]
 
@@ -951,9 +965,10 @@ Pour me retrouver plus tard : ouvre le menu Démarrer et tape « Brain in a Bo
 Ton second cerveau est prêt !
 Claude retient maintenant ce que tu lui apprends.
 Je peux te guider pas à pas dans n’importe quel logiciel : tu me montres ta fenêtre, je te dis où cliquer.
+Tu utilisais ChatGPT ou Claude ? « Importer ma mémoire » apporte à ton cerveau ce qu’ils savent de toi.
 [Importer ma mémoire]
 [Voir mes notes]
-Pour me retrouver plus tard : si ce n’est pas fait, glisse-moi dans le dossier Applications. Ensuite, Cmd + Espace, tape « Brain in a Box », puis Entrée.
+Pour me retrouver plus tard : si tu m’as ouvert depuis le fichier téléchargé (.dmg), glisse d’abord l’icône Brain in a Box sur le dossier Applications, dans sa fenêtre. Ensuite, Cmd + Espace, tape « Brain in a Box », puis Entrée.
 [Présente-toi à Claude (15 min)]
 [Guide-moi dans un logiciel (inactif)]
 
@@ -962,6 +977,7 @@ Pour me retrouver plus tard : si ce n’est pas fait, glisse-moi dans le dossie
 Ton second cerveau est prêt !
 Claude retient maintenant ce que tu lui apprends.
 Je peux te guider pas à pas dans n’importe quel logiciel : tu me montres ta fenêtre, je te dis où cliquer.
+Tu utilisais ChatGPT ou Claude ? « Importer ma mémoire » apporte à ton cerveau ce qu’ils savent de toi.
 [Importer ma mémoire]
 [Voir mes notes]
 [Présente-toi à Claude (15 min)]
@@ -972,6 +988,7 @@ Je peux te guider pas à pas dans n’importe quel logiciel : tu me montres ta 
 Ton second cerveau est prêt !
 Claude retient maintenant ce que tu lui apprends.
 Je peux te guider pas à pas dans n’importe quel logiciel : tu me montres ta fenêtre, je te dis où cliquer.
+Tu utilisais ChatGPT ou Claude ? « Importer ma mémoire » apporte à ton cerveau ce qu’ils savent de toi.
 [Importer ma mémoire]
 [Voir mes notes (inactif)]
 [Présente-toi à Claude (15 min)]
@@ -982,6 +999,7 @@ Je peux te guider pas à pas dans n’importe quel logiciel : tu me montres ta 
 J’ouvre Obsidian…
 Tes notes s’ouvrent dans Obsidian.
 Je peux te guider pas à pas dans n’importe quel logiciel : tu me montres ta fenêtre, je te dis où cliquer.
+Tu utilisais ChatGPT ou Claude ? « Importer ma mémoire » apporte à ton cerveau ce qu’ils savent de toi.
 [Importer ma mémoire]
 [Voir mes notes (inactif)]
 Tes notes sont dans le dossier Documents/Brain.
@@ -993,6 +1011,7 @@ Tes notes sont dans le dossier Documents/Brain.
 J’ouvre Obsidian…
 Tes notes s’ouvrent dans Obsidian.
 Je peux te guider pas à pas dans n’importe quel logiciel : tu me montres ta fenêtre, je te dis où cliquer.
+Tu utilisais ChatGPT ou Claude ? « Importer ma mémoire » apporte à ton cerveau ce qu’ils savent de toi.
 [Importer ma mémoire]
 [Voir mes notes]
 Tes notes sont dans le dossier Documents/Brain.
@@ -1033,7 +1052,7 @@ Recherche par le sens : À noterRecherche par mots-clés seulement. Une clé Vo
 #69
 == diag
 J’ai fait le tour : ton Mac est prêt.
-J’installe les outils Apple, le moteur de ta mémoire, Obsidian et ton cerveau : 10 à 20 minutes. Évite le partage de connexion de ton téléphone : il y a beaucoup à télécharger.
+J’installe les outils Apple, le moteur de ta mémoire, Obsidian et ton cerveau : 10 à 20 minutes. Si tu peux, branche-toi sur un Wi-Fi : il y a beaucoup à télécharger.
 Mon conseil : Tu utilises déjà Claude : ton cerveau travaillera avec lui (il te faudra un abonnement Pro ou Max pour Claude Code).
 [Voir le détail]
 [Tout installer]
@@ -1305,7 +1324,7 @@ Tu te connectes directement chez Anthropic : je ne vois jamais ton mot de passe
 #91
 == diag
 J’ai fait le tour : ton Mac est prêt.
-J’installe Obsidian et ton cerveau : 10 à 20 minutes. Évite le partage de connexion de ton téléphone : il y a beaucoup à télécharger.
+J’installe Obsidian et ton cerveau : 10 à 20 minutes. Si tu peux, branche-toi sur un Wi-Fi : il y a beaucoup à télécharger.
 Mon conseil : Tu as déjà Claude Code, connecté à ton abonnement : ton cerveau travaillera avec lui.
 [Voir le détail]
 [Tout installer]
@@ -1433,7 +1452,7 @@ Détails
 #104
 == diag
 J’ai fait le tour : ton Mac est prêt.
-J’installe ton cerveau : 10 à 20 minutes. Évite le partage de connexion de ton téléphone : il y a beaucoup à télécharger.
+J’installe ton cerveau : 10 à 20 minutes. Si tu peux, branche-toi sur un Wi-Fi : il y a beaucoup à télécharger.
 Mon conseil : Tu as déjà Claude Code, connecté à ton abonnement : ton cerveau travaillera avec lui.
 [Voir le détail]
 [Tout installer]
@@ -1626,7 +1645,7 @@ Détails
 #124
 == diag
 J’ai fait le tour : ton Mac est prêt.
-J’installe le moteur de ta mémoire et ton cerveau : 10 à 20 minutes. Évite le partage de connexion de ton téléphone : il y a beaucoup à télécharger.
+J’installe le moteur de ta mémoire et ton cerveau : 10 à 20 minutes. Si tu peux, branche-toi sur un Wi-Fi : il y a beaucoup à télécharger.
 Mon conseil : Tu as déjà Claude Code, connecté à ton abonnement : ton cerveau travaillera avec lui.
 [Voir le détail]
 [Tout installer]
@@ -1969,7 +1988,7 @@ Ses questions s’affichent en anglais : « Yes » veut dire oui, « No » 
 #156
 == diag
 J’ai fait le tour : ton Mac est prêt.
-J’installe Obsidian et ton cerveau : 10 à 20 minutes. Évite le partage de connexion de ton téléphone : il y a beaucoup à télécharger.
+J’installe Obsidian et ton cerveau : 10 à 20 minutes. Si tu peux, branche-toi sur un Wi-Fi : il y a beaucoup à télécharger.
 Mon conseil : Tu utilises déjà Claude : ton cerveau travaillera avec lui (il te faudra un abonnement Pro ou Max pour Claude Code).
 [Voir le détail]
 [Tout installer]
@@ -2275,7 +2294,7 @@ Détails
 #183
 == diag
 J’ai fait le tour : ton PC est prêt.
-J’installe Obsidian et ton cerveau : 10 à 20 minutes. Évite le partage de connexion de ton téléphone : il y a beaucoup à télécharger.
+J’installe Obsidian et ton cerveau : 10 à 20 minutes. Si tu peux, branche-toi sur un Wi-Fi : il y a beaucoup à télécharger.
 Mon conseil : Tu as déjà Claude Code, connecté à ton abonnement : ton cerveau travaillera avec lui.
 [Voir le détail]
 [Tout installer]
@@ -2332,7 +2351,7 @@ Détails
 #189
 == diag
 J’ai fait le tour : ton PC est prêt.
-J’installe le moteur de ta mémoire et ton cerveau : 10 à 20 minutes. Évite le partage de connexion de ton téléphone : il y a beaucoup à télécharger.
+J’installe le moteur de ta mémoire et ton cerveau : 10 à 20 minutes. Si tu peux, branche-toi sur un Wi-Fi : il y a beaucoup à télécharger.
 Mon conseil : Tu as déjà Claude Code, connecté à ton abonnement : ton cerveau travaillera avec lui.
 [Voir le détail]
 [Tout installer]
@@ -2424,7 +2443,7 @@ Détails
 #198
 == diag
 J’ai fait le tour : ton Mac est prêt.
-J’installe Claude Code, les outils Apple, le moteur de ta mémoire, Obsidian et ton cerveau : 10 à 20 minutes. Évite le partage de connexion de ton téléphone : il y a beaucoup à télécharger.
+J’installe Claude Code, les outils Apple, le moteur de ta mémoire, Obsidian et ton cerveau : 10 à 20 minutes. Si tu peux, branche-toi sur un Wi-Fi : il y a beaucoup à télécharger.
 Mon conseil : Tu utilises ChatGPT : ton cerveau marche avec Claude, il te faudra un abonnement Claude Pro ou Max (ton abonnement ChatGPT ne suffit pas). Codex, l’IA de ChatGPT, arrive bientôt ici. À la fin, tu pourras apporter à ton cerveau ce que ChatGPT sait de toi.
 J’ai vu Hermes : je ne l’installe pas et n’y touche pas. Ses meilleures compétences arrivent dans Claude avec ton cerveau.
 [Voir le détail]
@@ -3006,9 +3025,10 @@ Clique sur le bouton. Ton navigateur s’ouvre sur claude.ai : connecte-toi ave
 Une fenêtre de commandes s’ouvre aussi : laisse-la ouverte, tu n’as rien à y taper.
 Reviens ici : je vois tout seul quand c’est bon.
 [Je n’ai pas encore Claude Pro]
+Tu utilisais ChatGPT ou Claude ? « Importer ma mémoire » apporte à ton cerveau ce qu’ils savent de toi.
 [Importer ma mémoire]
 [Voir mes notes]
-Pour me retrouver plus tard : ouvre le menu Démarrer et tape « Brain in a Box ».
+Pour me retrouver plus tard : ouvre le menu Démarrer (Start) et tape « Brain in a Box ».
 [Connecter mon compte Claude]
 
 #250
@@ -3019,9 +3039,10 @@ Clique sur le bouton. Ton navigateur s’ouvre sur claude.ai : connecte-toi ave
 Une fenêtre de commandes s’ouvre aussi : laisse-la ouverte, tu n’as rien à y taper.
 Reviens ici : je vois tout seul quand c’est bon.
 [Je n’ai pas encore Claude Pro]
+Tu utilisais ChatGPT ou Claude ? « Importer ma mémoire » apporte à ton cerveau ce qu’ils savent de toi.
 [Importer ma mémoire]
 [Voir mes notes]
-Pour me retrouver plus tard : si ce n’est pas fait, glisse-moi dans le dossier Applications. Ensuite, Cmd + Espace, tape « Brain in a Box », puis Entrée.
+Pour me retrouver plus tard : si tu m’as ouvert depuis le fichier téléchargé (.dmg), glisse d’abord l’icône Brain in a Box sur le dossier Applications, dans sa fenêtre. Ensuite, Cmd + Espace, tape « Brain in a Box », puis Entrée.
 [Connecter mon compte Claude]
 
 #251
@@ -3032,9 +3053,10 @@ Clique sur le bouton. Ton navigateur s’ouvre sur claude.ai : connecte-toi ave
 Une fenêtre de commandes s’ouvre aussi : laisse-la ouverte, tu n’as rien à y taper.
 Reviens ici : je vois tout seul quand c’est bon.
 [Je n’ai pas encore Claude Pro]
+Tu utilisais ChatGPT ou Claude ? « Importer ma mémoire » apporte à ton cerveau ce qu’ils savent de toi.
 [Importer ma mémoire]
 [Voir mes notes]
-Pour me retrouver plus tard : si ce n’est pas fait, glisse-moi dans le dossier Applications. Ensuite, Cmd + Espace, tape « Brain in a Box », puis Entrée.
+Pour me retrouver plus tard : si tu m’as ouvert depuis le fichier téléchargé (.dmg), glisse d’abord l’icône Brain in a Box sur le dossier Applications, dans sa fenêtre. Ensuite, Cmd + Espace, tape « Brain in a Box », puis Entrée.
 [Connecter mon compte Claude (inactif)]
 
 #252
@@ -3046,9 +3068,10 @@ Une fenêtre de commandes s’ouvre aussi : laisse-la ouverte, tu n’as rien �
 Reviens ici : je vois tout seul quand c’est bon.
 J’attends ta connexion…
 [Je n’ai pas encore Claude Pro]
+Tu utilisais ChatGPT ou Claude ? « Importer ma mémoire » apporte à ton cerveau ce qu’ils savent de toi.
 [Importer ma mémoire]
 [Voir mes notes]
-Pour me retrouver plus tard : si ce n’est pas fait, glisse-moi dans le dossier Applications. Ensuite, Cmd + Espace, tape « Brain in a Box », puis Entrée.
+Pour me retrouver plus tard : si tu m’as ouvert depuis le fichier téléchargé (.dmg), glisse d’abord l’icône Brain in a Box sur le dossier Applications, dans sa fenêtre. Ensuite, Cmd + Espace, tape « Brain in a Box », puis Entrée.
 [Rouvrir la fenêtre]
 
 #253
@@ -3060,9 +3083,10 @@ Une fenêtre de commandes s’ouvre aussi : laisse-la ouverte, tu n’as rien �
 Reviens ici : je vois tout seul quand c’est bon.
 J’attends ta connexion…
 [Je n’ai pas encore Claude Pro]
+Tu utilisais ChatGPT ou Claude ? « Importer ma mémoire » apporte à ton cerveau ce qu’ils savent de toi.
 [Importer ma mémoire]
 [Voir mes notes]
-Pour me retrouver plus tard : si ce n’est pas fait, glisse-moi dans le dossier Applications. Ensuite, Cmd + Espace, tape « Brain in a Box », puis Entrée.
+Pour me retrouver plus tard : si tu m’as ouvert depuis le fichier téléchargé (.dmg), glisse d’abord l’icône Brain in a Box sur le dossier Applications, dans sa fenêtre. Ensuite, Cmd + Espace, tape « Brain in a Box », puis Entrée.
 [Rouvrir la fenêtre (inactif)]
 
 #254
@@ -3075,9 +3099,10 @@ Reviens ici : je vois tout seul quand c’est bon.
 J’attends ta connexion…
 Ça ne se connecte pas ? Si ton navigateur affiche un code, copie-le, colle-le dans la fenêtre de commandes (Cmd + V), puis appuie sur Entrée. Si tu as fermé cette fenêtre, ou si elle affiche un message en rouge, vérifie ta connexion internet, puis clique sur « Rouvrir la fenêtre ».
 [Je n’ai pas encore Claude Pro]
+Tu utilisais ChatGPT ou Claude ? « Importer ma mémoire » apporte à ton cerveau ce qu’ils savent de toi.
 [Importer ma mémoire]
 [Voir mes notes]
-Pour me retrouver plus tard : si ce n’est pas fait, glisse-moi dans le dossier Applications. Ensuite, Cmd + Espace, tape « Brain in a Box », puis Entrée.
+Pour me retrouver plus tard : si tu m’as ouvert depuis le fichier téléchargé (.dmg), glisse d’abord l’icône Brain in a Box sur le dossier Applications, dans sa fenêtre. Ensuite, Cmd + Espace, tape « Brain in a Box », puis Entrée.
 [Rouvrir la fenêtre (inactif)]
 
 #255
@@ -3090,9 +3115,10 @@ Reviens ici : je vois tout seul quand c’est bon.
 J’attends ta connexion…
 Ça ne se connecte pas ? Si ton navigateur affiche un code, copie-le, colle-le dans la fenêtre de commandes (Cmd + V), puis appuie sur Entrée. Si tu as fermé cette fenêtre, ou si elle affiche un message en rouge, vérifie ta connexion internet, puis clique sur « Rouvrir la fenêtre ».
 [Je n’ai pas encore Claude Pro]
+Tu utilisais ChatGPT ou Claude ? « Importer ma mémoire » apporte à ton cerveau ce qu’ils savent de toi.
 [Importer ma mémoire]
 [Voir mes notes]
-Pour me retrouver plus tard : si ce n’est pas fait, glisse-moi dans le dossier Applications. Ensuite, Cmd + Espace, tape « Brain in a Box », puis Entrée.
+Pour me retrouver plus tard : si tu m’as ouvert depuis le fichier téléchargé (.dmg), glisse d’abord l’icône Brain in a Box sur le dossier Applications, dans sa fenêtre. Ensuite, Cmd + Espace, tape « Brain in a Box », puis Entrée.
 [Rouvrir la fenêtre]
 
 #256
@@ -3194,7 +3220,7 @@ La page des abonnements Claude s’est ouverte dans ton navigateur : choisis Cl
 #263
 == diag
 J’ai fait le tour : un point à vérifier.
-claude.ai ne répond pas. Une étape risque d’échouer. Tu peux installer quand même (10 à 20 minutes), ou régler ça puis cliquer sur « Revérifier ».
+claude.ai ne répond pas. Une étape risque d’échouer. Vérifie ton Wi-Fi. Au travail, le réseau bloque parfois ces sites : essaie depuis chez toi. Tu peux installer quand même (10 à 20 minutes), ou faire ça puis cliquer sur « Revérifier ».
 Mon conseil : Ton cerveau marche avec Claude : il te faudra un abonnement Claude Pro ou Max.
 [Masquer le détail]
 Windows 11 (24H2) · 16 Go de mémoire · 182 Go libres
@@ -3218,7 +3244,7 @@ Recherche par le sens : À noterRecherche par mots-clés seulement. Une clé Vo
 #264
 == diag
 J’ai fait le tour : un point à vérifier.
-Il reste 7 Go. Ça passe, mais c’est juste. Tu peux installer quand même (10 à 20 minutes), ou régler ça puis cliquer sur « Revérifier ».
+Il reste 7 Go. Ça passe, mais c’est juste. Pour faire de la place, vide la Corbeille (Trash) ou supprime de gros fichiers. Tu peux installer quand même (10 à 20 minutes), ou faire ça puis cliquer sur « Revérifier ».
 Mon conseil : Ton cerveau marche avec Claude : il te faudra un abonnement Claude Pro ou Max.
 [Masquer le détail]
 macOS 15.4 · Puce Apple · 16 Go de mémoire · 7 Go libres
@@ -3243,9 +3269,10 @@ Recherche par le sens : À noterRecherche par mots-clés seulement. Une clé Vo
 Ton second cerveau est prêt !
 Claude retient maintenant ce que tu lui apprends.
 Je peux te guider pas à pas dans n’importe quel logiciel : tu me montres ta fenêtre, je te dis où cliquer.
+Tu utilisais ChatGPT ou Claude ? « Importer ma mémoire » apporte à ton cerveau ce qu’ils savent de toi.
 [Importer ma mémoire]
 [Voir mes notes (inactif)]
-Pour me retrouver plus tard : ouvre le menu Démarrer et tape « Brain in a Box ».
+Pour me retrouver plus tard : ouvre le menu Démarrer (Start) et tape « Brain in a Box ».
 [Présente-toi à Claude (15 min)]
 [Guide-moi dans un logiciel]
 
@@ -3254,10 +3281,11 @@ Pour me retrouver plus tard : ouvre le menu Démarrer et tape « Brain in a Bo
 J’ouvre Obsidian…
 Tes notes s’ouvrent dans Obsidian.
 Je peux te guider pas à pas dans n’importe quel logiciel : tu me montres ta fenêtre, je te dis où cliquer.
+Tu utilisais ChatGPT ou Claude ? « Importer ma mémoire » apporte à ton cerveau ce qu’ils savent de toi.
 [Importer ma mémoire]
 [Voir mes notes (inactif)]
 Tes notes sont dans le dossier C:\Users\aminata\Documents\Brain.
-Pour me retrouver plus tard : ouvre le menu Démarrer et tape « Brain in a Box ».
+Pour me retrouver plus tard : ouvre le menu Démarrer (Start) et tape « Brain in a Box ».
 [Présente-toi à Claude (15 min)]
 [Guide-moi dans un logiciel]
 
@@ -3266,9 +3294,43 @@ Pour me retrouver plus tard : ouvre le menu Démarrer et tape « Brain in a Bo
 J’ouvre Obsidian…
 Tes notes s’ouvrent dans Obsidian.
 Je peux te guider pas à pas dans n’importe quel logiciel : tu me montres ta fenêtre, je te dis où cliquer.
+Tu utilisais ChatGPT ou Claude ? « Importer ma mémoire » apporte à ton cerveau ce qu’ils savent de toi.
 [Importer ma mémoire]
 [Voir mes notes]
 Tes notes sont dans le dossier C:\Users\aminata\Documents\Brain.
-Pour me retrouver plus tard : ouvre le menu Démarrer et tape « Brain in a Box ».
+Pour me retrouver plus tard : ouvre le menu Démarrer (Start) et tape « Brain in a Box ».
+[Présente-toi à Claude (15 min)]
+[Guide-moi dans un logiciel]
+
+#268
+== welcome
+Content de te revoir !
+Ton installation n’est pas finie : clique sur « Vérifier mon PC » pour la reprendre. Le guide marche déjà : je peux te guider pas à pas dans un logiciel.
+[Vérifier mon PC]
+[Guide-moi dans un logiciel]
+
+#269
+== done
+Ça n’a pas marché.
+Obsidian n’est pas encore installé.
+Je peux te guider pas à pas dans n’importe quel logiciel : tu me montres ta fenêtre, je te dis où cliquer.
+Tu utilisais ChatGPT ou Claude ? « Importer ma mémoire » apporte à ton cerveau ce qu’ils savent de toi.
+[Importer ma mémoire]
+[Voir mes notes (inactif)]
+Tes notes sont dans le dossier C:\Users\aminata\Documents\Brain : ouvre-le dans l’Explorateur de fichiers (File Explorer). Obsidian, pour les lire, est gratuit sur obsidian.md.
+Pour me retrouver plus tard : ouvre le menu Démarrer (Start) et tape « Brain in a Box ».
+[Présente-toi à Claude (15 min)]
+[Guide-moi dans un logiciel]
+
+#270
+== done
+Ça n’a pas marché.
+Obsidian n’est pas encore installé.
+Je peux te guider pas à pas dans n’importe quel logiciel : tu me montres ta fenêtre, je te dis où cliquer.
+Tu utilisais ChatGPT ou Claude ? « Importer ma mémoire » apporte à ton cerveau ce qu’ils savent de toi.
+[Importer ma mémoire]
+[Voir mes notes]
+Tes notes sont dans le dossier C:\Users\aminata\Documents\Brain : ouvre-le dans l’Explorateur de fichiers (File Explorer). Obsidian, pour les lire, est gratuit sur obsidian.md.
+Pour me retrouver plus tard : ouvre le menu Démarrer (Start) et tape « Brain in a Box ».
 [Présente-toi à Claude (15 min)]
 [Guide-moi dans un logiciel]

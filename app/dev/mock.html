@@ -68,10 +68,13 @@
   // pasted back), partiel, rien (no fact kept), suspect; &fichiers=3 reads
   // three files; &pause=import leaves the requests running (« Arrêter »); &colle=1 pastes an answer on the paste screen.
   // Bibo: &sleep=3 makes it doze off after 3 s without activity instead of 45.
-  // The login: &jamais=1 never logs in, &hint=20 says what to do after 20 s without a login instead of 3 min,
+  // The login: &jamais=1 never logs in (Claude, or Codex), &hint=20 says what to do after 20 s without a login instead of 3 min,
   // &deco=1 (installe, motscles): Claude Code there but not logged in, until its login window opens.
   // &guide=1: the guide works here (guide_offert) once Claude Code is installed and logged in, the brain's folder
   // made (guide.rs, #70): under a failure too. &version=0.1.76: a preview's version.
+  // Back (installe, motscles): &incomplet=1 the install stopped half way (brain_complete), the guide working
+  // all the same (D1, #70); &lent=1 Claude Code takes 10 s to say it is logged in, then says nothing (detect.rs'
+  // limit). &obsidian=absent: « Voir mes notes » finds no Obsidian (winget blocked, say).
   // The diagnosis: &alerte=network|disk is a warning on that line (claude.ai silent, a disk nearly full).
   // Windows: &os=windows shows the PC's words and checks (manque, installe, motscles, echec with &fail=brain):
   // Python and Git instead of Apple's tools, install.ps1's sections under the brain step.
@@ -436,7 +439,7 @@
     let codexOpened = false;
     let codexPolls = 0;
     const codexState = () => {
-      if (codexOpened && codexPolls >= 2) return P.get('after') || 'chatgpt';
+      if (codexOpened && codexPolls >= 2 && !P.get('jamais')) return P.get('after') || 'chatgpt';
       return !P.get('codex') && (scenario === 'installe' || scenario === 'motscles' || Boolean(REPAIR)) ? 'chatgpt' : P.get('codex') || 'logged_out';
     };
     // The kit's list of Codex's features, next to the hooks: put by the brain step (or an install before).
@@ -483,7 +486,10 @@
         if (k.length < 20) return { status: 'invalid', message: 'Voyage refuse cette clé. Vérifie que tu l’as copiée en entier.' };
         return { status: 'ok', message: 'Ton cerveau trouvera tes notes par le sens.' };
       },
-      async claude_logged_in() { await wait(150); if (loginOpened) loginPolls += 1; return loggedIn(); },
+      async claude_logged_in() {
+        if (P.get('lent')) { await wait(10000); return false; }
+        await wait(150); if (loginOpened) loginPolls += 1; return loggedIn();
+      },
       async open_claude_login() { await wait(100); loginOpened = true; },
       async agents_offer() {
         await wait(50);
@@ -570,7 +576,8 @@
       async open_settings({ pane }) { console.log('open_settings', pane); await wait(100); },
       async open_repair_terminal({ step }) { console.log('open_repair_terminal', step); await wait(T(300)); },
       async start_onboarding() { await wait(100); },
-      async open_vault() { await wait(100); },
+      async open_vault() { await wait(100); if (P.get('obsidian') === 'absent') throw 'Obsidian n’est pas encore installé.'; },
+      async brain_complete() { await wait(20); return P.get('incomplet') !== '1'; },
       async brain_folder() { await wait(50); return WIN ? 'C:\\Users\\aminata\\Documents\\Brain' : 'Documents/Brain'; },
       // The links opened, in turn (dev/screens.mjs reads them).
       async open_link({ url }) { (window.__liens ||= []).push(url); console.log('open_link', url); },

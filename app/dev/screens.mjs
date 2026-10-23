@@ -111,6 +111,11 @@ const SCENARIOS = [
   's=manque&go=diag&alerte=network&os=windows',
   's=manque&go=diag&alerte=disk',
   's=installe&go=done&click=vault&os=windows',
+  // The second reviews': back on an install that stopped half way, the guide working (D1); Claude Code slow
+  // to say its login; no Obsidian under « Voir mes notes »; a disk nearly full on a Mac.
+  's=installe&go=welcome&incomplet=1&os=windows',
+  's=installe&go=welcome&lent=1&os=windows',
+  's=installe&go=done&click=vault&obsidian=absent&os=windows',
 ];
 
 // The guide in paste mode (guide-mock.html): a whole session to its end and the procedure saved, on each
@@ -269,6 +274,11 @@ const CODEX_CHECKS = [
       && !shots.some((s) => s.includes('peut travailler avec Codex')),
   },
   {
+    name: 'Codex\'s login that never comes: the wait, without Claude\'s hint (a code for its command window)',
+    query: 's=manque&porte=1&choix=codex&go=done&jamais=1&hint=20',
+    ok: (shots) => has(shots, 'login', 'J’attends ta connexion') && !shots.some((s) => s.includes('Si ton navigateur affiche un code')),
+  },
+  {
     name: 'One account rule everywhere: a personal ChatGPT plan, and both accounts for both',
     query: 's=manque&porte=1&go=choice',
     ok: (shots) => has(shots, 'welcome', 'abonnement ChatGPT personnel (pas un compte d’entreprise)')
@@ -295,7 +305,7 @@ const CLAUDE_CHECKS = [
     query: 's=manque&go=diag&alerte=network&os=windows',
     ok: (shots) => {
       const diag = last(shots, 'diag');
-      return diag.includes('un point à vérifier') && diag.includes('claude.ai ne répond pas') && diag.includes('[Masquer le détail]')
+      return diag.includes('un point à vérifier') && diag.includes('claude.ai ne répond pas') && diag.includes('essaie depuis chez toi') && diag.includes('[Masquer le détail]')
         && diag.includes('[Revérifier]') && !diag.includes('est prêt');
     },
   },
@@ -330,6 +340,38 @@ const CLAUDE_CHECKS = [
     name: 'The computer kept awake while a step runs, not said again under a failure',
     query: 's=echec&go=done&fail=brain&os=windows&guide=1',
     ok: (shots) => has(shots, 'install', 'sur le chargeur') && shots.filter((s) => s.includes('Oups, ça a coincé')).every((s) => !s.includes('jusqu’à la fin')),
+  },
+  {
+    name: 'Back on an install that stopped half way: the welcome says it, and how to finish it; the guide stays',
+    query: 's=installe&go=welcome&incomplet=1&os=windows',
+    ok: (shots) => {
+      const welcome = last(shots, 'welcome');
+      return welcome.includes('Ton installation n’est pas finie') && welcome.includes('«\u00a0Vérifier mon PC\u00a0»')
+        && welcome.includes('[Vérifier mon PC]') && welcome.includes('[Guide-moi dans un logiciel]');
+    },
+  },
+  {
+    name: 'Back, Claude Code slow to say its login: the welcome within 3 s, the guide offered, never « Il manque ton compte »',
+    query: 's=installe&go=welcome&lent=1&os=windows',
+    ok: (shots) => {
+      const first = shots.findIndex((s) => s.startsWith('== welcome') && s.includes('\n['));
+      return first >= 0 && shots.at[first] <= 3100 && shots[first].includes('[Guide-moi dans un logiciel]')
+        && !shots.some((s) => s.includes('Il manque ton compte'));
+    },
+  },
+  {
+    name: '« Voir mes notes » without Obsidian: the folder all the same, and where to open it',
+    query: 's=installe&go=done&click=vault&obsidian=absent&os=windows',
+    ok: (shots) => {
+      const done = last(shots, 'done');
+      return done.includes('Obsidian n’est pas encore installé') && done.includes('C:\\Users\\aminata\\Documents\\Brain')
+        && done.includes('Explorateur de fichiers (File Explorer)') && done.includes('obsidian.md');
+    },
+  },
+  {
+    name: 'A disk nearly full at the diagnosis: what to do, the Trash named as the Mac names it',
+    query: 's=manque&go=diag&alerte=disk',
+    ok: (shots) => last(shots, 'diag').includes('vide la Corbeille (Trash) ou supprime de gros fichiers'),
   },
   {
     name: 'The import says what is masked, and what may pass',
@@ -588,6 +630,8 @@ async function screens(mockText, scripts, query) {
 
   // Each screen once, in the order it first shows: a login polled ten times is one screen.
   const shots = [];
+  // When each screen first showed, in the run's own milliseconds.
+  shots.at = [];
   // The install bar's widths, each new one in turn (bibo.js draws the same one on Bibo's box).
   const bars = [];
   const snap = () => {
@@ -598,7 +642,10 @@ async function screens(mockText, scripts, query) {
     // The guide's window made wide or reduced: said next to the screen's name.
     const size = ['large', 'reduit'].find((c) => doc.body.classList.contains(c));
     const text = `== ${name}${size ? ` (${size})` : ''}${visible(doc.body).replace(/\n\s*\n/g, '\n')}`;
-    if (!shots.includes(text)) shots.push(text);
+    if (!shots.includes(text)) {
+      shots.push(text);
+      shots.at.push(t.now());
+    }
   };
   // Promises settle between two timers, as in the window.
   const settle = () => new Promise((r) => setImmediate(r));
