@@ -816,7 +816,7 @@ def vrai_claude(t, opts):
 # a refusal of the model ends the look, no other model is taken.
 GUIDE_RS = REPO / "app" / "src-tauri" / "src" / "guide.rs"
 CONSIGNES = REPO / "skills" / "guide-moi" / "consignes.md"
-CODE_ALPHABET = "ACDEFHJKMNPRTVWXY34679"
+CODE_ALPHABET = "ACDEFHJKMNPRTWXY34679"
 ECART_MAX = 8
 # (screen, program, objective, the button it is about, what is expected): a step on « Nouveau », trial
 # 1's trapped invoice, and a fake check that asks for Windows + R, Ctrl + V, Entrée (ClickFix).

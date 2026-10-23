@@ -26,12 +26,12 @@ const BAND_LEFT: u32 = 12;
 const ADVANCE: u32 = 6 * SCALE;
 /// The band is at least this wide, so a tiny capture still shows its whole code.
 const BAND_MIN_WIDTH: u32 = BAND_LEFT * 2 + 4 * ADVANCE;
-/// No letter that reads like another in 5×7 (phase 0: U taken for V).
-pub const ALPHABET: &[u8; 22] = b"ACDEFHJKMNPRTVWXY34679";
+/// No letter that reads like another in 5×7 (phase 0: U taken for V; the guide v2's: V for U).
+pub const ALPHABET: &[u8; 21] = b"ACDEFHJKMNPRTWXY34679";
 pub const CODE_LEN: usize = 4;
 
 /// Each letter of ALPHABET, top row first, the leftmost pixel the highest bit.
-const GLYPHS: [[u8; 7]; 22] = [
+const GLYPHS: [[u8; 7]; 21] = [
     [0b01110, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001], // A
     [0b01110, 0b10001, 0b10000, 0b10000, 0b10000, 0b10001, 0b01110], // C
     [0b11110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b11110], // D
@@ -45,7 +45,6 @@ const GLYPHS: [[u8; 7]; 22] = [
     [0b11110, 0b10001, 0b10001, 0b11110, 0b10000, 0b10000, 0b10000], // P
     [0b11110, 0b10001, 0b10001, 0b11110, 0b10100, 0b10010, 0b10001], // R
     [0b11111, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100], // T
-    [0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01010, 0b00100], // V
     [0b10001, 0b10001, 0b10001, 0b10101, 0b10101, 0b10101, 0b01010], // W
     [0b10001, 0b10001, 0b01010, 0b00100, 0b01010, 0b10001, 0b10001], // X
     [0b10001, 0b10001, 0b01010, 0b00100, 0b00100, 0b00100, 0b00100], // Y
@@ -349,6 +348,7 @@ pub(crate) mod tests {
             assert_eq!(GLYPHS.iter().filter(|o| *o == g).count(), 1, "{}", ALPHABET[i] as char);
         }
         assert!(!ALPHABET.contains(&b'U'), "U reads as V (phase 0)");
+        assert!(!ALPHABET.contains(&b'V'), "V reads as U (guide v2's P0: 2 codes of 12)");
         assert!(!ALPHABET.iter().any(|c| b"BGILOQSZ01258".contains(c)));
     }
 
@@ -411,7 +411,7 @@ pub(crate) mod tests {
     #[test]
     fn the_band_holds_the_code_under_the_image() {
         let img = reduce(&rgba(1600, 1000, [0, 128, 0, 255]));
-        for code in ["NRYV", "AC34", "9999", "WXYJ"] {
+        for code in ["NRYW", "AC34", "9999", "WXYJ"] {
             let sent = with_band(&img, code);
             assert_eq!((sent.w, sent.h), (1280, 800 + BAND));
             assert_eq!(read_band(&sent, 800).as_deref(), Some(code));
@@ -441,7 +441,7 @@ pub(crate) mod tests {
 
     #[test]
     fn png_round_trip() {
-        let img = with_band(&reduce(&rgba(300, 200, [1, 2, 3, 255])), "TVWX");
+        let img = with_band(&reduce(&rgba(300, 200, [1, 2, 3, 255])), "TWXY");
         let back = decode_png(&encode_png(&img)).unwrap();
         assert_eq!((back.w, back.h), (img.w, img.h));
         let rgb: Vec<u8> = back.px.chunks(4).flat_map(|p| p[..3].to_vec()).collect();
