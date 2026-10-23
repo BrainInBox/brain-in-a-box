@@ -49,6 +49,7 @@ PLEIN, POINTILLE = 0.85, 0.70
 MAX_AIRE, MIN_COTE = 0.25, 4
 MARGE = 4
 GO_PRECISION = 0.90
+FENETRE_MAX = 0.85
 
 # (logiciel, objectif, attendu) : attendu = "etape", ou le genre du négatif.
 CORPUS = {
@@ -495,6 +496,10 @@ def main():
             with open(o.sortie, "a", encoding="utf-8") as f:
                 f.write(json.dumps(look, ensure_ascii=False) + "\n")
             print(k, o.modele, o.mode, look.get("erreur") or (look.get("reponse") or {}).get("etat"), look["duree_s"], "s", flush=True)
+            # The user's 5-hour window, shared with everything else they run: never the look that empties it.
+            fenetre = ((look.get("forfait") or {}).get("five_hour") or {}).get("utilization")
+            if isinstance(fenetre, (int, float)) and fenetre >= FENETRE_MAX:
+                sys.exit("forfait à %d %% de la fenêtre de 5 h : arrêt, reprendre après sa reprise" % round(fenetre * 100))
     elif o.cmd == "juger":
         looks = [json.loads(l) for f in o.resultats for l in f.read_text(encoding="utf-8").splitlines() if l.strip()]
         print(json.dumps(bilan(looks, o.rendu), ensure_ascii=False, indent=1))
