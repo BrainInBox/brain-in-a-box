@@ -34,6 +34,7 @@
   //     filtre            Bibo's filter cut the answer, Claude saw nothing wrong
   //     prudent           no Opus for this account: Sonnet answers, cautious       sans-modele   neither model
   //     auth, billed, sans-forfait, vieux, arrete, installer   what guide_status says instead of « ready »
+  //       (&relu=ok: « ready » once the user logged in again; &lien=0: the browser would not open)
   //   &vu=0 the first time (G1); &os=windows|linux that system's words; &depose=1 drops a file instead of pasting
   //   (&depose=jpeg, a JPEG); &taille=1 every capture after the first is of another, small size (the hidden zones
   //   are not painted on it); &meme=1 the second capture is the first one again; &vide=1 the first paste holds no
@@ -329,7 +330,8 @@
         await wait(T(600));
         if (g === 'installer') return { ia: 'ready', capture: CAPTURE, cerveau: false, complet: false, vu: true, attentes: BASE };
         // &complet=0: the brain's folder only, the install stopped before the end (D1): no summary runs.
-        return { ia: logged ? STATUS[g] || 'ready' : 'not_logged_in', capture: CAPTURE, cerveau: true, complet: P.get('complet') !== '0', vu: P.get('vu') !== '0', attentes: BASE };
+        const relu = loginOpened && P.get('relu') === 'ok';
+        return { ia: logged ? (!relu && STATUS[g]) || 'ready' : 'not_logged_in', capture: CAPTURE, cerveau: true, complet: P.get('complet') !== '0', vu: P.get('vu') !== '0', attentes: BASE };
       },
       async guide_compris() { await wait(50); },
       async guide_commencer({ logiciel, objectif }) {
@@ -499,7 +501,10 @@
         document.body.dataset.screen = 'ferme';
         document.body.replaceChildren();
       },
-      async open_link({ url }) { console.log('open_link', url); },
+      async open_link({ url }) {
+        if (P.get('lien') === '0') throw 'Je n’ai pas pu ouvrir ton navigateur.';
+        console.log('open_link', url);
+      },
       // Logged in two checks after the login window opened, like someone quick in the browser.
       async open_claude_login() { await wait(100); loginOpened = true; },
       async claude_logged_in() { await wait(100); if (loginOpened) loginPolls += 1; if (loginPolls >= 2) logged = true; return logged; },

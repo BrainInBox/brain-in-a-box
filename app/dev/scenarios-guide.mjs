@@ -139,6 +139,13 @@ export const GUIDE_SCENARIOS = [
   // page opened again numbers from the status on.
   'g=sans-forfait&go=forfait',
   'g=sans-forfait&go=forfait&click=next',
+  // Its follow-up (the review of #76): the browser that would not open, the login again and the same account
+  // still without its plan, or now with it; a login billed per use, logged in again, or still billed.
+  'g=sans-forfait&go=forfait&lien=0&click=next',
+  'g=sans-forfait&go=forfait&click=reconnecter,next',
+  'g=sans-forfait&relu=ok&go=objectif&click=reconnecter,next',
+  'g=billed&os=windows&go=facture&click=next,next',
+  'g=billed&relu=ok&go=objectif&click=next,next',
   'g=ok&cap=clic&os=windows&course=1&go=liste&click=liste',
   'g=ok&cap=selecteur&course=1&go=coller&click=next,deja-capture',
   'g=ok&cap=clic&os=windows&base=7&go=objectif',

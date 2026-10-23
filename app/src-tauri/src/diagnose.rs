@@ -889,7 +889,7 @@ fn check_claude(found: &Found) -> Check {
 /// Only a subscription is used (never a login billed per use). A claude.ai account whose plan Claude
 /// Code does not say (free, or not read yet) and a login billed per use are said, without blocking:
 /// a developer billed on purpose installs all the same. The window has no button to change accounts:
-/// the person who advised Bibo can.
+/// the guide has (« Me reconnecter »), else the person who advised Bibo can.
 fn check_claude_auth(claude_works: bool, login: ClaudeLogin) -> Check {
     match (claude_works, login) {
         (false, _) => CLAUDE_AUTH.is(Status::Missing, "Tu te connecteras une fois Claude Code installé."),
@@ -897,7 +897,8 @@ fn check_claude_auth(claude_works: bool, login: ClaudeLogin) -> Check {
         (true, ClaudeLogin::Unconfirmed) => CLAUDE_AUTH.is(
             Status::Warn,
             "Tu es connecté, mais Claude ne me dit pas quel est ton abonnement. Ton cerveau demande Claude Pro \
-             (environ 20\u{a0}€ par mois) ou Max : un compte gratuit ne suffit pas. Si tu as Pro ou Max, tout va bien.",
+             (environ 20\u{a0}€ par mois) ou Max : un compte gratuit ne suffit pas. Si tu as Pro ou Max, le guide te \
+             demandera de te reconnecter une fois, pour que Claude le voie.",
         ),
         (true, ClaudeLogin::LoggedOut) => CLAUDE_AUTH.is(Status::Missing, "Pas encore connecté. Tu le feras en un clic."),
         (true, ClaudeLogin::Billed) => CLAUDE_AUTH.is(
@@ -1385,14 +1386,21 @@ mod tests {
     }
 
     /// claude.ai without its plan: a free account, most often (Claude Code reads the plan when it logs
-    /// in). Said in orange, with what the brain needs and its price, never blocking.
+    /// in). Said in orange, with what the brain needs and its price, never blocking. Never « tout va
+    /// bien »: the guide asks such an account to log in again first (guide.rs, Ia::SansForfait).
     #[test]
     fn a_claude_ai_account_without_a_plan_is_told_what_the_brain_needs() {
         let c = check_claude_auth(true, ClaudeLogin::Unconfirmed);
         assert_eq!((c.status, c.fix), (Status::Warn, None));
-        for said in ["Tu es connecté", "Claude Pro (environ 20\u{a0}€ par mois) ou Max", "un compte gratuit ne suffit pas", "Si tu as Pro ou Max, tout va bien."] {
+        for said in [
+            "Tu es connecté",
+            "Claude Pro (environ 20\u{a0}€ par mois) ou Max",
+            "un compte gratuit ne suffit pas",
+            "Si tu as Pro ou Max, le guide te demandera de te reconnecter une fois, pour que Claude le voie.",
+        ] {
             assert!(c.detail.contains(said), "{said}: {}", c.detail);
         }
+        assert!(!c.detail.contains("tout va bien"), "{}", c.detail);
         let tmp = tempfile::tempdir().unwrap();
         fake_brain(tmp.path());
         let d = decide(tmp.path(), &Facts { claude_login: ClaudeLogin::Unconfirmed, ..healthy_facts() });
