@@ -92,7 +92,8 @@ CLIC_SOURIS = "clic souris"
 # Bibo's titles (app/src/app.js), after norm(): the screen they stand for.
 ECRANS = (
     ("bienvenue", "Salut, moi c'est Bibo"),
-    # Opened again with the brain and Claude Code there: the guide first (G0, docs/proposals/guide.md).
+    # Opened again with the brain and Claude Code there: the guide first (G0, docs/proposals/guide.md), or
+    # Claude's login first when it was put off.
     ("bienvenue-retour", "Content de te revoir"),
     ("choix", "Avec quelle IA veux-tu travailler"),
     ("choix-resume", "Lequel écrit le résumé de chaque soir"),
@@ -101,7 +102,8 @@ ECRANS = (
     ("bloque", "Je ne peux pas installer"),
     ("deja-installe", "Tout est déjà installé"),
     ("diagnostic", "J'ai fait le tour"),
-    ("voyage", "Une option avant de commencer"),
+    # Search by meaning, an option offered at the end only: never on the way to the brain.
+    ("voyage", "Activons la recherche par le sens"),
     ("verif-compte", "Je vérifie ton compte Claude"),
     ("verif-compte-codex", "Je vérifie la connexion de Codex"),
     ("connexion-installation", "Connecte ton compte Claude maintenant"),
@@ -112,6 +114,8 @@ ECRANS = (
     ("codex-systeme", "Codex suit des réglages de ce "),
     ("installe", "C'est installé"),
     ("fini", "Ton second cerveau est prêt"),
+    # The end, Claude's login put off (as the robot does: no account on these VMs): it asks for it first.
+    ("fini", "Presque prêt"),
     ("import-verif", "Je prépare l'import"),
     ("import-choix", "D'où vient ta mémoire"),
     ("import-collage", "Demande-lui ce qu'il sait de toi"),
@@ -142,6 +146,7 @@ DELAI_PHRASE = 60
 DELAI_IMPORT = 3 * 60
 # The returning welcome's way to the guide: offered, not taken (no AI is asked on these VMs).
 GUIDE = "Guide-moi dans un logiciel"
+CONNECTER = "Connecter mon compte Claude"
 # Buttons that only come with a failure (the repair screens have many titles).
 BOUTONS_ECHEC = {"Réessayer", "Copier le rapport", "Revérifier"}
 # The screens each path must never see: Codex's on the path of Claude alone (the app users get keeps it
@@ -288,16 +293,19 @@ def rect_valide(r):
 
 
 # The main button of the screens where a user must find it at once, as the app labels it (machine: Mac or
-# PC). The night's Windows VM has 1024 x 768 with its taskbar, as an old laptop: the window has to fit.
+# PC), the first one there of its candidates. The night's Windows VM has 1024 x 768 with its taskbar, as an
+# old laptop: the window has to fit.
 PRINCIPAUX = {
-    "bienvenue": "Vérifier mon {machine}",
-    "bienvenue-retour": "Guide-moi dans un logiciel",
-    "diagnostic": "Tout installer",
-    "voyage": "Passer (recherche par mots-clés)",
-    "connexion-installation": "Connecter mon compte Claude",
-    "connexion": "Connecter mon compte Claude",
-    "fini": "Personnaliser mon cerveau (15 min)",
+    "bienvenue": ("Vérifier mon {machine}", "Choisir mon IA"),
+    "bienvenue-retour": ("Guide-moi dans un logiciel", "Connecter mon compte Claude"),
+    "diagnostic": ("Tout installer",),
+    "connexion-installation": ("Connecter mon compte Claude",),
+    "connexion": ("Connecter mon compte Claude",),
+    "connexion-chatgpt": ("Connecter Codex à mon compte ChatGPT",),
+    "fini": ("Guide-moi dans un logiciel", "Connecter mon compte Claude", "Connecter Codex à mon compte ChatGPT"),
 }
+# The diagnosis' lines, folded under this button: the robot unfolds them, to read what the VM had.
+DETAIL = "Voir le détail"
 
 
 def cache_du_bouton(ecran, libelle):
@@ -2808,7 +2816,7 @@ class Parcours:
         if self.marche == "aller" and cle == "fini":
             return "Importer ma mémoire"
         if cle == "import-choix":
-            return "Je copie-colle une réponse" if self.marche == "aller" else "Retour"
+            return "Je copie-colle (2 min)" if self.marche == "aller" else "Retour"
         if cle == "import-collage":
             return "Retour"
         if cle in ("connexion", "connexion-chatgpt"):
@@ -2821,8 +2829,11 @@ class Parcours:
             return None
         if cle == "deja-installe":
             self.echouer("au premier lancement, l'app dit que tout est déjà installé : la VM n'est pas neuve")
-        return {"diagnostic": "Tout installer", "voyage": "Passer (recherche par mots-clés)",
-                "connexion-installation": "Plus tard"}.get(cle)
+        if cle == "voyage":
+            self.echouer("l'app demande une clé Voyage avant la fin de l'installation : c'est une option de la fin")
+        if cle == "diagnostic" and e.bouton(DETAIL) is not None:
+            return DETAIL
+        return {"diagnostic": "Tout installer", "connexion-installation": "Plus tard"}.get(cle)
 
     def avancer(self, but, delai, relance=False, prefixe=None):
         """Until the screen `but`, within delai seconds. Returns {screen: first Ecran of it}."""
@@ -2841,7 +2852,9 @@ class Parcours:
             elif now - capture_prec >= CAPTURE_ATTENTE:
                 capture_prec = now
                 self.capturer("%s%s-%dmin" % (prefixe, cle, int((now - depuis) // 60)))
-            if cle not in vus or (vus[cle].partiel and not e.partiel):
+            # The fullest read of a screen: the diagnosis once its lines are unfolded.
+            if cle not in vus or (vus[cle].partiel and not e.partiel) or (
+                    cle == "diagnostic" and not e.partiel and len(e.textes) > len(vus[cle].textes)):
                 vus[cle] = e
             if not e.partiel:
                 self.mesurer(prefixe + cle, cle, e)
@@ -2854,12 +2867,15 @@ class Parcours:
                 # The page's accessibility tree may show the words before the buttons: read it all again.
                 self.forcer = True
             if state:
+                # Another button of the same screen (« Voir le détail », then « Tout installer »): clicked now.
+                if clic is not None and clic[2] != label:
+                    clic = None
                 if clic is None or now - clic[0] >= CLIC_RELANCE:
                     if clic is not None and clic[1] >= CLIC_ESSAIS:
                         self.echouer("le clic sur « %s » ne change rien (%d essais)" % (label, clic[1]))
                     how = self.p.cliquer(label)
                     self.clics.append({"a_s": self.secondes(), "ecran": prefixe + cle, "bouton": label, "comment": how})
-                    clic = (now, (clic[1] if clic else 0) + 1)
+                    clic = (now, (clic[1] if clic else 0) + 1, label)
             elif label and now - depuis >= CLIC_RELANCE * CLIC_ESSAIS:
                 self.echouer("l'écran « %s » n'offre pas le bouton « %s »%s" % (cle, label, " (désactivé)" if state is False else ""))
             if cle in ("inconnu", "chargement", "sans-fenetre") and now - depuis >= INCONNU_MAX:
@@ -2872,8 +2888,9 @@ class Parcours:
     def mesurer(self, nom, cle, e):
         """The screen's main button, once it is in the tree: a user sees it whole, inside the screen's usable
         area (a window taller than a laptop's screen hid it under the taskbar)."""
-        libelle = PRINCIPAUX.get(cle, "").format(machine=self.p.machine)
-        if not libelle or nom in self.principaux or e.bouton(libelle) is None:
+        libelle = next((b for b in (x.format(machine=self.p.machine) for x in PRINCIPAUX.get(cle, ()))
+                        if e.bouton(b) is not None), None)
+        if not libelle or nom in self.principaux:
             return
         cache = cache_du_bouton(e, libelle)
         if cache is None:
@@ -2939,15 +2956,19 @@ class Parcours:
             self.t.check("etape-claude" not in vus, "l'app a installé Claude Code alors que seul Codex est choisi")
             self.t.check(fini.texte.startswith("Codex retient"), "l'écran final ne nomme pas Codex : « %s »" % fini.texte)
             # The robot put the ChatGPT login off: Codex is used on that login only (§4.3), so it comes first.
-            self.t.check(fini.bouton("Personnaliser mon cerveau (15 min)") is None,
-                         "l'écran final propose de personnaliser le cerveau avec un Codex qui n'est pas connecté à ChatGPT")
+            self.t.check(fini.bouton("Présente-toi à Codex (15 min)") is None,
+                         "l'écran final propose de se présenter à un Codex qui n'est pas connecté à ChatGPT")
             self.t.check(any("Sign in with ChatGPT" in x for x in fini.textes), "l'écran final ne dit pas de choisir « Sign in with ChatGPT »")
-            boutons = ("Connecter Codex à mon compte ChatGPT", "Ouvrir mon cerveau dans Obsidian")
+            boutons = ("Connecter Codex à mon compte ChatGPT", "Voir mes notes")
         else:
             # Claude alone: the words of before Codex (all of them: app/dev/screens.mjs, in the tests).
             self.t.check("pour Claude" in vus["bienvenue"].texte, "la bienvenue ne parle pas de Claude : « %s »" % vus["bienvenue"].texte)
-            self.t.check(fini.texte.startswith("Claude retient"), "l'écran final ne nomme pas Claude : « %s »" % fini.texte)
-            boutons = ("Personnaliser mon cerveau (15 min)", "Ouvrir mon cerveau dans Obsidian")
+            # The robot put Claude's login off: the end is not « prêt », it asks for the login first, and
+            # opens nothing of Claude Code before it.
+            self.t.check(fini.titre.startswith("Presque prêt"), "l'écran final se dit prêt sans compte Claude : « %s »" % fini.titre)
+            self.t.check(fini.bouton("Présente-toi à Claude (15 min)") is None,
+                         "l'écran final propose de se présenter à Claude, qui n'est pas connecté")
+            boutons = ("Connecter mon compte Claude", "Voir mes notes")
         for b in boutons + ("Importer ma mémoire",):
             self.t.check(fini.bouton(b) is not None, "l'écran final n'a pas le bouton « %s »" % b)
         # Bibo's advice: at the diagnosis, or where Codex is open on the choice screen (the app's own words).
@@ -2972,10 +2993,12 @@ class Parcours:
         if self.codex:
             self.t.check("choix" in vus, "au deuxième lancement, l'app n'a pas redemandé quelle IA")
         else:
-            # Claude Code and the brain are there now: the welcome offers the guide.
+            # Claude Code and the brain are there now, Claude's login still put off (no account on these VMs):
+            # the welcome asks for it, the guide needs it.
             retour = vus.get("bienvenue-retour")
             self.t.check(retour is not None, "au deuxième lancement, l'app ne dit pas « Content de te revoir »")
-            self.t.check(retour is None or retour.bouton(GUIDE) is not None, "au deuxième lancement, l'accueil ne propose pas « %s »" % GUIDE)
+            self.t.check(retour is None or (retour.bouton(CONNECTER) is not None and retour.bouton(GUIDE) is None),
+                         "au deuxième lancement, sans compte Claude, l'accueil ne demande pas « %s » avant le guide" % CONNECTER)
         return vus
 
     # ── The guide (§9): a third launch, its window walked to the procedure in the brain ──

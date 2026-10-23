@@ -181,6 +181,25 @@ async fn open_vault() -> Result<(), String> {
     off_main(steps::open_vault).await
 }
 
+/// The brain's folder as the window says it, under « Voir mes notes »: install.ps1 may have put it
+/// elsewhere than Documents (detect::brain_dir_shown).
+#[tauri::command]
+async fn brain_folder() -> String {
+    tauri::async_runtime::spawn_blocking(|| detect::brain_dir_shown(&sys::home())).await.unwrap_or_default()
+}
+
+/// Whether the brain is whole, as the installer's own check says it (files read, nothing run): back on a
+/// brain whose install stopped half way, where the guide already works (D1), the welcome says so.
+#[tauri::command]
+async fn brain_complete() -> bool {
+    tauri::async_runtime::spawn_blocking(|| {
+        let home = sys::home();
+        detect::brain(&home, &agents::current(&home)).complete()
+    })
+    .await
+    .unwrap_or(true)
+}
+
 /// Opens one of a few known pages (Voyage dashboard, downloads) in the default browser.
 #[tauri::command]
 async fn open_link(url: String) -> Result<(), String> {
@@ -801,6 +820,8 @@ pub fn run() {
             open_codex_login,
             start_onboarding,
             open_vault,
+            brain_folder,
+            brain_complete,
             open_link,
             open_settings,
             open_repair_terminal,

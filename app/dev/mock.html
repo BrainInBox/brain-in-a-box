@@ -68,6 +68,14 @@
   // pasted back), partiel, rien (no fact kept), suspect; &fichiers=3 reads
   // three files; &pause=import leaves the requests running (« Arrêter »); &colle=1 pastes an answer on the paste screen.
   // Bibo: &sleep=3 makes it doze off after 3 s without activity instead of 45.
+  // The login: &jamais=1 never logs in (Claude, or Codex), &hint=20 says what to do after 20 s without a login instead of 3 min,
+  // &deco=1 (installe, motscles): Claude Code there but not logged in, until its login window opens.
+  // &guide=1: the guide works here (guide_offert) once Claude Code is installed and logged in, the brain's folder
+  // made (guide.rs, #70): under a failure too. &version=0.1.76: a preview's version.
+  // Back (installe, motscles): &incomplet=1 the install stopped half way (brain_complete), the guide working
+  // all the same (D1, #70); &lent=1 Claude Code takes 10 s to say it is logged in, then says nothing (detect.rs'
+  // limit). &obsidian=absent: « Voir mes notes » finds no Obsidian (winget blocked, say).
+  // The diagnosis: &alerte=network|disk is a warning on that line (claude.ai silent, a disk nearly full).
   // Windows: &os=windows shows the PC's words and checks (manque, installe, motscles, echec with &fail=brain):
   // Python and Git instead of Apple's tools, install.ps1's sections under the brain step.
   // Linux: &os=linux shows the words and checks of an Ubuntu (manque, installe, motscles, echec):
@@ -75,6 +83,7 @@
   (() => {
     const P = new URLSearchParams(location.search);
     if (P.get('sleep')) window.BIBO_SLEEP_MS = Number(P.get('sleep')) * 1000;
+    if (P.get('hint')) window.BIBO_LOGIN_HINT_MS = Number(P.get('hint')) * 1000;
     const WIN = P.get('os') === 'windows';
     const LIN = P.get('os') === 'linux';
     if (WIN) window.BIBO_OS = 'windows';
@@ -139,7 +148,13 @@
     };
     const SYSTEM = WIN ? 'Windows 11 (24H2)' : LIN ? 'Ubuntu 24.04.1 LTS' : 'macOS 15.4';
     const ARCH = WIN || LIN ? 'x86_64' : 'arm64';
-    const ONLINE = [C(WIN ? 'windows' : LIN ? 'linux' : 'macos', 'ok', SYSTEM), C('disk', 'ok', '182 Go libres'), C('network', 'ok', 'github.com et claude.ai répondent.')];
+    // Same sentences as diagnose.rs for a warning (&alerte=).
+    const ALERTES = {
+      network: C('network', 'warn', 'claude.ai ne répond pas. Une étape risque d’échouer.'),
+      disk: C('disk', 'warn', 'Il reste 7 Go. Ça passe, mais c’est juste.'),
+    };
+    const ONLINE = [C(WIN ? 'windows' : LIN ? 'linux' : 'macos', 'ok', SYSTEM), C('disk', 'ok', '182 Go libres'), C('network', 'ok', 'github.com et claude.ai répondent.')]
+      .map((c) => (c.id === P.get('alerte') ? ALERTES[c.id] : c));
     // Codex's lines (diagnose.rs), missing and there.
     const CODEX_MISSING = {
       codex: C('codex', 'missing', 'Pas encore installé.'),
@@ -264,7 +279,7 @@
         };
       }
       return {
-        os: SYSTEM, arch: ARCH, ram_gb: 16, disk_free_gb: 182.4, online: true, todo: ALL_STEPS, can_install: true,
+        os: SYSTEM, arch: ARCH, ram_gb: 16, disk_free_gb: P.get('alerte') === 'disk' ? 7 : 182.4, online: true, todo: ALL_STEPS, can_install: true,
         checks: [...ONLINE, ...MISSING],
       };
     }
@@ -416,12 +431,15 @@
     // Connected two checks after the login window opened, like someone quick in the browser.
     let loginOpened = false;
     let loginPolls = 0;
-    const loggedIn = () => scenario === 'installe' || scenario === 'motscles' || Boolean(REPAIR) || (loginOpened && loginPolls >= 2);
+    const stepsRun = new Set();
+    // &jamais=1: the login never comes (the command window shows an error, say).
+    const loggedIn = () => !P.get('jamais') && ((!P.get('deco') && (scenario === 'installe' || scenario === 'motscles' || Boolean(REPAIR)))
+      || (loginOpened && loginPolls >= 2));
     // Codex: logged out (or &codex=), with ChatGPT two checks after its login window opened.
     let codexOpened = false;
     let codexPolls = 0;
     const codexState = () => {
-      if (codexOpened && codexPolls >= 2) return P.get('after') || 'chatgpt';
+      if (codexOpened && codexPolls >= 2 && !P.get('jamais')) return P.get('after') || 'chatgpt';
       return !P.get('codex') && (scenario === 'installe' || scenario === 'motscles' || Boolean(REPAIR)) ? 'chatgpt' : P.get('codex') || 'logged_out';
     };
     // The kit's list of Codex's features, next to the hooks: put by the brain step (or an install before).
@@ -444,6 +462,7 @@
       async diagnose_machine() { await wait(P.get('go') ? 50 : 500); return diagnosis(); },
       async run_step({ id, voyageKey }) {
         console.log('run_step', id, voyageKey ? '(avec clé)' : '(sans clé)');
+        stepsRun.add(id);
         const fail = id === failing && !failedOnce.has(id) && failureOf(id);
         for (const line of fail ? fail.logs : LOGS[id] || ['…']) { await wait(LINE_MS); emit('step-log', { step: id, line }); }
         if (P.get('pause') === id) return new Promise(() => {});
@@ -467,7 +486,10 @@
         if (k.length < 20) return { status: 'invalid', message: 'Voyage refuse cette clé. Vérifie que tu l’as copiée en entier.' };
         return { status: 'ok', message: 'Ton cerveau trouvera tes notes par le sens.' };
       },
-      async claude_logged_in() { await wait(150); if (loginOpened) loginPolls += 1; return loggedIn(); },
+      async claude_logged_in() {
+        if (P.get('lent')) { await wait(10000); return false; }
+        await wait(150); if (loginOpened) loginPolls += 1; return loggedIn();
+      },
       async open_claude_login() { await wait(100); loginOpened = true; },
       async agents_offer() {
         await wait(50);
@@ -554,10 +576,15 @@
       async open_settings({ pane }) { console.log('open_settings', pane); await wait(100); },
       async open_repair_terminal({ step }) { console.log('open_repair_terminal', step); await wait(T(300)); },
       async start_onboarding() { await wait(100); },
-      async open_vault() { await wait(100); },
-      async open_link({ url }) { console.log('open_link', url); },
+      async open_vault() { await wait(100); if (P.get('obsidian') === 'absent') throw 'Obsidian n’est pas encore installé.'; },
+      async brain_complete() { await wait(20); return P.get('incomplet') !== '1'; },
+      async brain_folder() { await wait(50); return WIN ? 'C:\\Users\\aminata\\Documents\\Brain' : 'Documents/Brain'; },
+      // The links opened, in turn (dev/screens.mjs reads them).
+      async open_link({ url }) { (window.__liens ||= []).push(url); console.log('open_link', url); },
       // The guide (guide-mock.html has its window): offered once the brain and Claude Code are there.
-      async guide_offert() { await wait(50); return scenario === 'installe' || scenario === 'motscles'; },
+      // &guide=1: Claude Code installed and logged in, the brain's folder made: the guide works here (D1, guide.rs
+      // in #70), even if a later step fails.
+      async guide_offert() { await wait(50); return scenario === 'installe' || scenario === 'motscles' || (P.get('guide') === '1' && stepsRun.has('claude') && loggedIn()); },
       async guide_open() { console.log('guide_open'); await wait(100); },
     };
 
@@ -665,6 +692,8 @@
     });
 
     window.__TAURI__ = {
+      // &version=0.1.76: a preview's version (release.yml); a build of the repository is 0.1.0.
+      app: { getVersion: async () => P.get('version') || '0.1.0' },
       core: {
         invoke: (cmd, args = {}) => (Object.hasOwn(handlers, cmd) ? handlers[cmd](args) : Promise.reject(`commande inconnue : ${cmd}`)),
       },
@@ -764,8 +793,8 @@
           ['PC aux réglages ouverts', '?s=manque&porte=1&os=windows&codex=system'], ['Codex avant le cerveau', '?s=echec&porte=1&choix=codex'],
           ['les deux', '?s=installe&porte=1&agents=claude,codex'],
           ['conseil ChatGPT + Hermes', '?s=manque&conseil=chatgpt_bientot&hermes=1'], ['importer', '?s=installe&go=import&at=.choices&click=import'],
-          ['import : à jour', '?s=installe&imp=a_jour&go=import-error&click=import'], ['import : forfait', '?s=installe&imp=quota&go=import-plan&click=import'],
-          ['import partiel', '?s=installe&imp=partiel&go=import-plan&click=import']]) {
+          ['import : à jour', '?s=installe&imp=a_jour&go=import-error&click=import'], ['import : forfait', '?s=installe&imp=quota&go=import-plan&click=import,pick'],
+          ['import partiel', '?s=installe&imp=partiel&go=import-plan&click=import,pick']]) {
           const a = document.createElement('a');
           a.href = qs;
           a.textContent = label;

@@ -6,27 +6,39 @@
 const MAX_LOG_LINES = 300;
 const REPORT_LOG_LINES = 50;
 const LOGIN_POLL_MS = 3000;
+// No login this long after its window opened: what usually went wrong. dev/mock.html shortens it (&hint=).
+const LOGIN_HINT_MS = Number(window.BIBO_LOGIN_HINT_MS) || 180000;
+// How long the welcome waits for Claude's login to be read (`claude auth status`, 10 s at most in detect.rs).
+const LOGIN_READ_MS = 3000;
 const HAPPY_MS = 4500;
 // After « Réparé ! », long enough to read it.
 const FIXED_PAUSE_MS = 2500;
 const VOYAGE_DASHBOARD = 'https://dashboard.voyageai.com';
+// Where someone without the subscription takes it (steps.rs lets claude.ai open).
+const CLAUDE_PLANS = 'https://claude.ai/upgrade';
 
 // The same window on a Mac, on Windows and on Linux: only the words for the machine, its
 // settings, its command window and what the system may ask during the install differ.
 // dev/mock.html sets window.BIBO_OS.
+// One word for the window Claude Code runs in, whatever the system: « fenêtre de commandes ». `paste`: the
+// keys that paste in it.
 const SYSTEMS = {
   macos: {
-    machine: 'Mac', terminal: 'le Terminal', inTerminal: 'dans le Terminal', window: 'fenêtre Terminal', settings: 'Réglages',
+    machine: 'Mac', terminal: 'le Terminal', inTerminal: 'dans le Terminal', window: 'fenêtre de commandes', settings: 'Réglages', paste: 'Cmd + V',
+    trash: 'la Corbeille (Trash)', files: 'le Finder',
     // The brain lives in Documents, a folder macOS guards: refusing breaks the step.
     asks: ['brain', 'macOS va peut-être demander l’accès à ton dossier Documents : clique sur « Autoriser ».'],
   },
   windows: {
-    machine: 'PC', terminal: 'PowerShell', inTerminal: 'dans PowerShell', window: 'fenêtre PowerShell', settings: 'Paramètres',
-    // winget may need an administrator's yes for Git or Python.
-    asks: ['brain', 'Windows va peut-être demander une autorisation pour installer Git ou Python : clique sur « Oui ».'],
+    machine: 'PC', terminal: 'la fenêtre de commandes', inTerminal: 'dans une fenêtre de commandes', window: 'fenêtre de commandes', settings: 'Paramètres', paste: 'Ctrl + V',
+    trash: 'la Corbeille (Recycle Bin)', files: 'l’Explorateur de fichiers (File Explorer)',
+    // winget may need an administrator's yes, in two of install.ps1's sections (WINDOWS_ASKS): {what} is
+    // what that section installs.
+    asks: ['brain', 'Windows va peut-être demander une autorisation pour installer {what} : clique sur « Oui » (Yes).'],
   },
   linux: {
-    machine: 'PC', terminal: 'le Terminal', inTerminal: 'dans le Terminal', window: 'fenêtre de Terminal', settings: 'Paramètres',
+    machine: 'PC', terminal: 'le Terminal', inTerminal: 'dans le Terminal', window: 'fenêtre de commandes', settings: 'Paramètres', paste: 'Ctrl + Maj + V',
+    trash: 'la Corbeille', files: 'ton gestionnaire de fichiers',
     // The system's packages and Obsidian's are installed as root: the system asks for the password.
     asks: ['root', 'Ton ordinateur va te demander ton mot de passe pour installer des outils du système ou Obsidian : c’est normal, tape-le.'],
   },
@@ -49,12 +61,12 @@ const STEPS = {
     name: 'Outils Apple',
     short: 'les outils Apple',
     what: 'Les outils de base fournis par Apple.',
-    running: 'Clique sur « Installer » dans la fenêtre d’Apple.',
+    running: 'Clique sur « Installer » (Install), puis « Accepter » (Agree). Apple télécharge ensuite ses outils, 5 à 15 min : ne t’inquiète pas si sa fenêtre annonce d’abord plus d’une heure.',
     say: ['Une fenêtre Apple va s’ouvrir : clique sur Installer.', 'Je t’attends. Tu ne la vois pas ? Regarde dans le Dock.'],
   },
   bun: {
     name: 'Bun',
-    short: 'Bun',
+    short: 'le moteur de ta mémoire',
     what: 'Le moteur de ta mémoire.',
     say: ['J’installe Bun.', 'C’est le moteur de ta mémoire.'],
   },
@@ -104,8 +116,18 @@ const state = {
   // agents_offer: whether the window asks who the brain works with (only where the kit lets Codex be
   // chosen), and what it preselects, the preferred one first.
   offer: { open: false, agents: [] },
-  // guide_offert: the brain and Claude Code are there, the welcome leads to the guide (G0).
+  // guide_offert: the guide can work here (guide.rs says when), the welcome leads to it (G0); read again
+  // at the end and on a failure.
   guide: false,
+  // Claude's login, read with the guide at the start: without it the welcome asks for it before the guide.
+  claudeOn: false,
+  // brain_complete, read with the guide at the start: false, the install stopped half way (the guide works
+  // without the rest, D1), and the welcome says so.
+  brainWhole: true,
+  // The app's version (tauri.conf.json, 0.1.<n> for preview n), said small on the welcome; '' unknown.
+  version: '',
+  // The brain's folder as the window says it (brain_folder): never a path of its own.
+  brainDir: '',
   // The agents picked on the choice screen, the preferred one first. null: nothing was asked, Claude
   // alone, every screen as before Codex.
   agents: null,
@@ -121,6 +143,9 @@ const state = {
   // The step ids the install screen goes through.
   plan: [],
   steps: {},
+  // Where the running step is, from install.ps1's sections (« ▸ … (3 sur 13)… », Windows): its number, of
+  // how many, and its line.
+  section: null,
   failed: null,
   logs: [],
   // The install screen asked once for the Claude login (E1): it does not ask again.
@@ -144,7 +169,7 @@ const state = {
 
 // DOM handles and per-screen timers. screen() resets them.
 const ui = {};
-const view = { gen: 0, timers: [], rows: {}, log: null, bar: null, polling: null, failure: null, progress: null, onLine: null, asking: null, asked: null, onImport: null };
+const view = { gen: 0, timers: [], rows: {}, log: null, bar: null, asks: null, awake: null, polling: null, failure: null, progress: null, onLine: null, asking: null, asked: null, onImport: null };
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -255,6 +280,8 @@ function screen(name, { big = false } = {}) {
   view.rows = {};
   view.log = null;
   view.bar = null;
+  view.asks = null;
+  view.awake = null;
   view.polling = null;
   view.failure = null;
   view.progress = null;
@@ -280,9 +307,10 @@ function focusMain() {
 // the pointer comes by, giggles when clicked, and dozes off when nothing happens
 // on a screen that waits for the user. Just for fun: nothing depends on it.
 
-// dev/mock.html shortens it to try it out (&sleep=3).
+// dev/mock.html shortens it to try it out (&sleep=3). Never at the diagnosis, which waits for « Tout
+// installer »: a sleeping Bibo there read as « it is over ».
 const SLEEP_MS = Number(window.BIBO_SLEEP_MS) || 45000;
-const CALM_SCREENS = ['welcome', 'choice', 'diag', 'done'];
+const CALM_SCREENS = ['welcome', 'choice', 'done'];
 const HOP_GAP_MS = 1500;
 
 const life = {
@@ -316,7 +344,8 @@ function setMood(mood) {
 }
 
 function calm() {
-  return CALM_SCREENS.includes(document.body.dataset.screen);
+  // The end that still asks for Claude's login waits for a click, as the diagnosis does.
+  return CALM_SCREENS.includes(document.body.dataset.screen) && !document.querySelector('.login-steps');
 }
 
 // A class for a moment: blink, hop, giggle, waking.
@@ -424,12 +453,29 @@ function onPoke() {
 function showWelcome() {
   screen('welcome', { big: true });
   if (state.guide) {
-    // Back with everything installed: the guide first, the check of the machine still there.
-    say('idle', 'Content de te revoir !', 'Ton second cerveau est installé. Je peux aussi te guider pas à pas dans un logiciel : tu me montres ta fenêtre, je te dis où cliquer.');
     const check = state.offer.open ? button('Choisir mon IA', showChoice, { kind: 'secondary', act: 'check' })
       : button(`Vérifier mon ${OS.machine}`, runDiagnosis, { kind: 'secondary', act: 'check' });
+    if (!state.claudeOn) {
+      // Back, Claude's login put off: the guide needs it, so it comes first.
+      say('idle', 'Content de te revoir !', 'Il manque ton compte Claude : connecte-le, puis je pourrai te guider pas à pas dans un logiciel.');
+      const waiting = loginWaiting();
+      ui.screen.append(claudeLoginSteps('Reviens ici : je vois tout seul quand c’est bon.'), waiting, planLink());
+      const connect = connectButton(AIS.claude, () => connectThen(connect, 'claude', waiting, () => {
+        state.claudeOn = true;
+        state.loginSkipped = false;
+        showWelcome();
+      }));
+      ui.actions.append(check, connect);
+      addVersion();
+      return;
+    }
+    // Back, the guide ready: the guide first, the check of the machine still there. An install that stopped
+    // half way is said: the guide works without the rest, the memory and the evening's summary do not.
+    if (state.brainWhole) say('idle', 'Content de te revoir !', 'Je peux te guider pas à pas dans un logiciel : tu me montres ta fenêtre, je te dis où cliquer.');
+    else say('idle', 'Content de te revoir !', `Ton installation n’est pas finie : clique sur « ${check.textContent} » pour la reprendre. Le guide marche déjà : je peux te guider pas à pas dans un logiciel.`);
     const guide = button('Guide-moi dans un logiciel', () => openGuide(guide), { act: 'next' });
     ui.actions.append(check, guide);
+    addVersion();
     return;
   }
   if (state.offer.open) {
@@ -441,6 +487,7 @@ function showWelcome() {
         h('li', {}, `Je regarde ce qui manque sur ton ${OS.machine}, je l’installe, puis tu connectes ton compte (2 min).`),
         h('li', {}, 'J’installe le reste tout seul. Si ça coince, ton IA m’aide à réparer.')),
       h('p', { class: 'note' }, `Il te faut un abonnement Claude Pro ou Max, ou ${CHATGPT_PLAN}.`));
+    addVersion();
     ui.actions.append(button('Choisir mon IA', showChoice, { act: 'next' }));
     return;
   }
@@ -450,9 +497,36 @@ function showWelcome() {
       h('li', {}, `Je regarde ce qui manque sur ton ${OS.machine}.`),
       h('li', {}, 'J’installe Claude, puis tu connectes ton compte (2 min).'),
       h('li', {}, 'J’installe le reste tout seul. Si ça coince, Claude m’aide à réparer.')),
-    h('p', { class: 'note' }, 'Il te faut un abonnement Claude Pro ou Max.'));
+    h('p', { class: 'note' }, 'Il te faut un abonnement Claude Pro ou Max.'),
+    planLink());
+  addVersion();
   // No autofocus here: a focus ring on the very first screen looks like a glitch.
   ui.actions.append(button(`Vérifier mon ${OS.machine}`, runDiagnosis, { act: 'next' }));
+}
+
+// « Je n'ai pas encore Claude Pro »: the subscription's page, before twenty minutes of install it would
+// leave unused.
+function planLink() {
+  const box = h('div', { class: 'links' });
+  const link = button('Je n’ai pas encore Claude Pro', async () => {
+    link.disabled = true;
+    try {
+      await invoke('open_link', { url: CLAUDE_PLANS });
+      box.replaceChildren(h('p', { class: 'note' }, 'La page des abonnements Claude s’est ouverte dans ton navigateur : choisis Claude Pro, puis reviens ici.'));
+    } catch (e) {
+      box.replaceChildren(h('p', { class: 'note' }, `${errText(e)} Ouvre toi-même claude.ai/upgrade dans ton navigateur.`));
+    }
+  }, { kind: 'ghost', small: true, act: 'plan' });
+  box.append(link);
+  return box;
+}
+
+// « Préversion 76 », small, at the bottom of the welcome: which one a person has, when they ask for help.
+// Nothing for a build of the repository (0.1.0) or a version that cannot be read.
+function addVersion() {
+  const m = /^(\d+)\.(\d+)\.(\d+)$/.exec(state.version);
+  if (!m || (m[1] === '0' && m[3] === '0')) return;
+  ui.screen.append(h('p', { class: 'version' }, m[1] === '0' ? `Préversion ${m[3]}` : `Version ${state.version}`));
 }
 
 // ── 1b. Which AI (only where the kit lets Codex be chosen) ────────────────
@@ -603,14 +677,40 @@ function changeButton(small = false) {
   return state.offer.open ? button('Changer d’IA', showChoice, { kind: small ? 'secondary' : 'ghost', small, act: 'change' }) : null;
 }
 
+// A warning the install may trip on later (claude.ai or github.com silent or slow, a disk nearly full):
+// never folded under « prêt », and said with what to do.
+const RISKY_CHECKS = ['network', 'disk'];
+const RISKY_ADVICE = {
+  network: 'Vérifie ton Wi-Fi. Au travail, le réseau bloque parfois ces sites : essaie depuis chez toi.',
+  disk: `Pour faire de la place, vide ${OS.trash} ou supprime de gros fichiers.`,
+};
+
+function riskyChecks(d) {
+  return d.checks.filter((c) => c.status === 'warn' && RISKY_CHECKS.includes(c.id));
+}
+
+// The diagnosis' lines, folded: a dozen names of tools read as a dozen problems. Unfolded by itself
+// when something is red, or a warning the install may trip on.
+function detailToggle(d) {
+  const line = sysLine(d);
+  const body = h('div', { class: 'detail', id: 'diag-detail' }, line ? h('p', { class: 'sys' }, line) : null, checkList(d.checks));
+  const toggle = button('', () => paint(body.hidden), { kind: 'ghost', small: true, act: 'detail' });
+  toggle.setAttribute('aria-controls', 'diag-detail');
+  function paint(open) {
+    body.hidden = !open;
+    toggle.textContent = open ? 'Masquer le détail' : 'Voir le détail';
+    toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+  }
+  paint(!d.can_install || d.checks.some((c) => c.status === 'error') || riskyChecks(d).length > 0);
+  return [toggle, body];
+}
+
 function showDiagnosis() {
   const d = state.diag;
   screen('diag');
-  const line = sysLine(d);
-  if (line) ui.screen.append(h('p', { class: 'sys' }, line));
   // Where Codex can be chosen, the advice comes with that choice instead.
   if (!state.offer.open) ui.screen.append(...adviceLines(d.advice));
-  ui.screen.append(checkList(d.checks));
+  ui.screen.append(...detailToggle(d));
   const change = changeButton();
   if (change) ui.actions.append(change);
 
@@ -625,22 +725,25 @@ function showDiagnosis() {
   } else if (d.todo.length === 0) {
     say('happy', 'Tout est déjà installé !', `Ton ${OS.machine} a tout ce qu’il faut.`);
     ui.actions.append(button('Continuer', checkLogin, { act: 'next' }));
-  } else {
-    say('idle', 'J’ai fait le tour.', `Il manque ${listFr(d.todo.map((id) => stepInfo(id).short))}. Je m’en occupe.`);
+  } else if (riskyChecks(d).length) {
+    say('idle', 'J’ai fait le tour : un point à vérifier.', `${riskyChecks(d).map((c) => `${String(c.detail || '')} ${RISKY_ADVICE[c.id]}`).join(' ')} Tu peux installer quand même (10 à 20 minutes), ou faire ça puis cliquer sur « Revérifier ».`);
     ui.actions.append(
       button('Revérifier', runDiagnosis, { kind: 'secondary', act: 'recheck' }),
       button('Tout installer', startInstall, { act: 'next' }));
+  } else {
+    say('idle', `J’ai fait le tour : ton ${OS.machine} est prêt.`, `J’installe ${listFr(d.todo.map((id) => stepInfo(id).short))} : 10 à 20 minutes. Si tu peux, branche-toi sur un Wi-Fi : il y a beaucoup à télécharger.`);
+    ui.actions.append(button('Tout installer', startInstall, { act: 'next' }));
   }
   focusMain();
 }
 
+// Search by meaning never comes first: a bank card, before anything is installed, scared people off.
+// It is offered at the end, as an option.
 function startInstall() {
-  const d = state.diag;
-  state.plan = d.todo;
+  state.plan = state.diag.todo;
   state.steps = {};
   state.failed = null;
-  if (d.todo.includes('brain') && keywordsOnly()) showVoyage();
-  else runInstall(0);
+  runInstall(0);
 }
 
 function keywordsOnly() {
@@ -671,14 +774,11 @@ const KEY_VERDICT = {
   offline: ['worried', 'Je n’arrive pas à joindre Voyage.', 'Pas de réponse'],
 };
 
-// `back`: the screen to return to when the brain is already installed and the key
-// is all this visit is about. Without it, this screen sits inside the install.
-function showVoyage(back = null) {
+// An option once the brain is installed, never on the way to it. `back`: the screen to return to.
+function showVoyage(back) {
   const gen = screen('voyage');
   state.key = '';
-  const intro = back
-    ? () => say('idle', 'Activons la recherche par le sens', 'Avec une clé Voyage AI, ton cerveau retrouve tes notes par le sens, pas seulement par mots-clés.')
-    : () => say('idle', 'Une option avant de commencer', 'Ton cerveau retrouve tes notes par mots-clés. Avec une clé Voyage AI, il les retrouve aussi par le sens.');
+  const intro = () => say('idle', 'Activons la recherche par le sens', 'Une option : avec une clé Voyage AI, ton cerveau retrouve tes notes par le sens, pas seulement par mots-clés.');
   intro();
   // Bibo is giving a verdict on a key: editing the field takes it back.
   let verdict = false;
@@ -689,7 +789,7 @@ function showVoyage(back = null) {
   });
   const msg = h('p', { id: 'key-msg', class: 'key-msg', 'aria-live': 'polite' });
   const verify = button('Vérifier', check, { kind: 'secondary', act: 'verify' });
-  const next = button(back ? 'Activer avec cette clé' : 'Continuer avec cette clé', () => leave(true), { act: 'next' });
+  const next = button('Activer avec cette clé', () => leave(true), { act: 'next' });
   next.disabled = true;
 
   function reset() {
@@ -744,7 +844,7 @@ function showVoyage(back = null) {
   function leave(withKey) {
     if (!withKey) state.key = '';
     input.value = '';
-    if (withKey || !back) runInstall(0);
+    if (withKey) runInstall(0);
     else back();
   }
 
@@ -776,10 +876,9 @@ function showVoyage(back = null) {
     h('div', { class: 'keybox card' },
       h('label', { for: 'voyage-key' }, 'Ta clé Voyage'),
       h('div', { class: 'keyrow' }, input, verify),
-      msg));
-  ui.actions.append(
-    button(back ? 'Retour' : 'Passer (recherche par mots-clés)', () => leave(false), { kind: 'ghost', act: 'skip' }),
-    next);
+      msg),
+    h('p', { class: 'note' }, 'Le texte de tes notes sera envoyé à Voyage AI (États-Unis) pour être analysé. Sans clé, ton cerveau marche aussi : il cherche par mots-clés.'));
+  ui.actions.append(button('Retour', () => leave(false), { kind: 'ghost', act: 'skip' }), next);
   input.focus({ preventScroll: true });
 }
 
@@ -804,11 +903,48 @@ function paintStep(id, s, since) {
   row.since = s === 'running' ? since : 0;
 }
 
+// Windows has two steps, Claude Code and the brain, which is most of the time: counted by steps alone,
+// the bar stood at 50 % for 15 minutes. There, the brain weighs four times the others together (80 %
+// next to Claude Code), and moves with install.ps1's sections.
+function weight(id) {
+  const others = state.plan.length - 1;
+  return WINDOWS && stepRun(id) === 'brain' && others > 0 ? 4 * others : 1;
+}
+
 function paintProgress() {
   if (!view.bar) return;
   const { plan } = state;
-  const done = plan.filter((id) => state.steps[id] === 'done').length;
-  view.bar.style.width = `${plan.length ? (100 * done) / plan.length : 100}%`;
+  const total = plan.reduce((n, id) => n + weight(id), 0);
+  const { n, of } = state.section || { n: 1, of: 1 };
+  const part = (id) => (state.steps[id] === 'done' ? 1 : state.steps[id] === 'running' ? (n - 1) / of : 0);
+  const done = plan.reduce((sum, id) => sum + weight(id) * part(id), 0);
+  view.bar.style.width = `${total ? Math.round((1000 * done) / total) / 10 : 100}%`;
+}
+
+// Windows: winget may need an administrator's yes in two of install.ps1's sections, the Preflight's (Python
+// and Git) and Obsidian's (its user install failing, the machine's): what each installs.
+const WINDOWS_ASKS = [[/Python|Git/, 'Git ou Python'], [/Obsidian/, 'Obsidian']];
+
+// What the system may ask, only while it may: on Windows in those two sections, not for the 15 minutes
+// between. Before install.ps1's first line, its first section is coming.
+function asksNow() {
+  const running = state.plan.find((id) => state.steps[id] === 'running');
+  if (!running || !systemAsks(running)) return '';
+  if (!WINDOWS) return OS.asks[1];
+  const line = state.section ? state.section.line : 'Python';
+  const hit = WINDOWS_ASKS.find(([re]) => re.test(line));
+  return hit ? OS.asks[1].replace('{what}', hit[1]) : '';
+}
+
+// The notes of the install that hold only while a step runs: what the system may ask, keeping the
+// computer awake.
+function paintAsks() {
+  if (view.asks) {
+    const words = asksNow();
+    view.asks.hidden = !words;
+    if (words) view.asks.textContent = nbsp(words);
+  }
+  if (view.awake) view.awake.hidden = !state.plan.some((id) => state.steps[id] === 'running');
 }
 
 function tickElapsed() {
@@ -837,10 +973,11 @@ function renderInstall(name = 'install') {
     paintStep(id, state.steps[id] || 'pending');
   }
   view.bar = h('span', { class: 'bar-fill' });
-  ui.screen.append(h('div', { class: 'bar', 'aria-hidden': 'true' }, view.bar), list);
-  if (state.plan.some(systemAsks)) ui.screen.append(h('p', { class: 'note' }, OS.asks[1]));
-  ui.screen.append(logPanel());
+  view.asks = h('p', { class: 'note' });
+  view.awake = h('p', { class: 'note' }, 'Garde ton ordinateur sur le chargeur et ouvert jusqu’à la fin : s’il se met en veille, l’installation s’arrête.');
+  ui.screen.append(h('div', { class: 'bar', 'aria-hidden': 'true' }, view.bar), list, view.asks, view.awake, logPanel());
   paintProgress();
+  paintAsks();
   every(tickElapsed, 10000);
   return gen;
 }
@@ -857,7 +994,10 @@ async function runInstall(from, result = '') {
     const id = plan[i];
     const info = stepInfo(id);
     const run = stepRun(id);
+    state.section = null;
     paintStep(id, 'running', Date.now());
+    paintProgress();
+    paintAsks();
     // The Apple step's second line is an instruction: no step count in front of it.
     const where = plan.length > 1 && id !== 'clt' ? `Étape ${i + 1} sur ${plan.length}. ` : '';
     say('working', info.say[0], where + info.say[1]);
@@ -874,6 +1014,7 @@ async function runInstall(from, result = '') {
     // On failure the key stays in memory for « Réessayer ».
     if (!r || !r.ok) {
       paintStep(id, 'failed');
+      paintAsks();
       state.failed = { id, message: String((r && r.message) || 'Cette étape a échoué.') };
       showFailure(i);
       return;
@@ -883,7 +1024,9 @@ async function runInstall(from, result = '') {
     delete state.repair.aside[run];
     result = String(r.message || '');
     paintStep(id, 'done');
+    state.section = null;
     paintProgress();
+    paintAsks();
   }
   state.key = '';
   state.failed = null;
@@ -921,15 +1064,14 @@ async function askLoginInline(gen) {
     const waiting = h('p', { class: 'loading', hidden: true }, h('span', { class: 'spinner', 'aria-hidden': 'true' }), 'J’attends ta connexion…');
     const connect = button('Connecter mon compte Claude', open, { act: 'next' });
     const card = h('div', { class: 'login-card card' },
-      h('ol', { class: 'plan' },
-        h('li', {}, `Clique sur le bouton : une ${OS.window} s’ouvre.`),
-        h('li', {}, 'Ton navigateur te demande de te connecter à Claude.'),
-        h('li', {}, 'Reviens ici : je continue tout seul.')),
+      claudeLoginSteps('Reviens ici : je continue tout seul.'),
       h('p', { class: 'note' }, 'Tu te connectes directement chez Anthropic : je ne vois jamais ton mot de passe.'),
       waiting);
 
-    // « Plus tard » may come while the Terminal opens: nothing must follow it.
+    // « Plus tard » may come while the command window opens, or the login while it opens again (a second
+    // click): nothing must follow either.
     let over = false;
+    let logged = false;
 
     function finish() {
       over = true;
@@ -949,13 +1091,15 @@ async function askLoginInline(gen) {
         connect.disabled = false;
         return;
       }
-      if (over || gen !== view.gen) return;
-      say('thinking', 'J’attends que tu te connectes…', `Suis les étapes ${OS.inTerminal}.`);
+      if (over || logged || gen !== view.gen) return;
+      say('thinking', ...CLAUDE_WAIT);
       waiting.hidden = false;
+      hintLater(waiting);
       connect.textContent = 'Rouvrir la fenêtre';
       connect.className = 'btn btn-secondary';
       connect.disabled = false;
       poll(() => {
+        logged = true;
         say('happy', 'C’est connecté !', 'Claude est prêt à m’aider. Je continue.');
         waiting.hidden = true;
         ui.actions.replaceChildren();
@@ -969,6 +1113,34 @@ async function askLoginInline(gen) {
     card.scrollIntoView({ block: 'nearest' });
     focusMain();
   });
+}
+
+// Claude's login, said the same way wherever it is asked: the browser does it all, the command window
+// (`claude auth login`) waits for it, open. `back`: the last step, where this window takes over.
+function claudeLoginSteps(back) {
+  return h('ol', { class: 'plan login-steps' },
+    h('li', {}, 'Clique sur le bouton. Ton navigateur s’ouvre sur claude.ai : connecte-toi avec le compte de ton abonnement, puis clique sur « Autoriser » (Authorize).'),
+    h('li', {}, `Une ${OS.window} s’ouvre aussi : laisse-la ouverte, tu n’as rien à y taper.`),
+    h('li', {}, back));
+}
+
+// The spinner under the login's steps, shown once its window opened.
+function loginWaiting() {
+  return h('p', { class: 'loading', hidden: true }, h('span', { class: 'spinner', 'aria-hidden': 'true' }), 'J’attends ta connexion…');
+}
+
+const CLAUDE_WAIT = ['J’attends que tu te connectes…', 'Connecte-toi dans ton navigateur : je vois tout seul quand c’est bon.'];
+
+// Under `waiting`, once, if the login has not come LOGIN_HINT_MS after its window opened (a wait without
+// end was all there was): what usually went wrong, and what to do. The browser may show a code for the
+// command window instead of coming back by itself; that window closed, the login waits for nothing.
+function hintLater(waiting) {
+  if (waiting.dataset.hint) return;
+  waiting.dataset.hint = 'later';
+  later(() => {
+    if (waiting.hidden) return;
+    waiting.after(h('p', { class: 'note' }, `Ça ne se connecte pas ? Si ton navigateur affiche un code, copie-le, colle-le dans la ${OS.window} (${OS.paste}), puis appuie sur Entrée. Si tu as fermé cette fenêtre, ou si elle affiche un message en rouge, vérifie ta connexion internet, puis clique sur « Rouvrir la fenêtre ».`));
+  }, LOGIN_HINT_MS);
 }
 
 // ── 4b. Repair with Claude (or Codex) ─────────────────────────────────────
@@ -1007,7 +1179,7 @@ function repairNote(what, a) {
     unsupported: `Ton ${a.product} ne peut pas réparer depuis l’app (${a.why}).`,
     disabled: 'Cette version de l’app ne répare pas toute seule.',
     // agents.json says nothing the kit can trust: no AI is asked.
-    agents: 'Je ne sais plus avec quelle IA tu travailles : ton choix est illisible. Je ne demande rien, ni à Claude ni à Codex. Copie le rapport et envoie-le à l’équipe.',
+    agents: 'Je ne sais plus avec quelle IA tu travailles : ton choix est illisible. Je ne demande rien, ni à Claude ni à Codex. Copie le rapport et envoie-le à la personne qui t’a conseillé Bibo.',
     // Codex, before the brain step installed the kit's list of its features.
     not_yet: `${a.name} pourra m’aider une fois ton cerveau installé. Réessaie, ou copie le rapport.`,
   };
@@ -1080,6 +1252,7 @@ async function showFailure(index, intro = null) {
   focusMain();
   refreshRepairReport();
   undoCard(step);
+  offerGuide(view.gen);
 
   // The answer takes a few seconds (network, claude auth status): the buttons work meanwhile.
   const ask = {};
@@ -1121,6 +1294,17 @@ async function showFailure(index, intro = null) {
   if (refocus) focusMain();
 }
 
+// Under a failure, the guide when it already works here (guide.rs says when): what many came for does
+// not wait for the rest of the install.
+async function offerGuide(gen) {
+  if (!chose('claude')) return;
+  await readGuide();
+  if (!state.guide || gen !== view.gen || ui.screen.querySelector('.guide-offer')) return;
+  const open = button('Essayer le guide quand même', () => openGuide(open), { kind: 'secondary', small: true, act: 'guide' });
+  addNote(h('div', { class: 'upgrade guide-offer' },
+    h('p', { class: 'note' }, 'Le guide marche déjà, même si l’installation n’est pas finie : je peux te guider pas à pas dans un logiciel.'), open));
+}
+
 // « Voir exactement ce que j'envoie »: the dossier itself, built when opened.
 function sentPanel(step, a) {
   const pre = h('pre', { class: 'log-lines', tabindex: '0', 'aria-label': `Ce que j’envoie à ${a.name}` }, 'Je prépare le dossier…');
@@ -1160,7 +1344,8 @@ async function connectForRepair(index, btn, a = AIS.claude) {
     return;
   }
   if (gen !== view.gen) return;
-  say('thinking', 'J’attends que tu te connectes…', `Suis les étapes ${OS.inTerminal}.`);
+  if (engine === 'claude') say('thinking', ...CLAUDE_WAIT);
+  else say('thinking', 'J’attends que tu te connectes…', `Suis les étapes ${OS.inTerminal}.`);
   btn.textContent = 'Rouvrir la fenêtre';
   btn.className = 'btn btn-secondary';
   btn.disabled = false;
@@ -1322,7 +1507,7 @@ function showProposal(index, plan) {
     say('worried', `${a.name} n’a pas trouvé de réparation sûre.`,
       plan.suspect ? 'Le journal contient des choses inhabituelles : je préfère ne rien réparer tout seul.' : cause);
     if (explained && !plan.suspect) ui.screen.append(said(explained, a));
-    ui.screen.append(h('p', { class: 'note' }, `Rien n’a été modifié. Copie le rapport et envoie-le à l’équipe : il contient déjà l’analyse de ${a.name}.`));
+    ui.screen.append(h('p', { class: 'note' }, `Rien n’a été modifié. Copie le rapport et envoie-le à la personne qui t’a conseillé Bibo : il contient déjà l’analyse de ${a.name}.`));
     ui.actions.append(copyButton(), button('Réessayer', () => runInstall(index), { act: 'next' }));
     focusMain();
     return;
@@ -1363,6 +1548,7 @@ async function applyRepair(index, plan) {
   const run = stepRun(id);
   const gen = renderInstall('repairing');
   paintStep(id, 'running', Date.now());
+  paintAsks();
   const relaunch = () => say('working', `Je relance l’étape « ${info.name} »…`, info.say[1]);
   if ((plan.remedies || []).length) {
     say('working', 'Je répare…', 'Ensuite je relance l’étape.');
@@ -1401,6 +1587,7 @@ function showOutcome(index, plan, o, key) {
   if (kind === 'fixed') {
     paintStep(id, 'done');
     paintProgress();
+    paintAsks();
     if (run === 'brain') {
       const withoutKey = (plan.remedies || []).some((r) => r.id === 'relancer_sans_cle_voyage');
       if (key && !withoutKey) state.keyUsed = true;
@@ -1415,6 +1602,7 @@ function showOutcome(index, plan, o, key) {
   }
 
   paintStep(id, 'failed');
+  paintAsks();
   if (kind === 'refused') {
     showFailure(index, ['worried', 'Je n’ai rien fait.', String(o.message || '')]);
     return;
@@ -1428,11 +1616,11 @@ function showOutcome(index, plan, o, key) {
     // may say where a copy of the user's files is; a regression's only lists checks.
     if (kind === 'guard_restored') {
       const message = String(o.message || '');
-      say('worried', 'J’ai arrêté la réparation.', /rapport/.test(message) ? message : `${message} Copie le rapport pour l’équipe.`);
+      say('worried', 'J’ai arrêté la réparation.', /rapport/.test(message) ? message : `${message} Copie le rapport et envoie-le à la personne qui t’a conseillé Bibo.`);
     } else if (o.undoable) {
-      say('worried', 'Je n’ai pas pu tout remettre comme avant.', 'La réparation abîmait autre chose. Clique sur « Remettre comme avant », puis copie le rapport pour l’équipe.');
+      say('worried', 'Je n’ai pas pu tout remettre comme avant.', 'La réparation abîmait autre chose. Clique sur « Remettre comme avant », puis copie le rapport et envoie-le à la personne qui t’a conseillé Bibo.');
     } else {
-      say('worried', 'J’ai tout remis comme avant.', 'La réparation abîmait autre chose, alors je l’ai annulée. Copie le rapport pour l’équipe.');
+      say('worried', 'J’ai tout remis comme avant.', 'La réparation abîmait autre chose, alors je l’ai annulée. Copie le rapport et envoie-le à la personne qui t’a conseillé Bibo.');
     }
     undoCard(run);
     ui.actions.append(copyButton(), retry);
@@ -1446,7 +1634,7 @@ function showOutcome(index, plan, o, key) {
     ui.actions.append(copyButton(), button(`Redemander à ${next.name} (dernier essai)`, () => runRepair(index), { act: 'next' }));
   } else {
     // E6c. Claude in Terminal only for whom chose Claude.
-    say('worried', 'Je n’ai pas réussi à réparer tout seul.', `Rien n’est cassé. Copie le rapport et envoie-le à l’équipe : il contient déjà l’analyse de ${ai(plan.engine).name}.`);
+    say('worried', 'Je n’ai pas réussi à réparer tout seul.', `Rien n’est cassé. Copie le rapport et envoie-le à la personne qui t’a conseillé Bibo : il contient déjà l’analyse de ${ai(plan.engine).name}.`);
     undoCard(run);
     ui.actions.append(copyButton(), ...(state.repair.terminal ? [terminalButton(index)] : []), retry);
   }
@@ -1557,12 +1745,19 @@ function paintLog(force) {
 
 let logQueued = false;
 
-// On Windows, install.ps1's sections arrive as « ▸ … » lines (steps.rs): the running
-// row says the latest. A Mac's installers print nothing of the kind.
+// On Windows, install.ps1's sections arrive as « ▸ … (3 sur 13)… » lines (steps.rs): the running
+// row says the latest, the bar moves with its number. A Mac's installers print nothing of the kind.
 function showSection(step, line) {
   if (!WINDOWS || !line.startsWith('▸ ')) return;
   for (const [id, row] of Object.entries(view.rows)) {
     if (stepRun(id) === step && state.steps[id] === 'running') row.what.textContent = nbsp(line.slice(2));
+  }
+  const m = /\((\d+) sur (\d+)\)/.exec(line);
+  const [n, of] = m ? [Number(m[1]), Number(m[2])] : [0, 0];
+  if (n >= 1 && n <= of) {
+    state.section = { n, of, line };
+    paintProgress();
+    paintAsks();
   }
 }
 
@@ -1722,8 +1917,11 @@ function showLogin(engine = 'claude', rest = [], said = '') {
       return;
     }
     if (gen !== view.gen) return;
-    say('thinking', 'J’attends que tu te connectes…', `Suis les étapes ${OS.inTerminal}.`);
+    if (codex) say('thinking', 'J’attends que tu te connectes…', `Suis les étapes ${OS.inTerminal}.`);
+    else say('thinking', ...CLAUDE_WAIT);
     waiting.hidden = false;
+    // The hint is Claude's login (a code for its command window): Codex's goes another way.
+    if (!codex) hintLater(waiting);
     connect.textContent = 'Rouvrir la fenêtre';
     connect.className = 'btn btn-secondary';
     connect.disabled = false;
@@ -1733,10 +1931,7 @@ function showLogin(engine = 'claude', rest = [], said = '') {
   if (!codex) {
     say('idle', last ? 'Dernière étape : ton compte Claude' : 'Encore une étape : ton compte Claude', 'Connecte-toi pour que Claude puisse travailler avec ton cerveau.');
     ui.screen.append(
-      h('ol', { class: 'plan' },
-        h('li', {}, `Clique sur le bouton : une ${OS.window} s’ouvre.`),
-        h('li', {}, 'Suis ses étapes. Ton navigateur te demande de te connecter à Claude.'),
-        h('li', {}, 'Reviens ici : je vois tout seul quand c’est bon.')),
+      claudeLoginSteps('Reviens ici : je vois tout seul quand c’est bon.'),
       h('p', { class: 'note' }, 'Tu te connectes directement chez Anthropic : je ne vois jamais ton mot de passe. Il faut un abonnement Claude Pro ou Max.'),
       waiting);
     switchAi('Pas d’abonnement Claude Pro ou Max ? Change d’IA.');
@@ -1812,66 +2007,101 @@ function stopPolling() {
 
 // ── 6. Done ────────────────────────────────────────────────────────────────
 
+// Where to find Bibo again tomorrow: the installers say nothing of it.
+const FIND_ME = {
+  windows: 'Pour me retrouver plus tard : ouvre le menu Démarrer (Start) et tape « Brain in a Box ».',
+  // Opened from its disk image (.dmg), the app is gone once the disk is ejected: in Applications first.
+  macos: 'Pour me retrouver plus tard : si tu m’as ouvert depuis le fichier téléchargé (.dmg), glisse d’abord l’icône Brain in a Box sur le dossier Applications, dans sa fenêtre. Ensuite, Cmd + Espace, tape « Brain in a Box », puis Entrée.',
+}[SYSTEM];
+
+// One main button: the guide where Claude is the brain's AI and connected (what most came for), Claude's
+// login when it was put off, Codex's when Codex comes first and is not on its ChatGPT login. The rest
+// as links underneath.
 function showDone() {
   const gen = screen('done', { big: true });
+  readBrainDir();
   const names = chosenAgents().map((e) => ai(e).name);
   const first = names[0];
-  say('happy', 'Ton second cerveau est prêt !', names.length > 1
-    ? `${listFr(names)} retiennent maintenant ce que tu leur apprends.`
-    : `${first} retient maintenant ce que tu lui apprends.`);
-  // In the screen rather than with the buttons: three of them would not fit on one
-  // line. Above « Dernière chose », which leads to the main button.
-  if (canAddMeaning()) {
-    ui.screen.append(h('div', { class: 'upgrade' },
-      h('p', { class: 'note' }, 'Ton cerveau retrouve tes notes par mots-clés. Il peut aussi les retrouver par le sens.'),
-      button('Activer la recherche par le sens', () => addMeaning(showDone), { kind: 'secondary', small: true, act: 'voyage' })));
-  }
-  ui.screen.append(h('div', { class: 'upgrade' },
-    h('p', { class: 'note' }, 'Tu utilisais ChatGPT ou Claude ? Apporte ce qu’ils savent de toi.'),
-    button('Importer ma mémoire', showImport, { kind: 'secondary', small: true, act: 'import' })));
-  // The guide works with Claude (docs/proposals/guide.md): Codex is not shown images yet.
-  if (chose('claude')) {
-    const guide = button('Essayer le guide', () => openGuide(guide), { kind: 'secondary', small: true, act: 'guide' });
-    ui.screen.append(h('div', { class: 'upgrade' },
-      h('p', { class: 'note' }, 'Nouveau : je peux te guider pas à pas dans n’importe quel logiciel.'), guide));
-  }
   // The preferred one does the onboarding. Codex only on the login the kit uses (§4.3): logged in
   // another way it would bill a key, or offer one on its first screen, so its login comes first.
   const codexOff = chose('codex') && state.codexLogin !== 'chatgpt';
   const loginFirst = codexOff && chosenAgents()[0] === 'codex';
-  const who = names.length > 1 ? first : 'lui';
-  ui.screen.append(h('p', { class: 'note' }, loginFirst
-    ? `Dernière chose : connecte Codex à ton compte ChatGPT, puis présente-toi à ${who}. Il te pose quelques questions pour te connaître.`
-    : `Dernière chose : présente-toi à ${who}. Il te pose quelques questions pour te connaître.`));
-  if (state.loginSkipped) {
-    ui.screen.append(h('p', { class: 'note' }, 'Pense à connecter ton compte Claude : il te le demandera au premier lancement.'));
+  // Claude's login put off: Claude Code would ask for it on its first start, in English, next to an
+  // account billed by use. Nothing is ready without it: the end asks for it, and says so.
+  const claudeOff = !loginFirst && chose('claude') && state.loginSkipped;
+  // The guide works with Claude (docs/proposals/guide.md): Codex is not shown images yet.
+  const guide = chose('claude') && !claudeOff;
+  const waiting = loginWaiting();
+  if (claudeOff) {
+    say('idle', 'Presque prêt : il manque ton compte Claude', 'Connecte-le pour que Claude puisse travailler avec ton cerveau. Il faut un abonnement Claude Pro ou Max.');
+    ui.screen.append(claudeLoginSteps('Reviens ici : je vois tout seul quand c’est bon.'), waiting, planLink());
+  } else {
+    say('happy', 'Ton second cerveau est prêt !', names.length > 1
+      ? `${listFr(names)} retiennent maintenant ce que tu leur apprends.`
+      : `${first} retient maintenant ce que tu lui apprends.`);
+  }
+  if (guide) ui.screen.append(h('p', { class: 'note' }, 'Je peux te guider pas à pas dans n’importe quel logiciel : tu me montres ta fenêtre, je te dis où cliquer.'));
+  if (loginFirst) {
+    const who = names.length > 1 ? first : 'lui';
+    ui.screen.append(h('p', { class: 'note' }, `Dernière chose : connecte Codex à ton compte ChatGPT, puis présente-toi à ${who}. Il te pose quelques questions pour te connaître.`));
+    if (state.loginSkipped) ui.screen.append(h('p', { class: 'note' }, 'Pense à connecter ton compte Claude : il te le demandera au premier lancement.'));
   }
   if (codexOff) ui.screen.append(h('p', { class: 'note' }, codexLoginNote(state.codexLogin)));
 
-  // A double click would open two Terminal windows, or Obsidian twice: the
-  // button rests a few seconds.
+  // A double click would open two command windows, or Obsidian twice: the button rests a few seconds.
+  // True once it went.
   async function act(btn, cmd, title, text) {
     btn.disabled = true;
+    let ok = false;
     try {
       await invoke(cmd);
-      if (gen === view.gen) say('happy', title, text);
+      ok = gen === view.gen;
+      if (ok) say('happy', title, text);
     } catch (e) {
       if (gen === view.gen) say('worried', 'Ça n’a pas marché.', errText(e));
     }
     later(() => { btn.disabled = false; }, 3000);
+    return ok;
   }
 
-  const vault = button('Ouvrir mon cerveau dans Obsidian', () => act(vault, 'open_vault', 'J’ouvre Obsidian…', 'Ton cerveau est dans Documents › Brain.'), { kind: 'secondary', act: 'vault' });
-  ui.actions.append(vault);
+  // The folder in full, in the screen rather than in Bibo's words: those are masked like the log, and a
+  // Windows profile's path would read « ~ ». Said whether Obsidian opened or not: without it (winget
+  // blocked, say), the folder is the way to the notes.
+  const folder = h('p', { class: 'note folder', hidden: true });
+  const vault = button('Voir mes notes', async () => {
+    const opened = await act(vault, 'open_vault', 'J’ouvre Obsidian…', 'Tes notes s’ouvrent dans Obsidian.');
+    if (gen !== view.gen || !state.brainDir) return;
+    folder.textContent = opened ? `Tes notes sont dans le dossier ${state.brainDir}.`
+      : `Tes notes sont dans le dossier ${state.brainDir} : ouvre-le dans ${OS.files}. Obsidian, pour les lire, est gratuit sur obsidian.md.`;
+    folder.hidden = false;
+  }, { kind: 'ghost', small: true, act: 'vault' });
+  const links = [button('Importer ma mémoire', showImport, { kind: 'ghost', small: true, act: 'import' }), vault];
+  // Search by meaning takes a bank card: nothing to bring up before the account the brain needs.
+  if (canAddMeaning() && !claudeOff) links.push(button('Recherche par le sens', () => addMeaning(showDone), { kind: 'ghost', small: true, act: 'voyage' }));
+  ui.screen.append(h('p', { class: 'note' }, 'Tu utilisais ChatGPT ou Claude ? « Importer ma mémoire » apporte à ton cerveau ce qu’ils savent de toi.'),
+    h('div', { class: 'links' }, links), folder);
+  if (FIND_ME) ui.screen.append(h('p', { class: 'note' }, FIND_ME));
+
   if (loginFirst) {
     // Settings of the system no login fixes: nothing more to offer here.
     if (state.codexLogin !== 'system') {
-      const connect = connectButton(AIS.codex, () => connectThenDone(connect));
+      const connect = connectButton(AIS.codex, () => connectThen(connect, 'codex', null, showDone));
       ui.actions.append(connect);
     }
+  } else if (claudeOff) {
+    const connect = connectButton(AIS.claude, () => connectThen(connect, 'claude', waiting, () => {
+      state.loginSkipped = false;
+      showDone();
+    }));
+    ui.actions.append(connect);
   } else {
-    const onboard = button('Personnaliser mon cerveau (15 min)', () => act(onboard, 'start_onboarding', 'C’est parti !', `Une ${OS.window} s’ouvre : réponds aux questions de ${first}.`), { act: 'next' });
+    const onboard = button(`Présente-toi à ${first} (15 min)`, () => act(onboard, 'start_onboarding', 'C’est parti !', `Une ${OS.window} s’ouvre : réponds aux questions de ${first}.`),
+      guide ? { kind: 'secondary', act: 'onboard' } : { act: 'next' });
     ui.actions.append(onboard);
+    if (guide) {
+      const open = button('Guide-moi dans un logiciel', () => openGuide(open), { act: 'next' });
+      ui.actions.append(open);
+    }
   }
   focusMain();
 }
@@ -1896,12 +2126,13 @@ function codexLoginNote(said) {
   return 'Pense à connecter Codex à ton compte ChatGPT. S’il te le demande au premier lancement, choisis « Sign in with ChatGPT », jamais une clé API : elle serait facturée.';
 }
 
-// Codex's login from the end: once it is the one the kit uses (or another one), the end again.
-async function connectThenDone(btn) {
+// An account's login from the welcome or the end: once it is the one the kit uses (or, for Codex, another
+// one), `after`. `waiting`: Claude's spinner there, and the word after three minutes.
+async function connectThen(btn, engine, waiting, after) {
   const gen = view.gen;
   btn.disabled = true;
   try {
-    await invoke(LOGINS.codex.open);
+    await invoke(LOGINS[engine].open);
   } catch (e) {
     if (gen !== view.gen) return;
     say('worried', 'La fenêtre ne s’est pas ouverte.', errText(e));
@@ -1909,11 +2140,17 @@ async function connectThenDone(btn) {
     return;
   }
   if (gen !== view.gen) return;
-  say('thinking', 'J’attends que tu te connectes…', `Suis les étapes ${OS.inTerminal}.`);
+  if (engine === 'claude') say('thinking', ...CLAUDE_WAIT);
+  else say('thinking', 'J’attends que tu te connectes…', `Suis les étapes ${OS.inTerminal}.`);
+  if (waiting) {
+    waiting.hidden = false;
+    if (engine === 'claude') hintLater(waiting);
+  }
   btn.textContent = 'Rouvrir la fenêtre';
   btn.className = 'btn btn-secondary';
   btn.disabled = false;
-  poll(showDone, 'codex', showDone, state.codexLogin);
+  if (engine === 'codex') poll(after, 'codex', after, state.codexLogin);
+  else poll(after);
 }
 
 // ── 7. Importer ma mémoire ────────────────────────────────────────────────
@@ -1952,8 +2189,10 @@ function importAiHome(a) {
   return a === AIS.codex ? 'OpenAI' : 'Anthropic';
 }
 
+// Only keys and passwords written as such are masked (_import_lecture.py, masquer): « ses secrets masqués »
+// let people think their clients' names were, « les mots de passe » that one in a sentence was.
 function privacyNote(a) {
-  return h('p', { class: 'note' }, `Ce que tu importes est lu sur ton ${OS.machine} et ses secrets masqués. Puis ${a.name} le trie, chez ${importAiHome(a)}, avec ${a.plan} : rien ne part ailleurs. Le résultat est une nouvelle note de ton cerveau, que tu relis.`);
+  return h('p', { class: 'note' }, `Avant l’envoi, je masque les clés et les mots de passe écrits « mot de passe : … ». Un code glissé dans une phrase peut passer : avant de lancer, regarde « Voir exactement ce que j’envoie ». Le reste (noms de clients, montants, projets) part chez ${importAiHome(a)} pour être trié par ${a.name}, avec ${a.plan}, et nulle part ailleurs. Le résultat est une nouvelle note de ton cerveau, que tu relis.`);
 }
 
 // A browser that opens the .zip by itself (Safari does) leaves a folder: zipped again, it is read.
@@ -1971,8 +2210,7 @@ function exportHelp() {
     h('ul', { class: 'bullets' },
       h('li', {}, 'ChatGPT : Paramètres › Contrôles de données › Exporter les données. Un e-mail t’envoie un lien, valable 24 h : télécharge le fichier .zip.'),
       h('li', {}, `Claude : Paramètres › Confidentialité › Exporter les données, sur le site ou l’app de bureau. Un e-mail t’envoie tes fichiers .zip : choisis-les tous d’un coup (${SEVERAL} pour en prendre plusieurs).`),
-      h('li', {}, FOLDER_TIP),
-      h('li', {}, 'Pour les souvenirs de ChatGPT, le copier-coller marche mieux : son export ne les contient souvent plus.')));
+      h('li', {}, FOLDER_TIP)));
 }
 
 async function showImport() {
@@ -1992,16 +2230,18 @@ function showImportChoice(intro = null) {
   const a = importAi();
   if (intro) say(...intro);
   else say('idle', 'D’où vient ta mémoire ?', `ChatGPT ou Claude savent déjà des choses sur toi. ${a.name} en tire l’essentiel, je le range dans ton cerveau.`);
+  // The copy-paste first: two minutes, nothing to wait for. An export comes by e-mail, hours later.
   ui.screen.append(
     h('ul', { class: 'choices card' },
-      h('li', {}, h('p', { class: 'choice-name' }, 'Ton fichier d’export (.zip)'), h('p', { class: 'note' }, 'ChatGPT et Claude t’envoient tes conversations dans un fichier. Le plus complet.')),
-      h('li', {}, h('p', { class: 'choice-name' }, 'Un copier-coller (2 min)'), h('p', { class: 'note' }, 'Tu demandes à ChatGPT ou à Claude ce qu’il sait de toi, et tu colles sa réponse ici.'))),
+      h('li', {}, h('p', { class: 'choice-name' }, 'Un copier-coller (2 min)'), h('p', { class: 'note' }, 'Tu demandes à ChatGPT ou à Claude ce qu’il sait de toi, et tu colles sa réponse ici.')),
+      h('li', {}, h('p', { class: 'choice-name' }, 'Ton fichier d’export (.zip)'), h('p', { class: 'note' }, 'ChatGPT et Claude t’envoient tes conversations dans un fichier, par e-mail. Le plus complet.'))),
+    h('p', { class: 'note' }, 'Tu viens de ChatGPT ? Commence par le copier-coller : son export ne contient souvent plus tes souvenirs.'),
     exportHelp(),
     privacyNote(a));
   ui.actions.append(
     button('Retour', showDone, { kind: 'ghost', act: 'back' }),
-    button('Je copie-colle une réponse', () => showPaste(), { kind: 'secondary', act: 'paste' }),
-    button('Choisir mon fichier d’export', pickExport, { act: 'next' }));
+    button('Choisir mon fichier d’export', pickExport, { kind: 'secondary', act: 'pick' }),
+    button('Je copie-colle (2 min)', () => showPaste(), { act: 'next' }));
   focusMain();
 }
 
@@ -2180,7 +2420,7 @@ function showEstimate(plan) {
   };
   if (choices.length > 1) {
     for (const c of choices) {
-      const b = button(`${SIZES[c.nom] || c.nom} : ${count(c.appels, 'demande')}`, () => { chosen = c; paint(); }, { kind: 'secondary', small: true, act: `size-${c.nom}` });
+      const b = button(`${SIZES[c.nom] || c.nom} : environ ${c.minutes || c.appels} min`, () => { chosen = c; paint(); }, { kind: 'secondary', small: true, act: `size-${c.nom}` });
       b.dataset.appels = String(c.appels);
       sizes.append(b);
     }
@@ -2324,7 +2564,8 @@ function showImportError(e) {
         connect.disabled = false;
         return;
       }
-      say('thinking', 'J’attends que tu te connectes…', `Suis les étapes ${OS.inTerminal}.`);
+      if (engine === 'claude') say('thinking', ...CLAUDE_WAIT);
+      else say('thinking', 'J’attends que tu te connectes…', `Suis les étapes ${OS.inTerminal}.`);
       poll(() => {
         if (state.importPlan) showEstimate(state.importPlan);
         else showImportChoice();
@@ -2390,10 +2631,51 @@ function start() {
   window.__TAURI__.event.listen('step-log', onLog).catch(() => {});
   window.__TAURI__.event.listen('repair-progress', onRepairProgress).catch(() => {});
   window.__TAURI__.event.listen('import-progress', onImportProgress).catch(() => {});
-  Promise.all([readOffer(), readGuide()]).then(showWelcome);
+  // Claude's login only where the guide is offered: the welcome asks for it first when it is not there.
+  // Within LOGIN_READ_MS: Claude Code slow to answer held the welcome up to 10 s, empty, then read as « not
+  // logged in ». Past it, the guide is offered: its window asks for the login itself.
+  const guide = readGuide().then(async () => {
+    if (!state.guide) return;
+    const [said, whole] = await Promise.all([within(LOGIN_READ_MS, loginState('claude'), true), readBrainWhole()]);
+    state.claudeOn = loggedIn('claude', said);
+    state.brainWhole = whole;
+  });
+  Promise.all([readOffer(), guide, readVersion()]).then(showWelcome);
 }
 
-// Nothing to run: whether the brain and Claude Code are on the disk.
+// `promise`'s answer, or `fallback` once `ms` went by without one.
+function within(ms, promise, fallback) {
+  return Promise.race([promise, new Promise((resolve) => { setTimeout(() => resolve(fallback), ms); })]);
+}
+
+// Whether the install went to its end (detect.rs, files read only). Unreadable: nothing to say.
+async function readBrainWhole() {
+  try {
+    return (await invoke('brain_complete')) !== false;
+  } catch {
+    return true;
+  }
+}
+
+// Where the brain is, as the window says it (« Voir mes notes »): install.ps1 may have put it elsewhere
+// than Documents.
+async function readBrainDir() {
+  try {
+    state.brainDir = String(await invoke('brain_folder'));
+  } catch {
+    state.brainDir = '';
+  }
+}
+
+async function readVersion() {
+  try {
+    state.version = String(await window.__TAURI__.app.getVersion());
+  } catch {
+    state.version = '';
+  }
+}
+
+// Nothing to run: whether the guide can work here (guide.rs, files read only).
 async function readGuide() {
   try {
     state.guide = (await invoke('guide_offert')) === true;
