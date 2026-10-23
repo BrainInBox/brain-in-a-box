@@ -6,6 +6,7 @@ test-hooks.sh.
 
     python3 -I -m unittest discover -s engine/tests -v
 """
+import atexit
 import contextlib
 import importlib.util
 import io
@@ -32,7 +33,13 @@ import codex_captures as cap  # noqa: E402
 
 _spec = importlib.util.spec_from_file_location("session_recap", str(HOOKS / "session-recap.py"))
 rc = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(rc)
+# Loaded in a throwaway home: a folder the hook takes from the home when imported (an older one took
+# its journal's so) is never the user's own brain, even for a test that does not set it.
+_IMPORT_HOME = tempfile.mkdtemp(prefix="biab-recap-import-")
+atexit.register(shutil.rmtree, _IMPORT_HOME, True)
+with mock.patch.dict(os.environ, {"HOME": _IMPORT_HOME, "USERPROFILE": _IMPORT_HOME}):
+    os.environ.pop("BRAIN_DIR", None)
+    _spec.loader.exec_module(rc)
 
 DAY = "2026-10-14"
 # Pasted from a page, or a name the model picked: what Obsidian would run, load or read as structure.
