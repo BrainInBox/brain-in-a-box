@@ -85,8 +85,9 @@ INCONNU_MAX = 180           # a screen the robot does not know, for this long: a
 DELAI_FENETRE = 120
 DELAI_PREMIER = 75 * 60     # Bienvenue to the final screen (Apple's tools up to 45 min, the brain step 40)
 DELAI_RELANCE = 5 * 60
-# How every click is done: the mouse on the button, as a user clicks. Anything else (AXPress,
-# Invoke) proves no user could have clicked there: the scenario fails, once the walk is over.
+# How every click is done: the mouse on the button, as a user clicks, maybe followed by where, in
+# parentheses (macOS's picker). Anything else (AXPress, Invoke) proves no user could have clicked there:
+# the scenario fails, once the walk is over.
 CLIC_SOURIS = "clic souris"
 
 # Bibo's titles (app/src/app.js), after norm(): the screen they stand for.
@@ -3792,8 +3793,8 @@ class LogicielMac(Logiciel):
         click on the button macOS shows there (« Share This Window », a small button of ControlCenter's, on
         macOS 15 and 26), or on the window itself (macOS 14 lays a button of the window's size over it). As
         the desk test of the capture does it (app/src-tauri/tests/fixtures/guide/pilote_mac.py). Of the small
-        buttons, the widest whose middle is on the window. Returns how, with the buttons read and the click's
-        place (a failure's record)."""
+        buttons, the widest whose middle is on the window. Returns a click of the mouse (CLIC_SOURIS), then where,
+        on which window and the buttons read (a failure's record)."""
         f = self._cadre()
         if not f:
             raise ErreurPilote("la fenêtre d'Atelier Demo n'est plus là")
@@ -3818,7 +3819,8 @@ class LogicielMac(Logiciel):
             bx, by, how = x + w / 2 + 40, y + h / 2, "le milieu de la fenêtre (aucun bouton du sélecteur lu)"
         self.p._osa({"op": "souris", "x": bx, "y": by, "clic": True})
         lus = ", ".join("%s %s" % ("/".join(x for x in (b.get("n"), b.get("d")) if x) or "sans nom", b["pos"] + b["size"]) for b in boutons)
-        return "sélecteur de macOS : %s (clic à %d, %d ; fenêtre %s ; boutons lus : %s)" % (how, bx, by, f["pos"] + f["size"], lus or "aucun")
+        return "%s (sélecteur de macOS : %s à %d, %d ; fenêtre %s ; boutons lus : %s)" % (
+            CLIC_SOURIS, how, bx, by, f["pos"] + f["size"], lus or "aucun")
 
     def faire_etape(self):
         res = self.p._osa({"op": "cliquer", "processus": self.processus, "fenetre": None, "libelle": "Nouveau"})
@@ -4135,7 +4137,7 @@ def journaux_systeme(pilote, details):
 
 def clics_sans_souris(clics):
     """A reason when a click was not the mouse's (AXPress, Invoke, Toggle), else None."""
-    autres = [c for c in clics if c.get("comment") != CLIC_SOURIS]
+    autres = [c for c in clics if c.get("comment") != CLIC_SOURIS and not str(c.get("comment")).startswith(CLIC_SOURIS + " (")]
     if not autres:
         return None
     return "%d clic(s) sans la souris, qu'un utilisateur n'aurait pas pu faire (bouton couvert ? fenêtre derrière ?) : %s" % (

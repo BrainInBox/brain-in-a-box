@@ -488,6 +488,10 @@ class FauxLogiciel:
         nxt = guide_ecrans([], self.via).get(self.p.guide, {}).get("montrer")
         if nxt and not self.p.jamais_vue:
             self.p.aller_guide(nxt)
+        if self.via == "selecteur":
+            # As LogicielMac says it: the mouse, with where it clicked the picker.
+            return ta.CLIC_SOURIS + " (sélecteur de macOS : « Share This Window » à 491, 370 ; fenêtre [40, 100, 800, 540] ; " \
+                                    "boutons lus : sans nom [337, 356, 206, 28])"
         return ta.CLIC_SOURIS
 
     def faire_etape(self):
@@ -2666,6 +2670,13 @@ class GuideParts(unittest.TestCase):
         self.assertIn("Google Chrome", asked[0]["ignorer"])
         self.assertIn("ControlCenter", asked[0]["ignorer"], "macOS's picker is no dialog either")
 
+    def test_a_click_of_the_mouse_may_say_where_it_was(self):
+        self.assertIsNone(ta.clics_sans_souris([{"comment": ta.CLIC_SOURIS},
+                                                {"comment": ta.CLIC_SOURIS + " (sélecteur de macOS : « Share This Window » à 491, 370)"}]))
+        for other in ("AXPress (pas de clic souris : une autre app est devant (Finder))", "action AT-SPI (pas de clic souris : couvert)",
+                      "Invoke", "sélecteur de macOS : « Share This Window »", ta.CLIC_SOURIS + "s", None):
+            self.assertIsNotNone(ta.clics_sans_souris([{"bouton": "B", "ecran": "e", "comment": other}]), other)
+
     def test_on_a_mac_the_program_is_a_page_picked_in_the_systems_picker(self):
         tmp = Path(tempfile.mkdtemp(prefix="atelier-mac-"))
         self.addCleanup(shutil.rmtree, str(tmp), True)
@@ -2700,8 +2711,9 @@ class GuideParts(unittest.TestCase):
         self.assertEqual(p.ignores, ("Google Chrome",))
         with mock.patch.object(ta.time, "sleep"):
             said = logiciel.montrer()
-        self.assertEqual(said, "sélecteur de macOS : « Share This Window » (clic à 470, 114 ; fenêtre [40, 60, 800, 540] ; "
+        self.assertEqual(said, "clic souris (sélecteur de macOS : « Share This Window » à 470, 114 ; fenêtre [40, 60, 800, 540] ; "
                                "boutons lus : sans nom [900, 300, 160, 28], x [700, 90, 20, 20], sans nom [380, 100, 120, 28])")
+        self.assertIsNone(ta.clics_sans_souris([{"comment": said}]), "the picker is clicked with the mouse")
         clicks = [r for r in asked if r["op"] == "souris" and r["clic"]]
         self.assertEqual(clicks, [{"op": "souris", "x": 380 + 120 * 0.75, "y": 114.0, "clic": True}])
         hovers = [r for r in asked if r["op"] == "souris" and not r["clic"]]
@@ -2710,7 +2722,7 @@ class GuideParts(unittest.TestCase):
         asked.clear()
         replies["boutons"] = lambda r: {"boutons": [dict(frame, n="")]}
         with mock.patch.object(ta.time, "sleep"):
-            self.assertTrue(logiciel.montrer().startswith("sélecteur de macOS : la fenêtre, sous le sélecteur (clic à 440, 124 ;"))
+            self.assertTrue(logiciel.montrer().startswith("clic souris (sélecteur de macOS : la fenêtre, sous le sélecteur à 440, 124 ;"))
         self.assertEqual([r for r in asked if r["op"] == "souris" and r["clic"]], [{"op": "souris", "x": 440.0, "y": 60 + 0.12 * 540, "clic": True}])
         self.assertEqual(logiciel.faire_etape(), "clic souris")
         self.assertEqual(asked[-1], {"op": "cliquer", "processus": "Google Chrome", "fenetre": None, "libelle": "Nouveau"})
