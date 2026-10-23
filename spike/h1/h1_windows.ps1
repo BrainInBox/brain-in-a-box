@@ -333,6 +333,11 @@ switch ($Phase) {
     $R.failed = if ($rep) { @($rep.failed) } else { @("no report") }
     $R.path_readded_by_hermes = @(PathEntries (RawUserPath) | Where-Object { $_.TrimEnd("\") -eq $Bin }).Count -gt 0
     $R.processes_left = RootProcesses
+    # Les mutations qui suivent salissent exprès le home de la personne : le parcours normal est relevé ici.
+    $S = Load "setup"
+    $R.sentinels = Sentinels
+    $R.sentinel_changes_since_setup = DiffMap $S.sentinels $R.sentinels
+    $R.user_env_changes_since_setup = DiffMap $S.env (EnvSnapshot)
     Finish ($R.exit -eq 0 -and -not $R.path_readded_by_hermes)
 }
 "mutations" {
@@ -385,11 +390,15 @@ switch ($Phase) {
     if (Test-Path $Root) { & cmd.exe /c rmdir /s /q "$Root" 2>&1 | Out-Null }
     $k = EnvKey
     $kind = UserPathKind
-    $kept = @(PathEntries (RawUserPath) | Where-Object { -not (Underroot ([Environment]::ExpandEnvironmentVariables($_))) })
-    if ($kind -ne "absent") { $k.SetValue("Path", ($kept -join ";"), [Microsoft.Win32.RegistryValueKind]$kind) }
+    $all = @(PathEntries (RawUserPath))
+    $kept = @($all | Where-Object { -not (Underroot ([Environment]::ExpandEnvironmentVariables($_))) })
+    if ($kind -ne "absent" -and $kept.Count -ne $all.Count) { $k.SetValue("Path", ($kept -join ";"), [Microsoft.Win32.RegistryValueKind]$kind) }
     $k.Close()
     $R.bounded = [ordered]@{ seconds = [math]::Round($sw.Elapsed.TotalSeconds, 1); root_exists = (Test-Path $Root); processes_left = RootProcesses }
+    $P = Load "probe"
     $R.final = [ordered]@{
+        sentinel_changes_during_uninstall = DiffMap $S2 (Sentinels)
+        sentinel_changes_setup_to_probe = $(if ($P) { $P.sentinel_changes_since_setup } else { "no probe phase" })
         sentinel_changes_since_setup = DiffMap $S.sentinels (Sentinels)
         user_env_changes_since_setup = DiffMap $S.env (EnvSnapshot)
         runkey_changes_since_setup = DiffMap $S.runkeys (RunKeys)
@@ -407,7 +416,10 @@ switch ($Phase) {
         Select-Object -First 25 | ForEach-Object { "$($_.Count) $($_.Name)" })
     $ok = (-not $R.bounded.root_exists) -and $R.final.path_identical_to_setup
     if ($env:H1_UNINSTALL -eq "bounded") {
-        $ok = $ok -and (@($R.final.sentinel_changes_since_setup.Keys).Count -eq 0) -and (@($R.final.user_env_changes_since_setup.Keys).Count -eq 0) -and ($hl.Count -eq 0)
+        # Parcours normal : installation -> séance -> désinstallation, sans les mutations du milieu.
+        $probeTouched = @((AsHash $R.final.sentinel_changes_setup_to_probe).Keys).Count
+        $ok = $ok -and $P -and ($probeTouched -eq 0) -and (@($R.final.sentinel_changes_during_uninstall.Keys).Count -eq 0) `
+            -and (@($R.final.user_env_changes_since_setup.Keys).Count -eq 0) -and ($hl.Count -eq 0)
     } else {
         # Job de mutation : le PATH et les sentinelles sont abîmés exprès ; on vérifie seulement que ça se voit.
         $ok = $R.mutation_full_red -and (-not $R.bounded.root_exists)
