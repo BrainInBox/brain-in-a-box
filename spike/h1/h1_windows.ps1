@@ -198,7 +198,13 @@ switch ($Phase) {
 "install" {
     $S = Load "setup"
     $inst = Join-Path $Out "install.ps1"
-    Invoke-WebRequest "https://raw.githubusercontent.com/NousResearch/hermes-agent/$Sha/scripts/install.ps1" -OutFile $inst -UseBasicParsing
+    # raw.githubusercontent.com rend parfois 429 aux runners : on réessaie, puis un miroir ; l'empreinte tranche.
+    $R.download = @()
+    foreach ($try in 1..6) {
+        $u = if ($try -le 4) { "https://raw.githubusercontent.com/NousResearch/hermes-agent/$Sha/scripts/install.ps1" } else { "https://cdn.jsdelivr.net/gh/NousResearch/hermes-agent@$Sha/scripts/install.ps1" }
+        try { Invoke-WebRequest $u -OutFile $inst -UseBasicParsing -ErrorAction Stop; $R.download += "ok $u"; break }
+        catch { $R.download += "try $try $u : $($_.Exception.Message)"; Start-Sleep -Seconds (20 * $try) }
+    }
     $got = (Get-FileHash $inst -Algorithm SHA256).Hash.ToLower()
     $R.install_ps1_sha256 = [ordered]@{ expected = $env:H1_INSTALL_PS1_SHA256; got = $got; ok = ($got -eq $env:H1_INSTALL_PS1_SHA256) }
     if (-not $R.install_ps1_sha256.ok) { Finish $false }

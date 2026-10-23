@@ -22,7 +22,9 @@ for f in .zshrc .bashrc .bash_profile .profile; do touch "$HOME/$f"; cp "$HOME/$
 J hashes "${SENT[@]}" > "$OUT/sent0.json"
 export HERMES_HOME="$USERHOME" H1_USER_HERMES_HOME="$USERHOME"
 
-curl -fsSL -o "$OUT/install.sh" "https://raw.githubusercontent.com/NousResearch/hermes-agent/$H1_HERMES_COMMIT/scripts/install.sh"
+# raw.githubusercontent.com rend parfois 429 aux runners : on réessaie, puis un miroir ; l'empreinte tranche.
+curl -fsSL --retry 4 --retry-all-errors --retry-delay 20 -o "$OUT/install.sh" "https://raw.githubusercontent.com/NousResearch/hermes-agent/$H1_HERMES_COMMIT/scripts/install.sh" \
+  || curl -fsSL --retry 2 -o "$OUT/install.sh" "https://cdn.jsdelivr.net/gh/NousResearch/hermes-agent@$H1_HERMES_COMMIT/scripts/install.sh"
 got=$(shasum -a 256 "$OUT/install.sh" | cut -d' ' -f1)
 [ "$got" = "$H1_INSTALL_SH_SHA256" ] || { echo "install.sh SHA-256 mismatch: $got"; exit 1; }
 t0=$(python3 -c 'import time; print(time.time())')
