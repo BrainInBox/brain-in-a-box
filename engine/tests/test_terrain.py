@@ -1266,9 +1266,9 @@ class MiseAJour(unittest.TestCase):
         f.write_bytes(b"old")
         return f
 
-    def run_it(self):
+    def run_it(self, source="build"):
         opts = types.SimpleNamespace(home=self.home, json=str(Path(self.tmp) / "r.json"), parcours="app-mise-a-jour", vm=True,
-                                     source="build", fichier=str(self.new), captures=str(self.shots), delai_min=0)
+                                     source=source, fichier=str(self.new), captures=str(self.shots), delai_min=0)
         versions = iter(self.versions)
         with mock.patch.dict(os.environ, {"GH_TOKEN": "ghs_x"}), mock.patch.object(terrain, "version_d_avant", self.avant), \
                 mock.patch.object(terrain, "version_installee", lambda pilote: next(versions)):
@@ -1281,8 +1281,8 @@ class MiseAJour(unittest.TestCase):
         row, left = self.run_it()
         self.assertEqual(row["statut"], "ok", row["raison"])
         self.assertIsNone(left, "the read-only token never reaches the app")
-        self.assertTrue(row["raison"].startswith("app 0.1.138, son cerveau installé, puis la version construite par-dessus (le Finder "
-                                                 "remplace l'app, macOS la bloque de nouveau) : version 0.1.139"), row["raison"])
+        self.assertTrue(row["raison"].startswith("app 0.1.138, son cerveau installé, puis la version construite par-dessus (l'app "
+                                                 "remplacée dans Applications, macOS la bloque de nouveau) : version 0.1.139"), row["raison"])
         d = row["details"]
         self.assertEqual(self.p.installes[0][0], "Brain-in-a-Box_macos-universal.dmg")
         self.assertEqual(self.p.installes[1][0], self.new.name)
@@ -1300,6 +1300,27 @@ class MiseAJour(unittest.TestCase):
         self.assertTrue(any("-avant-" in c for c in d["captures"]))
         self.assertEqual(d["ajouts_au_coffre"], [])
         self.assertTrue((self.home / "Documents" / "Brain" / terrain.NOTE_UTILISATEUR).is_file())
+
+    def test_on_master_the_newest_preview_over_itself(self):
+        # The night on master: the tested version is the newest preview, fetched as the path app fetches it, with
+        # the read-only token taken out of the environment (never the app's); the same version, over itself.
+        got = []
+
+        def depuis_release(t, pilote, dossier, token, details, sha=None):
+            got.append((token, sha))
+            details["release"] = "app-v0.1.138-preview.138"
+            f = Path(dossier) / "Brain-in-a-Box_0.1.138-preview.138_macos-universal.dmg"
+            f.write_bytes(b"dmg")
+            return f
+        self.versions = ["0.1.138", "0.1.138"]
+        with mock.patch.object(terrain.terrain_app, "depuis_release", depuis_release), \
+                mock.patch.object(terrain, "tested_ref", lambda: "f" * 40):
+            row, left = self.run_it(source="release")
+        self.assertEqual(row["statut"], "ok", row["raison"])
+        self.assertEqual(got, [("ghs_x", "f" * 40)])
+        self.assertIsNone(left, "the read-only token never reaches the app")
+        self.assertIn("puis app-v0.1.138-preview.138 par-dessus", row["raison"])
+        self.assertEqual(self.p.installes[1][0], "Brain-in-a-Box_0.1.138-preview.138_macos-universal.dmg")
 
     def test_a_brain_the_update_touched_fails(self):
         for what, why in (("Documents/Brain/" + terrain.NOTE_UTILISATEUR, "1 fichier(s) du coffre perdu(s) ou changé(s) par la mise à jour : "
@@ -1379,6 +1400,41 @@ class MiseAJour(unittest.TestCase):
             check("autre.exe")
         self.assertIn("Brain-in-a-Box_windows-x64-setup.exe ne correspond pas au SHA256SUMS d'app-latest", str(cm.exception))
 
+
+SITE = Path(HERE).parent.parent / "site"
+# The robot's screens: 1024x768 on macOS and Windows, 1280x900 on Linux.
+ECRANS = {"macos": (1024, 768), "macos-mise-a-jour": (1024, 768), "windows": (1024, 768), "windows-mise-a-jour": (1024, 768),
+          "linux": (1280, 900)}
+# The site's images captures.sh does not make: the guide's (until the night films its automatic capture),
+# Voyage's screen (the robot no longer opens it), the icon and the shared link's picture.
+SITE_GARDEES = {"guide-objectif.webp", "guide-etape.webp", "bibo-3-voyage.webp", "bibo.svg", "og.jpg"}
+
+
+class SiteCaptures(unittest.TestCase):
+    """site/captures.sh crops the night's captures into site/img: each crop inside the robot's screen, each image
+    the size of its crop (the page says that size: test_release_workflow), an alt that says what it shows, and no
+    image of the site left out by mistake."""
+
+    def test_each_image_is_its_crop(self):
+        from test_release_workflow import webp_size
+        table = (SITE / "captures.sh").read_text(encoding="utf-8").split("<<'EOF'\n", 1)[1].split("\nEOF", 1)[0]
+        page = (SITE / "index.html").read_text(encoding="utf-8")
+        faites = set()
+        for line in table.splitlines():
+            if not line.strip() or line.startswith("#"):
+                continue
+            source, x, y, w, h, name = line.split()
+            x, y, w, h = int(x), int(y), int(w), int(h)
+            with self.subTest(name=name):
+                largeur, hauteur = ECRANS.get(source.split("/", 1)[0], (0, 0))
+                self.assertTrue(x >= 0 and y >= 0 and x + w <= largeur and y + h <= hauteur, "%s: crop outside the screen" % line)
+                self.assertEqual(webp_size(SITE / "img" / (name + ".webp")), (w, h))
+                for tag in re.findall(r'<a class="zoom" href="img/%s\.webp"><img [^>]*>' % re.escape(name), page):
+                    self.assertRegex(tag, r'alt="[^"]{40,}"', "a capture shown big says what it shows")
+                faites.add(name + ".webp")
+        site = {f.name for f in (SITE / "img").iterdir()}
+        self.assertEqual(sorted(site - faites - SITE_GARDEES), [], "an image of the site captures.sh neither makes nor keeps")
+        self.assertEqual(SITE_GARDEES - site, set())
 
 
 @unittest.skipIf(sys.platform == "win32", "the Unix form of Codex's hooks; Windows' runs on its VM (app-windows, app-codex)")

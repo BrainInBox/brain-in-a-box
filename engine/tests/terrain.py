@@ -1953,8 +1953,8 @@ def version_installee(pilote):
 
 def par_dessus(pilote, fichier, details, capturer):
     """The tested version installed over the one there, as a user does: on Windows its setup.exe opened and
-    clicked through (SmartScreen, then its pages); on macOS the app in Applications replaced by the DMG's (the
-    Finder's « Remplacer »), then Gatekeeper again."""
+    clicked through (SmartScreen, then its pages); on macOS the app in Applications replaced by the DMG's (what
+    the Finder's « Remplacer » does, done by the robot: it copies, it does not drag), then Gatekeeper again."""
     if isinstance(pilote, terrain_app.PiloteWindows):
         details["bureau_range"] = pilote._outil(["ranger"]).get("fenetres")
         lance, notes = pilote.lancer_setup(fichier, details, capturer)
@@ -2136,7 +2136,7 @@ def mise_a_jour(t, opts, pilote=None, horloge=time.monotonic, dormir=time.sleep)
                    "propose le guide, coffre, kit, réglages et tâches intacts" % (
                        avant.get("version") or avant.get("release"), nouveau.get("release") or "la version construite",
                        " (l'installeur dit « %s », sans question)" % MAJ_TITRE if isinstance(pilote, terrain_app.PiloteWindows)
-                       else " (le Finder remplace l'app, macOS la bloque de nouveau)", nouveau["version"])
+                       else " (l'app remplacée dans Applications, macOS la bloque de nouveau)", nouveau["version"])
     except terrain_app.ErreurPilote as e:
         if parcours:
             parcours.sur_echec()

@@ -34,12 +34,14 @@ done   # HTTP/2 302, four times
 
 ## Update the captures
 
-They come from the nightly field test (`.github/workflows/terrain.yml`), artifacts `captures-macos-app`, `captures-windows-app` and `captures-linux-app`:
+They come from the nightly field test (`.github/workflows/terrain.yml`), artifacts `captures-macos-app`, `captures-windows-app` and `captures-linux-app`, and the update's `captures-macos-app-mise-a-jour` and `captures-windows-app-mise-a-jour` (the end once Claude is connected, SmartScreen naming the site's file):
 
 ```bash
 run=$(gh run list -w terrain.yml -s completed -L 1 --json databaseId -q '.[0].databaseId')
-for os in macos windows linux; do gh run download "$run" -n "captures-$os-app" -D "/tmp/captures/$os"; done
+for a in macos-app windows-app linux-app macos-app-mise-a-jour windows-app-mise-a-jour; do
+  gh run download "$run" -n "captures-$a" -D "/tmp/captures/${a/-app/}"
+done
 site/captures.sh /tmp/captures      # needs cwebp (brew install webp)
 ```
 
-`captures.sh` crops each capture to the window that matters and writes `img/*.webp` (lossless-like, about 300 KB for all). Its table names the source capture, the crop and the output: when a screen of the app changes place, or a capture is renumbered, fix its line. Then check the page, and the texts and `alt` that describe the screens.
+`captures.sh` crops each capture to the window that matters and writes `img/*.webp` (lossless-like, about 300 KB for all). Its table names the source capture (by its screen: the first capture of it), the crop and the output: when a screen of the app changes place, fix its line. Then check the page, and the texts and `alt` that describe the screens.
