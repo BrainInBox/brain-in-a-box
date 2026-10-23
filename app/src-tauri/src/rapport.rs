@@ -161,7 +161,8 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn the_windows_desktop_is_explorers() {
-        let d = desktop(&sys::home());
-        assert!(d.is_absolute() && d.is_dir(), "{}", d.display());
+        let d = known::desktop().expect("Windows names its Desktop");
+        assert!(d.is_absolute(), "{}", d.display());
+        assert_eq!(desktop(&sys::home()), d);
     }
 }
