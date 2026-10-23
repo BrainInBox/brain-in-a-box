@@ -3101,7 +3101,7 @@ mod tests {
         let grows = dir.path().join("grows.sh");
         fs::write(&grows, format!("for i in $(seq 1 30); do printf 0123456789 >> {file}; sleep 0.2; done\n")).unwrap();
         let t = Instant::now();
-        let ended = run_watched(Path::new("/bin/sh"), &[&grows.to_string_lossy()], &[], dir.path(), &[watched.clone()], &pace, &mut |_| {});
+        let ended = run_watched(Path::new("/bin/sh"), &[&grows.to_string_lossy()], &[], dir.path(), std::slice::from_ref(&watched), &pace, &mut |_| {});
         assert_eq!(ended, Ended::Code(0));
         assert!(t.elapsed() > pace.stall * 3, "{:?}", t.elapsed());
         // Talks, then nothing: stopped after the pause, everything it started with it.
@@ -3110,7 +3110,7 @@ mod tests {
         fs::write(&still, format!("echo starting\nsleep 20\ntouch {}\n", sh_quote(&mark.to_string_lossy()))).unwrap();
         let mut lines = Vec::new();
         let t = Instant::now();
-        let ended = run_watched(Path::new("/bin/sh"), &[&still.to_string_lossy()], &[], dir.path(), &[watched.clone()], &pace, &mut |l| lines.push(l));
+        let ended = run_watched(Path::new("/bin/sh"), &[&still.to_string_lossy()], &[], dir.path(), std::slice::from_ref(&watched), &pace, &mut |l| lines.push(l));
         assert_eq!(ended, Ended::Stalled);
         assert!(t.elapsed() < Duration::from_secs(10) && lines == ["starting"], "{:?} {lines:?}", t.elapsed());
         // Past its limit, moving or not.

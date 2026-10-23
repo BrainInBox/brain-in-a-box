@@ -51,7 +51,7 @@ fn desktop(home: &Path) -> PathBuf {
 }
 
 /// XDG_DESKTOP_DIR="$HOME/Bureau", as xdg-user-dirs writes it: the home folder or an absolute path.
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", all(test, unix)))]
 fn xdg_desktop(dirs: &str, home: &Path) -> Option<PathBuf> {
     let value = dirs.lines().find_map(|l| l.trim().strip_prefix("XDG_DESKTOP_DIR="))?.trim().trim_matches('"');
     let path = match value.strip_prefix("$HOME") {
@@ -130,7 +130,7 @@ mod tests {
         assert!(written.contains("Échec à l'étape « brain »") && written.contains("~/Documents/Brain"), "{written}");
         assert_eq!(written.contains("\r\n"), cfg!(windows));
         // Again: replaced, not a second file.
-        save_in(&[desk.clone()], "deux").unwrap();
+        save_in(std::slice::from_ref(&desk), "deux").unwrap();
         assert_eq!(fs::read_to_string(desk.join(FILE)).unwrap(), "deux");
         assert_eq!(fs::read_dir(&desk).unwrap().count(), 1);
     }
@@ -146,6 +146,7 @@ mod tests {
         assert!(save_in(&[dir.path().to_path_buf()], &"x".repeat(MAX_BYTES + 1)).is_err());
     }
 
+    #[cfg(unix)]
     #[test]
     fn the_linux_desktop_is_the_one_user_dirs_names() {
         let home = Path::new("/home/jo");
