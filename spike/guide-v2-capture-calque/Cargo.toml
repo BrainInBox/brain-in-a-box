@@ -1,0 +1,30 @@
+# Throwaway (branch spike/guide-v2-capture-calque): P0 proofs W1, W3, W4 of the guide v2 on Windows VMs.
+# A crate of its own, outside the app: the techniques are measured, the product is not touched.
+[package]
+name = "spike-capture-calque"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[target.'cfg(windows)'.dependencies]
+# The app's own version (app/src-tauri/Cargo.toml), with the features these proofs need.
+windows = { version = "=0.61.3", features = [
+  "Win32_Devices_Display",
+  "Win32_Foundation",
+  "Win32_Graphics_Dwm",
+  "Win32_Graphics_Gdi",
+  "Win32_Security",
+  "Win32_Storage_Xps",
+  "Win32_System_Com",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Ole",
+  "Win32_System_SystemInformation",
+  "Win32_System_Threading",
+  "Win32_System_Variant",
+  "Win32_UI_Accessibility",
+  "Win32_UI_HiDpi",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_WindowsAndMessaging",
+] }

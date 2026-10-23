@@ -1,0 +1,146 @@
+# Throwaway (branch spike/guide-v2-capture-calque, deleted afterwards): the guide v2's P0 proofs W1 (the
+# app in front, composed by PrintWindow), W3 (the overlay) and W4 (change detection), on Windows Server
+# 2022 and 2025. Windows of known colours (spike/guide-v2-capture-calque/atelier.cs, compiled there) and
+# two pages of known colours served on 127.0.0.1; pixels counted in memory, no image kept or uploaded.
+# Then each protection taken out in turn must turn a test red.
+name: spike-guide-v2-capture-calque
+
+on:
+  push:
+    branches: [spike/guide-v2-capture-calque]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: spike-guide-v2-capture-calque-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  bureau:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2025, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+        working-directory: spike/guide-v2-capture-calque
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            spike/guide-v2-capture-calque/target
+          key: spikev2cc-${{ matrix.os }}-${{ hashFiles('spike/guide-v2-capture-calque/Cargo.lock') }}
+
+      - name: The desktop
+        shell: pwsh
+        run: |
+          [System.Environment]::OSVersion.VersionString
+          (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion').DisplayVersion
+          Add-Type -AssemblyName System.Windows.Forms
+          [System.Windows.Forms.Screen]::AllScreens | ForEach-Object { "screen $($_.DeviceName) $($_.Bounds)" }
+          whoami /groups | Select-String "Mandatory"
+          "session of this step: $((Get-Process -Id $PID).SessionId)"
+          $e = "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe"
+          if (Test-Path $e) { "Edge $((Get-Item $e).VersionInfo.ProductVersion)" }
+          Get-CimInstance Win32_VideoController | ForEach-Object { "video: $($_.Name) $($_.CurrentHorizontalResolution)x$($_.CurrentVerticalResolution)" }
+
+      - name: Build
+        run: cargo test --locked --no-run
+
+      - name: Unit tests
+        run: cargo test --locked 2>&1 | tee "$RUNNER_TEMP/unit.log"
+
+      - name: W1, the app in front (window, palette, dialog, menus; another program over it)
+        if: always()
+        run: cargo test --locked -- --ignored --exact tests::bureau_w1_appli_composee --test-threads=1 --nocapture 2>&1 | tee "$RUNNER_TEMP/w1-appli.log"
+
+      - name: W1, Edge (the site, the tab strip, Edge's other window)
+        if: always()
+        run: cargo test --locked -- --ignored --exact tests::bureau_w1_edge --test-threads=1 --nocapture 2>&1 | tee "$RUNNER_TEMP/w1-edge.log"
+
+      - name: W1, a window run as administrator, captured from Medium
+        if: always()
+        shell: pwsh
+        run: |
+          $fw = "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319"
+          & "$fw\csc.exe" /nologo /target:winexe /r:System.Windows.Forms.dll /r:System.Drawing.dll "/out:$env:RUNNER_TEMP\atelier-admin.exe" atelier.cs
+          & "$fw\csc.exe" /nologo /target:exe "/out:$env:RUNNER_TEMP\moyen.exe" moyen.cs
+          $w = Start-Process "$env:RUNNER_TEMP\atelier-admin.exe" -ArgumentList 'fenetre', '"Atelier Admin"', '80', '80', '500', '400', '1e88e5' -PassThru
+          Start-Sleep 3
+          $test = Get-ChildItem target\debug\deps\spike_capture_calque-*.exe | Sort-Object LastWriteTime | Select-Object -Last 1
+          $out = "$env:RUNNER_TEMP\w1-admin.log"
+          $cmd = "$env:RUNNER_TEMP\sonde.cmd"
+          "whoami /groups | findstr /i label > `"$out`"`r`n`"$($test.FullName)`" --ignored --exact tests::sonde_admin --nocapture --test-threads=1 >> `"$out`" 2>&1" | Out-File -FilePath $cmd -Encoding ascii
+          & "$env:RUNNER_TEMP\moyen.exe" "cmd.exe /c `"$cmd`""
+          Stop-Process -Id $w.Id -ErrorAction SilentlyContinue
+          Get-Content $out
+          if (-not (Select-String -Path $out -Pattern 'test result: ok' -Quiet)) { exit 1 }
+
+      - name: W3, the overlay at 100 %
+        if: always()
+        run: cargo test --locked -- --ignored --exact tests::bureau_w3_calque --test-threads=1 --nocapture 2>&1 | tee "$RUNNER_TEMP/w3.log"
+
+      - name: W4, idleness without a hook
+        if: always()
+        run: cargo test --locked -- --ignored --exact tests::bureau_w4_inactivite --test-threads=1 --nocapture 2>&1 | tee "$RUNNER_TEMP/w4-inactivite.log"
+
+      - name: W4, 60 s of a clock, a caret, a spinner
+        if: always()
+        run: cargo test --locked -- --ignored --exact tests::bureau_w4_calme_60s --test-threads=1 --nocapture 2>&1 | tee "$RUNNER_TEMP/w4-calme.log"
+
+      - name: W4, a dialog that opens
+        if: always()
+        run: cargo test --locked -- --ignored --exact tests::bureau_w4_dialogue --test-threads=1 --nocapture 2>&1 | tee "$RUNNER_TEMP/w4-dialogue.log"
+
+      - name: W3 at 125 and 150 % (resolution and scale changed live, put back after)
+        if: always()
+        run: cargo test --locked -- --ignored --exact tests::bureau_w3_echelles --test-threads=1 --nocapture 2>&1 | tee "$RUNNER_TEMP/w3-echelles.log"
+
+      - name: Measures
+        if: always()
+        run: |
+          {
+            echo "### Mesures (${{ matrix.os }})"
+            echo
+            echo '```'
+            grep -h '^MESURE\|^test tests::\|panicked' "$RUNNER_TEMP"/*.log || true
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+  # Only on a commit that asks for them (« [mutations] »), once the desktop tests are green.
+  mutations:
+    if: contains(github.event.head_commit.message, '[mutations]')
+    runs-on: windows-2025
+    timeout-minutes: 150
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: spike/guide-v2-capture-calque
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            spike/guide-v2-capture-calque/target
+          key: spikev2cc-mut-${{ hashFiles('spike/guide-v2-capture-calque/Cargo.lock') }}
+
+      - name: Build
+        run: cargo test --locked --no-run
+
+      - name: Each protection taken out turns a desktop test red
+        run: python -I mutations.py
