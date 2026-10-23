@@ -6,6 +6,7 @@ executable). Every run happens in a throwaway home.
 
     python3 -I -m unittest discover -s engine/tests -v
 """
+import hashlib
 import json
 import os
 import re
@@ -608,10 +609,16 @@ class Workflow(unittest.TestCase):
             # The JSON joins the report's artifacts (terrain-*); the captures stay out of its download.
             names = [st["with"]["name"] for st in steps if str(st.get("uses", "")).startswith("actions/upload-artifact@")]
             self.assertEqual(sorted(names), ["captures-%s-${{ matrix.parcours }}" % os_name, "terrain-%s-${{ matrix.parcours }}" % os_name])
-            # Two paths: Claude alone as users get it, and Codex chosen alone in the robot's copy of the kit.
-            self.assertEqual(job["strategy"], {"fail-fast": False, "matrix": {"parcours": ["app", "app-codex"]}})
+            # Claude alone as users get it, and Codex chosen alone in the robot's copy of the kit; Windows without
+            # winget too; macOS and Windows as an update over the version users already have.
+            paths = {"app-macos": ["app", "app-codex", "app-mise-a-jour"],
+                     "app-windows": ["app", "app-codex", "app-sans-winget", "app-mise-a-jour"]}.get(name, ["app", "app-codex"])
+            self.assertEqual(job["strategy"], {"fail-fast": False, "matrix": {"parcours": paths}})
             self.assertEqual(job["env"]["PARCOURS"], "${{ matrix.parcours }}")
-            self.assertEqual(terrain.JOBS[name], (os_name, ("%s-app" % os_name, "%s-app-codex" % os_name)))
+            self.assertEqual(terrain.JOBS[name], (os_name, tuple("%s-%s" % (os_name, pa) for pa in paths)))
+            for pa in paths:
+                self.assertEqual(terrain.ATTENDUS[pa], ("app",), pa)
+                self.assertIn(os_name, terrain.ATTENDUS_OS.get(pa, ("macos", "windows")), pa)
         self.assertIn("pattern: terrain-*", "pattern: " + self.jobs["rapport"]["steps"][1]["with"]["pattern"])
         self.assertIn("app", terrain.ATTENDUS["app"])
         self.assertEqual(terrain.ATTENDUS["app-codex"], ("app",))
@@ -623,6 +630,35 @@ class Workflow(unittest.TestCase):
         self.assertEqual(len(fresh), 1)
         self.assertLess(fresh[0], scenario[0])
         self.assertIn('"--stub=$env:TERRAIN_STUB"', steps[scenario[0]]["run"])
+
+    def test_a_branchs_app_is_built_as_the_next_version(self):
+        # Numbered as release.yml numbers a preview (MAJOR.MINOR.<run>), one more than the published ones: the
+        # installer then updates the version users have (app-mise-a-jour), as it will theirs.
+        for name, conf in (("app-macos", '--config "{\\"version\\":\\"$version\\"}"'), ("app-windows", "--config $config")):
+            build = next(st for st in self.jobs[name]["steps"] if st.get("name") == "Build the app from the tested commit (branch)")
+            run = build["run"]
+            asked = run.index("engine/tests/terrain.py\" version-suivante" if name == "app-macos" else
+                              "engine\\tests\\terrain.py\" version-suivante")
+            self.assertLess(asked, run.index("cargo tauri build"), name)
+            self.assertIn(conf, run, name)
+            self.assertNotIn("tauri.conf.json", run, "%s: the file is named after the version it was built with" % name)
+            self.assertIn("Brain-in-a-Box_${version}-terrain." if name == "app-macos" else "Brain-in-a-Box_$version-terrain.", run)
+        tags = ["refs/tags/app-v0.1.0-preview.121", "refs/tags/app-v0.1.138-preview.138", "refs/tags/app-v0.2.7-preview.140",
+                "refs/tags/v0.2.0", "refs/tags/app-latest", "refs/tags/app-v0.1.99-ci.99"]
+        self.assertEqual(terrain.version_suivante(tags, "0.1.0"), "0.1.139")
+        self.assertEqual(terrain.version_suivante([], "0.1.0"), "0.1.1")
+        self.assertEqual(terrain.version_suivante(tags[:1], "0.1.5"), "0.1.6")
+
+    def test_the_update_keeps_apples_tools_and_plays_through_the_same_step(self):
+        # A Mac that has its brain had Apple's tools for it: the update keeps them, every other path loses them.
+        steps = self.jobs["app-macos"]["steps"]
+        tools = next(st for st in steps if st.get("name") == "No Apple command line tools, before the app")
+        self.assertEqual(tools["if"], "matrix.parcours != 'app-mise-a-jour'")
+        for name in ("app-macos", "app-windows"):
+            scenario = [st for st in self.jobs[name]["steps"] if "terrain.py app" in st.get("run", "")]
+            self.assertEqual(len(scenario), 1, "one step for every path: terrain.py app plays the path's own scenario")
+            self.assertEqual(scenario[0].get("if"), "${{ !cancelled() }}", name)
+        self.assertTrue(terrain.SANS_WINGET_PS1.is_file())
 
     def test_nothing_the_app_touched_gets_into_a_cache(self):
         # The app, then Claude Code, Bun and gbrain's dependencies run as the job's user: a cache
@@ -972,14 +1008,377 @@ class WindowsWithoutGit(unittest.TestCase):
         called = []
 
         def check_git(t, opts):
-            called.append(opts.parcours)
+            called.append(("git", opts.parcours))
+
+        def check_python(t, opts):
+            called.append(("python", opts.parcours))
             raise terrain.Echec("vu")
         home = Path(self.tmp)
-        with mock.patch.object(terrain, "WINDOWS", True), mock.patch.object(terrain, "check_git", check_git):
-            for parcours, fresh in (("neuf", True), ("app", True), ("app-codex", True), ("montee", False), ("montee", True)):
+        with mock.patch.object(terrain, "WINDOWS", True), mock.patch.object(terrain, "check_git", check_git), \
+                mock.patch.object(terrain, "check_python", check_python):
+            for parcours, fresh in (("neuf", True), ("app", True), ("app-codex", True), ("app-sans-winget", True),
+                                    ("montee", False), ("montee", True)):
                 with self.assertRaises(terrain.Echec):
                     terrain.check_install(terrain.Etapes(), types.SimpleNamespace(home=home, parcours=parcours), fresh=fresh)
-        self.assertEqual(called, ["neuf", "app", "app-codex"])
+        fresh = ["neuf", "app", "app-codex", "app-sans-winget"]
+        self.assertEqual(called, [(k, pa) for pa in fresh for k in ("git", "python")])
+
+
+LOCAL = "C:\\Users\\runneradmin\\AppData\\Local"
+PY_WINGET = "install -e --id Python.Python.3.12 --source winget --silent --accept-package-agreements --accept-source-agreements"
+
+
+class WindowsPython(unittest.TestCase):
+    """Windows starts without Python but the Store's stub (poste-neuf.ps1): the way install.ps1 says it brought
+    one, read in install.log, and the app's diagnosis that said « À installer » first."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="terrain-python-")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.home = Path(self.tmp) / "home"
+        (self.home / ".brain-in-a-box").mkdir(parents=True)
+
+    def check(self, log, diagnostic=None, version="3.12.10"):
+        (self.home / ".brain-in-a-box" / "install.log").write_bytes(log.encode("utf-8"))
+        t = terrain.Etapes()
+        if diagnostic is not None:
+            t.details["diagnostic"] = {"textes": diagnostic}
+        with mock.patch.dict(os.environ, {"LOCALAPPDATA": LOCAL}), \
+                mock.patch.object(terrain, "python_de_session", lambda t, exe: version):
+            terrain.check_python(t, types.SimpleNamespace(home=self.home, parcours="app"))
+        return t.details["python"]
+
+    def refused(self, why, log, diagnostic=None):
+        with self.assertRaises(terrain.Echec) as cm:
+            self.check(log, diagnostic)
+        self.assertIn(why, str(cm.exception))
+
+    def test_python_brought_by_winget_for_the_user(self):
+        exe = LOCAL + "\\Programs\\Python\\Python312\\python.exe"
+        log = "\r\n> winget %s --scope user\r\nwinget : code 0\r\n\r\n> Python : %s (winget)\r\n" % (PY_WINGET, exe)
+        py = self.check(log, ["Python (pour les automatismes)", ": À installer"])
+        self.assertEqual((py["voie"], py["exe"], py["version"]), ("winget", exe, "3.12.10"))
+        self.assertEqual(py["resume"], "Python absent au départ, installé par winget, Python 3.12.10 dans un nouveau processus")
+        # Installed elsewhere than the user's programs: the toolcache's, or for all users.
+        for other in ("C:\\hostedtoolcache\\windows\\Python\\3.15.0\\x64\\python.exe", "C:\\Program Files\\Python312\\python.exe"):
+            self.refused("Python installé hors des programmes de l'utilisateur (%s)" % other, log.replace(exe, other))
+
+    def test_python_from_its_official_installer_when_winget_could_not(self):
+        exe = LOCAL + "\\Programs\\Python\\Python314\\python.exe"
+        log = ("\r\n> winget absent : Python non installe par winget\r\n\r\n> installeur officiel : Python 3.14.8 (x64) "
+               "https://www.python.org/ftp/python/3.14.8/python-3.14.8-amd64.exe\r\ninstalleur officiel : code 0\r\n"
+               "\r\n> Python : %s (installeur officiel)\r\n" % exe)
+        py = self.check(log, version="3.14.8")
+        self.assertEqual(py["voie"], "installeur officiel")
+        self.assertEqual(py["resume"], "Python absent au départ, installé par son installeur officiel (Python 3.14.8 (x64) : code 0 ; "
+                                       "avant lui : winget absent ou en panne), Python 3.14.8 dans un nouveau processus")
+
+    def test_a_vm_that_still_had_python_tests_nothing(self):
+        # install.ps1 notes Python's way only when it had to install one; the app's diagnosis saw one first.
+        self.refused("install.log ne dit pas que l'installeur a dû installer Python : il en a trouvé un sur la VM",
+                     "\r\n> winget install -e --id Git.Git x\r\nwinget : code 0\r\n")
+        exe = LOCAL + "\\Programs\\Python\\Python312\\python.exe"
+        log = "\r\n> Python : %s (winget)\r\n" % exe
+        self.refused("avant d'installer, le diagnostic de l'app disait Python « OK » : la VM avait encore un Python",
+                     log, ["Python (pour les automatismes)", ": OK", "Python 3.15.0"])
+        self.refused("le diagnostic de l'app disait Python « rien »", log, ["Git (l'historique de tes notes)", ": À installer"])
+        self.refused("l'installeur n'a pas installé Python : %s --scope user : code -1978335224 (0x8A150008)" % PY_WINGET,
+                     "\r\n> winget %s --scope user\r\nwinget : code -1978335224\r\n\r\n> Python : absent\r\n" % PY_WINGET)
+        self.refused("Python trouvé (C:\\py.exe) sans que winget ni son installeur officiel l'aient installé", "\r\n> Python : C:\\py.exe\r\n")
+
+    def test_install_ps1_writes_the_lines_read_here(self):
+        with open(os.path.join(HERE, "..", "..", "install.ps1"), encoding="utf-8") as f:
+            ps1 = f.read()
+        self.assertIn('$Py = Install-Missing "Python" "Python.Python.3.12" { Find-Python }', ps1)
+        self.assertIn('Note-Winget "> $Label : $(if (-not $p) { \'absent\' } elseif ($via) { "$p ($via)" } else { $p })"', ps1)
+        self.assertIn('Note-Winget "> installeur officiel : $Label $($o.Version) ($arch) $url`r`ninstalleur officiel : $end"', ps1)
+        self.assertIn('"InstallAllUsers=0"', ps1, "Python's official installer for the user alone, where check_python wants it")
+        app = os.path.join(HERE, "..", "..", "app", "src-tauri", "src", "diagnose.rs")
+        with open(app, encoding="utf-8") as f:
+            self.assertIn('Item("python", "%s"' % terrain.LIGNE_PYTHON, f.read())
+
+
+class Diagnostic:
+    """The app's diagnosis on a PC without winget (diagnose.rs: check_winget, check_obsidian_windows)."""
+    SANS_WINGET = ["Python (pour les automatismes)", ": À installer", "Git (l'historique de tes notes)", ": À installer",
+                   "Outil d'installation de Microsoft", ": À noter", "Obsidian (pour lire tes notes)", ": À noter"]
+
+
+class SansWinget(unittest.TestCase):
+    """The path app-sans-winget: the driver of the path app, winget taken away after Git (poste-sans-winget.ps1),
+    Obsidian not wanted, the diagnosis' orange lines, Python and Git from their official installers."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="terrain-sans-winget-")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.home = Path(self.tmp) / "home"
+        self.home.mkdir()
+        self.opts = types.SimpleNamespace(home=self.home, parcours="app-sans-winget")
+        self.obsidian = self.home / "Obsidian.exe"
+        self.calls = []
+        self.pilote = types.SimpleNamespace(
+            poste_neuf=lambda: (self.calls.append("sans-git"), {"sans_git": ["Git introuvable"]})[1],
+            outils=lambda home: [("Claude Code", [home / "claude.exe"]), ("Obsidian", [self.obsidian]), ("Python de winget", [home / "py"])],
+            constats=lambda t, details: self.calls.append("git-diagnostic"))
+        terrain.sans_winget(self.pilote, self.opts)
+
+    def proof(self, **change):
+        p = {"retires": [LOCAL + "\\Microsoft\\WindowsApps\\winget.exe"],
+             "sondes": {"get_command": [], "where": [], "chemins": []},
+             "nouveau_processus": {"get_command": [], "where_code": 1}}
+        p.update(change)
+        return p
+
+    def poste(self, proof, rc=0):
+        def run(argv, **kw):
+            argv = [str(a) for a in argv]
+            self.calls.append(Path(argv[argv.index("-File") + 1]).name)
+            if proof is not None:
+                with open(argv[argv.index("-Preuve") + 1], "w", encoding="utf-8") as f:
+                    json.dump(proof, f)
+            return rc, "winget retire : x\na new process: where winget code 1 ; Get-Command: none\n"
+        with mock.patch.object(terrain, "run", run):
+            return self.pilote.poste_neuf()
+
+    def test_winget_goes_after_git_and_nothing_finds_it_any_more(self):
+        fait = self.poste(self.proof())
+        self.assertEqual(self.calls, ["sans-git", "poste-sans-winget.ps1"])
+        self.assertEqual(sorted(fait), ["sans_git", "sans_winget"])
+        for change, why in (({"sondes": {"get_command": ["C:\\x\\winget.exe"], "where": [], "chemins": []}}, "get_command : C:\\x\\winget.exe"),
+                            ({"nouveau_processus": {"get_command": [], "where_code": 0}}, "un nouveau processus : where winget"),
+                            ({"sondes": {"get_command": []}}, "sonde(s) where, chemins absente(s)"),
+                            ({"nouveau_processus": {}}, "ce qu'un nouveau processus trouvait")):
+            with self.subTest(why=why), self.assertRaises(terrain.terrain_app.ErreurPilote) as cm:
+                self.poste(self.proof(**change))
+            self.assertIn(why, str(cm.exception))
+        with self.assertRaises(terrain.terrain_app.ErreurPilote) as cm:
+            self.poste(None, rc=1)
+        self.assertIn("winget n'a pas quitté la VM (poste-sans-winget.ps1, code 1)", str(cm.exception))
+
+    def test_obsidian_is_not_wanted_and_the_diagnosis_said_why(self):
+        self.assertEqual([n for n, _ in self.pilote.outils(self.home)], ["Claude Code", "Python de winget"])
+        t = terrain.Etapes()
+        self.pilote.constats(t, {"diagnostic": {"textes": Diagnostic.SANS_WINGET}})
+        self.assertEqual(self.calls, ["git-diagnostic"], "the path app's own checks first")
+        for textes, why in ((Diagnostic.SANS_WINGET[:4] + Diagnostic.SANS_WINGET[6:],
+                             "« Outil d'installation de Microsoft : À noter » (winget manquant) ; il dit « rien »"),
+                            (Diagnostic.SANS_WINGET[:7] + [": À installer"],
+                             "« Obsidian (pour lire tes notes) : À noter » (Obsidian impossible sans lui) ; il dit « À installer »")):
+            with self.subTest(why=why), self.assertRaises(terrain.Echec) as cm:
+                self.pilote.constats(terrain.Etapes(), {"diagnostic": {"textes": textes}})
+            self.assertIn(why, str(cm.exception))
+        self.obsidian.write_text("x")
+        with self.assertRaises(terrain.Echec) as cm:
+            self.pilote.constats(terrain.Etapes(), {"diagnostic": {"textes": Diagnostic.SANS_WINGET}})
+        self.assertIn("Obsidian est installé sur un PC sans winget", str(cm.exception))
+
+    def test_python_and_git_must_come_from_their_official_installers(self):
+        def scenario(voies):
+            def play(t, opts, kit, pilote=None):
+                self.assertIs(pilote, self.pilote if opts.parcours == "app-sans-winget" else None)
+                t.details.update(git={"voie": voies[0]}, python={"voie": voies[1], "resume": "Python absent au départ, ..."})
+                t.resume = "app installée"
+            return play
+        for parcours, voies, ok in (("app-sans-winget", ("installeur officiel",) * 2, True), ("app-sans-winget", ("installeur officiel", "winget"), False),
+                                    ("app", ("winget", "winget"), True)):
+            t = terrain.Etapes()
+            with mock.patch.object(terrain, "WINDOWS", True), mock.patch.object(terrain.terrain_app, "scenario", scenario(voies)), \
+                    mock.patch.object(terrain.terrain_app, "pilote_du_systeme", lambda travail, opts: self.pilote), \
+                    mock.patch.object(terrain, "sans_winget", lambda pilote, opts: pilote):
+                opts = types.SimpleNamespace(home=self.home, parcours=parcours)
+                if ok:
+                    terrain.app(t, opts)
+                    self.assertTrue(t.resume.endswith("; Python absent au départ, ..."), t.resume)
+                    self.assertEqual("sans winget, Obsidian pas installé" in t.resume, parcours == "app-sans-winget")
+                else:
+                    with self.assertRaises(terrain.Echec) as cm:
+                        terrain.app(t, opts)
+                    self.assertEqual(t.nom, "app-installeurs-officiels")
+                    self.assertIn("ici : Git par installeur officiel, Python par winget", str(cm.exception))
+
+    def test_the_script_proves_what_the_harness_reads(self):
+        with open(terrain.SANS_WINGET_PS1, "rb") as f:
+            raw = f.read()
+        self.assertTrue(all(c < 128 for c in raw), "Windows PowerShell 5.1 reads a file without BOM as ANSI")
+        ps1 = raw.decode("ascii")
+        self.assertIn("param([Parameter(Mandatory = $true)][string]$Preuve)", ps1)
+        # Only the aliases in a WindowsApps folder go, as turning the alias off does; anything else stops here.
+        self.assertIn("if ($d -like '*\\WindowsApps') {\n            Remove-Item -LiteralPath $w -Force", ps1)
+        for key in ("get_command = $cmd; where = $where; chemins = $chemins", "get_command = @(", "where_code = [int]$code",
+                    "[IO.File]::WriteAllText($Preuve, $json, (New-Object Text.UTF8Encoding $false))"):
+            self.assertIn(key, ps1)
+        self.assertNotIn("Set-Content", ps1)
+
+
+class FauxMaj:
+    """A Mac's app for the path app-mise-a-jour, played by test_terrain_app's fake driver: its brain made by
+    the version before (vault, kit, settings, launchd's plists), the end « prêt » once Claude is connected."""
+
+    @staticmethod
+    def pilote(h, home):
+        from test_terrain_app import FauxPilote, NB
+        pret = {"titre": "Ton second cerveau est prêt" + NB + "!", "texte": "Claude retient maintenant ce que tu lui apprends.",
+                "boutons": {"Présente-toi à Claude (15 min)": None, "Guide-moi dans un logiciel": None,
+                            "Importer ma mémoire": None, "Voir mes notes": None}}
+        p = FauxPilote(h, home=home, change={"pret": pret})
+        connecte = lambda: (Path(home) / ".claude" / "fake" / "scenario").is_file()
+        p.ecrans["verif"] = dict(p.ecrans["verif"], apres=(2, lambda: "pret" if connecte() else "login"))
+        installer = p.installer_le_kit
+
+        def cerveau():
+            installer()
+            home_ = Path(home)
+            for rel, text in (("Documents/Brain/Profile/soul.md", "# Moi\n"), (".claude/hooks/brain/session-logger.py", "print(1)\n"),
+                              (".claude/settings.json", "{}\n")):
+                (home_ / rel).parent.mkdir(parents=True, exist_ok=True)
+                (home_ / rel).write_text(text, encoding="utf-8")
+            for label in terrain.mac_labels():
+                plist = home_ / "Library" / "LaunchAgents" / (label + ".plist")
+                plist.parent.mkdir(parents=True, exist_ok=True)
+                plist.write_text("<plist>%s</plist>" % label)
+        p.installer_le_kit = cerveau
+        p.installes = []
+        p.installer = lambda fichier, details, capturer=None: (p.installes.append((Path(fichier).name, capturer("dmg"))), [])[1]
+        return p
+
+
+class MiseAJour(unittest.TestCase):
+    """The path app-mise-a-jour off a VM: the version before, its brain, the tested one over it, opened again with
+    Claude connected; what must not change, and the installer's pages on Windows."""
+
+    def setUp(self):
+        from test_terrain_app import Horloge
+        self.tmp = tempfile.mkdtemp(prefix="terrain-maj-")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.home = Path(self.tmp) / "home"
+        self.home.mkdir()
+        self.shots = Path(self.tmp) / "captures"
+        self.h = Horloge()
+        self.p = FauxMaj.pilote(self.h, self.home)
+        self.new = Path(self.tmp) / "Brain-in-a-Box_0.1.139-terrain.abc1234_macos-universal.dmg"
+        self.new.write_bytes(b"dmg")
+        self.versions = ["0.1.138", "0.1.139"]
+
+    def avant(self, t, pilote, dossier, details):
+        t("maj-telechargement-avant")
+        details.update(release="app-latest (le bouton du site)", fichier="Brain-in-a-Box_macos-universal.dmg")
+        f = Path(dossier) / "Brain-in-a-Box_macos-universal.dmg"
+        f.write_bytes(b"old")
+        return f
+
+    def run_it(self):
+        opts = types.SimpleNamespace(home=self.home, json=str(Path(self.tmp) / "r.json"), parcours="app-mise-a-jour", vm=True,
+                                     source="build", fichier=str(self.new), captures=str(self.shots), delai_min=0)
+        versions = iter(self.versions)
+        with mock.patch.dict(os.environ, {"GH_TOKEN": "ghs_x"}), mock.patch.object(terrain, "version_d_avant", self.avant), \
+                mock.patch.object(terrain, "version_installee", lambda pilote: next(versions)):
+            terrain.play("app", lambda t, o: terrain.mise_a_jour(t, o, pilote=self.p, horloge=self.h, dormir=self.h.dormir), opts)
+            left = os.environ.get("GH_TOKEN")
+        with open(opts.json, encoding="utf-8") as f:
+            return json.load(f)["scenarios"][0], left
+
+    def test_the_version_before_its_brain_then_the_tested_one_over_it(self):
+        row, left = self.run_it()
+        self.assertEqual(row["statut"], "ok", row["raison"])
+        self.assertIsNone(left, "the read-only token never reaches the app")
+        self.assertTrue(row["raison"].startswith("app 0.1.138, son cerveau installé, puis la version construite par-dessus (le Finder "
+                                                 "remplace l'app, macOS la bloque de nouveau) : version 0.1.139"), row["raison"])
+        d = row["details"]
+        self.assertEqual(self.p.installes[0][0], "Brain-in-a-Box_macos-universal.dmg")
+        self.assertEqual(self.p.installes[1][0], self.new.name)
+        self.assertTrue(self.p.installes[0][1].endswith("-avant-dmg.png") and self.p.installes[1][1].endswith("-maj-dmg.png"))
+        self.assertEqual((d["avant"]["version"], d["apres"]["version"]), ("0.1.138", "0.1.139"))
+        # The version before installs its brain as a user's does, from master's zip; its night kept away, then given back.
+        self.assertFalse(any("BIAB_ARCHIVE" in env for env in self.p.envs))
+        self.assertEqual(self.p.nuit, ["ecartee", "rendue"])
+        # Opened again with Claude connected (the fake Claude), the real one put back after.
+        self.assertEqual(d["fin"]["titre"], "Ton second cerveau est prêt !")
+        self.assertEqual(d["fin"]["boutons"][:2], ["Guide-moi dans un logiciel", "Présente-toi à Claude (15 min)"])
+        self.assertEqual((self.home / ".local" / "bin" / "claude").read_text(), "x")
+        self.assertTrue(any(c.endswith("-relance-deja-installe.png") for c in d["captures"]))
+        self.assertTrue(any(c.endswith("-relance-fini.png") for c in d["captures"]))
+        self.assertTrue(any("-avant-" in c for c in d["captures"]))
+        self.assertEqual(d["ajouts_au_coffre"], [])
+        self.assertTrue((self.home / "Documents" / "Brain" / terrain.NOTE_UTILISATEUR).is_file())
+
+    def test_a_brain_the_update_touched_fails(self):
+        for what, why in (("Documents/Brain/" + terrain.NOTE_UTILISATEUR, "1 fichier(s) du coffre perdu(s) ou changé(s) par la mise à jour : "
+                                                                          + terrain.NOTE_UTILISATEUR),
+                          (".claude/hooks/brain/session-logger.py", "la mise à jour de l'app a changé le kit installé"),
+                          (".claude/settings.json", "la mise à jour de l'app a changé ~/.claude/settings.json"),
+                          ("Library/LaunchAgents/%s.plist" % terrain.mac_labels()[0], "les tâches du cerveau ne sont plus les mêmes")):
+            with self.subTest(what=what):
+                shutil.rmtree(self.home, True)
+                self.home.mkdir()
+                self.p = FauxMaj.pilote(self.h, self.home)
+                installer = self.p.installer
+                self.p.installer = lambda f, d, c=None, w=what: ((self.home / w).unlink() if "0.1.139" in Path(f).name else None,
+                                                                 installer(f, d, c))[1]
+                row, _ = self.run_it()
+                self.assertEqual((row["statut"], row["etape"]), ("echec", "maj-cerveau-intact"), row["raison"])
+                self.assertIn(why, row["raison"])
+
+    def test_the_tested_version_must_be_the_one_installed_and_the_end_offer_the_guide(self):
+        self.versions = ["0.1.138", "0.1.138"]
+        row, _ = self.run_it()
+        self.assertEqual((row["statut"], row["etape"]), ("echec", "maj-version"))
+        self.assertIn("après la mise à jour, l'app installée est en version 0.1.138, pas 0.1.139", row["raison"])
+        shutil.rmtree(self.home, True)
+        self.home.mkdir()
+        self.p = FauxMaj.pilote(self.h, self.home)
+        self.versions = ["0.1.138", "0.1.139"]
+        with mock.patch.object(terrain.terrain_app, "poser_faux_claude", lambda home, exe, travail, prudent: Path(exe).with_name("aucun")):
+            row, _ = self.run_it()
+        self.assertEqual((row["statut"], row["etape"]), ("echec", "maj-relance"))
+        self.assertIn("après la mise à jour, Claude connecté, la fin dit « Presque prêt : il manque ton compte Claude »", row["raison"])
+
+    def test_windows_installer_says_it_updates_and_asks_nothing(self):
+        bienvenue = {"page": "bienvenue", "textes": ["Mettre à jour Bibo", "Une version de Bibo est déjà sur ton PC. Clique sur "
+                                                     "Suivant pour la mettre à jour : tes notes ne changent pas."]}
+        fin = {"page": "fin", "textes": ["Bibo est installé !"]}
+        self.assertEqual(terrain.pages_de_mise_a_jour([bienvenue, {"page": "installation", "textes": ["J’installe Bibo"]}, fin]), "")
+        neuf = {"page": "bienvenue", "textes": ["Bibo s’installe sur ton PC"]}
+        question = {"page": "page", "textes": ["Bibo est déjà sur ton PC", "Choisis ce que tu veux faire.",
+                                               "Bibo 0.1.139 est déjà sur ton PC. Laisse le premier choix et clique sur Suivant."]}
+        for pages, why in (([], "aucune page"), ([neuf, fin], "la première page de l'installeur ne dit pas « Mettre à jour Bibo »"),
+                           ([bienvenue, question, fin], "l'installeur pose une question à une mise à jour (page « page »)"),
+                           ([bienvenue, {"page": "dossier", "textes": []}, fin], "(page « dossier »)"),
+                           ([bienvenue, {"page": "installation", "textes": []}], "ne finit pas sur sa dernière page")):
+            with self.subTest(why=why):
+                self.assertIn(why, terrain.pages_de_mise_a_jour(pages))
+        # The installer's own words (French.nsh): the update's title, and each word of the question it must not ask.
+        with open(os.path.join(HERE, "..", "..", "app", "src-tauri", "installer", "French.nsh"), encoding="utf-8") as f:
+            nsh = terrain.terrain_app.norm(f.read())
+        self.assertIn('LangString biboUpdateTitle ${LANG_FRENCH} "%s"' % terrain.MAJ_TITRE, nsh)
+        for q in terrain.MAJ_QUESTIONS:
+            self.assertIn(terrain.terrain_app.norm(q), nsh, q)
+
+    def test_the_version_before_is_what_the_sites_button_downloads(self):
+        pilote = types.SimpleNamespace(suffixe="_windows-x64-setup.exe")
+        urls = []
+
+        def check(nom):
+            def telecharger(url, dest, timeout=600):
+                urls.append(url)
+                Path(dest).write_bytes(b"exe" if not url.endswith("SHA256SUMS") else
+                                       ("%s  %s\n" % (hashlib.sha256(b"exe").hexdigest(), nom)).encode())
+            details = {}
+            with mock.patch.object(terrain.terrain_app, "telecharger", telecharger):
+                f = terrain.version_d_avant(terrain.Etapes(), pilote, Path(tempfile.mkdtemp(dir=self.tmp)), details)
+            return f, details
+        f, details = check("Brain-in-a-Box_windows-x64-setup.exe")
+        self.assertEqual(urls, [terrain.APP_LATEST + "Brain-in-a-Box_windows-x64-setup.exe", terrain.APP_LATEST + "SHA256SUMS"])
+        self.assertEqual((f.name, details["release"]), ("Brain-in-a-Box_windows-x64-setup.exe", "app-latest (le bouton du site)"))
+        self.assertEqual(details["sha256"], hashlib.sha256(b"exe").hexdigest())
+        self.assertEqual(terrain.APP_LATEST, "https://github.com/BrainInBox/brain-in-a-box/releases/download/app-latest/")
+        # The site's links are these (site/index.html), and release.yml puts the files there under these names.
+        with open(os.path.join(HERE, "..", "..", "site", "index.html"), encoding="utf-8") as fh:
+            self.assertIn(terrain.APP_LATEST + "Brain-in-a-Box_windows-x64-setup.exe", fh.read())
+        # A file that is not the one its SHA256SUMS names fails.
+        with self.assertRaises(terrain.Echec) as cm:
+            check("autre.exe")
+        self.assertIn("Brain-in-a-Box_windows-x64-setup.exe ne correspond pas au SHA256SUMS d'app-latest", str(cm.exception))
+
 
 
 @unittest.skipIf(sys.platform == "win32", "the Unix form of Codex's hooks; Windows' runs on its VM (app-windows, app-codex)")

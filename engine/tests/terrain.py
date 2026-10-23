@@ -18,11 +18,16 @@ Scenarios:
                  screens (CLAUDE_CODE_OAUTH_TOKEN), with the repository's scripts: on a VM, a job where
                  nothing of the kit was installed
   app            the desktop app downloaded (or built), installed and clicked through in its real
-                 window to the brain, a capture of every screen, then opened again (VM only, terrain_app.py)
+                 window to the brain, a capture of every screen, then opened again (VM only, terrain_app.py).
+                 Path app-sans-winget (Windows): a PC without winget, Python and Git from their official
+                 installers. Path app-mise-a-jour: the version a user already has, its brain installed, then
+                 the tested version over it: the brain untouched, opened again with Claude connected
 Tools of the workflow:
   etape <name> --resultat <outcome>   records how a workflow step (an installer) ended
   rapport FILE...                     the results as Markdown ($GITHUB_STEP_SUMMARY)
   issue FILE...                       the nightly issue's body: fixed identifiers only, never a note nor a value
+  version-suivante                    the version a branch's app is built with: the next one after the
+                                      published previews', as release.yml would number it
 (rapport and issue: --attendus os-parcours,... and --jobs job=result,...: a result file, a scenario
 or a job's success missing is a failure, never a green night.)
 
@@ -40,6 +45,7 @@ import base64
 import hashlib
 import importlib.util
 import json
+import ntpath
 import os
 import re
 import secrets
@@ -82,7 +88,7 @@ STATUTS = {"ok": "OK", "echec": "ÉCHEC", "saute": "SAUTÉ"}
 SCENARIOS = ("installation", "montee-avant", "montee", "nuits", "vrai-claude", "app")
 INSTALLEURS = ("installeur", "installeur-v0.2.0", "installeur-montee")
 VM_ONLY = ("installation", "montee-avant", "montee", "app")
-PARCOURS = ("neuf", "montee", "claude", "app", "app-codex", "local", "reinstallation")
+PARCOURS = ("neuf", "montee", "claude", "app", "app-codex", "app-sans-winget", "app-mise-a-jour", "local", "reinstallation")
 OSES = ("macos", "windows", "linux")
 # The rows each path of terrain.yml writes. One missing is a failure: a step killed by its
 # timeout before it recorded, a cancelled job, a guard that refused to run.
@@ -93,16 +99,19 @@ ATTENDUS = {"neuf": ("installeur", "installation", "nuits"),
             "reinstallation": ("installeur", "montee-avant", "installeur-montee", "montee"),
             "claude": ("vrai-claude",),
             "app": ("app",),
-            "app-codex": ("app",)}
+            "app-codex": ("app",),
+            "app-sans-winget": ("app",),
+            "app-mise-a-jour": ("app",)}
 # The systems each path runs on, when not macOS and Windows.
 ATTENDUS_OS = {"neuf": ("macos", "windows", "linux"), "reinstallation": ("linux",), "app": ("macos", "windows", "linux"),
-               "app-codex": ("macos", "windows", "linux")}
+               "app-codex": ("macos", "windows", "linux"), "app-sans-winget": ("windows",)}
 # terrain.yml's jobs, and the result files each one writes ("tous": the commit to test, for all).
 JOBS = {"ref": ("tous", ()), "macos": ("macos", ("macos-neuf", "macos-montee")),
         "windows": ("windows", ("windows-neuf", "windows-montee")),
         "linux": ("linux", ("linux-neuf", "linux-reinstallation")),
         "claude": ("macos+windows", ("macos-claude", "windows-claude")),
-        "app-macos": ("macos", ("macos-app", "macos-app-codex")), "app-windows": ("windows", ("windows-app", "windows-app-codex")),
+        "app-macos": ("macos", ("macos-app", "macos-app-codex", "macos-app-mise-a-jour")),
+        "app-windows": ("windows", ("windows-app", "windows-app-codex", "windows-app-sans-winget", "windows-app-mise-a-jour")),
         "app-linux-build": ("linux", ("linux-app", "linux-app-codex")), "app-linux": ("linux", ("linux-app", "linux-app-codex")),
         # install.ps1's pinned installers against their latest release (.github/ci/epingles.py): no result file.
         "epingles": ("windows", ())}
@@ -1258,6 +1267,58 @@ def check_git_bash(t, opts, git, exe, env):
             "Profile/lessons.md (code %d : %s)" % (rc, out.strip()[-200:]))
 
 
+# Python, as install.ps1 notes it in install.log (Install-Missing): only when it found none that runs code (the
+# Store's stub does not), each winget attempt, its official installer and how it ended, then the way it came.
+WINGET_PYTHON = re.compile(r"^> winget (?P<args>install -e --id Python\.Python\S* .*?)\r?\nwinget : code (?P<code>-?\d+)\r?$", re.M)
+OFFICIEL_PYTHON = re.compile(r"^> installeur officiel : Python (?P<version>\S+) \((?P<arch>\w+)\) (?P<url>\S+)\r?\n"
+                             r"installeur officiel : (?P<fin>[^\r\n]*?)\r?$", re.M)
+VOIE_PYTHON = re.compile(r"^> Python : (?:(?P<absent>absent)|(?P<exe>.+?)(?: \((?P<via>winget|installeur officiel)\))?)\r?$", re.M)
+LIGNE_PYTHON = "Python (pour les automatismes)"
+
+
+def python_de_session(t, exe):
+    """The version the installed Python says, started as a new program is: the environment Windows builds from
+    the registry, nothing of this harness."""
+    rc, out = run([exe, "-I", "-c", "import sys; print(sys.version.split()[0])"], env=terrain_app.env_session(), timeout=120)
+    t.check(rc == 0 and re.match(r"^3\.\d+\.\d+", out.strip()), "le Python installé ne démarre pas dans un nouveau processus "
+            "(code %d : %s)" % (rc, out.strip()[-200:]))
+    return out.strip()
+
+
+def check_python(t, opts):
+    """Windows started without Python but the Store's stub (poste-neuf.ps1, which takes the py launcher away too):
+    install.ps1 found none, installed one (winget, or its official installer when winget could not) in the user's
+    programs, and a new process runs it. On the app's paths its diagnosis said « À installer » first."""
+    py = t.details["python"] = {}
+    textes = (t.details.get("diagnostic") or {}).get("textes")
+    if textes is not None:
+        t("python-absent-au-depart")
+        statut = terrain_app.statut_diagnostic(textes, LIGNE_PYTHON)
+        t.check(statut == terrain_app.A_INSTALLER, "avant d'installer, le diagnostic de l'app disait Python « %s » : la VM "
+                                                   "avait encore un Python" % (statut or ": rien").lstrip(": "))
+    t("python-installe")
+    log = opts.home / ".brain-in-a-box" / "install.log"
+    texte = read(log) if log.is_file() else ""
+    py["winget"] = ["%s : code %s" % (m.group("args"), code_winget(m.group("code"))) for m in WINGET_PYTHON.finditer(texte)]
+    py["officiel"] = ["Python %s (%s) : %s" % (m.group("version"), m.group("arch"), m.group("fin")) for m in OFFICIEL_PYTHON.finditer(texte)]
+    voies = list(VOIE_PYTHON.finditer(texte))
+    t.check(voies, "install.log ne dit pas que l'installeur a dû installer Python : il en a trouvé un sur la VM")
+    voie = voies[-1]
+    t.check(not voie.group("absent"), "l'installeur n'a pas installé Python : %s" % (
+        " ; ".join(py["winget"] + py["officiel"]) or "ni winget ni son installeur officiel n'ont été essayés"))
+    t.check(voie.group("via"), "Python trouvé (%s) sans que winget ni son installeur officiel l'aient installé" % voie.group("exe"))
+    exe = voie.group("exe").strip()
+    py.update(voie=voie.group("via"), exe=exe)
+    local = ntpath.normcase(ntpath.join(os.environ.get("LOCALAPPDATA") or str(opts.home / "AppData" / "Local"), "Programs", "Python"))
+    t.check(ntpath.normcase(exe).startswith(local + "\\"), "Python installé hors des programmes de l'utilisateur (%s)" % exe)
+
+    t("python-nouveau-processus")
+    py["version"] = python_de_session(t, exe)
+    par = "winget" if py["voie"] == "winget" else "son installeur officiel (%s ; avant lui : %s)" % (
+        py["officiel"][-1] if py["officiel"] else "?", " ; ".join(py["winget"]) or "winget absent ou en panne")
+    py["resume"] = "Python absent au départ, installé par %s, Python %s dans un nouveau processus" % (par, py["version"])
+
+
 def check_install(t, opts, kept=(), fresh=True, query=True):
     """What a fresh install, or an upgrade (fresh=False), says it did. kept: hooks the user changed
     (left to montee); query: a gbq query must answer. The path app-codex: Codex chosen alone, in a copy
@@ -1265,8 +1326,9 @@ def check_install(t, opts, kept=(), fresh=True, query=True):
     home = opts.home
     hooks = home / ".claude" / "hooks" / "brain"
     codex = opts.parcours == "app-codex"
-    if WINDOWS and fresh and opts.parcours in ("neuf", "app", "app-codex"):
+    if WINDOWS and fresh and opts.parcours in ("neuf", "app", "app-codex", "app-sans-winget"):
         check_git(t, opts)
+        check_python(t, opts)
     t("hooks")
     t.check(hooks.is_dir(), "aucun hook installé dans ~/.claude/hooks/brain")
     for name, src in kit_files() + ([("codex-features.json", REPO / "engine" / "codex-features.json")] if codex else []):
@@ -1635,7 +1697,7 @@ def installation(t, opts):
     check_install(t, opts)
     run_nightly(t, opts)
     t.resume = "hooks, settings, lanceurs, skills, coffre, gbrain, planificateur et une nuit réelle : conformes" + \
-        (" ; " + t.details["git"]["resume"] if (t.details.get("git") or {}).get("resume") else "")
+        "".join(" ; " + t.details[k]["resume"] for k in ("git", "python") if (t.details.get(k) or {}).get("resume"))
 
 
 # --------------------------------------------------------------------------- montee (VM)
@@ -1747,6 +1809,370 @@ def montee(t, opts):
     check_install(t, opts, kept={"session-logger.py"}, fresh=False)
     t.resume = "coffre octet pour octet, hook modifié %s, réglages gardés, tout le nouveau présent" % \
         t.details["hook_modifie"]
+
+
+# --------------------------------------------------------------------------- the app's paths (VM)
+
+SANS_WINGET_PS1 = REPO / ".github" / "ci" / "poste-sans-winget.ps1"
+# The diagnosis' lines (app/src-tauri/src/diagnose.rs) without winget, and the word for an orange line (app.js).
+LIGNE_WINGET = "Outil d'installation de Microsoft"
+LIGNE_OBSIDIAN = "Obsidian (pour lire tes notes)"
+A_NOTER = ": À noter"
+
+
+def app(t, opts):
+    """The scenario `app` of each path of terrain.yml's app jobs: terrain_app's walk, the path without winget
+    (Windows), or the update over the version a user already has."""
+    if opts.parcours == "app-mise-a-jour":
+        return mise_a_jour(t, opts)
+    pilote = None
+    if opts.parcours == "app-sans-winget":
+        t.check(WINDOWS, "le parcours sans winget est celui d'un PC Windows")
+        try:
+            pilote = sans_winget(terrain_app.pilote_du_systeme(workdir(opts, "app"), opts), opts)
+        except terrain_app.ErreurPilote as e:
+            raise Echec(str(e)) from None
+    terrain_app.scenario(t, opts, sys.modules[__name__], pilote=pilote)
+    if opts.parcours == "app-sans-winget":
+        t("app-installeurs-officiels")
+        voies = {k: (t.details.get(k) or {}).get("voie") for k in ("git", "python")}
+        t.check(voies == {"git": "installeur officiel", "python": "installeur officiel"},
+                "sans winget, Git et Python viennent de leurs installeurs officiels ; ici : Git par %s, Python par %s"
+                % (voies["git"], voies["python"]))
+        t.resume += " ; sans winget, Obsidian pas installé, comme Bibo l'a dit au diagnostic"
+    if (t.details.get("python") or {}).get("resume"):
+        t.resume += " ; " + t.details["python"]["resume"]
+
+
+def sans_winget(pilote, opts):
+    """PiloteWindows on a PC without winget (Windows 10 LTSC, a Windows Server, App Installer taken away by the
+    company, its alias turned off): once Git is gone (sans-git.ps1, which wants winget there), its alias goes too
+    (poste-sans-winget.ps1, its proof read again here). The app then brings Python and Git through their official
+    installers, and no Obsidian (winget only), said orange at the diagnosis: Obsidian is not wanted installed."""
+    poste, outils, constats = pilote.poste_neuf, pilote.outils, pilote.constats
+    preuve = workdir(opts, "sans-winget") / "sans-winget.json"
+
+    def poste_neuf():
+        fait = poste() or {}
+        rc, out = run(["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", SANS_WINGET_PS1,
+                       "-Preuve", preuve], timeout=300)
+        lignes = [l.strip() for l in out.splitlines() if l.strip()]
+        p = read_json(preuve)
+        if rc != 0 or p is None:
+            raise terrain_app.ErreurPilote("winget n'a pas quitté la VM (poste-sans-winget.ps1, code %d) : %s"
+                                           % (rc, " ".join(lignes[-4:])[-500:]))
+        trouve = preuve_sans_winget(p)
+        if trouve:
+            raise terrain_app.ErreurPilote("winget était encore trouvable avant l'app : %s" % trouve)
+        fait["sans_winget"] = lignes[-4:]
+        return fait
+
+    def sans_obsidian(home):
+        return [x for x in outils(home) if x[0] != "Obsidian"]
+
+    def constats_(t, details):
+        constats(t, details)
+        t("app-winget-diagnostic")
+        textes = (details.get("diagnostic") or {}).get("textes") or []
+        for ligne, attendu, dit in ((LIGNE_WINGET, A_NOTER, "winget manquant"), (LIGNE_OBSIDIAN, A_NOTER, "Obsidian impossible sans lui"),
+                                    (LIGNE_PYTHON, terrain_app.A_INSTALLER, "Python à installer")):
+            statut = terrain_app.statut_diagnostic(textes, ligne)
+            t.check(statut == attendu, "sans winget, le diagnostic de l'app devait dire « %s %s » (%s) ; il dit « %s »"
+                    % (ligne, attendu, dit, (statut or ": rien").lstrip(": ")))
+        t("app-obsidian-absent")
+        places = dict(outils(opts.home)).get("Obsidian") or []
+        t.check(not any(Path(x).exists() for x in places), "Obsidian est installé sur un PC sans winget (%s)" % next(
+            (x for x in places if Path(x).exists()), ""))
+
+    pilote.poste_neuf, pilote.outils, pilote.constats = poste_neuf, sans_obsidian, constats_
+    return pilote
+
+
+def preuve_sans_winget(p):
+    """What still found winget, from poste-sans-winget.ps1's proof read again probe by probe ("" : nothing)."""
+    sondes = p.get("sondes") if isinstance(p.get("sondes"), dict) else {}
+    manque = [k for k in ("get_command", "where", "chemins") if not isinstance(sondes.get(k), list)]
+    if manque:
+        return "la preuve ne dit pas tout : sonde(s) %s absente(s)" % ", ".join(manque)
+    neuf = p.get("nouveau_processus") if isinstance(p.get("nouveau_processus"), dict) else {}
+    if not isinstance(neuf.get("get_command"), list) or not isinstance(neuf.get("where_code"), int):
+        return "la preuve ne dit pas ce qu'un nouveau processus trouvait"
+    trouve = ["%s : %s" % (k, ", ".join(map(str, sondes[k]))[:200]) for k in ("get_command", "where", "chemins") if sondes[k]]
+    if neuf["get_command"] or neuf["where_code"] == 0:
+        trouve.append("un nouveau processus : %s" % (", ".join(map(str, neuf["get_command"])) or "where winget"))
+    return " ; ".join(trouve)
+
+
+# The version a user already has (path app-mise-a-jour): the one the site's button downloads, the release
+# app-latest (the newest preview, its files named without their version). On a branch, the tested version is the
+# next one; on master, the newest preview itself: installed over itself, as a user who downloads Bibo again does.
+APP_LATEST = "https://github.com/%s/releases/download/app-latest/" % terrain_app.REPO_SLUG
+VERSION_RE = re.compile(r"^Brain-in-a-Box_(\d+\.\d+\.\d+)")
+# The NSIS installer over a Bibo already there (app/src-tauri/installer): its first page says it updates, and no
+# text of a page starts as the question it must not ask (French.nsh: alreadyInstalled, chooseMaintenanceOption...).
+MAJ_TITRE = "Mettre à jour Bibo"
+MAJ_QUESTIONS = ("Bibo est déjà sur ton PC", "Choisis ce que tu veux faire", "Choisis comment installer Bibo",
+                 "Désinstaller Bibo", "Retirer d'abord l'autre version", "Installer par-dessus", "Une version plus récente de Bibo")
+PRET = "Ton second cerveau est prêt"
+PRESENTE = "Présente-toi à Claude (15 min)"
+
+
+def version_d_avant(t, pilote, dossier, details):
+    """The installer the site's button downloads, checked against app-latest's SHA256SUMS."""
+    t("maj-telechargement-avant")
+    name = "Brain-in-a-Box" + pilote.suffixe
+    dest = Path(dossier) / name
+    sums = Path(tempfile.mkdtemp(prefix="sums-")) / "SHA256SUMS"
+    try:
+        terrain_app.telecharger(APP_LATEST + name, dest)
+        terrain_app.telecharger(APP_LATEST + "SHA256SUMS", sums)
+    except OSError as e:
+        t.check(False, "téléchargement de %s impossible (%s)" % (APP_LATEST + name, type(e).__name__))
+    got = terrain_app.sha256(dest)
+    t.check(terrain_app.somme_attendue(sums.read_text(encoding="utf-8", errors="replace"), name) == got,
+            "%s ne correspond pas au SHA256SUMS d'app-latest" % name)
+    details.update(release="app-latest (le bouton du site)", fichier=name, sha256=got)
+    return dest
+
+
+def version_installee(pilote):
+    """The version of the app installed: Windows' uninstall entry (DisplayVersion), the bundle's on macOS."""
+    if isinstance(pilote, terrain_app.PiloteWindows):
+        import winreg
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, terrain_app.DESINSTALLATION[0] + "\\" + terrain_app.PRODUIT) as k:
+                return str(winreg.QueryValueEx(k, "DisplayVersion")[0])
+        except OSError:
+            return None
+    try:
+        with open(Path(pilote.app) / "Contents" / "Info.plist", "rb") as f:
+            return str(__import__("plistlib").load(f).get("CFBundleShortVersionString"))
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
+def par_dessus(pilote, fichier, details, capturer):
+    """The tested version installed over the one there, as a user does: on Windows its setup.exe opened and
+    clicked through (SmartScreen, then its pages); on macOS the app in Applications replaced by the DMG's (the
+    Finder's « Remplacer »), then Gatekeeper again."""
+    if isinstance(pilote, terrain_app.PiloteWindows):
+        details["bureau_range"] = pilote._outil(["ranger"]).get("fenetres")
+        lance, notes = pilote.lancer_setup(fichier, details, capturer)
+        proc = terrain_app.ProcessusShell(lance["handle"])
+        pages = details["installeur"] = []
+        try:
+            pilote.assistant(proc, pages, capturer)
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+        if proc.returncode != 0:
+            raise terrain_app.ErreurPilote("l'installeur a fini avec le code %s" % proc.returncode)
+        return notes + pilote.verifier_installation(details)
+    app_ = getattr(pilote, "app", None)
+    if app_ and Path(app_).exists():
+        shutil.rmtree(str(app_))
+    return pilote.installer(fichier, details, capturer)
+
+
+def pages_de_mise_a_jour(pages):
+    """What is wrong with the pages the installer showed over a Bibo already there ("" : nothing)."""
+    if not pages:
+        return "l'installeur n'a montré aucune page"
+    premiere = " ".join(pages[0].get("textes") or [])
+    if pages[0].get("page") != "bienvenue" or MAJ_TITRE not in terrain_app.norm(premiere):
+        return "la première page de l'installeur ne dit pas « %s » : « %s »" % (MAJ_TITRE, premiere[:200])
+    for p in pages:
+        textes = [terrain_app.norm(x) for x in p.get("textes") or []]
+        question = any(x.startswith(terrain_app.norm(q)) for x in textes for q in MAJ_QUESTIONS)
+        if question or p.get("page") in ("page", "dossier", "message"):
+            return "l'installeur pose une question à une mise à jour (page « %s ») : « %s »" % (p.get("page"), " ".join(textes)[:200])
+    if pages[-1].get("page") != "fin":
+        return "l'installeur ne finit pas sur sa dernière page (« %s »)" % pages[-1].get("page")
+    return ""
+
+
+def taches_du_cerveau(pilote, opts):
+    """What starts the brain's nightly and its summaries: the scheduled tasks on Windows, launchd's plists on macOS."""
+    if isinstance(pilote, terrain_app.PiloteWindows):
+        rc, tasks, _ = powershell(PS_TASKS)
+        return tasks if rc == 0 and isinstance(tasks, dict) else {}
+    agents = opts.home / "Library" / "LaunchAgents"
+    return {label: hashlib.sha256((agents / (label + ".plist")).read_bytes()).hexdigest()
+            for label in mac_labels() if (agents / (label + ".plist")).is_file()}
+
+
+def ecarter_launchd():
+    """macOS: the brain's launchd jobs stopped for the rest of the job (terrain.yml does so on its other macOS jobs):
+    a night started meanwhile would write in the vault the robot compares."""
+    for label in mac_labels():
+        run(["launchctl", "bootout", "%s/%s" % (launchd_domain(), label)], timeout=60)
+
+
+def etat_du_cerveau(pilote, opts):
+    home = opts.home
+    s = home / ".claude" / "settings.json"
+    # Python's own cache next to the hooks is no change of the kit.
+    kit = {rel: sha for rel, sha in tree(home / ".claude" / "hooks" / "brain").items() if "__pycache__/" not in rel}
+    return {"coffre": tree(pilote.cerveau(home)), "kit": kit,
+            "settings": hashlib.sha256(s.read_bytes()).hexdigest() if s.is_file() else None,
+            "taches": taches_du_cerveau(pilote, opts)}
+
+
+def comparer_cerveaux(t, avant, apres):
+    t.check(avant["coffre"], "pas de coffre avant la mise à jour")
+    perdus = sorted(rel for rel, sha in avant["coffre"].items() if apres["coffre"].get(rel) != sha)
+    t.check(not perdus, "%d fichier(s) du coffre perdu(s) ou changé(s) par la mise à jour : %s" % (len(perdus), ", ".join(perdus[:5])))
+    t.check(avant["kit"] and apres["kit"] == avant["kit"], "la mise à jour de l'app a changé le kit installé (~/.claude/hooks/brain)")
+    t.check(apres["settings"] == avant["settings"], "la mise à jour de l'app a changé ~/.claude/settings.json")
+    t.check(avant["taches"] and apres["taches"] == avant["taches"],
+            "les tâches du cerveau ne sont plus les mêmes après la mise à jour (avant : %s ; après : %s)"
+            % (", ".join(sorted(avant["taches"])) or "aucune", ", ".join(sorted(apres["taches"])) or "aucune"))
+    return sorted(set(apres["coffre"]) - set(avant["coffre"]))[:20]
+
+
+NOTE_UTILISATEUR = "Projects/avant-la-mise-a-jour.md"
+
+
+def mise_a_jour(t, opts, pilote=None, horloge=time.monotonic, dormir=time.sleep):
+    """Path app-mise-a-jour (Windows, macOS): the version a user already has (version_d_avant), installed and clicked
+    through to its brain, a note of the user's added; then the tested version over it (on Windows the NSIS installer
+    must say « Mettre à jour Bibo » and ask nothing), the app opened again with Claude connected (the guide's fake
+    Claude, where the app finds Claude Code): it says everything is installed and its end offers the guide; the
+    vault, the kit, its settings and the brain's tasks are what they were. pilote, horloge, dormir: the tests'."""
+    token = os.environ.pop("GH_TOKEN", None)
+    os.environ.pop("GITHUB_TOKEN", None)
+    home = opts.home
+    captures = Path(opts.captures) if getattr(opts, "captures", "") else home / "terrain-captures"
+    captures.mkdir(parents=True, exist_ok=True)
+    source = getattr(opts, "source", "")
+    delai = getattr(opts, "delai_min", 0) or 0
+    details = t.details
+    details["source"] = source
+    parcours = None
+    try:
+        t("maj-preparation")
+        t.check(source in terrain_app.SOURCES, "source inconnue « %s » (release ou build)" % source)
+        pilote = pilote or terrain_app.pilote_du_systeme(workdir(opts, "app"), opts)
+        parcours = terrain_app.Parcours(t, pilote, captures, horloge, dormir,
+                                        echeance=horloge() + delai * 60 if delai else None)
+        downloads = home / "Downloads"
+        downloads.mkdir(exist_ok=True)
+        avant = details["avant"] = {}
+        fichier_avant = version_d_avant(t, pilote, downloads, avant)
+        avant["quarantaine_posee"] = pilote.marquer_telecharge(fichier_avant)
+
+        t("maj-installation-avant")
+        t.notes.extend(pilote.installer(fichier_avant, avant, lambda nom: parcours.capturer("avant-" + nom)))
+        avant["version"] = version_installee(pilote)
+        # As a user's: the brain from master's zip (no BIAB_ARCHIVE), whatever the source of the tested version.
+        env = pilote.environnement(home)
+        parcours.lancer(env, "avant-")
+        parcours.avancer("fini", terrain_app.DELAI_PREMIER, prefixe="avant-")
+        t("maj-fermeture-avant")
+        pilote.fermer()
+        t("maj-nuit-ecartee")
+        if isinstance(pilote, terrain_app.PiloteMac):
+            ecarter_launchd()
+        else:
+            pilote.ecarter_la_nuit()
+
+        t("maj-note-utilisateur")
+        vault = pilote.cerveau(home)
+        t.check(vault.is_dir(), "la version d'avant n'a pas installé de coffre (%s)" % vault)
+        write(str(vault), NOTE_UTILISATEUR, "# Avant la mise à jour\n\nUne note à moi, écrite avant de mettre Bibo à jour.\n")
+        cerveau = etat_du_cerveau(pilote, opts)
+
+        nouveau = details["apres"] = {}
+        if source == "release":
+            fichier = terrain_app.depuis_release(t, pilote, downloads, token, nouveau, tested_ref())
+        else:
+            fichier = terrain_app.depuis_build(t, opts.fichier, downloads, nouveau)
+        nouveau["fichier"] = fichier.name
+        attendue = VERSION_RE.match(fichier.name)
+        t.check(attendue, "la version de %s n'est pas dans son nom" % fichier.name)
+        nouveau["quarantaine_posee"] = pilote.marquer_telecharge(fichier)
+        t("maj-installation")
+        t.notes.extend(par_dessus(pilote, fichier, nouveau, lambda nom: parcours.capturer("maj-" + nom)))
+        if isinstance(pilote, terrain_app.PiloteWindows):
+            t("maj-installeur")
+            faux = pages_de_mise_a_jour(nouveau.get("installeur"))
+            t.check(not faux, faux)
+        t("maj-version")
+        nouveau["version"] = version_installee(pilote)
+        t.check(nouveau["version"] == attendue.group(1), "après la mise à jour, l'app installée est en version %s, pas %s"
+                % (nouveau["version"], attendue.group(1)))
+
+        # Opened again as a user who connected Claude: the fake Claude says so (no account on these VMs).
+        t("maj-faux-claude")
+        exe = next(places[0] for name, places in pilote.outils(home) if name == "Claude Code")
+        t.check(Path(exe).exists(), "pas de Claude Code à %s : la version d'avant ne l'a pas installé" % exe)
+        vrai = terrain_app.poser_faux_claude(home, exe, workdir(opts, "faux-claude"), False)
+        try:
+            parcours.lancer(pilote.environnement(home), "relance-")
+            vus = parcours.avancer("fini", terrain_app.DELAI_RELANCE, relance=True)
+            t("maj-relance")
+            t.check("deja-installe" in vus, "après la mise à jour, l'app n'a pas dit « Tout est déjà installé »")
+            fini = vus["fini"]
+            t.check(fini.titre.startswith(PRET), "après la mise à jour, Claude connecté, la fin dit « %s »" % fini.titre)
+            for b in (terrain_app.GUIDE, PRESENTE):
+                t.check(fini.bouton(b) is not None, "après la mise à jour, la fin n'a pas le bouton « %s »" % b)
+            details["fin"] = {"titre": fini.titre, "boutons": [b for b in (terrain_app.GUIDE, PRESENTE, "Voir mes notes",
+                                                                             "Importer ma mémoire") if fini.bouton(b) is not None]}
+            t("maj-fermeture")
+            pilote.fermer()
+        finally:
+            terrain_app.rendre_vrai_claude(exe, vrai)
+
+        t("maj-cerveau-intact")
+        details["ajouts_au_coffre"] = comparer_cerveaux(t, cerveau, etat_du_cerveau(pilote, opts))
+        t("app-clics")
+        sans = terrain_app.clics_sans_souris(getattr(pilote, "clics_installation", []) + parcours.clics)
+        t.check(not sans, sans)
+        if not isinstance(pilote, terrain_app.PiloteMac):
+            rendue = pilote.rendre_la_nuit()
+            if rendue:
+                details["nuit_rendue"] = rendue
+        t.resume = "app %s, son cerveau installé, puis %s par-dessus%s : version %s, « Tout est déjà installé », la fin " \
+                   "propose le guide, coffre, kit, réglages et tâches intacts" % (
+                       avant.get("version") or avant.get("release"), nouveau.get("release") or "la version construite",
+                       " (l'installeur dit « %s », sans question)" % MAJ_TITRE if isinstance(pilote, terrain_app.PiloteWindows)
+                       else " (le Finder remplace l'app, macOS la bloque de nouveau)", nouveau["version"])
+    except terrain_app.ErreurPilote as e:
+        if parcours:
+            parcours.sur_echec()
+            details["install_log"] = terrain_app.journal_installation(home)
+        t.check(False, parcours.raison(str(e)) if parcours else str(e))
+    except Echec as e:
+        if parcours:
+            parcours.sur_echec()
+            details["install_log"] = terrain_app.journal_installation(home)
+            raise Echec(parcours.raison(str(e))) from None
+        raise
+    finally:
+        if parcours:
+            details.update(parcours.bilan())
+        if getattr(pilote, "clics_installation", None):
+            details["clics_installation"] = pilote.clics_installation
+
+
+def version_suivante(tags, base):
+    """MAJOR.MINOR of base and, as PATCH, one more than the published previews' (release.yml numbers each with its
+    run): the version a branch's app is built with, newer than the one users have (the installer then updates it)."""
+    major_minor = base.rsplit(".", 1)[0]
+    patches = [int(m.group(3)) for m in (terrain_app.PREVIEW_RE.match(x.rsplit("/", 1)[-1]) for x in tags)
+               if m and "%s.%s" % (m.group(1), m.group(2)) == major_minor]
+    return "%s.%d" % (major_minor, max(patches + [int(base.rsplit(".", 1)[1])]) + 1)
+
+
+def cmd_version_suivante():
+    base = json.loads(read(REPO / "app" / "src-tauri" / "tauri.conf.json"))["version"]
+    rc, out = run(["git", "ls-remote", "--tags", "--refs", "https://github.com/%s" % terrain_app.REPO_SLUG, "refs/tags/app-v*"],
+                  timeout=120)
+    if rc != 0:
+        print("git ls-remote : code %d" % rc, file=sys.stderr)
+        return 1
+    print(version_suivante([l.split()[-1] for l in out.splitlines() if l.strip()], base))
+    return 0
 
 
 # --------------------------------------------------------------------------- results and reports
@@ -1936,6 +2362,7 @@ def parser():
     e = sub.add_parser("etape", parents=[common])
     e.add_argument("nom", choices=INSTALLEURS)
     e.add_argument("--resultat", required=True)
+    sub.add_parser("version-suivante")
     for name in ("rapport", "issue"):
         r = sub.add_parser(name)
         r.add_argument("fichiers", nargs="*")
@@ -1955,6 +2382,8 @@ def main(argv=None):
         return cmd_rapport(opts)
     if opts.cmd == "issue":
         return cmd_issue(opts)
+    if opts.cmd == "version-suivante":
+        return cmd_version_suivante()
     if opts.vm and not (os.environ.get("GITHUB_ACTIONS") == "true"
                         and os.environ.get("RUNNER_ENVIRONMENT") == "github-hosted"):
         print("--vm : seulement sur un runner hébergé par GitHub (GITHUB_ACTIONS, RUNNER_ENVIRONMENT).")
@@ -1968,7 +2397,7 @@ def main(argv=None):
     if opts.cmd == "etape":
         return cmd_etape(opts)
     fn = {"installation": installation, "montee-avant": montee_avant, "montee": montee, "nuits": nuits,
-          "vrai-claude": vrai_claude, "app": lambda t, o: terrain_app.scenario(t, o, sys.modules[__name__])}[opts.cmd]
+          "vrai-claude": vrai_claude, "app": app}[opts.cmd]
     return 1 if play(opts.cmd, fn, opts) == "echec" else 0
 
 
