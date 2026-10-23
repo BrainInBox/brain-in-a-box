@@ -178,7 +178,7 @@ try {
     # Windows only: the block's paths are written with backslashes, as install.ps1 runs on Windows alone.
     if ($Win) {
         $start = $ps1.IndexOf('$GuardMoved = $false'); $end = $ps1.IndexOf('# 3. Hooks')
-        $vault = [scriptblock]::Create($ps1.Substring($start, $end - $start))
+        $vaultStep = [scriptblock]::Create($ps1.Substring($start, $end - $start))
         function Test-FolderGuard { return $false }
         $REPO = Join-Path $T "kit"
         New-Item -ItemType Directory -Path (Join-Path $REPO (Join-Path "vault-skeleton" "Profile")) -Force | Out-Null
@@ -192,15 +192,15 @@ try {
         }
         New-Home; Remove-Item Env:BRAIN_DIR -ErrorAction SilentlyContinue
         $docs = Join-Path $H "Documents"; Close $docs
-        $BrainDir = ""; $script:Vault = ""
-        $out = Try-Said { . $vault; $script:Vault = $BrainDir }; $thrown = $Thrown
+        $BrainDir = ""; $script:VaultDir = ""
+        $out = Try-Said { . $vaultStep; $script:VaultDir = $BrainDir }; $thrown = $Thrown
         Open $docs
-        Check (-not $thrown -and $Vault -ceq "$H\Brain" -and (Test-Path -LiteralPath (Join-Path $H (Join-Path "Brain" "CLAUDE.md"))) -and
+        Check (-not $thrown -and $VaultDir -ceq "$H\Brain" -and (Test-Path -LiteralPath (Join-Path $H (Join-Path "Brain" "CLAUDE.md"))) -and
                -not (Test-Path -LiteralPath (Join-Path $docs "Brain")) -and $out -match "Documents est protege") `
-              "Documents closed by an antivirus: the new brain goes to the profile's folder: $Vault ; $thrown ; $($out.Trim() -replace '\r?\n', ' / ')"
+              "Documents closed by an antivirus: the new brain goes to the profile's folder: $VaultDir ; $thrown ; $($out.Trim() -replace '\r?\n', ' / ')"
         New-Home; Close (Join-Path $H "closed"); $env:BRAIN_DIR = Join-Path (Join-Path $H "closed") "Brain"
         $BrainDir = ""
-        $out = Try-Said { . $vault }; $thrown = $Thrown
+        $out = Try-Said { . $vaultStep }; $thrown = $Thrown
         Open (Join-Path $H "closed"); Remove-Item Env:BRAIN_DIR
         Check ($thrown -match "installation arretee" -and $out -match "(?m)^BIAB_ARRET=acces_documents_refuse\r?$" -and -not (Test-Path -LiteralPath (Join-Path $H "Brain"))) `
               "a folder the user chose, closed: BIAB_ARRET=acces_documents_refuse, nothing put elsewhere: $thrown"
