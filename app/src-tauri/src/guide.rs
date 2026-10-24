@@ -2048,7 +2048,8 @@ impl Serialize for Offre {
 }
 
 /// Whether the installer's welcome offers the guide (G0, decision D1): Claude Code and the brain's
-/// folder are there, and Claude Code is logged in. The guide needs nothing else of the install (memory,
+/// folder are there, and Claude Code is logged in on a login the guide works with (`guided`). The guide
+/// needs nothing else of the install (memory,
 /// hooks, skills): an install that stopped once the brain's folder was made can already be guided (on
 /// Windows, gbrain and Bun come after the folder; on a Mac, the memory's index). A whole brain, as the
 /// installer's own check says it, needs no question (as before D1: the guide's window asks for the
@@ -2058,8 +2059,15 @@ impl Serialize for Offre {
 pub fn offert() -> Offre {
     let home = sys::home();
     offered(&home, detect::claude_bin().is_some(), &|| detect::brain(&home, &agents::current(&home)).complete(), &|| {
-        within(AUTH_WAIT, detect::claude_logged_in)
+        within(AUTH_WAIT, || guided(detect::claude_login()))
     })
+}
+
+/// A login D1 leads to the guide on: a subscription, or claude.ai with its plan not said (the guide's
+/// window says what a free account lacks). Never one billed per use (an API key, a gateway): the guide
+/// refuses it, and the diagnosis says so.
+fn guided(login: detect::ClaudeLogin) -> bool {
+    matches!(login, detect::ClaudeLogin::Subscribed | detect::ClaudeLogin::Unconfirmed)
 }
 
 /// How long the welcome waits for `claude auth status` (detect's own limit is 10 s).
@@ -3582,6 +3590,14 @@ mod tests {
         assert_eq!(serde_json::to_value(Offre::Complet).unwrap(), json!(true));
         assert_eq!(serde_json::to_value(Offre::Dossier).unwrap(), json!("dossier"));
         assert_eq!(serde_json::to_value(Offre::Non).unwrap(), json!(false));
+    }
+
+    /// D1 never leads a login billed per use (an API key, a gateway) to a guide that refuses it.
+    #[test]
+    fn d1_is_offered_on_a_subscription_only() {
+        use crate::detect::ClaudeLogin;
+        assert!(guided(ClaudeLogin::Subscribed) && guided(ClaudeLogin::Unconfirmed));
+        assert!(!guided(ClaudeLogin::Billed) && !guided(ClaudeLogin::LoggedOut));
     }
 
     /// The welcome waits for `claude auth status` a few seconds, not detect's ten: a Claude Code that

@@ -224,6 +224,7 @@ pub fn failed(why: &str) -> Diagnosis {
         download_mb: 0,
         minutes: 0,
         advice: None,
+        claude_billed: false,
     }
 }
 
@@ -615,18 +616,11 @@ fn decide(home: &Path, f: &Facts) -> Diagnosis {
     let download_mb = download_mb(&checks, &todo);
     let minutes = minutes(&todo, download_mb, f.speed);
     let slow = f.speed.is_some_and(|s| s < SLOW_BYTES_PER_S) && download_mb > 0;
-    let slow_note = slow.then(|| {
-        format!(
-            "prévois {} en tout, avec {} à télécharger. En données mobiles, attends d'avoir un Wi-Fi.",
-            fmt_minutes(minutes),
-            fmt_mb(download_mb)
-        )
-    });
     // A 403 for github.com is a filter, unless GitHub's file came all the same (the speed's measure,
     // taken while the brain is left to install). It blocks the brain's step, whose files come from
     // there: with the brain already in place, nothing.
     let filtered = f.github == Some(403) && f.speed.is_none() && todo.iter().any(|s| s == "brain");
-    checks.insert(network_at, check_network(&hosts, filtered, slow_note.as_deref()));
+    checks.insert(network_at, check_network(&hosts, filtered, slow));
     let can_install = checks.iter().all(|c| c.status != Status::Error);
     let headline = headline(&checks, &todo, download_mb, minutes, slow);
 
@@ -651,6 +645,7 @@ fn decide(home: &Path, f: &Facts) -> Diagnosis {
         download_mb,
         minutes,
         advice: advice::decide(&f.advice),
+        claude_billed: f.claude.answers() && f.claude_login == ClaudeLogin::Billed,
     }
 }
 
@@ -664,7 +659,7 @@ fn check_macos(version: Option<&str>) -> Check {
                 "macOS {v} est trop ancien. Il faut macOS 13 ou plus : mets ton Mac à jour dans Préférences Système."
             ),
         ),
-        None => MACOS.is(Status::Warn, "Je n'ai pas pu lire la version de macOS."),
+        None => MACOS.is(Status::Info, "Je n'ai pas pu lire la version de macOS."),
     }
 }
 
@@ -675,10 +670,10 @@ fn check_linux(f: &LinuxFacts) -> Check {
     match (&f.name, f.debian) {
         (Some(name), true) => LINUX.is(Status::Ok, name.clone()),
         (Some(name), false) => LINUX.is(
-            Status::Warn,
+            Status::Info,
             format!("{name} : je ne l'ai pas encore essayé (Ubuntu et Debian oui). Ça devrait marcher ; s'il manque des outils, je te le dis."),
         ),
-        (None, _) => LINUX.is(Status::Warn, "Je n'ai pas pu lire le nom du système."),
+        (None, _) => LINUX.is(Status::Info, "Je n'ai pas pu lire le nom du système."),
     }
 }
 
@@ -693,7 +688,7 @@ fn check_windows(version: Option<&WindowsVersion>) -> Check {
                 v.name()
             ),
         ),
-        None => WINDOWS.is(Status::Warn, "Je n'ai pas pu lire la version de Windows."),
+        None => WINDOWS.is(Status::Info, "Je n'ai pas pu lire la version de Windows."),
     }
 }
 
@@ -711,7 +706,7 @@ fn check_disk(free_gb: Option<f64>) -> Check {
             format!("Il reste {} Go. Ça passe, mais c'est juste.", fmt_gb(gb)),
         ),
         Some(gb) => DISK.is(Status::Ok, format!("{} Go libres", fmt_gb(gb))),
-        None => DISK.is(Status::Warn, "Je n'ai pas pu mesurer l'espace libre."),
+        None => DISK.is(Status::Info, "Je n'ai pas pu mesurer l'espace libre."),
     }
 }
 
@@ -728,8 +723,9 @@ fn hosts(f: &Facts) -> Vec<(&'static str, bool)> {
 
 /// Blocks when none of the sites answers, or when a filter answers for github.com (`filtered`: a 403),
 /// where the brain comes from: only github.com's, as claude.ai turns curl away with a 403 of its own.
-/// `slow`: what a slow network means for the downloads left.
-fn check_network(hosts: &[(&str, bool)], filtered: bool, slow: Option<&str>) -> Check {
+/// `slow`: every site answers, slowly for what is left to download. How long it takes and the Wi-Fi are
+/// the headline's (shown above the list): said once.
+fn check_network(hosts: &[(&str, bool)], filtered: bool, slow: bool) -> Check {
     if filtered {
         return NETWORK.is(
             Status::Error,
@@ -741,9 +737,10 @@ fn check_network(hosts: &[(&str, bool)], filtered: bool, slow: Option<&str>) -> 
     let (up, down) = (names(true), names(false));
     if down.is_empty() {
         let verb = if up.len() == 1 { "répond" } else { "répondent" };
-        return match slow {
-            Some(note) => NETWORK.is(Status::Warn, format!("{} {verb}, mais lentement : {note}", steps::list_fr(&up))),
-            None => NETWORK.is(Status::Ok, format!("{} {verb}.", steps::list_fr(&up))),
+        return if slow {
+            NETWORK.is(Status::Warn, format!("{} {verb}, mais lentement.", steps::list_fr(&up)))
+        } else {
+            NETWORK.is(Status::Ok, format!("{} {verb}.", steps::list_fr(&up)))
         };
     }
     if up.is_empty() {
@@ -834,25 +831,30 @@ fn check_git(found: &Found) -> Check {
 #[cfg(windows)]
 fn check_obsidian_windows(found: &Found, winget: bool) -> Check {
     match found {
-        Found::Absent if !winget => OBSIDIAN.is(
-            Status::Warn,
-            "Pas installé : je ne peux pas l'installer sans l'outil d'installation de Microsoft (voir sa ligne). Tu \
-             peux aussi le télécharger toi-même, gratuitement, sur obsidian.md.",
-        ),
+        // Said, nothing to do here: no step brings it without winget.
+        Found::Absent if !winget => Check {
+            fix: None,
+            ..OBSIDIAN.is(
+                Status::Info,
+                "Pas installé : je ne peux pas l'installer sans l'outil d'installation de Microsoft (voir sa ligne). Tu \
+                 peux aussi le télécharger toi-même, gratuitement, sur obsidian.md.",
+            )
+        },
         _ => check_obsidian(found),
     }
 }
 
 /// install.ps1 takes Obsidian from winget alone: without it, the install goes on without Obsidian,
-/// said in orange with the Store's way to get it. There but silent (its first run on a new profile is
+/// said in orange with the Store's way to get it, from the Start menu (the window opens no Store link:
+/// open_link opens a few sites only). Obsidian's own line follows from this one: not counted twice. There but silent (its first run on a new profile is
 /// slow): orange, and a minute to wait. Windows' own names, in French and in English: a PC may be
 /// either.
 #[cfg(windows)]
 fn check_winget(obsidian_missing: bool, winget: Option<&Found>) -> Option<Check> {
     let winget = winget.filter(|w| obsidian_missing && !w.answers())?;
-    let store = "Ouvre le Microsoft Store, cherche « Programme d'installation d'application (App Installer) » et clique \
-                 sur « Obtenir (Get) » ou « Mettre à jour (Update) ». S'il n'y a que « Ouvrir (Open) », redémarre ton \
-                 PC. Puis clique sur Revérifier.";
+    let store = "Ouvre le Microsoft Store : dans le menu Démarrer (Start), tape « Microsoft Store ». Dans le Store, \
+                 cherche « Programme d'installation d'application (App Installer) » et clique sur « Obtenir (Get) » ou \
+                 « Mettre à jour (Update) ». S'il n'y a que « Ouvrir (Open) », redémarre ton PC. Puis clique sur Revérifier.";
     Some(match winget {
         Found::Absent => WINGET.is(
             Status::Warn,
@@ -946,13 +948,14 @@ fn min_codex() -> String {
 }
 
 /// How Codex is logged in (codex::login, §4.3): only a ChatGPT account of a personal plan is used,
-/// never an API key, and the app never logs anyone out.
+/// never an API key, and the app never logs anyone out. Its login still to come is for later, as
+/// Claude's (no step brings it: the window asks for it at the end).
 fn check_codex_auth(c: &CodexFacts) -> Check {
     use codex::Login;
     let (status, detail) = match c.login {
-        _ if !c.found.answers() => (Status::Warn, "Tu te connecteras une fois Codex installé.".to_string()),
+        _ if !c.found.answers() => (Status::Missing, "Tu te connecteras une fois Codex installé.".to_string()),
         Login::Chatgpt => (Status::Ok, "Tu es connecté avec ton compte ChatGPT.".into()),
-        Login::LoggedOut => (Status::Warn, "Pas encore connecté. Tu le feras en un clic, avec ton compte ChatGPT.".into()),
+        Login::LoggedOut => (Status::Missing, "Pas encore connecté. Tu le feras en un clic, avec ton compte ChatGPT.".into()),
         Login::Billed => (
             Status::Warn,
             "Codex est connecté avec une clé API, qui serait facturée : je ne m'en sers pas. \
@@ -973,8 +976,8 @@ fn check_codex_auth(c: &CodexFacts) -> Check {
                 sys::MACHINE
             ),
         ),
-        Login::Unknown if !c.features => (Status::Warn, "Je regarderai ta connexion une fois ton cerveau installé.".into()),
-        Login::Unknown => (Status::Warn, "Je n'ai pas pu lire ta connexion à Codex.".into()),
+        Login::Unknown if !c.features => (Status::Missing, "Je regarderai ta connexion une fois ton cerveau installé.".into()),
+        Login::Unknown => (Status::Info, "Je n'ai pas pu lire ta connexion à Codex.".into()),
     };
     CODEX_AUTH.is(status, detail)
 }
@@ -1162,25 +1165,25 @@ fn installing(todo: &[String]) -> String {
 }
 
 /// The sentence over the list: what blocks, else that all is there, else what gets installed, how
-/// long it takes and how much it downloads.
+/// long it takes and how much it downloads. Never « prêt »: the window shows it whole under its own
+/// title, which says whether the machine is ready or has an orange line to read first.
 fn headline(checks: &[Check], todo: &[String], download_mb: u32, minutes: u32, slow: bool) -> String {
-    let machine = sys::MACHINE;
     match checks.iter().filter(|c| c.status == Status::Error).count() {
         0 => {}
         1 => return "Une chose bloque l'installation : la ligne en rouge dit quoi faire. Ensuite, clique sur Revérifier.".into(),
         _ => return "Des choses bloquent l'installation : les lignes en rouge disent quoi faire. Ensuite, clique sur Revérifier.".into(),
     }
     if todo.is_empty() {
-        return format!("Tout est déjà installé sur ton {machine}.");
+        return format!("Tout est déjà installé sur ton {}.", sys::MACHINE);
     }
     let (what, time, size) = (installing(todo), fmt_minutes(minutes), fmt_mb(download_mb));
     if slow {
         format!(
-            "Ton {machine} est prêt, mais ta connexion est lente. J'installe {what} : prévois {time}, avec {size} \
-             à télécharger. En données mobiles, attends d'avoir un Wi-Fi."
+            "Ta connexion est lente. J'installe {what} : prévois {time}, avec {size} à télécharger. En données \
+             mobiles, attends d'avoir un Wi-Fi."
         )
     } else {
-        format!("Ton {machine} est prêt. J'installe {what} : {time} et {size} à télécharger.")
+        format!("J'installe {what} : {time} et {size} à télécharger.")
     }
 }
 
@@ -1289,8 +1292,9 @@ mod tests {
         assert_eq!(check_macos(Some("12.7.6")).status, Status::Error);
         assert_eq!(check_macos(Some("13.0")).status, Status::Ok);
         assert_eq!(check_macos(Some("26.3.1")).detail, "macOS 26.3.1");
-        assert_eq!(check_macos(None).status, Status::Warn);
-        assert_eq!(check_macos(Some("garbage")).status, Status::Warn);
+        // What it could not read is said, with nothing to do: never « un point à vérifier ».
+        assert_eq!(check_macos(None).status, Status::Info);
+        assert_eq!(check_macos(Some("garbage")).status, Status::Info);
     }
 
     #[test]
@@ -1299,7 +1303,8 @@ mod tests {
         assert_eq!(check_disk(Some(3.0)).status, Status::Warn);
         assert_eq!(check_disk(Some(9.99)).status, Status::Warn);
         assert_eq!(check_disk(Some(10.0)).status, Status::Ok);
-        assert_eq!(check_disk(None).status, Status::Warn);
+        // Not measured: nothing to do, and no advice to make room (diagnose.rs says nothing was measured).
+        assert_eq!(check_disk(None).status, Status::Info);
         assert!(check_disk(Some(2.5)).detail.contains("2,5 Go"));
         assert!(check_disk(Some(2.99)).detail.contains("2,9 Go"));
         assert_eq!(check_disk(Some(174.02)).detail, "174 Go libres");
@@ -1325,7 +1330,7 @@ mod tests {
     #[test]
     fn network_blocks_only_when_both_sites_are_down() {
         let net = |github, claude_ai| {
-            let c = check_network(&[("github.com", github), ("claude.ai", claude_ai)], false, None);
+            let c = check_network(&[("github.com", github), ("claude.ai", claude_ai)], false, false);
             (c.status, c.detail)
         };
         // Claude alone: word for word as before Codex.
@@ -1341,7 +1346,7 @@ mod tests {
     /// Each agent's site; none answering blocks, one of them down warns.
     #[test]
     fn the_network_check_names_each_agents_site() {
-        let three = |a: bool, b, c| check_network(&[("github.com", a), ("claude.ai", b), ("chatgpt.com", c)], false, None);
+        let three = |a: bool, b, c| check_network(&[("github.com", a), ("claude.ai", b), ("chatgpt.com", c)], false, false);
         assert_eq!(three(true, true, true).detail, "github.com, claude.ai et chatgpt.com répondent.");
         let down = three(true, false, false);
         assert_eq!((down.status, down.detail.as_str()), (Status::Warn, "claude.ai et chatgpt.com ne répondent pas. Une étape risque d'échouer."));
@@ -1350,8 +1355,8 @@ mod tests {
             (none.status, none.detail.as_str()),
             (Status::Error, "Pas d'internet : ni github.com, ni claude.ai, ni chatgpt.com ne répondent. Vérifie ton Wi-Fi, puis relance.")
         );
-        assert_eq!(check_network(&[("github.com", true)], false, None).detail, "github.com répond.");
-        let alone = check_network(&[("github.com", false)], false, None);
+        assert_eq!(check_network(&[("github.com", true)], false, false).detail, "github.com répond.");
+        let alone = check_network(&[("github.com", false)], false, false);
         assert_eq!((alone.status, alone.detail.as_str()), (Status::Error, "Pas d'internet : github.com ne répond pas. Vérifie ton Wi-Fi, puis relance."));
         let f = Facts { agents: codex_agents(vec![Engine::Codex, Engine::Claude]), chatgpt: true, ..healthy_facts() };
         assert_eq!(hosts(&f), [("github.com", true), ("chatgpt.com", true), ("claude.ai", true)]);
@@ -1431,6 +1436,13 @@ mod tests {
         let d = decide(tmp.path(), &Facts { claude_login: ClaudeLogin::Billed, ..healthy_facts() });
         assert!(d.can_install && d.todo.is_empty());
         assert_eq!(by_id(&d, "claude_auth").status, Status::Warn);
+        // The window's end offers no guide on it (the guide refuses it): it is told so.
+        assert!(d.claude_billed);
+        assert_eq!(serde_json::to_value(&d).unwrap()["claude_billed"], true);
+        for login in [ClaudeLogin::Subscribed, ClaudeLogin::Unconfirmed, ClaudeLogin::LoggedOut] {
+            assert!(!decide(tmp.path(), &Facts { claude_login: login, ..healthy_facts() }).claude_billed, "{login:?}");
+        }
+        assert!(!failed("x").claude_billed);
     }
 
     #[test]
@@ -1521,7 +1533,8 @@ mod tests {
             assert!(!all.contains(&id.to_string()), "{id} in {all:?}");
         }
         assert!(by_id(&d, "network").detail.contains("chatgpt.com") && !by_id(&d, "network").detail.contains("claude.ai"));
-        assert_eq!(by_id(&d, "codex_auth").status, Status::Warn);
+        // Logged out: for later, as Claude's login (never « un point à vérifier »), and no step brings it.
+        assert_eq!((by_id(&d, "codex_auth").status, by_id(&d, "codex_auth").fix.as_deref()), (Status::Missing, None));
         assert_eq!(d.todo, ["brain"]);
 
         let missing =
@@ -1532,6 +1545,8 @@ mod tests {
         let pos = |id: &str| ids(&d).iter().position(|x| x == id).unwrap();
         assert!(pos("codex") < pos("claude"), "the preferred one first");
         assert_eq!(by_id(&d, "codex_auth").detail, "Tu te connecteras une fois Codex installé.");
+        assert_eq!((by_id(&d, "codex_auth").status, by_id(&d, "codex_auth").fix.as_deref()), (Status::Missing, None));
+        assert!(!d.todo.contains(&"codex_auth".to_string()));
     }
 
     #[test]
@@ -1549,9 +1564,17 @@ mod tests {
         use codex::Login;
         let said = |login, features| check_codex_auth(&CodexFacts { features, ..codex_facts(login) });
         assert_eq!(said(Login::Chatgpt, true).status, Status::Ok);
-        for login in [Login::LoggedOut, Login::Billed, Login::Managed, Login::System, Login::Unknown] {
+        // A login the kit does not use: orange, it says what to do. One still to come: for later. One it
+        // could not read: said, nothing to do.
+        for login in [Login::Billed, Login::Managed, Login::System] {
             let c = said(login, true);
             assert_eq!((c.status, c.fix), (Status::Warn, None), "{login:?}");
+        }
+        for (login, features, status) in
+            [(Login::LoggedOut, true, Status::Missing), (Login::Unknown, false, Status::Missing), (Login::Unknown, true, Status::Info)]
+        {
+            let c = said(login, features);
+            assert_eq!((c.status, c.fix), (status, None), "{login:?}");
         }
         assert!(said(Login::Billed, true).detail.contains("clé API") && said(Login::Billed, true).detail.contains("ChatGPT"));
         // No command to type: the login button replaces the key. A workspace account is said as one,
@@ -1562,7 +1585,7 @@ mod tests {
         assert!(said(Login::Unknown, false).detail.contains("une fois ton cerveau installé"));
         assert_ne!(said(Login::Unknown, false).detail, said(Login::Unknown, true).detail);
         let absent = check_codex_auth(&CodexFacts { found: Found::Absent, ..codex_facts(Login::Unknown) });
-        assert_eq!(absent.detail, "Tu te connecteras une fois Codex installé.");
+        assert_eq!((absent.status, absent.detail.as_str()), (Status::Missing, "Tu te connecteras une fois Codex installé."));
     }
 
     /// A choice the kit cannot trust: no agent is looked at, and nothing installs until it is made again.
@@ -1625,12 +1648,9 @@ mod tests {
         assert!(d.can_install, "{:?}", d.checks);
         let orange: Vec<&str> = d.checks.iter().filter(|c| c.status == Status::Warn).map(|c| c.id.as_str()).collect();
         assert!(orange.is_empty(), "{orange:?}");
-        let machine = sys::MACHINE;
-        assert!(
-            d.headline.starts_with(&format!("Ton {machine} est prêt. J'installe Claude et ton cerveau : environ ")),
-            "{}",
-            d.headline
-        );
+        // The window shows it whole under its own title, which says whether the machine is ready (an
+        // orange line there is « un point à vérifier »): never « prêt » here.
+        assert!(d.headline.starts_with("J'installe Claude et ton cerveau : environ ") && !d.headline.contains("prêt"), "{}", d.headline);
         // A fast enough network: nothing said of Wi-Fi (a PC on a cable would wonder why).
         assert!(d.headline.ends_with(" à télécharger.") && !d.headline.contains("Wi-Fi"), "{}", d.headline);
         // Claude Code (300 Mo), the brain's memory and the kit, and each tool of the system.
@@ -1665,10 +1685,10 @@ mod tests {
     #[test]
     fn a_filter_on_github_blocks_and_names_it() {
         let hosts = [("github.com", true), ("claude.ai", true)];
-        let c = check_network(&hosts, true, None);
+        let c = check_network(&hosts, true, false);
         assert_eq!((c.status, c.fix), (Status::Error, None));
         assert!(c.detail.contains("bloque github.com") && c.detail.contains("Revérifier"), "{}", c.detail);
-        assert_eq!(check_network(&hosts, false, None).status, Status::Ok);
+        assert_eq!(check_network(&hosts, false, false).status, Status::Ok);
         let tmp = tempfile::tempdir().unwrap();
         let d = decide(tmp.path(), &Facts { github: Some(403), ..fresh_facts() });
         assert!(!d.can_install);
@@ -1697,7 +1717,8 @@ mod tests {
         assert_eq!(by_id(&blocked, "network").status, Status::Error);
     }
 
-    /// Below 2 Mbit/s, the network check and the headline say how long the downloads take.
+    /// Below 2 Mbit/s, the headline says how long the downloads take and the Wi-Fi; the network's line only
+    /// that it is slow (the window shows both: said once).
     #[test]
     fn a_slow_network_says_how_long() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1706,19 +1727,17 @@ mod tests {
         assert!(d.can_install);
         let net = by_id(&d, "network");
         assert_eq!(net.status, Status::Warn);
-        assert!(net.detail.contains("mais lentement : prévois environ ") && net.detail.contains("En données mobiles"), "{}", net.detail);
+        assert_eq!(net.detail, "github.com et claude.ai répondent, mais lentement.");
         assert!(d.minutes > 60, "{}", d.minutes);
         // The time is the whole install's (downloads and work), the volume the downloads'.
-        let whole = format!("prévois {} en tout, avec {} à télécharger.", fmt_minutes(d.minutes), fmt_mb(d.download_mb));
-        assert!(net.detail.contains(&whole), "{}", net.detail);
-        assert!(d.headline.contains("ta connexion est lente") && d.headline.contains("attends d'avoir un Wi-Fi"), "{}", d.headline);
+        let whole = format!("prévois {}, avec {} à télécharger.", fmt_minutes(d.minutes), fmt_mb(d.download_mb));
+        assert!(d.headline.contains(&whole), "{}", d.headline);
+        assert!(d.headline.starts_with("Ta connexion est lente. J'installe ") && d.headline.contains("attends d'avoir un Wi-Fi"), "{}", d.headline);
         // « compte » would read as the Claude account.
         assert!(!net.detail.contains("compte") && !d.headline.contains("compte"), "{}", d.headline);
         // Past 5 h: « plusieurs heures », with no « environ » before it.
         let crawling = decide(tmp.path(), &Facts { speed: Some(20_000.0), ..fresh_facts() });
-        for said in [&by_id(&crawling, "network").detail, &crawling.headline] {
-            assert!(said.contains("prévois plusieurs heures") && !said.contains("environ plusieurs"), "{said}");
-        }
+        assert!(crawling.headline.contains("prévois plusieurs heures") && !crawling.headline.contains("environ plusieurs"), "{}", crawling.headline);
         // Fast, or nothing left to download: nothing said of the speed.
         let fast = decide(tmp.path(), &Facts { speed: Some(5_000_000.0), ..fresh_facts() });
         assert_eq!(by_id(&fast, "network").status, Status::Ok);
@@ -1939,7 +1958,8 @@ mod tests {
         let fedora = LinuxFacts { name: Some("Fedora Linux 41".into()), debian: false, obsidian_installable: false, ..healthy_facts().linux };
         let d = decide(tmp.path(), &Facts { linux: fedora.clone(), obsidian: Found::Absent, ..healthy_facts() });
         assert!(d.can_install, "{:?}", d.checks);
-        assert_eq!(by_id(&d, "linux").status, Status::Warn);
+        // Not tried yet, nothing to do: said, never « un point à vérifier ».
+        assert_eq!(by_id(&d, "linux").status, Status::Info);
         // No official Obsidian package here: a word, no step.
         let o = by_id(&d, "obsidian");
         assert_eq!((o.status, o.fix.as_deref()), (Status::Warn, None));
@@ -2018,14 +2038,17 @@ mod tests {
         for said in [
             "« Programme d'installation d'application (App Installer) »", "« Obtenir (Get) »", "« Mettre à jour (Update) »",
             "S'il n'y a que « Ouvrir (Open) », redémarre ton PC.", "Revérifier",
+            // The way to the Store, on the line itself: no button (open_link opens a few sites only).
+            "Ouvre le Microsoft Store : dans le menu Démarrer (Start), tape « Microsoft Store ».",
         ] {
             assert!(w.detail.contains(said), "{said}: {}", w.detail);
         }
         for id in ["python", "git"] {
             assert_eq!((by_id(&d, id).status, by_id(&d, id).detail.as_str()), (Status::Missing, "Pas encore installé : je l'installe pour toi."), "{id}");
         }
+        // Obsidian's line follows from winget's: said, not counted as a second point to check.
         let o = by_id(&d, "obsidian");
-        assert_eq!(o.status, Status::Warn);
+        assert_eq!((o.status, o.fix.as_deref()), (Status::Info, None));
         assert!(o.detail.contains("(voir sa ligne)") && o.detail.ends_with("Tu peux aussi le télécharger toi-même, gratuitement, sur obsidian.md."), "{}", o.detail);
         let with_winget = decide(tmp.path(), &Facts { winget: None, ..fresh_facts() });
         assert_eq!(d.download_mb + piece_mb("obsidian"), with_winget.download_mb);
@@ -2056,7 +2079,7 @@ mod tests {
         assert_eq!(check_windows(Some(&v(17763, Some("1809")))).detail, "Windows 10 (1809)");
         assert_eq!(check_windows(Some(&v(22631, Some("23H2")))).detail, "Windows 11 (23H2)");
         assert_eq!(check_windows(Some(&v(26100, None))).detail, "Windows 11");
-        assert_eq!(check_windows(None).status, Status::Warn);
+        assert_eq!(check_windows(None).status, Status::Info);
     }
 
     #[cfg(windows)]

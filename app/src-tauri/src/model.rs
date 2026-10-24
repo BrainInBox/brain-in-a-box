@@ -10,8 +10,11 @@ pub enum Status {
     /// Not there yet, and nothing to worry about: an install step brings it (`fix`), or the user
     /// adds it in a click later on (the login, the search by meaning: no `fix`, shown « Plus tard »).
     Missing,
-    /// Works, but something is off (old version, slow network...). Never blocks.
+    /// Works, but something is off (old version, slow network...): the line says what to do. Never blocks.
     Warn,
+    /// Worth saying, nothing to do: what the diagnosis could not read (a version, the free space), a
+    /// system not tried yet, a consequence of another line. Never blocks, never counted as a point to check.
+    Info,
     /// Blocks the install and no step can fix it (old macOS, no disk space...).
     Error,
 }
@@ -57,6 +60,9 @@ pub struct Diagnosis {
     pub minutes: u32,
     /// Which AI the brain should work with, from what is already on this computer (advice.rs).
     pub advice: Option<Advice>,
+    /// Claude Code logged in on a login billed per use (an API key, a gateway): the guide and the evening's
+    /// summary do not use it, so the window's end offers no guide.
+    pub claude_billed: bool,
 }
 
 /// Bibo's advice, in the kit's words (engine/hooks/_conseil.py).

@@ -203,18 +203,6 @@ async fn brain_folder() -> String {
     tauri::async_runtime::spawn_blocking(|| detect::brain_dir_shown(&sys::home())).await.unwrap_or_default()
 }
 
-/// Whether the brain is whole, as the installer's own check says it (files read, nothing run): back on a
-/// brain whose install stopped half way, where the guide already works (D1), the welcome says so.
-#[tauri::command]
-async fn brain_complete() -> bool {
-    tauri::async_runtime::spawn_blocking(|| {
-        let home = sys::home();
-        detect::brain(&home, &agents::current(&home)).complete()
-    })
-    .await
-    .unwrap_or(true)
-}
-
 /// Opens one of a few known pages (Voyage dashboard, downloads) in the default browser.
 #[tauri::command]
 async fn open_link(url: String) -> Result<(), String> {
@@ -841,7 +829,6 @@ pub fn run() {
             start_onboarding,
             open_vault,
             brain_folder,
-            brain_complete,
             open_link,
             open_settings,
             open_repair_terminal,
@@ -931,14 +918,24 @@ mod tests {
         assert_eq!(guide, guides.union(&shared).cloned().collect(), "the guide's window");
         assert!(main.iter().all(|c| commands.contains(c)) && guide.iter().all(|c| commands.contains(c)));
         assert!(main.is_disjoint(&guides), "the installer's window has none of the guide's but its door: {:?}", main.intersection(&guides).collect::<Vec<_>>());
-        for c in named_in("../src/app.js", &commands) {
-            assert!(main.contains(&c), "app.js calls {c}");
+        let (app, guide_js) = (named_in("../src/app.js", &commands), named_in("../src/guide.js", &commands));
+        for c in &app {
+            assert!(main.contains(c), "app.js calls {c}");
         }
-        for c in named_in("../src/guide.js", &commands) {
-            assert!(guide.contains(&c), "guide.js calls {c}");
+        for c in &guide_js {
+            assert!(guide.contains(c), "guide.js calls {c}");
         }
         let nobodys: Vec<&String> = commands.iter().filter(|c| !main.contains(*c) && !guide.contains(*c)).collect();
         assert!(nobodys.is_empty(), "no window may call {nobodys:?}");
+        // The installer's own commands, each called by its page: one it no longer calls is a door left open
+        // for nothing, out with its rights. But the commands added ahead of their screen (#72's report on the
+        // Desktop and « Parler à Claude »), each until app.js calls it.
+        let ahead = ["save_report", "start_claude"];
+        for c in ahead {
+            assert!(!app.contains(c), "app.js calls {c}: out of the commands ahead of their screen");
+        }
+        let unused: Vec<&String> = main.difference(&guide).filter(|c| !app.contains(*c) && !ahead.contains(&c.as_str())).collect();
+        assert!(unused.is_empty(), "app.js never calls {unused:?}");
     }
 
     /// A second launch while the guide guides brings the guide back, not the installer over the program guided

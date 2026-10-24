@@ -49,7 +49,7 @@
 ### s=echec&go=done&fail=brain&os=windows
 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 86 87 88 89 33 34 16 35
 
-### s=manque&go=login&nth=1&click=next,next,next,skip
+### s=manque&go=done&click=next,next,next,skip
 1 2 3 4 5 6 7 8 11 12 13 14 15 16 90
 
 ### s=repair-ok&go=done
@@ -128,85 +128,85 @@
 1 2 91 92 93 94 95 96 97 188 189
 
 ### s=repair-auth&go=done&os=linux
-18 19 179 92 190 94 95 84 85 138 139 140 141 142 143 144 145 98 191 192 101 193 103 16 49
+18 19 190 92 191 94 95 84 85 138 139 140 141 142 143 144 145 98 192 193 101 194 103 16 49
 
 ### s=manque&go=diag&conseil=chatgpt_bientot&hermes=1
-1 2 194
+1 2 195
 
 ### s=installe&go=diag&conseil=claude_vu&os=windows
-59 19 195
-
-### s=installe&go=diag&hermes=lu&os=linux
 59 19 196
 
+### s=installe&go=diag&hermes=lu&os=linux
+59 19 197
+
 ### s=installe&go=import-done&click=import,pick
-57 2 58 16 55 197 198 199 200 201 202 203 204 205 206 207
+57 2 58 16 55 198 199 200 201 202 203 204 205 206 207 208
 
 ### s=installe&go=import-done&click=import,pick,size-rapide&sent=1
-57 2 58 16 55 197 198 199 200 201 208 209 210 206 207
+57 2 58 16 55 198 199 200 201 202 209 210 211 207 208
 
 ### s=installe&go=import-done&click=import,pick&fichiers=3&os=windows
-59 19 60 16 61 197 211 212 213 214 215 216 202 203 204 205 206 217
+59 19 60 16 61 198 212 213 214 215 216 217 203 204 205 206 207 218
 
 ### s=installe&go=import-done&click=import&colle=1
-57 2 58 16 55 197 198 218 219 220 221 222 223 206 224
+57 2 58 16 55 198 199 219 220 221 222 223 224 207 225
 
 ### s=installe&go=import-paste&click=import&os=linux
-59 19 60 16 63 197 225 218 219
+59 19 60 16 63 198 226 219 220
 
 ### s=installe&go=import-done&click=import,pick&imp=partiel
-57 2 58 16 55 197 198 199 200 201 202 203 206 226
+57 2 58 16 55 198 199 200 201 202 203 204 207 227
 
 ### s=installe&go=import-done&click=import,pick&imp=suspect
-57 2 58 16 55 197 198 199 200 227 202 203 204 205 206 228
+57 2 58 16 55 198 199 200 201 228 203 204 205 206 207 229
 
 ### s=installe&go=import-done&click=import,pick&imp=rien
-57 2 58 16 55 197 198 199 200 201 202 203 204 205 206 229
+57 2 58 16 55 198 199 200 201 202 203 204 205 206 207 230
 
 ### s=installe&go=import-error&click=import,pick&imp=deja
-57 2 58 16 55 197 198 199 230
+57 2 58 16 55 198 199 200 231
 
 ### s=installe&go=import-error&click=import,pick&imp=compte
-57 2 58 16 55 197 198 199 231
+57 2 58 16 55 198 199 200 232
 
 ### s=installe&go=import-error&click=import,pick&imp=auth
-57 2 58 16 55 197 198 199 200 201 202 232
+57 2 58 16 55 198 199 200 201 202 203 233
 
 ### s=installe&go=import-error&click=import,pick&imp=quota
-57 2 58 16 55 197 198 199 200 201 202 233
+57 2 58 16 55 198 199 200 201 202 203 234
 
 ### s=installe&go=import-error&click=import&imp=a_jour
-57 2 58 16 55 197 234
+57 2 58 16 55 198 235
 
 ### s=installe&go=import-error&click=import,pick&imp=pas_un_zip
-57 2 58 16 55 197 198 199 235
+57 2 58 16 55 198 199 200 236
 
 ### s=installe&go=import-error&click=import,pick&imp=trop_de_fichiers&os=windows
-59 19 60 16 61 197 211 212 236
+59 19 60 16 61 198 212 213 237
 
 ### s=installe&go=import-error&click=import,pick&imp=timeout
-57 2 58 16 55 197 198 199 200 201 202 237
+57 2 58 16 55 198 199 200 201 202 203 238
 
 ### s=installe&go=import-paste&nth=2&click=import&colle=1&imp=phrase
-57 2 58 16 55 197 198 218 219 220 221 238 239
+57 2 58 16 55 198 199 219 220 221 222 239 240
 
 ### s=installe&go=import&nth=2&click=import,pick,back
-57 2 58 16 55 197 198 199 200 201 240
+57 2 58 16 55 198 199 200 201 202 241
 
 ### s=installe&go=import&nth=2&click=import,pick,next,stop&pause=import
-57 2 58 16 55 197 198 199 200 201 202 241
+57 2 58 16 55 198 199 200 201 202 203 242
 
 ### s=repair-ok&go=done&error=refused
-1 2 91 92 93 94 95 96 97 242 243 98 99 100 101 102 103 16 17
+1 2 91 92 93 94 95 96 97 243 244 98 99 100 101 102 103 16 17
 
 ### s=manque&go=welcome&version=0.1.76&os=windows
-244
+245
 
-### s=manque&go=done&click=skip,skip&os=windows
-18 19 20 21 22 23 28 29 30 31 32 33 34 16 90 245
+### s=manque&go=done&click=skip&os=windows
+18 19 20 21 22 23 28 29 30 31 32 33 34 16 246
 
-### s=manque&go=done&nth=2&click=skip,skip&jamais=1&hint=20
-1 2 3 4 5 6 11 12 13 14 15 16 90 246 247 248 249 250 251
+### s=manque&go=done&nth=2&click=skip&jamais=1&hint=20
+1 2 3 4 5 6 11 12 13 14 15 16 90 247 248 249 250 251
 
 ### s=login-early&go=done&jamais=1&hint=20
 1 2 69 70 71 72 73 74 252 253
@@ -241,11 +241,47 @@
 ### s=installe&go=done&click=vault&obsidian=absent&os=windows
 59 19 60 16 61 261 265 266
 
+### s=manque&go=diag&click=detail&os=windows
+18 19 20 267
+
+### s=installe&go=diag&compte=api&os=windows
+59 19 268
+
+### s=installe&go=diag&compte=gratuit
+57 2 269
+
+### s=manque&go=diag&winget=absent&os=windows
+18 19 270
+
+### s=manque&go=diag&reseau=filtre&os=windows
+18 19 271
+
+### s=manque&go=diag&reseau=lent&os=windows
+18 19 272
+
+### s=manque&go=diag&winget=absent&alerte=disk&os=windows
+18 19 273
+
+### s=manque&go=diag&reseau=lent&alerte=disk&os=windows
+18 19 274
+
+### s=installe&deco=1&go=login&click=check
+275 2 276 16 277
+
+### s=manque&go=diag&click=detail&aveugle=1&os=windows
+18 19 20 278
+
+### s=installe&go=done&compte=api&os=windows
+59 19 268 16 279
+
+### s=manque&go=done&click=skip
+1 2 3 4 5 6 11 12 13 14 15 16 90
+
 #1
 == welcome
 Salut, moi c’est Bibo !
-Je vais installer ton second cerveau pour Claude. 10 à 20 minutes, tu n’as aucune commande à taper.
-Je regarde ce qui manque sur ton Mac.
+Je vais installer ton second cerveau pour Claude. Tu n’as aucune commande à taper.
+Je regarde ce qui manque sur ton Mac, et je te dis combien de temps ça prend.
 J’installe Claude, puis tu connectes ton compte (2 min).
 J’installe le reste tout seul. Si ça coince, Claude m’aide à réparer.
 Il te faut un abonnement Claude Pro ou Max.
@@ -261,8 +297,8 @@ Vérification en cours
 #3
 == diag
 J’ai fait le tour : ton Mac est prêt.
-J’installe Claude Code, les outils Apple, le moteur de ta mémoire, Obsidian et ton cerveau : 10 à 20 minutes. Si tu peux, branche-toi sur un Wi-Fi : il y a beaucoup à télécharger.
-Mon conseil : Ton cerveau marche avec Claude : il te faudra un abonnement Claude Pro ou Max.
+J’installe Claude et ton cerveau : environ 25 minutes et 1,5 Go à télécharger.
+Mon conseil : Ton cerveau marche avec Claude : il te faut un abonnement Claude Pro (environ 20 € par mois) ou Max.
 [Voir le détail]
 [Tout installer]
 
@@ -454,8 +490,8 @@ Pour me retrouver plus tard : si tu m’as ouvert depuis le fichier télécharg
 #18
 == welcome
 Salut, moi c’est Bibo !
-Je vais installer ton second cerveau pour Claude. 10 à 20 minutes, tu n’as aucune commande à taper.
-Je regarde ce qui manque sur ton PC.
+Je vais installer ton second cerveau pour Claude. Tu n’as aucune commande à taper.
+Je regarde ce qui manque sur ton PC, et je te dis combien de temps ça prend.
 J’installe Claude, puis tu connectes ton compte (2 min).
 J’installe le reste tout seul. Si ça coince, Claude m’aide à réparer.
 Il te faut un abonnement Claude Pro ou Max.
@@ -471,8 +507,8 @@ Vérification en cours
 #20
 == diag
 J’ai fait le tour : ton PC est prêt.
-J’installe Claude Code et ton cerveau : 10 à 20 minutes. Si tu peux, branche-toi sur un Wi-Fi : il y a beaucoup à télécharger.
-Mon conseil : Ton cerveau marche avec Claude : il te faudra un abonnement Claude Pro ou Max.
+J’installe Claude et ton cerveau : environ 15 minutes et 900 Mo à télécharger.
+Mon conseil : Ton cerveau marche avec Claude : il te faut un abonnement Claude Pro (environ 20 € par mois) ou Max.
 [Voir le détail]
 [Tout installer]
 
@@ -565,7 +601,7 @@ Détails
 #28
 == install
 Je prépare ton cerveau.
-Étape 2 sur 2. C’est l’étape la plus longue : 10 à 20 minutes.
+Étape 2 sur 2. C’est l’étape la plus longue.
 Claude CodeClaude, directement sur ton PC.Fait
 Ton cerveauTes notes, ta mémoire, tes automatismes, et Obsidian.En cours…
 Windows va peut-être demander une autorisation pour installer Git ou Python : clique sur « Oui » (Yes).
@@ -575,7 +611,7 @@ Détails
 #29
 == install
 Je prépare ton cerveau.
-Étape 2 sur 2. C’est l’étape la plus longue : 10 à 20 minutes.
+Étape 2 sur 2. C’est l’étape la plus longue.
 Claude CodeClaude, directement sur ton PC.Fait
 Ton cerveauJe vérifie Python et Git, et je les installe s’il le faut (1 sur 13)…En cours…
 Windows va peut-être demander une autorisation pour installer Git ou Python : clique sur « Oui » (Yes).
@@ -585,7 +621,7 @@ Détails
 #30
 == install
 Je prépare ton cerveau.
-Étape 2 sur 2. C’est l’étape la plus longue : 10 à 20 minutes.
+Étape 2 sur 2. C’est l’étape la plus longue.
 Claude CodeClaude, directement sur ton PC.Fait
 Ton cerveauJe crée ton dossier Brain (3 sur 13)…En cours…
 Garde ton ordinateur sur le chargeur et ouvert jusqu’à la fin : s’il se met en veille, l’installation s’arrête.
@@ -594,7 +630,7 @@ Détails
 #31
 == install
 Je prépare ton cerveau.
-Étape 2 sur 2. C’est l’étape la plus longue : 10 à 20 minutes.
+Étape 2 sur 2. C’est l’étape la plus longue.
 Claude CodeClaude, directement sur ton PC.Fait
 Ton cerveauJ’installe la mémoire, 2 à 5 minutes (10 sur 13)…En cours…
 Garde ton ordinateur sur le chargeur et ouvert jusqu’à la fin : s’il se met en veille, l’installation s’arrête.
@@ -603,7 +639,7 @@ Détails
 #32
 == install
 Je prépare ton cerveau.
-Étape 2 sur 2. C’est l’étape la plus longue : 10 à 20 minutes.
+Étape 2 sur 2. C’est l’étape la plus longue.
 Claude CodeClaude, directement sur ton PC.Fait
 Ton cerveauJ’installe Obsidian (12 sur 13)…En cours…
 Windows va peut-être demander une autorisation pour installer Obsidian : clique sur « Oui » (Yes).
@@ -613,7 +649,7 @@ Détails
 #33
 == install
 Je prépare ton cerveau.
-Étape 2 sur 2. C’est l’étape la plus longue : 10 à 20 minutes.
+Étape 2 sur 2. C’est l’étape la plus longue.
 Claude CodeClaude, directement sur ton PC.Fait
 Ton cerveauJe vérifie que tout répond (13 sur 13)…En cours…
 Garde ton ordinateur sur le chargeur et ouvert jusqu’à la fin : s’il se met en veille, l’installation s’arrête.
@@ -643,8 +679,8 @@ Pour me retrouver plus tard : ouvre le menu Démarrer (Start) et tape « Brain
 #36
 == diag
 J’ai fait le tour : ton PC est prêt.
-J’installe les outils de base, Claude Code, le moteur de ta mémoire, Obsidian et ton cerveau : 10 à 20 minutes. Si tu peux, branche-toi sur un Wi-Fi : il y a beaucoup à télécharger.
-Mon conseil : Ton cerveau marche avec Claude : il te faudra un abonnement Claude Pro ou Max.
+J’installe Claude et ton cerveau : environ 20 minutes et 650 Mo à télécharger.
+Mon conseil : Ton cerveau marche avec Claude : il te faut un abonnement Claude Pro (environ 20 € par mois) ou Max.
 [Voir le détail]
 [Tout installer]
 
@@ -929,7 +965,7 @@ Je peux te guider pas à pas dans un logiciel : tu me montres ta fenêtre, je t
 == diag
 Tout est déjà installé !
 Ton Mac a tout ce qu’il faut.
-Mon conseil : Tu as déjà Claude Code, connecté à ton abonnement : ton cerveau travaillera avec lui.
+Mon conseil : Tu as déjà Claude Code, connecté à ton compte Claude : ton cerveau travaillera avec lui.
 [Voir le détail]
 [Continuer]
 
@@ -944,7 +980,7 @@ Je peux te guider pas à pas dans un logiciel : tu me montres ta fenêtre, je t
 == diag
 Tout est déjà installé !
 Ton PC a tout ce qu’il faut.
-Mon conseil : Tu as déjà Claude Code, connecté à ton abonnement : ton cerveau travaillera avec lui.
+Mon conseil : Tu as déjà Claude Code, connecté à ton compte Claude : ton cerveau travaillera avec lui.
 [Voir le détail]
 [Continuer]
 
@@ -1022,7 +1058,7 @@ Tes notes sont dans le dossier Documents/Brain.
 == diag
 Tout est déjà installé !
 Ton cerveau cherche par mots-clés : tu peux lui apprendre à chercher par le sens.
-Mon conseil : Tu as déjà Claude Code, connecté à ton abonnement : ton cerveau travaillera avec lui.
+Mon conseil : Tu as déjà Claude Code, connecté à ton compte Claude : ton cerveau travaillera avec lui.
 [Voir le détail]
 [Activer la recherche par le sens]
 [Continuer]
@@ -1030,30 +1066,30 @@ Mon conseil : Tu as déjà Claude Code, connecté à ton abonnement : ton cerv
 #68
 == diag
 Je ne peux pas installer pour l’instant.
-Règle d’abord ce qui est en rouge, puis clique sur Revérifier.
-Mon conseil : Ton cerveau marche avec Claude : il te faudra un abonnement Claude Pro ou Max.
+Des choses bloquent l’installation : les lignes en rouge disent quoi faire. Ensuite, clique sur Revérifier.
+Mon conseil : Ton cerveau marche avec Claude : il te faut un abonnement Claude Pro (environ 20 € par mois) ou Max.
 [Masquer le détail]
 macOS 12.7 · Intel · 8 Go de mémoire · 2,3 Go libres
 Version de macOS : BloquantmacOS 12.7 : il faut macOS 13 ou plus récent. Fais la mise à jour dans Réglages Système.
 Espace disque : BloquantIl reste 2,3 Go, il en faut au moins 3. Fais un peu de place, puis relance.
 Connexion internet : BloquantPas d’internet : ni github.com ni claude.ai ne répondent. Vérifie ton Wi-Fi, puis relance.
 Outils Apple (git, python3) : À installerPas encore installés. Apple s’en charge, il suffit de cliquer.
-Bun (le moteur de la mémoire) : À installerPas encore installé.
+Le moteur de la mémoire : À installerPas encore installé.
 Claude Code : À installerPas encore installé.
-Connexion à Claude : À noterTu te connecteras une fois Claude Code installé.
+Connexion à Claude : Plus tardTu te connecteras une fois Claude Code installé.
 Obsidian (pour lire tes notes) : À installerPas encore installé.
-Ton dossier Brain : À installerPas encore créé.
+Le dossier de tes notes : À installerPas encore créé.
 Les automatismes de Claude : À installerPas encore branchés.
 Les compétences de Claude : À installerPas encore installées.
 La mémoire de recherche : À installerPas encore créée.
-Recherche par le sens : À noterRecherche par mots-clés seulement. Une clé Voyage permet de chercher par le sens.
+Recherche par le sens : Plus tardTon cerveau retrouve tes notes par mots-clés. La recherche par le sens est une option, à ajouter après si tu veux.
 [Revérifier]
 
 #69
 == diag
 J’ai fait le tour : ton Mac est prêt.
-J’installe les outils Apple, le moteur de ta mémoire, Obsidian et ton cerveau : 10 à 20 minutes. Si tu peux, branche-toi sur un Wi-Fi : il y a beaucoup à télécharger.
-Mon conseil : Tu utilises déjà Claude : ton cerveau travaillera avec lui (il te faudra un abonnement Pro ou Max pour Claude Code).
+J’installe ton cerveau : environ 25 minutes et 1,2 Go à télécharger.
+Mon conseil : Tu utilises déjà Claude : ton cerveau travaillera avec lui. Si tu as Claude Pro ou Max, c’est bon. Sinon, il te faut Claude Pro (environ 20 € par mois).
 [Voir le détail]
 [Tout installer]
 
@@ -1311,21 +1347,23 @@ Claude lit le dossier…
 [Arrêter]
 
 #90
-== login
-Dernière étape : ton compte Claude
-Connecte-toi pour que Claude puisse travailler avec ton cerveau.
+== done
+Presque prêt : il manque ton compte Claude
+Connecte-le pour que Claude puisse travailler avec ton cerveau. Il faut un abonnement Claude Pro ou Max.
 Clique sur le bouton. Ton navigateur s’ouvre sur claude.ai : connecte-toi avec le compte de ton abonnement, puis clique sur « Autoriser » (Authorize).
 Une fenêtre de commandes s’ouvre aussi : laisse-la ouverte, tu n’as rien à y taper.
 Reviens ici : je vois tout seul quand c’est bon.
-Tu te connectes directement chez Anthropic : je ne vois jamais ton mot de passe. Il faut un abonnement Claude Pro ou Max.
-[Plus tard]
+[Je n’ai pas encore Claude Pro]
+[Importer ma mémoire]
+[Voir mes notes]
+Pour me retrouver plus tard : si tu m’as ouvert depuis le fichier téléchargé (.dmg), glisse d’abord l’icône Brain in a Box sur le dossier Applications, dans sa fenêtre. Ensuite, Cmd + Espace, tape « Brain in a Box », puis Entrée.
 [Connecter mon compte Claude]
 
 #91
 == diag
 J’ai fait le tour : ton Mac est prêt.
-J’installe Obsidian et ton cerveau : 10 à 20 minutes. Si tu peux, branche-toi sur un Wi-Fi : il y a beaucoup à télécharger.
-Mon conseil : Tu as déjà Claude Code, connecté à ton abonnement : ton cerveau travaillera avec lui.
+J’installe ton cerveau : environ 10 minutes et 350 Mo à télécharger.
+Mon conseil : Tu as déjà Claude Code, connecté à ton compte Claude : ton cerveau travaillera avec lui.
 [Voir le détail]
 [Tout installer]
 
@@ -1452,8 +1490,8 @@ Détails
 #104
 == diag
 J’ai fait le tour : ton Mac est prêt.
-J’installe ton cerveau : 10 à 20 minutes. Si tu peux, branche-toi sur un Wi-Fi : il y a beaucoup à télécharger.
-Mon conseil : Tu as déjà Claude Code, connecté à ton abonnement : ton cerveau travaillera avec lui.
+J’installe ton cerveau : environ 10 minutes et 150 Mo à télécharger.
+Mon conseil : Tu as déjà Claude Code, connecté à ton compte Claude : ton cerveau travaillera avec lui.
 [Voir le détail]
 [Tout installer]
 
@@ -1624,8 +1662,8 @@ Détails
 #122
 == diag
 J’ai fait le tour : ton Mac est prêt.
-J’installe le moteur de ta mémoire et ton cerveau : 10 à 20 minutes. Si tu peux, branche-toi sur un Wi-Fi : il y a beaucoup à télécharger.
-Mon conseil : Tu as déjà Claude Code, connecté à ton abonnement : ton cerveau travaillera avec lui.
+J’installe ton cerveau : environ 10 minutes et 200 Mo à télécharger.
+Mon conseil : Tu as déjà Claude Code, connecté à ton compte Claude : ton cerveau travaillera avec lui.
 [Voir le détail]
 [Tout installer]
 
@@ -1946,8 +1984,8 @@ Ses questions s’affichent en anglais : « Yes » veut dire oui, « No » 
 #152
 == diag
 J’ai fait le tour : ton Mac est prêt.
-J’installe Obsidian et ton cerveau : 10 à 20 minutes. Si tu peux, branche-toi sur un Wi-Fi : il y a beaucoup à télécharger.
-Mon conseil : Tu utilises déjà Claude : ton cerveau travaillera avec lui (il te faudra un abonnement Pro ou Max pour Claude Code).
+J’installe ton cerveau : environ 10 minutes et 350 Mo à télécharger.
+Mon conseil : Tu utilises déjà Claude : ton cerveau travaillera avec lui. Si tu as Claude Pro ou Max, c’est bon. Sinon, il te faut Claude Pro (environ 20 € par mois).
 [Voir le détail]
 [Tout installer]
 
@@ -2252,8 +2290,8 @@ Détails
 #179
 == diag
 J’ai fait le tour : ton PC est prêt.
-J’installe Obsidian et ton cerveau : 10 à 20 minutes. Si tu peux, branche-toi sur un Wi-Fi : il y a beaucoup à télécharger.
-Mon conseil : Tu as déjà Claude Code, connecté à ton abonnement : ton cerveau travaillera avec lui.
+J’installe ton cerveau : environ 15 minutes et 600 Mo à télécharger.
+Mon conseil : Tu as déjà Claude Code, connecté à ton compte Claude : ton cerveau travaillera avec lui.
 [Voir le détail]
 [Tout installer]
 
@@ -2309,8 +2347,8 @@ Détails
 #185
 == diag
 J’ai fait le tour : ton PC est prêt.
-J’installe le moteur de ta mémoire et ton cerveau : 10 à 20 minutes. Si tu peux, branche-toi sur un Wi-Fi : il y a beaucoup à télécharger.
-Mon conseil : Tu as déjà Claude Code, connecté à ton abonnement : ton cerveau travaillera avec lui.
+J’installe ton cerveau : environ 10 minutes et 200 Mo à télécharger.
+Mon conseil : Tu as déjà Claude Code, connecté à ton compte Claude : ton cerveau travaillera avec lui.
 [Voir le détail]
 [Tout installer]
 
@@ -2360,6 +2398,14 @@ Détails
 [Demander à Claude de réparer]
 
 #190
+== diag
+J’ai fait le tour : ton PC est prêt.
+J’installe ton cerveau : environ 10 minutes et 250 Mo à télécharger.
+Mon conseil : Tu as déjà Claude Code, connecté à ton compte Claude : ton cerveau travaillera avec lui.
+[Voir le détail]
+[Tout installer]
+
+#191
 == install
 J’installe Obsidian.
 Étape 1 sur 2. Téléchargement de 110 Mo, puis ton ordinateur te demande ton mot de passe.
@@ -2369,7 +2415,7 @@ Ton ordinateur va te demander ton mot de passe pour installer des outils du syst
 Garde ton ordinateur sur le chargeur et ouvert jusqu’à la fin : s’il se met en veille, l’installation s’arrête.
 Détails
 
-#191
+#192
 == repairing
 Je répare…
 Ensuite je relance l’étape.
@@ -2379,7 +2425,7 @@ Ton ordinateur va te demander ton mot de passe pour installer des outils du syst
 Garde ton ordinateur sur le chargeur et ouvert jusqu’à la fin : s’il se met en veille, l’installation s’arrête.
 Détails
 
-#192
+#193
 == repairing
 Je relance l’étape « Obsidian »…
 Téléchargement de 110 Mo, puis ton ordinateur te demande ton mot de passe.
@@ -2389,7 +2435,7 @@ Ton ordinateur va te demander ton mot de passe pour installer des outils du syst
 Garde ton ordinateur sur le chargeur et ouvert jusqu’à la fin : s’il se met en veille, l’installation s’arrête.
 Détails
 
-#193
+#194
 == install
 Je prépare ton cerveau.
 Étape 2 sur 2. C’est l’étape la plus longue.
@@ -2398,37 +2444,37 @@ Ton cerveauTes notes, ta mémoire et tes automatismes.En cours…
 Garde ton ordinateur sur le chargeur et ouvert jusqu’à la fin : s’il se met en veille, l’installation s’arrête.
 Détails
 
-#194
+#195
 == diag
 J’ai fait le tour : ton Mac est prêt.
-J’installe Claude Code, les outils Apple, le moteur de ta mémoire, Obsidian et ton cerveau : 10 à 20 minutes. Si tu peux, branche-toi sur un Wi-Fi : il y a beaucoup à télécharger.
+J’installe Claude et ton cerveau : environ 25 minutes et 1,5 Go à télécharger.
 Mon conseil : Tu utilises ChatGPT : ton cerveau marche avec Claude, il te faudra un abonnement Claude Pro ou Max (ton abonnement ChatGPT ne suffit pas). Codex, l’IA de ChatGPT, arrive bientôt ici. À la fin, tu pourras apporter à ton cerveau ce que ChatGPT sait de toi.
 J’ai vu Hermes : je ne l’installe pas et n’y touche pas. Ses meilleures compétences arrivent dans Claude avec ton cerveau.
 [Voir le détail]
 [Tout installer]
 
-#195
-== diag
-Tout est déjà installé !
-Ton PC a tout ce qu’il faut.
-Mon conseil : Tu utilises déjà Claude : ton cerveau travaillera avec lui (il te faudra un abonnement Pro ou Max pour Claude Code).
-[Voir le détail]
-[Continuer]
-
 #196
 == diag
 Tout est déjà installé !
 Ton PC a tout ce qu’il faut.
-Mon conseil : Tu as déjà Claude Code, connecté à ton abonnement : ton cerveau travaillera avec lui.
-J’ai vu Hermes : je ne l’installe pas et n’y touche pas. Ses meilleures compétences arrivent dans Claude avec ton cerveau, et chaque soir ton cerveau lit aussi ses conversations.
+Mon conseil : Tu utilises déjà Claude : ton cerveau travaillera avec lui. Si tu as Claude Pro ou Max, c’est bon. Sinon, il te faut Claude Pro (environ 20 € par mois).
 [Voir le détail]
 [Continuer]
 
 #197
+== diag
+Tout est déjà installé !
+Ton PC a tout ce qu’il faut.
+Mon conseil : Tu as déjà Claude Code, connecté à ton compte Claude : ton cerveau travaillera avec lui.
+J’ai vu Hermes : je ne l’installe pas et n’y touche pas. Ses meilleures compétences arrivent dans Claude avec ton cerveau, et chaque soir ton cerveau lit aussi ses conversations.
+[Voir le détail]
+[Continuer]
+
+#198
 == import
 Je prépare l’import…
 
-#198
+#199
 == import
 D’où vient ta mémoire ?
 ChatGPT ou Claude savent déjà des choses sur toi. Claude en tire l’essentiel, je le range dans ton cerveau.
@@ -2446,18 +2492,18 @@ Avant l’envoi, je masque les clés et les mots de passe écrits « mot de pas
 [Choisir mon fichier d’export]
 [Je copie-colle (2 min)]
 
-#199
+#200
 == import-read
 Choisis ton fichier d’export
 Dans la fenêtre qui s’ouvre. Pour Claude, choisis tous ses fichiers .zip d’un coup (Cmd-clic pour en prendre plusieurs).
 
-#200
+#201
 == import-read
 Je lis ton export…
 Rien ne part pendant cette lecture.
 [Arrêter]
 
-#201
+#202
 == import-plan
 Voilà ce que j’ai lu
 Claude va en tirer ce qui compte pour toi. Choisis combien de demandes il fait.
@@ -2476,7 +2522,7 @@ Voir exactement ce que j’envoie
 [Annuler]
 [Lancer (4 demandes)]
 
-#202
+#203
 == import-run
 Claude trie ta mémoire…
 Demande 1 sur 4. Tu peux utiliser ton ordinateur, mais laisse cette fenêtre ouverte jusqu’à la fin.
@@ -2484,7 +2530,7 @@ Environ 4 min en tout
 Claude n’a aucun outil : il lit, il répond, il ne touche à rien. Je vérifie chaque fait avant de l’écrire.
 [Arrêter]
 
-#203
+#204
 == import-run
 Claude trie ta mémoire…
 Demande 2 sur 4. Tu peux utiliser ton ordinateur, mais laisse cette fenêtre ouverte jusqu’à la fin.
@@ -2492,7 +2538,7 @@ Environ 4 min en tout
 Claude n’a aucun outil : il lit, il répond, il ne touche à rien. Je vérifie chaque fait avant de l’écrire.
 [Arrêter]
 
-#204
+#205
 == import-run
 Claude trie ta mémoire…
 Demande 3 sur 4. Tu peux utiliser ton ordinateur, mais laisse cette fenêtre ouverte jusqu’à la fin.
@@ -2500,7 +2546,7 @@ Environ 4 min en tout
 Claude n’a aucun outil : il lit, il répond, il ne touche à rien. Je vérifie chaque fait avant de l’écrire.
 [Arrêter]
 
-#205
+#206
 == import-run
 Claude trie ta mémoire…
 Demande 4 sur 4. Tu peux utiliser ton ordinateur, mais laisse cette fenêtre ouverte jusqu’à la fin.
@@ -2508,7 +2554,7 @@ Environ 4 min en tout
 Claude n’a aucun outil : il lit, il répond, il ne touche à rien. Je vérifie chaque fait avant de l’écrire.
 [Arrêter]
 
-#206
+#207
 == import-run
 Je range tout dans ton cerveau…
 Une nouvelle note, et une ligne dans ta mémoire.
@@ -2516,7 +2562,7 @@ J’écris la note
 Claude n’a aucun outil : il lit, il répond, il ne touche à rien. Je vérifie chaque fait avant de l’écrire.
 [Arrêter (inactif)]
 
-#207
+#208
 == import-done
 C’est rangé !
 42 faits dans Imports › 2026-10-13-import-chatgpt.
@@ -2532,7 +2578,7 @@ Relis-les : corrige ou supprime ce qui est faux. Rien d’autre n’a changé d
 [Terminé]
 [Voir la note]
 
-#208
+#209
 == import-plan
 Voilà ce que j’ai lu
 Claude va en tirer ce qui compte pour toi. Choisis combien de demandes il fait.
@@ -2551,7 +2597,7 @@ Voir exactement ce que j’envoie
 [Annuler]
 [Lancer (2 demandes)]
 
-#209
+#210
 == import-run
 Claude trie ta mémoire…
 Demande 1 sur 2. Tu peux utiliser ton ordinateur, mais laisse cette fenêtre ouverte jusqu’à la fin.
@@ -2559,7 +2605,7 @@ Environ 2 min en tout
 Claude n’a aucun outil : il lit, il répond, il ne touche à rien. Je vérifie chaque fait avant de l’écrire.
 [Arrêter]
 
-#210
+#211
 == import-run
 Claude trie ta mémoire…
 Demande 2 sur 2. Tu peux utiliser ton ordinateur, mais laisse cette fenêtre ouverte jusqu’à la fin.
@@ -2567,7 +2613,7 @@ Environ 2 min en tout
 Claude n’a aucun outil : il lit, il répond, il ne touche à rien. Je vérifie chaque fait avant de l’écrire.
 [Arrêter]
 
-#211
+#212
 == import
 D’où vient ta mémoire ?
 ChatGPT ou Claude savent déjà des choses sur toi. Claude en tire l’essentiel, je le range dans ton cerveau.
@@ -2585,33 +2631,33 @@ Avant l’envoi, je masque les clés et les mots de passe écrits « mot de pas
 [Choisir mon fichier d’export]
 [Je copie-colle (2 min)]
 
-#212
+#213
 == import-read
 Choisis ton fichier d’export
 Dans la fenêtre qui s’ouvre. Pour Claude, choisis tous ses fichiers .zip d’un coup (Ctrl-clic pour en prendre plusieurs).
 
-#213
+#214
 == import-read
 Je lis ton export…
 Rien ne part pendant cette lecture.
 Fichier 1 sur 3
 [Arrêter]
 
-#214
+#215
 == import-read
 Je lis ton export…
 Rien ne part pendant cette lecture.
 Fichier 2 sur 3
 [Arrêter]
 
-#215
+#216
 == import-read
 Je lis ton export…
 Rien ne part pendant cette lecture.
 Fichier 3 sur 3
 [Arrêter]
 
-#216
+#217
 == import-plan
 Voilà ce que j’ai lu
 Claude va en tirer ce qui compte pour toi. Choisis combien de demandes il fait.
@@ -2631,7 +2677,7 @@ Voir exactement ce que j’envoie
 [Annuler]
 [Lancer (4 demandes)]
 
-#217
+#218
 == import-done
 C’est rangé !
 42 faits dans Imports › 2026-10-13-import-claude.
@@ -2647,29 +2693,13 @@ Relis-les : corrige ou supprime ce qui est faux. Rien d’autre n’a changé d
 [Terminé]
 [Voir la note]
 
-#218
+#219
 == import-paste
 Demande-lui ce qu’il sait de toi
 Trois étapes, deux minutes. Rien ne part avant que tu valides.
 Copie cette phrase.
 Je prépare la phrase…
 [Copier la phrase (inactif)]
-Colle-la dans une nouvelle conversation, chez celui qui te connaît.
-[Ouvrir ChatGPT]
-[Ouvrir Claude]
-Copie sa réponse avec le bouton Copier de son bloc de code, et colle-la ici.
-S’il dit qu’il en reste, écris-lui « Continue » et colle la suite à la fin.
-Avant l’envoi, je masque les clés et les mots de passe écrits « mot de passe : … ». Un code glissé dans une phrase peut passer : avant de lancer, regarde « Voir exactement ce que j’envoie ». Le reste (noms de clients, montants, projets) part chez Anthropic pour être trié par Claude, avec ton abonnement Claude, et nulle part ailleurs. Le résultat est une nouvelle note de ton cerveau, que tu relis.
-[Retour]
-[Continuer (inactif)]
-
-#219
-== import-paste
-Demande-lui ce qu’il sait de toi
-Trois étapes, deux minutes. Rien ne part avant que tu valides.
-Copie cette phrase.
-Je change d'outil et j'ai besoin d'exporter mes données. Liste chaque souvenir que tu as enregistré sur moi, et tout ce que tu as appris de moi dans nos conversations passées. Mets tout dans un seul bloc de code, pour que je puisse le copier facilement. Une entrée par ligne, au format : [date d'enregistrement, si tu l'as] - le souvenir. Couvre tout ce qui suit, avec mes propres mots autant que possible : les consignes que je t'ai données sur ta façon de répondre (ton, format, style, « fais toujours… », « ne fais jamais… ») ; qui je suis : prénom, ville, métier, langues, centres d'intérêt ; mes projets, mes objectifs et les sujets qui reviennent ; les outils, logiciels et langages que j'utilise ; les personnes avec qui je travaille (prénom et rôle) ; mes préférences et les corrections que je t'ai faites ; tout autre contexte enregistré. Ne résume pas, ne regroupe pas, n'oublie rien, n'invente rien. N'écris aucun mot de passe, aucun numéro, aucun identifiant. Après le bloc de code, dis-moi si la liste est complète ou s'il en reste.
-[Copier la phrase]
 Colle-la dans une nouvelle conversation, chez celui qui te connaît.
 [Ouvrir ChatGPT]
 [Ouvrir Claude]
@@ -2693,15 +2723,31 @@ Copie sa réponse avec le bouton Copier de son bloc de code, et colle-la ici.
 S’il dit qu’il en reste, écris-lui « Continue » et colle la suite à la fin.
 Avant l’envoi, je masque les clés et les mots de passe écrits « mot de passe : … ». Un code glissé dans une phrase peut passer : avant de lancer, regarde « Voir exactement ce que j’envoie ». Le reste (noms de clients, montants, projets) part chez Anthropic pour être trié par Claude, avec ton abonnement Claude, et nulle part ailleurs. Le résultat est une nouvelle note de ton cerveau, que tu relis.
 [Retour]
-[Continuer]
+[Continuer (inactif)]
 
 #221
+== import-paste
+Demande-lui ce qu’il sait de toi
+Trois étapes, deux minutes. Rien ne part avant que tu valides.
+Copie cette phrase.
+Je change d'outil et j'ai besoin d'exporter mes données. Liste chaque souvenir que tu as enregistré sur moi, et tout ce que tu as appris de moi dans nos conversations passées. Mets tout dans un seul bloc de code, pour que je puisse le copier facilement. Une entrée par ligne, au format : [date d'enregistrement, si tu l'as] - le souvenir. Couvre tout ce qui suit, avec mes propres mots autant que possible : les consignes que je t'ai données sur ta façon de répondre (ton, format, style, « fais toujours… », « ne fais jamais… ») ; qui je suis : prénom, ville, métier, langues, centres d'intérêt ; mes projets, mes objectifs et les sujets qui reviennent ; les outils, logiciels et langages que j'utilise ; les personnes avec qui je travaille (prénom et rôle) ; mes préférences et les corrections que je t'ai faites ; tout autre contexte enregistré. Ne résume pas, ne regroupe pas, n'oublie rien, n'invente rien. N'écris aucun mot de passe, aucun numéro, aucun identifiant. Après le bloc de code, dis-moi si la liste est complète ou s'il en reste.
+[Copier la phrase]
+Colle-la dans une nouvelle conversation, chez celui qui te connaît.
+[Ouvrir ChatGPT]
+[Ouvrir Claude]
+Copie sa réponse avec le bouton Copier de son bloc de code, et colle-la ici.
+S’il dit qu’il en reste, écris-lui « Continue » et colle la suite à la fin.
+Avant l’envoi, je masque les clés et les mots de passe écrits « mot de passe : … ». Un code glissé dans une phrase peut passer : avant de lancer, regarde « Voir exactement ce que j’envoie ». Le reste (noms de clients, montants, projets) part chez Anthropic pour être trié par Claude, avec ton abonnement Claude, et nulle part ailleurs. Le résultat est une nouvelle note de ton cerveau, que tu relis.
+[Retour]
+[Continuer]
+
+#222
 == import-read
 Je lis sa réponse…
 Rien ne part pendant cette lecture.
 Un instant
 
-#222
+#223
 == import-plan
 Voilà ce que j’ai lu
 Claude va en tirer ce qui compte pour toi. Choisis combien de demandes il fait.
@@ -2715,7 +2761,7 @@ Voir exactement ce que j’envoie
 [Annuler]
 [Lancer (1 demande)]
 
-#223
+#224
 == import-run
 Claude trie ta mémoire…
 Demande 1 sur 1. Tu peux utiliser ton ordinateur, mais laisse cette fenêtre ouverte jusqu’à la fin.
@@ -2723,7 +2769,7 @@ Environ 1 min en tout
 Claude n’a aucun outil : il lit, il répond, il ne touche à rien. Je vérifie chaque fait avant de l’écrire.
 [Arrêter]
 
-#224
+#225
 == import-done
 C’est rangé !
 42 faits dans Imports › 2026-10-13-import-collage.
@@ -2739,7 +2785,7 @@ Relis-les : corrige ou supprime ce qui est faux. Rien d’autre n’a changé d
 [Terminé]
 [Voir la note]
 
-#225
+#226
 == import
 D’où vient ta mémoire ?
 ChatGPT ou Claude savent déjà des choses sur toi. Claude en tire l’essentiel, je le range dans ton cerveau.
@@ -2757,7 +2803,7 @@ Avant l’envoi, je masque les clés et les mots de passe écrits « mot de pas
 [Choisir mon fichier d’export]
 [Je copie-colle (2 min)]
 
-#226
+#227
 == import-done
 C’est rangé !
 19 faits dans Imports › 2026-10-13-import-chatgpt.
@@ -2772,7 +2818,7 @@ Relis-les : corrige ou supprime ce qui est faux. Rien d’autre n’a changé d
 [Terminé]
 [Voir la note]
 
-#227
+#228
 == import-plan
 Voilà ce que j’ai lu
 Claude va en tirer ce qui compte pour toi. Choisis combien de demandes il fait.
@@ -2792,7 +2838,7 @@ Voir exactement ce que j’envoie
 [Annuler]
 [Lancer (4 demandes)]
 
-#228
+#229
 == import-done
 C’est rangé !
 42 faits dans Imports › 2026-10-13-import-chatgpt.
@@ -2809,47 +2855,47 @@ Relis-les : corrige ou supprime ce qui est faux. Rien d’autre n’a changé d
 [Terminé]
 [Voir la note]
 
-#229
+#230
 == import-done
 Je n’ai rien trouvé de durable à garder.
 Rien n’a été écrit dans ton cerveau.
 [Terminé]
 
-#230
+#231
 == import-error
 C’est déjà dans ton cerveau.
 Tu l’as déjà importé le 12 octobre 2026 : c’est dans la note Imports › 2026-10-12-import-chatgpt.
 [Retour]
 [Terminé]
 
-#231
+#232
 == import-error
 Je ne peux pas importer ça.
 Ce fichier ne contient que les infos de ton compte Claude. Donne-moi les autres fichiers .zip de ton export (conversations, mémoire, projets).
 [Terminé]
 [Essayer autre chose]
 
-#232
+#233
 == import-error
 Claude n’est pas connecté à ton abonnement.
 Connecte-le, puis relance l’import. Rien n’est parti.
 [Retour]
 [Connecter mon compte Claude]
 
-#233
+#234
 == import-error
 Ton forfait Claude est à sa limite pour le moment.
 Il se recharge tout seul en quelques heures : reviens alors sur « Importer ma mémoire ». Rien n’a été écrit.
 [Terminé]
 
-#234
+#235
 == import-error
 Ton cerveau doit d’abord être mis à jour
 Il a été installé avant l’import de mémoire. 1 à 5 minutes, et rien de tes notes ne change.
 [Retour]
 [Mettre à jour mon cerveau]
 
-#235
+#236
 == import-error
 Je ne peux pas importer ça.
 Ce fichier n’est ni une archive .zip lisible ni un export en .json.
@@ -2857,7 +2903,7 @@ Tu as un dossier au lieu d’un .zip (Safari l’ouvre tout seul) ? Clic droit 
 [Terminé]
 [Essayer autre chose]
 
-#236
+#237
 == import-error
 Je ne peux pas importer ça.
 Choisis de 1 à 4 fichiers de ton export.
@@ -2865,14 +2911,14 @@ Tu as un dossier au lieu d’un .zip ? Clic droit sur le dossier, compresse-le 
 [Terminé]
 [Essayer autre chose]
 
-#237
+#238
 == import-error
 Claude ne répond pas pour l’instant.
 Rien n’a été écrit : réessaie dans un moment.
 [Retour]
 [Réessayer]
 
-#238
+#239
 == import-paste
 Tu as collé ma phrase.
 À l’étape 3, colle plutôt la réponse de ChatGPT ou de Claude.
@@ -2888,7 +2934,7 @@ Avant l’envoi, je masque les clés et les mots de passe écrits « mot de pas
 [Retour]
 [Continuer (inactif)]
 
-#239
+#240
 == import-paste
 Tu as collé ma phrase.
 À l’étape 3, colle plutôt la réponse de ChatGPT ou de Claude.
@@ -2904,7 +2950,7 @@ Avant l’envoi, je masque les clés et les mots de passe écrits « mot de pas
 [Retour]
 [Continuer (inactif)]
 
-#240
+#241
 == import
 C’est annulé.
 Rien n’est parti. D’où vient ta mémoire ?
@@ -2922,7 +2968,7 @@ Avant l’envoi, je masque les clés et les mots de passe écrits « mot de pas
 [Choisir mon fichier d’export]
 [Je copie-colle (2 min)]
 
-#241
+#242
 == import
 Arrêté.
 Rien n’a été écrit dans ton cerveau.
@@ -2940,7 +2986,7 @@ Avant l’envoi, je masque les clés et les mots de passe écrits « mot de pas
 [Choisir mon fichier d’export]
 [Je copie-colle (2 min)]
 
-#242
+#243
 == install
 Claude n’a pas voulu analyser ce dossier.
 Rien n’a été modifié.
@@ -2950,7 +2996,7 @@ Détails
 [Copier le rapport]
 [Réessayer]
 
-#243
+#244
 == install
 Claude n’a pas voulu analyser ce dossier.
 Rien n’a été modifié.
@@ -2963,31 +3009,17 @@ Détails
 [Réessayer]
 [Demander à Claude de réparer]
 
-#244
+#245
 == welcome
 Salut, moi c’est Bibo !
-Je vais installer ton second cerveau pour Claude. 10 à 20 minutes, tu n’as aucune commande à taper.
-Je regarde ce qui manque sur ton PC.
+Je vais installer ton second cerveau pour Claude. Tu n’as aucune commande à taper.
+Je regarde ce qui manque sur ton PC, et je te dis combien de temps ça prend.
 J’installe Claude, puis tu connectes ton compte (2 min).
 J’installe le reste tout seul. Si ça coince, Claude m’aide à réparer.
 Il te faut un abonnement Claude Pro ou Max.
 [Je n’ai pas encore Claude Pro]
 Préversion 76
 [Vérifier mon PC]
-
-#245
-== done
-Presque prêt : il manque ton compte Claude
-Connecte-le pour que Claude puisse travailler avec ton cerveau. Il faut un abonnement Claude Pro ou Max.
-Clique sur le bouton. Ton navigateur s’ouvre sur claude.ai : connecte-toi avec le compte de ton abonnement, puis clique sur « Autoriser » (Authorize).
-Une fenêtre de commandes s’ouvre aussi : laisse-la ouverte, tu n’as rien à y taper.
-Reviens ici : je vois tout seul quand c’est bon.
-[Je n’ai pas encore Claude Pro]
-Tu utilisais ChatGPT ou Claude ? « Importer ma mémoire » apporte à ton cerveau ce qu’ils savent de toi.
-[Importer ma mémoire]
-[Voir mes notes]
-Pour me retrouver plus tard : ouvre le menu Démarrer (Start) et tape « Brain in a Box ».
-[Connecter mon compte Claude]
 
 #246
 == done
@@ -2997,10 +3029,9 @@ Clique sur le bouton. Ton navigateur s’ouvre sur claude.ai : connecte-toi ave
 Une fenêtre de commandes s’ouvre aussi : laisse-la ouverte, tu n’as rien à y taper.
 Reviens ici : je vois tout seul quand c’est bon.
 [Je n’ai pas encore Claude Pro]
-Tu utilisais ChatGPT ou Claude ? « Importer ma mémoire » apporte à ton cerveau ce qu’ils savent de toi.
 [Importer ma mémoire]
 [Voir mes notes]
-Pour me retrouver plus tard : si tu m’as ouvert depuis le fichier téléchargé (.dmg), glisse d’abord l’icône Brain in a Box sur le dossier Applications, dans sa fenêtre. Ensuite, Cmd + Espace, tape « Brain in a Box », puis Entrée.
+Pour me retrouver plus tard : ouvre le menu Démarrer (Start) et tape « Brain in a Box ».
 [Connecter mon compte Claude]
 
 #247
@@ -3011,7 +3042,6 @@ Clique sur le bouton. Ton navigateur s’ouvre sur claude.ai : connecte-toi ave
 Une fenêtre de commandes s’ouvre aussi : laisse-la ouverte, tu n’as rien à y taper.
 Reviens ici : je vois tout seul quand c’est bon.
 [Je n’ai pas encore Claude Pro]
-Tu utilisais ChatGPT ou Claude ? « Importer ma mémoire » apporte à ton cerveau ce qu’ils savent de toi.
 [Importer ma mémoire]
 [Voir mes notes]
 Pour me retrouver plus tard : si tu m’as ouvert depuis le fichier téléchargé (.dmg), glisse d’abord l’icône Brain in a Box sur le dossier Applications, dans sa fenêtre. Ensuite, Cmd + Espace, tape « Brain in a Box », puis Entrée.
@@ -3026,7 +3056,6 @@ Une fenêtre de commandes s’ouvre aussi : laisse-la ouverte, tu n’as rien �
 Reviens ici : je vois tout seul quand c’est bon.
 J’attends ta connexion…
 [Je n’ai pas encore Claude Pro]
-Tu utilisais ChatGPT ou Claude ? « Importer ma mémoire » apporte à ton cerveau ce qu’ils savent de toi.
 [Importer ma mémoire]
 [Voir mes notes]
 Pour me retrouver plus tard : si tu m’as ouvert depuis le fichier téléchargé (.dmg), glisse d’abord l’icône Brain in a Box sur le dossier Applications, dans sa fenêtre. Ensuite, Cmd + Espace, tape « Brain in a Box », puis Entrée.
@@ -3041,7 +3070,6 @@ Une fenêtre de commandes s’ouvre aussi : laisse-la ouverte, tu n’as rien �
 Reviens ici : je vois tout seul quand c’est bon.
 J’attends ta connexion…
 [Je n’ai pas encore Claude Pro]
-Tu utilisais ChatGPT ou Claude ? « Importer ma mémoire » apporte à ton cerveau ce qu’ils savent de toi.
 [Importer ma mémoire]
 [Voir mes notes]
 Pour me retrouver plus tard : si tu m’as ouvert depuis le fichier téléchargé (.dmg), glisse d’abord l’icône Brain in a Box sur le dossier Applications, dans sa fenêtre. Ensuite, Cmd + Espace, tape « Brain in a Box », puis Entrée.
@@ -3057,7 +3085,6 @@ Reviens ici : je vois tout seul quand c’est bon.
 J’attends ta connexion…
 Ça ne se connecte pas ? Si ton navigateur affiche un code, copie-le, colle-le dans la fenêtre de commandes (Cmd + V), puis appuie sur Entrée. Si tu as fermé cette fenêtre, ou si elle affiche un message en rouge, vérifie ta connexion internet, puis clique sur « Rouvrir la fenêtre ».
 [Je n’ai pas encore Claude Pro]
-Tu utilisais ChatGPT ou Claude ? « Importer ma mémoire » apporte à ton cerveau ce qu’ils savent de toi.
 [Importer ma mémoire]
 [Voir mes notes]
 Pour me retrouver plus tard : si tu m’as ouvert depuis le fichier téléchargé (.dmg), glisse d’abord l’icône Brain in a Box sur le dossier Applications, dans sa fenêtre. Ensuite, Cmd + Espace, tape « Brain in a Box », puis Entrée.
@@ -3073,7 +3100,6 @@ Reviens ici : je vois tout seul quand c’est bon.
 J’attends ta connexion…
 Ça ne se connecte pas ? Si ton navigateur affiche un code, copie-le, colle-le dans la fenêtre de commandes (Cmd + V), puis appuie sur Entrée. Si tu as fermé cette fenêtre, ou si elle affiche un message en rouge, vérifie ta connexion internet, puis clique sur « Rouvrir la fenêtre ».
 [Je n’ai pas encore Claude Pro]
-Tu utilisais ChatGPT ou Claude ? « Importer ma mémoire » apporte à ton cerveau ce qu’ils savent de toi.
 [Importer ma mémoire]
 [Voir mes notes]
 Pour me retrouver plus tard : si tu m’as ouvert depuis le fichier téléchargé (.dmg), glisse d’abord l’icône Brain in a Box sur le dossier Applications, dans sa fenêtre. Ensuite, Cmd + Espace, tape « Brain in a Box », puis Entrée.
@@ -3167,8 +3193,8 @@ J’attends ta connexion…
 #258
 == welcome
 Salut, moi c’est Bibo !
-Je vais installer ton second cerveau pour Claude. 10 à 20 minutes, tu n’as aucune commande à taper.
-Je regarde ce qui manque sur ton Mac.
+Je vais installer ton second cerveau pour Claude. Tu n’as aucune commande à taper.
+Je regarde ce qui manque sur ton Mac, et je te dis combien de temps ça prend.
 J’installe Claude, puis tu connectes ton compte (2 min).
 J’installe le reste tout seul. Si ça coince, Claude m’aide à réparer.
 Il te faut un abonnement Claude Pro ou Max.
@@ -3178,47 +3204,47 @@ La page des abonnements Claude s’est ouverte dans ton navigateur : choisis Cl
 #259
 == diag
 J’ai fait le tour : un point à vérifier.
-claude.ai ne répond pas. Une étape risque d’échouer. Vérifie ton Wi-Fi. Au travail, le réseau bloque parfois ces sites : essaie depuis chez toi. Tu peux installer quand même (10 à 20 minutes), ou faire ça puis cliquer sur « Revérifier ».
-Mon conseil : Ton cerveau marche avec Claude : il te faudra un abonnement Claude Pro ou Max.
+J’installe Claude et ton cerveau : environ 15 minutes et 900 Mo à télécharger. Lis la ligne en orange, ci-dessous. Tu peux installer quand même, ou faire ce qu’elle dit, puis cliquer sur « Revérifier ».
+Mon conseil : Ton cerveau marche avec Claude : il te faut un abonnement Claude Pro (environ 20 € par mois) ou Max.
 [Masquer le détail]
 Windows 11 (24H2) · 16 Go de mémoire · 182 Go libres
 Version de Windows : OKWindows 11 (24H2)
 Espace disque : OK182 Go libres
-Connexion internet : À noterclaude.ai ne répond pas. Une étape risque d’échouer.
-Python (pour les automatismes) : À installerPas encore installé. Je l’installe : par winget (Microsoft), sinon depuis son site officiel.
-Git (l’historique de tes notes) : À installerPas encore installé. Je l’installe : par winget (Microsoft), sinon depuis son site officiel.
-Bun (le moteur de la mémoire) : À installerPas encore installé.
+Connexion internet : À noterclaude.ai ne répond pas. Une étape risque d’échouer. Vérifie ton Wi-Fi. Au travail, le réseau bloque parfois ces sites : essaie depuis chez toi.
+Python (pour les automatismes) : À installerPas encore installé : je l’installe pour toi.
+Git (l’historique de tes notes) : À installerPas encore installé : je l’installe pour toi.
+Le moteur de la mémoire : À installerPas encore installé.
 Claude Code : À installerPas encore installé.
-Connexion à Claude : À noterTu te connecteras une fois Claude Code installé.
+Connexion à Claude : Plus tardTu te connecteras une fois Claude Code installé.
 Obsidian (pour lire tes notes) : À installerPas encore installé.
-Ton dossier Brain : À installerPas encore créé.
+Le dossier de tes notes : À installerPas encore créé.
 Les automatismes de Claude : À installerPas encore branchés.
 Les compétences de Claude : À installerPas encore installées.
 La mémoire de recherche : À installerPas encore créée.
-Recherche par le sens : À noterRecherche par mots-clés seulement. Une clé Voyage permet de chercher par le sens.
+Recherche par le sens : Plus tardTon cerveau retrouve tes notes par mots-clés. La recherche par le sens est une option, à ajouter après si tu veux.
 [Revérifier]
 [Tout installer]
 
 #260
 == diag
 J’ai fait le tour : un point à vérifier.
-Il reste 7 Go. Ça passe, mais c’est juste. Pour faire de la place, vide la Corbeille (Trash) ou supprime de gros fichiers. Tu peux installer quand même (10 à 20 minutes), ou faire ça puis cliquer sur « Revérifier ».
-Mon conseil : Ton cerveau marche avec Claude : il te faudra un abonnement Claude Pro ou Max.
+J’installe Claude et ton cerveau : environ 25 minutes et 1,5 Go à télécharger. Lis la ligne en orange, ci-dessous. Tu peux installer quand même, ou faire ce qu’elle dit, puis cliquer sur « Revérifier ».
+Mon conseil : Ton cerveau marche avec Claude : il te faut un abonnement Claude Pro (environ 20 € par mois) ou Max.
 [Masquer le détail]
 macOS 15.4 · Puce Apple · 16 Go de mémoire · 7 Go libres
 Version de macOS : OKmacOS 15.4
-Espace disque : À noterIl reste 7 Go. Ça passe, mais c’est juste.
+Espace disque : À noterIl reste 7 Go. Ça passe, mais c’est juste. Pour faire de la place, vide la Corbeille (Trash) ou supprime de gros fichiers.
 Connexion internet : OKgithub.com et claude.ai répondent.
 Outils Apple (git, python3) : À installerPas encore installés. Apple s’en charge, il suffit de cliquer.
-Bun (le moteur de la mémoire) : À installerPas encore installé.
+Le moteur de la mémoire : À installerPas encore installé.
 Claude Code : À installerPas encore installé.
-Connexion à Claude : À noterTu te connecteras une fois Claude Code installé.
+Connexion à Claude : Plus tardTu te connecteras une fois Claude Code installé.
 Obsidian (pour lire tes notes) : À installerPas encore installé.
-Ton dossier Brain : À installerPas encore créé.
+Le dossier de tes notes : À installerPas encore créé.
 Les automatismes de Claude : À installerPas encore branchés.
 Les compétences de Claude : À installerPas encore installées.
 La mémoire de recherche : À installerPas encore créée.
-Recherche par le sens : À noterRecherche par mots-clés seulement. Une clé Voyage permet de chercher par le sens.
+Recherche par le sens : Plus tardTon cerveau retrouve tes notes par mots-clés. La recherche par le sens est une option, à ajouter après si tu veux.
 [Revérifier]
 [Tout installer]
 
@@ -3263,9 +3289,9 @@ Pour me retrouver plus tard : ouvre le menu Démarrer (Start) et tape « Brain
 #264
 == welcome
 Content de te revoir !
-Ton installation n’est pas finie : clique sur « Vérifier mon PC » pour la reprendre. Le guide marche déjà : je peux te guider pas à pas dans un logiciel.
-[Vérifier mon PC]
+Ton installation n’est pas finie. Je peux déjà te guider dans un logiciel.
 [Guide-moi dans un logiciel]
+[Finir l’installation]
 
 #265
 == done
@@ -3292,3 +3318,257 @@ Tes notes sont dans le dossier C:\Users\aminata\Documents\Brain : ouvre-le dans 
 Pour me retrouver plus tard : ouvre le menu Démarrer (Start) et tape « Brain in a Box ».
 [Présente-toi à Claude (15 min)]
 [Guide-moi dans un logiciel]
+
+#267
+== diag
+J’ai fait le tour : ton PC est prêt.
+J’installe Claude et ton cerveau : environ 15 minutes et 900 Mo à télécharger.
+Mon conseil : Ton cerveau marche avec Claude : il te faut un abonnement Claude Pro (environ 20 € par mois) ou Max.
+[Masquer le détail]
+Windows 11 (24H2) · 16 Go de mémoire · 182 Go libres
+Version de Windows : OKWindows 11 (24H2)
+Espace disque : OK182 Go libres
+Connexion internet : OKgithub.com et claude.ai répondent.
+Python (pour les automatismes) : À installerPas encore installé : je l’installe pour toi.
+Git (l’historique de tes notes) : À installerPas encore installé : je l’installe pour toi.
+Le moteur de la mémoire : À installerPas encore installé.
+Claude Code : À installerPas encore installé.
+Connexion à Claude : Plus tardTu te connecteras une fois Claude Code installé.
+Obsidian (pour lire tes notes) : À installerPas encore installé.
+Le dossier de tes notes : À installerPas encore créé.
+Les automatismes de Claude : À installerPas encore branchés.
+Les compétences de Claude : À installerPas encore installées.
+La mémoire de recherche : À installerPas encore créée.
+Recherche par le sens : Plus tardTon cerveau retrouve tes notes par mots-clés. La recherche par le sens est une option, à ajouter après si tu veux.
+[Tout installer]
+
+#268
+== diag
+Tout est déjà installé !
+Lis la ligne en orange, ci-dessous.
+Mon conseil : Tu utilises déjà Claude : ton cerveau travaillera avec lui. Si tu as Claude Pro ou Max, c’est bon. Sinon, il te faut Claude Pro (environ 20 € par mois).
+[Masquer le détail]
+Windows 11 (24H2) · 16 Go de mémoire · 182 Go libres
+Version de Windows : OKWindows 11 (24H2)
+Espace disque : OK182 Go libres
+Connexion internet : OKgithub.com et claude.ai répondent.
+Python (pour les automatismes) : OKPython 3.12.10
+Git (l’historique de tes notes) : OKGit 2.51.0
+Le moteur de la mémoire : OKBun 1.4.2
+Claude Code : OKClaude Code 2.1.296
+Connexion à Claude : À noterClaude Code est connecté à un compte payé à chaque message (clé API, passerelle…), pas à un abonnement : je ne m’en sers ni pour le guide ni pour le résumé du soir. Rien ne bloque : tout le reste s’installe. Pour passer à ton abonnement Claude Pro ou Max, demande de l’aide à la personne qui t’a conseillé Bibo.
+Obsidian (pour lire tes notes) : OKObsidian 1.14.4
+Le dossier de tes notes : OKIl est dans Documents/Brain.
+Les automatismes de Claude : OKClaude note tes corrections et tes séances.
+Les compétences de Claude : OKInstallées.
+La mémoire de recherche : OKPrête.
+Recherche par le sens : OKActivée (Voyage AI)
+[Revérifier]
+[Continuer]
+
+#269
+== diag
+Tout est déjà installé !
+Lis la ligne en orange, ci-dessous.
+Mon conseil : Tu as déjà Claude Code, connecté à ton compte Claude : ton cerveau travaillera avec lui.
+[Masquer le détail]
+macOS 15.4 · Puce Apple · 16 Go de mémoire · 182 Go libres
+Version de macOS : OKmacOS 15.4
+Espace disque : OK182 Go libres
+Connexion internet : OKgithub.com et claude.ai répondent.
+Outils Apple (git, python3) : OKgit et python3 sont là.
+Le moteur de la mémoire : OKBun 1.4.2
+Claude Code : OKClaude Code 2.1.296
+Connexion à Claude : À noterTu es connecté, mais Claude ne me dit pas quel est ton abonnement. Ton cerveau demande Claude Pro (environ 20 € par mois) ou Max : un compte gratuit ne suffit pas. Si tu as Pro ou Max, tout va bien.
+Obsidian (pour lire tes notes) : OKObsidian 1.14.4
+Le dossier de tes notes : OKIl est dans Documents/Brain.
+Les automatismes de Claude : OKClaude note tes corrections et tes séances.
+Les compétences de Claude : OKInstallées.
+La mémoire de recherche : OKPrête.
+Recherche par le sens : OKActivée (Voyage AI)
+[Revérifier]
+[Continuer]
+
+#270
+== diag
+J’ai fait le tour : un point à vérifier.
+J’installe Claude et ton cerveau : environ 15 minutes et 600 Mo à télécharger. Lis la ligne en orange, ci-dessous. Tu peux installer quand même, ou faire ce qu’elle dit, puis cliquer sur « Revérifier ».
+Mon conseil : Ton cerveau marche avec Claude : il te faut un abonnement Claude Pro (environ 20 € par mois) ou Max.
+[Masquer le détail]
+Windows 11 (24H2) · 16 Go de mémoire · 182 Go libres
+Version de Windows : OKWindows 11 (24H2)
+Espace disque : OK182 Go libres
+Connexion internet : OKgithub.com et claude.ai répondent.
+Python (pour les automatismes) : À installerPas encore installé : je l’installe pour toi.
+Git (l’historique de tes notes) : À installerPas encore installé : je l’installe pour toi.
+Outil d’installation de Microsoft : À noterIl me manque l’outil d’installation de Microsoft pour installer Obsidian : je continue sans. Ouvre le Microsoft Store : dans le menu Démarrer (Start), tape « Microsoft Store ». Dans le Store, cherche « Programme d’installation d’application (App Installer) » et clique sur « Obtenir (Get) » ou « Mettre à jour (Update) ». S’il n’y a que « Ouvrir (Open) », redémarre ton PC. Puis clique sur Revérifier.
+Le moteur de la mémoire : À installerPas encore installé.
+Claude Code : À installerPas encore installé.
+Connexion à Claude : Plus tardTu te connecteras une fois Claude Code installé.
+Obsidian (pour lire tes notes) : À savoirPas installé : je ne peux pas l’installer sans l’outil d’installation de Microsoft (voir sa ligne). Tu peux aussi le télécharger toi-même, gratuitement, sur obsidian.md.
+Le dossier de tes notes : À installerPas encore créé.
+Les automatismes de Claude : À installerPas encore branchés.
+Les compétences de Claude : À installerPas encore installées.
+La mémoire de recherche : À installerPas encore créée.
+Recherche par le sens : Plus tardTon cerveau retrouve tes notes par mots-clés. La recherche par le sens est une option, à ajouter après si tu veux.
+[Revérifier]
+[Tout installer]
+
+#271
+== diag
+Je ne peux pas installer pour l’instant.
+Une chose bloque l’installation : la ligne en rouge dit quoi faire. Ensuite, clique sur Revérifier.
+Mon conseil : Ton cerveau marche avec Claude : il te faut un abonnement Claude Pro (environ 20 € par mois) ou Max.
+[Masquer le détail]
+Windows 11 (24H2) · 16 Go de mémoire · 182 Go libres
+Version de Windows : OKWindows 11 (24H2)
+Espace disque : OK182 Go libres
+Connexion internet : BloquantCe réseau bloque github.com, d’où je télécharge ton cerveau. Au travail ou à l’école, demande au service informatique d’autoriser github.com. Sinon, connecte-toi à un autre réseau, puis clique sur Revérifier.
+Python (pour les automatismes) : À installerPas encore installé : je l’installe pour toi.
+Git (l’historique de tes notes) : À installerPas encore installé : je l’installe pour toi.
+Le moteur de la mémoire : À installerPas encore installé.
+Claude Code : À installerPas encore installé.
+Connexion à Claude : Plus tardTu te connecteras une fois Claude Code installé.
+Obsidian (pour lire tes notes) : À installerPas encore installé.
+Le dossier de tes notes : À installerPas encore créé.
+Les automatismes de Claude : À installerPas encore branchés.
+Les compétences de Claude : À installerPas encore installées.
+La mémoire de recherche : À installerPas encore créée.
+Recherche par le sens : Plus tardTon cerveau retrouve tes notes par mots-clés. La recherche par le sens est une option, à ajouter après si tu veux.
+[Revérifier]
+
+#272
+== diag
+J’ai fait le tour : un point à vérifier.
+Ta connexion est lente. J’installe Claude et ton cerveau : prévois environ 2 h 40, avec 900 Mo à télécharger. En données mobiles, attends d’avoir un Wi-Fi. Tu peux installer maintenant et laisser ton PC allumé, ou attendre un réseau plus rapide.
+Mon conseil : Ton cerveau marche avec Claude : il te faut un abonnement Claude Pro (environ 20 € par mois) ou Max.
+[Masquer le détail]
+Windows 11 (24H2) · 16 Go de mémoire · 182 Go libres
+Version de Windows : OKWindows 11 (24H2)
+Espace disque : OK182 Go libres
+Connexion internet : À notergithub.com et claude.ai répondent, mais lentement.
+Python (pour les automatismes) : À installerPas encore installé : je l’installe pour toi.
+Git (l’historique de tes notes) : À installerPas encore installé : je l’installe pour toi.
+Le moteur de la mémoire : À installerPas encore installé.
+Claude Code : À installerPas encore installé.
+Connexion à Claude : Plus tardTu te connecteras une fois Claude Code installé.
+Obsidian (pour lire tes notes) : À installerPas encore installé.
+Le dossier de tes notes : À installerPas encore créé.
+Les automatismes de Claude : À installerPas encore branchés.
+Les compétences de Claude : À installerPas encore installées.
+La mémoire de recherche : À installerPas encore créée.
+Recherche par le sens : Plus tardTon cerveau retrouve tes notes par mots-clés. La recherche par le sens est une option, à ajouter après si tu veux.
+[Revérifier]
+[Tout installer]
+
+#273
+== diag
+J’ai fait le tour : deux points à vérifier.
+J’installe Claude et ton cerveau : environ 15 minutes et 600 Mo à télécharger. Lis les lignes en orange, ci-dessous. Tu peux installer quand même, ou faire ce qu’elles disent, puis cliquer sur « Revérifier ».
+Mon conseil : Ton cerveau marche avec Claude : il te faut un abonnement Claude Pro (environ 20 € par mois) ou Max.
+[Masquer le détail]
+Windows 11 (24H2) · 16 Go de mémoire · 7 Go libres
+Version de Windows : OKWindows 11 (24H2)
+Espace disque : À noterIl reste 7 Go. Ça passe, mais c’est juste. Pour faire de la place, vide la Corbeille (Recycle Bin) ou supprime de gros fichiers.
+Connexion internet : OKgithub.com et claude.ai répondent.
+Python (pour les automatismes) : À installerPas encore installé : je l’installe pour toi.
+Git (l’historique de tes notes) : À installerPas encore installé : je l’installe pour toi.
+Outil d’installation de Microsoft : À noterIl me manque l’outil d’installation de Microsoft pour installer Obsidian : je continue sans. Ouvre le Microsoft Store : dans le menu Démarrer (Start), tape « Microsoft Store ». Dans le Store, cherche « Programme d’installation d’application (App Installer) » et clique sur « Obtenir (Get) » ou « Mettre à jour (Update) ». S’il n’y a que « Ouvrir (Open) », redémarre ton PC. Puis clique sur Revérifier.
+Le moteur de la mémoire : À installerPas encore installé.
+Claude Code : À installerPas encore installé.
+Connexion à Claude : Plus tardTu te connecteras une fois Claude Code installé.
+Obsidian (pour lire tes notes) : À savoirPas installé : je ne peux pas l’installer sans l’outil d’installation de Microsoft (voir sa ligne). Tu peux aussi le télécharger toi-même, gratuitement, sur obsidian.md.
+Le dossier de tes notes : À installerPas encore créé.
+Les automatismes de Claude : À installerPas encore branchés.
+Les compétences de Claude : À installerPas encore installées.
+La mémoire de recherche : À installerPas encore créée.
+Recherche par le sens : Plus tardTon cerveau retrouve tes notes par mots-clés. La recherche par le sens est une option, à ajouter après si tu veux.
+[Revérifier]
+[Tout installer]
+
+#274
+== diag
+J’ai fait le tour : deux points à vérifier.
+Ta connexion est lente. J’installe Claude et ton cerveau : prévois environ 2 h 40, avec 900 Mo à télécharger. En données mobiles, attends d’avoir un Wi-Fi. Lis les lignes en orange, ci-dessous. Tu peux installer quand même, ou faire ce qu’elles disent, puis cliquer sur « Revérifier ».
+Mon conseil : Ton cerveau marche avec Claude : il te faut un abonnement Claude Pro (environ 20 € par mois) ou Max.
+[Masquer le détail]
+Windows 11 (24H2) · 16 Go de mémoire · 7 Go libres
+Version de Windows : OKWindows 11 (24H2)
+Espace disque : À noterIl reste 7 Go. Ça passe, mais c’est juste. Pour faire de la place, vide la Corbeille (Recycle Bin) ou supprime de gros fichiers.
+Connexion internet : À notergithub.com et claude.ai répondent, mais lentement.
+Python (pour les automatismes) : À installerPas encore installé : je l’installe pour toi.
+Git (l’historique de tes notes) : À installerPas encore installé : je l’installe pour toi.
+Le moteur de la mémoire : À installerPas encore installé.
+Claude Code : À installerPas encore installé.
+Connexion à Claude : Plus tardTu te connecteras une fois Claude Code installé.
+Obsidian (pour lire tes notes) : À installerPas encore installé.
+Le dossier de tes notes : À installerPas encore créé.
+Les automatismes de Claude : À installerPas encore branchés.
+Les compétences de Claude : À installerPas encore installées.
+La mémoire de recherche : À installerPas encore créée.
+Recherche par le sens : Plus tardTon cerveau retrouve tes notes par mots-clés. La recherche par le sens est une option, à ajouter après si tu veux.
+[Revérifier]
+[Tout installer]
+
+#275
+== welcome
+Content de te revoir !
+Il manque ton compte Claude : connecte-le, puis je pourrai te guider pas à pas dans un logiciel.
+Clique sur le bouton. Ton navigateur s’ouvre sur claude.ai : connecte-toi avec le compte de ton abonnement, puis clique sur « Autoriser » (Authorize).
+Une fenêtre de commandes s’ouvre aussi : laisse-la ouverte, tu n’as rien à y taper.
+Reviens ici : je vois tout seul quand c’est bon.
+[Je n’ai pas encore Claude Pro]
+[Vérifier mon Mac]
+[Connecter mon compte Claude]
+
+#276
+== diag
+Tout est déjà installé !
+Ton Mac a tout ce qu’il faut.
+Mon conseil : Ton cerveau marche avec Claude : il te faut un abonnement Claude Pro (environ 20 € par mois) ou Max.
+[Voir le détail]
+[Continuer]
+
+#277
+== login
+Dernière étape : ton compte Claude
+Connecte-toi pour que Claude puisse travailler avec ton cerveau.
+Clique sur le bouton. Ton navigateur s’ouvre sur claude.ai : connecte-toi avec le compte de ton abonnement, puis clique sur « Autoriser » (Authorize).
+Une fenêtre de commandes s’ouvre aussi : laisse-la ouverte, tu n’as rien à y taper.
+Reviens ici : je vois tout seul quand c’est bon.
+Tu te connectes directement chez Anthropic : je ne vois jamais ton mot de passe. Il faut un abonnement Claude Pro ou Max.
+[Plus tard]
+[Connecter mon compte Claude]
+
+#278
+== diag
+J’ai fait le tour : ton PC est prêt.
+J’installe Claude et ton cerveau : environ 15 minutes et 900 Mo à télécharger.
+Mon conseil : Ton cerveau marche avec Claude : il te faut un abonnement Claude Pro (environ 20 € par mois) ou Max.
+[Masquer le détail]
+Windows · 16 Go de mémoire
+Version de Windows : À savoirJe n’ai pas pu lire la version de Windows.
+Espace disque : À savoirJe n’ai pas pu mesurer l’espace libre.
+Connexion internet : OKgithub.com et claude.ai répondent.
+Python (pour les automatismes) : À installerPas encore installé : je l’installe pour toi.
+Git (l’historique de tes notes) : À installerPas encore installé : je l’installe pour toi.
+Le moteur de la mémoire : À installerPas encore installé.
+Claude Code : À installerPas encore installé.
+Connexion à Claude : Plus tardTu te connecteras une fois Claude Code installé.
+Obsidian (pour lire tes notes) : À installerPas encore installé.
+Le dossier de tes notes : À installerPas encore créé.
+Les automatismes de Claude : À installerPas encore branchés.
+Les compétences de Claude : À installerPas encore installées.
+La mémoire de recherche : À installerPas encore créée.
+Recherche par le sens : Plus tardTon cerveau retrouve tes notes par mots-clés. La recherche par le sens est une option, à ajouter après si tu veux.
+[Tout installer]
+
+#279
+== done
+Presque prêt : il manque ton abonnement Claude
+Claude Code est connecté à un compte payé à chaque message : je ne m’en sers ni pour le guide ni pour le résumé du soir. Pour passer à Claude Pro ou Max, demande de l’aide à la personne qui t’a conseillé Bibo.
+Tu utilisais ChatGPT ou Claude ? « Importer ma mémoire » apporte à ton cerveau ce qu’ils savent de toi.
+[Importer ma mémoire]
+[Voir mes notes]
+Pour me retrouver plus tard : ouvre le menu Démarrer (Start) et tape « Brain in a Box ».
+[Présente-toi à Claude (15 min)]

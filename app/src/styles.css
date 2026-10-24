@@ -13,6 +13,11 @@
   --missing: #5f6886;
   --warn: #a35f09;
   --error: #c0392b;
+  /* A line in orange or red of the diagnosis, found at a glance among a dozen: its mark (an orange that
+     reads as one, 4:1 on white, for the bar and the icon; --warn stays for text) and its tint. */
+  --warn-mark: #d35400;
+  --warn-bg: rgba(230, 126, 34, 0.18);
+  --error-bg: rgba(192, 57, 43, 0.1);
   --on-status: #ffffff;
   --log-bg: #2a211f;
   --log-ink: #f3e9da;
@@ -37,6 +42,9 @@
     --missing: #aab2cc;
     --warn: #f2c04e;
     --error: #ff8a7a;
+    --warn-mark: #f5a35c;
+    --warn-bg: rgba(245, 163, 92, 0.16);
+    --error-bg: rgba(255, 138, 122, 0.14);
     --on-status: #1c1715;
     --log-bg: #120e0d;
     --log-ink: #e9ddd2;
@@ -356,7 +364,12 @@ body.big .plan { justify-content: center; text-align: left; }
 
 .check-detail { color: var(--ink-2); font-size: 13.5px; overflow-wrap: anywhere; }
 
-.check.is-error { background: rgba(192, 57, 43, 0.07); }
+.check.is-error { background: var(--error-bg); box-shadow: inset 4px 0 0 var(--error); }
+
+/* An orange line unfolds the list: it says what to do (« Lis la ligne en orange »), and is found at a glance. */
+.check.is-warn { background: var(--warn-bg); box-shadow: inset 4px 0 0 var(--warn-mark); }
+
+.check.is-warn .ic-warn { color: var(--warn-mark); }
 
 /* Bibo's advice: which AI, from what is already there. */
 .advice {

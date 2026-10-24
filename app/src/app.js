@@ -52,39 +52,33 @@ const ROOT_STEPS = ['paquets', 'obsidian'];
 const STEPS = {
   paquets: {
     name: 'Outils de base',
-    short: 'les outils de base',
     what: 'git, python3 et curl, des outils du système.',
     running: 'Tape ton mot de passe dans la fenêtre du système.',
     say: ['Ton ordinateur va te demander ton mot de passe.', 'C’est pour installer les outils du système qui manquent.'],
   },
   clt: {
     name: 'Outils Apple',
-    short: 'les outils Apple',
     what: 'Les outils de base fournis par Apple.',
     running: 'Clique sur « Installer » (Install), puis « Accepter » (Agree). Apple télécharge ensuite ses outils, 5 à 15 min : ne t’inquiète pas si sa fenêtre annonce d’abord plus d’une heure.',
     say: ['Une fenêtre Apple va s’ouvrir : clique sur Installer.', 'Je t’attends. Tu ne la vois pas ? Regarde dans le Dock.'],
   },
   bun: {
     name: 'Bun',
-    short: 'le moteur de ta mémoire',
     what: 'Le moteur de ta mémoire.',
     say: ['J’installe Bun.', 'C’est le moteur de ta mémoire.'],
   },
   claude: {
     name: 'Claude Code',
-    short: 'Claude Code',
     what: `Claude, directement sur ton ${OS.machine}.`,
     say: ['J’installe Claude Code.', 'L’outil officiel d’Anthropic.'],
   },
   codex: {
     name: 'Codex',
-    short: 'Codex',
     what: `Codex, directement sur ton ${OS.machine}.`,
     say: ['J’installe Codex.', 'L’outil officiel d’OpenAI.'],
   },
   obsidian: {
     name: 'Obsidian',
-    short: 'Obsidian',
     what: 'Pour feuilleter ton cerveau.',
     // Linux: its official package, installed as root once the system has the password.
     say: ['J’installe Obsidian.', SYSTEM === 'linux'
@@ -93,23 +87,22 @@ const STEPS = {
   },
   brain: {
     name: 'Ton cerveau',
-    short: 'ton cerveau',
     // On Windows, install.ps1 brings Python, Git, Bun and Obsidian too.
     what: WINDOWS ? 'Tes notes, ta mémoire, tes automatismes, et Obsidian.' : 'Tes notes, ta mémoire et tes automatismes.',
-    say: ['Je prépare ton cerveau.', WINDOWS ? 'C’est l’étape la plus longue : 10 à 20 minutes.' : 'C’est l’étape la plus longue.'],
+    // How long: the diagnosis said it, from what is left and the network's speed.
+    say: ['Je prépare ton cerveau.', 'C’est l’étape la plus longue.'],
   },
   // Not a step of its own: the brain step again, with a key, upgrades a brain that
   // only searches by keywords.
   voyage: {
     name: 'Recherche par le sens',
-    short: 'la recherche par le sens',
     what: 'Ton cerveau apprend à retrouver tes notes par le sens.',
     say: ['J’active la recherche par le sens.', 'Ton cerveau relit tes notes : quelques minutes.'],
     step: 'brain',
   },
 };
 
-const CHECK_STATUS = { ok: 'OK', missing: 'À installer', later: 'Plus tard', warn: 'À noter', error: 'Bloquant' };
+const CHECK_STATUS = { ok: 'OK', missing: 'À installer', later: 'Plus tard', info: 'À savoir', warn: 'À noter', error: 'Bloquant' };
 const STEP_STATUS = { pending: 'En attente', running: 'En cours…', done: 'Fait', failed: 'Échec' };
 
 const state = {
@@ -117,12 +110,12 @@ const state = {
   // chosen), and what it preselects, the preferred one first.
   offer: { open: false, agents: [] },
   // guide_offert: the guide can work here (guide.rs says when), the welcome leads to it (G0); read again
-  // at the end and on a failure.
+  // on a failure.
   guide: false,
   // Claude's login, read with the guide at the start: without it the welcome asks for it before the guide.
   claudeOn: false,
-  // brain_complete, read with the guide at the start: false, the install stopped half way (the guide works
-  // without the rest, D1), and the welcome says so.
+  // guide_offert said "dossier": the install stopped half way, the guide works without the rest (D1), and
+  // the welcome says so.
   brainWhole: true,
   // The app's version (tauri.conf.json, 0.1.<n> for preview n), said small on the welcome; '' unknown.
   version: '',
@@ -179,7 +172,7 @@ function listFr(items) {
 }
 
 function stepInfo(id) {
-  return Object.hasOwn(STEPS, id) ? STEPS[id] : { name: id, short: id, what: '', say: [`J’installe ${id}.`, ''] };
+  return Object.hasOwn(STEPS, id) ? STEPS[id] : { name: id, what: '', say: [`J’installe ${id}.`, ''] };
 }
 
 // The run_step id behind a row of the install screen.
@@ -308,7 +301,7 @@ function focusMain() {
 // on a screen that waits for the user. Just for fun: nothing depends on it.
 
 // dev/mock.html shortens it to try it out (&sleep=3). Never at the diagnosis, which waits for « Tout
-// installer »: a sleeping Bibo there read as « it is over ».
+// installer », nor where a main button waits for its click: a sleeping Bibo there read as « it is over ».
 const SLEEP_MS = Number(window.BIBO_SLEEP_MS) || 45000;
 const CALM_SCREENS = ['welcome', 'choice', 'done'];
 const HOP_GAP_MS = 1500;
@@ -344,8 +337,7 @@ function setMood(mood) {
 }
 
 function calm() {
-  // The end that still asks for Claude's login waits for a click, as the diagnosis does.
-  return CALM_SCREENS.includes(document.body.dataset.screen) && !document.querySelector('.login-steps');
+  return CALM_SCREENS.includes(document.body.dataset.screen) && !ui.actions.querySelector('[data-act="next"]:not(:disabled)');
 }
 
 // A class for a moment: blink, hop, giggle, waking.
@@ -453,8 +445,8 @@ function onPoke() {
 function showWelcome() {
   screen('welcome', { big: true });
   if (state.guide) {
-    const check = state.offer.open ? button('Choisir mon IA', showChoice, { kind: 'secondary', act: 'check' })
-      : button(`Vérifier mon ${OS.machine}`, runDiagnosis, { kind: 'secondary', act: 'check' });
+    const check = () => (state.offer.open ? button('Choisir mon IA', showChoice, { kind: 'secondary', act: 'check' })
+      : button(`Vérifier mon ${OS.machine}`, runDiagnosis, { kind: 'secondary', act: 'check' }));
     if (!state.claudeOn) {
       // Back, Claude's login put off: the guide needs it, so it comes first.
       say('idle', 'Content de te revoir !', 'Il manque ton compte Claude : connecte-le, puis je pourrai te guider pas à pas dans un logiciel.');
@@ -465,36 +457,44 @@ function showWelcome() {
         state.loginSkipped = false;
         showWelcome();
       }));
-      ui.actions.append(check, connect);
+      ui.actions.append(check(), connect);
       addVersion();
       return;
     }
-    // Back, the guide ready: the guide first, the check of the machine still there. An install that stopped
-    // half way is said: the guide works without the rest, the memory and the evening's summary do not.
-    if (state.brainWhole) say('idle', 'Content de te revoir !', 'Je peux te guider pas à pas dans un logiciel : tu me montres ta fenêtre, je te dis où cliquer.');
-    else say('idle', 'Content de te revoir !', `Ton installation n’est pas finie : clique sur « ${check.textContent} » pour la reprendre. Le guide marche déjà : je peux te guider pas à pas dans un logiciel.`);
-    const guide = button('Guide-moi dans un logiciel', () => openGuide(guide), { act: 'next' });
-    ui.actions.append(check, guide);
+    if (!state.brainWhole) {
+      // An install that stopped half way (D1): finishing it comes first, named as such; the guide works already.
+      const guide = button('Guide-moi dans un logiciel', () => openGuide(guide), { kind: 'secondary', act: 'guide' });
+      // Not finished: the memory, the hooks, the skills or the choice of the AI (detect.rs' complete), none named.
+      say('idle', 'Content de te revoir !', 'Ton installation n’est pas finie. Je peux déjà te guider dans un logiciel.');
+      ui.actions.append(guide, button('Finir l’installation', state.offer.open ? showChoice : runDiagnosis, { act: 'next' }));
+    } else {
+      // The guide first, the check of the machine still there.
+      const guide = button('Guide-moi dans un logiciel', () => openGuide(guide), { act: 'next' });
+      say('idle', 'Content de te revoir !', 'Je peux te guider pas à pas dans un logiciel : tu me montres ta fenêtre, je te dis où cliquer.');
+      ui.actions.append(check(), guide);
+    }
     addVersion();
     return;
   }
   if (state.offer.open) {
     // Codex can be chosen here: the AI is not named yet.
-    say('idle', 'Salut, moi c’est Bibo !', 'Je vais installer ton second cerveau pour ton IA, Claude ou Codex. 10 à 20 minutes, tu n’as aucune commande à taper.');
+    say('idle', 'Salut, moi c’est Bibo !', 'Je vais installer ton second cerveau pour ton IA, Claude ou Codex. Tu n’as aucune commande à taper.');
     ui.screen.append(
       h('ol', { class: 'plan' },
         h('li', {}, 'Tu choisis ton IA : Claude, Codex ou les deux.'),
-        h('li', {}, `Je regarde ce qui manque sur ton ${OS.machine}, je l’installe, puis tu connectes ton compte (2 min).`),
+        h('li', {}, `Je regarde ce qui manque sur ton ${OS.machine}, et je te dis combien de temps ça prend.`),
+        h('li', {}, 'Je l’installe, puis tu connectes ton compte (2 min).'),
         h('li', {}, 'J’installe le reste tout seul. Si ça coince, ton IA m’aide à réparer.')),
       h('p', { class: 'note' }, `Il te faut un abonnement Claude Pro ou Max, ou ${CHATGPT_PLAN}.`));
     addVersion();
     ui.actions.append(button('Choisir mon IA', showChoice, { act: 'next' }));
     return;
   }
-  say('idle', 'Salut, moi c’est Bibo !', 'Je vais installer ton second cerveau pour Claude. 10 à 20 minutes, tu n’as aucune commande à taper.');
+  // How long: the diagnosis says it, from what is left and the network's speed (25 minutes on a Mac).
+  say('idle', 'Salut, moi c’est Bibo !', 'Je vais installer ton second cerveau pour Claude. Tu n’as aucune commande à taper.');
   ui.screen.append(
     h('ol', { class: 'plan' },
-      h('li', {}, `Je regarde ce qui manque sur ton ${OS.machine}.`),
+      h('li', {}, `Je regarde ce qui manque sur ton ${OS.machine}, et je te dis combien de temps ça prend.`),
       h('li', {}, 'J’installe Claude, puis tu connectes ton compte (2 min).'),
       h('li', {}, 'J’installe le reste tout seul. Si ça coince, Claude m’aide à réparer.')),
     h('p', { class: 'note' }, 'Il te faut un abonnement Claude Pro ou Max.'),
@@ -665,10 +665,11 @@ function adviceLines(a) {
 function checkList(checks) {
   return h('ul', { class: 'checks card' }, checks.map((c) => {
     // Missing, with no step to bring it (the login, the search by meaning): for later, nothing to worry about.
+    // Info (what the diagnosis could not read, a consequence of another line): said, nothing to do.
     const said = c.status === 'missing' && !c.fix ? 'later' : c.status;
     const status = Object.hasOwn(CHECK_STATUS, said) ? said : 'warn';
     return h('li', { class: `check is-${status}` },
-      icon(status === 'later' ? 'pending' : status),
+      icon(status === 'later' || status === 'info' ? 'pending' : status),
       h('span', { class: 'check-label' }, String(c.label), h('span', { class: 'sr-only' }, ` : ${CHECK_STATUS[status]}`)),
       h('span', { class: 'check-detail' }, String(c.detail || '')));
   }));
@@ -679,23 +680,29 @@ function changeButton(small = false) {
   return state.offer.open ? button('Changer d’IA', showChoice, { kind: small ? 'secondary' : 'ghost', small, act: 'change' }) : null;
 }
 
-// A warning the install may trip on later (claude.ai or github.com silent or slow, a disk nearly full):
-// never folded under « prêt », and said with what to do.
-const RISKY_CHECKS = ['network', 'disk'];
+// What to do about a warning the install may trip on (claude.ai or github.com silent, a disk nearly full),
+// on its line: the orange lines say what to do, Bibo sends to them.
 const RISKY_ADVICE = {
   network: 'Vérifie ton Wi-Fi. Au travail, le réseau bloque parfois ces sites : essaie depuis chez toi.',
   disk: `Pour faire de la place, vide ${OS.trash} ou supprime de gros fichiers.`,
 };
 
-function riskyChecks(d) {
-  return d.checks.filter((c) => c.status === 'warn' && RISKY_CHECKS.includes(c.id));
+// Every site answers, slowly (diagnose.rs): the network's line and the headline say how long, and the Wi-Fi.
+function slowNetwork(d) {
+  return d.online && d.checks.some((c) => c.id === 'network' && c.status === 'warn');
+}
+
+// The diagnosis' lines, with what to do under a warning the install may trip on.
+function advised(d) {
+  const advice = (c) => c.status === 'warn' && Object.hasOwn(RISKY_ADVICE, c.id) && !(c.id === 'network' && d.online);
+  return d.checks.map((c) => (advice(c) ? { ...c, detail: `${String(c.detail || '')} ${RISKY_ADVICE[c.id]}` } : c));
 }
 
 // The diagnosis' lines, folded: a dozen names of tools read as a dozen problems. Unfolded by itself
-// when something is red, or a warning the install may trip on.
+// when a line is red or orange: it says what to do.
 function detailToggle(d) {
   const line = sysLine(d);
-  const body = h('div', { class: 'detail', id: 'diag-detail' }, line ? h('p', { class: 'sys' }, line) : null, checkList(d.checks));
+  const body = h('div', { class: 'detail', id: 'diag-detail' }, line ? h('p', { class: 'sys' }, line) : null, checkList(advised(d)));
   const toggle = button('', () => paint(body.hidden), { kind: 'ghost', small: true, act: 'detail' });
   toggle.setAttribute('aria-controls', 'diag-detail');
   function paint(open) {
@@ -703,9 +710,12 @@ function detailToggle(d) {
     toggle.textContent = open ? 'Masquer le détail' : 'Voir le détail';
     toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
   }
-  paint(!d.can_install || d.checks.some((c) => c.status === 'error') || riskyChecks(d).length > 0);
+  paint(!d.can_install || d.checks.some((c) => c.status === 'error' || c.status === 'warn'));
   return [toggle, body];
 }
+
+// The title over orange lines: as many points as the list has.
+const POINTS = ['un point', 'deux points', 'trois points', 'quatre points', 'cinq points'];
 
 function showDiagnosis() {
   const d = state.diag;
@@ -715,25 +725,34 @@ function showDiagnosis() {
   ui.screen.append(...detailToggle(d));
   const change = changeButton();
   if (change) ui.actions.append(change);
+  // An orange line can often be set right away (winget, the network, the disk): « Revérifier » next to it. A
+  // line with nothing to do (diagnose.rs' info, the logins for later) is no point to check.
+  const orange = d.checks.filter((c) => c.status === 'warn').length;
+  const recheck = () => button('Revérifier', runDiagnosis, { kind: 'secondary', act: 'recheck' });
+  const read = orange > 1 ? 'Lis les lignes en orange, ci-dessous.' : 'Lis la ligne en orange, ci-dessous.';
+  // What gets installed, how long it takes, how much it downloads (diagnose.rs, never « prêt »).
+  const headline = String(d.headline || '');
 
   if (!d.can_install) {
-    say('worried', 'Je ne peux pas installer pour l’instant.', 'Règle d’abord ce qui est en rouge, puis clique sur Revérifier.');
+    say('worried', 'Je ne peux pas installer pour l’instant.', headline);
     ui.actions.append(button('Revérifier', runDiagnosis, { act: 'next' }));
-  } else if (d.todo.length === 0 && canAddMeaning()) {
-    say('happy', 'Tout est déjà installé !', 'Ton cerveau cherche par mots-clés : tu peux lui apprendre à chercher par le sens.');
-    ui.actions.append(
-      button('Activer la recherche par le sens', () => addMeaning(showDiagnosis), { kind: 'secondary', act: 'voyage' }),
-      button('Continuer', checkLogin, { act: 'next' }));
   } else if (d.todo.length === 0) {
-    say('happy', 'Tout est déjà installé !', `Ton ${OS.machine} a tout ce qu’il faut.`);
+    const meaning = canAddMeaning();
+    // An orange line (an account paid per message, say) is no « tout ce qu'il faut ».
+    const first = meaning ? 'Ton cerveau cherche par mots-clés : tu peux lui apprendre à chercher par le sens.' : orange ? '' : `Ton ${OS.machine} a tout ce qu’il faut.`;
+    say('happy', 'Tout est déjà installé !', [first, orange ? read : ''].filter(Boolean).join(' '));
+    if (orange) ui.actions.append(recheck());
+    if (meaning) ui.actions.append(button('Activer la recherche par le sens', () => addMeaning(showDiagnosis), { kind: 'secondary', act: 'voyage' }));
     ui.actions.append(button('Continuer', checkLogin, { act: 'next' }));
-  } else if (riskyChecks(d).length) {
-    say('idle', 'J’ai fait le tour : un point à vérifier.', `${riskyChecks(d).map((c) => `${String(c.detail || '')} ${RISKY_ADVICE[c.id]}`).join(' ')} Tu peux installer quand même (10 à 20 minutes), ou faire ça puis cliquer sur « Revérifier ».`);
-    ui.actions.append(
-      button('Revérifier', runDiagnosis, { kind: 'secondary', act: 'recheck' }),
-      button('Tout installer', startInstall, { act: 'next' }));
+  } else if (orange) {
+    // How long first, then the orange lines, then the choice. A slow network alone is the headline's:
+    // install now, or wait for a faster one.
+    const choice = orange === 1 && slowNetwork(d) ? `Tu peux installer maintenant et laisser ton ${OS.machine} allumé, ou attendre un réseau plus rapide.`
+      : `${read} Tu peux installer quand même, ou faire ce qu’${orange > 1 ? 'elles disent' : 'elle dit'}, puis cliquer sur « Revérifier ».`;
+    say('idle', `J’ai fait le tour : ${POINTS[orange - 1] || `${orange} points`} à vérifier.`, `${headline} ${choice}`);
+    ui.actions.append(recheck(), button('Tout installer', startInstall, { act: 'next' }));
   } else {
-    say('idle', `J’ai fait le tour : ton ${OS.machine} est prêt.`, `J’installe ${listFr(d.todo.map((id) => stepInfo(id).short))} : 10 à 20 minutes. Si tu peux, branche-toi sur un Wi-Fi : il y a beaucoup à télécharger.`);
+    say('idle', `J’ai fait le tour : ton ${OS.machine} est prêt.`, headline);
     ui.actions.append(button('Tout installer', startInstall, { act: 'next' }));
   }
   focusMain();
@@ -1111,7 +1130,11 @@ async function askLoginInline(gen) {
 
     say('idle', 'Connecte ton compte Claude maintenant', 'Comme ça, si une étape coince, Claude pourra m’aider à la réparer.');
     ui.screen.querySelector('.steps').after(card);
-    ui.actions.append(button('Plus tard', finish, { kind: 'ghost', act: 'skip' }), connect);
+    // Put off here, it is put off for the session: the end says what is missing, without asking again.
+    ui.actions.append(button('Plus tard', () => {
+      state.loginSkipped = true;
+      finish();
+    }, { kind: 'ghost', act: 'skip' }), connect);
     card.scrollIntoView({ block: 'nearest' });
     focusMain();
   });
@@ -2020,8 +2043,6 @@ const FIND_ME = {
 // login when it was put off, Codex's when Codex comes first and is not on its ChatGPT login. The rest
 // as links underneath.
 function showDone() {
-  const gen = screen('done', { big: true });
-  readBrainDir();
   const names = chosenAgents().map((e) => ai(e).name);
   const first = names[0];
   // The preferred one does the onboarding. Codex only on the login the kit uses (§4.3): logged in
@@ -2031,12 +2052,21 @@ function showDone() {
   // Claude's login put off: Claude Code would ask for it on its first start, in English, next to an
   // account billed by use. Nothing is ready without it: the end asks for it, and says so.
   const claudeOff = !loginFirst && chose('claude') && state.loginSkipped;
+  // Claude Code on a login billed per use (diagnose.rs): the guide refuses it, the evening's summary does not
+  // use it. Nothing to connect here: who advised Bibo can change it.
+  const billed = !loginFirst && !claudeOff && chose('claude') && state.diag?.claude_billed === true;
   // The guide works with Claude (docs/proposals/guide.md): Codex is not shown images yet.
-  const guide = chose('claude') && !claudeOff;
+  const guide = chose('claude') && !claudeOff && !billed;
+  // « Presque prêt » with the account's steps: beside a small Bibo, as the login's screen, else the steps and
+  // where to find me do not fit a Mac's window.
+  const gen = screen('done', { big: !claudeOff });
+  readBrainDir();
   const waiting = loginWaiting();
   if (claudeOff) {
     say('idle', 'Presque prêt : il manque ton compte Claude', 'Connecte-le pour que Claude puisse travailler avec ton cerveau. Il faut un abonnement Claude Pro ou Max.');
     ui.screen.append(claudeLoginSteps('Reviens ici : je vois tout seul quand c’est bon.'), waiting, planLink());
+  } else if (billed) {
+    say('idle', 'Presque prêt : il manque ton abonnement Claude', 'Claude Code est connecté à un compte payé à chaque message : je ne m’en sers ni pour le guide ni pour le résumé du soir. Pour passer à Claude Pro ou Max, demande de l’aide à la personne qui t’a conseillé Bibo.');
   } else {
     say('happy', 'Ton second cerveau est prêt !', names.length > 1
       ? `${listFr(names)} retiennent maintenant ce que tu leur apprends.`
@@ -2080,8 +2110,10 @@ function showDone() {
   const links = [button('Importer ma mémoire', showImport, { kind: 'ghost', small: true, act: 'import' }), vault];
   // Search by meaning takes a bank card: nothing to bring up before the account the brain needs.
   if (canAddMeaning() && !claudeOff) links.push(button('Recherche par le sens', () => addMeaning(showDone), { kind: 'ghost', small: true, act: 'voyage' }));
-  ui.screen.append(h('p', { class: 'note' }, 'Tu utilisais ChatGPT ou Claude ? « Importer ma mémoire » apporte à ton cerveau ce qu’ils savent de toi.'),
-    h('div', { class: 'links' }, links), folder);
+  // « Presque prêt » says the account's steps first: without the import's sentence (its screen says it, and
+  // asks for the account when it needs it), the links and where to find me fit above the buttons.
+  if (!claudeOff) ui.screen.append(h('p', { class: 'note' }, 'Tu utilisais ChatGPT ou Claude ? « Importer ma mémoire » apporte à ton cerveau ce qu’ils savent de toi.'));
+  ui.screen.append(h('div', { class: 'links' }, links), folder);
   if (FIND_ME) ui.screen.append(h('p', { class: 'note' }, FIND_ME));
 
   if (loginFirst) {
@@ -2636,11 +2668,9 @@ function start() {
   // Claude's login only where the guide is offered: the welcome asks for it first when it is not there.
   // Within LOGIN_READ_MS: Claude Code slow to answer held the welcome up to 10 s, empty, then read as « not
   // logged in ». Past it, the guide is offered: its window asks for the login itself.
-  const guide = readGuide().then(async () => {
-    if (!state.guide) return;
-    const [said, whole] = await Promise.all([within(LOGIN_READ_MS, loginState('claude'), true), readBrainWhole()]);
-    state.claudeOn = loggedIn('claude', said);
-    state.brainWhole = whole;
+  // "dossier" comes with Claude logged in: read once, in guide.rs.
+  const guide = readGuide().then(async (offre) => {
+    if (offre === true) state.claudeOn = loggedIn('claude', await within(LOGIN_READ_MS, loginState('claude'), true));
   });
   Promise.all([readOffer(), guide, readVersion()]).then(showWelcome);
 }
@@ -2648,15 +2678,6 @@ function start() {
 // `promise`'s answer, or `fallback` once `ms` went by without one.
 function within(ms, promise, fallback) {
   return Promise.race([promise, new Promise((resolve) => { setTimeout(() => resolve(fallback), ms); })]);
-}
-
-// Whether the install went to its end (detect.rs, files read only). Unreadable: nothing to say.
-async function readBrainWhole() {
-  try {
-    return (await invoke('brain_complete')) !== false;
-  } catch {
-    return true;
-  }
 }
 
 // Where the brain is, as the window says it (« Voir mes notes »): install.ps1 may have put it elsewhere
@@ -2677,13 +2698,19 @@ async function readVersion() {
   }
 }
 
-// Nothing to run: whether the guide can work here (guide.rs, files read only).
+// Whether the guide can work here (guide.rs): true with a whole brain; "dossier" with the brain's folder
+// only, Claude logged in (D1); false. Its answer, for start().
 async function readGuide() {
+  let offre = false;
   try {
-    state.guide = (await invoke('guide_offert')) === true;
+    offre = await invoke('guide_offert');
   } catch {
-    state.guide = false;
+    offre = false;
   }
+  state.guide = offre === true || offre === 'dossier';
+  state.brainWhole = offre !== 'dossier';
+  if (offre === 'dossier') state.claudeOn = true;
+  return offre;
 }
 
 // Closed (as shipped), or unreadable: nothing is asked, every screen as before Codex.
