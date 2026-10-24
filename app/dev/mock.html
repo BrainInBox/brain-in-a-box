@@ -263,7 +263,7 @@
     const STORE = "Ouvre le Microsoft Store : dans le menu Démarrer (Start), tape « Microsoft Store ». Dans le Store, cherche « Programme d'installation d'application (App Installer) » et clique sur « Obtenir (Get) » ou « Mettre à jour (Update) ». S'il n'y a que « Ouvrir (Open) », redémarre ton PC. Puis clique sur Revérifier.";
     const SANS_WINGET = {
       winget: C('winget', 'warn', `Il me manque l'outil d'installation de Microsoft pour installer Obsidian : je continue sans. ${STORE}`),
-      obsidian: C('obsidian', 'info', "Pas installé : je ne peux pas l'installer sans l'outil d'installation de Microsoft (voir sa ligne). Tu peux aussi le télécharger toi-même, gratuitement, sur obsidian.md."),
+      obsidian: { ...C('obsidian', 'info', "Pas installé : je ne peux pas l'installer sans l'outil d'installation de Microsoft (voir sa ligne). Tu peux aussi le télécharger toi-même, gratuitement, sur obsidian.md."), fix: null },
     };
     // What diagnose.rs could not read: said, nothing to do (&aveugle=1).
     const AVEUGLE = {

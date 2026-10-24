@@ -831,11 +831,15 @@ fn check_git(found: &Found) -> Check {
 #[cfg(windows)]
 fn check_obsidian_windows(found: &Found, winget: bool) -> Check {
     match found {
-        Found::Absent if !winget => OBSIDIAN.is(
-            Status::Info,
-            "Pas installé : je ne peux pas l'installer sans l'outil d'installation de Microsoft (voir sa ligne). Tu \
-             peux aussi le télécharger toi-même, gratuitement, sur obsidian.md.",
-        ),
+        // Said, nothing to do here: no step brings it without winget.
+        Found::Absent if !winget => Check {
+            fix: None,
+            ..OBSIDIAN.is(
+                Status::Info,
+                "Pas installé : je ne peux pas l'installer sans l'outil d'installation de Microsoft (voir sa ligne). Tu \
+                 peux aussi le télécharger toi-même, gratuitement, sur obsidian.md.",
+            )
+        },
         _ => check_obsidian(found),
     }
 }
