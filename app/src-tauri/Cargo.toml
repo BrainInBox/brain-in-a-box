@@ -46,6 +46,9 @@ winreg = "0.56"
 # (capture/win.rs), by PrintWindow alone. Features only, no crate: PrintWindow (Win32_Storage_Xps) and
 # a program's name in its version resource (Win32_Storage_FileSystem) are the two the build lacked.
 # Win32_Security: the named mutex that keeps one Bibo open at a time (lib.rs, already_open).
+# The guide v2's screen (capture/ecran.rs): the input desktop's name (Win32_System_StationsAndDesktops, no
+# capture on the lock screen or UAC's) and the tick GetLastInputInfo is counted against
+# (Win32_System_SystemInformation).
 windows = { version = "=0.61.3", features = [
   "Win32_Foundation",
   "Win32_Graphics_Dwm",
@@ -53,6 +56,8 @@ windows = { version = "=0.61.3", features = [
   "Win32_Security",
   "Win32_Storage_FileSystem",
   "Win32_Storage_Xps",
+  "Win32_System_StationsAndDesktops",
+  "Win32_System_SystemInformation",
   "Win32_System_Threading",
   "Win32_UI_HiDpi",
   "Win32_UI_Input_KeyboardAndMouse",
@@ -103,6 +108,12 @@ tempfile = "3"
 # the app's manifest of the common controls); the check does not depend on the system.
 [target.'cfg(not(windows))'.dev-dependencies]
 tauri = { version = "2", features = ["test"] }
+
+# The guide v2's desk tests on a Windows VM (capture/ecran.rs): the screen's resolution and scale changed and
+# put back (Win32_Devices_Display), the session locked last (Win32_System_Shutdown) and its lock read
+# (Win32_System_RemoteDesktop). Features of the crate already in the build, for the tests only.
+[target.'cfg(windows)'.dev-dependencies]
+windows = { version = "=0.61.3", features = ["Win32_Devices_Display", "Win32_System_RemoteDesktop", "Win32_System_Shutdown"] }
 
 # The desk test of the macOS capture (tests/bureau_mac.rs): AppKit's run loop and a window for Bibo, as
 # in the app. Already in the build through tao and wry.

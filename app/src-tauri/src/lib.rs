@@ -1,5 +1,6 @@
 mod advice;
 mod agents;
+mod calque;
 mod capture;
 mod claude;
 mod codex;
@@ -364,6 +365,7 @@ fn open_guide(app: &tauri::AppHandle) -> tauri::Result<()> {
         // The installer's window comes back: an app with no window in sight looks gone.
         tauri::WindowEvent::Destroyed => {
             guide::fin();
+            calque::fermer(&handle);
             if let Some(main) = handle.get_webview_window("main") {
                 let _ = main.unminimize();
             }
@@ -574,6 +576,23 @@ async fn guide_brouillon() -> Result<guide::Brouillon, guide::GuideError> {
 #[tauri::command]
 async fn guide_enregistrer(note: guide::NoteGuide) -> Result<guide::Enregistre, guide::GuideError> {
     guiding(move || guide::enregistrer(&note)).await
+}
+
+/// Bibo's overlay over the program guided in (calque.rs): a ring and a bubble at those pixels of the screen,
+/// or nothing when Windows would let them into a capture. Windows only; elsewhere « non disponible ».
+#[tauri::command]
+async fn guide_calque_montrer<R: tauri::Runtime>(app: tauri::AppHandle<R>, demande: calque::Demande) -> Result<calque::Montre, calque::Refus> {
+    tauri::async_runtime::spawn_blocking(move || calque::montrer(&app, &demande))
+        .await
+        .unwrap_or_else(|e| Err(calque::Refus::Fenetre { message: e.to_string() }))
+}
+
+/// The ring and the bubble gone (the step done, « Pause », « Arrêter »).
+#[tauri::command]
+async fn guide_calque_effacer<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(), calque::Refus> {
+    tauri::async_runtime::spawn_blocking(move || calque::effacer(&app))
+        .await
+        .unwrap_or_else(|e| Err(calque::Refus::Fenetre { message: e.to_string() }))
 }
 
 /// The picker of the system, opened from Rust: the window opens no dialog itself and never gives a
@@ -879,6 +898,8 @@ pub fn run() {
             guide_fin,
             guide_brouillon,
             guide_enregistrer,
+            guide_calque_montrer,
+            guide_calque_effacer,
             start_claude,
             save_report
         ])
@@ -999,7 +1020,8 @@ mod tests {
 
     /// Tauri's own check, with the app's manifest and capabilities as the app is built (the code the app
     /// runs, on a mock runtime): the guide's page asking the installer's commands is refused, and the
-    /// installer's page the guide's; each its own passes. No command of the app runs here.
+    /// installer's page the guide's; each its own passes. The overlay's page (calque.html), which has no
+    /// capability, may call none. No command of the app runs here.
     #[cfg(not(windows))]
     #[test]
     fn tauri_refuses_each_window_the_other_ones_commands() {
@@ -1013,6 +1035,7 @@ mod tests {
             .unwrap();
         let window = |label: &str, page: &str| tauri::WebviewWindowBuilder::new(&app, label, tauri::WebviewUrl::App(page.into())).build().unwrap();
         let (main, guide) = (window("main", "index.html"), window("guide", "guide.html"));
+        let calque = window(super::calque::LABEL, "calque.html");
         let refused = |w: &tauri::WebviewWindow<Mock>, cmd: &str| match ask(w, cmd) {
             Err(e) => e.to_string().contains("not allowed"),
             Ok(_) => false,
@@ -1020,12 +1043,55 @@ mod tests {
         for cmd in ["run_step", "repair_apply", "repair_analyze", "open_repair_terminal", "import_run", "start_onboarding", "guide_open"] {
             assert!(refused(&guide, cmd), "the guide's window may call {cmd}: {:?}", ask(&guide, cmd));
         }
-        for cmd in ["guide_envoyer", "guide_enregistrer", "guide_coller_presse_papiers", "guide_regarder", "guide_annuler"] {
+        for cmd in ["guide_envoyer", "guide_enregistrer", "guide_coller_presse_papiers", "guide_regarder", "guide_annuler", "guide_calque_montrer", "guide_calque_effacer"] {
             assert!(refused(&main, cmd), "the installer's window may call {cmd}: {:?}", ask(&main, cmd));
+        }
+        for cmd in names(&read("src/lib.rs"), "generate_handler![") {
+            assert!(refused(&calque, &cmd), "the overlay's page may call {cmd}: {:?}", ask(&calque, &cmd));
         }
         // Each its own: the control, without which a refusal of everything would pass.
         assert!(ask(&guide, "guide_annuler").is_ok(), "{:?}", ask(&guide, "guide_annuler"));
+        assert!(ask(&guide, "guide_calque_effacer").is_ok(), "{:?}", ask(&guide, "guide_calque_effacer"));
         assert!(ask(&main, "guide_offert").is_ok(), "{:?}", ask(&main, "guide_offert"));
         assert!(!refused(&guide, "open_link"), "a link the guide may open: {:?}", ask(&guide, "open_link"));
+    }
+
+    /// The overlay's two commands as the guide's page will call them, run by the app's own handlers: the
+    /// request's shape, and « non disponible » off Windows; a target that is not one never reaches them.
+    #[cfg(not(windows))]
+    #[test]
+    fn the_overlays_commands_answer_the_guide() {
+        let app = tauri::test::mock_builder()
+            .invoke_handler(tauri::generate_handler![super::guide_calque_montrer, super::guide_calque_effacer])
+            .build(tauri::generate_context!(test = true))
+            .unwrap();
+        let guide = tauri::WebviewWindowBuilder::new(&app, "guide", tauri::WebviewUrl::App("guide.html".into())).build().unwrap();
+        let call = |cmd: &str, args: serde_json::Value| {
+            tauri::test::get_ipc_response(
+                &guide,
+                tauri::webview::InvokeRequest {
+                    cmd: cmd.into(),
+                    callback: tauri::ipc::CallbackFn(0),
+                    error: tauri::ipc::CallbackFn(1),
+                    url: "tauri://localhost".parse().unwrap(),
+                    body: tauri::ipc::InvokeBody::Json(args),
+                    headers: Default::default(),
+                    invoke_key: tauri::test::INVOKE_KEY.into(),
+                },
+            )
+        };
+        let demande = serde_json::json!({
+            "demande": { "cible": { "x": -1800, "y": 120, "largeur": 160, "hauteur": 40 }, "anneau": true, "texte": "Clique sur Nouveau.", "ton": "attention" }
+        });
+        assert_eq!(call("guide_calque_montrer", demande).unwrap_err(), serde_json::json!({ "kind": "indisponible" }));
+        assert_eq!(call("guide_calque_effacer", serde_json::json!({})).unwrap().deserialize::<serde_json::Value>().unwrap(), serde_json::Value::Null);
+        for bad in [
+            serde_json::json!({}),
+            serde_json::json!({ "demande": { "cible": { "x": 0, "y": 0, "largeur": -4, "hauteur": 40 }, "anneau": true, "texte": "a", "ton": "normal" } }),
+            serde_json::json!({ "demande": { "cible": { "x": 0, "y": 0, "largeur": 4, "hauteur": 40 }, "anneau": true, "texte": "a", "ton": "rouge" } }),
+        ] {
+            let e = call("guide_calque_montrer", bad.clone()).unwrap_err();
+            assert!(e.as_str().is_some_and(|m| m.contains("invalid args")), "{bad}: {e}");
+        }
     }
 }

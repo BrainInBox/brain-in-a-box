@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <title>Bibo</title>
+  <style>
+    /* Bibo's overlay (calque.rs): transparent but for a ring and a bubble, which Rust places in the
+       screen's physical pixels and calque.js turns into this page's. Clicks go through all of it. */
+    html, body { margin: 0; background: transparent; overflow: hidden; }
+    .anneau, .bulle { position: fixed; box-sizing: border-box; }
+    .anneau { border-radius: 10px; }
+    .bulle {
+      display: flex; flex-direction: column; justify-content: flex-start;
+      padding: 10px 12px; border-radius: 10px; border-style: solid;
+      background: var(--fond); border-color: var(--bord); color: #ffffff;
+      font: 500 15px/20px "Segoe UI", system-ui, sans-serif; overflow: hidden;
+    }
+    .bulle.en-haut { justify-content: flex-end; }
+    .bulle .contenu { display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+    .bulle .mot { font-weight: 700; }
+    .bulle .mot::before { content: "\26A0\FE0F  "; }
+    [hidden] { display: none !important; }
+  </style>
+  <script src="calque.js" defer></script>
+</head>
+<body>
+  <div class="anneau" hidden></div>
+  <div class="bulle" hidden><div class="contenu"><span class="mot"></span> <span class="texte"></span></div></div>
+</body>
+</html>

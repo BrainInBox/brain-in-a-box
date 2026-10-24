@@ -59,6 +59,8 @@ const COMMANDS: &[&str] = &[
     "guide_fin",
     "guide_brouillon",
     "guide_enregistrer",
+    "guide_calque_montrer",
+    "guide_calque_effacer",
     "start_claude",
     "save_report",
 ];

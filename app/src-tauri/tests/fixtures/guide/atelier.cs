@@ -1,5 +1,5 @@
 // A program for the guide's capture tests on a Windows desktop (src/capture/win.rs, the tests named
-// "bureau"): plain windows of known colours, nothing else, no data. Compiled there by the csc.exe of
+// "bureau"; src/capture/vm.rs, the guide v2's): plain windows of known colours, nothing else, no data. Compiled there by the csc.exe of
 // the .NET Framework that comes with Windows: nothing downloaded. ASCII only: csc reads a file
 // without a byte order mark in the ANSI code page.
 //
@@ -10,6 +10,15 @@
 //   atelier.exe message <title> <x> <y> <w> <h> <rrggbb>            a window, then the system's message box
 //   atelier.exe protege <title> <x> <y> <w> <h> <rrggbb>            a window Windows keeps out of captures
 //   atelier.exe intrus  <title> <x> <y> <w> <h> <rrggbb> <hwnd>     a window owned by another program's
+//   atelier.exe bouton  <title> <x> <y> <w> <h> <rrggbb>            a grey button "Nouveau"; each click
+//                                                                   says where it landed in the title
+//   atelier.exe vivant  <title> <x> <y> <w> <h> <rrggbb>            a clock with seconds, a spinner, a
+//                                                                   moving bar, a blinking caret; "Nouveau"
+//                                                                   opens a 400 x 200 dialog, white for
+//                                                                   200 ms, then orange; Escape closes it
+//   atelier.exe secret  <title> <x> <y> <w> <h> <rrggbb>            an orange password field (ES_PASSWORD)
+//                                                                   and a plain one
+//   atelier.exe video   <title> <x> <y> <w> <h> <rrggbb>            grey blocks that change every 40 ms
 using System;
 using System.Drawing;
 using System.Reflection;
@@ -26,6 +35,9 @@ static class Atelier
 
     const int WS_EX_NOACTIVATE = 0x08000000;
     const uint WDA_MONITOR = 1;
+
+    static readonly Color Orange = Color.FromArgb(0xff, 0x98, 0x00);
+    static readonly Color Grey = Color.FromArgb(0x78, 0x78, 0x78);
 
     class Dessus : Form
     {
@@ -48,6 +60,133 @@ static class Atelier
         return Color.FromArgb((v >> 16) & 255, (v >> 8) & 255, v & 255);
     }
 
+    static void Bouton(Form f, string titre)
+    {
+        int n = 0;
+        Button b = new Button();
+        b.Text = "Nouveau";
+        b.Bounds = new Rectangle(40, 40, 200, 60);
+        b.BackColor = Grey;
+        b.FlatStyle = FlatStyle.Flat;
+        b.Click += delegate { n++; f.Text = titre + " clic-bouton " + n; };
+        f.Controls.Add(b);
+        f.MouseClick += delegate { n++; f.Text = titre + " clic-fond " + n; };
+    }
+
+    static void Vivant(Form f)
+    {
+        Label horloge = new Label();
+        horloge.Bounds = new Rectangle(f.ClientSize.Width - 150, 10, 140, 24);
+        horloge.Font = new Font("Segoe UI", 12);
+        horloge.ForeColor = Color.White;
+        f.Controls.Add(horloge);
+
+        int angle = 0;
+        Panel tourne = new Panel();
+        tourne.Bounds = new Rectangle(f.ClientSize.Width - 60, 50, 40, 40);
+        tourne.Paint += delegate(object s, PaintEventArgs e)
+        {
+            e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            using (Pen p = new Pen(Color.White, 5)) e.Graphics.DrawArc(p, 5, 5, 28, 28, angle, 270);
+        };
+        f.Controls.Add(tourne);
+
+        Panel piste = new Panel();
+        piste.Bounds = new Rectangle(20, f.ClientSize.Height - 40, 220, 18);
+        piste.BackColor = Color.White;
+        Panel barre = new Panel();
+        barre.Bounds = new Rectangle(0, 0, 60, 18);
+        barre.BackColor = Grey;
+        piste.Controls.Add(barre);
+        f.Controls.Add(piste);
+
+        TextBox saisie = new TextBox();
+        saisie.Bounds = new Rectangle(20, 100, 260, 24);
+        f.Controls.Add(saisie);
+
+        Button nouveau = new Button();
+        nouveau.Text = "Nouveau";
+        nouveau.Bounds = new Rectangle(20, 20, 160, 40);
+        nouveau.BackColor = Color.White;
+        nouveau.Click += delegate
+        {
+            Form d = new Form();
+            d.Text = "Nouvelle facture";
+            d.FormBorderStyle = FormBorderStyle.FixedDialog;
+            d.StartPosition = FormStartPosition.Manual;
+            d.Bounds = new Rectangle(f.Left + 200, f.Top + 140, 400, 200);
+            d.BackColor = Color.White;
+            d.ShowInTaskbar = false;
+            d.MinimizeBox = false;
+            d.MaximizeBox = false;
+            Button fermer = new Button();
+            fermer.Text = "Fermer";
+            fermer.Bounds = new Rectangle(280, 110, 90, 30);
+            fermer.BackColor = Color.White;
+            fermer.DialogResult = DialogResult.Cancel;
+            d.Controls.Add(fermer);
+            d.CancelButton = fermer;
+            Timer charge = new Timer();
+            charge.Interval = 200;
+            charge.Tick += delegate { charge.Stop(); d.BackColor = Orange; };
+            d.Shown += delegate { charge.Start(); };
+            d.ShowDialog(f);
+            charge.Dispose();
+        };
+        f.Controls.Add(nouveau);
+
+        Timer t = new Timer();
+        t.Interval = 100;
+        t.Tick += delegate
+        {
+            angle = (angle + 30) % 360;
+            tourne.Invalidate();
+            barre.Left = (barre.Left + 8) % piste.Width;
+            horloge.Text = DateTime.Now.ToString("HH:mm:ss");
+        };
+        t.Start();
+        f.Shown += delegate { saisie.Focus(); };
+    }
+
+    static void Secret(Form f)
+    {
+        TextBox mdp = new TextBox();
+        mdp.AutoSize = false;
+        mdp.Bounds = new Rectangle(20, 20, 300, 40);
+        mdp.BackColor = Orange;
+        mdp.UseSystemPasswordChar = true;
+        f.Controls.Add(mdp);
+        TextBox nom = new TextBox();
+        nom.AutoSize = false;
+        nom.Bounds = new Rectangle(20, 80, 300, 40);
+        nom.BackColor = Grey;
+        f.Controls.Add(nom);
+    }
+
+    static void Video(Form f)
+    {
+        Random hasard = new Random(7);
+        Bitmap image = new Bitmap(32, 18);
+        PictureBox ecran = new PictureBox();
+        ecran.Dock = DockStyle.Fill;
+        ecran.SizeMode = PictureBoxSizeMode.StretchImage;
+        f.Controls.Add(ecran);
+        Timer t = new Timer();
+        t.Interval = 40;
+        t.Tick += delegate
+        {
+            for (int y = 0; y < image.Height; y++)
+                for (int x = 0; x < image.Width; x++)
+                {
+                    int g = hasard.Next(256);
+                    image.SetPixel(x, y, Color.FromArgb(g, g, g));
+                }
+            ecran.Image = image;
+            ecran.Invalidate();
+        };
+        t.Start();
+    }
+
     [STAThread]
     static int Main(string[] a)
     {
@@ -65,6 +204,10 @@ static class Atelier
             // (an owned window lies over its owner).
             SetWindowLongPtr(f.Handle, -8, new IntPtr(long.Parse(a[7])));
         }
+        if (mode == "bouton") Bouton(f, a[1]);
+        if (mode == "vivant") Vivant(f);
+        if (mode == "secret") Secret(f);
+        if (mode == "video") Video(f);
         f.Shown += delegate
         {
             if (mode == "protege")
