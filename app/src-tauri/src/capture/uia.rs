@@ -174,10 +174,10 @@ impl Contexte {
 }
 
 /// A command and a table's rows are never walked: nothing under them is read, not even by the other
-/// process.
+/// process. But a tab: WPF puts the page it shows under it.
 #[cfg_attr(not(windows), allow(dead_code))]
 pub(super) fn descendre(s: Sorte) -> bool {
-    !matches!(s, Sorte::Commande(_) | Sorte::Donnees)
+    !matches!(s, Sorte::Commande(g) if g != Genre::Onglet) && s != Sorte::Donnees
 }
 
 /// Whether a command, at this place of the tree, may be listed: in a browser, only from the page
@@ -540,7 +540,7 @@ mod tests {
         for s in [Sorte::Commande(Genre::Bouton), Sorte::Commande(Genre::Champ), Sorte::Commande(Genre::Liste), Sorte::Donnees] {
             assert!(!descendre(s), "{s:?}: nothing under it is read");
         }
-        for s in [Sorte::Page, Sorte::Barre, Sorte::BarreTitre, Sorte::Autre] {
+        for s in [Sorte::Page, Sorte::Barre, Sorte::BarreTitre, Sorte::Autre, Sorte::Commande(Genre::Onglet)] {
             assert!(descendre(s), "{s:?}");
         }
     }
