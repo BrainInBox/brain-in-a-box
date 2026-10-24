@@ -9,6 +9,9 @@
 //                                                                   second colour over it
 //   atelier.exe message <title> <x> <y> <w> <h> <rrggbb>            a window, then the system's message box
 //   atelier.exe protege <title> <x> <y> <w> <h> <rrggbb>            a window Windows keeps out of captures
+//                                                                   on the screen (WDA_MONITOR)
+//   atelier.exe exclu   <title> <x> <y> <w> <h> <rrggbb>            the same, out of every capture
+//                                                                   (WDA_EXCLUDEFROMCAPTURE)
 //   atelier.exe intrus  <title> <x> <y> <w> <h> <rrggbb> <hwnd>     a window owned by another program's
 //
 // The scale's modes, each "modal" with a green band along the window's right and bottom edges (a capture
@@ -18,6 +21,9 @@
 //   atelier.exe mixte     ...   the same, its dialog unaware of the scale (made on a thread that is)
 //   atelier.exe gdi       ...   unaware, its drawing scaled by GDI ("System (Enhanced)" in Compatibility)
 //   atelier.exe systeme   ...   aware of the scale the system had when it opened (SetProcessDPIAware)
+//
+// The others are aware of the system's scale too (SetProcessDPIAware); "<mode>-etiree" (fenetre-etiree,
+// protege-etiree...) is the same mode unaware of the scale, its window stretched by Windows.
 using System;
 using System.Drawing;
 using System.Reflection;
@@ -35,7 +41,7 @@ static class Atelier
     [DllImport("user32.dll")] static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
 
     const int WS_EX_NOACTIVATE = 0x08000000;
-    const uint WDA_MONITOR = 1;
+    const uint WDA_MONITOR = 1, WDA_EXCLUDEFROMCAPTURE = 0x11;
     // DPI_AWARENESS_CONTEXT_UNAWARE, _PER_MONITOR_AWARE_V2 and _UNAWARE_GDISCALED.
     static readonly IntPtr Unaware = new IntPtr(-1), PerMonitor = new IntPtr(-4), GdiScaled = new IntPtr(-5);
 
@@ -64,6 +70,8 @@ static class Atelier
     static int Main(string[] a)
     {
         string mode = a[0];
+        bool unaware = mode.EndsWith("-etiree");
+        if (unaware) mode = mode.Substring(0, mode.Length - "-etiree".Length);
         bool scale = mode == "etiree" || mode == "conscient" || mode == "mixte" || mode == "gdi" || mode == "systeme";
         if (mode == "conscient" || mode == "mixte")
         {
@@ -73,7 +81,7 @@ static class Atelier
         {
             if (!SetProcessDpiAwarenessContext(GdiScaled)) return 3;
         }
-        else if (mode != "etiree")
+        else if (mode != "etiree" && !unaware)
         {
             SetProcessDPIAware();
         }
@@ -102,9 +110,9 @@ static class Atelier
         }
         f.Shown += delegate
         {
-            if (mode == "protege")
+            if (mode == "protege" || mode == "exclu")
             {
-                SetWindowDisplayAffinity(f.Handle, WDA_MONITOR);
+                SetWindowDisplayAffinity(f.Handle, mode == "protege" ? WDA_MONITOR : WDA_EXCLUDEFROMCAPTURE);
             }
             if (mode == "modal" || scale)
             {

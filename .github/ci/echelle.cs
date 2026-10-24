@@ -3,10 +3,11 @@
 // Windows' own csc. ASCII only: csc reads a file without a byte order mark in the ANSI code page.
 //
 //   echelle.exe <width> <height> <percent>
+//   echelle.exe                              says "<width> <height> <percent>", the screen as it is
 //
 // The size by ChangeDisplaySettings, then the scale by DisplayConfigSetDeviceInfo (type -4, the call
-// behind Settings > Display > Scale, relative to the recommended one); done once a per-monitor thread
-// sees the screen at that DPI.
+// behind Settings > Display > Scale, relative to the recommended one; read by type -3); done once a
+// per-monitor thread sees the screen at that DPI.
 using System;
 using System.Runtime.InteropServices;
 
@@ -91,12 +92,32 @@ static class Echelle
         return x;
     }
 
+    static DPI_GET Scale(PATH p)
+    {
+        DPI_GET g = new DPI_GET();
+        g.h.type = -3;
+        g.h.size = Marshal.SizeOf(typeof(DPI_GET));
+        g.h.adapter = p.srcAdapter;
+        g.h.id = p.srcId;
+        int r = DisplayConfigGetDeviceInfo(ref g);
+        if (r != 0) throw new Exception("DisplayConfigGetDeviceInfo " + r);
+        return g;
+    }
+
     static int Main(string[] a)
     {
-        int width = int.Parse(a[0]), height = int.Parse(a[1]), percent = int.Parse(a[2]);
         DEVMODE dm = new DEVMODE();
         dm.dmSize = (short)Marshal.SizeOf(typeof(DEVMODE));
         EnumDisplaySettings(null, -1, ref dm);
+        if (a.Length == 0)
+        {
+            DPI_GET g = Scale(Paths()[0]);
+            int i = g.cur - g.min;
+            if (i < 0 || i >= Scales.Length) { Console.WriteLine("scale out of the steps: " + g.cur + " from " + g.min); return 2; }
+            Console.WriteLine(dm.dmPelsWidth + " " + dm.dmPelsHeight + " " + Scales[i]);
+            return 0;
+        }
+        int width = int.Parse(a[0]), height = int.Parse(a[1]), percent = int.Parse(a[2]);
         dm.dmPelsWidth = width;
         dm.dmPelsHeight = height;
         dm.dmFields = 0x80000 | 0x100000;
@@ -108,13 +129,8 @@ static class Echelle
         if (want < 0) { Console.WriteLine("not a scale: " + percent); return 2; }
         foreach (PATH p in Paths())
         {
-            DPI_GET g = new DPI_GET();
-            g.h.type = -3;
-            g.h.size = Marshal.SizeOf(typeof(DPI_GET));
-            g.h.adapter = p.srcAdapter;
-            g.h.id = p.srcId;
-            r = DisplayConfigGetDeviceInfo(ref g);
-            if (r != 0) { Console.WriteLine("DisplayConfigGetDeviceInfo " + r); return 1; }
+            DPI_GET g;
+            try { g = Scale(p); } catch (Exception e) { Console.WriteLine(e.Message); return 1; }
             int rel = want + g.min;
             if (rel > g.max) { Console.WriteLine("source " + p.srcId + ": " + percent + " % is over its max"); return 2; }
             DPI_SET s = new DPI_SET();
