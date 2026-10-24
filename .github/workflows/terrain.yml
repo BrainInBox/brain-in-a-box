@@ -545,10 +545,10 @@ jobs:
   # a fake Claude in Claude Code's place (engine/tests/fake_claude.py): no AI is asked here either.
   # On macOS and Windows, "app-mise-a-jour": the version users already have, clicked through to its
   # brain, then the tested version over it, opened again with the fake Claude connected (terrain.py,
-  # mise_a_jour). On master, app-latest (what the site's button downloads), then the same preview over
-  # it, as a user who downloads Bibo again. A branch's app is built as the next version after the
-  # published ones (terrain.py version-suivante), as release.yml numbers them, and goes over the
-  # preview it was numbered after: never a newer one published meanwhile.
+  # mise_a_jour). On master, the newest preview over the one before it, kept under the name of the
+  # site's button: the step users take. A branch's app is built, on this path only, as the next version
+  # after the published ones (terrain.py version-suivante), as release.yml numbers them, and goes over
+  # the preview it was numbered after: never a newer one published meanwhile.
   app-macos:
     name: The app, clicked through (macOS${{ matrix.parcours == 'app-codex' && ', Codex chosen' || matrix.parcours == 'app-mise-a-jour' && ', update over the published one' || '' }})
     needs: ref
@@ -605,7 +605,7 @@ jobs:
           key: terrain-build-${{ runner.os }}-universal-${{ hashFiles('app/src-tauri/Cargo.lock') }}
           restore-keys: terrain-build-${{ runner.os }}-universal-
 
-      # The command of release.yml: one universal DMG, ad-hoc signed, numbered as the next preview.
+      # The command of release.yml: one universal DMG, ad-hoc signed; for the update, numbered as the next preview.
       - name: Build the app from the tested commit (branch)
         if: steps.source.outputs.source == 'build'
         timeout-minutes: 40
@@ -618,7 +618,13 @@ jobs:
         run: |
           rustup target add aarch64-apple-darwin x86_64-apple-darwin
           command -v cargo-tauri >/dev/null || cargo install tauri-cli --version "=$TAURI_CLI_VERSION" --locked
-          version=$(python3 -I "$GITHUB_WORKSPACE/engine/tests/terrain.py" version-suivante)
+          # Only the update needs the next number (the published tags, git ls-remote); the other paths keep
+          # tauri.conf.json's, as before.
+          if [ "$PARCOURS" = app-mise-a-jour ]; then
+            version=$(python3 -I "$GITHUB_WORKSPACE/engine/tests/terrain.py" version-suivante)
+          else
+            version=$(python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1]))["version"])' tauri.conf.json)
+          fi
           [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::no version for the build ($version)"; exit 1; }
           build() {
             rm -rf "target/$TARGET/release/bundle"
@@ -782,7 +788,7 @@ jobs:
           key: terrain-build-${{ runner.os }}-x86_64-pc-windows-msvc-${{ hashFiles('app/src-tauri/Cargo.lock') }}
           restore-keys: terrain-build-${{ runner.os }}-x86_64-pc-windows-msvc-
 
-      # The command of release.yml: one NSIS installer, for the user alone, numbered as the next preview.
+      # The command of release.yml: one NSIS installer, for the user alone; for the update, numbered as the next preview.
       - name: Build the app from the tested commit (branch)
         if: steps.source.outputs.source == 'build'
         timeout-minutes: 45
@@ -796,8 +802,14 @@ jobs:
             cargo install tauri-cli --version "=$env:TAURI_CLI_VERSION" --locked
             if ($LASTEXITCODE) { exit 1 }
           }
-          $version = python -I "$env:GITHUB_WORKSPACE\engine\tests\terrain.py" version-suivante
-          if ($LASTEXITCODE -or "$version" -notmatch '^\d+\.\d+\.\d+$') { "::error::no version for the build ($version)"; exit 1 }
+          # Only the update needs the next number (see app-macos); the other paths keep tauri.conf.json's.
+          if ($env:PARCOURS -eq 'app-mise-a-jour') {
+            $version = python -I "$env:GITHUB_WORKSPACE\engine\tests\terrain.py" version-suivante
+            if ($LASTEXITCODE) { "::error::no version for the build: the published tags did not answer"; exit 1 }
+          } else {
+            $version = (Get-Content tauri.conf.json -Raw | ConvertFrom-Json).version
+          }
+          if ("$version" -notmatch '^\d+\.\d+\.\d+$') { "::error::no version for the build ($version)"; exit 1 }
           $config = Join-Path $env:RUNNER_TEMP 'version.json'
           [IO.File]::WriteAllText($config, "{`"version`":`"$version`"}")
           $bundle = "target\$env:TARGET\release\bundle"

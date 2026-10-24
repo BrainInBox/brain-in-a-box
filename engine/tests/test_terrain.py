@@ -634,15 +634,18 @@ class Workflow(unittest.TestCase):
 
     def test_a_branchs_app_is_built_as_the_next_version(self):
         # Numbered as release.yml numbers a preview (MAJOR.MINOR.<run>), one more than the published ones: the
-        # installer then updates the version users have (app-mise-a-jour), as it will theirs.
-        for name, conf in (("app-macos", '--config "{\\"version\\":\\"$version\\"}"'), ("app-windows", "--config $config")):
+        # installer then updates the version users have (app-mise-a-jour), as it will theirs. Only that path asks
+        # the published tags (git ls-remote): GitHub's hiccup there fails one job, not the seven that build.
+        for name, conf, seul in (("app-macos", '--config "{\\"version\\":\\"$version\\"}"', 'if [ "$PARCOURS" = app-mise-a-jour ]; then'),
+                                 ("app-windows", "--config $config", "if ($env:PARCOURS -eq 'app-mise-a-jour') {")):
             build = next(st for st in self.jobs[name]["steps"] if st.get("name") == "Build the app from the tested commit (branch)")
             run = build["run"]
             asked = run.index("engine/tests/terrain.py\" version-suivante" if name == "app-macos" else
                               "engine\\tests\\terrain.py\" version-suivante")
-            self.assertLess(asked, run.index("cargo tauri build"), name)
+            self.assertLess(run.index(seul), asked, name)
+            self.assertLess(asked, run.rindex("tauri.conf.json"), "%s: the other paths keep the version of tauri.conf.json" % name)
+            self.assertLess(run.rindex("tauri.conf.json"), run.index("cargo tauri build"), name)
             self.assertIn(conf, run, name)
-            self.assertNotIn("tauri.conf.json", run, "%s: the file is named after the version it was built with" % name)
             self.assertIn("Brain-in-a-Box_${version}-terrain." if name == "app-macos" else "Brain-in-a-Box_$version-terrain.", run)
         tags = ["refs/tags/app-v0.1.0-preview.121", "refs/tags/app-v0.1.138-preview.138", "refs/tags/app-v0.2.7-preview.140",
                 "refs/tags/v0.2.0", "refs/tags/app-latest", "refs/tags/app-v0.1.99-ci.99"]
@@ -1168,10 +1171,39 @@ class SansWinget(unittest.TestCase):
             with self.subTest(why=why), self.assertRaises(terrain.Echec) as cm:
                 self.pilote.constats(terrain.Etapes(), {"diagnostic": {"textes": textes}})
             self.assertIn(why, str(cm.exception))
+        # The welcome's PR (A) says Obsidian's line in grey, « À savoir »: nothing to do there, it follows from
+        # winget's. Either word says it will not be installed; winget's own line stays orange.
+        a_savoir = Diagnostic.SANS_WINGET[:7] + [": À savoir"]
+        self.pilote.constats(terrain.Etapes(), {"diagnostic": {"textes": a_savoir}})
+        with self.assertRaises(terrain.Echec) as cm:
+            self.pilote.constats(terrain.Etapes(), {"diagnostic": {"textes": Diagnostic.SANS_WINGET[:5] + [": À savoir"] + a_savoir[6:]}})
+        self.assertIn("« Outil d'installation de Microsoft : À noter » (winget manquant) ; il dit « À savoir »", str(cm.exception))
         self.obsidian.write_text("x")
         with self.assertRaises(terrain.Echec) as cm:
             self.pilote.constats(terrain.Etapes(), {"diagnostic": {"textes": Diagnostic.SANS_WINGET}})
         self.assertIn("Obsidian est installé sur un PC sans winget", str(cm.exception))
+
+    def test_an_end_of_install_that_says_obsidian_done_without_it_is_noted(self):
+        # Run 40049003350, capture 14-installe: « C'est installé ! », Ton cerveau « Tes notes, ta mémoire, tes
+        # automatismes, et Obsidian. » Fait, on a PC where Obsidian could not come. Noted until the app says it.
+        from terrain_app import Ecran
+        lus = iter([Ecran(fenetre=True, titre="J'installe Claude Code."),
+                    Ecran(fenetre=True, titre="C'est installé !", textes=["C'est installé !", "Ton cerveau",
+                                                                          "Tes notes, ta mémoire, tes automatismes, et Obsidian.", "Fait"]),
+                    Ecran(fenetre=True, titre="Tout est déjà installé", textes=["et Obsidian"])])
+        pilote = types.SimpleNamespace(poste_neuf=lambda: {}, outils=lambda home: [], constats=lambda t, d: None,
+                                       lire=lambda: next(lus))
+        terrain.sans_winget(pilote, self.opts)
+        self.assertEqual([pilote.lire().titre for _ in range(3)], ["J'installe Claude Code.", "C'est installé !",
+                                                                    "Tout est déjà installé"])
+        t = terrain.Etapes()
+        pilote.constats(t, {"diagnostic": {"textes": Diagnostic.SANS_WINGET}})
+        self.assertEqual(t.notes, ["sans winget, « C'est installé » dit encore « Tes notes, ta mémoire, tes automatismes, et "
+                                   "Obsidian. » à l'étape Ton cerveau : Obsidian n'est pourtant pas installé"])
+        # A driver of the tests without lire, or an end that does not name Obsidian: nothing to note.
+        t = terrain.Etapes()
+        self.pilote.constats(t, {"diagnostic": {"textes": Diagnostic.SANS_WINGET}})
+        self.assertEqual(t.notes, [])
 
     def test_a_diagnosis_that_says_ready_over_its_orange_lines_is_noted(self):
         # Run 39979891713: « J'ai fait le tour : ton PC est prêt. », winget and Obsidian orange under « Voir le
@@ -1332,16 +1364,17 @@ class MiseAJour(unittest.TestCase):
             row, left = self.run_it(source="release")
         return row, left, got
 
-    def test_on_master_the_newest_preview_over_itself(self):
+    def test_on_master_the_newest_preview_over_the_one_before(self):
         # The night on master: the tested version is the newest preview, fetched as the path app fetches it, with
-        # the read-only token taken out of the environment (never the app's); the same version, over itself.
-        self.versions = ["0.1.138", "0.1.138"]
+        # the read-only token taken out of the environment (never the app's), and goes over the preview before it:
+        # the step users take, never a reinstall of the same version (that one: installer.nsi, its test).
+        self.versions = ["0.1.137", "0.1.138"]
         row, left, got = self.on_master()
         self.assertEqual(row["statut"], "ok", row["raison"])
         self.assertEqual(got, [("ghs_x", "f" * 40)])
-        self.assertEqual(self.avant_de, [None], "on master, the version before is what the site's button downloads")
+        self.assertEqual(self.avant_de, ["0.1.138"], "on master too, the version before is the preview before the tested one")
         self.assertIsNone(left, "the read-only token never reaches the app")
-        self.assertIn("puis app-v0.1.138-preview.138 par-dessus", row["raison"])
+        self.assertIn("app 0.1.137, son cerveau installé, puis app-v0.1.138-preview.138 par-dessus", row["raison"])
         self.assertEqual(self.p.installes[1][0], "Brain-in-a-Box_0.1.138-preview.138_macos-universal.dmg")
 
     def test_a_tested_version_older_than_the_one_there_is_never_installed_over_it(self):
@@ -1353,9 +1386,8 @@ class MiseAJour(unittest.TestCase):
         self.assertIn("la version testée (0.1.139) n'est pas plus récente que celle d'avant (0.1.158)", row["raison"])
         self.assertEqual([n for n, _ in self.p.installes], ["Brain-in-a-Box_macos-universal.dmg"],
                          "nothing is installed over a newer version")
-        # On master the newest preview goes over itself, or over the one before when one came out meanwhile;
-        # never over a newer one.
-        for there, ok in (("0.1.139", True), ("0.1.137", True), ("0.1.140", False)):
+        # On master as on a branch: the same version or a newer one there is no update.
+        for there, ok in (("0.1.138", True), ("0.1.139", False), ("0.1.140", False)):
             with self.subTest(there=there):
                 shutil.rmtree(self.home, True)
                 self.home.mkdir()
@@ -1365,9 +1397,9 @@ class MiseAJour(unittest.TestCase):
                 self.assertEqual(row["statut"], "ok" if ok else "echec", row["raison"])
                 if not ok:
                     self.assertEqual(row["etape"], "maj-versions")
-                    self.assertIn("la version testée (0.1.139) est plus ancienne que celle d'avant (0.1.140)", row["raison"])
-        self.assertEqual(terrain.ordre_des_versions("0.1.139", "0.1.99", "build"), "")
-        self.assertIn("ne dit pas sa version", terrain.ordre_des_versions("0.1.139", None, "build"))
+                    self.assertIn("la version testée (0.1.139) n'est pas plus récente que celle d'avant (%s)" % there, row["raison"])
+        self.assertEqual(terrain.ordre_des_versions("0.1.139", "0.1.99"), "")
+        self.assertIn("ne dit pas sa version", terrain.ordre_des_versions("0.1.139", None))
 
     def test_a_note_both_installs_make_is_said_once(self):
         note = "quarantaine levée par le robot, là où l'utilisateur clique « Ouvrir quand même » dans Réglages"
@@ -1378,8 +1410,9 @@ class MiseAJour(unittest.TestCase):
         self.assertEqual(row["raison"].count(note), 1, row["raison"])
         self.assertEqual(row["details"]["a_noter"], [note])
 
-    def test_on_a_branch_the_version_before_is_the_preview_the_build_was_numbered_after(self):
-        # Not app-latest: a preview published during the night would come before the version built from it.
+    def test_the_version_before_is_the_preview_before_the_tested_one(self):
+        # Not app-latest: a preview published during the night would come before the version built from it. On a
+        # branch the preview its build was numbered after, on master the one before the newest.
         pilote = types.SimpleNamespace(suffixe="_windows-x64-setup.exe")
         tags = ["refs/tags/app-v0.1.0-preview.132", "refs/tags/app-v0.1.138-preview.138", "refs/tags/app-v0.1.158-preview.158",
                 "refs/tags/app-latest", "refs/tags/v0.2.0"]
@@ -1399,8 +1432,16 @@ class MiseAJour(unittest.TestCase):
         f, details = avant(tags, "0.1.139")
         base = "https://github.com/BrainInBox/brain-in-a-box/releases/download/app-v0.1.138-preview.138/"
         self.assertEqual(urls, [base + nom, base + "SHA256SUMS"])
-        self.assertEqual((f.name, details["release"]), (nom, "app-v0.1.138-preview.138"))
+        # Kept under the name of the site's button, as the user who clicked it when it was the newest has it: the
+        # SmartScreen of the site's captures names the file the page names.
+        self.assertEqual((f.name, details["release"], details["publie_sous"]),
+                         ("Brain-in-a-Box_windows-x64-setup.exe", "app-v0.1.138-preview.138", nom))
         self.assertEqual(details["sha256"], hashlib.sha256(b"exe").hexdigest())
+        with open(os.path.join(HERE, "..", "..", "site", "index.html"), encoding="utf-8") as fh:
+            self.assertIn("/releases/download/app-latest/" + f.name, fh.read())
+        # On master: the newest preview is the tested one, 0.1.158; the version before, 0.1.138.
+        urls.clear()
+        self.assertEqual(avant(tags, "0.1.158")[1]["release"], "app-v0.1.138-preview.138")
         # A new MAJOR.MINOR: the version before is still the newest preview users have.
         urls.clear()
         nom = "Brain-in-a-Box_0.1.158-preview.158_windows-x64-setup.exe"
@@ -1410,6 +1451,12 @@ class MiseAJour(unittest.TestCase):
             with self.subTest(why=why), self.assertRaises(terrain.Echec) as cm:
                 avant(tags_, "0.1.139")
             self.assertIn(why, str(cm.exception))
+        # A file that is not the one its SHA256SUMS names fails.
+        nom = "autre.exe"
+        with self.assertRaises(terrain.Echec) as cm:
+            avant(tags, "0.1.139")
+        self.assertIn("Brain-in-a-Box_0.1.138-preview.138_windows-x64-setup.exe ne correspond pas au SHA256SUMS de "
+                      "app-v0.1.138-preview.138", str(cm.exception))
 
     def test_the_published_tags_are_read_again_after_a_hiccup(self):
         calls, slept = [], []
@@ -1484,32 +1531,6 @@ class MiseAJour(unittest.TestCase):
         for q in terrain.MAJ_QUESTIONS:
             self.assertIn(terrain.terrain_app.norm(q), nsh, q)
 
-    def test_the_version_before_is_what_the_sites_button_downloads(self):
-        pilote = types.SimpleNamespace(suffixe="_windows-x64-setup.exe")
-        urls = []
-
-        def check(nom):
-            def telecharger(url, dest, timeout=600):
-                urls.append(url)
-                Path(dest).write_bytes(b"exe" if not url.endswith("SHA256SUMS") else
-                                       ("%s  %s\n" % (hashlib.sha256(b"exe").hexdigest(), nom)).encode())
-            details = {}
-            with mock.patch.object(terrain.terrain_app, "telecharger", telecharger):
-                f = terrain.version_d_avant(terrain.Etapes(), pilote, Path(tempfile.mkdtemp(dir=self.tmp)), details)
-            return f, details
-        f, details = check("Brain-in-a-Box_windows-x64-setup.exe")
-        self.assertEqual(urls, [terrain.APP_LATEST + "Brain-in-a-Box_windows-x64-setup.exe", terrain.APP_LATEST + "SHA256SUMS"])
-        self.assertEqual((f.name, details["release"]), ("Brain-in-a-Box_windows-x64-setup.exe", "app-latest (le bouton du site)"))
-        self.assertEqual(details["sha256"], hashlib.sha256(b"exe").hexdigest())
-        self.assertEqual(terrain.APP_LATEST, "https://github.com/BrainInBox/brain-in-a-box/releases/download/app-latest/")
-        # The site's links are these (site/index.html), and release.yml puts the files there under these names.
-        with open(os.path.join(HERE, "..", "..", "site", "index.html"), encoding="utf-8") as fh:
-            self.assertIn(terrain.APP_LATEST + "Brain-in-a-Box_windows-x64-setup.exe", fh.read())
-        # A file that is not the one its SHA256SUMS names fails.
-        with self.assertRaises(terrain.Echec) as cm:
-            check("autre.exe")
-        self.assertIn("Brain-in-a-Box_windows-x64-setup.exe ne correspond pas au SHA256SUMS d'app-latest", str(cm.exception))
-
 
 SITE = Path(HERE).parent.parent / "site"
 # The robot's screens: 1024x768 on macOS and Windows, 1280x900 on Linux.
@@ -1545,6 +1566,24 @@ class SiteCaptures(unittest.TestCase):
         site = {f.name for f in (SITE / "img").iterdir()}
         self.assertEqual(sorted(site - faites - SITE_GARDEES), [], "an image of the site captures.sh neither makes nor keeps")
         self.assertEqual(SITE_GARDEES - site, set())
+
+    def test_the_page_says_what_the_nights_saw(self):
+        page = (SITE / "index.html").read_text(encoding="utf-8")
+        # app-mise-a-jour on macOS: Gatekeeper refuses the replaced app every time (gatekeeper_verdict: rejected).
+        faq = re.search(r'<details id="mettre-a-jour">.*?</details>', page, re.S).group(0)
+        mac = re.search(r"<li><strong>Mac</strong>.*?</li>", faq, re.S).group(0)
+        self.assertIn("la bloque de nouveau", mac)
+        self.assertIn("Ouvrir quand même", mac)
+        # app-sans-winget: no Obsidian, and the page says where to get it.
+        obsidian = re.search(r"<h3>Obsidian</h3>.*?</article>", page, re.S).group(0)
+        self.assertIn('href="https://obsidian.md"', obsidian)
+        # The walkthrough has no Voyage screen any more: no « clé Voyage » in it, unexplained.
+        for journey in re.findall(r'<ol class="journey".*?</ol>', page, re.S):
+            self.assertNotIn("clé Voyage", journey)
+        # Screen 5 (the login at the end, bibo-7) shows screen 3's three instructions: the page says them too.
+        ecran5 = re.search(r"Écran 5.*?</li>", page, re.S).group(0)
+        for consigne in ("claude.ai", "Autoriser", "laisse la fenêtre de commandes ouverte"):
+            self.assertIn(consigne, ecran5)
 
 
 @unittest.skipIf(sys.platform == "win32", "the Unix form of Codex's hooks; Windows' runs on its VM (app-windows, app-codex)")
