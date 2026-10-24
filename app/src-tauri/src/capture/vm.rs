@@ -25,7 +25,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, EnumChildWindows, EnumWindows, GetAncestor, GetForegroundWindow, GetMessageW,
     GetWindowDisplayAffinity, GetWindowLongW, GetWindowRect, GetWindowTextW, IsWindow, IsWindowVisible, PostThreadMessageW, RegisterClassW, SetCursorPos,
     SetForegroundWindow, SetWindowDisplayAffinity, SetWindowPos, ShowWindow, TranslateMessage, WindowFromPoint, ES_PASSWORD, GA_ROOT, GWL_STYLE, HWND_TOP,
-    MSG, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SW_SHOWMINNOACTIVE, WDA_EXCLUDEFROMCAPTURE, WDA_NONE, WINDOW_DISPLAY_AFFINITY, WM_QUIT, WNDCLASSW,
+    MSG, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SW_MINIMIZE, SW_RESTORE, SW_SHOWMINNOACTIVE, WDA_EXCLUDEFROMCAPTURE, WDA_NONE, WINDOW_DISPLAY_AFFINITY, WM_QUIT, WNDCLASSW,
     WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
 };
 
@@ -624,8 +624,9 @@ fn verifier_calque(app: &tauri::AppHandle, d: &Desk, t: &str, fautes: &mut Vec<S
     sleep(300);
     clic(centre(&pr));
     faute(within(Duration::from_secs(5), || (devant() == hwnd(pastille.id)).then_some(())).is_some(), "Bibo's pastille never in front".into());
+    let t0 = Instant::now();
     let montre = calque::montrer(app, &Demande { cible: b, anneau: true, texte: "Clique sur Nouveau.".into(), ton: Ton::Normal });
-    mesure(t, "montre", format!("{montre:?}"));
+    mesure(t, "montre", format!("{montre:?} en {} ms", t0.elapsed().as_millis()));
     faute(montre == Ok(Montre { anneau: true, bulle: true }), format!("shown: {montre:?}"));
     let id = ecran::calque().fenetre.expect("the overlay's window");
     mesure(t, "affinite_lue", format!("{:#x}", affinite(id)));
@@ -651,8 +652,11 @@ fn verifier_calque(app: &tauri::AppHandle, d: &Desk, t: &str, fautes: &mut Vec<S
     faute(a0 == 0 && b0 == 0, format!("the overlay in a copy of the screen: ring {a0}, bubble {b0}"));
     let c = capturer(&ecran, &ChampsClassiques);
     faute(c.is_ok(), format!("Bibo's capture refused: {:?}", c.as_ref().err()));
-    let bleu = compte(&teams, &ecran.rect, &f.agrandi(-20, -40), BLUE);
-    faute(bleu > 0, "the app under the overlay".into());
+    // In Bibo's own image, the app under the overlay (the overlay is not one of Bibo's windows to black).
+    let dedans = f.agrandi(-20, -40);
+    let bleu = c.as_ref().map_or(0, |c| compte(&c.image, &ecran.rect, &dedans, BLUE));
+    mesure(t, "appli_sous_le_calque", format!("{bleu}/{}", dedans.aire()));
+    faute(bleu * 2 >= dedans.aire(), format!("the app under the overlay, in Bibo's capture: {bleu}/{}", dedans.aire()));
 
     // The witness: shown to captures for a moment, the ring and the bubble are there, at their place.
     faute(temoin(app, WDA_NONE), "witness: the affinity not set to none".into());
@@ -701,6 +705,18 @@ fn verifier_calque(app: &tauri::AppHandle, d: &Desk, t: &str, fautes: &mut Vec<S
     mesure(t, "clic_sur_l_anneau", format!("{r2:?}"));
     faute(r2.as_deref() == Some("clic-fond"), "the click on the ring never reached the app".into());
     faute(devant() == win, "the app no longer in front".into());
+
+    // The app minimized: Windows activates the next window in the order, never the overlay, which is first.
+    // SAFETY: another program's window, minimized then restored.
+    let _ = unsafe { ShowWindow(win, SW_MINIMIZE) };
+    sleep(800);
+    let suivante = devant();
+    mesure(t, "devant_apres_reduction", class(suivante));
+    faute(suivante != hwnd(id), "the overlay took the focus when the app was minimized".into());
+    // SAFETY: as above.
+    let _ = unsafe { ShowWindow(win, SW_RESTORE) };
+    sleep(500);
+    au_premier_plan(win, fond);
 
     // A window always on top, opened after the overlay, over the ring: the overlay goes back over it.
     let zd = autour.agrandi(10, 10);
