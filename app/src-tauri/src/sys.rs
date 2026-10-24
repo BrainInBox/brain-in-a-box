@@ -99,18 +99,24 @@ pub fn exe(name: &str) -> String {
 }
 
 /// The inherited PATH first (a test can put stubs in front), then our install locations.
-/// Never a folder of the AppImage the app runs from.
 pub fn tool_path() -> OsString {
-    let mut dirs: Vec<PathBuf> = std::env::var_os("PATH")
-        .map(|p| std::env::split_paths(&p).filter(|d| !d.as_os_str().is_empty() && !in_appimage(d)).collect())
-        .unwrap_or_default();
-    dirs.extend(install_dirs(&home()));
-    let mut seen = HashSet::new();
-    dirs.retain(|d| seen.insert(d.clone()));
+    let dirs = tool_dirs(std::env::var_os("PATH"), &home());
     // Only a folder holding the separator cannot be joined: such a one is left out.
     std::env::join_paths(&dirs)
         .or_else(|_| std::env::join_paths(dirs.iter().filter(|d| std::env::join_paths([d]).is_ok())))
         .unwrap_or_default()
+}
+
+/// Only the PATH's absolute folders: an empty or relative entry is the folder the app was started
+/// from, where a claude.exe or a git.exe could be anyone's. Never a folder of the AppImage the app
+/// runs from.
+fn tool_dirs(path: Option<OsString>, home: &Path) -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> =
+        path.map(|p| std::env::split_paths(&p).filter(|d| d.is_absolute() && !in_appimage(d)).collect()).unwrap_or_default();
+    dirs.extend(install_dirs(home));
+    let mut seen = HashSet::new();
+    dirs.retain(|d| seen.insert(d.clone()));
+    dirs
 }
 
 #[cfg(target_os = "macos")]
@@ -348,6 +354,20 @@ pub fn run_streaming(
     limit: Duration,
     on_line: &mut dyn FnMut(String),
 ) -> i32 {
+    run_streaming_until(program, args, env, cwd, limit, &AtomicBool::new(false), on_line)
+}
+
+/// `run_streaming`, also stopped with everything it started once `cancel` is set (from another
+/// thread, or `on_line`): -1 then, and the caller says why.
+pub fn run_streaming_until(
+    program: &Path,
+    args: &[&str],
+    env: &[(&str, Option<&str>)],
+    cwd: Option<&Path>,
+    limit: Duration,
+    cancel: &AtomicBool,
+    on_line: &mut dyn FnMut(String),
+) -> i32 {
     let mut cmd = command(program);
     cmd.args(args).stdin(Stdio::null());
     for (k, v) in env {
@@ -366,11 +386,13 @@ pub fn run_streaming(
             return -1;
         }
     };
-    let code = supervise(&mut child, &rx, limit, None, &mut |_, bytes| {
+    let code = supervise(&mut child, &rx, limit, Some(cancel), &mut |_, bytes| {
         on_line(strip_ansi(String::from_utf8_lossy(&bytes).trim_end_matches('\n')));
     });
     code.unwrap_or_else(|| {
-        on_line(format!("Toujours pas fini au bout de {} : j'arrête.", minutes(limit)));
+        if !cancel.load(Ordering::SeqCst) {
+            on_line(format!("Toujours pas fini au bout de {} : j'arrête.", minutes(limit)));
+        }
         -1
     })
 }
@@ -390,6 +412,13 @@ pub fn spawn_piped(program: &Path, args: &[&str], env: &[(&str, &str)]) -> io::R
 /// Stops a program from `spawn_piped` and everything it started.
 pub fn stop(child: &mut Child) {
     kill_group(child);
+}
+
+/// Starts a helper that lives as long as the caller keeps its `Child` (and the pipe to its stdin, when
+/// `stdin` is piped): nothing of an AppImage reaches it.
+#[cfg(unix)]
+pub fn spawn_held(program: &Path, args: &[&str], stdin: Stdio) -> io::Result<Child> {
+    outside_appimage(&mut Command::new(program)).args(args).stdin(stdin).stdout(Stdio::null()).stderr(Stdio::null()).spawn()
 }
 
 /// How `run_isolated` runs a program that must not inherit anything from the app.
@@ -1162,7 +1191,9 @@ mod tests {
         let mut lines = Vec::new();
         let script = "head -c 9000000 /dev/zero | tr '\\0' x; echo; echo ok; head -c 9000000 /dev/zero | tr '\\0' y >&2; echo >&2; echo err >&2; \
                       head -c 16 /dev/zero | tr '\\0' z; echo";
-        let code = run_isolated_pipes(Path::new("/bin/sh"), &["-c", script], &isolated(&[], dir.path(), "", &cancel), 16, &mut |p, l| lines.push((p, l)));
+        // 18 MB through tr: about 3.5 s alone, past isolated()'s 5 s on a loaded machine. The cap is what is tested here, not the time.
+        let roomy = Isolated { limit: Duration::from_secs(120), ..isolated(&[], dir.path(), "", &cancel) };
+        let code = run_isolated_pipes(Path::new("/bin/sh"), &["-c", script], &roomy, 16, &mut |p, l| lines.push((p, l)));
         assert_eq!(code.unwrap(), Some(0));
         lines.sort_by_key(|(p, _)| *p == Pipe::Err);
         let seen: Vec<(Pipe, String)> = lines.into_iter().map(|(p, l)| (p, if l.len() > 16 { format!("{} bytes", l.len()) } else { l })).collect();
@@ -1248,6 +1279,19 @@ mod tests {
     fn durations_read_well() {
         assert_eq!(minutes(Duration::from_secs(30)), "30 s");
         assert_eq!(minutes(Duration::from_secs(150)), "2 min");
+    }
+
+    /// A relative or empty entry of the PATH is the folder the app was started from (a terminal's,
+    /// a download's): a claude.exe or a git.exe put there would be found, and run.
+    #[test]
+    fn only_the_absolute_folders_of_the_path() {
+        let tools = if cfg!(windows) { r"C:\Tools" } else { "/opt/tools" };
+        let home = if cfg!(windows) { r"C:\Users\jo" } else { "/home/jo" };
+        let path = std::env::join_paths([".", "bin", "", tools, r"..\x", "../x"]).unwrap();
+        let dirs = tool_dirs(Some(path), Path::new(home));
+        assert_eq!(dirs.first(), Some(&PathBuf::from(tools)), "{dirs:?}");
+        assert!(dirs.iter().all(|d| d.is_absolute()), "{dirs:?}");
+        assert!(dirs.contains(&Path::new(home).join(".local").join("bin")), "{dirs:?}");
     }
 
     #[test]

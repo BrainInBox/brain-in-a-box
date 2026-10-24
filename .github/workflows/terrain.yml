@@ -541,7 +541,8 @@ jobs:
   # checks the attestation). The captures are public: the VM's screen only.
   # Two paths on each system: "app", Claude alone as users get it (the app's gate closed, no choice
   # asked), and "app-codex", Codex chosen alone, the gate open in the robot's copy of the kit only
-  # (terrain_app.py), as the other benches open it.
+  # (terrain_app.py), as the other benches open it. On "app", a third launch walks Bibo's guide with
+  # a fake Claude in Claude Code's place (engine/tests/fake_claude.py): no AI is asked here either.
   app-macos:
     name: The app, clicked through (macOS${{ matrix.parcours == 'app-codex' && ', Codex chosen' || '' }})
     needs: ref
@@ -605,6 +606,7 @@ jobs:
         working-directory: app/src-tauri
         env:
           APPLE_SIGNING_IDENTITY: "-"
+          TAURI_BUNDLER_DMG_IGNORE_CI: "true"
           TAURI_CLI_VERSION: "2.11.5"
           TARGET: universal-apple-darwin
         run: |
@@ -707,7 +709,7 @@ jobs:
     name: The app, clicked through (Windows${{ matrix.parcours == 'app-codex' && ', Codex chosen' || '' }})
     needs: ref
     runs-on: windows-latest
-    timeout-minutes: 185
+    timeout-minutes: 190
     permissions:
       contents: read
       attestations: read
@@ -833,7 +835,7 @@ jobs:
             [Environment]::SetEnvironmentVariable('Path', ("$user;$apps").TrimStart(';'), 'User')
             "WindowsApps was not on the user's PATH: added, as on every PC"
           }
-          "py launcher: $(if (Test-Path "$env:WINDIR\py.exe") { 'there (the stub py.cmd comes first on the PATH)' } else { 'absent' })"
+          "py launcher: $(if (Test-Path "$env:WINDIR\py.exe.biab-off") { 'taken away (poste-neuf.ps1)' } elseif (Test-Path "$env:WINDIR\py.exe") { 'there' } else { 'absent' })"
 
       # Each step re-reads the Machine PATH, which poste-neuf.ps1 emptied of the runner's Python:
       # the harness gets it back through GITHUB_PATH; the app gets a session's environment, without it.
@@ -855,6 +857,28 @@ jobs:
           python -I engine/tests/terrain.py app --parcours $env:PARCOURS --vm --json $env:TERRAIN_JSON `
             "--source=$env:SOURCE" "--fichier=$env:APP_FICHIER" --captures $env:TERRAIN_CAPTURES "--stub=$env:TERRAIN_STUB" `
             --delai-min 125
+
+      # The uninstaller of the setup.exe tested above (app/src-tauri/installer/hooks.nsh), silent as
+      # an IT department runs it, in place (_?=, so that the step waits for it): the app goes,
+      # Windows no longer lists it, and the brain's scheduled tasks stay (silent, its question is
+      # answered no). A question shown anyway would hang it: the step's time limit says so.
+      - name: "The uninstaller, silent: the app goes, the brain's tasks stay"
+        timeout-minutes: 5
+        run: |
+          $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Brain in a Box'
+          $un = (Get-ItemProperty $key).UninstallString.Trim('"')
+          $dir = Split-Path $un
+          $tasks = @('BrainNightly', 'BrainReflection' | Where-Object { Get-ScheduledTask -TaskName $_ -ErrorAction SilentlyContinue })
+          "tasks before: $($tasks -join ', ')"
+          $p = Start-Process -FilePath $un -ArgumentList "/S _?=$dir" -Wait -PassThru
+          if ($p.ExitCode) { throw "the uninstaller ended with $($p.ExitCode)" }
+          if (Test-Path "$dir\brain-in-a-box.exe") { throw 'the app is still there' }
+          if (Test-Path $key) { throw 'Windows still lists the app' }
+          foreach ($t in $tasks) {
+            if (-not (Get-ScheduledTask -TaskName $t -ErrorAction SilentlyContinue)) { throw "$t removed by a silent uninstall" }
+          }
+          if ($tasks.Count -eq 0) { "::warning::no scheduled task here: only the app's removal was checked" }
+          "uninstalled; tasks kept: $($tasks -join ', ')"
 
       - name: Summary
         if: always()
@@ -1039,14 +1063,15 @@ jobs:
 
       # The desktop: an X server (Xvfb) and a window manager (openbox), the user's systemd and
       # session bus (the accessibility bus answers there, and install.sh finds systemd there), the
-      # robot's eyes and hands (AT-SPI's Python bindings, xdotool, xwininfo, ImageMagick), and
+      # robot's eyes and hands (AT-SPI's Python bindings, xdotool, xwininfo, ImageMagick, and xclip,
+      # which holds the capture it pastes in the guide as a capture tool does), and
       # pkexec with the rule that stands in for the password typed in the system's window; it logs
       # the window's text (pkexec's cmdline_short) under fenetre-mot-de-passe, which the results check.
       - name: A desktop for the app
         timeout-minutes: 5
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y -q xvfb openbox xdotool x11-utils imagemagick at-spi2-core python3-gi \
+          sudo apt-get install -y -q xvfb openbox xdotool x11-utils imagemagick xclip at-spi2-core python3-gi \
             gir1.2-atspi-2.0 dbus-user-session pkexec
           printf '%s\n' 'polkit.addRule(function (action, subject) {' \
             "  if (action.id == \"org.freedesktop.policykit.exec\" && subject.user == \"$USER\") {" \
@@ -1098,9 +1123,30 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+  # The installers install.ps1 falls back on when winget cannot (Git for Windows, Python) are pinned: a newer
+  # release, a security fix among them, reaches nobody until the pins move. Red once one has been out for 14
+  # days (.github/ci/epingles.py); the report then opens the issue. GitHub's API with the read-only token.
+  epingles:
+    name: install.ps1's pinned installers against their latest release
+    needs: ref
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      TERRAIN_SHA: ${{ needs.ref.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.ref.outputs.sha }}
+          persist-credentials: false
+
+      - name: Git for Windows and Python, no newer release out for 14 days
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -I .github/ci/epingles.py --resume "$GITHUB_STEP_SUMMARY"
+
   rapport:
     name: Report (one issue "terrain")
-    needs: [ref, macos, windows, linux, claude, app-macos, app-windows, app-linux-build, app-linux]
+    needs: [ref, macos, windows, linux, claude, app-macos, app-windows, app-linux-build, app-linux, epingles]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -1110,7 +1156,7 @@ jobs:
     env:
       ATTENDUS: macos-neuf,macos-montee,windows-neuf,windows-montee,linux-neuf,linux-reinstallation,macos-claude,windows-claude,macos-app,windows-app,linux-app,macos-app-codex,windows-app-codex,linux-app-codex
       # A job that did not succeed is a failure even when its rows say nothing (terrain.py JOBS).
-      JOBS: ref=${{ needs.ref.result }},macos=${{ needs.macos.result }},windows=${{ needs.windows.result }},linux=${{ needs.linux.result }},claude=${{ needs.claude.result }},app-macos=${{ needs.app-macos.result }},app-windows=${{ needs.app-windows.result }},app-linux-build=${{ needs.app-linux-build.result }},app-linux=${{ needs.app-linux.result }}
+      JOBS: ref=${{ needs.ref.result }},macos=${{ needs.macos.result }},windows=${{ needs.windows.result }},linux=${{ needs.linux.result }},claude=${{ needs.claude.result }},app-macos=${{ needs.app-macos.result }},app-windows=${{ needs.app-windows.result }},app-linux-build=${{ needs.app-linux-build.result }},app-linux=${{ needs.app-linux.result }},epingles=${{ needs.epingles.result }}
     steps:
       # The workflow's own commit: the code that writes the issue is the one this file came with.
       - uses: actions/checkout@v4

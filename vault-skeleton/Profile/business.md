@@ -1,5 +1,7 @@
 # Business — activity, company, projects
 
+> Cette note décrit ton travail : ton activité, ton secteur, les personnes avec qui tu travailles. Claude la remplit quand tu te présentes.
+>
 > Filled in by the onboarding. This is where the business/project context the agent needs to know lives.
 
 ## Main activity

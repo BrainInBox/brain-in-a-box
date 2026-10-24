@@ -6,7 +6,8 @@
 // as a screen reader sees it), presses a button as a screen reader does (Invoke), and
 // captures the whole screen.
 //
-//   pilote-windows.exe lire <pid>                  the windows of <pid>, and the one in front
+//   pilote-windows.exe lire <pid>                  the windows of <pid>, and the one in front; each button's place
+//                                                  and the screen's usable area (the taskbar left out)
 //   pilote-windows.exe cliquer <hwnd> <label> [souris|invoke]
 //                                                  the enabled button (or link) with that label: the mouse
 //                                                  on it as a user clicks, or Invoke as a screen reader does
@@ -18,6 +19,10 @@
 //   pilote-windows.exe fenetres                    the visible top-level windows, each with its program
 //   pilote-windows.exe arbre <hwnd>                one window, its program and its tree
 //   pilote-windows.exe raccourci <file.lnk>        where a shortcut points
+//   pilote-windows.exe taper <hwnd> <text>         the text typed in the window, as a keyboard types it
+//   pilote-windows.exe touche <hwnd> tab           Tab in the window
+//   pilote-windows.exe coller <hwnd>               the PNG whose base64 comes on stdin put in the clipboard,
+//                                                  as Windows' capture tool puts one, then Ctrl+V in the window
 //
 // Every answer is one line of JSON, ASCII only (\uXXXX escapes): the console's code page never
 // matters. This file stays ASCII too: csc reads a file without a byte order mark in the ANSI
@@ -28,6 +33,7 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.Globalization;
+using System.IO;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -64,6 +70,7 @@ static class PiloteWindows
     [DllImport("user32.dll")] static extern bool AttachThreadInput(uint a, uint b, bool attach);
     [DllImport("user32.dll")] static extern bool PostMessage(IntPtr h, uint msg, IntPtr w, IntPtr l);
     [DllImport("user32.dll")] static extern int GetSystemMetrics(int i);
+    [DllImport("user32.dll")] static extern bool SystemParametersInfo(uint action, uint param, ref RECT r, uint ini);
     [DllImport("user32.dll")] static extern IntPtr WindowFromPoint(POINT p);
     [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr h, uint flags);
     [DllImport("user32.dll")] static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
@@ -76,6 +83,20 @@ static class PiloteWindows
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     static extern bool QueryFullProcessImageName(IntPtr h, uint flags, StringBuilder s, ref uint size);
     [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct KEYBDINPUT { public ushort wVk; public ushort wScan; public uint dwFlags; public uint time; public IntPtr dwExtraInfo; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct MOUSEINPUT { public int dx; public int dy; public uint mouseData; public uint dwFlags; public uint time; public IntPtr dwExtraInfo; }
+
+    [StructLayout(LayoutKind.Explicit)]
+    struct INPUTUNION { [FieldOffset(0)] public MOUSEINPUT mi; [FieldOffset(0)] public KEYBDINPUT ki; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct INPUT { public uint type; public INPUTUNION u; }
+
+    [DllImport("user32.dll", SetLastError = true)] static extern uint SendInput(uint n, INPUT[] inputs, int size);
 
     // aria-live: .NET 4.7.1 and later know it, older ones do not (read by reflection).
     static AutomationProperty Live = Propriete("LiveSettingProperty");
@@ -111,8 +132,12 @@ static class PiloteWindows
         if (op == "ranger" && a.Length == 1) return Ranger();
         if (op == "fenetres" && a.Length == 1) return Fenetres();
         if (op == "arbre" && a.Length == 2) return UneFenetre(Fenetre(a[1]));
+        if (op == "taper" && a.Length == 3) return Taper(Fenetre(a[1]), a[2]);
+        if (op == "touche" && a.Length == 3 && a[2] == "tab") return Touche(Fenetre(a[1]), 0x09);
+        if (op == "coller" && a.Length == 2) return Coller(Fenetre(a[1]), Console.In.ReadToEnd());
         return Echec("usage : lire <pid> | cliquer <hwnd> <libelle> | cocher <hwnd> <libelle> 0|1 | fermer <hwnd> | "
-                     + "devant <hwnd> | capturer <png> | raccourci <lnk> | ranger");
+                     + "devant <hwnd> | capturer <png> | raccourci <lnk> | ranger | taper <hwnd> <texte> | touche <hwnd> tab | "
+                     + "coller <hwnd> (base64 sur stdin)");
     }
 
     // ------------------------------------------------------------------ windows
@@ -202,7 +227,17 @@ static class PiloteWindows
         res["fenetres"] = app;
         res["devant"] = autre;
         res["mode"] = mode;
+        res["zone"] = ZoneUtile();
         return res;
+    }
+
+    // The main screen's usable area, the taskbar left out (SPI_GETWORKAREA), in the pixels of the windows'
+    // and the buttons' places: a button below it is under the taskbar.
+    static List<object> ZoneUtile()
+    {
+        RECT r = new RECT();
+        if (!SystemParametersInfo(0x0030, 0, ref r, 0)) return null;
+        return new List<object> { r.Left, r.Top, r.Right - r.Left, r.Bottom - r.Top };
     }
 
     // ------------------------------------------------------------------ the accessibility tree
@@ -229,6 +264,7 @@ static class PiloteWindows
         cr.Add(AutomationElement.AutomationIdProperty);
         cr.Add(AutomationElement.ClassNameProperty);
         cr.Add(TogglePattern.ToggleStateProperty);
+        cr.Add(AutomationElement.BoundingRectangleProperty);
         if (Live != null) cr.Add(Live);
         return cr;
     }
@@ -289,6 +325,16 @@ static class PiloteWindows
         if (classe.Length > 0) d["c"] = classe;
         object coche = Valeur(e, TogglePattern.ToggleStateProperty, cache);
         if (coche is ToggleState) d["x"] = (int)(ToggleState)coche;
+        // A button's place on the screen: whether a user sees it whole.
+        if ((string)d["t"] == "Button" || (string)d["t"] == "Hyperlink")
+        {
+            object place = Valeur(e, AutomationElement.BoundingRectangleProperty, cache);
+            if (place is System.Windows.Rect && ((System.Windows.Rect)place).Width > 0 && ((System.Windows.Rect)place).Height > 0)
+            {
+                System.Windows.Rect b = (System.Windows.Rect)place;
+                d["b"] = new List<object> { (int)Math.Round(b.Left), (int)Math.Round(b.Top), (int)Math.Round(b.Width), (int)Math.Round(b.Height) };
+            }
+        }
         object live = Valeur(e, Live, cache);
         if (live != null)
         {
@@ -617,6 +663,71 @@ static class PiloteWindows
         {
             Marshal.FinalReleaseComObject(shell);
         }
+    }
+
+    // ------------------------------------------------------------------ the keyboard
+
+    // Each character as the keyboard sends it (a Unicode key, down then up), the window in front first.
+    static Dictionary<string, object> Taper(IntPtr h, string texte)
+    {
+        if (!Activer(h)) return Echec("la fenetre ne vient pas devant");
+        foreach (char c in texte)
+        {
+            INPUT[] k = new INPUT[2];
+            k[0].type = 1;
+            k[0].u.ki.wScan = c;
+            k[0].u.ki.dwFlags = 0x0004;   // KEYEVENTF_UNICODE
+            k[1] = k[0];
+            k[1].u.ki.dwFlags = 0x0004 | 0x0002;   // KEYEVENTF_KEYUP
+            if (SendInput(2, k, Marshal.SizeOf(typeof(INPUT))) != 2) return Echec("SendInput : erreur " + Marshal.GetLastWin32Error());
+            Thread.Sleep(15);
+        }
+        return Ok();
+    }
+
+    static Dictionary<string, object> Touche(IntPtr h, byte vk)
+    {
+        if (!Activer(h)) return Echec("la fenetre ne vient pas devant");
+        keybd_event(vk, 0, 0, UIntPtr.Zero);
+        keybd_event(vk, 0, 2, UIntPtr.Zero);
+        Thread.Sleep(100);
+        return Ok();
+    }
+
+    // The clipboard as Win + Shift + S leaves it: the PNG ("PNG", what a browser reads first) and a bitmap.
+    // The clipboard wants a thread of its own kind (STA).
+    static Dictionary<string, object> Coller(IntPtr h, string b64)
+    {
+        byte[] png = Convert.FromBase64String(b64.Trim());
+        Exception err = null;
+        Thread t = new Thread(delegate ()
+        {
+            try
+            {
+                System.Windows.Forms.DataObject d = new System.Windows.Forms.DataObject();
+                d.SetData("PNG", false, new MemoryStream(png));
+                using (System.Drawing.Image img = System.Drawing.Image.FromStream(new MemoryStream(png)))
+                {
+                    d.SetData(System.Windows.Forms.DataFormats.Bitmap, true, new Bitmap(img));
+                }
+                System.Windows.Forms.Clipboard.SetDataObject(d, true, 10, 100);
+            }
+            catch (Exception e)
+            {
+                err = e;
+            }
+        });
+        t.SetApartmentState(ApartmentState.STA);
+        t.Start();
+        t.Join();
+        if (err != null) return Echec("presse-papiers : " + err.Message);
+        if (!Activer(h)) return Echec("la fenetre ne vient pas devant");
+        keybd_event(0x11, 0, 0, UIntPtr.Zero);   // Ctrl
+        keybd_event(0x56, 0, 0, UIntPtr.Zero);   // V
+        keybd_event(0x56, 0, 2, UIntPtr.Zero);
+        keybd_event(0x11, 0, 2, UIntPtr.Zero);
+        Thread.Sleep(150);
+        return Ok();
     }
 
     // ------------------------------------------------------------------ answers

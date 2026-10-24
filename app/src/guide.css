@@ -1,0 +1,48 @@
+/* The guide's window (guide.html): its own pieces for the automatic capture; styles.css has the rest. */
+.tool.tool-labelled { width: auto; display: inline-flex; align-items: center; gap: 4px; padding: 0 8px 0 6px; font: inherit; font-size: 13px; }
+
+/* Reduced, the tools go to the footer's empty left, beside « C'est fait »: « Agrandir » keeps its word
+   (point 20), and the step the whole width. */
+body.guide.reduit .hero { top: auto; right: auto; bottom: 12px; left: 8px; }
+
+body.guide.reduit .consigne { padding-right: 0; }
+
+/* The time left to click in the program's window. */
+.countdown { font-size: 15px; font-weight: 650; }
+
+.countdown .chrono-time { font-variant-numeric: tabular-nums; color: var(--accent); }
+
+.window-card { padding: 10px 14px; }
+
+.window-card > * + * { margin-top: 6px; }
+
+.window-app { font-weight: 650; overflow-wrap: anywhere; }
+
+/* The list of windows: one button a line, for the keyboard and screen readers. */
+.windows { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+
+.window-line {
+  appearance: none;
+  width: 100%;
+  padding: 8px 12px;
+  border: 1.5px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.window-line:hover:not(:disabled) { border-color: var(--accent); }
+
+.window-line:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+.window-line:disabled { opacity: 0.6; cursor: default; }
+
+.window-why { color: var(--ink-2); }
+
+/* The note for the company, when the window could not copy it: to select and copy by hand. */
+.company-note { display: block; margin-top: 6px; font-size: 12px; line-height: 1.4; resize: vertical; }

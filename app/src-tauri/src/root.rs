@@ -67,7 +67,7 @@ apt-get -o DPkg::Lock::Timeout=600 install -y -q -- \"$d/paquet.deb\"\n";
 /// the command they can type instead.
 pub fn install_packages(pkexec: &Path, packages: &[&str], what: &str, by_hand: &str, log: &mut dyn FnMut(String)) -> Result<(), String> {
     if let Some(p) = packages.iter().find(|p| !PACKAGES.contains(p)) {
-        return Err(format!("Je n'installe pas « {p} » : ce n'est pas un des outils de base. Copie le rapport et envoie-le à l'équipe."));
+        return Err(format!("Je n'installe pas « {p} » : ce n'est pas un des outils de base. Envoie le rapport à la personne qui t'a conseillé Bibo."));
     }
     if packages.is_empty() {
         return Ok(());
@@ -126,7 +126,7 @@ fn run(pkexec: &Path, script: &str, label: &str, args: &[&str], what: &str, by_h
         )),
         code => Err(format!(
             "L'installation de {what} s'est arrêtée (code {code}) sur : « {why} ». Relance l'étape ; si ça recommence, \
-             copie le rapport et envoie-le à l'équipe."
+             envoie le rapport à la personne qui t'a conseillé Bibo."
         )),
     }
 }

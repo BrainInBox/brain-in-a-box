@@ -46,7 +46,7 @@ from collections import namedtuple
 from contextlib import contextmanager
 from pathlib import Path
 
-from _headless_claude import HeadlessError, _brief, _label, _login_name, supervise
+from _headless_claude import HeadlessError, _brief, _label, _login_name, supervise, which
 
 WINDOWS = os.name == "nt"
 # The version step 0 checked every option and setting below with.
@@ -147,19 +147,6 @@ def _settings_in(text):
 
 # --------------------------------------------------------------------------- the binary
 
-def _which(name, dirs):
-    """The first `name` in `dirs` that can run, from absolute folders only. Not shutil.which: on
-    Windows it looks in the current folder first, even with path=; and an empty or relative entry
-    is a folder of wherever the night's task or a session's `controle` runs from."""
-    for d in dirs:
-        if not d or not os.path.isabs(d):
-            continue
-        p = os.path.join(d, name)
-        if os.path.exists(p) and not os.path.isdir(p) and (WINDOWS or os.access(p, os.X_OK)):
-            return p
-    return None
-
-
 def find_codex():
     """argv of the user's codex (the official installer's place first), or None."""
     if WINDOWS:
@@ -167,13 +154,13 @@ def find_codex():
         local = os.path.join(base, "Programs", "OpenAI", "Codex", "bin", "codex.exe")
         if os.path.isfile(local):
             return [local]
-        found = _which("codex.exe", os.environ.get("PATH", "").split(os.pathsep))
+        found = which("codex.exe")
         return [found] if found and found.lower().endswith(".exe") else None
     local = Path.home() / ".local" / "bin" / "codex"
     if local.is_file() and os.access(str(local), os.X_OK):
         return [str(local)]
     # launchd and the Task Scheduler start with a bare PATH.
-    found = _which("codex", os.environ.get("PATH", "").split(os.pathsep) + list(EXTRA_DIRS))
+    found = which("codex", os.environ.get("PATH", "").split(os.pathsep) + list(EXTRA_DIRS))
     return [found] if found else None
 
 

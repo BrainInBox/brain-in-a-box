@@ -1,6 +1,7 @@
 mod advice;
 mod agents;
 mod bbrain;
+mod capture;
 mod claude;
 mod codex;
 mod config_guard;
@@ -16,6 +17,7 @@ mod import;
 mod model;
 mod perms;
 mod qr;
+mod rapport;
 mod redact;
 mod remedies;
 mod repair;
@@ -194,9 +196,42 @@ async fn start_onboarding() -> Result<(), String> {
     off_main(steps::start_onboarding).await
 }
 
+/// « Parler à Claude »: Claude Code in the brain, in a terminal window, with no prompt.
+#[tauri::command]
+async fn start_claude() -> Result<(), String> {
+    off_main(steps::start_claude).await
+}
+
+/// The report of a failed install, masked, on the Desktop: where it went, and the sentence that says so.
+#[tauri::command]
+async fn save_report(text: String) -> Result<rapport::Saved, String> {
+    tauri::async_runtime::spawn_blocking(move || rapport::save(&text))
+        .await
+        .unwrap_or_else(|e| Err(format!("Erreur interne : {e}")))
+}
+
 #[tauri::command]
 async fn open_vault() -> Result<(), String> {
     off_main(steps::open_vault).await
+}
+
+/// The brain's folder as the window says it, under « Voir mes notes »: install.ps1 may have put it
+/// elsewhere than Documents (detect::brain_dir_shown).
+#[tauri::command]
+async fn brain_folder() -> String {
+    tauri::async_runtime::spawn_blocking(|| detect::brain_dir_shown(&sys::home())).await.unwrap_or_default()
+}
+
+/// Whether the brain is whole, as the installer's own check says it (files read, nothing run): back on a
+/// brain whose install stopped half way, where the guide already works (D1), the welcome says so.
+#[tauri::command]
+async fn brain_complete() -> bool {
+    tauri::async_runtime::spawn_blocking(|| {
+        let home = sys::home();
+        detect::brain(&home, &agents::current(&home)).complete()
+    })
+    .await
+    .unwrap_or(true)
 }
 
 /// Opens one of a few known pages (Voyage dashboard, downloads) in the default browser.
@@ -405,7 +440,7 @@ fn open_guide(app: &tauri::AppHandle) -> tauri::Result<()> {
     }
     let frame = guide_area(app).map(|area| guide::frame(area, guide::Taille::Normal));
     let mut builder = tauri::WebviewWindowBuilder::new(app, "guide", tauri::WebviewUrl::App("guide.html".into()))
-        .title("Bibo, ton guide")
+        .title(GUIDE_TITLE)
         .min_inner_size(360.0, 220.0)
         .always_on_top(true)
         .visible_on_all_workspaces(true);
@@ -568,10 +603,11 @@ async fn bbrain_shot(app: tauri::AppHandle) -> Option<serde_json::Value> {
     .flatten()
 }
 
-/// The installer's welcome offers the guide: the brain and Claude Code are there (nothing is run).
+/// The installer's welcome offers the guide, with a whole brain or its folder only (guide::Offre):
+/// Claude Code's login is asked only when the brain is not whole.
 #[tauri::command]
-async fn guide_offert() -> bool {
-    tauri::async_runtime::spawn_blocking(guide::offert).await.unwrap_or(false)
+async fn guide_offert() -> guide::Offre {
+    tauri::async_runtime::spawn_blocking(guide::offert).await.unwrap_or(guide::Offre::Non)
 }
 
 /// « Fermer le guide »: its window goes, the session with it (Destroyed), the installer's comes back.
@@ -630,10 +666,76 @@ async fn guide_coller(request: tauri::ipc::Request<'_>) -> Result<guide::Apercu,
     guiding(move || guide::coller(&bytes)).await
 }
 
+/// A capture pasted where the page got no image (Linux: WebKitGTK hands a page only files, never an
+/// image of the clipboard): GTK's clipboard read on the main thread, the image as a PNG, its preview.
+/// Asked by the page on Ctrl+V only, while it waits for a capture.
+#[tauri::command]
+async fn guide_coller_presse_papiers(app: tauri::AppHandle) -> Result<guide::Apercu, guide::GuideError> {
+    let png = clipboard_png(&app).await?;
+    guiding(move || guide::coller(&png)).await
+}
+
+#[cfg(target_os = "linux")]
+async fn clipboard_png(app: &tauri::AppHandle) -> Result<Vec<u8>, guide::GuideError> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.run_on_main_thread(move || {
+        let image = gtk::Clipboard::get(&gtk::gdk::SELECTION_CLIPBOARD).wait_for_image();
+        let _ = tx.send(image.and_then(|p| p.save_to_bufferv("png", &[]).ok()));
+    })
+    .map_err(|e| guide::GuideError::Interne { message: e.to_string() })?;
+    let got = tauri::async_runtime::spawn_blocking(move || rx.recv_timeout(std::time::Duration::from_secs(15)).ok().flatten()).await;
+    got.ok().flatten().ok_or(guide::GuideError::SansImage)
+}
+
+/// Elsewhere the page's paste event holds the image: never asked.
+#[cfg(not(target_os = "linux"))]
+async fn clipboard_png(_: &tauri::AppHandle) -> Result<Vec<u8>, guide::GuideError> {
+    Err(guide::GuideError::SansImage)
+}
+
 /// The file dropped on the window, now that it waits for a capture: its preview.
 #[tauri::command]
 async fn guide_prendre_depot() -> Result<guide::Apercu, guide::GuideError> {
     guiding(guide::prendre_depot).await
+}
+
+/// G2's list (Windows): other programs' windows, Bibo's left out, the minimized ones marked.
+#[tauri::command]
+async fn guide_fenetres() -> Result<Vec<capture::Fenetre>, guide::GuideError> {
+    guiding(guide::fenetres).await
+}
+
+/// « Clique dans la fenêtre de ton logiciel » (Windows, X11): the window clicked within 45 s (R4). The
+/// guide's window takes the focus first, so a click in the user's window, in front already, counts.
+#[tauri::command]
+async fn guide_attendre_clic(app: tauri::AppHandle) -> Result<capture::Fenetre, guide::GuideError> {
+    if let Some(w) = app.get_webview_window("guide") {
+        let _ = w.set_focus();
+    }
+    guiding(guide::attendre_clic).await
+}
+
+/// The window from the list or the click, kept with its process and program (R22). On macOS (no id),
+/// the system's picker: the guide's window leaves « always on top » while it is out, or it would lie
+/// over the picker's « Share This Window » button (phase 0, macOS 15 and 26), and comes back after.
+#[tauri::command]
+async fn guide_choisir(app: tauri::AppHandle, id: Option<u64>) -> Result<capture::Fenetre, guide::GuideError> {
+    let picker = id.is_none() && tauri::async_runtime::spawn_blocking(guide::selecteur).await.unwrap_or(false);
+    let lowered = app.get_webview_window("guide").filter(|w| picker && w.is_always_on_top().unwrap_or(false));
+    if let Some(w) = &lowered {
+        let _ = w.set_always_on_top(false);
+    }
+    let chosen = guiding(move || guide::choisir(id)).await;
+    if let Some(w) = &lowered {
+        let _ = w.set_always_on_top(true);
+    }
+    chosen
+}
+
+/// « Regarde mon écran »: the chosen window captured now, its preview as a pasted capture's.
+#[tauri::command]
+async fn guide_regarder() -> Result<guide::Apercu, guide::GuideError> {
+    guiding(guide::regarder).await
 }
 
 /// Every zone to hide, drawn on the preview: the new preview.
@@ -787,6 +889,104 @@ fn guide_ask(args: &[String]) -> i32 {
     }
 }
 
+// ── The installer's window: whole on the screen, one at a time, never white ──
+
+/// The window's own size (tauri.conf.json) and the least it shrinks to, in logical pixels.
+const MAIN_SIZE: (f64, f64) = (780.0, 680.0);
+const MAIN_MIN: (f64, f64) = (600.0, 440.0);
+/// Kept free on each side inside the usable area, in logical pixels: the window never touches the taskbar.
+const MAIN_MARGIN: f64 = 12.0;
+/// The window shows once its page is drawn; past this, whatever happened, it shows anyway.
+const SHOW_ANYWAY: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// Where the installer's window goes, in physical pixels.
+#[derive(Debug, PartialEq)]
+struct Placement {
+    /// The inside of the window, the page.
+    width: u32,
+    height: u32,
+    /// Its outer corner, title bar included.
+    x: i32,
+    y: i32,
+}
+
+/// The installer's window on the usable area of its screen (`area`: x, y, width, height, without the
+/// taskbar or the Dock), all in physical pixels: at most its own size and never under its minimum, its
+/// frame (`frame`: the outer size less the inner, the title bar's height included) inside the area,
+/// centered. A screen too small for the minimum keeps the title bar at the top, where it can be grabbed.
+/// A 1366 × 768 laptop at 125 % has 1092 × 566 to give, a taskbar of 48 left out: the page gets 503 high.
+fn place_main(area: (i32, i32, u32, u32), frame: (u32, u32), scale: f64) -> Placement {
+    let px = |v: f64| (v * scale).round() as u32;
+    let (ax, ay, aw, ah) = area;
+    let fit = |want: f64, least: f64, room: u32, frame: u32| px(want).min(room.saturating_sub(frame + 2 * px(MAIN_MARGIN))).max(px(least));
+    let (width, height) = (fit(MAIN_SIZE.0, MAIN_MIN.0, aw, frame.0), fit(MAIN_SIZE.1, MAIN_MIN.1, ah, frame.1));
+    let center = |start: i32, room: u32, size: u32| start + ((i64::from(room) - i64::from(size)) / 2).max(0) as i32;
+    Placement { width, height, x: center(ax, aw, width + frame.0), y: center(ay, ah, height + frame.1) }
+}
+
+/// Before it first shows: a laptop's screen at 125 % is shorter than the window, whose buttons went under
+/// the taskbar (the night's 1024 × 768 too). Without a screen to measure, the window stays as configured.
+fn place_main_window(w: &tauri::WebviewWindow) -> tauri::Result<()> {
+    let Some(monitor) = w.current_monitor()?.or(w.primary_monitor()?) else { return Ok(()) };
+    let area = monitor.work_area();
+    let (outer, inner) = (w.outer_size()?, w.inner_size()?);
+    let frame = (outer.width.saturating_sub(inner.width), outer.height.saturating_sub(inner.height));
+    let p = place_main((area.position.x, area.position.y, area.size.width, area.size.height), frame, monitor.scale_factor());
+    w.set_size(tauri::PhysicalSize::new(p.width, p.height))?;
+    w.set_position(tauri::PhysicalPosition::new(p.x, p.y))
+}
+
+/// Shown once, when hidden: a second call (the page's, then the time's) leaves it where the user put it.
+fn show_main(w: &tauri::Window) {
+    if !w.is_visible().unwrap_or(true) {
+        let _ = w.show();
+        let _ = w.set_focus();
+    }
+}
+
+/// The guide's window title (open_guide).
+const GUIDE_TITLE: &str = "Bibo, ton guide";
+/// The window a second launch brings to the front, the first one there: the guide's while it guides (the
+/// installer's is then down in the taskbar, and coming up it would cover the program guided in).
+#[cfg_attr(not(windows), allow(dead_code))]
+const FRONT_FIRST: [&str; 2] = [GUIDE_TITLE, "Brain in a Box"];
+
+/// Windows: one Bibo at a time. A second launch (a double click on a window slow to come) brings the first
+/// one to the front and goes: two installers over the same brain would collide. Nothing to find (the
+/// first still starting, or stuck without a window): this one opens. macOS brings an app already open
+/// back by itself.
+#[cfg(windows)]
+fn already_open() -> bool {
+    use windows::core::{w, HSTRING};
+    use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS};
+    use windows::Win32::System::Threading::CreateMutexW;
+    use windows::Win32::UI::WindowsAndMessaging::{FindWindowW, IsIconic, SetForegroundWindow, ShowWindow, SW_RESTORE};
+    // SAFETY: a name of ours. The handle is never closed: the system lets it go when the process ends.
+    let first = match unsafe { CreateMutexW(None, false, w!("Local\\BrainInABox.Bibo")) } {
+        Ok(_) => (unsafe { GetLastError() }) != ERROR_ALREADY_EXISTS,
+        Err(_) => true,
+    };
+    if first {
+        return false;
+    }
+    for _ in 0..30 {
+        // SAFETY: Tauri's window class and our windows' titles, and a handle FindWindowW just gave: never a
+        // folder named Brain in a Box.
+        let found = FRONT_FIRST.iter().find_map(|title| unsafe { FindWindowW(w!("Tauri Window"), &HSTRING::from(*title)) }.ok());
+        if let Some(h) = found {
+            unsafe {
+                if IsIconic(h).as_bool() {
+                    let _ = ShowWindow(h, SW_RESTORE);
+                }
+                let _ = SetForegroundWindow(h);
+            }
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    false
+}
+
 pub fn run() {
     // Command-line mode, for tests and support: no window. The Voyage key comes
     // from VOYAGE_API_KEY, never from the command line.
@@ -811,8 +1011,30 @@ pub fn run() {
         }
         _ => {}
     }
+    #[cfg(windows)]
+    if already_open() {
+        return;
+    }
 
     tauri::Builder::default()
+        .setup(|app| {
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = place_main_window(&w);
+                let w = w.as_ref().window();
+                std::thread::spawn(move || {
+                    std::thread::sleep(SHOW_ANYWAY);
+                    show_main(&w);
+                });
+            }
+            Ok(())
+        })
+        // Hidden until then (tauri.conf.json): Windows' WebView2 takes a few seconds to start, and showed a
+        // white window meanwhile, which looks broken.
+        .on_page_load(|webview, payload| {
+            if webview.label() == "main" && payload.event() == tauri::webview::PageLoadEvent::Finished {
+                show_main(&webview.window());
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             diagnose_machine,
             run_step,
@@ -832,6 +1054,8 @@ pub fn run() {
             open_codex_login,
             start_onboarding,
             open_vault,
+            brain_folder,
+            brain_complete,
             open_link,
             open_settings,
             open_repair_terminal,
@@ -866,7 +1090,12 @@ pub fn run() {
             guide_compris,
             guide_commencer,
             guide_coller,
+            guide_coller_presse_papiers,
             guide_prendre_depot,
+            guide_fenetres,
+            guide_attendre_clic,
+            guide_choisir,
+            guide_regarder,
             guide_cacher,
             guide_envoi_texte,
             guide_envoyer,
@@ -879,7 +1108,9 @@ pub fn run() {
             bbrain_start,
             bbrain_call,
             bbrain_reply,
-            bbrain_shot
+            bbrain_shot,
+            start_claude,
+            save_report
         ])
         .build(tauri::generate_context!())
         .expect("error while running Brain in a Box")
@@ -961,5 +1192,93 @@ mod tests {
             .filter(|c| !main.contains(*c) && !guide.contains(*c) && !bbrain.contains(*c) && !vitre.contains(*c))
             .collect();
         assert!(nobodys.is_empty(), "no window may call {nobodys:?}");
+    }
+
+    /// A second launch while the guide guides brings the guide back, not the installer over the program guided
+    /// in; the titles it looks for are the windows' own.
+    #[test]
+    fn a_second_launch_brings_the_guide_first() {
+        use super::{FRONT_FIRST, GUIDE_TITLE};
+        let conf: serde_json::Value = serde_json::from_str(&read("tauri.conf.json")).unwrap();
+        assert_eq!(FRONT_FIRST, [GUIDE_TITLE, conf["app"]["windows"][0]["title"].as_str().unwrap()]);
+    }
+
+    /// The installer's window on the night's VM and on the laptops of the people it is for: whole in the usable
+    /// area, centered, never under its minimum; tauri.conf.json says the same sizes.
+    #[test]
+    fn the_installer_window_fits_the_usable_area_whole() {
+        use super::{place_main, Placement, MAIN_MIN, MAIN_SIZE};
+        // The night's VM: 1024 × 768, a taskbar 48 high, Windows' frame at 100 % (the title bar and the
+        // invisible borders). Before, 780 × 680 at (60, 50): the window's bottom went 41 under the taskbar.
+        assert_eq!(place_main((0, 0, 1024, 720), (16, 39), 1.0), Placement { width: 780, height: 657, x: 114, y: 12 });
+        // 1366 × 768 at 125 % (a taskbar of 60): the page gets 629 / 1.25 = 503 high.
+        assert_eq!(place_main((0, 0, 1366, 708), (20, 49), 1.25), Placement { width: 975, height: 629, x: 185, y: 15 });
+        // A screen with room: the window's own size, centered in the area (here a second screen, at its right).
+        assert_eq!(place_main((1920, 25, 1920, 1015), (0, 28), 1.0), Placement { width: 780, height: 680, x: 2490, y: 178 });
+        // Too small for the minimum: the minimum, its title bar at the area's top.
+        assert_eq!(place_main((0, 0, 640, 400), (16, 39), 1.0), Placement { width: 600, height: 440, x: 12, y: 0 });
+
+        let conf: serde_json::Value = serde_json::from_str(&read("tauri.conf.json")).unwrap();
+        let main = &conf["app"]["windows"][0];
+        assert_eq!(main["label"], "main");
+        assert_eq!((main["width"].as_f64(), main["height"].as_f64()), (Some(MAIN_SIZE.0), Some(MAIN_SIZE.1)));
+        assert_eq!((main["minWidth"].as_f64(), main["minHeight"].as_f64()), (Some(MAIN_MIN.0), Some(MAIN_MIN.1)));
+        // Hidden until its page is drawn (no white window), and on the page's own background meanwhile.
+        assert_eq!((main["visible"].as_bool(), main["center"].as_bool()), (Some(false), Some(true)));
+        let bg = read("../src/styles.css");
+        assert!(bg.contains(&format!("--bg: {};", main["backgroundColor"].as_str().unwrap())), "the window's background is the page's");
+    }
+
+    #[cfg(not(windows))]
+    type Mock = tauri::test::MockRuntime;
+
+    /// What Tauri answers a window's page that asks `cmd` with no argument.
+    #[cfg(not(windows))]
+    fn ask(window: &tauri::WebviewWindow<Mock>, cmd: &str) -> Result<tauri::ipc::InvokeResponseBody, serde_json::Value> {
+        tauri::test::get_ipc_response(
+            window,
+            tauri::webview::InvokeRequest {
+                cmd: cmd.into(),
+                callback: tauri::ipc::CallbackFn(0),
+                error: tauri::ipc::CallbackFn(1),
+                // The pages of the app, as the mock runtime serves them (local, as on macOS and Linux).
+                url: "tauri://localhost".parse().unwrap(),
+                body: tauri::ipc::InvokeBody::default(),
+                headers: Default::default(),
+                invoke_key: tauri::test::INVOKE_KEY.into(),
+            },
+        )
+    }
+
+    /// Tauri's own check, with the app's manifest and capabilities as the app is built (the code the app
+    /// runs, on a mock runtime): the guide's page asking the installer's commands is refused, and the
+    /// installer's page the guide's; each its own passes. No command of the app runs here.
+    #[cfg(not(windows))]
+    #[test]
+    fn tauri_refuses_each_window_the_other_ones_commands() {
+        // Every command answers "ok" here: what Tauri refuses never reaches its handler, what it lets through does.
+        let app = tauri::test::mock_builder()
+            .invoke_handler(|invoke| {
+                invoke.resolver.resolve("ok");
+                true
+            })
+            .build(tauri::generate_context!(test = true))
+            .unwrap();
+        let window = |label: &str, page: &str| tauri::WebviewWindowBuilder::new(&app, label, tauri::WebviewUrl::App(page.into())).build().unwrap();
+        let (main, guide) = (window("main", "index.html"), window("guide", "guide.html"));
+        let refused = |w: &tauri::WebviewWindow<Mock>, cmd: &str| match ask(w, cmd) {
+            Err(e) => e.to_string().contains("not allowed"),
+            Ok(_) => false,
+        };
+        for cmd in ["run_step", "repair_apply", "repair_analyze", "open_repair_terminal", "import_run", "start_onboarding", "guide_open"] {
+            assert!(refused(&guide, cmd), "the guide's window may call {cmd}: {:?}", ask(&guide, cmd));
+        }
+        for cmd in ["guide_envoyer", "guide_enregistrer", "guide_coller_presse_papiers", "guide_regarder", "guide_annuler"] {
+            assert!(refused(&main, cmd), "the installer's window may call {cmd}: {:?}", ask(&main, cmd));
+        }
+        // Each its own: the control, without which a refusal of everything would pass.
+        assert!(ask(&guide, "guide_annuler").is_ok(), "{:?}", ask(&guide, "guide_annuler"));
+        assert!(ask(&main, "guide_offert").is_ok(), "{:?}", ask(&main, "guide_offert"));
+        assert!(!refused(&guide, "open_link"), "a link the guide may open: {:?}", ask(&guide, "open_link"));
     }
 }

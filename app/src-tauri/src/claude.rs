@@ -7,8 +7,10 @@
 //! stream-json (`stdin`), the images in memory only. Its stream is checked line by line
 //! (`Watch`): the start-up line first, fail closed, and a run that does not behave is stopped at
 //! once: a tool, a second start-up line that is not clean, a model the question did not ask for,
-//! or a refusal of the model, which Claude Code would otherwise have another model answer. The
-//! repair asks it (repair.rs).
+//! or a refusal of the model, which Claude Code would otherwise have another model answer. A model
+//! the account cannot use (a plan without Opus, an organization that restricts it) is said apart
+//! (`NoModel`); with an image, Claude Code's own switch to another model for it stops the run there.
+//! The repair asks it (repair.rs), the guide too (guide.rs).
 //!
 //! Where the two differ, this side keeps the repair's words: no start-up line is a bad start
 //! (the launcher says "start"), no result line is an answer off (the launcher says "api").
@@ -67,6 +69,9 @@ pub enum ClaudeError {
     Invalid,
     /// The model refused (its safeguards); Claude Code would have had another one answer instead.
     Refused,
+    /// The account cannot use the model asked for (a plan without it, an organization that restricts
+    /// it): nothing was asked of any model.
+    NoModel,
 }
 
 /// What Claude Code says of the subscription's limits (its rate_limit_event).
@@ -272,12 +277,14 @@ pub struct Watch {
     pub result: Option<Value>,
     /// The category of the model's refusal ("cyber"), once it refused.
     pub refused: Option<String>,
+    /// With an image: Claude Code handed the question to another model, for this reason ("model_not_found").
+    pub switched: Option<String>,
     pub rate_limit: Option<RateLimit>,
 }
 
 impl Watch {
     pub fn new(model: Option<&str>) -> Self {
-        Watch { model: model.map(String::from), exact: false, started_as: None, init: None, api_errors: Vec::new(), result: None, refused: None, rate_limit: None }
+        Watch { model: model.map(String::from), exact: false, started_as: None, init: None, api_errors: Vec::new(), result: None, refused: None, switched: None, rate_limit: None }
     }
 
     /// The watch of a question with an image: the model checked exactly.
@@ -304,6 +311,12 @@ impl Watch {
         // The model refused; Claude Code would have another one answer in its place, unasked.
         if kind == "system" && v["subtype"] == "model_refusal_fallback" {
             self.refused = Some(label(v["api_refusal_category"].as_str().unwrap_or_default()));
+            return false;
+        }
+        // With an image, the model Claude Code would put in place of one the account cannot use, or
+        // that failed: never asked (the repair keeps its family check of the usage).
+        if self.exact && kind == "system" && v["subtype"] == "model_fallback" {
+            self.switched = Some(label(v["trigger"].as_str().unwrap_or_default()));
             return false;
         }
         if self.init.is_none() {
@@ -353,7 +366,7 @@ impl Watch {
     }
 
     fn going_on(&self) -> bool {
-        self.refused.is_none() && !matches!(self.init, Some(Err(_)))
+        self.refused.is_none() && self.switched.is_none() && !matches!(self.init, Some(Err(_)))
     }
 
     /// A model the usage counts that is not the one asked for: another one answered, or part of it.
@@ -381,6 +394,11 @@ impl Watch {
     pub fn conclude(&self, cancelled: bool, timed_out: bool) -> Result<Value, ClaudeError> {
         if self.refused.is_some() {
             return Err(ClaudeError::Refused);
+        }
+        match self.switched.as_deref() {
+            Some("model_not_found" | "permission_denied") => return Err(ClaudeError::NoModel),
+            Some(_) => return Err(ClaudeError::Init),
+            None => {}
         }
         match &self.init {
             Some(Err(_)) => return Err(ClaudeError::Init),
@@ -492,6 +510,10 @@ fn parse_result(result: &Value, api_errors: &[String]) -> Result<Value, ClaudeEr
             let typed = |names: &[&str]| api_errors.iter().any(|e| names.contains(&e.as_str()));
             if typed(&["rate_limit", "usage_limit_reached"]) || (said.contains("hit your") && said.contains("limit")) {
                 Err(ClaudeError::Quota)
+            } else if typed(&["model_not_found"]) || said.contains("issue with the selected model") || said.contains("is not available with the Claude") {
+                // Claude Code's words for a model the account cannot use (2.1.306, errors.md): the 404,
+                // and a Pro plan's refusal of Opus, which tells « /logout and /login » and is no login error.
+                Err(ClaudeError::NoModel)
             } else if typed(&["authentication_failed"]) || said.contains("/login") || said.contains("Not logged in") {
                 Err(ClaudeError::Auth)
             } else {
@@ -779,6 +801,42 @@ mod tests {
         let mut w = Watch::exact(Some("opus"));
         assert_eq!(run(&mut w, &spelled), None);
         assert!(w.conclude(false, false).is_ok());
+    }
+
+    /// The account cannot use the model asked for: Claude Code's 404 (captured, 2.1.306, a model no
+    /// account has), its sentence for a Pro plan without Opus (its code and errors.md), or, with an
+    /// image, its own switch to another model (`model_fallback`), stopped there.
+    #[test]
+    fn a_model_the_account_cannot_use_is_said_so() {
+        for name in ["model-not-found.jsonl", "pro-sans-opus.jsonl"] {
+            for mut w in [Watch::exact(Some("opus")), Watch::new(Some("opus"))] {
+                assert!(fixture(name).lines().all(|l| w.line(l)), "{name}");
+                assert_eq!(w.conclude(false, false), Err(ClaudeError::NoModel), "{name}");
+            }
+        }
+        let r = |text: &str| json!({ "type": "result", "subtype": "success", "is_error": true, "result": text });
+        assert_eq!(parse_result(&r("There's an issue with the selected model (opus). It may not exist or you may not have access to it."), &[]), Err(ClaudeError::NoModel));
+        assert_eq!(parse_result(&r("Claude Opus is not available with the Claude Pro plan."), &[]), Err(ClaudeError::NoModel));
+        assert_eq!(parse_result(&r(""), &["model_not_found".into()]), Err(ClaudeError::NoModel));
+        assert_eq!(parse_result(&r("API Error: 400 bad request"), &["invalid_request".into()]), Err(ClaudeError::Api));
+
+        // Claude Code hands the question to another model when Opus is not found for the account: with an
+        // image, stopped at that very line; the repair's watch, as before (the family of the usage).
+        let stream = fixture("model-fallback.jsonl");
+        let mut w = Watch::exact(Some("opus"));
+        assert_eq!(stream.lines().position(|l| !w.line(l)), Some(2));
+        assert_eq!(w.conclude(true, false), Err(ClaudeError::NoModel), "the run was stopped for it");
+        let (mut repair, mut went_on) = (Watch::new(Some("opus")), true);
+        for l in stream.lines() {
+            went_on &= repair.line(l);
+        }
+        assert!(!went_on);
+        assert_eq!(repair.conclude(false, false), Err(ClaudeError::Init));
+        // Another switch (a server's error): another model unasked, a bad run.
+        let other = stream.replace("\"trigger\":\"model_not_found\"", "\"trigger\":\"server_error\"");
+        let mut w = Watch::exact(Some("opus"));
+        assert_eq!(other.lines().position(|l| !w.line(l)), Some(2));
+        assert_eq!(w.conclude(true, false), Err(ClaudeError::Init));
     }
 
     #[test]

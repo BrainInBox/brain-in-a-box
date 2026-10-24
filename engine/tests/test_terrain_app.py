@@ -52,24 +52,29 @@ def neuf(installe):
         "bienvenue": {"titre": "Salut, moi c’est Bibo" + NB + "!",
                       "texte": "Je vais installer ton second cerveau pour Claude. 10 à 20 minutes, tu n’as aucune commande à taper.",
                       "boutons": {"Vérifier mon Mac": "diag-en-cours"}},
-        # Opened again with the brain and Claude Code there.
+        # Opened again with the brain and Claude Code there, Claude logged in (the guide's fake Claude says so).
         "retour": {"titre": "Content de te revoir" + NB + "!",
-                   "texte": "Ton second cerveau est installé. Je peux aussi te guider pas à pas dans un logiciel : tu me montres ta fenêtre, je te dis où cliquer.",
+                   "texte": "Je peux te guider pas à pas dans un logiciel : tu me montres ta fenêtre, je te dis où cliquer.",
                    "boutons": {"Vérifier mon Mac": "diag-en-cours", "Guide-moi dans un logiciel": None}},
+        # The same, the login put off: the welcome asks for it before the guide.
+        "retour-sans-compte": {"titre": "Content de te revoir" + NB + "!",
+                               "texte": "Il manque ton compte Claude" + NB + ": connecte-le, puis je pourrai te guider pas à pas dans un logiciel.",
+                               "boutons": {"Vérifier mon Mac": "diag-en-cours", "Connecter mon compte Claude": None}},
         "diag-en-cours": {"titre": "Je regarde ton Mac…", "texte": "Ça prend quelques secondes.",
                           "apres": (3, lambda: "deja" if installe() else "diag")},
-        "diag": {"titre": "J’ai fait le tour.", "texte": "Il manque Claude Code, Bun, Obsidian et ton cerveau. Je m’en occupe.",
-                 "boutons": {"Revérifier": "diag-en-cours", "Tout installer": "voyage"},
-                 "textes": ["macOS 26.6 · Puce Apple · 7 Go de mémoire", "Mon conseil" + NB + ":",
-                            "Ton cerveau marche avec Claude" + NB + ": il te faudra un abonnement Claude Pro ou Max.",
-                            "Claude Code", "À installer"]},
+        # The lines folded: the robot unfolds them, then installs.
+        "diag": {"titre": "J’ai fait le tour" + NB + ": ton Mac est prêt.",
+                 "texte": "J’installe Claude Code, le moteur de ta mémoire, Obsidian et ton cerveau" + NB + ": 10 à 20 minutes. Branche-toi sur un Wi-Fi si tu peux.",
+                 "boutons": {"Voir le détail": "diag-detail", "Tout installer": "claude"},
+                 "textes": ["Mon conseil" + NB + ":", "Ton cerveau marche avec Claude" + NB + ": il te faudra un abonnement Claude Pro ou Max."]},
+        "diag-detail": {"titre": "J’ai fait le tour" + NB + ": ton Mac est prêt.",
+                        "texte": "J’installe Claude Code, le moteur de ta mémoire, Obsidian et ton cerveau" + NB + ": 10 à 20 minutes. Branche-toi sur un Wi-Fi si tu peux.",
+                        "boutons": {"Masquer le détail": "diag", "Tout installer": "claude"},
+                        "textes": ["Mon conseil" + NB + ":", "Ton cerveau marche avec Claude" + NB + ": il te faudra un abonnement Claude Pro ou Max.",
+                                   "macOS 26.6 · Puce Apple · 7 Go de mémoire", "Claude Code", "À installer"]},
         "deja": {"titre": "Tout est déjà installé" + NB + "!",
                  "texte": "Ton cerveau cherche par mots-clés" + NB + ": tu peux lui apprendre à chercher par le sens.",
                  "boutons": {"Activer la recherche par le sens": None, "Continuer": "verif"}},
-        "voyage": {"titre": "Une option avant de commencer",
-                   "texte": "Ton cerveau retrouve tes notes par mots-clés. Avec une clé Voyage AI, il les retrouve aussi par le sens.",
-                   "boutons": {"Ouvrir Voyage AI": None, "Vérifier": None, "Passer (recherche par mots-clés)": "claude",
-                               "Continuer avec cette clé": None}},
         "claude": {"titre": "J’installe Claude Code.", "texte": "Étape 1 sur 4. L’outil officiel d’Anthropic.", "apres": (30, "verif-inline")},
         "verif-inline": {"titre": "Je vérifie ton compte Claude…", "apres": (2, "login-inline")},
         "login-inline": {"titre": "Connecte ton compte Claude maintenant",
@@ -83,14 +88,16 @@ def neuf(installe):
         "login": {"titre": "Dernière étape" + NB + ": ton compte Claude",
                   "texte": "Connecte-toi pour que Claude puisse travailler avec ton cerveau.",
                   "boutons": {"Plus tard": "fini", "Connecter mon compte Claude": None}},
-        "fini": {"titre": "Ton second cerveau est prêt" + NB + "!", "texte": "Claude retient maintenant ce que tu lui apprends.",
-                 "boutons": {"Activer la recherche par le sens": None, "Importer ma mémoire": "import-verif",
-                             "Ouvrir mon cerveau dans Obsidian": None, "Personnaliser mon cerveau (15 min)": None}},
+        # Claude's login put off: the end asks for it first.
+        "fini": {"titre": "Presque prêt" + NB + ": il manque ton compte Claude",
+                 "texte": "Connecte-le pour que Claude puisse travailler avec ton cerveau. Il faut un abonnement Claude Pro ou Max.",
+                 "boutons": {"Importer ma mémoire": "import-verif", "Voir mes notes": None, "Recherche par le sens": None,
+                             "Connecter mon compte Claude": None}},
         # « Importer ma mémoire »: the robot goes to the copy-paste and back, no AI asked.
         "import-verif": {"titre": "Je prépare l’import…", "apres": (3, "import-choix")},
         "import-choix": {"titre": "D’où vient ta mémoire" + NB + "?",
                          "texte": "ChatGPT ou Claude savent déjà des choses sur toi. Claude en tire l’essentiel, je le range dans ton cerveau.",
-                         "boutons": {"Retour": "fini", "Je copie-colle une réponse": "import-collage", "Choisir mon fichier d’export": None}},
+                         "boutons": {"Retour": "fini", "Choisir mon fichier d’export": None, "Je copie-colle (2 min)": "import-collage"}},
         "import-collage": {"titre": "Demande-lui ce qu’il sait de toi", "texte": "Trois étapes, deux minutes. Rien ne part avant que tu valides.",
                            "boutons": {"Copier la phrase": None, "Ouvrir ChatGPT": None, "Ouvrir Claude": None, "Retour": "import-choix",
                                        "Continuer": None},
@@ -110,11 +117,12 @@ def neuf_codex(installe):
                   "boutons": {"Claude": "diag-en-cours", "Codex": "diag-en-cours", "Les deux": "resume"},
                   "textes": ["Mon conseil" + NB + ":", "Ton cerveau marche avec Claude" + NB + ": il te faudra un abonnement Claude Pro ou Max."]}
     # Where Codex can be chosen, the advice is on the choice screen.
-    e["diag"] = dict(e["diag"], textes=[x for x in e["diag"]["textes"] if "conseil" not in x and "Pro ou Max" not in x])
+    texte = "J’installe Codex, le moteur de ta mémoire, Obsidian et ton cerveau" + NB + ": 10 à 20 minutes. Branche-toi sur un Wi-Fi si tu peux."
+    for k in ("diag", "diag-detail"):
+        e[k] = dict(e[k], texte=texte, textes=[x for x in e[k]["textes"] if "conseil" not in x and "Pro ou Max" not in x],
+                    boutons=dict(e[k]["boutons"], **{"Tout installer": "codex"}))
     e["resume"] = {"titre": "Lequel écrit le résumé de chaque soir" + NB + "?", "boutons": {"Retour": "choix", "Claude": None, "Codex": None}}
-    e["diag"] = dict(e["diag"], texte="Il manque Codex, Bun, Obsidian et ton cerveau. Je m’en occupe.")
     e["import-choix"] = dict(e["import-choix"], texte="ChatGPT ou Claude savent déjà des choses sur toi. Codex en tire l’essentiel, je le range dans ton cerveau.")
-    e["voyage"] = dict(e["voyage"], boutons=dict(e["voyage"]["boutons"], **{"Passer (recherche par mots-clés)": "codex"}))
     e["codex"] = {"titre": "J’installe Codex.", "texte": "Étape 1 sur 4. L’outil officiel d’OpenAI.", "apres": (30, "bun")}
     e["installe"] = dict(e["installe"], apres=(2, "verif-codex"))
     e["deja"] = dict(e["deja"], boutons={"Activer la recherche par le sens": None, "Continuer": "verif-codex"})
@@ -123,12 +131,50 @@ def neuf_codex(installe):
                         "texte": "Connecte Codex à ton compte ChatGPT pour qu’il puisse travailler avec ton cerveau.",
                         "boutons": {"Plus tard": "fini", "Connecter Codex à mon compte ChatGPT": None}}
     # The ChatGPT login put off: Codex's login comes first, the onboarding after it (§4.3).
-    e["fini"] = dict(e["fini"], texte="Codex retient maintenant ce que tu lui apprends.",
-                     boutons={"Activer la recherche par le sens": None, "Importer ma mémoire": "import-verif",
-                              "Ouvrir mon cerveau dans Obsidian": None, "Connecter Codex à mon compte ChatGPT": None},
+    e["fini"] = dict(e["fini"], titre="Ton second cerveau est prêt" + NB + "!", texte="Codex retient maintenant ce que tu lui apprends.",
+                     boutons={"Importer ma mémoire": "import-verif", "Voir mes notes": None, "Recherche par le sens": None,
+                              "Connecter Codex à mon compte ChatGPT": None},
                      textes=["Pense à connecter Codex à ton compte ChatGPT. S’il te le demande au premier lancement, "
                              "choisis « Sign in with ChatGPT », jamais une clé API : elle serait facturée."])
     return e
+
+
+def guide_ecrans(etape_textes):
+    """The guide's window (app/src/guide.js), as Bibo words it, in paste mode: next screen per button, or
+    (seconds, next screen) by itself; a capture pasted on « coller-* » goes to « lecture »."""
+    return {
+        "charge": {"titre": "Je prépare le guide…", "texte": "Je vérifie Claude Code sur ton Mac.", "apres": (1, "comment")},
+        "comment": {"titre": "Comment je regarde ton écran", "texte": "Avant de commencer, quatre choses à savoir.",
+                    "boutons": {"Voir mon réglage": None, "Pas maintenant": None, "J’ai compris": "objectif"}},
+        "objectif": {"titre": "Qu’est-ce que tu veux faire" + NB + "?",
+                     "texte": "Dis-moi dans quel logiciel, et ce que tu veux y faire : je te guide une étape à la fois.",
+                     "boutons": {"Comment je regarde ton écran": None, "Arrêter le guide": None, "Continuer": "coller-debut"}},
+        "coller-debut": {"titre": "Montre-moi ta fenêtre.", "texte": "Fais une capture de la fenêtre d’Atelier Demo, puis colle-la ici.",
+                         "boutons": {"Arrêter le guide": None, "Retour": "objectif"}},
+        "lecture": {"titre": "Je lis ton image…", "apres": (1, "apercu")},
+        "apercu": {"titre": "Voici ce que Claude va voir.", "texte": "Vérifie qu’il n’y a rien que tu ne veux pas envoyer : tu peux cacher des zones.",
+                   "boutons": {"Autre capture": None, "Cacher une zone": None, "Envoyer à Claude": "regarde"}},
+        "regarde": {"titre": "Claude regarde ta fenêtre…", "texte": "5 secondes environ.", "apres": (3, "reponse")},
+        "etape": {"titre": "Étape 1", "textes": etape_textes,
+                  "boutons": {"Arrêter le guide": None, "Je suis bloqué": None, "C’est fait": "coller-fait"}},
+        "coller-fait": {"titre": "Montre-moi où tu en es.", "texte": "Fais une capture de la fenêtre d’Atelier Demo, puis colle-la ici.",
+                        "boutons": {"Arrêter le guide": None, "Retour": "etape"}},
+        "fin": {"titre": "Bravo, c’est fait" + NB + "!", "texte": "Voici ce qu’on a fait ensemble.",
+                "textes": ["Clique sur « Nouveau » en haut à gauche."],
+                "boutons": {"Fermer le guide": None, "Nouvel objectif": None, "Enregistrer cette procédure": "brouillon"}},
+        "brouillon": {"titre": "Je prépare la procédure…", "apres": (1, "enregistrer")},
+        "enregistrer": {"titre": "Je l’écris dans ton cerveau" + NB + "?",
+                        "texte": "Relis et corrige si tu veux : la prochaine fois, je m’en servirai.",
+                        "boutons": {"Retour": None, "Enregistrer dans mon cerveau": "enregistre"}},
+        "enregistre": {"titre": "Enregistré dans Documents › Brain › Guides.", "texte": "Je m’en servirai la prochaine fois.",
+                       "boutons": {"Fermer le guide": None, "Nouvel objectif": None}},
+    }
+
+
+NOTE_GUIDE = ('---\nname: "guide-atelier-demo-faire-une-facture"\nversion: "1.0.0"\ndescription: "Faire une facture dans Atelier '
+              'Demo, pas à pas (appris avec Bibo le 21/10/2026)."\nallowed-tools: []\ntriggers: ["Faire une facture dans Atelier Demo"]'
+              '\nlogiciel: "Atelier Demo"\nsource: "bibo-guide"\n---\n# Faire une facture — Atelier Demo\n\n'
+              '1. Clique sur « Nouveau » en haut à gauche.\n')
 
 
 class FauxPilote(ta.Pilote):
@@ -160,6 +206,14 @@ class FauxPilote(ta.Pilote):
         self.comment = ta.CLIC_SOURIS   # how its clicks are done
         self.ecrans_vus = 0             # nouvel_ecran() calls
         self.nuit = []
+        # The guide's window: its screen (None: not open), the keyboard and the pastes, the fake Claude's
+        # calls (what the real one leaves in ~/.claude/fake), whether the step's capture shows the ring.
+        self.guide, self.guide_depuis, self.saisies, self.appels = None, 0.0, [], 0
+        self.anneau, self.trace, self.guide_prudent = True, None, False
+        self.anneau_apercu, self.modeles_faux = False, None
+        # The places of the buttons and the screen's usable area, as the Windows driver reads them: a function
+        # (screen, label) -> [x, y, w, h] or None. None: no places (macOS, Linux).
+        self.places, self.zone = None, None
 
     def aller(self, etat):
         self.etat = etat() if callable(etat) else etat
@@ -192,8 +246,10 @@ class FauxPilote(ta.Pilote):
         line = re.search(r"^CODEX_OUVERT = .*$", gate.read_text(encoding="utf-8"), re.M) if gate.is_file() else None
         self.portes.append(line.group(0) if line else None)
         self.marqueurs.append((gate.parents[2] / ta.MARQUEUR).is_file())
-        # Claude Code and the brain installed: the guide's welcome (Codex alone has no Claude Code).
-        self.aller("retour" if self.fait and not self.codex else "bienvenue")
+        # Claude Code and the brain installed: the guide's welcome (Codex alone has no Claude Code), which asks
+        # for Claude's login first unless the guide's fake Claude is there (it says it is logged in).
+        connecte = self.home is not None and (Path(self.home) / ".claude" / "fake" / "scenario").is_file()
+        self.aller(("retour" if connecte else "retour-sans-compte") if self.fait and not self.codex else "bienvenue")
 
     def vivante(self):
         return self.etat is not None
@@ -236,21 +292,93 @@ class FauxPilote(ta.Pilote):
         spec = self.spec()
         return ta.norm(spec["titre"]), ta.norm(spec.get("texte", ""))
 
+    def guide_spec(self):
+        textes = ["Clique sur « Nouveau », en haut à gauche, sous le titre.",
+                  "Vérifie que le bouton s’appelle « Nouveau »." if self.guide_prudent else "",
+                  ta.ANNEAU_POINTILLE if self.guide_prudent else ta.ANNEAU_PLEIN,
+                  "Mode prudent : ton compte Claude ne me donne pas accès à Opus." if self.guide_prudent else "",
+                  "1 capture envoyée à Claude, sur 40 pour cette fois."]
+        ecrans = guide_ecrans([x for x in textes if x])
+        spec = ecrans[self.guide]
+        if "apres" in spec and self.h.now - self.guide_depuis >= spec["apres"][0]:
+            nxt = spec["apres"][1]
+            self.aller_guide(("etape" if self.appels == 1 else "fin") if nxt == "reponse" else nxt)
+            spec = ecrans[self.guide]
+        return spec
+
+    def aller_guide(self, etat):
+        self.guide, self.guide_depuis = etat, self.h.now
+
+    def lire_guide(self):
+        if self.guide is None:
+            return ta.Ecran()
+        spec = self.guide_spec()
+        tape = [x for k, x in self.saisies if k == "taper"]
+        boutons = [(b, not (self.guide == "objectif" and b == "Continuer" and tape != [ta.LOGICIEL_GUIDE, ta.OBJECTIF_GUIDE]))
+                   for b in spec.get("boutons", {})]
+        return ta.Ecran(fenetre=True, titre=spec["titre"], texte=spec.get("texte", ""), boutons=boutons, textes=spec.get("textes", []))
+
+    def taper(self, texte):
+        self.saisies.append(("taper", texte))
+
+    def tabulation(self):
+        self.saisies.append(("tab", None))
+
+    def coller_image(self, png):
+        self.saisies.append(("coller", hashlib.sha256(png).hexdigest()[:8]))
+        if self.guide in ("coller-debut", "coller-fait"):
+            self.aller_guide("lecture")
+
+    def cliquer_guide(self, libelle):
+        nxt = next((v for b, v in guide_ecrans([])[self.guide].get("boutons", {}).items() if ta.norm(b) == ta.norm(libelle)), None)
+        home = Path(self.home)
+        fake = home / ".claude" / "fake"
+        if libelle == "Envoyer à Claude":
+            # What the fake Claude leaves of each call: its model, a piece of the image it got.
+            self.appels += 1
+            (fake / "fragments").mkdir(parents=True, exist_ok=True)
+            modeles = (["opus", "sonnet"] if self.appels == 1 else ["sonnet"]) if self.guide_prudent else ["opus"]
+            modeles = self.modeles_faux or modeles
+            with open(fake / "models", "a") as f:
+                f.write("".join(m + "\n" for m in modeles))
+            for m in modeles:
+                n = len(list((fake / "fragments").glob("*.json"))) + 1
+                (fake / "fragments" / ("%d.json" % n)).write_text(json.dumps([{"raw": "ab%02d" % n * 8, "b64": "Zm9v%d" % n}]))
+            if self.trace:
+                self.trace.parent.mkdir(parents=True, exist_ok=True)
+                self.trace.write_bytes(b"\x89PNG\r\n\x1a\n" + b"x" * 40)
+        if libelle == "Enregistrer dans mon cerveau":
+            (home / "Documents" / "Brain" / "Guides").mkdir(parents=True, exist_ok=True)
+            (home / "Documents" / "Brain" / "Guides" / "atelier-demo-faire-une-facture.md").write_text(NOTE_GUIDE, encoding="utf-8")
+        if libelle == "Fermer le guide":
+            self.guide = None
+        elif nxt:
+            self.aller_guide(nxt)
+
     def lire(self):
         self.h.now += 0.5   # reading the window takes a moment
         self.pleines += 1
+        if self.fenetre_titre == ta.GUIDE_TITRE:
+            return self.lire_guide()
         if self.etat is None:
             return ta.Ecran()
         spec = self.spec()
         dialogues = [dict(self.dialogue)] if self.dialogue else []
         late = self.h.now - self.depuis < spec.get("boutons_apres", 0)   # the tree shows the words first
+        boutons = [] if late else list(spec.get("boutons", {}))
+        places = {b: self.places(self.etat, b) for b in boutons} if self.places else None
         return ta.Ecran(fenetre=True, titre=spec["titre"], texte=spec.get("texte", ""),
-                        boutons=[] if late else [(b, True) for b in spec.get("boutons", {})], textes=spec.get("textes", []),
-                        dialogues=dialogues)
+                        boutons=[(b, True) for b in boutons], textes=spec.get("textes", []),
+                        dialogues=dialogues, places={b: r for b, r in (places or {}).items() if r}, zone=self.zone)
 
     def cliquer(self, libelle, processus=None):
         self.clics.append((processus, libelle) if processus else libelle)
         how = self.comment(libelle) if callable(self.comment) else self.comment
+        if self.fenetre_titre == ta.GUIDE_TITRE:
+            self.cliquer_guide(libelle)
+            return how
+        if libelle == ta.GUIDE and self.etat == "retour":
+            self.aller_guide("charge")
         if processus:
             if self.dialogue and libelle == self.dialogue.get("part_sur"):
                 self.dialogue = None
@@ -263,7 +391,11 @@ class FauxPilote(ta.Pilote):
         return how
 
     def capturer(self, chemin):
-        Path(chemin).write_bytes(b"\x89PNG")
+        # The guide's preview and step: the pasted capture's green button, and on the step its red ring.
+        if self.fenetre_titre == ta.GUIDE_TITRE and self.guide in ("apercu", "etape"):
+            Path(chemin).write_bytes(capture_guide(self.anneau if self.guide == "etape" else self.anneau_apercu))
+        else:
+            Path(chemin).write_bytes(b"\x89PNG")
         self.captures.append(Path(chemin).name)
 
     def marquer_telecharge(self, fichier):
@@ -275,8 +407,29 @@ class FauxPilote(ta.Pilote):
 
     outils = ta.PiloteMac.outils
 
+    def racines_traces(self, home):
+        return [Path(home)]
+
     def arbre(self):
         return {"app": [], "faux": True}
+
+
+def capture_guide(anneau, pointille=False):
+    """A capture of the screen with the guide's window: the pasted image's green button, shrunk, and,
+    when `anneau`, Bibo's red ellipse round it (here a frame, dotted when `pointille`)."""
+    e = ta.ecrans()
+    t = e.Toile(600, 400, (240, 240, 240))
+    t.rect(100, 100, 40, 14, ta.VERT)
+    if anneau:
+        for x in range(88, 152):
+            for y in (90, 91, 122, 123):
+                if not pointille or (x // 4) % 2 == 0:
+                    t.rect(x, y, 1, 1, ta.ROUGE)
+        for y in range(90, 124):
+            for x in (88, 89, 150, 151):
+                if not pointille or (y // 4) % 2 == 0:
+                    t.rect(x, y, 1, 1, ta.ROUGE)
+    return t.png()
 
 
 class FauxMac(ta.PiloteMac):
@@ -392,28 +545,31 @@ class Walk(Base):
         p = FauxPilote(self.h)
         pa = self.parcours(p)
         took = pa.premier_lancement({"HOME": "/h"})
-        self.assertEqual(p.clics, ["Vérifier mon Mac", "Tout installer", "Passer (recherche par mots-clés)",
-                                   "Plus tard", "Plus tard", "Importer ma mémoire", "Je copie-colle une réponse", "Retour", "Retour"])
+        self.assertEqual(p.clics, ["Vérifier mon Mac", "Voir le détail", "Tout installer",
+                                   "Plus tard", "Plus tard", "Importer ma mémoire", "Je copie-colle (2 min)", "Retour", "Retour"])
         self.assertGreater(took, 500)
         shots = p.captures
-        self.assertEqual(shots[:5], ["01-bienvenue.png", "02-diagnostic-en-cours.png", "03-diagnostic.png",
-                                     "04-voyage.png", "05-etape-claude.png"])
+        # Search by meaning is no longer on the way: the install comes right after the diagnosis.
+        self.assertEqual(shots[:4], ["01-bienvenue.png", "02-diagnostic-en-cours.png", "03-diagnostic.png", "04-etape-claude.png"])
         for name in ("etape-bun", "etape-obsidian", "etape-brain", "etape-brain-2min", "etape-brain-4min",
                      "etape-brain-6min", "connexion-installation", "connexion", "fini", "import-choix", "import-collage"):
             self.assertTrue(any(re.match(r"^\d\d-%s\.png$" % name, s) for s in shots), name)
         self.assertEqual(shots, sorted(shots))
         self.assertEqual(sorted(os.listdir(self.shots)), shots)
         self.assertEqual(self.t.vus[0], "app-lancement")
-        for step in ("app-bienvenue", "app-diagnostic", "app-voyage", "app-etape-claude", "app-connexion-installation",
+        self.assertNotIn("app-voyage", self.t.vus)
+        for step in ("app-bienvenue", "app-diagnostic", "app-etape-claude", "app-connexion-installation",
                      "app-etape-brain", "app-connexion", "app-fini"):
             self.assertIn(step, self.t.vus)
         for step in self.t.vus:
             self.assertRegex(step, terrain.ETAPE_RE)
-        self.assertIn("Il manque Claude Code, Bun, Obsidian et ton cerveau.", self.t.details["diagnostic"]["bibo"])
+        self.assertIn("J'installe Claude Code, le moteur de ta mémoire, Obsidian et ton cerveau", self.t.details["diagnostic"]["bibo"])
+        # The lines unfolded, read: what the VM had before the app.
+        self.assertIn("Claude Code", self.t.details["diagnostic"]["textes"])
         b = pa.bilan()
         brain = next(e for e in b["ecrans"] if e["ecran"] == "etape-brain")
         self.assertGreaterEqual(brain["duree_s"], 400)
-        self.assertEqual(b["bibo"]["titre"], "Ton second cerveau est prêt !")
+        self.assertEqual(b["bibo"]["titre"], "Presque prêt : il manque ton compte Claude")
         self.assertIn("app-import-collage", self.t.vus)
         self.assertEqual(self.t.details["conseil"], "Ton cerveau marche avec Claude : il te faudra un abonnement Claude Pro ou Max.")
         self.assertTrue(self.t.details["import"]["phrase"])
@@ -422,8 +578,8 @@ class Walk(Base):
         p = FauxPilote(self.h, codex=True)
         pa = ta.Parcours(self.t, p, self.shots, horloge=self.h, dormir=self.h.dormir, codex=True)
         pa.premier_lancement({})
-        self.assertEqual(p.clics, ["Choisir mon IA", "Codex", "Tout installer", "Passer (recherche par mots-clés)", "Plus tard",
-                                   "Importer ma mémoire", "Je copie-colle une réponse", "Retour", "Retour"])
+        self.assertEqual(p.clics, ["Choisir mon IA", "Codex", "Voir le détail", "Tout installer", "Plus tard",
+                                   "Importer ma mémoire", "Je copie-colle (2 min)", "Retour", "Retour"])
         for step in ("app-bienvenue", "app-choix", "app-diagnostic", "app-etape-codex", "app-verif-compte-codex",
                      "app-connexion-chatgpt", "app-fini"):
             self.assertIn(step, self.t.vus)
@@ -454,24 +610,24 @@ class Walk(Base):
         for change, said in (({"codex": {"titre": "J’installe Codex.", "texte": "Étape 1 sur 5.", "apres": (30, "claude")},
                                "claude": {"titre": "J’installe Claude Code.", "texte": "Étape 2 sur 5.", "apres": (30, "bun")}},
                               "l'app a installé Claude Code alors que seul Codex est choisi"),
-                             ({"voyage": {"titre": "Une option avant de commencer", "boutons": {"Passer (recherche par mots-clés)": "bun"}}},
+                             ({"diag-detail": dict(neuf_codex(lambda: False)["diag-detail"], boutons={"Tout installer": "bun"})},
                               "le parcours n'est pas passé par l'écran « etape-codex »"),
                              ({"verif-codex": {"titre": "Je vérifie ton compte Claude…", "apres": (2, "login-codex")}},
                               "écran « verif-compte » : Codex est choisi seul"),
                              ({"verif-codex": {"titre": "Je vérifie la connexion de Codex…", "apres": (2, "login")}},
                               "écran « connexion » : Codex est choisi seul"),
                              ({"fini": {"titre": "Ton second cerveau est prêt" + NB + "!", "texte": "Claude retient maintenant ce que tu lui apprends.",
-                                        "boutons": {"Ouvrir mon cerveau dans Obsidian": None, "Personnaliser mon cerveau (15 min)": None}}},
+                                        "boutons": {"Voir mes notes": None, "Guide-moi dans un logiciel": None}}},
                               "l'écran final ne nomme pas Codex"),
                              ({"choix": {"titre": "Avec quelle IA veux-tu travailler" + NB + "?", "boutons": {"Codex": "resume"}}},
                               "écran « choix-resume » : Codex est choisi seul"),
                              ({"fini": {"titre": "Ton second cerveau est prêt" + NB + "!", "texte": "Codex retient maintenant ce que tu lui apprends.",
-                                        "boutons": {"Ouvrir mon cerveau dans Obsidian": None, "Personnaliser mon cerveau (15 min)": None,
+                                        "boutons": {"Voir mes notes": None, "Présente-toi à Codex (15 min)": None,
                                                     "Connecter Codex à mon compte ChatGPT": None},
                                         "textes": ["choisis « Sign in with ChatGPT »"]}},
-                              "l'écran final propose de personnaliser le cerveau avec un Codex qui n'est pas connecté à ChatGPT"),
+                              "l'écran final propose de se présenter à un Codex qui n'est pas connecté à ChatGPT"),
                              ({"fini": {"titre": "Ton second cerveau est prêt" + NB + "!", "texte": "Codex retient maintenant ce que tu lui apprends.",
-                                        "boutons": {"Ouvrir mon cerveau dans Obsidian": None, "Connecter Codex à mon compte ChatGPT": None},
+                                        "boutons": {"Voir mes notes": None, "Connecter Codex à mon compte ChatGPT": None},
                                         "textes": ["Pense à connecter Codex : il te le demandera au premier lancement."]}},
                               "l'écran final ne dit pas de choisir « Sign in with ChatGPT »")):
             h = Horloge()
@@ -486,9 +642,13 @@ class Walk(Base):
                                              "texte": "Je vais installer ton second cerveau pour ton IA. 10 à 20 minutes, tu n’as aucune commande à taper.",
                                              "boutons": {"Vérifier mon Mac": "diag-en-cours"}}},
                               "la bienvenue ne parle pas de Claude"),
-                             ({"fini": {"titre": "Ton second cerveau est prêt" + NB + "!", "texte": "Ton IA retient maintenant ce que tu lui apprends.",
-                                        "boutons": {"Ouvrir mon cerveau dans Obsidian": None, "Personnaliser mon cerveau (15 min)": None}}},
-                              "l'écran final ne nomme pas Claude")):
+                             # Claude's login put off: « prêt » and the onboarding would open Claude Code unconnected.
+                             ({"fini": {"titre": "Ton second cerveau est prêt" + NB + "!", "texte": "Claude retient maintenant ce que tu lui apprends.",
+                                        "boutons": {"Voir mes notes": None, "Importer ma mémoire": None, "Connecter mon compte Claude": None}}},
+                              "l'écran final se dit prêt sans compte Claude"),
+                             ({"fini": dict(neuf(lambda: False)["fini"], boutons={"Voir mes notes": None, "Importer ma mémoire": None,
+                                                                                  "Présente-toi à Claude (15 min)": None, "Connecter mon compte Claude": None})},
+                              "l'écran final propose de se présenter à Claude, qui n'est pas connecté")):
             h = Horloge()
             p = FauxPilote(h, change=change)
             with self.subTest(said=said), self.assertRaises(terrain.Echec) as cm:
@@ -498,11 +658,12 @@ class Walk(Base):
     def test_the_advice_and_the_import_are_on_the_screens(self):
         # The advice at the diagnosis (the choice screen where Codex is open), « Importer ma mémoire » at the
         # end, its copy-paste showing the sentence to paste: each missing one fails, named.
-        diag = neuf(lambda: False)["diag"]
+        diag, detail = neuf(lambda: False)["diag"], neuf(lambda: False)["diag-detail"]
         fini = neuf(lambda: False)["fini"]
         collage = neuf(lambda: False)["import-collage"]
         for codex, change, said in (
-                (False, {"diag": dict(diag, textes=["Claude Code", "À installer"])}, "le diagnostic ne donne pas « Mon conseil »"),
+                (False, {"diag": dict(diag, textes=[]), "diag-detail": dict(detail, textes=["Claude Code", "À installer"])},
+                 "le diagnostic ne donne pas « Mon conseil »"),
                 (True, {"choix": dict(neuf_codex(lambda: False)["choix"], textes=[])}, "l'écran du choix ne donne pas « Mon conseil »"),
                 (False, {"fini": dict(fini, boutons={k: v for k, v in fini["boutons"].items() if k != "Importer ma mémoire"})},
                  "l'écran final n'a pas le bouton « Importer ma mémoire »"),
@@ -529,7 +690,7 @@ class Walk(Base):
                                                      "textes": ["Je prépare la phrase…"], "apres": (6, "import-collage-2")},
                                   "import-collage-2": dict(neuf(lambda: False)["import-collage"])})
         ta.Parcours(Noms(), p, self.shots, horloge=h, dormir=h.dormir).premier_lancement({})
-        self.assertEqual(p.clics[-4:], ["Importer ma mémoire", "Je copie-colle une réponse", "Retour", "Retour"])
+        self.assertEqual(p.clics[-4:], ["Importer ma mémoire", "Je copie-colle (2 min)", "Retour", "Retour"])
 
     def test_quick_reads_stand_for_full_ones_while_bibo_says_the_same(self):
         slow, quick = FauxPilote(self.h), FauxPilote(Horloge())
@@ -561,7 +722,7 @@ class Walk(Base):
         pa.premier_lancement({})
         self.assertEqual(len([n for n in quick.captures if n.endswith("-etape-bun.png")]), 1)
         # The slow one failed at the end of the install, before « Importer ma mémoire ».
-        self.assertEqual(quick.clics, slow.clics + ["Importer ma mémoire", "Je copie-colle une réponse", "Retour", "Retour"])
+        self.assertEqual(quick.clics, slow.clics + ["Importer ma mémoire", "Je copie-colle (2 min)", "Retour", "Retour"])
 
     def test_every_step_of_the_plan_is_counted(self):
         vus = lambda *etapes: {cle: ta.Ecran(True, "x", texte) for cle, texte in etapes}
@@ -583,8 +744,8 @@ class Walk(Base):
         click = next(c for c in pa.clics if c["ecran"] == "connexion")
         self.assertEqual(click["bouton"], "Plus tard")
         self.assertLessEqual(click["a_s"] - shown["debut_s"], 5, "not at the next periodic full read")
-        self.assertEqual([c["bouton"] for c in pa.clics], ["Vérifier mon Mac", "Tout installer",
-                                                           "Passer (recherche par mots-clés)", "Plus tard", "Plus tard", "Importer ma mémoire", "Je copie-colle une réponse", "Retour", "Retour"])
+        self.assertEqual([c["bouton"] for c in pa.clics], ["Vérifier mon Mac", "Voir le détail", "Tout installer",
+                                                           "Plus tard", "Plus tard", "Importer ma mémoire", "Je copie-colle (2 min)", "Retour", "Retour"])
 
     def test_opened_again_it_says_all_is_installed(self):
         p = FauxPilote(self.h)
@@ -599,19 +760,17 @@ class Walk(Base):
         self.assertIn("app-relance-deja-installe", self.t.vus)
         self.assertTrue(any(s.endswith("-relance-deja-installe.png") for s in p.captures))
 
-    def test_opened_again_the_welcome_must_offer_the_guide(self):
-        for retour, said in (({"titre": "Content de te revoir" + NB + "!", "boutons": {"Vérifier mon Mac": "diag-en-cours"}},
-                              "l'accueil ne propose pas « Guide-moi dans un logiciel »"),
+    def test_opened_again_without_claude_the_welcome_asks_for_it_before_the_guide(self):
+        # The welcome as it was: the guide first, though Claude is not logged in.
+        avant = dict(neuf(lambda: True)["retour"])
+        for retour, said in ((avant, "sans compte Claude, l'accueil ne demande pas « Connecter mon compte Claude » avant le guide"),
                              (None, "l'app ne dit pas « Content de te revoir »")):
             self.setUp()
             p = FauxPilote(self.h)
             pa = self.parcours(p)
             pa.premier_lancement({})
             p.fermer()
-            if retour:
-                p.ecrans["retour"] = retour
-            else:
-                p.ecrans["retour"] = p.ecrans["bienvenue"]
+            p.ecrans["retour-sans-compte"] = retour or p.ecrans["bienvenue"]
             with self.assertRaises(terrain.Echec) as cm:
                 pa.relance({})
             self.assertIn(said, str(cm.exception))
@@ -655,10 +814,19 @@ class Walk(Base):
         self.assertEqual(self.t.nom, "app-bienvenue")
 
     def test_a_missing_button_fails(self):
-        p = FauxPilote(self.h, change={"voyage": {"titre": "Une option avant de commencer", "boutons": {"Ouvrir Voyage AI": None}}})
+        detail = neuf(lambda: False)["diag-detail"]
+        p = FauxPilote(self.h, change={"diag-detail": dict(detail, boutons={"Masquer le détail": "diag"})})
         with self.assertRaises(terrain.Echec) as cm:
             self.parcours(p).premier_lancement({})
-        self.assertIn("l'écran « voyage » n'offre pas le bouton « Passer (recherche par mots-clés) »", str(cm.exception))
+        self.assertIn("l'écran « diagnostic » n'offre pas le bouton « Tout installer »", str(cm.exception))
+
+    def test_search_by_meaning_on_the_way_to_the_brain_fails(self):
+        # A bank card asked before anything is installed scared people off: it is an option of the end.
+        p = FauxPilote(self.h, change={"diag-detail": dict(neuf(lambda: False)["diag-detail"], boutons={"Tout installer": "voyage"}),
+                                       "voyage": {"titre": "Activons la recherche par le sens", "boutons": {"Retour": "claude"}}})
+        with self.assertRaises(terrain.Echec) as cm:
+            self.parcours(p).premier_lancement({})
+        self.assertIn("l'app demande une clé Voyage avant la fin de l'installation", str(cm.exception))
 
     def test_a_machine_with_everything_is_not_a_fresh_vm(self):
         p = FauxPilote(self.h)
@@ -684,6 +852,56 @@ class Walk(Base):
             pa.premier_lancement({})
         self.assertRegex(str(cm.exception), r"toujours sur l'écran « etape-brain » après 1\d min \(fin du temps du scénario\)")
         self.assertLess(self.h.now, 21 * 60)
+
+    def test_the_main_button_is_whole_in_the_usable_area_of_the_screen(self):
+        # The night's Windows VM: 1024 x 768, a taskbar 48 high. Each screen's buttons in a row at the bottom
+        # of the window, as the app puts them.
+        def fenetre(haut, hauteur):
+            return lambda etat, b: [400 + 150 * list(p.ecrans[etat]["boutons"]).index(b), haut + hauteur - 60, 140, 40]
+        p = FauxPilote(self.h)
+        p.machine, p.zone = "PC", [0, 0, 1024, 720]
+        p.ecrans["bienvenue"] = dict(p.ecrans["bienvenue"], boutons={"Vérifier mon PC": "diag-en-cours"})
+        # Before: 780 x 680 at (60, 50), its title bar 31 high, Bibo's buttons 20 px under the taskbar.
+        p.places = fenetre(50 + 31, 680)
+        pa = self.parcours(p)
+        with self.assertRaises(terrain.Echec) as cm:
+            pa.premier_lancement({})
+        self.assertIn("écran « bienvenue » : le bouton « Vérifier mon PC » sort de l'écran utile (21 px en bas)", str(cm.exception))
+        self.assertTrue(p.captures[-1].endswith("-bienvenue-bouton-cache.png"), p.captures)
+        # Now: 657 high, centered (lib.rs, place_main): every main button whole, each measured once.
+        p, self.h.now = FauxPilote(self.h), 0.0
+        p.machine, p.zone = "PC", [0, 0, 1024, 720]
+        p.ecrans["bienvenue"] = dict(p.ecrans["bienvenue"], boutons={"Vérifier mon PC": "diag-en-cours"})
+        p.places = fenetre(12 + 31, 657)
+        pa = self.parcours(p)
+        pa.premier_lancement({})
+        self.assertEqual(sorted(pa.principaux), ["bienvenue", "connexion", "connexion-installation", "diagnostic", "fini"])
+        self.assertEqual(pa.principaux["fini"]["bouton"], "Connecter mon compte Claude")
+        self.assertEqual(pa.principaux["diagnostic"], {"bouton": "Tout installer", "place": [550, 640, 140, 40], "zone": [0, 0, 1024, 720]})
+        self.assertEqual(pa.bilan()["boutons_principaux"], pa.principaux)
+        # A driver without places (macOS, Linux) measures nothing and fails nothing.
+        p, self.h.now = FauxPilote(self.h), 0.0
+        pa = self.parcours(p)
+        pa.premier_lancement({})
+        self.assertEqual(pa.principaux, {})
+        # Windows' driver must measure them: a tree that stops giving the places fails, it does not pass unmeasured.
+        p, self.h.now = FauxPilote(self.h), 0.0
+        p.machine, p.mesure_places = "PC", True
+        p.ecrans["bienvenue"] = dict(p.ecrans["bienvenue"], boutons={"Vérifier mon PC": "diag-en-cours"})
+        with self.assertRaises(terrain.Echec) as cm:
+            self.parcours(p).premier_lancement({})
+        self.assertIn("écran « bienvenue » : le bouton principal n'a pas été mesuré", str(cm.exception))
+
+    def test_opened_twice_the_second_one_goes_by_itself(self):
+        p = FauxPilote(self.h)
+        p.ouvrir_encore = lambda env: 0.8
+        self.parcours(p).premier_lancement({})
+        self.assertEqual(self.t.details["deuxieme_ouverture_s"], 0.8)
+        p, self.h.now = FauxPilote(self.h), 0.0
+        p.ouvrir_encore = lambda env: None
+        with self.assertRaises(terrain.Echec) as cm:
+            self.parcours(p).premier_lancement({})
+        self.assertIn("l'app ouverte une deuxième fois reste ouverte : deux Bibo à la fois", str(cm.exception))
 
     def test_no_window_fails_with_a_capture(self):
         p = FauxPilote(self.h)
@@ -862,9 +1080,9 @@ class ReadingTheWindow(unittest.TestCase):
         with open(os.path.join(REPO, "app", "src", "app.js"), encoding="utf-8") as f:
             app = ta.norm(f.read().replace("${OS.machine}", "Mac"))
         words = [start for _, start in ta.ECRANS] + list(ta.ETAPES) + list(ta.BOUTONS_ECHEC) + [
-            "Vérifier mon Mac", "Tout installer", "Passer (recherche par mots-clés)", "Plus tard", "Continuer",
-            "Personnaliser mon cerveau (15 min)", "Ouvrir mon cerveau dans Obsidian", "Importer ma mémoire",
-            "Je copie-colle une réponse", "Retour", ta.CONSEIL]
+            "Vérifier mon Mac", ta.DETAIL, "Tout installer", "Plus tard", "Continuer", "Présente-toi à", "Voir mes notes",
+            "Importer ma mémoire", "Je copie-colle (2 min)", "Retour", ta.CONSEIL] + [
+            b.replace("{machine}", "Mac") for bs in ta.PRINCIPAUX.values() for b in bs]
         for w in words:
             self.assertIn(ta.norm(w), app, w)
 
@@ -1067,6 +1285,23 @@ class WindowsReading(unittest.TestCase):
         e = self.ecran(page_uia("StatusBar", p_texte=True))
         self.assertEqual((e.titre, e.texte), ("Salut, moi c'est Bibo !", "Je vais installer ton second cerveau."))
 
+    def test_each_buttons_place_and_the_usable_area(self):
+        page = page_uia()
+        footer = [n for n in ta._aplatir(page)[::-1] if n[1].get("lt") == "content info"][0][1]
+        footer["k"][0]["b"] = [552, 676, 160, 44]
+        footer["k"][1]["b"] = [430, 676, 110, 0]     # a place without a height: none
+        e = self.ecran(page)
+        self.assertEqual(e.places, {"Vérifier mon PC": [552, 676, 160, 44]})
+        e.zone = [0, 0, 1024, 720]
+        self.assertEqual(ta.cache_du_bouton(e, "Vérifier mon PC"), "")
+        e.zone = [0, 0, 1024, 700]
+        self.assertEqual(ta.cache_du_bouton(e, "Vérifier mon PC"), "20 px en bas")
+        e.places["Vérifier mon PC"] = [-8, -4, 160, 44]
+        self.assertEqual(ta.cache_du_bouton(e, "Vérifier mon PC"), "4 px en haut, 8 px à gauche")
+        self.assertIsNone(ta.cache_du_bouton(e, "Plus tard"))
+        e.zone = None
+        self.assertIsNone(ta.cache_du_bouton(e, "Vérifier mon PC"))
+
     def test_the_window_frame_is_not_the_page(self):
         e = self.ecran(page_uia())
         self.assertIsNone(e.bouton("Close"))
@@ -1260,6 +1495,20 @@ class WindowsInstaller(Base):
 
 
 class WindowsApp(Base):
+    def test_opened_a_second_time_as_a_user_does_and_killed_if_it_stays(self):
+        p = FauxWindows(self.h, self.tmp)
+        p.exe = r"C:\Users\r\AppData\Local\Brain in a Box\brain-in-a-box.exe"
+        runs = []
+        p._run = lambda argv, timeout=120, **kw: runs.append([str(a) for a in argv]) or (0, "")
+        for fini, attendu in ((3.0, 3.0), (None, None)):
+            second = FauxSetup(self.h)
+            second.fini = None if fini is None else self.h.now + fini
+            with mock.patch.object(ta.subprocess, "Popen", return_value=second) as popen:
+                self.assertEqual(p.ouvrir_encore({"USERPROFILE": "C:\\Users\\r"}), attendu)
+            self.assertEqual(popen.call_args[0][0], [p.exe])
+            self.assertEqual(popen.call_args[1]["env"], {"USERPROFILE": "C:\\Users\\r"})
+        self.assertEqual(runs, [["taskkill", "/PID", str(second.pid), "/T", "/F"]])
+
     def test_the_window_a_dialog_in_front_and_a_click_on_it(self):
         p = FauxWindows(self.h, self.tmp)
         p.proc = FauxSetup(self.h)
@@ -1278,12 +1527,13 @@ class WindowsApp(Base):
                     {"h": 6, "classe": "Tao Thread Event Target", "titre": "", "rect": [0, 0, 16, 16],
                      "arbre": uia("Pane", "", c="Tao Thread Event Target")},
                     {"h": 5, "classe": "Tauri Window", "titre": "Brain in a Box", "rect": [130, 49, 796, 719],
-                     "arbre": page_uia()}], "devant": outil.devant}
+                     "arbre": page_uia()}], "devant": outil.devant, "zone": [0, 0, 1024, 720]}
             return {"ok": True, "comment": "Invoke"}
         p._outil = outil
         outil.devant = devant
         e = p.lire()
         self.assertEqual((e.titre, ta.cle_ecran(e)[0]), ("Salut, moi c'est Bibo !", "bienvenue"))
+        self.assertEqual(e.zone, [0, 0, 1024, 720])
         self.assertEqual(e.dialogues[0]["processus"], "SmartScreen")
         self.assertEqual(ta.bouton_autoriser(e.dialogues[0]), "Autoriser")
         p.cliquer("Autoriser", processus="SmartScreen")
@@ -1304,8 +1554,8 @@ class WindowsApp(Base):
         f.ecrans["claude"]["texte"] = "Étape 1 sur 2. L’outil officiel d’Anthropic."
         f.ecrans["brain"] = dict(f.ecrans["brain"], texte="Étape 2 sur 2. C’est l’étape la plus longue : 10 à 20 minutes.")
         self.parcours(f).premier_lancement({})
-        self.assertEqual(f.clics, ["Vérifier mon PC", "Tout installer", "Passer (recherche par mots-clés)",
-                                   "Plus tard", "Plus tard", "Importer ma mémoire", "Je copie-colle une réponse", "Retour", "Retour"])
+        self.assertEqual(f.clics, ["Vérifier mon PC", "Voir le détail", "Tout installer",
+                                   "Plus tard", "Plus tard", "Importer ma mémoire", "Je copie-colle (2 min)", "Retour", "Retour"])
         self.assertFalse([c for c in f.captures if "etape-bun" in c or "etape-obsidian" in c])
 
 
@@ -1846,7 +2096,7 @@ class Scenario(Base):
         self.assertEqual(row["statut"], "ok", row["raison"])
         self.assertIn("deuxième lancement : déjà installé", row["raison"])
         self.assertEqual(len(checked), 1)
-        self.assertEqual(p.fermetures, 2)
+        self.assertEqual(p.fermetures, 3, "the guide's launch closed too")
         for env in p.envs:
             self.assertFalse({"GH_TOKEN", "GITHUB_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"} & set(env), env)
             self.assertTrue(env["BIAB_ARCHIVE"].endswith(".zip"))
@@ -1898,8 +2148,8 @@ class Scenario(Base):
         self.h = p.h
         row, p, _, _, _, home = self.run_it(pilote=p, source="release", release=lambda t, pi, d, tok, det, sha=None: Path(d) / "app.dmg")
         self.assertEqual(row["statut"], "ok", row["raison"])
-        self.assertEqual([env.get("BIAB_ARCHIVE") for env in p.envs], [None, None])
-        self.assertEqual(p.portes, [None, None])
+        self.assertEqual([env.get("BIAB_ARCHIVE") for env in p.envs], [None, None, None], "the guide's launch too")
+        self.assertEqual(p.portes, [None, None, None])
 
     def test_codex_alone_wants_codex_and_no_claude_code(self):
         p = FauxPilote(self.h, home=Path(self.tmp) / "home", codex=True)
@@ -2001,7 +2251,7 @@ class Scenario(Base):
             t.check(False, "gbq query ne trouve pas Profile/lessons.md (code 127)")
         row, p, _, _, _, _ = self.run_it(check=check)
         self.assertEqual((row["statut"], row["etape"]), ("echec", "lanceurs"))
-        self.assertIn("gbq query ne trouve pas Profile/lessons.md (code 127) ; Bibo : « Ton second cerveau est prêt !",
+        self.assertIn("gbq query ne trouve pas Profile/lessons.md (code 127) ; Bibo : « Presque prêt : il manque ton compte Claude",
                       row["raison"])
         self.assertTrue(row["details"]["captures"][-1].endswith("-echec.png"))
 
@@ -2048,6 +2298,182 @@ class Scenario(Base):
         row, _, _, _, _, _ = self.run_it(pilote=p)
         self.assertEqual((row["statut"], row["etape"]), ("echec", "app-sources"))
         self.assertIn("BIAB_ARCHIVE ignoré", row["raison"])
+
+class Guide(Scenario):
+    """The guide's walk on the third launch (Claude alone): the fake window of guide.js's words."""
+
+    def test_walked_to_the_procedure_its_ring_found_and_nothing_left(self):
+        p = FauxPilote(self.h, home=Path(self.tmp) / "home")
+        row, p, _, _, _, home = self.run_it(pilote=p)
+        self.assertEqual(row["statut"], "ok", row["raison"])
+        d = row["details"]["guide"]
+        # The screens Bibo passes by itself (a second or two) may come and go between two readings.
+        self.assertEqual([e for e in d["ecrans"] if e not in ta.ATTENTES_GUIDE],
+                         ["comment", "objectif", "coller-debut", "apercu", "etape", "coller-fait", "apercu", "fin", "enregistrer",
+                          "enregistre"])
+        self.assertEqual(d["collages"], ["debut", "fait"])
+        self.assertEqual([k for k, _ in p.saisies], ["taper", "tab", "taper", "coller", "coller"])
+        self.assertEqual([x for k, x in p.saisies if k == "taper"], [ta.LOGICIEL_GUIDE, ta.OBJECTIF_GUIDE])
+        self.assertEqual(len({x for k, x in p.saisies if k == "coller"}), 2, "two captures, not the same one twice")
+        self.assertEqual(d["modeles"], ["opus", "opus"])
+        self.assertEqual(d["note"], "atelier-demo-faire-une-facture.md")
+        self.assertEqual((d["temoin"]["boutons_verts"], d["temoin"]["entoures"]), (1, []))
+        self.assertEqual((d["etape"]["niveau"], len(d["etape"]["entoures"])), ("plein", 1))
+        self.assertIn(ta.GUIDE, p.clics)
+        for b in ("J'ai compris", "Continuer", "Envoyer à Claude", "C'est fait", "Enregistrer cette procédure",
+                  "Enregistrer dans mon cerveau", "Fermer le guide"):
+            self.assertIn(b, p.clics)
+        self.assertIn("guide : deux captures collées, l'étape entourée, la procédure dans Guides/, aucune image", row["raison"])
+        # The real Claude Code back, the fake gone.
+        self.assertEqual((home / ".local" / "bin" / "claude").read_text(), "x")
+        self.assertFalse((home / ".local" / "bin" / "claude.terrain-vrai").exists())
+
+    def test_without_opus_sonnet_and_its_dotted_ring(self):
+        p = FauxPilote(self.h, home=Path(self.tmp) / "home")
+        p.guide_prudent = True
+        row, p, _, _, _, home = self.run_it(pilote=p)
+        self.assertEqual(row["statut"], "ok", row["raison"])
+        d = row["details"]["guide"]
+        self.assertEqual((d["prudent"], d["modeles"], d["etape"]["niveau"]), (True, ["opus", "sonnet", "sonnet"], "pointille"))
+        self.assertIn("l'étape entourée en pointillés (Sonnet, mode prudent)", row["raison"])
+        self.assertTrue((home / ".claude" / "fake" / "refuse-opus").is_file())
+
+    def test_no_ring_on_the_step_fails(self):
+        p = FauxPilote(self.h, home=Path(self.tmp) / "home")
+        p.anneau = False
+        row, _, _, _, _, _ = self.run_it(pilote=p)
+        self.assertEqual((row["statut"], row["etape"]), ("echec", "app-guide-etape"))
+        self.assertIn("aucune ellipse rouge autour du bouton vert", row["raison"])
+
+    def test_an_image_the_app_left_on_the_disk_fails(self):
+        home = Path(self.tmp) / "home"
+        p = FauxPilote(self.h, home=home)
+        p.trace = home / "Library" / "Caches" / "com.braininbox.installer" / "WebKit" / "x.png"
+        row, _, _, _, _, _ = self.run_it(pilote=p)
+        self.assertEqual((row["statut"], row["etape"]), ("echec", "app-guide-disque"))
+        self.assertIn("une image PNG dans un dossier de l'app", row["raison"])
+        self.assertIn("~/Library/Caches/com.braininbox.installer/WebKit/x.png", row["raison"])
+
+    def test_a_ring_before_any_answer_fails(self):
+        p = FauxPilote(self.h, home=Path(self.tmp) / "home")
+        p.anneau_apercu = True
+        row, _, _, _, _, _ = self.run_it(pilote=p)
+        self.assertEqual((row["statut"], row["etape"]), ("echec", "app-guide-apercu"))
+        self.assertIn("une ellipse rouge sur l'aperçu, avant toute réponse de Claude", row["raison"])
+
+    def test_the_fake_claude_asked_another_model_fails(self):
+        p = FauxPilote(self.h, home=Path(self.tmp) / "home")
+        p.modeles_faux = ["sonnet"]
+        row, _, _, _, _, _ = self.run_it(pilote=p)
+        self.assertEqual((row["statut"], row["etape"]), ("echec", "app-guide-modeles"))
+        self.assertIn("le faux Claude a été lancé avec ['sonnet', 'sonnet'] (attendu : ['opus', 'opus'])", row["raison"])
+
+    def test_the_cautious_mode_said_where_opus_answers_fails(self):
+        p = FauxPilote(self.h, home=Path(self.tmp) / "home")
+        spec = p.guide_spec
+        said = lambda sp: dict(sp, textes=sp["textes"] + ["Mode prudent : ton compte Claude ne me donne pas accès à Opus."]) \
+            if p.guide == "etape" else sp
+        p.guide_spec = lambda: said(spec())
+        row, _, _, _, _, _ = self.run_it(pilote=p)
+        self.assertEqual((row["statut"], row["etape"]), ("echec", "app-guide-etape"))
+        self.assertIn("l'étape dit à tort le mode prudent", row["raison"])
+
+
+class GuideParts(unittest.TestCase):
+    def test_the_ring_is_found_round_the_green_button_only_when_drawn(self):
+        e = ta.ecrans()
+        for anneau, pointille, entoure in ((True, False, 1), (True, True, 1), (False, False, 0)):
+            w, h, px = e.lire_png(capture_guide(anneau, pointille))
+            trouves = ta.anneaux(w, h, px)
+            self.assertEqual((len(trouves), len(ta.entoures(trouves))), (1, entoure), (anneau, pointille, trouves))
+        # Red elsewhere on the screen, or on two sides of the button only, is no ring round it.
+        for rouge in ((300, 50, 80, 4), (80, 100, 6, 14), (80, 100, 6, 14, 150, 100, 6, 14)):
+            t = e.Toile(600, 400, (240, 240, 240))
+            t.rect(100, 100, 40, 14, ta.VERT)
+            for i in range(0, len(rouge), 4):
+                t.rect(*rouge[i:i + 4], ta.ROUGE)
+            w, h, px = e.lire_png(t.png())
+            self.assertEqual(ta.entoures(ta.anneaux(w, h, px)), [], rouge)
+
+    def test_the_screens_and_the_words_the_robot_reads_are_the_guides(self):
+        with open(os.path.join(REPO, "app", "src", "guide.js"), encoding="utf-8") as f:
+            js = ta.norm(f.read())
+        for _, start in ta.ECRANS_GUIDE:
+            self.assertIn(ta.norm(start), js, start)
+        for word in ("J'ai compris", "Continuer", "Envoyer à Claude", "C'est fait", "Enregistrer cette procédure",
+                     "Enregistrer dans mon cerveau", "Fermer le guide", "Refaire la capture", ta.PRUDENT,
+                     "Sur l'image, « ${e.libelle} » est entouré en rouge.", ta.ANNEAU_POINTILLE):
+            self.assertIn(ta.norm(word), js, word)
+        self.assertEqual(ta.ANNEAU_PLEIN, "Sur l'image, « Nouveau » est entouré en rouge.")
+        self.assertEqual(ta.REPONSES_GUIDE["debut"]["libelle"], "Nouveau")
+        with open(os.path.join(REPO, "app", "src-tauri", "src", "lib.rs"), encoding="utf-8") as f:
+            rs = f.read()
+        self.assertIn('const GUIDE_TITLE: &str = "%s";' % ta.GUIDE_TITRE, rs)
+        self.assertIn(".title(GUIDE_TITLE)", rs)
+        with open(os.path.join(REPO, "app", "src", "styles.css"), encoding="utf-8") as f:
+            css = f.read()
+        self.assertIn("stroke: #%02x%02x%02x;" % ta.ROUGE, css)
+        self.assertIn("border: 3px solid #%02x%02x%02x;" % ta.ROUGE, css)
+        self.assertEqual(ta.VERT, ta.ecrans().VERT)
+
+    def test_the_traces_are_the_guides_images_and_pngs_of_the_app(self):
+        tmp = Path(tempfile.mkdtemp(prefix="traces-"))
+        self.addCleanup(shutil.rmtree, str(tmp), True)
+        frag = b"\x01\x02morceau-de-capture\x03"
+        old = tmp / "home" / "Library" / "Caches" / "com.braininbox.installer" / "vieux.png"
+        old.parent.mkdir(parents=True)
+        old.write_bytes(ta.PNG_SIGNATURE + frag)
+        os.utime(old, (1000, 1000))
+        (tmp / "home" / "Documents").mkdir(parents=True)
+        (tmp / "home" / "Documents" / "note.md").write_bytes(b"rien")
+        (tmp / "home" / "Documents" / "autre.png").write_bytes(ta.PNG_SIGNATURE)
+        self.assertEqual(ta.traces_du_guide([tmp / "home"], 2000, [], [frag], ("com.braininbox.installer",)), [],
+                         "older than the walk, or a PNG elsewhere than the app's folders")
+        (tmp / "home" / "Documents" / "fuite.txt").write_bytes(b"avant " + frag + b" apres")
+        cache = tmp / "home" / "AppData" / "Local" / "com.braininbox.installer" / "EBWebView" / "Default" / "Cache" / "f_0001"
+        cache.parent.mkdir(parents=True)
+        cache.write_bytes(b"entete" + ta.PNG_SIGNATURE + b"donnees")
+        robot = tmp / "home" / "terrain-travail" / "copie.png"
+        robot.parent.mkdir(parents=True)
+        robot.write_bytes(ta.PNG_SIGNATURE + frag)
+        got = sorted((Path(p).name, why) for p, why in ta.traces_du_guide(
+            [tmp / "home", tmp / "home" / "Documents"], 2000, [tmp / "home" / "terrain-travail"], [frag], ("com.braininbox.installer",)))
+        self.assertEqual(got, [("f_0001", "une image PNG dans un dossier de l'app"), ("fuite.txt", "un morceau d'une image du guide")])
+
+    def test_the_note_must_be_the_guides_own(self):
+        tmp = Path(tempfile.mkdtemp(prefix="note-"))
+        self.addCleanup(shutil.rmtree, str(tmp), True)
+        self.assertIsNone(ta.note_du_guide(tmp, 0)[0])
+        (tmp / "Guides").mkdir()
+        (tmp / "Guides" / "atelier-demo-faire-une-facture.md").write_text(NOTE_GUIDE, encoding="utf-8")
+        self.assertEqual(ta.note_du_guide(tmp, 0)[0].name, "atelier-demo-faire-une-facture.md")
+        (tmp / "Guides" / "atelier-demo-faire-une-facture.md").write_text(NOTE_GUIDE.replace('source: "bibo-guide"', ""), encoding="utf-8")
+        note, why = ta.note_du_guide(tmp, 0)
+        self.assertIsNone(note)
+        self.assertIn('source: "bibo-guide"', why)
+
+    @unittest.skipUnless(os.name == "nt", "the relay is compiled by the .NET Framework's csc, on Windows")
+    def test_the_relay_hands_the_fake_claude_its_arguments_and_streams_as_they_are(self):
+        tmp = Path(tempfile.mkdtemp(prefix="relais-"))
+        self.addCleanup(shutil.rmtree, str(tmp), True)
+        home = tmp / "home"
+        exe = home / ".local" / "bin" / "claude.exe"
+        exe.parent.mkdir(parents=True)
+        exe.write_bytes(b"MZ vrai")
+        vrai = ta.poser_faux_claude(home, exe, tmp, False)
+        (home / ".claude" / "fake" / "scenario").write_text("plan-ok", encoding="utf-8")
+        (home / ".claude" / "fake" / "fixtures").write_text(os.path.join(REPO, "app", "src-tauri", "tests", "fixtures", "repair"), encoding="utf-8")
+        (home / ".claude" / "fake" / "answer.json").write_text("{}", encoding="utf-8")
+        args = ["-p", "--tools", "", "--append-system-prompt", 'Tu es « Bibo ».\n"guillemets" \\ fin\\', "--settings", '{"a":true}']
+        p = subprocess.run([str(exe)] + args, input="la question\n".encode("utf-8"), capture_output=True,
+                           env=dict(os.environ, USERPROFILE=str(home), HOME=""), timeout=120)
+        self.assertEqual(p.returncode, 0, p.stderr.decode("utf-8", "replace"))
+        self.assertIn(b'"subtype":"init"', p.stdout.replace(b" ", b""))
+        fake = home / ".claude" / "fake"
+        self.assertEqual(json.loads((fake / "argv.json").read_text(encoding="utf-8")), args)
+        self.assertEqual((fake / "prompt.txt").read_text(encoding="utf-8"), "la question\n")
+        ta.rendre_vrai_claude(exe, vrai)
+        self.assertEqual(exe.read_bytes(), b"MZ vrai")
 
 
 if __name__ == "__main__":

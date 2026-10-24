@@ -6,7 +6,11 @@ way a user does, installs it, opens it and clicks through its real window, Bienv
 screen, with a capture of every screen. Bibo's advice must be at the diagnosis (on the choice screen
 where Codex is open). At the end, the robot goes into « Importer ma mémoire », to the copy-paste that
 shows the sentence to paste, and back: nothing is sent, no AI is asked. Then it checks the brain works
-and opens the app a second time: it must say everything is already installed.
+and opens the app a second time: it must say everything is already installed. Then, Claude alone, a
+third time: the welcome's « Guide-moi dans un logiciel », and the guide's window walked to the procedure
+in the brain with a fake Claude (engine/tests/fake_claude.py) put where the app finds Claude Code: two
+made-up captures pasted as a user pastes them, the step's red ellipse found on a capture of the screen,
+no image of the guide left on the disk. Linux plays an account without Opus: Sonnet, the cautious mode.
 
 The path "app-codex" does the same with Codex chosen alone, where the robot opened Codex in its copy of
 the kit, as the other benches open it (test-hooks.sh, codex_captures.open_gate): the tested commit's
@@ -43,6 +47,7 @@ Ubuntu without git nor curl, as Ubuntu's desktop comes: the app has to bring the
 This module imports nothing of terrain.py: terrain.py passes itself in (kit), so a failure is
 always terrain.py's own Echec, even when terrain.py runs as __main__.
 """
+import base64
 import hashlib
 import json
 import ntpath
@@ -87,7 +92,8 @@ CLIC_SOURIS = "clic souris"
 # Bibo's titles (app/src/app.js), after norm(): the screen they stand for.
 ECRANS = (
     ("bienvenue", "Salut, moi c'est Bibo"),
-    # Opened again with the brain and Claude Code there: the guide first (G0, docs/proposals/guide.md).
+    # Opened again with the brain and Claude Code there: the guide first (G0, docs/proposals/guide.md), or
+    # Claude's login first when it was put off.
     ("bienvenue-retour", "Content de te revoir"),
     ("choix", "Avec quelle IA veux-tu travailler"),
     ("choix-resume", "Lequel écrit le résumé de chaque soir"),
@@ -96,7 +102,8 @@ ECRANS = (
     ("bloque", "Je ne peux pas installer"),
     ("deja-installe", "Tout est déjà installé"),
     ("diagnostic", "J'ai fait le tour"),
-    ("voyage", "Une option avant de commencer"),
+    # Search by meaning, an option offered at the end only: never on the way to the brain.
+    ("voyage", "Activons la recherche par le sens"),
     ("verif-compte", "Je vérifie ton compte Claude"),
     ("verif-compte-codex", "Je vérifie la connexion de Codex"),
     ("connexion-installation", "Connecte ton compte Claude maintenant"),
@@ -107,6 +114,8 @@ ECRANS = (
     ("codex-systeme", "Codex suit des réglages de ce "),
     ("installe", "C'est installé"),
     ("fini", "Ton second cerveau est prêt"),
+    # The end, Claude's login put off (as the robot does: no account on these VMs): it asks for it first.
+    ("fini", "Presque prêt"),
     ("import-verif", "Je prépare l'import"),
     ("import-choix", "D'où vient ta mémoire"),
     ("import-collage", "Demande-lui ce qu'il sait de toi"),
@@ -138,6 +147,7 @@ DELAI_PHRASE = 60
 DELAI_IMPORT = 3 * 60
 # The returning welcome's way to the guide: offered, not taken (no AI is asked on these VMs).
 GUIDE = "Guide-moi dans un logiciel"
+CONNECTER = "Connecter mon compte Claude"
 # Buttons that only come with a failure (the repair screens have many titles).
 BOUTONS_ECHEC = {"Réessayer", "Copier le rapport", "Revérifier"}
 # The screens each path must never see: Codex's on the path of Claude alone (the app users get keeps it
@@ -190,8 +200,12 @@ class Ecran:
     """What the robot sees: Bibo's title and text, the buttons (label, enabled), every text."""
 
     def __init__(self, fenetre=False, titre="", texte="", boutons=(), textes=(), dialogues=(), lecture="", statut=None,
-                 partiel=False):
+                 partiel=False, places=None, zone=None):
         self.fenetre, self.titre, self.texte = fenetre, norm(titre), norm(texte)
+        # Where each button is on the screen ({label: [x, y, w, h]}) and the screen's usable area (the taskbar
+        # left out), when the driver can tell (Windows): a user must see the main button whole.
+        self.places = {norm(b): r for b, r in (places or {}).items()}
+        self.zone = zone
         # Bibo's words only (a quick read saw them change): the full read comes next.
         self.partiel = partiel
         # (window index, child indices from the window) of Bibo's status region: a quick read's path.
@@ -259,6 +273,7 @@ def ecran_depuis_arbre(fenetres, dialogues=()):
     textes = [(c, _texte(n)) for c, n in flat if n.get("r") == "AXStaticText" and _texte(n).strip()]
     boutons = [(n.get("n") or n.get("d") or _texte(n), n.get("e", True) is not False)
                for c, n in flat if n.get("r") == "AXButton"]
+    places = {n.get("n") or n.get("d") or _texte(n): n["b"] for c, n in flat if n.get("r") == "AXButton" and rect_valide(n.get("b"))}
     statut = next((c for c, n in flat if n.get("s") == "AXApplicationStatus"), None)
     if statut is not None:
         dits = [t for c, t in textes if c[:len(statut)] == statut]
@@ -271,7 +286,39 @@ def ecran_depuis_arbre(fenetres, dialogues=()):
     else:
         dits, lecture = [], "vide"
     return Ecran(fenetre=True, titre=dits[0] if dits else "", texte=" ".join(dits[1:]), boutons=boutons,
-                 textes=[t for _, t in textes], dialogues=dialogues, lecture=lecture, statut=chemin_statut)
+                 textes=[t for _, t in textes], dialogues=dialogues, lecture=lecture, statut=chemin_statut, places=places)
+
+
+def rect_valide(r):
+    return isinstance(r, list) and len(r) == 4 and all(isinstance(v, int) for v in r) and r[2] > 0 and r[3] > 0
+
+
+# The main button of the screens where a user must find it at once, as the app labels it (machine: Mac or
+# PC), the first one there of its candidates. The night's Windows VM has 1024 x 768 with its taskbar, as an
+# old laptop: the window has to fit.
+PRINCIPAUX = {
+    "bienvenue": ("Vérifier mon {machine}", "Choisir mon IA"),
+    "bienvenue-retour": ("Guide-moi dans un logiciel", "Connecter mon compte Claude"),
+    "diagnostic": ("Tout installer",),
+    "connexion-installation": ("Connecter mon compte Claude",),
+    "connexion": ("Connecter mon compte Claude",),
+    "connexion-chatgpt": ("Connecter Codex à mon compte ChatGPT",),
+    "fini": ("Guide-moi dans un logiciel", "Connecter mon compte Claude", "Connecter Codex à mon compte ChatGPT"),
+}
+# The diagnosis' lines, folded under this button: the robot unfolds them, to read what the VM had.
+DETAIL = "Voir le détail"
+
+
+def cache_du_bouton(ecran, libelle):
+    """How much of the button the usable area of the screen leaves out ("" when a user sees it whole), or
+    None when the driver gives no places (macOS, Linux) or the button is not there."""
+    r, zone = ecran.places.get(norm(libelle)), ecran.zone
+    if not rect_valide(r) or not rect_valide(zone):
+        return None
+    x, y, w, h = r
+    zx, zy, zw, zh = zone
+    cotes = [("en haut", zy - y), ("en bas", (y + h) - (zy + zh)), ("à gauche", zx - x), ("à droite", (x + w) - (zx + zw))]
+    return ", ".join("%d px %s" % (n, ou) for ou, n in cotes if n > 0)
 
 
 def dits_rapides(textes):
@@ -443,10 +490,12 @@ class Pilote:
     # app's step for it went untested, and the results say so.
     neufs = ()
 
-    def _run(self, argv, timeout=120, env=None, creationflags=0):
+    def _run(self, argv, timeout=120, env=None, creationflags=0, entree=None):
+        """entree: bytes for its stdin (a PNG's base64), else it gets the robot's."""
         try:
             p = subprocess.run([str(a) for a in argv], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                               timeout=timeout, env=env, creationflags=creationflags)
+                               timeout=timeout, env=env, creationflags=creationflags,
+                               **({"input": entree} if entree is not None else {}))
         except subprocess.TimeoutExpired:
             raise ErreurPilote("%s n'a pas fini en %d s" % (Path(str(argv[0])).name, timeout))
         except OSError as e:
@@ -477,6 +526,13 @@ class Pilote:
     def ecarter_la_nuit(self):
         """Keeps the nightly the install registered out of the checks' way; returns what it did, or None."""
         return None
+
+    # A second click on the app while it is open (a window slow to show): the second one must go by itself.
+    # Windows only (lib.rs, already_open): macOS brings an open app back by itself, Linux is not checked.
+    ouvrir_encore = None
+    # The driver gives each button's place and the screen's usable area (Windows): the main buttons must be
+    # measured, not skipped without a word when the tree stops giving them.
+    mesure_places = False
 
     def poste_neuf(self):
         """Makes the VM the machine users have, right before the app's first start (what its steps must
@@ -532,6 +588,34 @@ class Pilote:
         """The raw accessibility tree, kept next to the captures when the run fails."""
         return None
 
+    # The app's window read and clicked: its installer's (None, the only one until the guide), or the
+    # one with this title (GUIDE_TITRE).
+    fenetre_titre = None
+
+    def taper(self, texte):
+        """Types text in that window, as a user does on the keyboard (ASCII)."""
+        raise NotImplementedError
+
+    def tabulation(self):
+        """Tab, to the next field."""
+        raise NotImplementedError
+
+    def coller_image(self, png):
+        """A PNG in the clipboard, as a capture tool puts one (from memory, no file), then Cmd+V or Ctrl+V
+        in that window."""
+        raise NotImplementedError
+
+    # The guide's walk on this system: an account without Opus (Sonnet, the cautious mode) or not.
+    guide_prudent = False
+
+    def cerveau(self, home):
+        """Where the app put the brain."""
+        return Path(home) / "Documents" / "Brain"
+
+    def racines_traces(self, home):
+        """Where the guide could have left an image: the home, the temporary folders."""
+        return [Path(home), Path(tempfile.gettempdir())]
+
     def attendre(self, predicat, delai, horloge=time.monotonic, dormir=time.sleep, pas=1.0):
         fin = horloge() + delai
         while True:
@@ -545,7 +629,8 @@ JXA = r'''
 function run(argv) {
   var req = JSON.parse(argv[0]);
   var se = Application('System Events');
-  var out = req.op === 'cliquer' ? cliquer(se, req) : req.op === 'rapide' ? rapide(se, req) : lire(se, req);
+  var out = req.op === 'cliquer' ? cliquer(se, req) : req.op === 'rapide' ? rapide(se, req) :
+            req.op === 'clavier' ? clavier(se, req) : lire(se, req);
   return enc(out);
 }
 
@@ -724,6 +809,7 @@ function cliquer(se, req) {
   var count = 0;
   try { count = ws.length; } catch (e) {}
   for (var i = 0; i < count; i++) {
+    if (req.fenetre && norm(prop(ws[i], 'name')) !== norm(req.fenetre)) continue;
     var b = chercher(ws[i], label, 0);
     if (!b) continue;
     if (prop(b, 'enabled') === false) return {ok: false, pourquoi: 'inactif'};
@@ -734,6 +820,35 @@ function cliquer(se, req) {
     return {ok: false, pourquoi: 'ni souris ni AXPress (' + pourquoi + ')'};
   }
   return {ok: false, pourquoi: 'absent'};
+}
+
+// The keyboard, as a user types in the window: text, Tab, or a PNG put in the clipboard (from its
+// base64, no file) then Cmd+V. The app is brought to the front and the window raised first.
+function clavier(se, req) {
+  var running = [];
+  try { running = se.processes.name(); } catch (e) {}
+  if (running.indexOf(req.processus) < 0) return {ok: false, pourquoi: 'processus'};
+  var p = se.processes.byName(req.processus);
+  try { p.frontmost = true; } catch (e) {}
+  if (req.fenetre) {
+    try { p.windows.byName(req.fenetre).actions.byName('AXRaise').perform(); } catch (e) { return {ok: false, pourquoi: 'fenetre'}; }
+  }
+  delay(0.4);
+  if (req.png) {
+    ObjC.import('AppKit');
+    var pb = $.NSPasteboard.generalPasteboard;
+    pb.clearContents;
+    var data = $.NSData.alloc.initWithBase64EncodedStringOptions($(req.png), 0);
+    if (!pb.setDataForType(data, $('public.png'))) return {ok: false, pourquoi: 'presse-papiers'};
+    delay(0.2);
+    se.keystroke('v', {using: 'command down'});
+  } else if (req.touche === 'tab') {
+    se.keyCode(48);
+  } else {
+    se.keystroke(req.texte);
+  }
+  delay(0.3);
+  return {ok: true};
 }
 '''
 
@@ -944,14 +1059,17 @@ class PiloteMac(Pilote):
                          "ignorer": list(self.IGNORER)})
         self.dernier_arbre = res
         fen = [f for f in res.get("app") or [] if isinstance(f, dict)]
+        if self.fenetre_titre:
+            fen = [f for f in fen if norm(f.get("titre")) == norm(self.fenetre_titre)]
         dialogues = [dialogue_depuis_arbre(d.get("processus"), d.get("arbre")) for d in res.get("dialogues") or []
                      if isinstance(d, dict)]
         e = ecran_depuis_arbre(fen, [d for d in dialogues if d["textes"] or d["boutons"]])
-        self.statut = e.statut
+        # A quick read follows the place of the last full one among all the app's windows: not here.
+        self.statut = None if self.fenetre_titre else e.statut
         return e
 
     def rapide(self):
-        if not getattr(self, "statut", None):
+        if not getattr(self, "statut", None) or self.fenetre_titre:
             return None
         try:
             res = self._osa({"op": "rapide", "processus": self.processus, "fenetre": self.statut[0],
@@ -961,10 +1079,30 @@ class PiloteMac(Pilote):
         return dits_rapides(res.get("textes")) if res.get("ok") else None
 
     def cliquer(self, libelle, processus=None):
-        res = self._osa({"op": "cliquer", "processus": processus or self.processus, "libelle": libelle})
+        res = self._osa({"op": "cliquer", "processus": processus or self.processus, "libelle": libelle,
+                         "fenetre": None if processus else self.fenetre_titre})
         if not res.get("ok"):
             raise ErreurPilote("pas de clic sur « %s » (%s)" % (libelle, res.get("pourquoi")))
         return res.get("comment")
+
+    def _clavier(self, **req):
+        res = self._osa(dict(req, op="clavier", processus=self.processus, fenetre=self.fenetre_titre))
+        if not res.get("ok"):
+            raise ErreurPilote("le clavier n'atteint pas la fenêtre (%s)" % res.get("pourquoi"))
+
+    def taper(self, texte):
+        self._clavier(texte=texte)
+
+    def tabulation(self):
+        self._clavier(touche="tab")
+
+    def coller_image(self, png):
+        self._clavier(png=base64.b64encode(png).decode("ascii"))
+
+    def racines_traces(self, home):
+        out = Pilote.racines_traces(self, home)
+        rc, said = self._run(["/usr/bin/getconf", "DARWIN_USER_CACHE_DIR"], timeout=30)
+        return out + ([Path(said.strip())] if rc == 0 and said.strip() else [])
 
     def capturer(self, chemin):
         rc, out = self._run(["/usr/sbin/screencapture", "-x", "-t", "png", chemin], timeout=60)
@@ -1018,6 +1156,8 @@ def _uia(node):
         out["l"] = node["l"]
     if "x" in node:
         out["x"] = node["x"]
+    if rect_valide(node.get("b")):
+        out["b"] = node["b"]
     if role not in ("AXStaticText", "AXButton", "AXCheckBox"):
         out["k"] = [_uia(k) for k in node.get("k") or [] if isinstance(k, dict) and str(k.get("t")) not in UIA_CADRE]
     return out
@@ -1308,6 +1448,7 @@ class PiloteWindows(Pilote):
 
     machine = "PC"
     suffixe = "_windows-x64-setup.exe"
+    mesure_places = True
     neufs = ("Python (pour les automatismes)", LIGNE_GIT)
     # In front, yet no dialog: the desktop, the taskbar, a console.
     IGNORER = ("Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd", "ConsoleWindowClass",
@@ -1333,7 +1474,8 @@ class PiloteWindows(Pilote):
         if not csc.is_file():
             raise ErreurPilote("csc.exe absent (%s) : pas de .NET Framework 4 sur ce PC" % csc)
         refs = []
-        for name in ("UIAutomationClient.dll", "UIAutomationTypes.dll", "WindowsBase.dll", "System.Drawing.dll"):
+        for name in ("UIAutomationClient.dll", "UIAutomationTypes.dll", "WindowsBase.dll", "System.Drawing.dll",
+                     "System.Windows.Forms.dll"):
             found = next((d / name for d in (fw / "WPF", fw) if (d / name).is_file()), None)
             if found is None:
                 raise ErreurPilote("%s absent du .NET Framework (%s)" % (name, fw))
@@ -1345,9 +1487,9 @@ class PiloteWindows(Pilote):
             raise ErreurPilote("le pilote Windows ne compile pas (csc code %d : %s)" % (rc, out.strip()[-500:]))
         return exe
 
-    def _outil(self, args, timeout=120):
+    def _outil(self, args, timeout=120, entree=None):
         # No console window of its own: it would take the foreground from the window to click.
-        rc, out = self._run([self.outil] + [str(a) for a in args], timeout=timeout, creationflags=SANS_CONSOLE)
+        rc, out = self._run([self.outil] + [str(a) for a in args], timeout=timeout, creationflags=SANS_CONSOLE, entree=entree)
         try:
             res = json.loads(out.strip().splitlines()[-1])
         except (ValueError, IndexError):
@@ -1624,6 +1766,21 @@ class PiloteWindows(Pilote):
     def vivante(self):
         return self.proc is not None and self.proc.poll() is None
 
+    def ouvrir_encore(self, env, delai=30):
+        """The app opened a second time while its window is there: seconds the second process took to go
+        by itself, or None when it stayed (then killed, with everything it started)."""
+        debut = self.horloge()
+        try:
+            proc = subprocess.Popen([self.exe], env=env, cwd=os.path.dirname(self.exe), stdin=subprocess.DEVNULL,
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                    creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+        except OSError as e:
+            raise ErreurPilote("l'app ne se lance pas une deuxième fois (%s)" % (e.strerror or type(e).__name__))
+        if self.attendre(lambda: proc.poll() is not None, delai, self.horloge, self.dormir):
+            return round(self.horloge() - debut, 1)
+        self._run(["taskkill", "/PID", proc.pid, "/T", "/F"], timeout=60)
+        return None
+
     def fermer(self):
         """The window's X (WM_CLOSE), as a user quits; the process killed only if it stays."""
         if self.vivante() and self.hwnd is None:
@@ -1656,7 +1813,7 @@ class PiloteWindows(Pilote):
                 # A message box of the app itself.
                 self.dialogues_h[self.exe_nom()] = f.get("h")
                 dialogues.append(dialogue_depuis_arbre(self.exe_nom(), arbre))
-            else:
+            elif not self.fenetre_titre or norm(f.get("titre")) == norm(self.fenetre_titre):
                 fen.append({"titre": f.get("titre"), "arbre": arbre, "h": f.get("h")})
         d = res.get("devant")
         if isinstance(d, dict) and d.get("classe") not in self.IGNORER:
@@ -1667,7 +1824,9 @@ class PiloteWindows(Pilote):
             page = [f for f in fen if any(n.get("r") == "AXWebArea" for _, n in _aplatir(f["arbre"]))]
             self.hwnd = (page or fen)[0]["h"]
             self._devant(self.hwnd)
-        return ecran_depuis_arbre(fen, [d for d in dialogues if d["textes"] or d["boutons"]])
+        e = ecran_depuis_arbre(fen, [d for d in dialogues if d["textes"] or d["boutons"]])
+        e.zone = res.get("zone") if rect_valide(res.get("zone")) else None
+        return e
 
     def exe_nom(self):
         return nom_programme(self.exe or "brain-in-a-box.exe")
@@ -1688,6 +1847,35 @@ class PiloteWindows(Pilote):
         if not res.get("ok"):
             raise ErreurPilote("pas de clic sur « %s » (%s)" % (libelle, res.get("pourquoi")))
         return res.get("comment")
+
+    def _clavier(self, args, entree=None):
+        if not self.hwnd:
+            self.lire()
+        if not self.hwnd:
+            raise ErreurPilote("pas de fenêtre où taper")
+        res = self._outil([args[0], self.hwnd] + list(args[1:]), entree=entree)
+        if not res.get("ok"):
+            raise ErreurPilote("le clavier n'atteint pas la fenêtre (%s)" % res.get("pourquoi"))
+
+    def cerveau(self, home):
+        try:
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as k:
+                d = winreg.QueryValueEx(k, "BRAIN_DIR")[0]
+            if d:
+                return Path(d)
+        except OSError:
+            pass
+        return Pilote.cerveau(self, home)
+
+    def taper(self, texte):
+        self._clavier(["taper", texte])
+
+    def tabulation(self):
+        self._clavier(["touche", "tab"])
+
+    def coller_image(self, png):
+        self._clavier(["coller"], entree=base64.b64encode(png))
 
     def capturer(self, chemin):
         res = self._outil(["capturer", chemin], timeout=60)
@@ -1777,11 +1965,18 @@ def node(o, depth, budget):
         n["v"] = t
         return n
     if depth < 40:
-        for i in range(o.get_child_count()):
+        try:
+            count = o.get_child_count()
+        except Exception:
+            return n    # gone while read: the page changed under the reading (the guide replaces its screen)
+        for i in range(count):
             if budget[0] <= 0:
                 break
-            kid = o.get_child_at_index(i)
-            n["k"].append(node(kid, depth + 1, budget) if kid is not None else {"r": "", "n": "", "k": []})
+            try:
+                kid = o.get_child_at_index(i)
+                n["k"].append(node(kid, depth + 1, budget) if kid is not None else {"r": "", "n": "", "k": []})
+            except Exception:
+                n["k"].append({"r": "", "n": "", "k": []})
     return n
 
 
@@ -1854,6 +2049,8 @@ def bouton(req):
     label = norm(req["libelle"])
     for a in apps(req["app"])[-1:]:
         for w in windows(a):
+            if req.get("fenetre") and norm(w.get_name()) != norm(req["fenetre"]):
+                continue
             b = chercher(w, label)
             if b is None:
                 continue
@@ -2330,7 +2527,7 @@ class PiloteLinux(Pilote):
     def fenetre(self):
         """(X window, its place on the screen and its size) of the app, or None. xwininfo's absolute
         place: xdotool's counts the window manager's frame twice."""
-        rc, out = self._x("search", "--onlyvisible", "--name", "^%s$" % re.escape(TITRE_FENETRE))
+        rc, out = self._x("search", "--onlyvisible", "--name", "^%s$" % re.escape(self.fenetre_titre or TITRE_FENETRE))
         wid = next((w for w in out.split() if w.isdigit()), None) if rc == 0 else None
         if not wid:
             return None
@@ -2357,20 +2554,27 @@ class PiloteLinux(Pilote):
     def lire(self):
         if not self.vivante():
             return Ecran()
-        res = self._helper({"op": "lire", "app": NOM_ATSPI})
+        try:
+            res = self._helper({"op": "lire", "app": NOM_ATSPI})
+        except ErreurPilote:
+            # An element gone between two calls of AT-SPI: the page changed under the reading, read again.
+            self.dormir(0.5)
+            res = self._helper({"op": "lire", "app": NOM_ATSPI})
         self.dernier_arbre = res
         for f in res.get("app") or []:
             if isinstance(f, dict):
                 self.roles_decales.update(roles_decales(f.get("arbre")))
         fen = [{"titre": f.get("titre"), "arbre": arbre_atspi(f.get("arbre"))} for f in res.get("app") or [] if isinstance(f, dict)]
+        if self.fenetre_titre:
+            fen = [f for f in fen if norm(f["titre"]) == norm(self.fenetre_titre)]
         dialogues = [dialogue_depuis_arbre(d.get("processus"), arbre_atspi(d.get("arbre"))) for d in res.get("dialogues") or []
                      if isinstance(d, dict)]
         e = ecran_depuis_arbre(fen, [d for d in dialogues if d["textes"] or d["boutons"]])
-        self.statut = e.statut
+        self.statut = None if self.fenetre_titre else e.statut
         return e
 
     def rapide(self):
-        if not self.statut:
+        if not self.statut or self.fenetre_titre:
             return None
         try:
             res = self._helper({"op": "rapide", "app": NOM_ATSPI, "fenetre": self.statut[0], "chemin": list(self.statut[1])},
@@ -2395,13 +2599,13 @@ class PiloteLinux(Pilote):
         """The mouse on the middle of the button, as a user clicks: the window to the front, the button
         scrolled into view, its place in the window from AT-SPI (relative to the page: WebKitGTK's
         screen places leave out the window manager's frame), then nothing else under the pointer."""
-        res = self._helper({"op": "bouton", "app": NOM_ATSPI, "libelle": libelle})
+        res = self._helper({"op": "bouton", "app": NOM_ATSPI, "libelle": libelle, "fenetre": self.fenetre_titre})
         if not res.get("ok"):
             raise ErreurPilote("pas de clic sur « %s » (%s)" % (libelle, res.get("pourquoi")))
         pourquoi = self._souris(res)
         if pourquoi is None:
             return CLIC_SOURIS
-        res = self._helper({"op": "bouton", "app": NOM_ATSPI, "libelle": libelle, "presser": True})
+        res = self._helper({"op": "bouton", "app": NOM_ATSPI, "libelle": libelle, "presser": True, "fenetre": self.fenetre_titre})
         if not res.get("ok"):
             raise ErreurPilote("pas de clic sur « %s » (ni souris ni AT-SPI : %s)" % (libelle, pourquoi))
         return "action AT-SPI (pas de clic souris : %s)" % pourquoi
@@ -2424,8 +2628,49 @@ class PiloteLinux(Pilote):
         rc, out = self._x("click", "1")
         return None if rc == 0 else "xdotool click : %s" % out.strip()[-100:]
 
+    guide_prudent = True
+
+    def racines_traces(self, home):
+        return Pilote.racines_traces(self, home) + [Path("/tmp")]
+
+    def _devant(self):
+        f = self.fenetre()
+        if not f:
+            raise ErreurPilote("pas de fenêtre X où taper")
+        self._x("windowactivate", "--sync", f[0])
+        return f[0]
+
+    def taper(self, texte):
+        self._devant()
+        rc, out = self._x("type", "--delay", "40", "--", texte, timeout=60)
+        if rc != 0:
+            raise ErreurPilote("xdotool type : %s" % out.strip()[-100:])
+
+    def tabulation(self):
+        self._devant()
+        self._x("key", "--clearmodifiers", "Tab")
+
+    def coller_image(self, png):
+        """xclip holds the image as the clipboard's owner, as a capture tool does, until the next copy."""
+        if not shutil.which("xclip"):
+            rc, out = self._run(["sudo", "-n", "apt-get", "install", "-y", "-q", "xclip"], timeout=600,
+                                env=dict(os.environ, DEBIAN_FRONTEND="noninteractive"))
+            if rc != 0:
+                raise ErreurPilote("xclip ne s'installe pas : %s" % out.strip()[-200:])
+        try:
+            p = subprocess.Popen(["xclip", "-selection", "clipboard", "-t", "image/png", "-i"], stdin=subprocess.PIPE,
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=self._env_outils())
+            p.communicate(png, timeout=30)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            raise ErreurPilote("xclip : %s" % e)
+        if p.returncode != 0:
+            raise ErreurPilote("xclip n'a pas pris l'image (code %d)" % p.returncode)
+        self._devant()
+        self._x("key", "--clearmodifiers", "ctrl+v")
+
     def capturer(self, chemin):
-        rc, out = self._run(["import", "-window", "root", "png:%s" % chemin], timeout=60, env=self._env_outils())
+        # 8-bit RGB always (ImageMagick would write a palette for a screen of few colours): the guide's ring is read in it.
+        rc, out = self._run(["import", "-window", "root", "png24:%s" % chemin], timeout=60, env=self._env_outils())
         if rc != 0 or not Path(chemin).is_file() or Path(chemin).stat().st_size == 0:
             raise ErreurPilote("pas de capture de l'écran (import code %d : %s)" % (rc, out.strip()[-200:]))
 
@@ -2464,6 +2709,7 @@ class Parcours:
         # « Importer ma mémoire » from the end: "aller" to the copy-paste, "retour" back to the end, else None.
         self.marche = None
         self.arrive = horloge()  # when the current screen showed
+        self.principaux = {}    # {screen: {"bouton", "place", "zone"}}: the main buttons measured, whole on the screen
 
     def secondes(self):
         return int(self.horloge() - self.debut)
@@ -2574,7 +2820,7 @@ class Parcours:
         if self.marche == "aller" and cle == "fini":
             return "Importer ma mémoire"
         if cle == "import-choix":
-            return "Je copie-colle une réponse" if self.marche == "aller" else "Retour"
+            return "Je copie-colle (2 min)" if self.marche == "aller" else "Retour"
         if cle == "import-collage":
             return "Retour"
         if cle in ("connexion", "connexion-chatgpt"):
@@ -2587,12 +2833,15 @@ class Parcours:
             return None
         if cle == "deja-installe":
             self.echouer("au premier lancement, l'app dit que tout est déjà installé : la VM n'est pas neuve")
-        return {"diagnostic": "Tout installer", "voyage": "Passer (recherche par mots-clés)",
-                "connexion-installation": "Plus tard"}.get(cle)
+        if cle == "voyage":
+            self.echouer("l'app demande une clé Voyage avant la fin de l'installation : c'est une option de la fin")
+        if cle == "diagnostic" and e.bouton(DETAIL) is not None:
+            return DETAIL
+        return {"diagnostic": "Tout installer", "connexion-installation": "Plus tard"}.get(cle)
 
-    def avancer(self, but, delai, relance=False):
+    def avancer(self, but, delai, relance=False, prefixe=None):
         """Until the screen `but`, within delai seconds. Returns {screen: first Ecran of it}."""
-        prefixe = "relance-" if relance else ""
+        prefixe = prefixe if prefixe is not None else "relance-" if relance else ""
         debut = self.horloge()
         fin = debut + delai if self.echeance is None else min(debut + delai, self.echeance)
         cle_prec, depuis, capture_prec, clic = None, 0.0, 0.0, None
@@ -2607,8 +2856,12 @@ class Parcours:
             elif now - capture_prec >= CAPTURE_ATTENTE:
                 capture_prec = now
                 self.capturer("%s%s-%dmin" % (prefixe, cle, int((now - depuis) // 60)))
-            if cle not in vus or (vus[cle].partiel and not e.partiel):
+            # The fullest read of a screen: the diagnosis once its lines are unfolded.
+            if cle not in vus or (vus[cle].partiel and not e.partiel) or (
+                    cle == "diagnostic" and not e.partiel and len(e.textes) > len(vus[cle].textes)):
                 vus[cle] = e
+            if not e.partiel:
+                self.mesurer(prefixe + cle, cle, e)
             if cle == but and not e.partiel:
                 self.ecrans[-1]["duree_s"] = 0
                 return vus
@@ -2618,12 +2871,15 @@ class Parcours:
                 # The page's accessibility tree may show the words before the buttons: read it all again.
                 self.forcer = True
             if state:
+                # Another button of the same screen (« Voir le détail », then « Tout installer »): clicked now.
+                if clic is not None and clic[2] != label:
+                    clic = None
                 if clic is None or now - clic[0] >= CLIC_RELANCE:
                     if clic is not None and clic[1] >= CLIC_ESSAIS:
                         self.echouer("le clic sur « %s » ne change rien (%d essais)" % (label, clic[1]))
                     how = self.p.cliquer(label)
                     self.clics.append({"a_s": self.secondes(), "ecran": prefixe + cle, "bouton": label, "comment": how})
-                    clic = (now, (clic[1] if clic else 0) + 1)
+                    clic = (now, (clic[1] if clic else 0) + 1, label)
             elif label and now - depuis >= CLIC_RELANCE * CLIC_ESSAIS:
                 self.echouer("l'écran « %s » n'offre pas le bouton « %s »%s" % (cle, label, " (désactivé)" if state is False else ""))
             if cle in ("inconnu", "chargement", "sans-fenetre") and now - depuis >= INCONNU_MAX:
@@ -2633,6 +2889,22 @@ class Parcours:
                     cle, int((now - debut) // 60), "" if fin == debut + delai else " (fin du temps du scénario)"))
             self.dormir(POLL)
 
+    def mesurer(self, nom, cle, e):
+        """The screen's main button, once it is in the tree: a user sees it whole, inside the screen's usable
+        area (a window taller than a laptop's screen hid it under the taskbar)."""
+        libelle = next((b for b in (x.format(machine=self.p.machine) for x in PRINCIPAUX.get(cle, ()))
+                        if e.bouton(b) is not None), None)
+        if not libelle or nom in self.principaux:
+            return
+        cache = cache_du_bouton(e, libelle)
+        if cache is None:
+            return
+        self.principaux[nom] = {"bouton": libelle, "place": e.places.get(norm(libelle)), "zone": e.zone}
+        if cache:
+            self.capturer(nom + "-bouton-cache")
+            self.echouer("écran « %s » : le bouton « %s » sort de l'écran utile (%s) : un utilisateur ne le voit pas en entier"
+                         % (nom, libelle, cache))
+
     def lancer(self, env, prefixe=""):
         self.t("app-%slancement" % prefixe)
         self.precedent, self.forcer = None, True
@@ -2640,6 +2912,12 @@ class Parcours:
         if not self.p.attendre(lambda: self.lire().fenetre, DELAI_FENETRE, self.horloge, self.dormir):
             self.capturer(prefixe + "sans-fenetre")
             self.echouer("aucune fenêtre %d s après l'ouverture de l'app" % DELAI_FENETRE)
+        if not prefixe and self.p.ouvrir_encore:
+            # The user double-clicks again: still one Bibo, the first one.
+            pris = self.p.ouvrir_encore(env)
+            self.t.details["deuxieme_ouverture_s"] = pris
+            self.t.check(pris is not None, "l'app ouverte une deuxième fois reste ouverte : deux Bibo à la fois")
+            self.t.check(self.p.vivante(), "l'app ouverte une deuxième fois a fermé la première")
 
     def importer(self):
         """« Importer ma mémoire » from the end: its choice, the copy-paste showing the sentence to paste,
@@ -2673,20 +2951,28 @@ class Parcours:
         vus = self.avancer("fini", DELAI_PREMIER)
         for must in ("bienvenue", "choix", "diagnostic", "etape-codex", "connexion-chatgpt") if self.codex else ("bienvenue", "diagnostic"):
             self.t.check(must in vus, "le parcours n'est pas passé par l'écran « %s »" % must)
+        if self.p.mesure_places:
+            for cle in ("diagnostic",) if self.codex else ("bienvenue", "diagnostic"):
+                self.t.check(cle in self.principaux, "écran « %s » : le bouton principal n'a pas été mesuré (le pilote ne donne "
+                                                      "plus la place des boutons ou la zone utile de l'écran)" % cle)
         fini = vus["fini"]
         if self.codex:
             self.t.check("etape-claude" not in vus, "l'app a installé Claude Code alors que seul Codex est choisi")
             self.t.check(fini.texte.startswith("Codex retient"), "l'écran final ne nomme pas Codex : « %s »" % fini.texte)
             # The robot put the ChatGPT login off: Codex is used on that login only (§4.3), so it comes first.
-            self.t.check(fini.bouton("Personnaliser mon cerveau (15 min)") is None,
-                         "l'écran final propose de personnaliser le cerveau avec un Codex qui n'est pas connecté à ChatGPT")
+            self.t.check(fini.bouton("Présente-toi à Codex (15 min)") is None,
+                         "l'écran final propose de se présenter à un Codex qui n'est pas connecté à ChatGPT")
             self.t.check(any("Sign in with ChatGPT" in x for x in fini.textes), "l'écran final ne dit pas de choisir « Sign in with ChatGPT »")
-            boutons = ("Connecter Codex à mon compte ChatGPT", "Ouvrir mon cerveau dans Obsidian")
+            boutons = ("Connecter Codex à mon compte ChatGPT", "Voir mes notes")
         else:
             # Claude alone: the words of before Codex (all of them: app/dev/screens.mjs, in the tests).
             self.t.check("pour Claude" in vus["bienvenue"].texte, "la bienvenue ne parle pas de Claude : « %s »" % vus["bienvenue"].texte)
-            self.t.check(fini.texte.startswith("Claude retient"), "l'écran final ne nomme pas Claude : « %s »" % fini.texte)
-            boutons = ("Personnaliser mon cerveau (15 min)", "Ouvrir mon cerveau dans Obsidian")
+            # The robot put Claude's login off: the end is not « prêt », it asks for the login first, and
+            # opens nothing of Claude Code before it.
+            self.t.check(fini.titre.startswith("Presque prêt"), "l'écran final se dit prêt sans compte Claude : « %s »" % fini.titre)
+            self.t.check(fini.bouton("Présente-toi à Claude (15 min)") is None,
+                         "l'écran final propose de se présenter à Claude, qui n'est pas connecté")
+            boutons = ("Connecter mon compte Claude", "Voir mes notes")
         for b in boutons + ("Importer ma mémoire",):
             self.t.check(fini.bouton(b) is not None, "l'écran final n'a pas le bouton « %s »" % b)
         # Bibo's advice: at the diagnosis, or where Codex is open on the choice screen (the app's own words).
@@ -2711,11 +2997,141 @@ class Parcours:
         if self.codex:
             self.t.check("choix" in vus, "au deuxième lancement, l'app n'a pas redemandé quelle IA")
         else:
-            # Claude Code and the brain are there now: the welcome offers the guide.
+            # Claude Code and the brain are there now, Claude's login still put off (no account on these VMs):
+            # the welcome asks for it, the guide needs it.
             retour = vus.get("bienvenue-retour")
             self.t.check(retour is not None, "au deuxième lancement, l'app ne dit pas « Content de te revoir »")
-            self.t.check(retour is None or retour.bouton(GUIDE) is not None, "au deuxième lancement, l'accueil ne propose pas « %s »" % GUIDE)
+            self.t.check(retour is None or (retour.bouton(CONNECTER) is not None and retour.bouton(GUIDE) is None),
+                         "au deuxième lancement, sans compte Claude, l'accueil ne demande pas « %s » avant le guide" % CONNECTER)
         return vus
+
+    # ── The guide (§9): a third launch, its window walked to the procedure in the brain ──
+
+    def guide(self, env, images, prudent=False):
+        """From the welcome's « Guide-moi dans un logiciel » to the procedure in the brain, as a user: G1
+        read, the program and the goal typed, a capture pasted (Cmd/Ctrl+V) and sent, the step and its
+        ellipse, « C'est fait », a second capture, the end, the procedure saved, the guide closed.
+        images: {"debut": PNG, "fait": PNG}, pasted in turn; prudent: no Opus for the account (the fake
+        refuses it), Sonnet's dotted ellipse expected. Returns what was seen."""
+        vu = {"ecrans": [], "collages": [], "saisie": None, "temoin": None, "etape": None}
+        self.lancer(env, "guide-")
+        self.avancer("bienvenue-retour", DELAI_RELANCE, relance=True, prefixe="guide-")
+        self.forcer = True
+        how = self.p.cliquer(GUIDE)
+        self.clics.append({"a_s": self.secondes(), "ecran": "guide-bienvenue-retour", "bouton": GUIDE, "comment": how})
+        self.p.fenetre_titre = GUIDE_TITRE
+        self.precedent, self.forcer = None, True
+        try:
+            self.marcher_guide(images, prudent, vu)
+        finally:
+            self.p.fenetre_titre = None
+            self.precedent, self.forcer = None, True
+        return vu
+
+    def marcher_guide(self, images, prudent, vu):
+        p, t = self.p, self.t
+        debut = self.horloge()
+        fin = debut + DELAI_GUIDE if self.echeance is None else min(debut + DELAI_GUIDE, self.echeance)
+        cle_prec, depuis, clic, faits = None, 0.0, None, set()
+        while True:
+            e = self.lire()
+            cle = cle_guide(e)
+            now = self.horloge()
+            if cle != cle_prec:
+                cle_prec, depuis, clic = cle, now, None
+                if cle == "sans-fenetre" and "enregistre" in vu["ecrans"]:
+                    return      # « Fermer le guide »: its window went
+                self.entrer(cle, "guide-")
+                vu["ecrans"].append(cle)
+            action = None
+            if cle == "inconnu":
+                if now - depuis >= INCONNU_GUIDE:
+                    self.echouer("le guide montre un écran inattendu")
+            elif cle in ATTENTES_GUIDE:
+                if now - depuis >= (DELAI_FENETRE if cle == "sans-fenetre" else 90):
+                    self.echouer("le guide reste sur « %s » depuis %d s" % (cle, int(now - depuis)))
+            elif cle == "comment":
+                action = ("cliquer", "J'ai compris")
+            elif cle == "objectif":
+                if "objectif" not in faits:
+                    faits.add("objectif")
+                    # The field of the program has the focus: the program, Tab, the goal.
+                    p.taper(LOGICIEL_GUIDE)
+                    p.tabulation()
+                    p.taper(OBJECTIF_GUIDE)
+                    vu["saisie"] = "clavier"
+                    self.forcer = True
+                    continue
+                action = ("cliquer", "Continuer")
+            elif cle in ("coller-debut", "coller-fait"):
+                action = ("coller", cle.split("-", 1)[1])
+            elif cle == "apercu":
+                if "temoin" not in faits:
+                    # Before any answer, no ellipse on the screen: the ring's reading proves nothing otherwise.
+                    faits.add("temoin")
+                    vu["temoin"] = self.lire_anneaux(self.captures[-1])
+                    t.check(vu["temoin"]["boutons_verts"] >= 1, "l'aperçu ne montre pas la capture collée (aucun bouton vert)")
+                    t.check(not vu["temoin"]["entoures"], "une ellipse rouge sur l'aperçu, avant toute réponse de Claude")
+                t.check(e.bouton("Refaire la capture") is None, "l'aperçu dit « la même capture que la dernière fois »")
+                action = ("cliquer", "Envoyer à Claude")
+            elif cle == "etape":
+                if "etape" not in faits:
+                    faits.add("etape")
+                    vu["etape"] = self.verifier_etape(e, prudent)
+                action = ("cliquer", "C'est fait")
+            elif cle == "fin":
+                # The summary's step is checked in the note it becomes (AT-SPI names a list item, no text).
+                action = ("cliquer", "Enregistrer cette procédure")
+            elif cle == "enregistrer":
+                action = ("cliquer", "Enregistrer dans mon cerveau")
+            elif cle == "enregistre":
+                vu["enregistre"] = e.titre
+                action = ("cliquer", "Fermer le guide")
+            if action and (clic is None or now - clic[0] >= CLIC_RELANCE):
+                if clic is not None and clic[1] >= CLIC_ESSAIS:
+                    self.echouer("« %s » ne change rien sur l'écran « %s » du guide (%d essais)" % (action[1], cle, clic[1]))
+                if action[0] == "coller":
+                    p.coller_image(images[action[1]])
+                    vu["collages"].append(action[1])
+                    clic = (now, (clic[1] if clic else 0) + 1)
+                    self.forcer = True
+                else:
+                    state = e.bouton(action[1])
+                    if state:
+                        how = p.cliquer(action[1])
+                        self.clics.append({"a_s": self.secondes(), "ecran": "guide-" + cle, "bouton": action[1], "comment": how})
+                        clic = (now, (clic[1] if clic else 0) + 1)
+                    else:
+                        self.forcer = True
+                        if now - depuis >= CLIC_RELANCE * CLIC_ESSAIS:
+                            self.echouer("l'écran « %s » du guide n'offre pas le bouton « %s »%s" % (
+                                cle, action[1], " (désactivé)" if state is False else ""))
+            if now >= fin:
+                self.echouer("toujours sur l'écran « %s » du guide après %d min" % (cle, int((now - debut) // 60)))
+            self.dormir(POLL)
+
+    def lire_anneaux(self, nom):
+        """The green buttons of the capture `nom` and those a red ring goes round."""
+        w, h, px = ecrans().lire_png((self.dossier / nom).read_bytes())
+        trouves = anneaux(w, h, px)
+        return {"capture": nom, "boutons_verts": len(trouves), "entoures": [a["boite"] for a in entoures(trouves)],
+                "cotes": [a["cotes"] for a in trouves]}
+
+    def verifier_etape(self, e, prudent):
+        """The step: Claude's sentence, the ellipse the page says it drew (full for Opus, dotted for the
+        cautious mode), and on a capture of the screen a red ring round the green button."""
+        t = self.t
+        t.check(norm(REPONSES_GUIDE["debut"]["consigne"]) in e.textes, "l'étape ne montre pas la consigne de Claude")
+        attendu = ANNEAU_POINTILLE if prudent else ANNEAU_PLEIN
+        t.check(norm(attendu) in e.textes, "l'étape ne dit pas « %s »" % attendu)
+        dit_prudent = any(x.startswith(PRUDENT) for x in e.textes)
+        t.check(dit_prudent == prudent, "l'étape %s le mode prudent" % ("ne dit pas" if prudent else "dit à tort"))
+        self.dormir(1.0)
+        vu = self.lire_anneaux(self.capturer("guide-etape-anneau"))
+        t.check(vu["entoures"], "aucune ellipse rouge autour du bouton vert sur la capture de l'étape (%d bouton(s) vert(s), "
+                                "côtés : %s)" % (vu["boutons_verts"], vu["cotes"]))
+        vu.update(niveau="pointille" if prudent else "plein", prudent=dit_prudent)
+        return vu
 
     def sur_echec(self):
         """A last capture and the raw tree next to it, for whoever reads the failure."""
@@ -2737,12 +3153,352 @@ class Parcours:
         mean = lambda xs: int(sum(xs) / len(xs)) if xs else None
         return {"captures": self.captures, "ecrans": self.ecrans, "clics": self.clics,
                 "dialogues_systeme": [{k: v for k, v in d.items() if k != "clic_a"} for d in self.dialogues],
-                "bibo": {"titre": self.dernier.titre, "texte": self.dernier.texte},
+                "bibo": {"titre": self.dernier.titre, "texte": self.dernier.texte}, "boutons_principaux": self.principaux,
                 "dernier_ecran": dict(self.dernier.resume(), lecture=self.dernier.lecture), "lecture_fenetre_ms": {"pleine": mean(self.lectures), "rapide": mean(self.rapides),
                                                            "lectures": [len(self.lectures), len(self.rapides)]}}
 
 
-# --------------------------------------------------------------------------- getting the app
+# --------------------------------------------------------------------------- the guide (docs/proposals/guide.md §9)
+
+# The guide's window (lib.rs, open_guide) and the installer's.
+GUIDE_TITRE = "Bibo, ton guide"
+APP_TITRE = TITRE_FENETRE
+# What the robot types, ASCII (System Events' keystroke): a made-up program and what to do in it.
+LOGICIEL_GUIDE, OBJECTIF_GUIDE = "Atelier Demo", "Faire une facture"
+# The fake Claude's answers (engine/tests/fake_claude.py, scenario "guide"): « Nouveau », then done.
+REPONSES_GUIDE = {
+    "debut": {"etat": "etape", "consigne": "Clique sur « Nouveau », en haut à gauche, sous le titre.", "libelle": "Nouveau",
+              "cible": "vert", "confiance": 0.92, "question": None, "choix": [], "precedente": "sans_objet",
+              "action_sensible": False, "suspect": False, "resume_etape": "Clique sur « Nouveau » en haut à gauche."},
+    "fait": {"etat": "termine", "consigne": "La facture est enregistrée : c'est fait !", "libelle": None, "cible": None,
+             "confiance": 0.95, "question": None, "choix": [], "precedente": "faite", "action_sensible": False, "suspect": False,
+             "resume_etape": "Clique sur « Valider »."},
+}
+ETAPE_ENREGISTREE = "1. Clique sur « Nouveau » en haut à gauche."
+# Bibo's titles in the guide's window (app/src/guide.js), after norm(): the screen they stand for.
+ECRANS_GUIDE = (
+    ("charge", "Je prépare le guide"),
+    ("comment", "Comment je regarde ton écran"),
+    ("objectif", "Qu'est-ce que tu veux faire ?"),
+    ("coller-debut", "Montre-moi ta fenêtre."),
+    ("coller-fait", "Montre-moi où tu en es."),
+    ("lecture", "Je lis ton image"),
+    ("apercu", "Voici ce que Claude va voir."),
+    ("regarde", "Claude regarde ta fenêtre"),
+    ("etape", "Étape "),
+    ("fin", "Bravo, c'est fait !"),
+    ("brouillon", "Je prépare la procédure"),
+    ("enregistrer", "Je l'écris dans ton cerveau ?"),
+    ("enregistre", "Enregistré dans "),
+)
+ATTENTES_GUIDE = {"sans-fenetre", "chargement", "charge", "lecture", "regarde", "brouillon"}
+# On the step: what the page says for the screen reader with its ellipse, Opus's full one or Sonnet's dotted one.
+ANNEAU_PLEIN = "Sur l'image, « Nouveau » est entouré en rouge."
+ANNEAU_POINTILLE = "Sur l'image, la zone à vérifier est entourée en pointillés."
+PRUDENT = "Mode prudent"
+DELAI_GUIDE = 6 * 60
+INCONNU_GUIDE = 30
+# The ellipse's red (styles.css, .ring ellipse and .zoom-ring) and the button's green (ecrans_guide.VERT).
+ROUGE, VERT = (229, 38, 43), (20, 160, 60)
+
+
+def cle_guide(e):
+    """The guide's screen the window shows: a known one, an error said in Bibo's words, or « inconnu »."""
+    if not e.fenetre:
+        return "sans-fenetre"
+    if not e.titre:
+        return "chargement"
+    for key, start in ECRANS_GUIDE:
+        if e.titre.startswith(norm(start)):
+            return key
+    return "inconnu"
+
+
+def masque(px, i, couleur, ecart):
+    r, g, b = px[i], px[i + 1], px[i + 2]
+    return abs(r - couleur[0]) <= ecart and abs(g - couleur[1]) <= ecart and abs(b - couleur[2]) <= ecart
+
+
+def anneaux(w, h, px):
+    """[(the green box on the screen, the sides of it where the ring's red is found)] of a capture (RGB):
+    each green button and whether an ellipse is around it, as Bibo draws it on the image and its zoom."""
+    vert = bytearray(w * h)
+    for y in range(h):
+        row = y * w
+        for x in range(w):
+            if masque(px, (row + x) * 3, VERT, 45):
+                vert[row + x] = 1
+    boites = []
+    for start in range(w * h):
+        if not vert[start]:
+            continue
+        pile, x0, y0, x1, y1, n = [start], w, h, 0, 0, 0
+        vert[start] = 0
+        while pile:
+            i = pile.pop()
+            x, y = i % w, i // w
+            n += 1
+            x0, y0, x1, y1 = min(x0, x), min(y0, y), max(x1, x), max(y1, y)
+            for j in (i - 1 if x else -1, i + 1 if x + 1 < w else -1, i - w, i + w):
+                if 0 <= j < w * h and vert[j]:
+                    vert[j] = 0
+                    pile.append(j)
+        if n >= 40 and x1 - x0 >= 6 and y1 - y0 >= 3:
+            boites.append((x0, y0, x1, y1))
+    out = []
+    for x0, y0, x1, y1 in boites:
+        bw, bh = x1 - x0 + 1, y1 - y0 + 1
+        cx, cy = (x0 + x1) // 2, (y0 + y1) // 2
+        dx, dy = bw // 2 + 14, bh // 2 + 14
+
+        def rouge(xs, ys):
+            return any(0 <= x < w and 0 <= y < h and masque(px, (y * w + x) * 3, ROUGE, 60) for y in ys for x in xs)
+        cotes = [c for c, ok in (
+            ("gauche", rouge(range(x0 - dx, x0), range(cy - bh // 2, cy + bh // 2 + 1))),
+            ("droite", rouge(range(x1 + 1, x1 + 1 + dx), range(cy - bh // 2, cy + bh // 2 + 1))),
+            ("haut", rouge(range(cx - bw // 4, cx + bw // 4 + 1), range(y0 - dy, y0))),
+            ("bas", rouge(range(cx - bw // 4, cx + bw // 4 + 1), range(y1 + 1, y1 + 1 + dy)))) if ok]
+        out.append({"boite": [x0, y0, bw, bh], "cotes": cotes})
+    return out
+
+
+def entoures(trouves):
+    """The green buttons a ring goes round: red on three of its sides at least (a dotted ring has gaps)."""
+    return [a for a in trouves if len(a["cotes"]) >= 3]
+
+
+def note_du_guide(cerveau, depuis):
+    """(the procedure note the guide wrote, its text) in the brain's Guides/ since `depuis`, or why not."""
+    dossier = Path(cerveau) / "Guides"
+    notes = [p for p in sorted(dossier.glob("*.md")) if p.stat().st_mtime >= depuis] if dossier.is_dir() else []
+    if len(notes) != 1:
+        return None, "%d note(s) neuve(s) dans %s (une attendue)" % (len(notes), dossier)
+    texte = notes[0].read_text(encoding="utf-8")
+    for must in ('source: "bibo-guide"', 'logiciel: "%s"' % LOGICIEL_GUIDE, "allowed-tools: []", ETAPE_ENREGISTREE):
+        if must not in texte:
+            return None, "la note %s n'a pas « %s »" % (notes[0].name, must)
+    return notes[0], None
+
+
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+TRACES_MAX = 64 * 1024 * 1024
+
+
+def montrer(p, home):
+    """A path as the report shows it, the same on the 3 OS: ~/… under home, with slashes."""
+    try:
+        return "~/" + Path(p).relative_to(home).as_posix()
+    except ValueError:
+        return Path(p).as_posix()
+
+
+def traces_du_guide(racines, depuis, exclus, fragments, dossiers_app):
+    """[(file, why)] of the files written since `depuis` under `racines` (`exclus` left out, links not
+    followed): one that holds a fragment of an image of the guide (the captures pasted, those sent to
+    Claude, their base64), or a PNG anywhere in it, in a folder of the app (`dossiers_app`: words of
+    its paths, its identifier). Bibo keeps neither image nor answer on the disk (§5)."""
+    exclus = [os.path.normcase(os.path.abspath(str(e))) for e in exclus]
+    vus, out = set(), []
+    for racine in racines:
+        for dirpath, dirnames, filenames in os.walk(str(racine)):
+            here = os.path.normcase(os.path.abspath(dirpath))
+            if any(here == e or here.startswith(e + os.sep) for e in exclus):
+                dirnames[:] = []
+                continue
+            for fn in filenames:
+                p = os.path.join(dirpath, fn)
+                key = os.path.normcase(os.path.abspath(p))
+                if key in vus or os.path.islink(p):
+                    continue
+                vus.add(key)
+                try:
+                    st = os.stat(p)
+                    if st.st_mtime < depuis or not stat.S_ISREG(st.st_mode) or st.st_size > TRACES_MAX:
+                        continue
+                    with open(p, "rb") as f:
+                        data = f.read()
+                except OSError:
+                    continue
+                if any(frag and frag in data for frag in fragments):
+                    out.append((p, "un morceau d'une image du guide"))
+                elif PNG_SIGNATURE in data and any(m in key for m in dossiers_app):
+                    out.append((p, "une image PNG dans un dossier de l'app"))
+    return out
+
+
+RELAIS_CS = r'''// claude.exe of the field test "app" (terrain_app.py): runs the fake Claude with the harness' Python,
+// its arguments quoted as Windows reads them back, its stdin handed down as is (a stdin redirected by .NET
+// starts with the BOM of its writer's encoding), its stdout and stderr passed through.
+using System;
+using System.Diagnostics;
+using System.IO;
+using System.Text;
+using System.Threading;
+
+static class Relais
+{
+    const string PYTHON = @"__PYTHON__";
+    const string FAUX = @"__FAUX__";
+
+    static string Quote(string a)
+    {
+        if (a.Length > 0 && a.IndexOfAny(new char[] { ' ', '\t', '\n', '\v', '"' }) < 0) return a;
+        StringBuilder b = new StringBuilder("\"");
+        for (int i = 0; i < a.Length; i++)
+        {
+            int bs = 0;
+            while (i < a.Length && a[i] == '\\') { bs++; i++; }
+            if (i == a.Length) { b.Append('\\', bs * 2); break; }
+            if (a[i] == '"') { b.Append('\\', bs * 2 + 1); b.Append('"'); }
+            else { b.Append('\\', bs); b.Append(a[i]); }
+        }
+        b.Append('"');
+        return b.ToString();
+    }
+
+    static void Copy(Stream from, Stream to)
+    {
+        byte[] buf = new byte[65536];
+        int n;
+        while ((n = from.Read(buf, 0, buf.Length)) > 0) { to.Write(buf, 0, n); to.Flush(); }
+    }
+
+    static int Main(string[] args)
+    {
+        StringBuilder line = new StringBuilder("-I " + Quote(FAUX));
+        foreach (string a in args) line.Append(' ').Append(Quote(a));
+        ProcessStartInfo psi = new ProcessStartInfo(PYTHON, line.ToString());
+        psi.UseShellExecute = false;
+        psi.CreateNoWindow = true;
+        psi.RedirectStandardOutput = true;
+        psi.RedirectStandardError = true;
+        using (Process p = Process.Start(psi))
+        {
+            Stream o = Console.OpenStandardOutput(), e = Console.OpenStandardError();
+            Thread to = new Thread(delegate () { Copy(p.StandardOutput.BaseStream, o); });
+            Thread te = new Thread(delegate () { Copy(p.StandardError.BaseStream, e); });
+            to.Start();
+            te.Start();
+            p.WaitForExit();
+            to.Join();
+            te.Join();
+            return p.ExitCode;
+        }
+    }
+}
+'''
+FAUX_CLAUDE = Path(__file__).resolve().with_name("fake_claude.py")
+
+
+def poser_faux_claude(home, exe, travail, prudent):
+    """The fake Claude at exe, where the app finds Claude Code, the real one set aside, and its settings
+    (~/.claude/fake): the guide's scenario, its two answers, Opus refused when `prudent`. On Windows (an
+    .exe) a relay compiled by the .NET Framework's csc, since the app runs no .cmd. Returns where the real
+    one waits."""
+    home, exe = Path(home), Path(exe)
+    Path(travail).mkdir(parents=True, exist_ok=True)
+    vrai = exe.with_name(exe.name + ".terrain-vrai")
+    os.replace(str(exe), str(vrai))
+    fake = home / ".claude" / "fake"
+    if fake.exists():
+        shutil.rmtree(str(fake))
+    (fake / "guide").mkdir(parents=True)
+    (fake / "scenario").write_text("guide", encoding="utf-8")
+    (fake / "version").write_text("2.1.306 (Claude Code)", encoding="utf-8")
+    for demande, answer in REPONSES_GUIDE.items():
+        (fake / "guide" / (demande + ".json")).write_text(json.dumps(answer, ensure_ascii=False), encoding="utf-8")
+    if prudent:
+        (fake / "refuse-opus").write_text("", encoding="utf-8")
+    if exe.suffix == ".exe":
+        src = Path(travail) / "relais-claude.cs"
+        src.write_text(RELAIS_CS.replace("__PYTHON__", sys.executable.replace('"', '""'))
+                       .replace("__FAUX__", str(FAUX_CLAUDE).replace('"', '""')), encoding="ascii")
+        csc = Path(os.environ.get("WINDIR") or r"C:\Windows") / "Microsoft.NET" / "Framework64" / "v4.0.30319" / "csc.exe"
+        p = subprocess.run([str(csc), "/nologo", "/target:exe", "/optimize+", "/out:%s" % exe, str(src)],
+                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=300, creationflags=SANS_CONSOLE)
+        if p.returncode != 0 or not exe.is_file():
+            os.replace(str(vrai), str(exe))
+            raise ErreurPilote("le claude.exe relais ne compile pas : %s" % p.stdout.decode("utf-8", "replace")[-300:])
+    else:
+        exe.write_text("#!/bin/sh\nexec '%s' -I '%s' \"$@\"\n" % (sys.executable, FAUX_CLAUDE), encoding="utf-8")
+        os.chmod(str(exe), 0o755)
+    return vrai
+
+
+def rendre_vrai_claude(exe, vrai):
+    if Path(vrai).exists():
+        if Path(exe).exists():
+            os.remove(str(exe))
+        os.replace(str(vrai), str(exe))
+
+
+_ECRANS = []
+
+
+def ecrans():
+    """engine/tests/ecrans_guide.py, loaded from its path (this folder never goes on sys.path)."""
+    if not _ECRANS:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("ecrans_guide", str(Path(__file__).resolve().with_name("ecrans_guide.py")))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _ECRANS.append(module)
+    return _ECRANS[0]
+
+
+def guide_terrain(t, parcours, pilote, home, env, captures, travail):
+    """The guide on a third launch (Claude alone): the fake Claude in Claude Code's place, the walk, then
+    what it must have left (the procedure) and must not (an image), the calls the fake got, and on Windows
+    the windows' commands kept apart. Returns the details."""
+    prudent = pilote.guide_prudent
+    t("app-guide-faux-claude")
+    debut = time.time()
+    exe = next(places[0] for name, places in pilote.outils(home) if name == "Claude Code")
+    if not Path(exe).exists():
+        raise ErreurPilote("pas de Claude Code à %s : l'app ne l'a pas installé" % exe)
+    vrai = poser_faux_claude(home, exe, travail, prudent)
+    fake = Path(home) / ".claude" / "fake"
+    images = {"debut": ecrans().liste(vert=True)[0].png(), "fait": ecrans().facture_creee()[0].png()}
+    try:
+        vu = parcours.guide(env, images, prudent)
+        t("app-guide-fermeture")
+        pilote.lire()   # the installer's window again, the guide's gone
+        vu["fermeture"] = pilote.fermer()
+    finally:
+        rendre_vrai_claude(exe, vrai)
+    d = {"prudent": prudent, "ecrans": vu["ecrans"], "collages": vu["collages"], "saisie": vu["saisie"],
+         "temoin": vu["temoin"], "etape": vu["etape"], "enregistre": vu.get("enregistre")}
+    t("app-guide-procedure")
+    note, pourquoi = note_du_guide(pilote.cerveau(home), debut)
+    t.check(note, pourquoi)
+    d["note"] = note.name
+    t("app-guide-modeles")
+    try:
+        modeles = (fake / "models").read_text(encoding="utf-8").split()
+    except OSError:
+        modeles = []
+    d["modeles"] = modeles
+    attendus = ["opus", "sonnet", "sonnet"] if prudent else ["opus", "opus"]
+    t.check(modeles == attendus, "le faux Claude a été lancé avec %s (attendu : %s)" % (modeles, attendus))
+    t("app-guide-disque")
+    fragments = []
+    for png in images.values():
+        b64 = __import__("base64").b64encode(png)
+        fragments += [png[len(png) // 2:len(png) // 2 + 64], b64[len(b64) // 2:len(b64) // 2 + 80]]
+    for f in sorted((fake / "fragments").glob("*.json")) if (fake / "fragments").is_dir() else []:
+        for x in json.loads(f.read_text(encoding="utf-8")):
+            fragments += [bytes.fromhex(x["raw"]), x["b64"].encode("ascii")]
+    t.check(len(fragments) >= 4 + 2 * len(modeles), "le faux Claude n'a pas dit ce qu'il a reçu : rien à chercher")
+    racines = pilote.racines_traces(home)
+    # Left out: the robot's own folders (its scripts, its captures of the screen, the repository it runs from)
+    # and the fake Claude's records.
+    traces = traces_du_guide(racines, debut, [Path(travail).parent, captures, fake, Path(__file__).resolve().parents[2]],
+                             fragments, ("com.braininbox.installer", ".brain-in-a-box", "biab-guide", "ebwebview"))
+    d["traces"] = [(montrer(p, home), why) for p, why in traces][:20]
+    t.check(not traces, "des traces des images du guide sur le disque : %s" % "; ".join(
+        "%s (%s)" % (p, why) for p, why in d["traces"][:5]))
+    return d
+
 
 def _get(url, token=None, timeout=60):
     if token and not url.startswith("https://api.github.com/"):
@@ -3057,6 +3813,9 @@ def scenario(t, opts, kit, pilote=None, horloge=time.monotonic, dormir=time.slee
         parcours.relance(env)
         t("app-fermeture-relance")
         pilote.fermer()
+        if not codex:
+            # The guide: offered by the welcome now, walked with a fake Claude (no AI on these VMs).
+            details["guide"] = guide_terrain(t, parcours, pilote, home, env, captures, kit.workdir(opts, "guide"))
         t("app-clics")
         sans = clics_sans_souris(getattr(pilote, "clics_installation", []) + parcours.clics)
         t.check(not sans, sans)
@@ -3068,9 +3827,12 @@ def scenario(t, opts, kit, pilote=None, horloge=time.monotonic, dormir=time.slee
             details["nuit_rendue"] = rendue
         kit.run_nightly(t, opts)
         t.resume = "app %s installée, %s%d écrans cliqués à la souris jusqu'au cerveau en %d min, vérifications conformes, " \
-                   "deuxième lancement : déjà installé, une nuit lancée par le planificateur%s" % (
+                   "deuxième lancement : déjà installé%s, une nuit lancée par le planificateur%s" % (
                        details.get("release") or "construite", "Codex choisi seul, " if codex else "", len(parcours.ecrans),
                        details["duree_parcours_s"] // 60,
+                       "" if codex else " ; guide : deux captures collées, l'étape entourée%s, la procédure dans Guides/, "
+                                         "aucune image sur le disque" % (
+                                             " en pointillés (Sonnet, mode prudent)" if details["guide"]["prudent"] else ""),
                        " ; " + details["git"]["resume"] if (details.get("git") or {}).get("resume") else "")
     except ErreurPilote as e:
         if parcours:

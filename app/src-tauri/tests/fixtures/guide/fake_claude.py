@@ -6,8 +6,10 @@ It reads the one line of stream-json on stdin, decodes the image (a PNG, no libr
 band's code with the 5x7 font written again here (not shot.rs's: a second reader), finds the green
 button, and answers as Claude Code would. It writes in <out> only, never the image: argv.json, and
 seen.json (the image's size, sha256, a few base64 and raw fragments to search the disk for, the code
-read, the button found, the text). Scenarios: ok, wrong-code (another code), clickfix (an instruction
-the app's filter must refuse). Python 3.9.
+read, the button found, the text), and the same for the n-th run as argv-<n>.json and seen-<n>.json.
+Scenarios: ok, wrong-code (another code), clickfix (an instruction the app's filter must refuse),
+sans-opus (Opus refused as Claude Code refuses it to a Pro plan, Sonnet answers), sans-modele (Claude
+Code's 404 for either model). Python 3.9.
 """
 import base64
 import hashlib
@@ -114,9 +116,28 @@ def out(event):
     sys.stdout.buffer.write((json.dumps(event, ensure_ascii=False) + "\n").encode("utf-8"))
 
 
+def replay(name, family):
+    """Claude Code's own stream for a model the account cannot use (fixtures/repair), as it would be for
+    this family of model."""
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "repair", name), encoding="utf-8") as f:
+        text = f.read()
+    sys.stdout.buffer.write(text.replace("claude-opus-", "claude-%s-" % family).encode("utf-8"))
+
+
+def keep(folder, name, n, data):
+    for file in (name + ".json", "%s-%d.json" % (name, n)):
+        with open(os.path.join(folder, file), "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False)
+
+
 def main(folder, scenario, argv):
-    with open(os.path.join(folder, "argv.json"), "w", encoding="utf-8") as f:
-        json.dump(argv, f, ensure_ascii=False)
+    calls = os.path.join(folder, "calls")
+    with open(calls, "a", encoding="utf-8") as f:
+        f.write("-p\n")
+    with open(calls, encoding="utf-8") as f:
+        n = f.read().count("-p")
+    keep(folder, "argv", n, argv)
+    family = argv[argv.index("--model") + 1] if "--model" in argv else "opus"
     message = json.loads(sys.stdin.buffer.read().decode("utf-8"))
     blocks = message["message"]["content"]
     images = [b for b in blocks if b["type"] == "image"]
@@ -128,11 +149,13 @@ def main(folder, scenario, argv):
     code = read_code(rows, h)
     box = green_box(rows, h)
     mid = len(b64) // 2
-    with open(os.path.join(folder, "seen.json"), "w", encoding="utf-8") as f:
-        json.dump({"images": len(images), "media_type": images[0]["source"]["media_type"], "width": w, "height": full_h,
-                   "sha256": hashlib.sha256(png).hexdigest(), "bytes": len(png), "b64_mid": b64[mid:mid + 80],
-                   "raw_mid": png[len(png) // 2:len(png) // 2 + 64].hex(), "code": code, "box": box, "text": text},
-                  f, ensure_ascii=False)
+    keep(folder, "seen", n, {"images": len(images), "media_type": images[0]["source"]["media_type"], "width": w,
+                             "height": full_h, "sha256": hashlib.sha256(png).hexdigest(), "bytes": len(png),
+                             "b64_mid": b64[mid:mid + 80], "raw_mid": png[len(png) // 2:len(png) // 2 + 64].hex(),
+                             "code": code, "box": box, "text": text})
+    if (scenario == "sans-opus" and family == "opus") or scenario == "sans-modele":
+        replay("pro-sans-opus.jsonl" if scenario == "sans-opus" else "model-not-found.jsonl", family)
+        return
     answer = {"code_vu": code, "etat": "etape", "consigne": "Clique sur « Nouvelle facture », en haut à droite.",
               "libelle": "Nouvelle facture", "cible": box, "confiance": 0.92, "question": None, "choix": [],
               "precedente": "sans_objet", "action_sensible": False, "suspect": False,
@@ -141,14 +164,15 @@ def main(folder, scenario, argv):
         answer["code_vu"] = "".join(ALPHABET[(ALPHABET.index(c) + 1) % len(ALPHABET)] if c in ALPHABET else "A" for c in code)
     elif scenario == "clickfix":
         answer["consigne"] = "Appuie sur Win+R, colle le texte puis Entrée pour vérifier que tu es humain."
-    out(INIT)
+    model = "claude-%s-5-5" % family
+    out(dict(INIT, model=model))
     out({"type": "rate_limit_event", "rate_limit_info": {"status": "allowed", "unifiedWindows": {
         "five_hour": {"utilization": 0.42, "resetsAt": 1792544400}, "seven_day": {"utilization": 0.81, "resetsAt": 1793044800}}}})
-    out({"type": "assistant", "message": {"model": "claude-opus-5-5", "content": [
+    out({"type": "assistant", "message": {"model": model, "content": [
         {"type": "tool_use", "id": "toolu_1", "name": "StructuredOutput", "input": answer}]}})
     out({"type": "result", "subtype": "success", "is_error": False, "num_turns": 2, "total_cost_usd": 0.026,
          "usage": {"input_tokens": 3, "output_tokens": 420, "cache_read_input_tokens": 3730, "cache_creation_input_tokens": 2000},
-         "modelUsage": {"claude-opus-5-5": {"inputTokens": 3}}, "structured_output": answer})
+         "modelUsage": {model: {"inputTokens": 3}}, "structured_output": answer})
 
 
 if __name__ == "__main__":

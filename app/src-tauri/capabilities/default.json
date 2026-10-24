@@ -25,6 +25,8 @@
     "allow-open-codex-login",
     "allow-start-onboarding",
     "allow-open-vault",
+    "allow-brain-folder",
+    "allow-brain-complete",
     "allow-open-link",
     "allow-open-settings",
     "allow-open-repair-terminal",
@@ -52,6 +54,8 @@
     "allow-open-hermes-device-page",
     "allow-guide-open",
     "allow-guide-offert",
-    "allow-bbrain-open"
+    "allow-bbrain-open",
+    "allow-start-claude",
+    "allow-save-report"
   ]
 }

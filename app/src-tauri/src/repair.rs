@@ -155,9 +155,12 @@ impl Entry {
 }
 
 /// The catalogue's words for this computer: {machine} is "Mac" or "PC", {terminal}
-/// the window where commands run.
+/// the window where commands run, {sites} the sites to let through (SITES).
 fn local(text: &str) -> String {
-    text.replace("{machine}", sys::MACHINE).replace("{terminal}", if cfg!(windows) { "PowerShell" } else { "Terminal" })
+    let sites: Vec<String> = SITES.iter().map(|s| s.to_string()).collect();
+    text.replace("{machine}", sys::MACHINE)
+        .replace("{terminal}", if cfg!(windows) { "PowerShell" } else { "Terminal" })
+        .replace("{sites}", &steps::list_fr(&sites))
 }
 
 const CAUSES: &[Entry] = &[
@@ -198,11 +201,79 @@ const CAUSES: &[Entry] = &[
         if cfg!(windows) { "Windows bloque l'écriture dans ton dossier Documents (protection contre les ransomwares)." }
         else { "macOS refuse l'accès à ton dossier Documents." }),
     Entry::new("settings_json_invalide", BRAIN, "le fichier de réglages de Claude est illisible.",
-        "Ton fichier de réglages Claude est abîmé. Je n'y touche pas : l'équipe va t'aider."),
+        "Ton fichier de réglages Claude est abîmé. Je n'y touche pas : envoie le rapport à la personne qui t'a conseillé Bibo."),
     Entry::new("cle_voyage_refusee", BRAIN, "la clé Voyage a été refusée.", "Voyage a refusé la clé."),
     Entry::new("base_verrouillee", BRAIN, "la base de mémoire est utilisée par un autre programme.",
         "La base de mémoire est utilisée par un autre programme."),
+    // install.ps1's own stops (BIAB_ARRET, see STOPS).
+    Entry::new("winget_absent", WINDOWS_BRAIN,
+        "winget est absent, ne démarre pas ou sa source est en panne, et Python n'a pas pu s'installer sans lui.",
+        "Il manque à ce PC l'outil d'installation de Windows (winget), ou il est en panne, et Python n'a pas pu s'installer sans lui."),
+    Entry::new("python_absent", WINDOWS_BRAIN, "Python n'a pu s'installer ni par winget ni par son installeur officiel.",
+        "Python, dont ton cerveau a besoin, n'a pas pu s'installer."),
+    Entry::new("powershell_verrouille", WINDOWS_BRAIN,
+        "PowerShell est verrouillé par l'entreprise (mode de langage restreint, ou stratégie d'exécution imposée).",
+        "Ton PC bloque PowerShell, dont l'installation a besoin : c'est une règle de ton entreprise."),
+    Entry::new("strategie_entreprise", WINDOWS_BRAIN,
+        "une stratégie de l'entreprise interdit d'installer des programmes (winget ou un installeur bloqués).",
+        "Une règle de ton entreprise interdit d'installer des programmes sur ce PC."),
+    Entry::new("proxy_entreprise", WINDOWS_BRAIN, "le proxy de l'entreprise bloque les téléchargements.",
+        "Le réseau de ton entreprise bloque les téléchargements de l'installation."),
+    Entry::new("antivirus_bloque", WINDOWS_BRAIN, "un antivirus a bloqué ou supprimé un programme d'installation.",
+        "Ton antivirus a bloqué un programme dont l'installation a besoin."),
+    Entry::new("choix_ia", WINDOWS_BRAIN, "l'installeur refuse le choix d'IA (agents.json, ou les réglages de Codex).",
+        "Ton choix d'IA (Claude ou Codex) ne peut pas être appliqué tel quel."),
 ];
+
+/// What the user does about each stop install.ps1 says (BIAB_ARRET=<cause>, the line before it stops):
+/// the cause's sentence, then this one. Every stop it can make is here, each a cause above.
+const STOPS: &[(&str, &str)] = &[
+    ("reseau",
+        "Vérifie ton Wi-Fi, puis clique sur « Réessayer ». En données mobiles, attends d'avoir un Wi-Fi. \
+         Sur un PC d'entreprise, son réseau bloque peut-être l'installation : demande à ton service informatique."),
+    ("sources_abimees", "Clique sur « Réessayer » : je le retélécharge."),
+    ("acces_documents_refuse",
+        "N'y autorise aucun programme toi-même : clique sur « Réessayer » ; si ça recommence, envoie le rapport à la personne qui t'a conseillé Bibo."),
+    ("winget_absent",
+        "Installe ou mets à jour « Programme d'installation d'application » (App Installer) depuis le Microsoft Store, puis clique sur « Réessayer ». \
+         Sur un PC d'entreprise, demande-le à ton service informatique."),
+    // python.org's first button is the install manager, a console in English: the classic installer instead,
+    // which puts Python where install.ps1 looks (Find-Python).
+    ("python_absent",
+        "Clique sur « Réessayer ». Si ça recommence, installe Python toi-même : sur python.org/downloads/windows, prends \
+         « Windows installer (64-bit) » de Python 3.14, lance-le et clique sur « Install Now ». Puis clique sur « Réessayer »."),
+    ("powershell_verrouille", "Demande à ton service informatique s'il peut installer Brain in a Box pour toi, ou installe-le sur un PC personnel."),
+    ("strategie_entreprise",
+        "Demande à ton service informatique d'installer ce dont Brain in a Box a besoin (Python 3, Git, Bun et Obsidian), puis clique sur « Réessayer »."),
+    ("proxy_entreprise",
+        "Demande à ton service informatique de laisser passer {sites} (avec leurs sous-domaines), ou installe depuis un autre réseau (chez toi), \
+         puis clique sur « Réessayer »."),
+    ("antivirus_bloque",
+        "Ne le désactive pas : installe Python toi-même (sur python.org/downloads/windows, « Windows installer (64-bit) » de Python 3.14, \
+         puis « Install Now »), puis clique sur « Réessayer ». Sur un PC d'entreprise, demande-le à ton service informatique."),
+    ("choix_ia", "Rien n'a changé dans ton cerveau : envoie le rapport à la personne qui t'a conseillé Bibo."),
+];
+
+/// The sites a company's network has to let through, with their subdomains: Claude Code's installer and
+/// Claude itself, the kit and Git (github.com, its downloads on githubusercontent.com), Python, Bun and the
+/// packages it fetches for gbrain, Hermes's installer (on a Mac). One list for every sentence that names them ({sites}).
+pub(crate) const SITES: &[&str] = &["claude.ai", "anthropic.com", "github.com", "githubusercontent.com", "python.org", "bun.sh", "npmjs.org", "nousresearch.com"];
+
+/// The stops no AI can do anything about from here: the company's rules, the choice of AI that the user
+/// alone changes. Their sentence says whom to ask; Claude is not offered (and the subscription not spent).
+const WITHHELD: &[&str] = &["powershell_verrouille", "strategie_entreprise", "proxy_entreprise", "choix_ia"];
+
+fn withheld(message: &str) -> bool {
+    WITHHELD.iter().filter_map(|id| stop_message(id)).any(|m| m == message)
+}
+
+/// The window's sentence for a stop of install.ps1: what happened, then what to do. None for a cause it
+/// does not know (an older or newer install.ps1, a line a program printed).
+pub fn stop_message(id: &str) -> Option<String> {
+    let (_, todo) = STOPS.iter().find(|(s, _)| *s == id)?;
+    let cause = CAUSES.iter().find(|e| e.id == id)?;
+    Some(format!("{} {}", local(cause.user), local(todo)))
+}
 
 const REMEDIES: &[Entry] = &[
     Entry::new("relancer", ALL, "relancer l'étape telle quelle.", "Relancer l'étape « {étape} »."),
@@ -231,8 +302,12 @@ const ACTIONS: &[Entry] = &[
     Entry::new("ouvrir_mise_a_jour", CLT, "installer les outils depuis Mise à jour de logiciels.",
         "Installe les Command Line Tools proposés dans Mise à jour de logiciels.")
     .pane("software_update"),
-    Entry::new("verifier_reseau", ALL, "vérifier le Wi-Fi, couper le VPN.",
-        "Vérifie ton Wi-Fi. Si tu as un VPN ou un réseau d'entreprise, coupe-le le temps de l'installation."),
+    Entry::new("verifier_reseau", ALL, "vérifier le Wi-Fi, couper un VPN personnel.",
+        "Vérifie ton Wi-Fi. Si tu as un VPN perso, coupe-le le temps de l'installation."),
+    // A company's PC: nothing of its security is for the user to turn off.
+    Entry::new("demander_informatique", ALL,
+        "sur un ordinateur d'entreprise : demander au service informatique (proxy, règles d'installation, antivirus de l'entreprise).",
+        "Sur un {machine} d'entreprise, ne coupe et ne désactive rien toi-même : demande à ton service informatique de laisser passer les téléchargements de l'installation ({sites}, avec leurs sous-domaines)."),
     Entry::new("liberer_espace", ALL, "libérer au moins 5 Go.", "Libère au moins 5 Go sur ton {machine}.").pane("storage"),
     // A Mac asks once for the app itself. On Windows the only way through would be to allow
     // PowerShell, git or Python in protected folders, for every script: never offered.
@@ -246,8 +321,8 @@ const ACTIONS: &[Entry] = &[
         "Quand ton ordinateur te demande ton mot de passe, tape-le : c'est pour installer Obsidian."),
     Entry::new("attendre_mises_a_jour", LINUX_OBSIDIAN, "attendre la fin des mises à jour du système.",
         "Attends que les mises à jour du système soient finies, puis relance."),
-    Entry::new("envoyer_rapport", ALL, "envoyer le rapport à l'équipe.",
-        "Copie le rapport et envoie-le à l'équipe : il contient déjà l'analyse de {ia}."),
+    Entry::new("envoyer_rapport", ALL, "envoyer le rapport à la personne qui a conseillé l'app.",
+        "Envoie le rapport à la personne qui t'a conseillé Bibo : il contient déjà l'analyse de {ia}."),
 ];
 
 const CONFIDENCE: &[&str] = &["haute", "moyenne", "basse"];
@@ -325,9 +400,12 @@ pub enum RepairState {
     /// Codex, before the brain step put the kit's list of its features next to the hooks: it cannot
     /// be asked yet, and nothing is wrong with it.
     NotYet,
+    /// The step stopped on what no AI can change from here (a company's rule, the choice of AI): the
+    /// step's sentence says what to do, nobody is asked.
+    Withheld,
 }
 
-#[derive(Serialize, Clone, Copy, Debug)]
+#[derive(Serialize, Clone, Copy, Debug, PartialEq)]
 pub struct RepairStatus {
     pub state: RepairState,
     /// Claude can still help interactively, in Terminal.
@@ -339,7 +417,7 @@ pub struct RepairStatus {
 
 impl RepairStatus {
     fn of(state: RepairState) -> Self {
-        let terminal_fallback = !matches!(state, RepairState::Absent | RepairState::Offline | RepairState::Agents);
+        let terminal_fallback = !matches!(state, RepairState::Absent | RepairState::Offline | RepairState::Agents | RepairState::Withheld);
         RepairStatus { state, terminal_fallback, engine: None }
     }
 }
@@ -408,7 +486,10 @@ impl From<ClaudeError> for RepairError {
             ClaudeError::Timeout => RepairError::Timeout,
             ClaudeError::Quota => RepairError::Quota,
             ClaudeError::Auth => RepairError::Auth,
-            ClaudeError::Api => RepairError::Api,
+            // An error of the service, both. Before the guide told them apart, the 404 was Api already, and
+            // the Pro plan's refusal of Opus, which tells « /logout and /login », was Auth: no login would
+            // fix it. The repair asks Sonnet, which neither concerns.
+            ClaudeError::Api | ClaudeError::NoModel => RepairError::Api,
             ClaudeError::Init => RepairError::InitInvalid,
             ClaudeError::Invalid => RepairError::InvalidVerdict,
             ClaudeError::Refused => RepairError::Refused,
@@ -648,6 +729,11 @@ impl Session {
         lock(&self.traces).entry(r.id.clone()).or_default().result = Some(r.clone());
     }
 
+    /// The step's failure is one of the stops left to the user (see WITHHELD).
+    fn withheld(&self, step: &str) -> Option<RepairStatus> {
+        self.failure(step).filter(|f| withheld(&f.message)).map(|_| RepairStatus::of(RepairState::Withheld))
+    }
+
     fn failure(&self, step: &str) -> Option<Failure> {
         let traces = lock(&self.traces);
         let t = traces.get(step)?;
@@ -791,6 +877,9 @@ impl Used {
 /// What the window can offer under a failed step: the first engine agents.json lists that may be
 /// asked, else why the preferred one may not.
 pub fn availability(step: &str) -> RepairStatus {
+    if let Some(status) = SESSION.withheld(step) {
+        return status;
+    }
     lineup(&agents::current(&sys::home()), step, true).status()
 }
 
@@ -1823,8 +1912,8 @@ impl Session {
         let dossier = blocks(&request, None, step, &failure, &facts, &previous, &known);
         // Claude in Terminal runs commands: a log written to steer it stays with the team.
         if dossier.log_suspect {
-            return Err("Le journal contient des choses inhabituelles : je préfère que l'équipe regarde. \
-                        Copie le rapport et envoie-le-lui."
+            return Err("Le journal contient des choses inhabituelles : je préfère ne pas laisser Claude y toucher. \
+                        Envoie le rapport à la personne qui t'a conseillé Bibo."
                 .into());
         }
         let fail = |e: io::Error| format!("Je n'ai pas pu préparer le dossier pour Claude ({e}).");
@@ -2488,12 +2577,12 @@ fn sha256_hex(text: &str) -> Option<String> {
     Some(config_guard::hex(&Sha256::digest(text.as_bytes())))
 }
 
-fn now_secs() -> u64 {
+pub(crate) fn now_secs() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs())
 }
 
 /// UTC calendar date and time (days-to-civil, proleptic Gregorian).
-fn civil(secs: u64) -> (i64, u64, u64, u64, u64, u64) {
+pub(crate) fn civil(secs: u64) -> (i64, u64, u64, u64, u64, u64) {
     let days = (secs / 86_400) as i64;
     let rem = secs % 86_400;
     let z = days + 719_468;
@@ -2754,7 +2843,7 @@ pub(crate) mod tests {
         // Linux has no settings page to open: the sentence alone.
         assert_eq!(p.actions[0].pane, if cfg!(target_os = "linux") { None } else { Some("storage") });
         assert_eq!(p.actions[1].pane, None);
-        assert_eq!(p.actions[1].text, "Copie le rapport et envoie-le à l'équipe : il contient déjà l'analyse de Claude.");
+        assert_eq!(p.actions[1].text, "Envoie le rapport à la personne qui t'a conseillé Bibo : il contient déjà l'analyse de Claude.");
         let json = serde_json::to_value(&p).unwrap();
         assert_eq!(json["plan_id"], "20261013-184455-brain");
         assert!(json.get("engine").is_none(), "Claude alone: the plan the window always got");
@@ -3663,6 +3752,7 @@ pub(crate) mod tests {
                 .collect(),
             todo: Vec::new(),
             can_install: true,
+            headline: String::new(), download_mb: 0, minutes: 0,
             advice: None,
         }
     }
@@ -4487,5 +4577,108 @@ pub(crate) mod tests {
         assert_eq!(entry["erreur"], json!({ "kind": "auth" }));
         assert_eq!(s.used("brain"), (0, 0), "two refusals that cost nothing: the analysis is given back");
         assert_eq!(s.launches.load(Ordering::SeqCst), 2);
+    }
+    /// Every stop install.ps1 can make (BIAB_ARRET=<cause>) has its sentence here, what happened then
+    /// what to do, and each is a cause of the catalogue (Claude may name it on Windows); no sentence waits
+    /// for a stop install.ps1 never makes.
+    #[test]
+    fn every_stop_of_install_ps1_has_its_sentence() {
+        let ps1 = include_str!("../../../install.ps1");
+        let quoted = Regex::new(r#""([a-z]+(?:_[a-z]+)*)""#).unwrap();
+        let said = Regex::new(r"BIAB_ARRET=([a-z_]+)").unwrap();
+        let body = |name: &str| {
+            let at = ps1.find(&format!("function {name} {{")).unwrap_or_else(|| panic!("{name}"));
+            &ps1[at..at + ps1[at..].find("\n}").unwrap()]
+        };
+        let mut made: HashSet<&str> = HashSet::new();
+        for text in ps1.lines().filter(|l| l.contains("Arret") || l.contains("BIAB_ARRET")).chain([body("Get-ArretPython")]) {
+            made.extend(quoted.captures_iter(text).map(|c| c.get(1).unwrap().as_str()));
+            made.extend(said.captures_iter(text).map(|c| c.get(1).unwrap().as_str()));
+        }
+        let mut made: Vec<&str> = made.into_iter().collect();
+        made.sort();
+        let mut known: Vec<&str> = STOPS.iter().map(|(id, _)| *id).collect();
+        known.sort();
+        assert_eq!(made, known, "install.ps1's stops and the sentences for them");
+        for id in known {
+            let m = stop_message(id).unwrap_or_else(|| panic!("{id} is no cause of the catalogue"));
+            assert!(!m.contains('{') && m.ends_with('.') && m.chars().count() <= 400, "{id}: {m}");
+            assert!(m.contains("« Réessayer »") || m.contains("service informatique") || m.contains("conseillé Bibo"), "{id} does not say what to do: {m}");
+            #[cfg(windows)]
+            assert!(find(CAUSES, "brain", id).is_some(), "Claude cannot name {id}");
+        }
+        assert_eq!(stop_message("pas_une_cause"), None);
+        assert_eq!(stop_message("disque_plein"), None, "a cause install.ps1 never stops on has no stop sentence");
+    }
+
+    /// What each stop says fits the PC it happens on: Python by the classic installer (python.org's first
+    /// button is the install manager, in English), winget broken as well as missing, a company's network
+    /// or its Store; PowerShell blocked at any step, not only the brain's.
+    #[test]
+    fn the_stops_say_what_fits() {
+        let say = |id| stop_message(id).unwrap();
+        for id in ["python_absent", "antivirus_bloque"] {
+            assert!(say(id).contains("python.org/downloads/windows") && say(id).contains("« Windows installer (64-bit) »") && say(id).contains("« Install Now »"), "{id}: {}", say(id));
+            assert!(!say(id).contains("« Download »"), "{id}");
+        }
+        assert!(say("winget_absent").contains("Installe ou mets à jour") && say("winget_absent").contains("service informatique"), "{}", say("winget_absent"));
+        assert!(say("reseau").contains("service informatique"), "{}", say("reseau"));
+        assert!(!say("powershell_verrouille").contains("cerveau"), "{}", say("powershell_verrouille"));
+        assert!(!say("strategie_entreprise").contains("installer Python 3 sur ce PC"), "not only Python: {}", say("strategie_entreprise"));
+    }
+
+    /// The sites to let through, one list for every sentence: each host the install downloads from
+    /// (install.ps1's, the app's, Claude Code's installer, Bun's packages, Claude itself) is one of them,
+    /// or under one.
+    #[test]
+    fn one_list_of_sites_covers_every_download() {
+        let covered = |host: &str| SITES.iter().any(|s| host == *s || host.ends_with(&format!(".{s}")));
+        let url = Regex::new(r"https://([a-z0-9-]+(?:\.[a-z0-9-]+)+)").unwrap();
+        // Links shown to the user, Codex's (Claude's only, on Windows), Voyage's (only with a key), tests' hosts.
+        let not_downloads = ["claude.com", "obsidian.md", "git-scm.com", "go.microsoft.com", "openai.com", "chatgpt.com", "voyageai.com", "evil.com", ".test", ".invalid"];
+        let sources = [include_str!("../../../install.ps1"), include_str!("steps.rs")];
+        let mut hosts: Vec<&str> = sources.iter().flat_map(|s| url.captures_iter(s).map(|c| c.get(1).unwrap().as_str())).collect();
+        hosts.extend(["downloads.claude.ai", "registry.npmjs.org", "api.anthropic.com", "objects.githubusercontent.com", "codeload.github.com"]);
+        for host in hosts.into_iter().filter(|h| !not_downloads.iter().any(|n| h.ends_with(n))) {
+            assert!(covered(host), "{host} is not among the sites to let through");
+        }
+        let proxy = stop_message("proxy_entreprise").unwrap();
+        let it = ACTIONS.iter().find(|e| e.id == "demander_informatique").unwrap().user_text("brain");
+        for s in SITES {
+            assert!(proxy.contains(s) && it.contains(s), "{s}: {proxy} / {it}");
+        }
+        assert!(proxy.contains("sous-domaines") && it.contains("sous-domaines"));
+    }
+
+    /// A stop that is the company's (or the choice of AI) leaves Claude out: the window keeps « Réessayer »
+    /// first and the sentence that says whom to ask; nothing of the subscription spent for nothing.
+    #[test]
+    fn a_stop_for_the_it_service_is_not_offered_to_claude() {
+        for id in ["powershell_verrouille", "strategie_entreprise", "proxy_entreprise", "choix_ia"] {
+            assert!(withheld(&stop_message(id).unwrap()), "{id}");
+        }
+        for id in ["acces_documents_refuse", "reseau", "python_absent", "antivirus_bloque", "winget_absent", "sources_abimees"] {
+            assert!(!withheld(&stop_message(id).unwrap()), "{id}");
+        }
+        assert!(!withheld("L'installation de ton cerveau s'est arrêtée avant la fin."));
+        let status = RepairStatus::of(RepairState::Withheld);
+        assert!(!status.terminal_fallback);
+        assert_eq!(serde_json::to_value(status).unwrap()["state"], "withheld");
+        // Recorded as the step's failure, it is what the window is told.
+        let s = Session::default();
+        s.record_result(&StepResult { id: "brain".into(), ok: false, message: stop_message("proxy_entreprise").unwrap() });
+        assert_eq!(s.withheld("brain"), Some(RepairStatus::of(RepairState::Withheld)));
+        s.record_result(&StepResult { id: "brain".into(), ok: false, message: stop_message("reseau").unwrap() });
+        assert_eq!(s.withheld("brain"), None);
+    }
+
+    /// A company's PC: nothing of its security is for the user to turn off; the VPN to cut is one's own.
+    #[test]
+    fn a_company_pc_is_left_to_its_it_service() {
+        let it = ACTIONS.iter().find(|e| e.id == "demander_informatique").unwrap();
+        let text = it.user_text("brain");
+        assert!(text.contains("service informatique") && text.contains("ne coupe et ne désactive rien"), "{text}");
+        let vpn = ACTIONS.iter().find(|e| e.id == "verifier_reseau").unwrap().user_text("brain");
+        assert!(vpn.contains("VPN perso") && !vpn.contains("entreprise"), "{vpn}");
     }
 }

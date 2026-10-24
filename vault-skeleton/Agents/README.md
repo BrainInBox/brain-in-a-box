@@ -1,4 +1,8 @@
-# Agents — the AI agents on your team
+# Agents — les assistants IA de ton équipe
+
+Une note par assistant IA que tu utilises : ce qu'il sait faire et comment le lancer. Si tu n'utilises que Claude, ce dossier peut rester vide.
+
+## In English
 
 > Same schema as `../Team/`, but for AI agents. An agent here is a first-class teammate, not a hidden tool — it has a name, a runtime, skills, a scope, and a track record. Anyone (human or other agent) can query "who can do X" and get a unified answer across humans + agents.
 

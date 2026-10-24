@@ -15,8 +15,11 @@
         "title": "Brain in a Box",
         "width": 780,
         "height": 680,
-        "minWidth": 620,
-        "minHeight": 560
+        "minWidth": 600,
+        "minHeight": 440,
+        "center": true,
+        "visible": false,
+        "backgroundColor": "#fbf5ec"
       }
     ],
     "security": {

@@ -20,6 +20,8 @@ const COMMANDS: &[&str] = &[
     "open_codex_login",
     "start_onboarding",
     "open_vault",
+    "brain_folder",
+    "brain_complete",
     "open_link",
     "open_settings",
     "open_repair_terminal",
@@ -54,7 +56,12 @@ const COMMANDS: &[&str] = &[
     "guide_compris",
     "guide_commencer",
     "guide_coller",
+    "guide_coller_presse_papiers",
     "guide_prendre_depot",
+    "guide_fenetres",
+    "guide_attendre_clic",
+    "guide_choisir",
+    "guide_regarder",
     "guide_cacher",
     "guide_envoi_texte",
     "guide_envoyer",
@@ -68,6 +75,8 @@ const COMMANDS: &[&str] = &[
     "bbrain_call",
     "bbrain_reply",
     "bbrain_shot",
+    "start_claude",
+    "save_report",
 ];
 
 fn main() {

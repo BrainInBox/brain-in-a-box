@@ -41,6 +41,8 @@ param([string]$BrainDir = "", [string]$Agents = "", [string]$Prefere = "")
 
 $ErrorActionPreference = "Stop"
 if ($ExecutionContext.SessionState.LanguageMode -ne "FullLanguage") {
+    # Pour l'app, la cause de l'arret, qu'elle dit en une phrase (BIAB_ARRET : voir Fail).
+    Write-Host "BIAB_ARRET=powershell_verrouille"
     Write-Host "  [X]  PowerShell est verrouille sur ce PC (politique de l'entreprise). Demande a ton service informatique, ou utilise un PC perso." -ForegroundColor Red
     throw "brain-in-a-box : PowerShell en mode restreint ($($ExecutionContext.SessionState.LanguageMode))"
 }
@@ -49,6 +51,29 @@ if ($ExecutionContext.SessionState.LanguageMode -ne "FullLanguage") {
 try { Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force -ErrorAction Stop } catch {}
 # Windows PowerShell 5.1 negocie encore TLS 1.0 sur les vieux Windows 10 : GitHub et claude.ai le refusent.
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+# Un proxy d'entreprise qui demande l'identifiant Windows (407) : Windows PowerShell ne le lui donne jamais de
+# lui-meme. Ses telechargements (Invoke-WebRequest, irm de Bun) le donnent, comme le navigateur.
+try { [Net.WebRequest]::DefaultWebProxy.Credentials = [Net.CredentialCache]::DefaultNetworkCredentials } catch {}
+
+# Pas de mise en veille pendant l'installation (10 a 20 minutes : un portable sur batterie s'endort, et
+# l'installation s'arrete) : le PC reste eveille tant que ce script tourne, l'ecran peut s'eteindre. Rendu
+# a la fin et a tout arret (le trap) ; lance a part, Windows le rend aussi quand le processus finit. Lance par
+# l'app (BIAB_APP), rien : l'app garde elle-meme le PC eveille, et Add-Type (un compilateur lance par un
+# script) est ce qu'un antivirus d'entreprise surveille.
+function Set-Awake([bool]$On) {
+    if ($env:BIAB_APP) { return }
+    try {
+        if (-not ("BiabVeille.Etat" -as [type])) {
+            Add-Type -Namespace BiabVeille -Name Etat -MemberDefinition '[DllImport("kernel32.dll")] public static extern uint SetThreadExecutionState(int flags);'
+        }
+        # ES_CONTINUOUS (0x80000000), avec ES_SYSTEM_REQUIRED (0x1) tant qu'on installe.
+        $null = [BiabVeille.Etat]::SetThreadExecutionState($(if ($On) { [int]::MinValue -bor 1 } else { [int]::MinValue }))
+    } catch {}   # le compilateur d'Add-Type bloque, ou pas Windows : le PC peut dormir, comme avant
+}
+Set-Awake $true
+# Tout arret, pas seulement Fail (une copie qui echoue, une erreur imprevue) : le PC peut de nouveau dormir.
+# Un trap vaut pour tout le script, meme avant cette ligne (Set-Awake encore inconnu : le try).
+trap { try { Set-Awake $false } catch {}; break }
 
 $H = $env:USERPROFILE
 $HOOKS = "$H\.claude\hooks\brain"
@@ -65,8 +90,32 @@ function Say($t)  { Write-Host ""; Write-Host "=== $t ===" -ForegroundColor Cyan
 function Ok($t)   { Write-Host "  [OK] $t" -ForegroundColor Green }
 function Warn($t) { Write-Host "  [!]  $t" -ForegroundColor Yellow }
 # throw et pas exit : lance par `irm | iex`, exit fermerait la fenetre avant qu'on lise le message.
-function Fail($t) { Write-Host "  [X]  $t" -ForegroundColor Red; throw "brain-in-a-box : installation arretee - $t" }
-function Have($c) { return [bool](Get-Command $c -ErrorAction SilentlyContinue) }
+# -Arret, la cause pour l'app : BIAB_ARRET=<cause> juste avant l'arret, qu'elle dit en une phrase avec ce
+# qu'il faut faire, au lieu de la derniere ligne. Une cause de son catalogue (app/src-tauri/src/repair.rs, STOPS).
+function Fail($t, [string]$Arret = "") {
+    if ($Arret) { Write-Host "BIAB_ARRET=$Arret" }
+    Write-Host "  [X]  $t" -ForegroundColor Red
+    throw "brain-in-a-box : installation arretee - $t"
+}
+# Un programme par son nom, dans les seuls dossiers du PATH nommes en entier (C:\..., \\serveur\...), comme le
+# kit depuis #60 : une entree relative ("." ou "bin") est un dossier de la ou l'installation est lancee (un
+# dossier de telechargements), ou un faux git.exe serait pris et un faux python lance. Tous, dans l'ordre du PATH.
+function Find-Program([string]$Name) {
+    $exts = @("")
+    if (-not [IO.Path]::GetExtension($Name) -and $env:PATHEXT) { $exts = @($env:PATHEXT -split ";" | Where-Object { $_ }) }
+    $found = @()
+    foreach ($d in ("$env:PATH" -split [IO.Path]::PathSeparator)) {
+        $d = $d.Trim().Trim('"')
+        $full = ($d -match '^[A-Za-z]:[\\/]') -or ($d -match '^[\\/]{2}[^\\/]') -or ([IO.Path]::DirectorySeparatorChar -eq '/' -and $d.StartsWith('/'))
+        if (-not $full) { continue }
+        foreach ($e in $exts) {
+            $hits = @()
+            try { $hits = [IO.Directory]::GetFiles($d, "$Name$e") } catch {}   # dossier absent ou nom invalide
+            foreach ($h in $hits) { if ($found -notcontains $h) { $found += $h } }
+        }
+    }
+    return $found
+}
 function Refresh-Path {
     $env:Path = [Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [Environment]::GetEnvironmentVariable("Path","User") + ";" + $env:Path
 }
@@ -129,20 +178,218 @@ $WingetNotes = @()
 function Note-Winget([string]$t) {
     if ($script:LogOpen) { Add-Content -LiteralPath $LOG -Value "`r`n$t" -Encoding utf8 } else { $script:WingetNotes += $t }
 }
+# Le journal s'ouvre une fois : apres le choix des agents, ou juste avant que l'echec de Python arrete
+# l'installation. Les notes d'avant y entrent avec lui.
+function Open-Log {
+    if ($script:LogOpen) { return }
+    New-Item -ItemType Directory -Path (Split-Path -Parent $LOG) -Force | Out-Null
+    Add-Content -LiteralPath $LOG -Value "`r`n===== $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') install =====" -Encoding utf8
+    $script:LogOpen = $true
+    foreach ($n in $script:WingetNotes) { Note-Winget $n }
+    $script:WingetNotes = @()
+}
 
+# Les codes de winget pour une source qui ne s'ouvre pas (winget-cli, AppInstallerErrors.h) : index
+# corrompu (0x8A15000A), sources corrompues (0x8A15000B), donnees manquantes (0x8A15000F), source
+# alteree (0x8A15003F), source(s) impossible(s) a ouvrir (0x8A150045, 0x8A15004B). "winget source
+# update" la refait souvent, sans droits admin ("winget source reset" en demande).
+$WINGET_SOURCE_CODES = @(-1978335222, -1978335221, -1978335217, -1978335169, -1978335163, -1978335157)
+# winget bloque par la politique de l'entreprise (strategie de groupe : 0x8A15003A ; l'installeur du
+# paquet bloque : 0x8A15010F) : le kit ne passe pas outre avec un autre installeur, il le dit.
+$WINGET_POLICY_CODES = @(-1978335174, -1978334961)
+$WingetRepaired = $false   # "winget source update" deja tente
+$WingetBroken = $false     # sa source toujours en panne apres : winget n'est plus essaye
+$WingetBlocked = $false    # bloque par l'entreprise : ni winget ni installeur officiel
+$WingetDown = $false       # il ne demarre pas : winget n'est plus essaye
+$OfficialArret = ""        # pourquoi le dernier installeur officiel n'a pas pu (une cause de l'app), ou ""
+
+function Get-Winget { return @(Find-Program "winget")[0] }
+
+# Un compte administrateur, eleve ou non (l'UAC lui demande juste Oui) : le groupe Administrateurs est dans son
+# jeton, "deny only" tant qu'il n'est pas eleve. Un compte standard, lui, devrait taper le mot de passe d'un autre.
+function Test-Admin {
+    try {
+        foreach ($c in [Security.Principal.WindowsIdentity]::GetCurrent().Claims) { if ($c.Value -eq "S-1-5-32-544") { return $true } }
+    } catch {}
+    return $false
+}
+
+# Un proxy entre ce PC et internet (le reglage du systeme, souvent celui d'une entreprise) : un telechargement
+# qui echoue y est sans doute bloque.
+function Test-Proxy([string]$Url) {
+    try { $u = [Uri]$Url; return ([Net.WebRequest]::GetSystemWebProxy().GetProxy($u) -ne $u) } catch { return $false }
+}
+
+# Le code de sortie de winget, ou $null quand il n'a pas demarre (App Installer pas encore enregistre pour
+# ce compte) : pas le code du programme d'avant, reste dans $LASTEXITCODE.
+function Invoke-Winget([string[]]$a) {
+    $w = Get-Winget
+    $global:LASTEXITCODE = $null
+    try { Invoke-Native { & $w @a } | Out-Host }
+    catch {
+        # La raison de Windows (programme invalide, fichier inaccessible), sans la position dans ce script.
+        $e = if ($_.Exception.InnerException) { $_.Exception.InnerException } else { $_.Exception }
+        Note-Winget "> winget $($a -join ' ')`r`nwinget : n'a pas demarre : $(@($e.Message -split "`r?`n")[0])"
+        return $null
+    }
+    $code = $LASTEXITCODE
+    if ($null -eq $code) { Note-Winget "> winget $($a -join ' ')`r`nwinget : n'a pas demarre"; return $null }
+    Note-Winget "> winget $($a -join ' ')`r`nwinget : code $code"
+    return $code
+}
+
+# $true quand winget a installe le paquet.
 function Winget-Install($id, $label) {
-    if (-not (Have winget)) { Warn "$label absent et winget indisponible"; Note-Winget "> winget absent : $label non installe"; return }
+    if (-not (Get-Winget)) { Note-Winget "> winget absent : $label non installe par winget"; return $false }
+    if ($script:WingetBlocked) { Note-Winget "> winget : bloque par la politique de l'entreprise, $label non installe par winget"; return $false }
+    if ($script:WingetBroken) { Note-Winget "> winget : sa source est en panne, $label non installe par winget"; return $false }
+    if ($script:WingetDown) { Note-Winget "> winget : il ne demarre pas, $label non installe par winget"; return $false }
     Write-Host "  ... $label : installation (winget)"
-    # Portee utilisateur d'abord (pas de fenetre admin), sinon l'installeur par defaut du paquet.
-    foreach ($scope in @("user", "")) {
+    $ok = $false
+    # Portee utilisateur d'abord (pas de fenetre admin), sinon l'installeur par defaut du paquet, souvent pour
+    # tous les comptes : seulement sur un compte administrateur. Un compte standard verrait l'UAC lui demander
+    # un mot de passe qu'il n'a pas ; l'installeur officiel, sans droits admin, vient apres.
+    $scopes = if (Test-Admin) { @("user", "") } else { @("user") }
+    foreach ($scope in $scopes) {
         $a = @("install", "-e", "--id", $id, "--source", "winget", "--silent", "--accept-package-agreements", "--accept-source-agreements")
         if ($scope) { $a += @("--scope", $scope) }
-        Invoke-Native { & winget @a }
-        $code = $LASTEXITCODE
-        Note-Winget "> winget $($a -join ' ')`r`nwinget : code $code"
-        if ($code -eq 0) { break }
+        $code = Invoke-Winget $a
+        # Sa source en panne : une mise a jour (une fois, sans admin), puis un seul nouvel essai.
+        if ($WINGET_SOURCE_CODES -contains $code -and -not $script:WingetRepaired) {
+            $script:WingetRepaired = $true
+            Write-Host "  ... winget : sa source ne s'ouvre pas, je la mets a jour"
+            $null = Invoke-Winget @("source", "update", "--name", "winget")
+            $code = Invoke-Winget $a
+        }
+        if ($null -eq $code) { $script:WingetDown = $true; Warn "winget ne demarre pas sur ce PC : je fais sans lui"; break }
+        if ($code -eq 0) { $ok = $true; break }
+        if ($WINGET_POLICY_CODES -contains $code) { $script:WingetBlocked = $true; break }
+        if ($WINGET_SOURCE_CODES -contains $code) { $script:WingetBroken = $true; break }
     }
     Refresh-Path
+    return $ok
+}
+
+# Git et Python quand winget n'a pas pu (absent, sa source en panne, ou il ne demarre pas ; jamais quand
+# l'entreprise le bloque) : leur installeur officiel, a la version epinglee ici, compare a son empreinte
+# SHA-256 avant de tourner, comme celui de Codex. Sans fenetre ni question. x64, ou ARM64 natif sur un PC
+# ARM (ce que winget prendrait).
+# Chaque empreinte est relevee a deux sources : pour Git for Windows, le digest de l'API GitHub et le
+# tableau de ses notes de version ; pour Python, sa page sur python.org et l'API de python.org.
+$OFFICIAL_INSTALLERS = @{
+    "Git" = @{
+        Version = "2.56.0.2"
+        x64 = @("https://github.com/git-for-windows/git/releases/download/v2.56.0.windows.2/Git-2.56.0.2-64-bit.exe",
+                "52188f917b378f00c70ec136bcf090005f30d44fbc4eba0bce759cc6592d60f6")
+        arm64 = @("https://github.com/git-for-windows/git/releases/download/v2.56.0.windows.2/Git-2.56.0.2-arm64.exe",
+                  "b9ced78ce371577dc966f50ae571909d6731e36d31065d35c8efa21544c58bf0")
+        # Inno Setup, sans fenetre ni message. Il ne demande jamais les droits admin (PrivilegesRequired=none)
+        # et ignore /CURRENTUSER (aucun PrivilegesRequiredOverridesAllowed) : sans droits admin il va dans le
+        # profil (%LOCALAPPDATA%\Programs\Git), lance d'un PowerShell administrateur dans Program Files, pour
+        # tous les comptes. Find-Git regarde aux deux endroits.
+        Args = @("/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/NOCANCEL", "/SP-")
+    }
+    "Python" = @{
+        Version = "3.14.8"
+        x64 = @("https://www.python.org/ftp/python/3.14.8/python-3.14.8-amd64.exe",
+                "759be887b96e736a3ca886daf8d575f18fcae1a09efab6902f42d59e8999f8ef")
+        arm64 = @("https://www.python.org/ftp/python/3.14.8/python-3.14.8-arm64.exe",
+                  "53ba74b5b4370eb823fe0005eedeab907479f7339cecb11efea0e75ab5f10cfc")
+        # Pour cet utilisateur (%LOCALAPPDATA%\Programs\Python), sur son PATH ; sans le lanceur py, qui
+        # s'installe pour tous les comptes (une fenetre admin).
+        Args = @("/quiet", "InstallAllUsers=0", "PrependPath=1", "Include_launcher=0", "Include_test=0")
+    }
+}
+
+# Le systeme, pas ce processus : un PowerShell x64 emule sur un PC ARM se dit AMD64.
+function Get-WinArch {
+    switch ("$([Environment]::GetEnvironmentVariable('PROCESSOR_ARCHITECTURE', 'Machine'))") {
+        "AMD64" { return "x64" }
+        "ARM64" { return "arm64" }
+    }
+    return ""
+}
+
+# $true quand l'installeur a fini sans erreur. Le fichier va dans un dossier a soi sous le profil (pas
+# TEMP, ou d'autres comptes peuvent ecrire), ou l'installeur deballe aussi les siens ; supprime apres.
+# Une empreinte qui ne correspond pas : rien n'est lance.
+function Official-Install([string]$Label) {
+    $o = $OFFICIAL_INSTALLERS[$Label]
+    $arch = Get-WinArch
+    if (-not $arch) { Note-Winget "> installeur officiel : $Label, aucun pour ce Windows 32 bits"; return $false }
+    $url, $sha = $o[$arch]
+    $script:OfficialArret = ""
+    Write-Host "  ... $Label $($o.Version) : installeur officiel (sans fenetre admin), verifie avant de tourner"
+    $d = Join-Path $H (Join-Path ".brain-in-a-box" ("installeur-" + [guid]::NewGuid().ToString("N")))
+    $tmp = Join-Path $d "tmp"
+    $end = "interrompu"; $f = $null
+    try {
+        New-Item -ItemType Directory -Path $tmp -Force | Out-Null
+        $f = Join-Path $d ($url -replace '^.*/', '')
+        $pp = $ProgressPreference; $ProgressPreference = "SilentlyContinue"
+        try { Invoke-WebRequest -Uri $url -OutFile $f -UseBasicParsing }
+        catch {
+            $end = "telechargement impossible : $($_.Exception.Message)"
+            $script:OfficialArret = if (Test-Proxy $url) { "proxy_entreprise" } else { "reseau" }
+            Warn "$Label : telechargement impossible (reseau ?) : relance la meme commande"
+            return $false
+        } finally { $ProgressPreference = $pp }
+        $hex = ([BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash([IO.File]::ReadAllBytes($f))) -replace '-', '').ToLowerInvariant()
+        if ($hex -ne $sha) {
+            $end = "empreinte SHA-256 $hex, attendue $sha : rien n'est lance"
+            # Une page a la place du fichier : un portail Wi-Fi, ou le filtre d'un proxy.
+            $script:OfficialArret = if (Test-Proxy $url) { "proxy_entreprise" } else { "reseau" }
+            Warn "$Label : le fichier telecharge ne correspond pas a l'empreinte SHA-256 epinglee, rien n'est lance : relance la meme commande plus tard"
+            return $false
+        }
+        $savedTemp = $env:TEMP; $savedTmp = $env:TMP
+        $env:TEMP = $tmp; $env:TMP = $tmp
+        try { $p = Invoke-Native { Start-Process -FilePath $f -ArgumentList $o.Args -Wait -PassThru -ErrorAction Stop } }
+        finally { $env:TEMP = $savedTemp; $env:TMP = $savedTmp }
+        $end = "code $($p.ExitCode)"
+        if ($p.ExitCode -eq 0 -or $p.ExitCode -eq 3010) { return $true }   # 3010 : fini, un redemarrage conseille
+        if ($p.ExitCode -eq 1625) { $script:OfficialArret = "strategie_entreprise" }   # installation interdite par une strategie
+        Warn "$Label : son installeur officiel a echoue (code $($p.ExitCode)), details : $LOG"
+        return $false
+    } catch {
+        $end = "erreur : $($_.Exception.Message)"
+        # Pourquoi Windows ne l'a pas lance : un antivirus (le fichier a disparu, ou un virus annonce : 225, 226),
+        # une strategie (1260). Start-Process n'en garde que le texte, dans la langue de Windows.
+        $m = "$($_.Exception.Message)"
+        for ($e = $_.Exception; $e; $e = $e.InnerException) { if ($e -is [ComponentModel.Win32Exception]) { $m += " [$($e.NativeErrorCode)]" } }
+        if (($f -and -not (Test-Path -LiteralPath $f)) -or $m -match '(?i)virus|\[22[56]\]') { $script:OfficialArret = "antivirus_bloque" }
+        elseif ($m -match '(?i)group policy|strat.gie de groupe|Gruppenrichtlinie|\[1260\]') { $script:OfficialArret = "strategie_entreprise" }
+        Warn "$Label : son installeur officiel n'a pas tourne : $($_.Exception.Message)"
+        return $false
+    } finally {
+        # Une ligne pour l'essai, comme pour winget : ce qui a ete lance, puis comment ca a fini.
+        Note-Winget "> installeur officiel : $Label $($o.Version) ($arch) $url`r`ninstalleur officiel : $end"
+        Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue
+        Refresh-Path
+    }
+}
+
+# Python ou Git absent : winget, sinon son installeur officiel, sauf si l'entreprise bloque winget. Le
+# journal dit la voie qui a marche.
+function Install-Missing([string]$Label, [string]$Id, [scriptblock]$Find) {
+    $via = if (Winget-Install $Id $Label) { "winget" } else { "" }
+    $p = & $Find
+    if (-not $p -and $script:WingetBlocked) {
+        Warn "$Label : winget est bloque par la politique de ton entreprise, je ne l'installe pas autrement. Demande a ton service informatique, ou utilise un PC perso."
+    } elseif (-not $p) {
+        $via = if (Official-Install $Label) { "installeur officiel" } else { "" }
+        $p = & $Find
+    }
+    Note-Winget "> $Label : $(if (-not $p) { 'absent' } elseif ($via) { "$p ($via)" } else { $p })"
+    return $p
+}
+
+# Pourquoi Python manque, pour l'app (BIAB_ARRET) : la cause sur laquelle quelqu'un peut agir.
+function Get-ArretPython {
+    if ($script:WingetBlocked) { return "strategie_entreprise" }
+    if ($script:OfficialArret) { return $script:OfficialArret }
+    if (-not (Get-Winget) -or $script:WingetDown -or $script:WingetBroken) { return "winget_absent" }
+    return "python_absent"
 }
 
 # Le "python" livre avec Windows est un raccourci vers le Microsoft Store : il est sur le PATH mais
@@ -165,19 +412,17 @@ function Test-Python($exe, [string[]]$pre = @()) {
 
 function Find-Python {
     $cands = @()
-    foreach ($n in "python", "python3") {
-        $cands += @(Get-Command $n -All -CommandType Application -ErrorAction SilentlyContinue | ForEach-Object { $_.Source })
-    }
+    foreach ($n in "python", "python3") { $cands += @(Find-Program $n) }
     $cands += @(Get-ChildItem -Path "$env:LOCALAPPDATA\Programs\Python\Python3*\python.exe", "$env:ProgramFiles\Python3*\python.exe" -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
     foreach ($c in $cands) { $p = Test-Python $c; if ($p) { return $p } }
-    $launcher = Get-Command py -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($launcher) { return (Test-Python $launcher.Source @("-3")) }
+    $launcher = @(Find-Program "py")[0]
+    if ($launcher) { return (Test-Python $launcher @("-3")) }
     return $null
 }
 
 function Find-Git {
-    $g = Get-Command git -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($g) { return $g.Source }
+    $g = @(Find-Program "git")[0]
+    if ($g) { return $g }
     foreach ($p in "$env:ProgramFiles\Git\cmd\git.exe", "$env:LOCALAPPDATA\Programs\Git\cmd\git.exe") {
         if (Test-Path -LiteralPath $p) { return $p }
     }
@@ -185,8 +430,8 @@ function Find-Git {
 }
 
 function Find-Claude {
-    $c = Get-Command claude -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($c) { return $c.Source }
+    $c = @(Find-Program "claude")[0]
+    if ($c) { return $c }
     if (Test-Path -LiteralPath "$BIN\claude.exe") { return "$BIN\claude.exe" }
     return $null
 }
@@ -316,8 +561,8 @@ $CodexDir = ""   # le CODEX_HOME que note agents.json, une fois Codex choisi
 function Find-Codex {
     $p = Join-Path $env:LOCALAPPDATA (Join-Path "Programs" (Join-Path "OpenAI" (Join-Path "Codex" (Join-Path "bin" "codex.exe"))))
     if (Test-Path -LiteralPath $p -PathType Leaf) { return $p }
-    $c = Get-Command codex.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($c) { return $c.Source }
+    $c = @(Find-Program "codex.exe")[0]
+    if ($c) { return $c }
     return $null
 }
 
@@ -513,14 +758,14 @@ if (-not $REPO -or -not (Test-Path -LiteralPath (Join-Path $REPO "vault-skeleton
     } else {
         $pp = $ProgressPreference; $ProgressPreference = "SilentlyContinue"   # la barre de progression divise le debit par 10 sous 5.1
         try { Invoke-WebRequest -Uri $archive -OutFile $zip -UseBasicParsing }
-        catch { Fail "telechargement impossible ($archive) : $($_.Exception.Message). Verifie ta connexion puis relance." }
+        catch { Fail "telechargement impossible ($archive) : $($_.Exception.Message). Verifie ta connexion puis relance." -Arret "reseau" }
         finally { $ProgressPreference = $pp }
     }
     # .NET plutot qu'Expand-Archive : pas de module script a charger, quelle que soit la politique d'execution.
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     [IO.Compression.ZipFile]::ExtractToDirectory($zip, $dl)
     $top = Get-ChildItem -LiteralPath $dl -Directory | Select-Object -First 1
-    if (-not $top -or -not (Test-Path -LiteralPath (Join-Path $top.FullName "vault-skeleton"))) { Fail "archive inattendue ($archive)" }
+    if (-not $top -or -not (Test-Path -LiteralPath (Join-Path $top.FullName "vault-skeleton"))) { Fail "archive inattendue ($archive)" -Arret "sources_abimees" }
     if (Test-Path -LiteralPath $SRC) { Remove-Item -LiteralPath $SRC -Recurse -Force }
     New-Item -ItemType Directory -Path (Split-Path -Parent $SRC) -Force | Out-Null
     Copy-Item -LiteralPath $top.FullName -Destination $SRC -Recurse
@@ -534,7 +779,7 @@ if (-not $REPO -or -not (Test-Path -LiteralPath (Join-Path $REPO "vault-skeleton
 try { $pin = [IO.File]::ReadAllText("$REPO\engine\gbrain-pin.json") | ConvertFrom-Json } catch { $pin = $null }
 # Valeurs verifiees : $BUN_VERSION entre dans une commande PowerShell (installeur de Bun).
 if (-not $pin -or "$($pin.tag)" -cnotmatch '^v[0-9]+(\.[0-9]+){2,3}$' -or "$($pin.sha)" -cnotmatch '^[0-9a-f]{40}$' -or "$($pin.bun)" -cnotmatch '^[0-9]+\.[0-9]+\.[0-9]+$') {
-    Fail "engine\gbrain-pin.json illisible. Retelecharge brain-in-a-box puis relance."
+    Fail "engine\gbrain-pin.json illisible. Retelecharge brain-in-a-box puis relance." -Arret "sources_abimees"
 }
 $GBRAIN_TAG = [string]$pin.tag
 $GBRAIN_REF = [string]$pin.sha
@@ -543,8 +788,8 @@ $BUN_VERSION = [string]$pin.bun
 # 1. Preflight : Python (obligatoire), Git (historique du vault, et Git Bash pour l'outil Bash de Claude Code)
 Say "Preflight"
 $Py = Find-Python
-if (-not $Py) { Winget-Install "Python.Python.3.12" "Python"; $Py = Find-Python }
-if (-not $Py) { Fail "Python introuvable. Installe Python 3 depuis https://www.python.org/downloads/ puis relance la meme commande." }
+if (-not $Py) { $Py = Install-Missing "Python" "Python.Python.3.12" { Find-Python } }
+if (-not $Py) { Open-Log; Fail "Python introuvable. Installe Python 3 depuis https://www.python.org/downloads/ puis relance la meme commande." -Arret (Get-ArretPython) }
 Ok "python ($Py)"
 # >>> agents
 # L'IA que le kit branche : -Agents/-Prefere, sinon BIAB_AGENTS/BIAB_PREFERE (ce que passe l'app),
@@ -558,20 +803,20 @@ $agentsArg = if ($Agents) { $Agents } else { "$env:BIAB_AGENTS" }
 $prefereArg = if ($Prefere) { $Prefere } else { "$env:BIAB_PREFERE" }
 $badChoice = "-Agents prend claude, codex ou claude,codex, et -Prefere l'un des agents choisis (de meme BIAB_AGENTS et BIAB_PREFERE)."
 # Rien d'autre que des noms : Windows PowerShell 5.1 couperait un argument qui contient un guillemet.
-if ("$agentsArg$prefereArg" -cnotmatch '^[A-Za-z, ]*$') { Fail $badChoice }
+if ("$agentsArg$prefereArg" -cnotmatch '^[A-Za-z, ]*$') { Fail $badChoice -Arret "choix_ia" }
 $agentsOut = Invoke-Native { & $Py -I "$REPO\engine\hooks\_agents.py" choisir --pose-par=install.ps1 "--agents=$agentsArg" "--prefere=$prefereArg" }
 $agentsOut = "$(@($agentsOut) | Select-Object -Last 1)".Trim()
 if ($agentsOut -cnotmatch '^agents=(claude|codex|claude,codex) prefere=(claude|codex) source=(defaut|fichier|choix) ecrit=(oui|non)$') {
   switch -Regex ($agentsOut) {
-    '^erreur=inconnu$' { Fail $badChoice }
-    '^erreur=ferme$' { Fail "Codex arrive bientot sur ce systeme. Relance avec -Agents claude, ou sans -Agents ni BIAB_AGENTS." }
-    '^erreur=prefere$' { Fail "-Prefere (ou BIAB_PREFERE) nomme un agent qui n'est pas choisi." }
-    '^erreur=fichier:ferme$' { Fail "$AgentsFile demande Codex, pas encore disponible sur ce systeme. Relance avec -Agents claude pour le remplacer." }
-    '^erreur=fichier:illisible$' { Fail "$AgentsFile est illisible. Laisse tel quel : corrige-le, ou relance avec -Agents claude (ou codex, ou claude,codex) pour le remplacer." }
-    '^erreur=fichier:' { Fail "$AgentsFile n'est pas un choix que ce kit connait. Laisse tel quel : relance avec -Agents claude (ou codex, ou claude,codex) pour le remplacer." }
-    '^erreur=codex_home$' { Fail "CODEX_HOME doit etre un chemin absolu." }
-    '^erreur=ecriture:' { Fail "impossible d'ecrire $AgentsFile ($($agentsOut.Substring(16)))." }
-    default { Fail "engine\hooks\_agents.py n'a pas repondu (code $LASTEXITCODE). Retelecharge brain-in-a-box puis relance." }
+    '^erreur=inconnu$' { Fail $badChoice -Arret "choix_ia" }
+    '^erreur=ferme$' { Fail "Codex arrive bientot sur ce systeme. Relance avec -Agents claude, ou sans -Agents ni BIAB_AGENTS." -Arret "choix_ia" }
+    '^erreur=prefere$' { Fail "-Prefere (ou BIAB_PREFERE) nomme un agent qui n'est pas choisi." -Arret "choix_ia" }
+    '^erreur=fichier:ferme$' { Fail "$AgentsFile demande Codex, pas encore disponible sur ce systeme. Relance avec -Agents claude pour le remplacer." -Arret "choix_ia" }
+    '^erreur=fichier:illisible$' { Fail "$AgentsFile est illisible. Laisse tel quel : corrige-le, ou relance avec -Agents claude (ou codex, ou claude,codex) pour le remplacer." -Arret "choix_ia" }
+    '^erreur=fichier:' { Fail "$AgentsFile n'est pas un choix que ce kit connait. Laisse tel quel : relance avec -Agents claude (ou codex, ou claude,codex) pour le remplacer." -Arret "choix_ia" }
+    '^erreur=codex_home$' { Fail "CODEX_HOME doit etre un chemin absolu." -Arret "choix_ia" }
+    '^erreur=ecriture:' { Fail "impossible d'ecrire $AgentsFile ($($agentsOut.Substring(16)))." -Arret "choix_ia" }
+    default { Fail "engine\hooks\_agents.py n'a pas repondu (code $LASTEXITCODE). Retelecharge brain-in-a-box puis relance." -Arret "sources_abimees" }
   }
 }
 $ChosenAgents, $PreferredAgent, $agentsSource, $agentsWritten = $Matches[1], $Matches[2], $Matches[3], $Matches[4]
@@ -588,19 +833,16 @@ elseif ($agentsSource -ne "defaut") { Ok "agents IA : $agentsLabel, comme choisi
 # Ni un hooks.json de Codex qu'on ne sait pas lire : arret ici, avant tout changement, comme install.sh.
 if ($WithCodex) {
     $CodexDir = Get-CodexHome
-    if (-not $CodexDir) { Fail "$AgentsFile ne dit pas ou vit Codex : relance avec -Agents" }
+    if (-not $CodexDir) { Fail "$AgentsFile ne dit pas ou vit Codex : relance avec -Agents" -Arret "choix_ia" }
     $r = Invoke-Wire @("check", $CodexDir, $HOOKS)
-    if ($script:WireCode -ne 0) { Fail ($r -join " ") }
+    if ($script:WireCode -ne 0) { Fail ($r -join " ") -Arret "choix_ia" }
 }
 # <<< agents
 # Le journal s'ouvre une fois le choix des agents accepte (un choix refuse n'y laisse rien), avant
 # Git : winget y note ce qu'il installe.
-New-Item -ItemType Directory -Path (Split-Path -Parent $LOG) -Force | Out-Null
-Add-Content -LiteralPath $LOG -Value "`r`n===== $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') install =====" -Encoding utf8
-$LogOpen = $true
-foreach ($n in $WingetNotes) { Note-Winget $n }
+Open-Log
 $Git = Find-Git
-if (-not $Git) { Winget-Install "Git.Git" "Git"; $Git = Find-Git }
+if (-not $Git) { $Git = Install-Missing "Git" "Git.Git" { Find-Git } }
 if ($Git) {
     $gitDir = Split-Path -Parent $Git
     if (($env:Path -split ";") -notcontains $gitDir) { $env:Path = "$gitDir;$env:Path" }
@@ -654,9 +896,10 @@ if ($VoyageKey) {
 # cerveau neuf va dans le dossier personnel : y autoriser PowerShell, git ou Python ouvrirait Documents
 # a tout script qu'ils lancent, rancongiciels compris.
 $GuardMoved = $false
+$KitChose = $false   # ni -BrainDir ni BRAIN_DIR : le kit choisit le dossier
 if (-not $BrainDir) { $BrainDir = $env:BRAIN_DIR }
 if (-not $BrainDir) {
-    $BrainDir = "$H\Documents\Brain"
+    $BrainDir = "$H\Documents\Brain"; $KitChose = $true
     if (-not (Test-Path -LiteralPath $BrainDir) -and (Test-FolderGuard)) { $BrainDir = "$H\Brain"; $GuardMoved = $true }
 }
 Say "Brain vault ($BrainDir)"
@@ -665,12 +908,21 @@ $hasContent = (Test-Path -LiteralPath $BrainDir) -and (@(Get-ChildItem -LiteralP
 if ($hasContent) {
     Warn "vault deja present -> skeleton NON copie (on garde ton contenu)"
 } else {
-    try {
-        New-Item -ItemType Directory -Path $BrainDir -Force | Out-Null
-        Copy-Item "$REPO\vault-skeleton\*" $BrainDir -Recurse -Force
-    } catch {
+    $newVault = { param($d) New-Item -ItemType Directory -Path $d -Force | Out-Null; Copy-Item "$REPO\vault-skeleton\*" $d -Recurse -Force }
+    $existed = Test-Path -LiteralPath $BrainDir
+    try { & $newVault $BrainDir }
+    catch {
+        $why = $_.Exception.Message
+        # Documents ferme par un antivirus (l'acces controle de Windows est vu plus haut) : le cerveau neuf
+        # que le kit y mettait va dans le dossier personnel, comme pour l'acces controle, sans rien autoriser.
+        $alt = "$H\Brain"
+        if ($KitChose -and -not $GuardMoved -and -not @(Get-ChildItem -LiteralPath $alt -Force -ErrorAction SilentlyContinue).Count) {
+            if (-not $existed) { Remove-Item -LiteralPath $BrainDir -Recurse -Force -ErrorAction SilentlyContinue }
+            try { & $newVault $alt; $BrainDir = $alt; $why = "" } catch { $why = "$why ; $alt : $($_.Exception.Message)" }
+        }
         # Jamais "autorise PowerShell" : tout script lance par PowerShell pourrait ensuite chiffrer Documents.
-        Fail "impossible d'ecrire dans $BrainDir ($($_.Exception.Message)). Un antivirus ou l'acces controle aux dossiers protege sans doute ce dossier : n'y autorise pas PowerShell, mets plutot ton cerveau ailleurs. Dans PowerShell, tape  `$env:BRAIN_DIR = `"`$env:USERPROFILE\Brain`"  puis relance la commande d'installation."
+        if ($why) { Fail "impossible d'ecrire dans $BrainDir ($why). Un antivirus ou l'acces controle aux dossiers protege sans doute ce dossier : n'y autorise pas PowerShell, mets plutot ton cerveau ailleurs. Dans PowerShell, tape  `$env:BRAIN_DIR = `"`$env:USERPROFILE\Brain`"  puis relance la commande d'installation." -Arret "acces_documents_refuse" }
+        Ok "Documents est protege (un antivirus, sans doute) : ton cerveau va dans ton dossier personnel ($BrainDir)"
     }
     Ok "skeleton place"
 }
@@ -860,8 +1112,6 @@ if (-not $Git) {
 # Chaque echec laisse la recherche par mots-cles en place : gbq passe alors par brain_search.
 Say "Memoire gbrain (2 a 5 minutes la premiere fois)"
 function Install-Gbrain {
-    if (-not $Git) { Warn "gbrain a besoin de Git"; return $false }
-
     # Bun, le moteur de gbrain : installeur officiel, par utilisateur, la version testee en CI.
     $bun = Join-Path $BUNBIN "bun.exe"
     $have = Get-BunVersion $bun
@@ -877,6 +1127,8 @@ function Install-Gbrain {
     if (-not $have) { Warn "Bun ne s'est pas installe (details : $LOG)"; return $false }
     if (($env:Path -split ";") -notcontains $BUNBIN) { $env:Path = "$BUNBIN;$env:Path" }
     Ok "bun $have"
+    # Bun d'abord, meme sans Git : il sera la quand Git arrivera (une prochaine fois), gbrain avec lui.
+    if (-not $Git) { Warn "gbrain a besoin de Git"; return $false }
 
     # Le commit teste, recupere seul : 46 Mo au lieu de 600 avec tout l'historique.
     $fresh = $false
@@ -1049,7 +1301,8 @@ function Register-BrainTask($name, $exe, $argument, $triggers) {
         Warn "tache: $name - S4U refuse ($($_.Exception.Message)) ; enregistree en mode session ouverte, elle ne tourne que session deverrouillee"
     }
 }
-# pythonw = pas de fenetre noire qui s'ouvre a 04:00. La reflection garde python.exe : elle ecrit sur stdout.
+# pythonw = pas de fenetre noire qui s'ouvre a 04:00, ni a 12:00 et 23:00 pour la reflection : elle ecrit son
+# etat et ses erreurs dans des fichiers (~\.claude\logs), et sa sortie n'allait nulle part (S4U).
 $Pyw = Join-Path (Split-Path -Parent $Py) "pythonw.exe"
 if (-not (Test-Path -LiteralPath $Pyw)) { $Pyw = $Py }
 # Un antislash final avant le guillemet fermant l'echapperait ("D:\Brain\" -> D:\Brain"), on le double.
@@ -1065,7 +1318,7 @@ try {
     }
     $t12 = New-ScheduledTaskTrigger -Daily -At "12:00"
     $t23 = New-ScheduledTaskTrigger -Daily -At "23:00"
-    Register-BrainTask "BrainReflection" $Py "`"$HOOKS\daily-reflection.py`"" @($t12, $t23)
+    Register-BrainTask "BrainReflection" $Pyw "`"$HOOKS\daily-reflection.py`"" @($t12, $t23)
 } catch {
     Warn "Task Scheduler : $($_.Exception.Message) - recree les taches a la main si besoin"
 }
@@ -1083,9 +1336,10 @@ if ($WithClaude) {
     $Claude = Find-Claude
     if ($Claude) { Ok "Claude Code ($Claude)" } else { Warn "Claude Code non installe - telecharge-le sur https://claude.com/download puis relance" }
 }
-if (-not (Find-Obsidian)) { Winget-Install "Obsidian.Obsidian" "Obsidian" }
+# Obsidian est optionnel : winget seulement, pas d'installeur de secours.
+if (-not (Find-Obsidian)) { $null = Winget-Install "Obsidian.Obsidian" "Obsidian" }
 $Obsidian = Find-Obsidian
-if ($Obsidian) { Ok "Obsidian ($Obsidian)" } else { Warn "Obsidian non installe - gratuit sur https://obsidian.md" }
+if ($Obsidian) { Ok "Obsidian ($Obsidian)" } else { Warn "Obsidian non installe (optionnel, pour voir ton cerveau) : gratuit sur https://obsidian.md" }
 
 # 11. Verifier la recherche (l'index par mots-cles sert aussi de repli a gbrain)
 Say "Verification"
@@ -1157,3 +1411,4 @@ if ($BackedUp.Count) {
     Write-Host "$($BackedUp.Count) fichier(s) remplace(s) par leur nouvelle version : $(($BackedUp | ForEach-Object { Split-Path -Leaf $_ }) -join ', ')." -ForegroundColor Yellow
     Write-Host "L'ancienne version de chacun est dans $BACKUP (si tu les avais modifies, reprends tes changements depuis la)." -ForegroundColor Yellow
 }
+Set-Awake $false

@@ -17,13 +17,12 @@ Log: ~/.gbrain/nightly.log (same place as on macOS).
 import argparse
 import os
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
 import time
 import traceback
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 HOME = Path.home()
 HERE = Path(__file__).resolve().parent  # ~/.claude/hooks/brain once installed
@@ -31,6 +30,8 @@ GDATA = Path(os.environ.get("GBRAIN_HOME", "").strip() or HOME) / ".gbrain"
 BSDIR = HOME / ".brain-search"
 BUN_BIN = Path(os.environ.get("BUN_INSTALL") or HOME / ".bun") / "bin"
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+WINDOWS = os.name == "nt"   # Windows only, but its tests run everywhere
+EXE = ".exe" if WINDOWS else ""
 LOG = GDATA / "nightly.log"
 
 
@@ -53,12 +54,33 @@ def run(cmd, cwd=None, timeout=600, env=None, out=None):
     try:
         return p.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
-        # gbrain.exe is a shim that starts bun.exe: kill the whole tree, the OS frees the brain's lock.
-        subprocess.run(["taskkill", "/F", "/T", "/PID", str(p.pid)], stdout=subprocess.DEVNULL,
-                       stderr=subprocess.DEVNULL, creationflags=NO_WINDOW)
+        kill_tree(p.pid)
         p.wait()
         log(f"[run] {Path(cmd[0]).name} {cmd[1] if len(cmd) > 1 else ''} killed after {timeout}s")
         return 124
+
+
+def kill_tree(pid):
+    """gbrain.exe is a shim that starts bun.exe: the whole tree goes, and the OS frees the brain's lock.
+    Windows' taskkill by its full path: a bare name is looked for in the current folder first."""
+    taskkill = os.path.join(os.environ.get("SystemRoot") or r"C:\Windows", "System32", "taskkill.exe")
+    subprocess.run([taskkill, "/F", "/T", "/PID", str(pid)], stdout=subprocess.DEVNULL,
+                   stderr=subprocess.DEVNULL, creationflags=NO_WINDOW)
+
+
+def absolute_folder(d):
+    """Whether `d`, a folder of the PATH, is named in full: on Windows with its drive or a share, as
+    _headless_claude.absolute_folder says (Python 3.12's os.path.isabs also takes \\tools)."""
+    return bool(d) and (PureWindowsPath(d).is_absolute() if WINDOWS else os.path.isabs(d))
+
+
+def find_git():
+    """git.exe in the PATH's absolute folders. Not shutil.which: it looks in the current folder first."""
+    for d in os.environ.get("PATH", "").split(os.pathsep):
+        p = os.path.join(d, "git" + EXE)
+        if absolute_folder(d) and os.path.isfile(p) and os.access(p, os.X_OK):
+            return p
+    return None
 
 
 def commit_vault(git, vault):
@@ -124,8 +146,9 @@ def main():
                "gbrain_update.py et controle.py sont pris à côté de ce script. Pour un essai isolé, "
                "change HOME (USERPROFILE sous Windows).")
     ap.add_argument("--brain", required=True, help="le dossier du cerveau (vault)")
-    ap.add_argument("--git", default=shutil.which("git"), help="chemin de git (défaut : celui du PATH)")
+    ap.add_argument("--git", help="chemin de git (défaut : celui du PATH)")
     args = ap.parse_args()
+    args.git = args.git or find_git()
     vault = Path(args.brain)
     GDATA.mkdir(parents=True, exist_ok=True)
     log(f"===== {time.strftime('%Y-%m-%d %H:%M:%S')} nightly start =====")

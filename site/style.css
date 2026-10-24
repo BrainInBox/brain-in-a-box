@@ -288,7 +288,7 @@ code {
 
 /* Hero */
 
-.hero { position: relative; overflow: hidden; padding: 88px 0 112px; text-align: center; }
+.hero { position: relative; overflow: hidden; padding: 40px 0 96px; text-align: center; }
 .hero::before {
   content: "";
   position: absolute;
@@ -302,20 +302,74 @@ code {
 }
 .hero-in { position: relative; display: flex; flex-direction: column; align-items: center; }
 .hero-bibo {
-  width: 112px;
-  margin-bottom: 28px;
+  width: 96px;
+  height: 96px;
+  overflow: visible;
+  margin-bottom: 4px;
   filter: drop-shadow(0 18px 30px rgba(247, 169, 196, 0.16));
   animation: float 6s ease-in-out infinite;
 }
 @keyframes float {
   50% { transform: translateY(-8px); }
 }
-.hero h1 { margin-top: 24px; max-width: 15em; }
+/* Bibo comes out of his box (as in the app, app/src/bibo-anim.css): the taped box shakes, the lid
+   pops, he springs out, blinks and waves; then he floats, and blinks now and then. Without motion,
+   the drawing as it is: Bibo out of his box. */
+.hero-bibo .hb-box,
+.hero-bibo .hb-rise,
+.hero-bibo .hb-flap-l,
+.hero-bibo .hb-flap-r,
+.hero-bibo .hb-lid-l,
+.hero-bibo .hb-lid-r,
+.hero-bibo .hb-arm { transform-box: view-box; }
+.hero-bibo .hb-box { transform-origin: 120px 204px; animation: hb-shake 0.3s 0.35s ease-in-out; }
+.hero-bibo .hb-lid { opacity: 0; animation: hb-lid 0.82s linear both; }
+.hero-bibo .hb-lid-l { transform-origin: 46px 131px; animation: hb-lid-open 0.16s 0.66s ease-in both; }
+.hero-bibo .hb-lid-r { transform-origin: 194px 131px; animation: hb-lid-open 0.16s 0.66s ease-in both; }
+.hero-bibo .hb-tape { animation: hb-tape 0.18s 0.62s ease-out both; }
+.hero-bibo .hb-flap-l { transform-origin: 53px 131px; animation: hb-flap 0.3s 0.7s cubic-bezier(0.3, 1.5, 0.5, 1) both; }
+.hero-bibo .hb-flap-r { transform-origin: 187px 131px; animation: hb-flap 0.3s 0.7s cubic-bezier(0.3, 1.5, 0.5, 1) both; }
+.hero-bibo .hb-rise { transform-origin: 120px 140px; animation: hb-spring 0.62s 0.7s both; }
+.hero-bibo .hb-eyes { transform-box: fill-box; transform-origin: 50% 50%; animation: hb-blink 5.5s -4.03s infinite; }
+.hero-bibo .hb-arm { opacity: 0; transform-origin: 174px 128px; animation: hb-wave 1s 1.4s ease-in-out both; }
+/* His eyes follow the pointer, slowly (app.js sets --gx and --gy, in the drawing's units). */
+.hero-bibo .hb-pupils { transform: translate(var(--gx, 0px), var(--gy, 0px)); transition: transform 0.45s ease-out; }
+@keyframes hb-shake {
+  20% { transform: rotate(-3deg); }
+  45% { transform: rotate(2.5deg); }
+  70% { transform: rotate(-2deg); }
+}
+@keyframes hb-lid {
+  0%, 97% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes hb-lid-open { to { transform: scaleX(0); } }
+@keyframes hb-tape { to { opacity: 0; transform: translateY(-8px); } }
+@keyframes hb-flap { from { transform: scale(0); } }
+@keyframes hb-spring {
+  0% { transform: translateY(100px) scale(0.92, 1.04); animation-timing-function: cubic-bezier(0.2, 0.8, 0.4, 1); }
+  55% { transform: translateY(-14px) scale(0.96, 1.06); animation-timing-function: ease-in; }
+  78% { transform: scale(1.07, 0.92); animation-timing-function: ease-out; }
+  100% { transform: none; }
+}
+@keyframes hb-blink {
+  0%, 97%, 100% { transform: none; }
+  98% { transform: scaleY(0.1); }
+}
+@keyframes hb-wave {
+  0% { opacity: 0; transform: scale(0.3) rotate(25deg); }
+  14% { opacity: 1; transform: none; }
+  32%, 68% { transform: rotate(-16deg); }
+  50% { transform: rotate(6deg); }
+  86% { opacity: 1; transform: none; }
+  100% { opacity: 0; transform: scale(0.3) rotate(25deg); }
+}
+.hero h1 { margin-top: 20px; max-width: 15em; font-size: clamp(36px, 4.9vw, 64px); }
 .h1-line { display: inline-block; }
-.lead { margin-top: 28px; max-width: 37em; text-wrap: balance; color: var(--ink-2); font-size: clamp(17px, 1.6vw, 19px); line-height: 1.6; }
-.for { margin-top: 14px; color: var(--ink); font-size: 15.5px; font-weight: 500; }
+.lead { margin-top: 20px; max-width: 44em; text-wrap: balance; color: var(--ink-2); font-size: clamp(17px, 1.5vw, 19px); line-height: 1.55; }
+.for { margin-top: 12px; color: var(--ink); font-size: 15.5px; font-weight: 500; }
 
-.dl { display: flex; flex-direction: column; align-items: center; margin-top: 40px; }
+.dl { display: flex; flex-direction: column; align-items: center; margin-top: 28px; }
 .dl-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 16px 28px; }
 .dl-meta { margin-top: 16px; color: var(--ink-3); font-size: 14px; }
 .dl-mobile { max-width: 28em; margin-top: 4px; color: var(--ink); font-weight: 500; }
@@ -331,7 +385,57 @@ code {
 .dl-others ul { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 18px; margin: 0; padding: 0; list-style: none; }
 .dl-others a { font-weight: 500; }
 .dl-version { margin-top: 8px; color: var(--ink-3); font-size: 13.5px; }
-.dl-version a { color: var(--ink-2); }
+.dl-privacy { max-width: 36em; margin-top: 14px; color: var(--ink-3); font-size: 13.5px; }
+
+/* On a phone: the link goes to the computer (app.js shows it). */
+.phone {
+  width: 100%;
+  max-width: 30em;
+  margin-bottom: 28px;
+  padding: 20px 18px 18px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+.phone-say { color: var(--ink); font-size: 16.5px; font-weight: 500; line-height: 1.45; }
+.phone-url { margin-top: 12px; color: var(--pink); font: 500 16px/1.3 var(--mono); overflow-wrap: anywhere; }
+.phone-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 16px; }
+.phone-actions .btn { padding: 12px 20px; font-size: 15px; }
+.phone-done { margin-top: 12px; color: var(--ink-2); font-size: 14px; }
+.phone-done:empty { display: none; }
+
+/* Once the download has started: the next three steps, for this system. */
+.next {
+  width: 100%;
+  max-width: 980px;
+  margin-top: 28px;
+  padding: 24px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius);
+  background: var(--panel);
+  text-align: left;
+}
+.next:focus { outline: none; }
+.next:focus-visible { outline: 2px solid var(--pink); outline-offset: 3px; }
+.next-title { color: var(--ink); font: 600 19px/1.3 var(--head); letter-spacing: -0.01em; }
+.next-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin: 18px 0 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: next;
+}
+.next-steps li { counter-increment: next; padding: 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--well); }
+.next-steps h3 { font-size: 16.5px; letter-spacing: -0.01em; }
+.next-steps h3::before { content: counter(next) ". "; color: var(--pink); }
+.next-steps p { margin-top: 8px; color: var(--ink-2); font-size: 14.5px; }
+.next-steps .gestures { margin: 6px 0 0; padding-left: 1.4em; list-style: decimal; color: var(--ink-2); font-size: 14.5px; }
+.next-steps .gestures li { display: list-item; counter-increment: none; margin-top: 4px; padding: 0; border: 0; border-radius: 0; background: none; }
+.next-steps .gestures li::marker { color: var(--pink); }
+.next-steps img { display: block; width: 100%; height: auto; max-height: 150px; margin-top: 12px; object-fit: contain; object-position: left top; border-radius: 6px; }
+.next-more { margin-top: 16px; font-size: 15px; }
 .dl-warn {
   max-width: 36em;
   margin-top: 32px;
@@ -838,6 +942,15 @@ pre.cmd code { padding: 0; background: none; border: 0; color: inherit; font: in
 }
 .foot-bottom a { color: var(--ink-2); }
 
+/* The guide: two screens of it, side by side */
+
+.guide-steps { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; margin: 48px 0 0; padding: 0; list-style: none; }
+.guide-steps > li { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; align-items: center; }
+.guide-steps .shot { padding: 14px; }
+.guide-steps img { width: 100%; height: auto; }
+.guide-text h3 { margin: 14px 0 10px; font-size: 22px; letter-spacing: -0.02em; }
+.guide-text p:not(.j-num) { color: var(--ink-2); font-size: 15.5px; }
+
 /* Narrower screens */
 
 /* Under 1240px the tree's boxes get too narrow for their text beside the words. */
@@ -853,7 +966,15 @@ pre.cmd code { padding: 0; background: none; border: 0; color: inherit; font: in
   .steps > li { gap: 16px 32px; }
 }
 
+@media (max-width: 1100px) {
+  .guide-steps { grid-template-columns: minmax(0, 1fr); max-width: 720px; }
+}
+
 @media (max-width: 900px) {
+  .next-steps { grid-template-columns: minmax(0, 1fr); }
+  .next-steps li { display: grid; grid-template-columns: minmax(0, 1fr) 140px; grid-template-rows: auto 1fr; gap: 0 16px; align-items: start; }
+  .next-steps li img { grid-column: 2; grid-row: 1 / span 2; margin-top: 0; }
+  .next-steps li > :not(img) { grid-column: 1; }
   .foot-top { grid-template-columns: minmax(0, 1fr); }
   .systems-grid { grid-template-columns: minmax(0, 1fr); max-width: 560px; }
   .journey > li, .journey > li:nth-child(even) { grid-template-columns: minmax(0, 1fr); padding: 44px 0; }
@@ -888,8 +1009,13 @@ pre.cmd code { padding: 0; background: none; border: 0; color: inherit; font: in
   :root { --gutter: 16px; }
   .section { padding: 72px 0; }
   .section-how { padding-top: 8px; }
-  .hero { padding: 48px 0 72px; }
-  .hero-bibo { width: 88px; margin-bottom: 20px; }
+  .hero { padding: 24px 0 64px; }
+  .hero-bibo { width: 80px; height: 80px; margin-bottom: 4px; }
+  .guide-steps > li { grid-template-columns: minmax(0, 1fr); }
+  .guide-steps .shot { max-width: 340px; }
+  .next { padding: 18px 16px; }
+  .next-steps li { grid-template-columns: minmax(0, 1fr); }
+  .next-steps li img { grid-column: auto; grid-row: auto; margin-top: 12px; }
   .lead { margin-top: 22px; }
   .section-lead { font-size: 17px; }
   .needs, .softs, .after, .ways { grid-template-columns: minmax(0, 1fr); }
@@ -916,4 +1042,5 @@ pre.cmd code { padding: 0; background: none; border: 0; color: inherit; font: in
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
   *, *::before, *::after { animation: none !important; transition: none !important; }
+  .hero-bibo .hb-pupils { transform: none; }
 }

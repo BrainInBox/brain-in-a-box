@@ -35,6 +35,14 @@ import sys
 import tempfile
 import time
 from collections import namedtuple
+from contextlib import contextmanager
+
+try:
+    import fcntl
+    msvcrt = None
+except ImportError:  # Windows
+    import msvcrt
+    fcntl = None
 
 AGENTS = ("claude", "codex")
 # The systems Codex can be chosen on: macOS and Linux open in phase 6, Windows in phase 7.
@@ -45,6 +53,8 @@ POSE_PAR = ("install.sh", "install.ps1")
 VUS = "codex-hooks-vus.json"
 # When the installer last wired them in Codex's hooks.json (pose_hooks()).
 POSES = "codex-hooks-poses.json"
+# How long a hook waits for the others of its event to write their line in VUS (a few ms each).
+VERROU_ATTENTE = 2.0
 UTC = "%Y-%m-%dT%H:%M:%SZ"
 UTC_RE = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ")
 # The sessions the user types in: Codex's terminal (cli) and its editor's (vscode). "exec" is a script's
@@ -349,13 +359,46 @@ def _d_un_coup(p, d):
         raise
 
 
+@contextmanager
+def _verrou(p, attente=VERROU_ATTENTE):
+    """Holds the lock file p (created 0600, never through a link) for the block. OSError when another
+    process still holds it after `attente` seconds."""
+    if os.path.islink(p):   # O_NOFOLLOW closes the race where there is one
+        raise OSError("%s is a link" % p)
+    fd = os.open(p, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0), 0o600)
+    try:
+        fin = time.monotonic() + attente
+        while True:
+            try:
+                if fcntl:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                else:
+                    msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+                break
+            except OSError:
+                if time.monotonic() >= fin:
+                    raise
+                time.sleep(0.01)
+        try:
+            yield
+        finally:
+            if msvcrt:
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+    finally:
+        os.close(fd)
+
+
 def vu(nom, home=None):
     """Notes that Codex ran the hook `nom` now: codex-hooks-vus.json, beside agents.json, written in one
-    step (0600); a link in its place is replaced, never followed. Hooks running together may each miss
-    the other's line once: each one's own time is what counts."""
-    d = vus(home)
-    d[nom] = time.strftime(UTC, time.gmtime())
-    _d_un_coup(os.path.join(os.path.dirname(fichier(home)), VUS), {"version": 1, "hooks": d})
+    step (0600); a link in its place is replaced, never followed. Codex runs one event's hooks at once:
+    each reads the file and writes it back with its line under a lock (.codex-hooks-vus.json.lock), or
+    the last one to write would drop the lines of those that wrote in between."""
+    dossier = os.path.dirname(fichier(home))
+    os.makedirs(dossier, exist_ok=True)
+    with _verrou(os.path.join(dossier, "." + VUS + ".lock")):
+        d = vus(home)
+        d[nom] = time.strftime(UTC, time.gmtime())
+        _d_un_coup(os.path.join(dossier, VUS), {"version": 1, "hooks": d})
 
 
 def pose_hooks(home=None):
