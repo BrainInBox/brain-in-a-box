@@ -1,6 +1,6 @@
-# Throwaway (branch spike/guide-v2-uia-mutations): each protection of the guide v2's Windows reader
-# (capture/uia_win.rs) taken out in turn turns a desktop test red, on a VM at 150 %; and what lies over
-# the Odoo-like page's password field in Edge (sonde, first push only).
+# Throwaway (branch spike/guide-v2-uia-mutations): the guide v2's desktop tests on two VMs, quicker than
+# the PR's six; and, when the commit says [mutations], each protection of the guide v2's Windows reader
+# (capture/uia_win.rs) taken out in turn must turn a desktop test red, on a VM at 150 %.
 name: spike-uia-mutations
 
 on:
@@ -11,9 +11,54 @@ permissions:
   contents: read
 
 jobs:
+  tests:
+    if: "!contains(github.event.head_commit.message, '[mutations]')"
+    name: tests (${{ matrix.os }}, ${{ matrix.echelle }} %)
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-2022, echelle: 100 }
+          - { os: windows-2025, echelle: 150 }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: app/src-tauri
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build the tests
+        run: cargo test --locked --lib --no-run
+      - name: The screen, 1920x1080 at ${{ matrix.echelle }} %
+        run: |
+          & "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /target:exe "/out:$env:RUNNER_TEMP\echelle.exe" ..\..\.github\ci\echelle.cs
+          if ($LASTEXITCODE) { exit 1 }
+          & "$env:RUNNER_TEMP\echelle.exe" 1920 1080 ${{ matrix.echelle }}
+          if ($LASTEXITCODE) { exit 1 }
+      - name: A RemoteApp of the VM itself (mstsc)
+        if: matrix.echelle == 100
+        timeout-minutes: 5
+        run: |
+          ../../.github/ci/remoteapp.ps1
+          "BIBO_LOIN_PID=$((Get-Process mstsc | Select-Object -First 1).Id)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: The elements of a real desktop's programs
+        env:
+          ECHELLE: ${{ matrix.echelle }}
+        run: |
+          $skip = if ($env:ECHELLE -ne '100') { '--skip', 'uia_remoteapp' } else { @() }
+          cargo test --locked --lib -- --ignored uia_ --test-threads=1 --nocapture @skip 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\uia.txt"
+          $code = $LASTEXITCODE
+          $lines = @('```') + @(Get-Content "$env:RUNNER_TEMP\uia.txt" | Where-Object { $_ -match '^MESURE |test result|panicked|\.\.\. (ok|FAILED)' }) + @('```')
+          $lines | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          exit $code
+
   mutations:
+    if: contains(github.event.head_commit.message, '[mutations]')
     runs-on: windows-2025
-    timeout-minutes: 240
+    timeout-minutes: 300
     defaults:
       run:
         shell: pwsh
