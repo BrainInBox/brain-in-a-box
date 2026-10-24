@@ -39,6 +39,8 @@
 
 Quand Chafic a connecté ses comptes : vérifier dans le Mac de test que Bbox répond par Claude puis par ChatGPT, capture à l'appui, puis déconnecter son ChatGPT du Mac de test et arrêter le relais.
 
+Attention : comme `hermes auth add anthropic`, la connexion Claude enregistre le compte sans le rendre actif. Bbox ouvre ensuite l'étape de choix du modèle, que le relais ne valide pas : la valider par `cdp.py` avant de tester une réponse. À trancher plus tard : faire de Claude le fournisseur actif d'office après la connexion (petit changement, à prouver).
+
 ## Notes d'essai
 
 - Remettre le Mac de test à neuf : `vm-blank-1.sh` (retire le service de démarrage fabriqué, vide le disque avec `sync`, arrête le Mac virtuel proprement), relancer `tart run bbox-essai`, puis `vm-blank-2.sh`, puis le tunnel `-L 9333:127.0.0.1:9333`. Sans `sync` et sans arrêt propre, le déplacement du fichier de démarrage est perdu.
