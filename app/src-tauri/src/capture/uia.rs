@@ -193,6 +193,20 @@ pub(super) fn court(nom: &str) -> String {
     line.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(NOM_MAX).collect()
 }
 
+/// A list holds for the window asked only: the same before and after its tree is read (R22). Closed
+/// meanwhile, or its handle now another program's window: nothing.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(super) fn tant_que<T>(toujours: impl Fn() -> bool, lire: impl FnOnce() -> Result<T, Rate>) -> Result<T, Rate> {
+    if !toujours() {
+        return Err(Rate::Introuvable);
+    }
+    let lu = lire()?;
+    if !toujours() {
+        return Err(Rate::Introuvable);
+    }
+    Ok(lu)
+}
+
 /// Bibo points by pixels, as in v1, when the tree gives nothing to point at: nothing but the title
 /// bar's buttons (a program without accessibility, a canvas), or nothing at all (a remote desktop).
 #[cfg_attr(not(test), allow(dead_code))]
@@ -496,6 +510,21 @@ mod tests {
     }
 
     #[test]
+    fn a_list_holds_only_for_the_window_still_there() {
+        let suite = |v: &'static [bool]| {
+            let i = std::cell::Cell::new(0);
+            move || {
+                i.set(i.get() + 1);
+                v[i.get() - 1]
+            }
+        };
+        assert_eq!(tant_que(suite(&[true, true]), || Ok(7)), Ok(7));
+        assert_eq!(tant_que(suite(&[false]), || -> Result<i32, Rate> { panic!("read") }), Err(Rate::Introuvable), "gone before: not read");
+        assert_eq!(tant_que(suite(&[true, false]), || Ok(7)), Err(Rate::Introuvable), "gone, or another window, while read");
+        assert_eq!(tant_que(suite(&[true]), || Err::<i32, _>(Rate::Reduite)), Err(Rate::Reduite));
+    }
+
+    #[test]
     fn pixels_when_the_tree_gives_nothing() {
         assert!(repli_pixels(&Liste::default()), "a remote desktop");
         let barre = |n: &str| Element { barre_titre: true, ..el(Genre::Bouton, n) };
@@ -581,18 +610,26 @@ mod tests {
     /// The windows read, in turn (None: the window in front).
     type Lus = Arc<Mutex<Vec<Option<u64>>>>;
 
-    /// A reader of the tests: the first read slow, as UIA's first is.
+    /// A reader of the tests: the first read slow, as UIA's first is. With a gate, each read after the
+    /// first waits until the test drops it: the test, not the clock, says when a read ends.
     struct Faux {
         lus: Lus,
         premier: Duration,
         ensuite: Duration,
         parti: Arc<Mutex<bool>>,
+        porte: Option<mpsc::Receiver<()>>,
+        commencees: Arc<Mutex<usize>>,
     }
 
     impl Lire for Faux {
         fn lire(&mut self, cible: Option<&Window>, _cachees: &[Cadre]) -> Result<Liste, Rate> {
             let premier = self.lus.lock().unwrap().is_empty();
+            *self.commencees.lock().unwrap() += 1;
             std::thread::sleep(if premier { self.premier } else { self.ensuite });
+            if let (false, Some(porte)) = (premier, &self.porte) {
+                // Never for ever: a test that goes wrong ends red, not stuck.
+                let _ = porte.recv_timeout(Duration::from_secs(10));
+            }
             self.lus.lock().unwrap().push(cible.map(|w| w.id));
             Ok(liste(vec![el(Genre::Bouton, "Nouveau")]))
         }
@@ -605,12 +642,17 @@ mod tests {
     }
 
     fn faux(premier: u64, ensuite: u64) -> (Travailleur, Lus, Arc<Mutex<bool>>) {
-        let (lus, parti) = (Arc::new(Mutex::new(Vec::new())), Arc::new(Mutex::new(false)));
-        let (l, p) = (lus.clone(), parti.clone());
-        let t = Travailleur::demarrer(move || {
-            Ok(Faux { lus: l, premier: Duration::from_millis(premier), ensuite: Duration::from_millis(ensuite), parti: p })
-        });
+        let (t, lus, parti, _) = faux_a_la_porte(premier, ensuite, None);
         (t, lus, parti)
+    }
+
+    fn faux_a_la_porte(premier: u64, ensuite: u64, porte: Option<mpsc::Receiver<()>>) -> (Travailleur, Lus, Arc<Mutex<bool>>, Arc<Mutex<usize>>) {
+        let (lus, parti, commencees) = (Arc::new(Mutex::new(Vec::new())), Arc::new(Mutex::new(false)), Arc::new(Mutex::new(0)));
+        let (l, p, c) = (lus.clone(), parti.clone(), commencees.clone());
+        let t = Travailleur::demarrer(move || {
+            Ok(Faux { lus: l, premier: Duration::from_millis(premier), ensuite: Duration::from_millis(ensuite), parti: p, porte, commencees: c })
+        });
+        (t, lus, parti, commencees)
     }
 
     fn sage() -> Window {
@@ -646,15 +688,17 @@ mod tests {
 
     #[test]
     fn the_lists_nobody_waits_for_any_more_are_not_read() {
-        let (t, lus, _) = faux(0, 300);
+        let (porte, attente) = mpsc::channel();
+        let (t, lus, _, commencees) = faux_a_la_porte(0, 0, Some(attente));
         until("warmed up", || lus.lock().unwrap().len() == 1);
-        for _ in 0..5 {
+        t.envoi.send(Travail { cible: Some(sage()), cachees: Vec::new(), reponse: None, echeance: None }).unwrap();
+        until("a read under way, held", || *commencees.lock().unwrap() == 2);
+        for _ in 0..4 {
             assert_eq!(demander(&t.envoi, &sage(), &[], Duration::from_millis(20)), Err(Rate::Indisponible));
         }
-        let start = Instant::now();
+        drop(porte);
         assert!(demander(&t.envoi, &sage(), &[], Duration::from_secs(5)).is_ok());
-        assert!(start.elapsed() < Duration::from_millis(1000), "the four given up were read: {:?}", start.elapsed());
-        assert_eq!(lus.lock().unwrap().len(), 3, "the warm-up, the one under way, this one");
+        assert_eq!(lus.lock().unwrap().len(), 3, "the warm-up, the one under way, this one: not the four given up");
     }
 
     #[test]
