@@ -1574,6 +1574,9 @@ class SiteCaptures(unittest.TestCase):
         mac = re.search(r"<li><strong>Mac</strong>.*?</li>", faq, re.S).group(0)
         self.assertIn("la bloque de nouveau", mac)
         self.assertIn("Ouvrir quand même", mac)
+        # The help a blocked user looks for says so too, not « au premier lancement » alone.
+        aide = re.search(r"<summary>Mac&nbsp;: l’app est bloquée.*?</details>", page, re.S).group(0)
+        self.assertIn("après une mise à jour", aide)
         # app-sans-winget: no Obsidian, and the page says where to get it.
         obsidian = re.search(r"<h3>Obsidian</h3>.*?</article>", page, re.S).group(0)
         self.assertIn('href="https://obsidian.md"', obsidian)
