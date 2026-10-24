@@ -495,9 +495,11 @@ jobs:
   # The guide's capture at 125 and 150 % (capture/win.rs): programs unaware of the scale (as many an old
   # ERP, stretched by Windows on the screen), aware of it, of mixed parts, scaled by GDI, and aware of
   # the system's scale when the screen's is lowered under it; each captured whole, its dialog in place.
-  # A protected window and another program's popup stay out at that scale too. The runner's screen is
+  # A window over it, another program's popup and a protected window stay out of the image, the window
+  # at the screen's size, stretched by Windows, or drawn bigger than its frame. The runner's screen is
   # set as Settings sets it (.github/ci/echelle.cs, compiled there by Windows' own csc); at 100 % the
-  # same tests run with the others, in the app job, but the one that lowers the scale.
+  # same tests run with the others, in the app job, but the ones that lower the scale (echelle_baissee,
+  # on a runner only: GITHUB_ACTIONS).
   bureau-echelle:
     name: bureau-echelle (${{ matrix.echelle }} %)
     needs: changes
@@ -531,7 +533,7 @@ jobs:
             exit 1
           }
       - name: Each window captured whole, its dialog in place, nothing of another program's
-        run: cargo test --locked --lib -- --ignored echelle bureau_a_protected_window bureau_another_programs_popup --test-threads=1 --nocapture
+        run: cargo test --locked --lib -- --ignored echelle bureau_a_protected_window bureau_another_programs_popup bureau_a_window_under_another --test-threads=1 --nocapture
 
   # The app's own install path on a real Windows, without its window: Claude Code, then the
   # brain (install.ps1 from this commit, no console, no question) on a PC with only the Store's
