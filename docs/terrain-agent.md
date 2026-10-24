@@ -160,9 +160,24 @@ and skills, the kit's correction-detector run as Codex runs it, and that nothing
 there. Its results are `terrain-<os>-app-codex` and `captures-<os>-app-codex`. Opening Codex for real
 (the PR that changes `CODEX_OUVERT`) is the maintainer's, never a fix of this path.
 
+Two more paths (`terrain.py`, `app`). `app-sans-winget` (Windows): the path `app` once winget is gone
+too (`.github/ci/poste-sans-winget.ps1`, its proof in `details.poste_neuf.sans_winget`); Python and Git
+must come from their official installers (`details.git`, `details.python`), Obsidian not at all, winget's
+line orange at the diagnosis and Obsidian's orange or grey (« À noter », « À savoir »; `app-winget-diagnostic`,
+`app-obsidian-absent`). `app-mise-a-jour` (macOS, Windows): the tested version first (`details.apres`), then
+the preview before it (`details.avant`: on master the one before the newest, on a branch the one its build
+was numbered after; its file kept under the site button's name, `publie_sous` says the release's), its
+brain installed, then the tested version over it (steps `maj-*`: `maj-versions` refuses one that is not
+newer, `maj-installeur` the NSIS pages, `maj-cerveau-intact` the vault, kit, settings and tasks). Results
+`terrain-<os>-app-sans-winget` and `-app-mise-a-jour`, with their `captures-` artifacts.
+
+The version before is clicked through by the tested commit's robot (`terrain_app.py`). A PR that renames a
+title or a button the robot reads keeps the old words recognized too, until the next preview is out:
+otherwise `app-mise-a-jour` fails at a step `app-avant-*` on the published app, which still has them.
+
 ```bash
-gh run download <run-id> --name terrain-macos-app --dir "$(mktemp -d)"     # the JSON (terrain-windows-app, terrain-linux-app; -app-codex)
-gh run download <run-id> --name captures-macos-app --dir "$(mktemp -d)"    # the captures (captures-windows-app, captures-linux-app; -app-codex)
+gh run download <run-id> --name terrain-macos-app --dir "$(mktemp -d)"     # the JSON (terrain-windows-app, terrain-linux-app; -app-codex, -app-sans-winget, -app-mise-a-jour)
+gh run download <run-id> --name captures-macos-app --dir "$(mktemp -d)"    # the captures (captures-windows-app, captures-linux-app; the same suffixes)
 ```
 
 - `etape` says where: `app-preparation`, `app-telechargement`, `app-verification` or
