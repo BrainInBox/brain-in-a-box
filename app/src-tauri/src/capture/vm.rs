@@ -15,14 +15,14 @@ use std::time::{Duration, Instant};
 
 use windows::core::{w, BOOL};
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
-use windows::Win32::Graphics::Gdi::{CreateSolidBrush, ChangeDisplaySettingsExW, EnumDisplaySettingsW, CDS_TYPE, DEVMODEW, DISP_CHANGE_SUCCESSFUL, DM_PELSHEIGHT, DM_PELSWIDTH, ENUM_CURRENT_SETTINGS, ENUM_DISPLAY_SETTINGS_MODE};
+use windows::Win32::Graphics::Gdi::{ClientToScreen, CreateSolidBrush, ChangeDisplaySettingsExW, EnumDisplaySettingsW, CDS_TYPE, DEVMODEW, DISP_CHANGE_SUCCESSFUL, DM_PELSHEIGHT, DM_PELSWIDTH, ENUM_CURRENT_SETTINGS, ENUM_DISPLAY_SETTINGS_MODE};
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
     MOUSEEVENTF_MOVE, MOUSEINPUT, MOUSE_EVENT_FLAGS, VIRTUAL_KEY, VK_ESCAPE, VK_LWIN, VK_SHIFT,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, EnumChildWindows, EnumWindows, GetAncestor, GetForegroundWindow, GetMessageW,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, EnumChildWindows, EnumWindows, GetAncestor, GetClientRect, GetForegroundWindow, GetMessageW,
     GetWindowDisplayAffinity, GetWindowLongW, GetWindowRect, GetWindowTextW, IsWindow, IsWindowVisible, PostThreadMessageW, RegisterClassW, SetCursorPos,
     SetForegroundWindow, SetWindowDisplayAffinity, SetWindowPos, ShowWindow, TranslateMessage, WindowFromPoint, ES_PASSWORD, GA_ROOT, GWL_STYLE, HWND_TOP,
     MSG, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SW_MINIMIZE, SW_RESTORE, SW_SHOWMINNOACTIVE, WDA_EXCLUDEFROMCAPTURE, WDA_NONE, WINDOW_DISPLAY_AFFINITY, WM_QUIT, WNDCLASSW,
@@ -234,6 +234,9 @@ fn desk() -> Desk {
             let _ = unsafe { ShowWindow(h, SW_SHOWMINNOACTIVE) };
         }
     }
+    // A dialog left on the desktop (a crash report, a prompt) would take clicks and the focus: said first.
+    let dialogues: Vec<String> = top_windows().into_iter().filter(|&h| visible(h) && class(h) == "#32770").map(|h| format!("« {} » pid {}", title(h), pid_of(h))).collect();
+    mesure("bureau", "dialogues", format!("{dialogues:?}, devant {} « {} »", class(devant()), title(devant())));
     atelier();
     Desk { nonce: format!("{}-{}", std::process::id(), N.fetch_add(1, Ordering::SeqCst)) }
 }
@@ -425,6 +428,17 @@ fn anneau_dessine(echelle: f64) -> (RectEcran, RectEcran) {
 
 fn bulle_dessinee() -> RectEcran {
     ecran::calque().dessin.iter().find(|t| t.couleurs[0] == ENCRE).map(|t| t.zone).expect("the bubble")
+}
+
+/// Where the overlay's page lies on the screen (its client area): what it can draw on.
+fn page(id: u64) -> Option<RectEcran> {
+    let (mut o, mut r) = (POINT::default(), RECT::default());
+    // SAFETY: a POINT and a RECT for the calls.
+    unsafe {
+        ClientToScreen(hwnd(id), &mut o).as_bool().then_some(())?;
+        GetClientRect(hwnd(id), &mut r).ok()?;
+    }
+    Some(RectEcran { x: o.x, y: o.y, largeur: (r.right - r.left).max(0) as u32, hauteur: (r.bottom - r.top).max(0) as u32 })
 }
 
 /// The click count the window of mode « bouton » shows at the end of its title, and where the last one landed.
@@ -671,6 +685,9 @@ fn verifier_calque(app: &tauri::AppHandle, d: &Desk, t: &str, fautes: &mut Vec<S
     let id = ecran::calque().fenetre.expect("the overlay's window");
     mesure(t, "affinite_lue", format!("{:#x}", affinite(id)));
     mesure(t, "calque_fenetre", format!("{:?}", window_rect(hwnd(id))));
+    let p = page(id);
+    mesure(t, "calque_page", format!("{p:?}"));
+    faute(p.is_some_and(|p| p.contient(&ecran.rect)), format!("the overlay's page short of the screen: {p:?}"));
     faute(affinite(id) == 0x11, "the affinity read back".into());
     sleep(2000);
     faute(devant() == hwnd(pastille.id), format!("the overlay took the focus: {}", class(devant())));
@@ -751,7 +768,7 @@ fn verifier_calque(app: &tauri::AppHandle, d: &Desk, t: &str, fautes: &mut Vec<S
     let _ = unsafe { ShowWindow(win, SW_MINIMIZE) };
     sleep(800);
     let suivante = devant();
-    mesure(t, "devant_apres_reduction", class(suivante));
+    mesure(t, "devant_apres_reduction", format!("{} « {} »", class(suivante), title(suivante)));
     faute(suivante != hwnd(id), "the overlay took the focus when the app was minimized".into());
     // SAFETY: as above.
     let _ = unsafe { ShowWindow(win, SW_RESTORE) };
@@ -777,6 +794,30 @@ fn verifier_calque(app: &tauri::AppHandle, d: &Desk, t: &str, fautes: &mut Vec<S
     temoin(app, WDA_EXCLUDEFROMCAPTURE);
     mesure(t, "temoin_anneau_sur_fenetre_toujours_devant", format!("{a3}/{bande}"));
     faute(a3 * 10 >= bande * 3, "the ring hidden by a window always on top".into());
+
+    // At the screen's bottom right (a full-screen app's « Valider »): the bubble against the screen's right
+    // edge, the ring and the bubble shown there too, at their place.
+    let coin = RectEcran { x: ecran.rect.droite() as i32 - 140, y: ecran.rect.bas() as i32 - 140, largeur: 100, hauteur: 32 };
+    let m = calque::montrer(app, &Demande { cible: coin, anneau: true, texte: "Clique sur Valider.".into(), ton: Ton::Normal });
+    mesure(t, "coin", format!("{m:?}, page {:?}", page(id)));
+    faute(m == Ok(Montre { anneau: true, bulle: true }), format!("at the screen's bottom right: {m:?}"));
+    if m == Ok(Montre { anneau: true, bulle: true }) {
+        let (ext, sombre) = anneau_dessine(ecran.echelle);
+        let bulle = bulle_dessinee();
+        mesure(t, "coin_bulle", format!("{bulle:?}"));
+        faute(bulle.droite() == ecran.rect.droite(), format!("the bubble not against the right edge: {bulle:?}"));
+        temoin(app, WDA_NONE);
+        let vu = within(Duration::from_secs(10), || {
+            let img = ecran::lire_brut(&ecran.rect).ok()?;
+            (compte(&img, &ecran.rect, &bulle, ENCRE) * 10 >= bulle.aire()).then_some(img)
+        });
+        temoin(app, WDA_EXCLUDEFROMCAPTURE);
+        let vu_la = vu.as_ref().and_then(|img| bornes(img, &ecran.rect, &ext.agrandi(8, 8), FONCE));
+        let place = vu_la.map_or(i64::MAX, |r| ecart(&r, &sombre));
+        mesure(t, "coin_anneau_ecart_px", place);
+        faute(vu.is_some(), "the bubble at the screen's bottom right not on the screen".into());
+        faute(place <= 6, format!("the ring at the screen's bottom right {place} px off"));
+    }
 
     // Erased: nothing drawn, nothing searched.
     faute(calque::effacer(app).is_ok(), "erased".into());
