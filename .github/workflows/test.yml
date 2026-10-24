@@ -492,6 +492,49 @@ jobs:
           print("linux:", d["os"], len(ids), "checks, to do:", d["todo"])
           PY
 
+  # The guide's capture at 125 and 150 % (capture/win.rs): programs unaware of the scale (as many an old
+  # ERP, stretched by Windows on the screen), aware of it, of mixed parts, scaled by GDI, and aware of
+  # the system's scale when the screen's is lowered under it; each captured whole, its dialog in place.
+  # A window over it, another program's popup and a protected window stay out of the image, the window
+  # at the screen's size, stretched by Windows, or drawn bigger than its frame. The runner's screen is
+  # set as Settings sets it (.github/ci/echelle.cs, compiled there by Windows' own csc); at 100 % the
+  # same tests run with the others, in the app job, but the ones that lower the scale (echelle_baissee,
+  # on a runner only: GITHUB_ACTIONS).
+  bureau-echelle:
+    name: bureau-echelle (${{ matrix.echelle }} %)
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        echelle: [125, 150]
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: app/src-tauri
+    env:
+      BIBO_ECHELLE: ${{ matrix.echelle }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build the tests
+        run: cargo test --locked --lib --no-run
+      - name: The screen, 1920x1080 at ${{ matrix.echelle }} %
+        run: |
+          & "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /target:exe "/out:$env:RUNNER_TEMP\echelle.exe" ..\..\.github\ci\echelle.cs
+          if ($LASTEXITCODE) { exit 1 }
+          & "$env:RUNNER_TEMP\echelle.exe" 1920 1080 $env:BIBO_ECHELLE
+          if ($LASTEXITCODE) {
+            # DisplayConfigSetDeviceInfo's scale (type -4) is undocumented: a new runner image may change it.
+            Write-Output "::error::echelle.exe stopped ($LASTEXITCODE): 1, Windows refused a call; 2, no such scale on this screen; 3, the screen never reached it (the runner's image changed?)"
+            exit 1
+          }
+      - name: Each window captured whole, its dialog in place, nothing of another program's
+        run: cargo test --locked --lib -- --ignored echelle bureau_a_protected_window bureau_another_programs_popup bureau_a_window_under_another --test-threads=1 --nocapture
+
   # The app's own install path on a real Windows, without its window: Claude Code, then the
   # brain (install.ps1 from this commit, no console, no question) on a PC with only the Store's
   # python stub, Documents protected against ransomware and a TEMP every account can write to.

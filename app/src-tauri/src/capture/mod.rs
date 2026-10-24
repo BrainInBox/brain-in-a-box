@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
-use crate::shot::Rgba;
+use crate::shot::{Rgba, MAX_SIDE};
 
 #[cfg(target_os = "macos")]
 mod mac;
@@ -335,6 +335,54 @@ fn lay(base: &mut Rgba, dialog: &Rgba, dx: i64, dy: i64) {
     }
 }
 
+/// A capture's pixels to a pixel of the screen, for a window of `dpi` on a screen of `screen` dpi. A
+/// program unaware of the screen's scale (or aware of another one) has its windows stretched by Windows
+/// on the screen, while PrintWindow draws them at their own size: 96 / 144 at 150 %. Never one aware of
+/// each screen's scale (`per_monitor`), whatever the two say (astride two screens, or its program not
+/// yet caught up with a change of scale); and only the screen's DPI as a thread counting in physical
+/// pixels reads it (`physical`). Else, or either unknown, 1: cut as it is on the screen.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn ratio(dpi: u32, screen: u32, per_monitor: bool, physical: bool) -> f64 {
+    if per_monitor || !physical || dpi == 0 || screen == 0 {
+        1.0
+    } else {
+        f64::from(dpi) / f64::from(screen)
+    }
+}
+
+/// The bitmap a window draws itself in, (width, height, the ratio its image is cut at), for its frame
+/// `w` x `h` on the screen and the ratio it draws at (a capture's pixels to one of the screen): room
+/// for all of it when it draws bigger than its frame. Past MAX_SIDE, its frame cut at a ratio of 1 (what
+/// it draws past it lost); None when even that is empty or past MAX_SIDE.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn room(w: i32, h: i32, ratio: f64) -> Option<(i32, i32, f64)> {
+    let at = |r: f64| {
+        let side = |v: i32| (f64::from(v) * r.max(1.0)).ceil() as i32;
+        let (cw, ch) = (side(w), side(h));
+        (cw > 0 && ch > 0 && cw as u32 <= MAX_SIDE && ch as u32 <= MAX_SIDE).then_some((cw, ch, r))
+    };
+    at(ratio).or_else(|| at(1.0))
+}
+
+/// The image at another size, each pixel the one under its centre: a dialog of another scale than its
+/// window, at the window's. None past MAX_SIDE, or when either is empty.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn resized(img: &Rgba, w: u32, h: u32) -> Option<Rgba> {
+    if w == 0 || h == 0 || w > MAX_SIDE || h > MAX_SIDE || img.w == 0 || img.h == 0 {
+        return None;
+    }
+    let under = |i: u32, to: u32, from: u32| ((u64::from(i) * 2 + 1) * u64::from(from) / (u64::from(to) * 2)) as u32;
+    let mut px = Vec::with_capacity(w as usize * h as usize * 4);
+    for y in 0..h {
+        let row = under(y, h, img.h) * img.w;
+        for x in 0..w {
+            let i = ((row + under(x, w, img.w)) * 4) as usize;
+            px.extend_from_slice(&img.px[i..i + 4]);
+        }
+    }
+    Some(Rgba { w, h, px })
+}
+
 /// A frame as ScreenCaptureKit gives it (blue, green, red, alpha; `stride` bytes a row, padded) into
 /// RGBA, its alpha kept: a window's rounded corners are transparent, put on white before it is sent.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
@@ -643,6 +691,58 @@ mod tests {
         let mut base = crate::shot::tests::rgba(8, 6, [0, 0, 255, 255]);
         lay(&mut base, &dialog, 50, -50);
         assert_eq!((orange(&base), base.w, base.h), (vec![], 8, 6));
+    }
+
+    #[test]
+    fn a_dialog_of_another_scale_is_resized_pixel_for_pixel() {
+        // 2×2 of four colours, then 3×3 (150 %) and back to 2×2: each pixel the one under its centre.
+        let colours = [[1, 0, 0, 255], [2, 0, 0, 255], [3, 0, 0, 255], [4, 0, 0, 255]];
+        let img = Rgba { w: 2, h: 2, px: colours.concat() };
+        let big = resized(&img, 3, 3).unwrap();
+        let red = |img: &Rgba| img.px.chunks_exact(4).map(|p| p[0]).collect::<Vec<_>>();
+        assert_eq!((big.w, big.h, red(&big)), (3, 3, vec![1, 2, 2, 3, 4, 4, 3, 4, 4]));
+        assert_eq!(resized(&big, 2, 2).unwrap().px, img.px);
+        assert_eq!(resized(&img, 2, 2).unwrap().px, img.px, "at its size, the same");
+        let small = resized(&big, 1, 2).unwrap();
+        assert_eq!((small.w, small.h, red(&small)), (1, 2, vec![2, 4]));
+        assert_eq!(resized(&img, MAX_SIDE, 1).map(|i| (i.w, i.h)), Some((MAX_SIDE, 1)));
+    }
+
+    #[test]
+    fn a_resize_is_never_past_max_side_nor_of_an_empty_image() {
+        let img = Rgba { w: 2, h: 2, px: vec![9; 16] };
+        // A dialog of a program at 480 dpi on a screen at 96, 3000 px wide: 15000 px, 900 MB.
+        assert!(resized(&img, MAX_SIDE + 1, 1).is_none(), "never past MAX_SIDE");
+        assert!(resized(&img, 1, MAX_SIDE + 1).is_none());
+        assert!(resized(&img, 0, 5).is_none() && resized(&img, 5, 0).is_none(), "nothing to make");
+        assert!(resized(&Rgba { w: 0, h: 0, px: vec![] }, 2, 2).is_none(), "nothing to read");
+    }
+
+    #[test]
+    fn a_ratio_only_for_a_window_windows_stretches_on_a_screen_read_in_its_pixels() {
+        assert_eq!(ratio(96, 144, false, true), 96.0 / 144.0, "unaware of the scale, at 150 %: stretched by Windows");
+        assert_eq!(ratio(144, 96, false, true), 1.5, "aware of the system's 150 %, the screen at 100 %: drawn bigger");
+        assert_eq!(ratio(120, 120, false, true), 1.0);
+        // Aware of each screen's scale, never stretched: as it is on the screen whatever the two say
+        // (astride two screens, or its program not yet caught up with a change of scale).
+        assert_eq!(ratio(144, 96, true, true), 1.0, "aware of each screen's");
+        // The screen read in 96 dpi points (the thread refused the physical pixels): no ratio of two scales.
+        assert_eq!(ratio(120, 96, false, false), 1.0, "the screen read in points");
+        assert_eq!(ratio(0, 144, false, true), 1.0, "the window gone");
+        assert_eq!(ratio(96, 0, false, true), 1.0, "its screen unread");
+    }
+
+    #[test]
+    fn a_window_drawn_bigger_than_its_frame_gets_room_up_to_max_side() {
+        assert_eq!(room(640, 480, 1.5), Some((960, 720, 1.5)), "room for all of it");
+        assert_eq!(room(800, 600, 0.8), Some((800, 600, 0.8)), "drawn smaller (stretched by Windows): its frame");
+        assert_eq!(room(640, 480, 1.0), Some((640, 480, 1.0)));
+        // Maximized on a screen 3440 px wide at 100 %, the system at 250 %: 8600 px. Its frame's size, cut
+        // at a ratio of 1 as before that room (what lies past its frame lost), never no image at all.
+        assert_eq!(room(3440, 1400, 2.5), Some((3440, 1400, 1.0)));
+        assert_eq!(room(MAX_SIDE as i32 + 1, 10, 1.0), None, "its frame itself past MAX_SIDE");
+        assert_eq!(room(0, 10, 1.0), None);
+        assert_eq!(room(10, -4, 1.5), None);
     }
 
     #[test]
