@@ -40,6 +40,11 @@
 - **F3, décidé par le PO le 25/10 : pas maintenant.** Quand Hermès tourne déjà, Bbox se raccroche à sa passerelle telle quelle : rien n'est perdu, mais les conversations tournent sur le code de la personne, donc sans les retouches Bbox (nom, pas d'IA gratuite). La cible (Awa) n'a pas Hermès ; ce cas concerne surtout les initiés. La « voie séparée » (verrou propre à Bbox, passerelle sans messageries) attendra un besoin réel.
 - **Avant toute version publique** (les builds de commit ne sont pas concernés) : F6, le flux de mise à jour retombe sur `NousResearch/hermes-agent` si la variable d'environnement de la CI est absente (`electron-builder.config.cjs:61`), et `resolveUpdateRoot` doit rendre null en mode embarqué ; F7, le nom de commande d'une version publique est `hermes` (`product-identity.cjs:61`), à passer à `bbox`.
 - F8 (facultatif) : l'étape de confirmation du modèle ne doit pas changer le modèle sans choix explicite quand d'autres fournisseurs existent.
+- Restes signalés par les sous-agents F1, F2, F4 et F5 (non bloquants, l'essai du 24/10 est passé) :
+  - côté moteur, `gateway stop`, `stop --all` et le ménage des passerelles orphelines cherchent les passerelles parmi les processus en marche ; en mode Bbox, ils pourraient encore arrêter celle de la personne. L'app ne les appelle pas dans l'essai (même processus avant et après), mais il faudra les protéger aussi ;
+  - côté fenêtre, Bbox ne redémarre plus aucune passerelle, même la sienne : après une mise à jour de Bbox, sa propre passerelle garde l'ancien code jusqu'à ce qu'on quitte l'app. Il faudra que la passerelle déclare son dossier de code pour distinguer la sienne ;
+  - la désinstallation « Bbox seul » n'existe que sur macOS ; Windows garde le désinstalleur du système (à vérifier au test Windows) ;
+  - le message de refus en cas de passerelle étrangère dit encore « hermes gateway stop » : à réécrire en mots simples, au nom de Bbox.
 
 ## La prochaine action
 
