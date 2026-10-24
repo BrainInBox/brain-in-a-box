@@ -395,7 +395,8 @@ pub fn grab(chosen: &Window) -> Result<Rgba, Rate> {
     Ok(image)
 }
 
-/// On a Windows desktop only, a VM of the CI's: `cargo test -- --ignored bureau --test-threads=1`.
+/// On a Windows desktop only, a VM of the CI's: `cargo test -- --ignored bureau --test-threads=1`. Those
+/// named echelle_baissee change the screen's scale: in the CI's job bureau-echelle only.
 /// Windows of known colours (tests/fixtures/guide/atelier.cs, compiled there by Windows' own csc)
 /// and a page in the browser; their pixels are counted in memory. Nothing is written but that program
 /// and that page, in a folder of the test's.
@@ -411,7 +412,10 @@ mod tests {
     use std::time::Duration;
     use windows::core::w;
     use windows::Win32::Foundation::POINT;
-    use windows::Win32::UI::HiDpi::{GetDpiForWindow, DPI_AWARENESS_CONTEXT_UNAWARE};
+    use windows::Win32::UI::HiDpi::{
+        AreDpiAwarenessContextsEqual, GetDpiForWindow, GetDpiFromDpiAwarenessContext, GetWindowDpiAwarenessContext, DPI_AWARENESS_CONTEXT_UNAWARE,
+        DPI_AWARENESS_CONTEXT_UNAWARE_GDISCALED,
+    };
     use windows::Win32::UI::Input::KeyboardAndMouse::{
         EnableWindow, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, MOUSEEVENTF_LEFTDOWN,
         MOUSEEVENTF_LEFTUP, MOUSEINPUT, MOUSE_EVENT_FLAGS, VIRTUAL_KEY, VK_ESCAPE, VK_LWIN,
@@ -475,14 +479,16 @@ mod tests {
         ((r.left + r.right) / 2, (r.top + r.bottom) / 2)
     }
 
-    /// The window on top at this point of the screen.
+    /// The window on top at this point of the screen (its pixels, as DWM's frames count).
     fn on_top((x, y): (i32, i32)) -> u64 {
+        let _physical = Physical::enter();
         // SAFETY: plain values.
         id_of(unsafe { GetAncestor(WindowFromPoint(POINT { x, y }), GA_ROOT) })
     }
 
-    /// A click as a hand makes it.
+    /// A click as a hand makes it, at this point of the screen (its pixels).
     fn click((x, y): (i32, i32)) {
+        let _physical = Physical::enter();
         // SAFETY: plain values; the inputs live for the call.
         unsafe { SetCursorPos(x, y) }.unwrap();
         let input = |flags: MOUSE_EVENT_FLAGS| INPUT { r#type: INPUT_MOUSE, Anonymous: INPUT_0 { mi: MOUSEINPUT { dwFlags: flags, ..Default::default() } } };
@@ -633,6 +639,73 @@ mod tests {
         r
     }
 
+    /// The screen's scale: the job bureau-echelle's (test.yml), or 100 %.
+    fn echelle() -> u32 {
+        std::env::var("BIBO_ECHELLE").map_or(100, |e| e.parse().unwrap())
+    }
+
+    fn dpi(h: HWND) -> u32 {
+        // SAFETY: a window handle.
+        unsafe { GetDpiForWindow(h) }
+    }
+
+    /// The window of one of the atelier's scale modes and its dialog, once open.
+    fn open_with_dialog(d: &Desk, mode: &str) -> (Program, Found, HWND, HWND) {
+        let (p, win) = d.open(mode, mode, (80, 80, 640, 480), &[BLUE, ORANGE]);
+        let h = handle(win.window.id);
+        until("its dialog open", || modal(h, win.window.pid).is_some());
+        let dialog = modal(h, win.window.pid).unwrap();
+        (p, win, h, dialog)
+    }
+
+    /// A window of the atelier's scale modes captured whole: the image `s` of its frame on the screen
+    /// (a capture's pixels to one of the screen), nothing left black, its green band along the right and
+    /// bottom edges (a capture cut short loses it); its dialog, `sd` of its own frame alone, laid at its
+    /// place at the window's scale: where it shows alone, to 3 pixels.
+    fn captured_whole(win: &Found, dialog: HWND, s: f64, sd: f64) {
+        let h = handle(win.window.id);
+        // DWM's frames are the screen's pixels, whatever the thread counts in.
+        let (at, its) = (frame(h).unwrap(), frame(dialog).unwrap());
+        let img = grab(&win.window).unwrap();
+        let alone = {
+            let _physical = Physical::enter();
+            print(dialog).unwrap().0
+        };
+        let scaled = |v: i32, k: f64| (f64::from(v) * k).round() as i32;
+        let size = (scaled(at.right - at.left, s), scaled(at.bottom - at.top, s));
+        let alone_size = (scaled(its.right - its.left, sd), scaled(its.bottom - its.top, sd));
+        let green = |x: u32, y: u32| img.px[((y * img.w + x) * 4) as usize..][..3].iter().zip(GREEN).all(|(&v, c)| v.abs_diff(c) <= 3);
+        let right = (0..img.h).filter(|&y| green(img.w - 4, y)).count() * 2 > img.h as usize;
+        let bottom = (0..img.w).filter(|&x| green(x, img.h - 4)).count() * 2 > img.w as usize;
+        let (k, dx, dy) = (s / sd, scaled(its.left - at.left, s), scaled(its.top - at.top, s));
+        let o = bounds(&alone, ORANGE).expect("the dialog's colour in its own image");
+        let place = (dx + scaled(o.0, k), dy + scaled(o.1, k), dx + scaled(o.2, k), dy + scaled(o.3, k));
+        let orange = bounds(&img, ORANGE).expect("the dialog's colour in the capture");
+        let margins = black_margins(&img);
+        eprintln!(
+            "{} at {} %, window {s:.3} dialog {sd:.3}: image {}x{} for {size:?}, black margins {margins:?}, green band right {right} bottom {bottom}; dialog alone {}x{} for {alone_size:?}, its colour {orange:?} for {place:?}",
+            win.titre,
+            echelle(),
+            img.w,
+            img.h,
+            alone.w,
+            alone.h
+        );
+        assert!(margins.iter().all(|&m| m <= 1), "nothing left black: {margins:?}");
+        assert!(right && bottom, "its green band along the right and bottom edges: right {right}, bottom {bottom}");
+        assert!((img.w as i32).abs_diff(size.0) <= 2 && (img.h as i32).abs_diff(size.1) <= 2, "its size: {}x{}, not {size:?}", img.w, img.h);
+        assert!(black_margins(&alone).iter().all(|&m| m <= 1), "the dialog alone, nothing black: {:?}", black_margins(&alone));
+        assert!(
+            (alone.w as i32).abs_diff(alone_size.0) <= 2 && (alone.h as i32).abs_diff(alone_size.1) <= 2,
+            "the dialog alone: {}x{}, not {alone_size:?}",
+            alone.w,
+            alone.h
+        );
+        let off = [orange.0 - place.0, orange.1 - place.1, orange.2 - place.2, orange.3 - place.3];
+        assert!(off.iter().all(|d| d.abs() <= 3), "the dialog at its place and its size: {orange:?}, not {place:?}");
+        assert!(count(&img, BLUE) > pixels(&img) / 3, "and the window around it");
+    }
+
     /// A program unaware of the screen's scale (many an old ERP): at 125 or 150 %, Windows stretches its
     /// window and its dialog on the screen, while PrintWindow draws them at their own size. The capture
     /// is that image, whole: no black left from the screen's size, the dialog where the program put it.
@@ -642,42 +715,110 @@ mod tests {
     #[ignore = "a Windows desktop (VM)"]
     fn bureau_echelle_a_window_windows_stretches_is_captured_whole() {
         let d = desk();
-        let (_p, win) = d.open("etiree", "Etiree", (80, 80, 640, 480), &[BLUE, ORANGE]);
-        let h = handle(win.window.id);
-        until("its dialog open", || modal(h, win.window.pid).is_some());
-        let dialog = modal(h, win.window.pid).unwrap();
-        // SAFETY: a window handle.
-        assert_eq!(unsafe { GetDpiForWindow(h) }, 96, "a program unaware of the scale");
+        let (_p, win, h, dialog) = open_with_dialog(&d, "etiree");
+        assert_eq!((dpi(h), dpi(dialog)), (96, 96), "a program unaware of the scale");
         let own = its_own(h);
-        let (outer, at, its) = {
+        let outer = {
             let _physical = Physical::enter();
             let mut outer = RECT::default();
             // SAFETY: a RECT for the call.
             unsafe { GetWindowRect(h, &mut outer) }.unwrap();
-            (outer, frame(h).unwrap(), frame(dialog).unwrap())
+            outer
         };
         // The program's pixels to a pixel of the screen, as Windows stretched its window.
         let s = f64::from(own.right - own.left) / f64::from(outer.right - outer.left);
-        if let Ok(echelle) = std::env::var("BIBO_ECHELLE") {
-            let want = 100.0 / echelle.parse::<f64>().unwrap();
-            assert!((s - want).abs() < 0.01, "the screen at {echelle} %: the window stretched {s:.3}, not {want:.3}");
+        let want = 100.0 / f64::from(echelle());
+        assert!((s - want).abs() < 0.01, "the screen at {} %: the window stretched {s:.3}, not {want:.3}", echelle());
+        captured_whole(&win, dialog, s, s);
+    }
+
+    /// A program aware of each screen's scale (per monitor v2), as most are today (Edge, Office, the
+    /// Explorer): drawn at the screen's pixels, captured as it is on the screen.
+    #[test]
+    #[ignore = "a Windows desktop (VM)"]
+    fn bureau_echelle_a_window_aware_of_the_scale_is_captured_whole() {
+        let d = desk();
+        let (_p, win, h, dialog) = open_with_dialog(&d, "conscient");
+        let screen = 96 * echelle() / 100;
+        assert_eq!((dpi(h), dpi(dialog)), (screen, screen), "aware of the screen's scale");
+        captured_whole(&win, dialog, 1.0, 1.0);
+    }
+
+    /// A dialog unaware of the scale over a window aware of it (a program made of old and new parts):
+    /// Windows stretches the dialog alone. In the window's capture it is at the window's scale.
+    #[test]
+    #[ignore = "a Windows desktop (VM)"]
+    fn bureau_echelle_a_dialog_of_another_scale_than_its_window() {
+        let d = desk();
+        let (_p, win, h, dialog) = open_with_dialog(&d, "mixte");
+        let screen = 96 * echelle() / 100;
+        assert_eq!((dpi(h), dpi(dialog)), (screen, 96), "the window aware of the scale, its dialog not");
+        captured_whole(&win, dialog, 1.0, 96.0 / f64::from(screen));
+    }
+
+    /// A program unaware of the scale whose drawing GDI scales: « Système (amélioré) » in its
+    /// Compatibility tab, ticked against an old ERP's blur. Drawn sharp at the screen's pixels.
+    #[test]
+    #[ignore = "a Windows desktop (VM)"]
+    fn bureau_echelle_a_window_gdi_scales_is_captured_whole() {
+        let d = desk();
+        let (_p, win, h, dialog) = open_with_dialog(&d, "gdi");
+        // SAFETY: a window handle; contexts Windows defines.
+        let (context, gdi, unaware) = unsafe {
+            let c = GetWindowDpiAwarenessContext(h);
+            (c.0 as isize, AreDpiAwarenessContextsEqual(c, DPI_AWARENESS_CONTEXT_UNAWARE_GDISCALED).as_bool(), AreDpiAwarenessContextsEqual(c, DPI_AWARENESS_CONTEXT_UNAWARE).as_bool())
+        };
+        eprintln!("gdi: dpi {} (dialog {}), context {context:#x}, equal to unaware gdi-scaled {gdi}, to unaware {unaware}", dpi(h), dpi(dialog));
+        captured_whole(&win, dialog, 1.0, 1.0);
+    }
+
+    /// echelle.cs (.github/ci), compiled in the test's folder: the screen's scale set as Settings sets it.
+    fn scale_tool(d: &Desk) -> PathBuf {
+        let csc = PathBuf::from(std::env::var("WINDIR").unwrap()).join("Microsoft.NET").join("Framework64").join("v4.0.30319").join("csc.exe");
+        let exe = d.dir.path().join("echelle.exe");
+        let source = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("..").join(".github").join("ci").join("echelle.cs");
+        let out = Command::new(&csc).args(["/nologo", "/target:exe"]).arg(format!("/out:{}", exe.display())).arg(&source).output().unwrap();
+        assert!(out.status.success() && exe.is_file(), "csc: {}", String::from_utf8_lossy(&out.stdout));
+        exe
+    }
+
+    fn set_scale(tool: &Path, percent: u32) -> Result<(), String> {
+        let out = Command::new(tool).args(["1920", "1080", &percent.to_string()]).output().map_err(|e| e.to_string())?;
+        let said = String::from_utf8_lossy(&out.stdout).trim().replace('\n', " / ");
+        eprintln!("echelle.exe {percent}: {said}");
+        out.status.success().then_some(()).ok_or(said)
+    }
+
+    /// A program aware of the scale the system had when it opened (SetProcessDPIAware, as many an ERP),
+    /// then the screen's scale lowered without signing out, as a laptop's at 150 % beside a screen at
+    /// 100 % where the window goes: Windows shrinks it on the screen, while PrintWindow draws it bigger
+    /// than its frame there. Captured whole all the same. It changes the screen's scale (put back after):
+    /// on a VM of the CI's only, the job bureau-echelle, never with the tests named bureau.
+    #[test]
+    #[ignore = "changes the screen's scale: the CI's job bureau-echelle"]
+    fn echelle_baissee_a_window_drawn_bigger_than_its_frame_is_captured_whole() {
+        struct Back(PathBuf, u32);
+        impl Drop for Back {
+            fn drop(&mut self) {
+                if let Err(e) = set_scale(&self.0, self.1) {
+                    eprintln!("the screen's scale not put back to {} %: {e}", self.1);
+                }
+            }
         }
-        let mine = |v: i32| (f64::from(v) * s).round() as i32;
-        let img = grab(&win.window).unwrap();
-        let size = (mine(at.right - at.left), mine(at.bottom - at.top));
-        let place = (mine(its.left - at.left), mine(its.top - at.top), mine(its.right - at.left), mine(its.bottom - at.top));
-        let margins = black_margins(&img);
-        let orange = bounds(&img, ORANGE).expect("the dialog's colour in the capture");
-        eprintln!("stretched {s:.3}: image {}x{}, its own frame {size:?}, black margins {margins:?}, dialog {orange:?} at {place:?}", img.w, img.h);
-        assert!(margins.iter().all(|&m| m <= 1), "nothing left black from the screen's size: {margins:?}");
-        assert!((img.w as i32).abs_diff(size.0) <= 2 && (img.h as i32).abs_diff(size.1) <= 2, "its own size: {}x{}, not {size:?}", img.w, img.h);
-        assert!(
-            orange.0 >= place.0 - 3 && orange.1 >= place.1 - 3 && orange.2 <= place.2 + 3 && orange.3 <= place.3 + 3,
-            "the dialog at its place: {orange:?} within {place:?}"
-        );
-        let area = (place.2 - place.0) * (place.3 - place.1);
-        assert!(count(&img, ORANGE) as i32 > area * 6 / 10, "its colour over most of it: {} of {area}", count(&img, ORANGE));
-        assert!(count(&img, BLUE) > pixels(&img) / 3, "and the window around it");
+        let echelle: u32 = std::env::var("BIBO_ECHELLE").expect("the job bureau-echelle's scale, 125 or 150").parse().unwrap();
+        let d = desk();
+        let tool = scale_tool(&d);
+        let (_p, win, h, dialog) = open_with_dialog(&d, "systeme");
+        let opened = dpi(h);
+        // SAFETY: a window handle.
+        let its_system = unsafe { GetDpiFromDpiAwarenessContext(GetWindowDpiAwarenessContext(h)) };
+        eprintln!("systeme opened at {echelle} %: dpi {opened} (dialog {}), its system's {its_system}", dpi(dialog));
+        assert_eq!(opened, 96 * echelle / 100, "opened at {echelle} %, it takes the screen's scale as its system's");
+        let _back = Back(tool.clone(), echelle);
+        set_scale(&tool, 100).unwrap();
+        assert_eq!((dpi(h), dpi(dialog)), (opened, opened), "its scale kept, the screen's lowered");
+        let s = f64::from(opened) / 96.0;
+        captured_whole(&win, dialog, s, s);
     }
 
     /// R11: a window of another program that makes itself a popup of the chosen one, while that one
