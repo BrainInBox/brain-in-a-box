@@ -6,11 +6,17 @@
 //   atelier_uia.exe erp      <title> <x> <y> <w> <h> <unaware|system|pmv2>
 //   atelier_uia.exe message  <title> <x> <y> <w> <h>   then the system's message box: Yes, No, Cancel
 //   atelier_uia.exe question <title> <x> <y> <w> <h>   then a modal window of Oui, Non, Annuler
+//   atelier_uia.exe ailleurs <title> <x> <y> <w> <h>   the same, out of every screen
 //   atelier_uia.exe saisie   <title> <x> <y> <w> <h>   then a modal form: an amount, OK, Annuler
+//   atelier_uia.exe erreur   <title> <x> <y> <w> <h>   then a modal error: its details read only, three buttons
+//   atelier_uia.exe deux     <title> <x> <y> <w> <h>   and a second window of its own beside, owned by none
+//   atelier_uia.exe foule    <title> <x> <y> <w> <h>   three hundred buttons
+//   atelier_uia.exe fige     <title> <x> <y> <w> <h>   "Figer" hangs it for 15 s
 //
 // erp: buttons of known colours (their boxes are found again on the screen), a disabled one, a password
 // field of a known colour, a menu, tabs, a check box, radio buttons, a field and a list showing a
-// customer, a link, a grid, a list view and a tree of customers (data: none of it may be listed).
+// customer, a link, a grid, a list view and a tree of customers (data: none of it may be listed). The
+// other modes: "Nouveau" and a password field of the same colour.
 using System;
 using System.Drawing;
 using System.Reflection;
@@ -61,6 +67,7 @@ static class AtelierUia
     {
         MenuStrip menu = new MenuStrip();
         foreach (string m in new[] { "Fichier", "Edition", "Aide" }) menu.Items.Add(new ToolStripMenuItem(m));
+        ((ToolStripMenuItem)menu.Items[0]).DropDownItems.Add("Imprimer la facture");
         f.MainMenuStrip = menu;
 
         f.Controls.AddRange(new Control[] {
@@ -92,13 +99,7 @@ static class AtelierUia
         f.Controls.Add(client);
 
         f.Controls.Add(Lab("Mot de passe :", 310, 98));
-        TextBox secret = new TextBox();
-        secret.Bounds = new Rectangle(410, 94, 160, 24);
-        secret.BorderStyle = BorderStyle.FixedSingle;
-        secret.BackColor = C(0xff9800);
-        secret.UseSystemPasswordChar = true;
-        secret.Text = "invente-0000";
-        f.Controls.Add(secret);
+        f.Controls.Add(Secret(410, 94));
 
         f.Controls.Add(Lab("Facturer a :", 590, 98));
         ComboBox who = new ComboBox();
@@ -148,17 +149,54 @@ static class AtelierUia
         f.Shown += delegate { client.Focus(); };
     }
 
-    // A modal window of the program's own, its owner waiting.
-    static void Dialog(Form owner, bool form)
+    static TextBox Secret(int x, int y)
     {
+        TextBox secret = new TextBox();
+        secret.Bounds = new Rectangle(x, y, 160, 24);
+        secret.BorderStyle = BorderStyle.FixedSingle;
+        secret.BackColor = C(0xff9800);
+        secret.UseSystemPasswordChar = true;
+        secret.Text = "invente-0000";
+        return secret;
+    }
+
+    // A modal window of the program's own, its owner waiting: a choice, a form, or an error.
+    static void Dialog(Form owner, string mode)
+    {
+        bool form = mode == "saisie";
         Form d = new Form();
         d.Text = form ? "Nouveau reglement" : "Atelier";
         d.StartPosition = FormStartPosition.CenterParent;
+        if (mode == "ailleurs")
+        {
+            d.StartPosition = FormStartPosition.Manual;
+            d.Location = new Point(-3000, 100);
+        }
         d.Size = new Size(360, 200);
         d.ShowInTaskbar = false;
         d.MinimizeBox = false;
         d.MaximizeBox = false;
-        if (form)
+        if (mode == "erreur")
+        {
+            // As .NET's own error window: what happened in a box one reads and copies, never types in.
+            d.Size = new Size(420, 260);
+            d.Controls.Add(Lab("Une erreur est survenue.", 16, 12));
+            TextBox details = new TextBox();
+            details.Multiline = true;
+            details.ReadOnly = true;
+            details.Bounds = new Rectangle(16, 36, 370, 100);
+            details.Text = "System.InvalidOperationException: exemple invente\r\n   a Atelier.Enregistrer()";
+            d.Controls.Add(details);
+            string[] actions = { "Details", "Continuer", "Quitter" };
+            for (int i = 0; i < actions.Length; i++)
+            {
+                Button b = new Button();
+                b.Text = actions[i];
+                b.Bounds = new Rectangle(16 + 124 * i, 160, 116, 30);
+                d.Controls.Add(b);
+            }
+        }
+        else if (form)
         {
             d.Controls.Add(Lab("Montant :", 16, 24));
             TextBox amount = new TextBox();
@@ -187,6 +225,35 @@ static class AtelierUia
         d.ShowDialog(owner);
     }
 
+    // Another window of the same program and thread, owned by none: as Edge's second window.
+    static void Autre(Form f)
+    {
+        Form o = new Form();
+        o.Text = f.Text + " (autre)";
+        o.StartPosition = FormStartPosition.Manual;
+        o.AutoScaleMode = AutoScaleMode.None;
+        o.Bounds = new Rectangle(f.Right + 20, f.Top, 400, 300);
+        o.BackColor = C(0x787878);
+        o.Controls.Add(Flat("Autre fenetre", 0x1e88e5, 16, 16, 160, 36));
+        o.Controls.Add(Flat("Garage Dupont", 0x1e88e5, 16, 64, 160, 36));
+        o.Show();
+    }
+
+    static void Foule(Form f)
+    {
+        FlowLayoutPanel p = new FlowLayoutPanel();
+        p.Bounds = new Rectangle(0, 60, f.ClientSize.Width, f.ClientSize.Height - 60);
+        for (int i = 1; i <= 300; i++)
+        {
+            Button b = new Button();
+            b.Text = "B" + i.ToString("000");
+            b.Size = new Size(46, 22);
+            b.Margin = new Padding(1);
+            p.Controls.Add(b);
+        }
+        f.Controls.Add(p);
+    }
+
     [STAThread]
     static int Main(string[] a)
     {
@@ -207,13 +274,21 @@ static class AtelierUia
         else
         {
             f.Controls.Add(Flat("Nouveau", 0x2e7d32, 16, 16, 120, 36));
+            f.Controls.Add(Secret(150, 22));
+            if (mode == "fige")
+            {
+                Button hang = Flat("Figer", 0x6d4c41, 330, 16, 120, 36);
+                hang.Click += delegate { System.Threading.Thread.Sleep(15000); };
+                f.Controls.Add(hang);
+            }
+            if (mode == "foule") Foule(f);
             f.Shown += delegate
             {
                 f.BeginInvoke(new MethodInvoker(delegate
                 {
                     if (mode == "message") MessageBox.Show(f, "Enregistrer les modifications ?", "Atelier", MessageBoxButtons.YesNoCancel);
-                    if (mode == "question") Dialog(f, false);
-                    if (mode == "saisie") Dialog(f, true);
+                    if (mode == "question" || mode == "ailleurs" || mode == "saisie" || mode == "erreur") Dialog(f, mode);
+                    if (mode == "deux") Autre(f);
                 }));
             };
         }

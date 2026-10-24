@@ -2,7 +2,8 @@
 //! client, in process, on the reader's thread. The program's tree is read one level at a time, in a
 //! view filtered on the kinds the rules need: a command, a table or a list is never asked for what
 //! lies under it, so their rows are not even walked by the other process (P0: the whole tree took 166
-//! to 405 ms at p90, one level at a time 17 to 63 ms).
+//! to 405 ms at p90, one level at a time 17 to 63 ms). The password fields, by one search of each
+//! window's whole tree, done by its own process, which gives back their boxes only.
 
 use std::mem::size_of;
 
@@ -13,9 +14,12 @@ use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CoUninitiali
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::*;
 use windows::Win32::UI::Input::KeyboardAndMouse::IsWindowEnabled;
-use windows::Win32::UI::WindowsAndMessaging::{EnumWindows, GetAncestor, WindowFromPoint, GA_ROOT};
+use windows::Win32::UI::WindowsAndMessaging::{EnumChildWindows, EnumWindows, GetAncestor, GetWindowThreadProcessId, WindowFromPoint, GA_ROOT, GA_ROOTOWNER};
 
-use super::uia::{attend_un_choix, court, descendre, dialogue, distant, garde, navigateur, tant_que, visible, Cadre, Contexte, Element, Genre, Lire, Liste, Sorte};
+use super::uia::{
+    attend_un_choix, compte, court, coupe, descendre, dialogue, distant, garde, navigateur, tant_que, visible, Cadre, Contexte, Element, Genre, Lire, Liste,
+    Secrets, Sorte, ELEMENTS_MAX,
+};
 use super::win::{class, cloaked, foreground, frame, handle, identity, list, minimized, owner, pid_of, visible as shown, Physical};
 use super::{same_window, Rate, Window};
 
@@ -78,6 +82,10 @@ pub(super) struct Lecteur {
     auto: IUIAutomation,
     /// A node, its properties and its children in the filtered view, alive to go further down.
     vue: IUIAutomationCacheRequest,
+    /// The password fields anywhere under a window, and its pages.
+    cherches: IUIAutomationCondition,
+    /// Their boxes and what they are, nothing else.
+    leurs_cadres: IUIAutomationCacheRequest,
     _com: Com,
 }
 
@@ -107,8 +115,8 @@ impl Lecteur {
         if let Ok(nav) = condition(UIA_LandmarkTypePropertyId, VARIANT::from(UIA_NavigationLandmarkTypeId.0)) {
             filtre = Some(ou(&auto, filtre, nav).map_err(fail)?);
         }
-        // SAFETY: a request of ours, filled before use.
-        let vue = unsafe {
+        // SAFETY: requests of ours, filled before use.
+        let (vue, leurs_cadres) = unsafe {
             let r = auto.CreateCacheRequest().map_err(fail)?;
             for p in [
                 UIA_ControlTypePropertyId,
@@ -116,7 +124,7 @@ impl Lecteur {
                 UIA_BoundingRectanglePropertyId,
                 UIA_IsOffscreenPropertyId,
                 UIA_IsEnabledPropertyId,
-                UIA_IsPasswordPropertyId,
+                UIA_ValueIsReadOnlyPropertyId,
                 UIA_WindowIsModalPropertyId,
             ] {
                 r.AddProperty(p).map_err(fail)?;
@@ -125,9 +133,17 @@ impl Lecteur {
             r.SetTreeScope(TreeScope(TreeScope_Element.0 | TreeScope_Children.0)).map_err(fail)?;
             r.SetAutomationElementMode(AutomationElementMode_Full).map_err(fail)?;
             r.SetTreeFilter(filtre.as_ref().ok_or(Rate::Indisponible)?).map_err(fail)?;
-            r
+            let c = auto.CreateCacheRequest().map_err(fail)?;
+            for p in [UIA_BoundingRectanglePropertyId, UIA_ControlTypePropertyId, UIA_IsPasswordPropertyId] {
+                c.AddProperty(p).map_err(fail)?;
+            }
+            c.SetAutomationElementMode(AutomationElementMode_None).map_err(fail)?;
+            (r, c)
         };
-        Ok(Lecteur { auto, vue, _com: com })
+        let mots_de_passe = condition(UIA_IsPasswordPropertyId, VARIANT::from(true)).map_err(fail)?;
+        let pages = condition(UIA_ControlTypePropertyId, VARIANT::from(UIA_DocumentControlTypeId.0)).map_err(fail)?;
+        let cherches = ou(&auto, Some(mots_de_passe), pages).map_err(fail)?;
+        Ok(Lecteur { auto, vue, cherches, leurs_cadres, _com: com })
     }
 
     /// The level under `el`, then under each of its children that is neither a command nor data.
@@ -152,32 +168,52 @@ impl Lecteur {
         }
     }
 
-    /// The commands of the process's windows on `h`'s screen, the one on top first. In physical pixels:
-    /// the caller has entered them.
-    fn arbre(&self, h: HWND, pid: u32, navigateur: bool, cachees: &[Cadre]) -> Result<Liste, Rate> {
+    /// The commands of `h`, its dialogs and its menus on its screen, the window on top first, and the
+    /// dialogs that wait on a choice wherever they are. In physical pixels: the caller has entered them.
+    fn arbre(&self, h: HWND, navigateur: bool, cachees: &[Cadre]) -> Result<Liste, Rate> {
         let ecran = ecran_de(h).ok_or(Rate::Introuvable)?;
-        let mut liste = Liste::default();
-        for w in fenetres(pid) {
-            let Some(f) = frame(w).map(cadre).filter(|f| f.touche(&ecran)) else { continue };
+        let mut liste = Liste { attend: !active(h), ..Liste::default() };
+        for w in famille(h) {
+            let Some(f) = frame(w).map(cadre) else { continue };
             // A window that waits on a dialog: nothing of it can be clicked.
             if !active(w) {
                 continue;
             }
+            let attend = owner(w).is_some_and(|o| !active(o));
+            // On another screen, nothing of it is listed; a dialog there waits on the person all the same.
+            if !f.touche(&ecran) && !dialogue(&class(w), attend, false) {
+                continue;
+            }
             // SAFETY: a window handle; its first level comes back cached.
             let Ok(racine) = (unsafe { self.auto.ElementFromHandleBuildCache(w, &self.vue) }) else { continue };
-            let mut p = Parcours { hwnd: w, fenetre: f, ecran, navigateur, cachees, elements: Vec::new(), toutes: Vec::new(), secrets: Vec::new() };
+            let mut p = Parcours { hwnd: w, fenetre: f, ecran, navigateur, cachees, elements: Vec::new(), toutes: Vec::new() };
             self.parcourir(&racine, Contexte::default(), 0, &mut p);
             // SAFETY: a cached property of an element of ours.
             let modale = unsafe { racine.GetCachedPropertyValue(UIA_WindowIsModalPropertyId) }.ok().and_then(|v| bool::try_from(&v).ok()).unwrap_or(false);
-            let attend = owner(w).is_some_and(|o| !active(o));
             if attend_un_choix(dialogue(&class(w), attend, modale), &p.toutes) {
                 p.elements.iter_mut().for_each(|e| e.choix = true);
                 liste.choix.push(f);
             }
             liste.elements.extend(p.elements);
-            liste.secrets.extend(p.secrets);
         }
+        liste.elements.truncate(ELEMENTS_MAX);
         Ok(liste)
+    }
+
+    /// The boxes of a window's password fields: one search of its whole tree, done by its own process,
+    /// whatever lies above them (a table, a list, a window waiting on a dialog), whatever their type.
+    /// None: not known, the tree did not answer, or a web page's is not built yet.
+    fn champs(&self, w: HWND) -> Option<Vec<Cadre>> {
+        // SAFETY: a window handle, a condition and a request of ours; what is found comes back cached.
+        unsafe {
+            let racine = self.auto.ElementFromHandle(w).ok()?;
+            let trouves = racine.FindAllBuildCache(TreeScope_Descendants, &self.cherches, &self.leurs_cadres).ok()?;
+            let trouves: Vec<IUIAutomationElement> = (0..trouves.Length().ok()?).filter_map(|i| trouves.GetElement(i).ok()).collect();
+            if !trouves.iter().any(|e| e.CachedControlType().is_ok_and(|t| t == UIA_DocumentControlTypeId)) && montre_une_page(w) {
+                return None;
+            }
+            Some(trouves.iter().filter(|e| e.CachedIsPassword().is_ok_and(|b| b.as_bool())).filter_map(|e| e.CachedBoundingRectangle().ok()).map(cadre).collect())
+        }
     }
 }
 
@@ -203,26 +239,26 @@ struct Parcours<'a> {
     navigateur: bool,
     cachees: &'a [Cadre],
     elements: Vec<Element>,
-    /// Every command of the window, seen or not, unnamed: what the guard of the dialog counts (a
-    /// hidden zone over « Non » leaves a dialog that waits on a choice all the same).
+    /// What the guard of the dialog counts, unnamed (`compte`).
     toutes: Vec<Element>,
-    secrets: Vec<Cadre>,
 }
 
 impl Parcours<'_> {
     fn commande(&mut self, el: &IUIAutomationElement, genre: Genre, ctx: Contexte) {
         // SAFETY: cached properties of an element of ours.
         let c = cadre(unsafe { el.CachedBoundingRectangle() }.unwrap_or_default());
-        if genre == Genre::Champ && c.touche(&self.fenetre) && unsafe { el.CachedIsPassword() }.is_ok_and(|b| b.as_bool()) {
-            self.secrets.push(c);
-        }
         let barre_titre = ctx.titre;
-        self.toutes.push(Element { genre, nom: String::new(), cadre: c, barre_titre, choix: false });
         let hors_vue = unsafe { el.CachedIsOffscreen() }.map_or(true, |b| b.as_bool());
         let actif = unsafe { el.CachedIsEnabled() }.is_ok_and(|b| b.as_bool());
+        // Only whether one can type in it, never its value.
+        let lecture_seule = unsafe { el.GetCachedPropertyValue(UIA_ValueIsReadOnlyPropertyId) }.ok().and_then(|v| bool::try_from(&v).ok()).unwrap_or(false);
+        let element = |nom: String, coupe: bool| Element { genre, nom, coupe, cadre: c, barre_titre, choix: false };
+        if compte(genre, hors_vue, actif, lecture_seule) {
+            self.toutes.push(element(String::new(), false));
+        }
         if garde(genre, ctx, self.navigateur) && visible(&c, &self.fenetre, &self.ecran, hors_vue, actif, self.cachees) && montre(self.hwnd, &c) {
-            let nom = unsafe { el.CachedName() }.map(|b| court(&b.to_string())).unwrap_or_default();
-            self.elements.push(Element { genre, nom, cadre: c, barre_titre, choix: false });
+            let brut = unsafe { el.CachedName() }.map(|b| b.to_string()).unwrap_or_default();
+            self.elements.push(element(court(&brut), coupe(&brut)));
         }
     }
 }
@@ -250,10 +286,43 @@ fn en_ordre() -> Vec<HWND> {
     all
 }
 
-/// The process's windows on the screen, the one on top first: its main window, its dialogs, its
-/// open menus.
-fn fenetres(pid: u32) -> Vec<HWND> {
-    en_ordre().into_iter().filter(|&h| pid_of(h) == pid && shown(h) && !minimized(h) && !cloaked(h)).collect()
+/// Shown on the desktop: not hidden, minimized, nor cloaked (another virtual desktop, a suspended app).
+fn en_vue(h: HWND) -> bool {
+    shown(h) && !minimized(h) && !cloaked(h)
+}
+
+/// A window that shows a web page (a browser, an Electron app, a WebView2): Chromium builds its tree
+/// at the first question, so that tree without its page is not read yet (P0: Edge's first list empty).
+fn montre_une_page(w: HWND) -> bool {
+    unsafe extern "system" fn each(h: HWND, trouve: LPARAM) -> windows::core::BOOL {
+        let page = class(h) == "Chrome_RenderWidgetHostHWND" && shown(h);
+        // SAFETY: the bool lent below, alive for the whole call.
+        unsafe { *(trouve.0 as *mut bool) |= page };
+        windows::core::BOOL(i32::from(!page))
+    }
+    let mut trouve = false;
+    // SAFETY: `each` only writes `trouve`, which outlives the call.
+    let _ = unsafe { EnumChildWindows(Some(w), Some(each), LPARAM(&mut trouve as *mut bool as isize)) };
+    trouve
+}
+
+fn racine_de(h: HWND) -> HWND {
+    // SAFETY: any value is accepted.
+    unsafe { GetAncestor(h, GA_ROOTOWNER) }
+}
+
+fn fil_de(h: HWND) -> u32 {
+    // SAFETY: any value is accepted.
+    unsafe { GetWindowThreadProcessId(h, None) }
+}
+
+/// The windows of what the person works in, the one on top first: `h`, the windows it owns or that
+/// own it (its dialogs, its palettes, the menus a toolkit draws), and the system's menus its thread
+/// opens. Not its program's other windows: Edge's other window is another site, and Explorer's
+/// taskbar names every window open and its notification area says what each program says.
+fn famille(h: HWND) -> Vec<HWND> {
+    let (racine, fil) = (racine_de(h), fil_de(h));
+    en_ordre().into_iter().filter(|&w| en_vue(w) && (racine_de(w) == racine || (class(w) == "#32768" && fil_de(w) == fil))).collect()
 }
 
 fn ecran_de(h: HWND) -> Option<Cadre> {
@@ -293,15 +362,38 @@ impl Lire for Lecteur {
                 if distant(&cible.app) {
                     return Ok(Liste::default());
                 }
-                self.arbre(h, cible.pid, navigateur(&cible.app), cachees)
+                self.arbre(h, navigateur(&cible.app), cachees)
             },
         )
+    }
+
+    fn secrets(&mut self, ecran: &Cadre) -> Result<Secrets, Rate> {
+        let _physical = Physical::enter();
+        let mut s = Secrets::default();
+        for w in en_ordre() {
+            // Bibo's own windows: blacked whole by the capture.
+            if !en_vue(w) || pid_of(w) == std::process::id() {
+                continue;
+            }
+            let Some(f) = frame(w).map(cadre).filter(|f| f.touche(ecran)) else { continue };
+            // A remote desktop shows another computer's fields; a tree that does not answer or a page not
+            // built yet, none known.
+            let lu = match identity(w) {
+                Some(i) if !distant(&i.app) => self.champs(w),
+                _ => None,
+            };
+            match lu {
+                Some(champs) => s.champs.extend(champs.into_iter().filter(|c| c.touche(&f) && c.touche(ecran))),
+                None => s.opaques.push(f),
+            }
+        }
+        Ok(s)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::super::uia::{designe, elements, fermer, lignes, ouvrir, repli_pixels, zones_secretes, NOM_MAX};
+    use super::super::uia::{designe, elements, fermer, lignes, ouvrir, repli_pixels, secrets, zones_secretes, NOM_MAX};
     use super::super::win::title;
     use super::*;
     use crate::capture::bureau::*;
@@ -311,11 +403,14 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::process::Command;
     use std::time::{Duration, Instant};
-    use windows::Win32::Foundation::POINT;
+    use windows::Win32::Foundation::{POINT, WPARAM};
     use windows::Win32::Graphics::Gdi::{BitBlt, GetDC, MonitorFromPoint, ReleaseDC, MONITOR_DEFAULTTOPRIMARY, SRCCOPY};
     use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
-    use windows::Win32::UI::Input::KeyboardAndMouse::{SendInput, INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEINPUT, MOUSE_EVENT_FLAGS};
-    use windows::Win32::UI::WindowsAndMessaging::SetCursorPos;
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEINPUT,
+        MOUSE_EVENT_FLAGS, VIRTUAL_KEY, VK_ESCAPE, VK_MENU, VK_SPACE,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, SetCursorPos, WM_CLOSE};
 
     #[test]
     fn each_control_type_to_the_rules() {
@@ -341,6 +436,9 @@ mod tests {
 
     const RED: [u8; 3] = [0xe5, 0x39, 0x35];
     const PURPLE: [u8; 3] = [0x8e, 0x24, 0xaa];
+    /// The Odoo-like page's two other password fields: in a list's row, in a table's cell.
+    const CYAN: [u8; 3] = [0x00, 0xac, 0xc1];
+    const LIME: [u8; 3] = [0xc0, 0xca, 0x33];
     /// The made-up customers of both fixtures: none may be in a list.
     const CLIENTS: [&str; 31] = [
         "Boulangerie Martin", "Garage Dupont", "Pharmacie Leroy", "Plomberie Moreau", "Cafe Lefebvre", "Fleuriste Garnier", "Librairie Fournier",
@@ -400,6 +498,16 @@ mod tests {
         let input = |flags: MOUSE_EVENT_FLAGS| INPUT { r#type: INPUT_MOUSE, Anonymous: INPUT_0 { mi: MOUSEINPUT { dwFlags: flags, ..Default::default() } } };
         let sent = unsafe { SendInput(&[input(MOUSEEVENTF_LEFTDOWN), input(MOUSEEVENTF_LEFTUP)], size_of::<INPUT>() as i32) };
         assert_eq!(sent, 2, "SendInput");
+    }
+
+    /// Keys as a hand presses them: each down in turn, then up the other way round.
+    fn touches(keys: &[VIRTUAL_KEY]) {
+        let key = |k: VIRTUAL_KEY, f: KEYBD_EVENT_FLAGS| INPUT { r#type: INPUT_KEYBOARD, Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: k, dwFlags: f, ..Default::default() } } };
+        let inputs: Vec<INPUT> = keys.iter().map(|&k| key(k, KEYBD_EVENT_FLAGS(0))).chain(keys.iter().rev().map(|&k| key(k, KEYEVENTF_KEYUP))).collect();
+        // SAFETY: the inputs live for the call.
+        let sent = unsafe { SendInput(&inputs, size_of::<INPUT>() as i32) };
+        assert_eq!(sent as usize, inputs.len(), "SendInput");
+        std::thread::sleep(Duration::from_millis(300));
     }
 
     /// The window brought in front by a click on its title bar.
@@ -499,6 +607,71 @@ mod tests {
         }
     }
 
+    /// The screen a window is on, in physical pixels.
+    fn ecran_de_la(w: &Window) -> Cadre {
+        let _p = Physical::enter();
+        ecran_de(handle(w.id)).unwrap()
+    }
+
+    /// The windows over or at a box, said: what an opaque window is.
+    fn quoi(c: &[Cadre]) -> Vec<Vec<String>> {
+        c.iter().map(dessus).collect()
+    }
+
+    /// The opaque windows that are not a remote desktop's (at 100 %, the job's RemoteApp is on the screen).
+    fn inconnues(s: &Secrets) -> Vec<Vec<String>> {
+        let _p = Physical::enter();
+        let distants: Vec<Cadre> = en_ordre().into_iter().filter(|&h| en_vue(h) && identity(h).is_some_and(|i| distant(&i.app))).filter_map(|h| frame(h).map(cadre)).collect();
+        quoi(&s.opaques.iter().filter(|c| !distants.contains(c)).copied().collect::<Vec<_>>())
+    }
+
+    /// The password fields of the screen, read once more until `done`, and measured: p50, p90 and max of
+    /// 10 reads in a row.
+    fn secrets_jusqu_a(test: &str, ecran: &Cadre, done: impl Fn(&Secrets) -> bool) -> Secrets {
+        let start = Instant::now();
+        let s = loop {
+            let s = secrets(ecran);
+            if let Ok(s) = &s {
+                if done(s) {
+                    break s.clone();
+                }
+            }
+            assert!(start.elapsed() < WAIT, "{test}: the password fields never as expected; last: {s:?}");
+            std::thread::sleep(Duration::from_millis(250));
+        };
+        let mut ms: Vec<f64> = (0..10)
+            .map(|_| {
+                let t = Instant::now();
+                secrets(ecran).unwrap();
+                t.elapsed().as_secs_f64() * 1000.0
+            })
+            .collect();
+        ms.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        mesure(test, "secrets_ms_p50", format!("{:.1}", ms[4]));
+        mesure(test, "secrets_ms_p90", format!("{:.1}", ms[8]));
+        mesure(test, "secrets_ms_max", format!("{:.1}", ms[9]));
+        mesure(test, "secrets", format!("{} champs, opaques {:?}", s.champs.len(), quoi(&s.opaques)));
+        s
+    }
+
+    /// Each colour's box against the password field over it, the largest gap; then all blacked: none of
+    /// the colour left.
+    fn noircis(test: &str, img: &mut Rgba, origine: (i32, i32), s: &Secrets, couleurs: &[[u8; 3]]) -> i32 {
+        let mut pire = 0;
+        for &couleur in couleurs {
+            let (l, t, r, b) = bounds(img, couleur).unwrap_or_else(|| panic!("{test}: no pixel of {couleur:?}"));
+            let vu = Cadre { x: origine.0 + l, y: origine.1 + t, largeur: r - l, hauteur: b - t };
+            let c = s.champs.iter().find(|c| c.touche(&vu)).unwrap_or_else(|| panic!("{test}: no password field over {couleur:?} at {vu:?}: {:?}", s.champs));
+            pire = pire.max(ecart(test, img, origine, couleur, &format!("mot de passe {couleur:?}"), c));
+        }
+        let avant: Vec<usize> = couleurs.iter().map(|&c| count(img, c)).collect();
+        crate::shot::paint(img, &zones_secretes(&s.a_noircir(), origine));
+        let apres: Vec<usize> = couleurs.iter().map(|&c| count(img, c)).collect();
+        mesure(test, "mots_de_passe_avant_apres", format!("{avant:?} -> {apres:?}"));
+        assert!(avant.iter().all(|&n| n > 300) && apres.iter().all(|&n| n == 0), "{test}: the password fields blacked: {avant:?} -> {apres:?}");
+        pire
+    }
+
     /// The ERP-like window as a program unaware of the scale, aware of it, or per monitor: its commands
     /// and their boxes against the screen, the password field given and blacked, no customer, names
     /// cut, a link out of a bar and a disabled button left out, a hidden zone.
@@ -512,6 +685,7 @@ mod tests {
         devant_par_clic(&win);
         fermer();
         let t = Instant::now();
+        ouvrir();
         let premier = elements(&win.window, &[]);
         mesure(&test, "ms_premier_appel", format!("{:.1} ({} elements)", t.elapsed().as_secs_f64() * 1000.0, premier.map_or(0, |l| l.elements.len())));
         let l = jusqu_a(&test, &win.window, WAIT, |l| nomme(l, Genre::Bouton, "Nouveau").is_some());
@@ -526,17 +700,13 @@ mod tests {
             let e = nomme(&l, Genre::Bouton, nom).unwrap_or_else(|| panic!("{test}: {nom}"));
             pire = pire.max(ecart(&test, &img, origine, couleur, nom, &e.cadre));
         }
-        assert_eq!(l.secrets.len(), 1, "{test}: the password field");
-        pire = pire.max(ecart(&test, &img, origine, ORANGE, "mot de passe", &l.secrets[0]));
+        let s = secrets_jusqu_a(&test, &ecran_de_la(&win.window), |s| s.champs.len() == 1);
+        pire = pire.max(noircis(&test, &mut img, origine, &s, &[ORANGE]));
         mesure(&test, "ecart_max_px", pire);
-        let avant = count(&img, ORANGE);
-        crate::shot::paint(&mut img, &zones_secretes(&l, origine));
-        mesure(&test, "orange_avant_apres", format!("{avant} -> {}", count(&img, ORANGE)));
         mesure(&test, "noms_clients", format!("{:?}", fuites(&l)));
         let supprimer = nomme(&l, Genre::Bouton, "Supprimer").unwrap().cadre;
         let cache = elements(&win.window, &[supprimer]).unwrap();
 
-        assert!(avant > 500 && count(&img, ORANGE) == 0, "{test}: the password field blacked");
         assert!(fuites(&l).is_empty(), "{test}: no customer");
         for (genre, nom) in [
             (Genre::Menu, "Fichier"),
@@ -555,8 +725,13 @@ mod tests {
         assert!(nomme(&l, Genre::Bouton, "Archiver").is_none(), "{test}: a disabled button");
         assert!(l.elements.iter().all(|e| e.nom != "Start" && e.nom != "Démarrer"), "{test}: nothing of another program");
         assert!(l.elements.iter().filter(|e| e.barre_titre).count() >= 2, "{test}: the title bar's buttons, marked");
-        assert!(!repli_pixels(&l) && l.choix.is_empty(), "{test}: a tree, no dialog");
-        assert!(designe(&l, l.elements.iter().position(|e| e.nom == "Nouveau").unwrap() + 1, "Nouveau").is_some());
+        assert!(!repli_pixels(&l) && l.choix.is_empty() && !l.attend, "{test}: a tree, no dialog");
+        assert!(inconnues(&s).is_empty(), "{test}: every window's fields known: {:?}", inconnues(&s));
+        let numero = |nom: &str| l.elements.iter().position(|e| e.nom == nom).unwrap() + 1;
+        assert!(designe(&l, numero("Nouveau"), "Nouveau").is_some());
+        assert!(designe(&l, numero("Nouveau"), "Nouveau devis").is_none(), "{test}: a short name was not cut");
+        let exporter = "Exporter toutes les factures du trimestre vers le cabinet comptable";
+        assert!(designe(&l, numero("Exporter toutes les factures du trimestr"), exporter).is_some(), "{test}: a name cut, the label going on");
         assert!(nomme(&cache, Genre::Bouton, "Supprimer").is_none() && nomme(&cache, Genre::Bouton, "Nouveau").is_some(), "{test}: the hidden zone");
         assert!(pire <= 4, "{test}: boxes within 4 px of the screen ({pire})");
         assert!(p90 < 300.0, "{test}: p90 {p90:.1} ms");
@@ -591,6 +766,7 @@ mod tests {
         let titre = format!("Atelier couvert {}", std::process::id());
         let _p = Program(Command::new(&exe).args(["erp", titre.as_str(), "60", "60", "900", "640", "pmv2"]).spawn().unwrap());
         let win = listed_as(|f| f.titre == titre);
+        ouvrir();
         let l = jusqu_a(&test, &win.window, WAIT, |l| nomme(l, Genre::Bouton, "Supprimer").is_some());
         let s = nomme(&l, Genre::Bouton, "Supprimer").unwrap().cadre;
         let milieu = Cadre { x: s.x + s.largeur / 2, y: s.y + s.hauteur / 2, largeur: 1, hauteur: 1 };
@@ -621,6 +797,7 @@ mod tests {
         let titre = format!("Atelier toile {}", std::process::id());
         let p = Program(Command::new(&exe).args(["fenetre", titre.as_str(), "80", "80", "640", "480", "1e88e5"]).spawn().unwrap());
         let win = listed_as(|f| f.titre == titre);
+        ouvrir();
         let l = jusqu_a(&test, &win.window, WAIT, |l| !l.elements.is_empty());
         imprime(&test, &l, (0, 0));
         assert!(repli_pixels(&l), "{test}: pixels");
@@ -655,6 +832,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (_b, win) = edge_ouvre(&test, dir.path(), "profil");
         devant_par_clic(&win);
+        ouvrir();
         let l = jusqu_a(&test, &win.window, Duration::from_secs(60), |l| nomme(l, Genre::Bouton, "Nouveau").is_some() && l.elements.len() > 15);
         let p90 = latence(&test, &win.window);
 
@@ -667,17 +845,14 @@ mod tests {
             let e = nomme(&l, Genre::Bouton, nom).unwrap_or_else(|| panic!("{test}: {nom}"));
             pire = pire.max(ecart(&test, &img, origine, couleur, nom, &e.cadre));
         }
-        assert_eq!(l.secrets.len(), 1, "{test}: the password field");
-        mesure(&test, "fenetres_sur_le_mot_de_passe", format!("{:?}", dessus(&l.secrets[0])));
-        pire = pire.max(ecart(&test, &img, origine, ORANGE, "mot de passe", &l.secrets[0]));
+        // Its three: the panel's, a list's row's, a table's cell's (data the walk never enters).
+        let s = secrets_jusqu_a(&test, &ecran_de_la(&win.window), |s| s.champs.len() == 3);
+        pire = pire.max(noircis(&test, &mut img, origine, &s, &[ORANGE, CYAN, LIME]));
         mesure(&test, "ecart_max_px", pire);
-        let avant = count(&img, ORANGE);
-        crate::shot::paint(&mut img, &zones_secretes(&l, origine));
-        mesure(&test, "orange_avant_apres", format!("{avant} -> {}", count(&img, ORANGE)));
         mesure(&test, "noms_clients", format!("{:?}", fuites(&l)));
 
-        assert!(avant > 500 && count(&img, ORANGE) == 0, "{test}: the password field blacked");
         assert!(fuites(&l).is_empty(), "{test}: no customer, in the table or linked beside it");
+        assert!(inconnues(&s).is_empty(), "{test}: every window's fields known: {:?}", inconnues(&s));
         for (genre, nom) in [
             (Genre::Lien, "Ventes"),
             (Genre::Lien, "Commandes"),
@@ -712,6 +887,7 @@ mod tests {
             std::thread::sleep(Duration::from_secs(5));
             fermer();
             let t = Instant::now();
+            ouvrir();
             let l = elements(&win.window, &[]).unwrap();
             mesure(&test, "sans_ouverture", format!("{:.1} ms, {} elements", t.elapsed().as_secs_f64() * 1000.0, l.elements.len()));
         }
@@ -739,10 +915,17 @@ mod tests {
         let titre = format!("Atelier {mode} {}", std::process::id());
         let p = Program(Command::new(&exe).args([mode, titre.as_str(), "80", "80", "700", "500"]).spawn().unwrap());
         let win = listed_as(|f| f.titre == titre);
+        ouvrir();
         let l = jusqu_a(&test, &win.window, WAIT, |l| l.elements.iter().filter(|e| e.genre == Genre::Bouton && !e.barre_titre).count() >= 2);
         imprime(&test, &l, (0, 0));
         mesure(&test, "choix", l.choix.len());
         assert!(nomme(&l, Genre::Bouton, "Nouveau").is_none(), "{test}: the window behind waits: {:?}", noms(&l));
+        assert!(l.attend && !repli_pixels(&l), "{test}: the window asked waits on its dialog");
+        // The window behind, disabled, has a password field: blacked all the same.
+        let f = cadre_de(&win);
+        let mut img = ecran(f);
+        let s = secrets_jusqu_a(&test, &ecran_de_la(&win.window), |s| !s.champs.is_empty());
+        noircis(&test, &mut img, (f.x, f.y), &s, &[ORANGE]);
         (l, win.window, p)
     }
 
@@ -768,6 +951,37 @@ mod tests {
         assert_eq!(l.choix.len(), 1, "a modal window of Oui, Non, Annuler waits on a choice");
         let oui = l.elements.iter().position(|e| e.nom == "Oui").expect("Oui");
         assert!(designe(&l, oui + 1, "Oui").is_none());
+    }
+
+    /// An error as .NET shows it: its details in a box read only, three buttons. The person's choice: a
+    /// box one cannot type in makes no form of it.
+    #[test]
+    #[ignore = "a Windows desktop (VM)"]
+    fn uia_dialogue_erreur() {
+        let (l, _, _p) = dialogue_de("erreur");
+        assert_eq!(l.choix.len(), 1, "an error's details make no form: {:?}", noms(&l));
+        let quitter = l.elements.iter().position(|e| e.nom == "Quitter").expect("Quitter");
+        assert!(designe(&l, quitter + 1, "Quitter").is_none());
+    }
+
+    /// A dialog that waits on a choice, out of the screen of the window it blocks: nothing of it listed,
+    /// still the person's choice, and no ring by pixels on the window behind.
+    #[test]
+    #[ignore = "a Windows desktop (VM)"]
+    fn uia_dialogue_ailleurs() {
+        let test = format!("dialogue_ailleurs_{}", echelle());
+        let dir = tempfile::tempdir().unwrap();
+        let exe = csc("atelier_uia.cs", dir.path());
+        let titre = format!("Atelier ailleurs {}", std::process::id());
+        let _p = Program(Command::new(&exe).args(["ailleurs", titre.as_str(), "80", "80", "700", "500"]).spawn().unwrap());
+        let win = listed_as(|f| f.titre == titre);
+        ouvrir();
+        let l = jusqu_a(&test, &win.window, WAIT, |l| !l.choix.is_empty());
+        imprime(&test, &l, (0, 0));
+        assert_eq!(l.choix.len(), 1, "{test}");
+        assert!(l.choix[0].x < -1000 && !l.choix[0].touche(&ecran_de_la(&win.window)), "{test}: out of the screen: {:?}", l.choix);
+        assert!(l.elements.iter().all(|e| e.barre_titre), "{test}: nothing of it listed: {:?}", noms(&l));
+        assert!(l.attend && !repli_pixels(&l), "{test}: no ring by pixels");
     }
 
     #[test]
@@ -797,16 +1011,22 @@ mod tests {
 
         let lecteur = Lecteur::nouveau().unwrap();
         let _physical = Physical::enter();
-        let arbre = || lecteur.arbre(handle(win.window.id), win.window.pid, false, &[]).unwrap_or_default();
+        let arbre = || lecteur.arbre(handle(win.window.id), false, &[]).unwrap_or_default();
         let start = Instant::now();
         while nomme(&arbre(), Genre::Bouton, "Nouveau").is_none() {
             assert!(start.elapsed() < WAIT, "{test}: its tree never had its commands");
             std::thread::sleep(Duration::from_millis(250));
         }
+        ouvrir();
         let l = elements(&win.window, &[]).unwrap();
         imprime(&test, &l, (0, 0));
-        assert!(l.elements.is_empty() && l.secrets.is_empty(), "{test}: {:?}", noms(&l));
+        assert!(l.elements.is_empty(), "{test}: {:?}", noms(&l));
         assert!(repli_pixels(&l), "{test}: pixels");
+        // Its password field, the other computer's: not known, the window said opaque.
+        let f = cadre_de(&win);
+        let s = secrets(&ecran_de_la(&win.window)).unwrap();
+        mesure(&test, "secrets", format!("{} champs, opaques {:?}", s.champs.len(), quoi(&s.opaques)));
+        assert!(s.opaques.contains(&f) && !s.champs.iter().any(|c| c.touche(&f)), "{test}: {s:?}");
     }
 
     /// A RemoteApp's windows (mstsc, opened by the job, its pid in BIBO_LOIN_PID): an empty list, so
@@ -816,17 +1036,225 @@ mod tests {
     fn uia_remoteapp() {
         let test = format!("remoteapp_{}", echelle());
         let pid: u32 = std::env::var("BIBO_LOIN_PID").expect("BIBO_LOIN_PID").parse().unwrap();
-        let loin = fenetres(pid).into_iter().find_map(identity).expect("a window of mstsc");
+        let loin = en_ordre().into_iter().filter(|&h| pid_of(h) == pid && en_vue(h)).find_map(identity).expect("a window of mstsc");
         mesure(&test, "fenetre", class(handle(loin.id)));
+        ouvrir();
         let l = elements(&loin, &[]).unwrap();
         imprime(&test, &l, (0, 0));
-        assert!(l.elements.is_empty() && l.secrets.is_empty(), "{test}: nothing of the other computer");
+        assert!(l.elements.is_empty(), "{test}: nothing of the other computer");
         assert!(repli_pixels(&l), "{test}: pixels");
+        let f = {
+            let _p = Physical::enter();
+            cadre(frame(handle(loin.id)).unwrap())
+        };
+        let s = secrets(&ecran_de_la(&loin)).unwrap();
+        mesure(&test, "secrets", format!("{} champs, opaques {:?}", s.champs.len(), quoi(&s.opaques)));
+        assert!(s.opaques.contains(&f), "{test}: the other computer's fields unknown: {s:?}");
 
         let ici = Program(Command::new("notepad.exe").spawn().unwrap());
         let local = listed_as(|f| f.window.pid == ici.0.id() || (f.nom.contains("Notepad") && f.window.pid != pid));
         let l = jusqu_a(&test, &local.window, WAIT, |l| l.elements.iter().any(|e| e.genre == Genre::Menu));
         imprime(&format!("{test}_local"), &l, (0, 0));
         assert!(!repli_pixels(&l), "{test}: the same program here has its tree");
+    }
+
+    /// A window of a program the test did not start (Explorer's), asked to close.
+    struct Fermer(HWND);
+
+    impl Drop for Fermer {
+        fn drop(&mut self) {
+            // SAFETY: a message to a window; gone already, nothing happens.
+            let _ = unsafe { PostMessageW(Some(self.0), WM_CLOSE, WPARAM(0), LPARAM(0)) };
+        }
+    }
+
+    /// Explorer's window lives in the taskbar's process: the taskbar's buttons (every window's title)
+    /// and its notification area (what each program says) are none of its commands.
+    #[test]
+    #[ignore = "a Windows desktop (VM)"]
+    fn uia_explorateur() {
+        let test = format!("explorateur_{}", echelle());
+        let barre = en_ordre().into_iter().find(|&h| class(h) == "Shell_TrayWnd").expect("the taskbar");
+        let siens: Vec<(String, Cadre)> = {
+            let lecteur = Lecteur::nouveau().unwrap();
+            let _physical = Physical::enter();
+            let l = lecteur.arbre(barre, false, &[]).unwrap_or_default();
+            l.elements.into_iter().filter(|e| !e.barre_titre && !e.nom.is_empty()).map(|e| (e.nom, e.cadre)).collect()
+        };
+        mesure(&test, "barre_des_taches", format!("{:?}", siens.iter().map(|(n, _)| n).collect::<Vec<_>>()));
+        assert!(!siens.is_empty(), "{test}: the taskbar's own commands, to look for");
+
+        let dir = tempfile::tempdir().unwrap();
+        let nom = format!("Dossier {}", std::process::id());
+        std::fs::create_dir(dir.path().join(&nom)).unwrap();
+        let _lanceur = Program(Command::new("explorer.exe").arg(dir.path().join(&nom)).spawn().unwrap());
+        let win = listed_as(|f| f.titre.starts_with(&nom));
+        let _ferme = Fermer(handle(win.window.id));
+        mesure(&test, "processus", format!("{} {} ; barre {}", class(handle(win.window.id)), win.window.pid, pid_of(barre)));
+        assert_eq!(win.window.pid, pid_of(barre), "{test}: Explorer's window in the taskbar's process, else this test proves nothing");
+        devant_par_clic(&win);
+        ouvrir();
+        let l = jusqu_a(&test, &win.window, WAIT, |l| l.elements.iter().any(|e| !e.barre_titre));
+        imprime(&test, &l, (0, 0));
+        let de_la_barre: Vec<&String> = l.elements.iter().filter(|e| siens.iter().any(|(n, c)| *n == e.nom && *c == e.cadre)).map(|e| &e.nom).collect();
+        assert!(de_la_barre.is_empty(), "{test}: the taskbar's in Explorer's list: {de_la_barre:?}");
+    }
+
+    fn atelier_en(mode: &str, titre: &str, x: i32, y: i32, l: i32, h: i32, dir: &Path) -> (Program, Found) {
+        let exe = dir.join("atelier_uia.exe");
+        let exe = if exe.is_file() { exe } else { csc("atelier_uia.cs", dir) };
+        let (x, y, l, h) = (x.to_string(), y.to_string(), l.to_string(), h.to_string());
+        let p = Program(Command::new(&exe).args([mode, titre, x.as_str(), y.as_str(), l.as_str(), h.as_str()]).spawn().unwrap());
+        let win = listed_as(|f| f.titre == titre);
+        (p, win)
+    }
+
+    /// The menus open on the window: the program's own (a toolkit's window, owned by it) and the system's
+    /// (`#32768`, its thread's): theirs are its commands too.
+    #[test]
+    #[ignore = "a Windows desktop (VM)"]
+    fn uia_menus() {
+        let test = format!("menus_{}", echelle());
+        let dir = tempfile::tempdir().unwrap();
+        let exe = csc("atelier_uia.cs", dir.path());
+        let titre = format!("Atelier menus {}", std::process::id());
+        let _p = Program(Command::new(&exe).args(["erp", titre.as_str(), "60", "60", "900", "640", "pmv2"]).spawn().unwrap());
+        let win = listed_as(|f| f.titre == titre);
+        devant_par_clic(&win);
+        ouvrir();
+        let l = jusqu_a(&test, &win.window, WAIT, |l| nomme(l, Genre::Menu, "Fichier").is_some());
+        let fichier = nomme(&l, Genre::Menu, "Fichier").unwrap().cadre;
+        clic(fichier.x + fichier.largeur / 2, fichier.y + fichier.hauteur / 2);
+        let l = jusqu_a(&test, &win.window, WAIT, |l| nomme(l, Genre::Menu, "Imprimer la facture").is_some());
+        imprime(&format!("{test}_fichier"), &l, (0, 0));
+        touches(&[VK_ESCAPE]);
+        touches(&[VK_ESCAPE]);
+        devant_par_clic(&win);
+        touches(&[VK_MENU, VK_SPACE]);
+        let l = jusqu_a(&test, &win.window, WAIT, |l| l.elements.iter().any(|e| e.genre == Genre::Menu && !e.barre_titre && (e.nom.starts_with("Close") || e.nom.starts_with("Fermer"))));
+        imprime(&format!("{test}_systeme"), &l, (0, 0));
+        touches(&[VK_ESCAPE]);
+    }
+
+    /// Another window of the program, owned by none (as Edge's second window, another site): nothing of
+    /// it in the list of the window asked.
+    #[test]
+    #[ignore = "a Windows desktop (VM)"]
+    fn uia_deux_fenetres() {
+        let test = format!("deux_fenetres_{}", echelle());
+        let dir = tempfile::tempdir().unwrap();
+        let titre = format!("Atelier deux {}", std::process::id());
+        let (_p, win) = atelier_en("deux", &titre, 60, 60, 700, 500, dir.path());
+        let autre = listed_as(|f| f.titre == format!("{titre} (autre)"));
+        assert_eq!(autre.window.pid, win.window.pid);
+        ouvrir();
+        // Its own list has them: they are there to be left out.
+        jusqu_a(&test, &autre.window, WAIT, |l| nomme(l, Genre::Bouton, "Autre fenetre").is_some());
+        let l = jusqu_a(&test, &win.window, WAIT, |l| nomme(l, Genre::Bouton, "Nouveau").is_some());
+        imprime(&test, &l, (0, 0));
+        assert!(nomme(&l, Genre::Bouton, "Autre fenetre").is_none() && fuites(&l).is_empty(), "{test}: {:?}", noms(&l));
+    }
+
+    /// Three hundred buttons in sight: the first 150 listed, no more.
+    #[test]
+    #[ignore = "a Windows desktop (VM)"]
+    fn uia_foule() {
+        let test = format!("foule_{}", echelle());
+        let dir = tempfile::tempdir().unwrap();
+        let titre = format!("Atelier foule {}", std::process::id());
+        let (_p, win) = atelier_en("foule", &titre, 40, 40, 1000, 700, dir.path());
+        devant_par_clic(&win);
+        ouvrir();
+        let l = jusqu_a(&test, &win.window, WAIT, |l| nomme(l, Genre::Bouton, "B001").is_some());
+        mesure(&test, "elements", l.elements.len());
+        assert_eq!(l.elements.len(), ELEMENTS_MAX, "{test}: {:?}", noms(&l).last());
+        assert!(nomme(&l, Genre::Bouton, "Nouveau").is_some(), "{test}: the first ones kept");
+    }
+
+    /// Another program's password field on the same screen: blacked too, the whole screen leaves; the
+    /// list of the program asked has nothing of it.
+    #[test]
+    #[ignore = "a Windows desktop (VM)"]
+    fn uia_mots_de_passe_ailleurs() {
+        let test = format!("mots_de_passe_ailleurs_{}", echelle());
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (format!("Atelier ici {}", std::process::id()), format!("Atelier la {}", std::process::id()));
+        let (_pa, ici) = atelier_en("fige", &a, 40, 60, 600, 400, dir.path());
+        let (_pb, la) = atelier_en("fige", &b, 700, 60, 600, 400, dir.path());
+        devant_par_clic(&ici);
+        ouvrir();
+        let l = jusqu_a(&test, &ici.window, WAIT, |l| nomme(l, Genre::Bouton, "Nouveau").is_some());
+        assert_eq!(l.elements.iter().filter(|e| e.nom == "Nouveau").count(), 1, "{test}: the other program's not listed");
+        let s = secrets_jusqu_a(&test, &ecran_de_la(&ici.window), |s| s.champs.len() == 2);
+        for w in [&ici, &la] {
+            let f = cadre_de(w);
+            noircis(&test, &mut ecran(f), (f.x, f.y), &s, &[ORANGE]);
+        }
+    }
+
+    /// A program that hangs (15 s): its list not waited for past 3 s; the reader free again long before
+    /// it wakes (UIA's timeouts), another window's list given; its password field never taken for none.
+    #[test]
+    #[ignore = "a Windows desktop (VM)"]
+    fn uia_fige() {
+        let test = format!("fige_{}", echelle());
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (format!("Atelier fige {}", std::process::id()), format!("Atelier vivant {}", std::process::id()));
+        let (_pa, fige) = atelier_en("fige", &a, 40, 60, 600, 400, dir.path());
+        let (_pb, vivant) = atelier_en("fige", &b, 700, 60, 600, 400, dir.path());
+        ouvrir();
+        let l = jusqu_a(&test, &fige.window, WAIT, |l| nomme(l, Genre::Bouton, "Figer").is_some());
+        jusqu_a(&test, &vivant.window, WAIT, |l| nomme(l, Genre::Bouton, "Figer").is_some());
+        let (ecran_, f) = (ecran_de_la(&fige.window), cadre_de(&fige));
+        let figer = nomme(&l, Genre::Bouton, "Figer").unwrap().cadre;
+        clic(figer.x + figer.largeur / 2, figer.y + figer.hauteur / 2);
+        let t0 = Instant::now();
+        std::thread::sleep(Duration::from_millis(500));
+
+        let r = elements(&fige.window, &[]);
+        mesure(&test, "liste_figee", format!("{:?} a {:.1} s", r.as_ref().map(noms), t0.elapsed().as_secs_f64()));
+        assert!(t0.elapsed() < Duration::from_millis(4500), "{test}: waited past its 3 s");
+        let libre = loop {
+            if elements(&vivant.window, &[]).is_ok_and(|l| nomme(&l, Genre::Bouton, "Figer").is_some()) {
+                break t0.elapsed();
+            }
+            assert!(t0.elapsed() < Duration::from_secs(40), "{test}: the reader never free again");
+            std::thread::sleep(Duration::from_millis(100));
+        };
+        mesure(&test, "s_lecteur_libre", format!("{:.1}", libre.as_secs_f64()));
+        let s = secrets(&ecran_);
+        mesure(&test, "secrets_fige", format!("{:?} a {:.1} s", s.as_ref().map(|s| (s.champs.len(), quoi(&s.opaques))), t0.elapsed().as_secs_f64()));
+        assert!(t0.elapsed() < Duration::from_secs(14), "{test}: measured while it still hangs");
+        if let Ok(s) = &s {
+            assert!(s.opaques.contains(&f) || s.champs.iter().any(|c| c.touche(&f)), "{test}: its password field taken for none: {s:?}");
+        }
+        assert!(libre < Duration::from_secs(12), "{test}: the reader held {libre:?} by a program that hangs 15 s");
+    }
+
+    /// Edge met first by the password search, another program in front: its page's three fields found,
+    /// or the window said opaque, never taken for a window without one (Chromium builds its tree at the
+    /// first question: P0's first list was empty).
+    #[test]
+    #[ignore = "a Windows desktop (VM)"]
+    fn uia_edge_premier_contact() {
+        let test = format!("edge_premier_contact_{}", echelle());
+        let dir = tempfile::tempdir().unwrap();
+        fermer();
+        let (_b, edge_) = edge_ouvre(&test, dir.path(), "premier");
+        let f = cadre_de(&edge_);
+        until("the page painted", || count(&ecran(f), ORANGE) > 300);
+        let titre = format!("Atelier devant {}", std::process::id());
+        let (_p, devant_) = atelier_en("fige", &titre, f.x + f.largeur - 420, f.y + f.hauteur - 300, 400, 260, dir.path());
+        devant_par_clic(&devant_);
+        let ecran_ = ecran_de_la(&edge_.window);
+        ouvrir();
+        let t = Instant::now();
+        let s = secrets(&ecran_);
+        let connus = |s: &Secrets| s.champs.iter().filter(|c| c.touche(&f)).count();
+        mesure(&test, "premier", format!("{:?} en {:.1} ms", s.as_ref().map(|s| (connus(s), quoi(&s.opaques))), t.elapsed().as_secs_f64() * 1000.0));
+        if let Ok(s) = &s {
+            assert!(connus(s) == 3 || s.opaques.contains(&f), "{test}: Edge's fields neither found ({}) nor said unknown: {s:?}", connus(s));
+        }
+        secrets_jusqu_a(&test, &ecran_, |s| connus(s) == 3);
     }
 }
