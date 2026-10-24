@@ -957,6 +957,14 @@ function claudeInstalled() {
   return Boolean(c) && c.status === 'ok';
 }
 
+// Hermes answers on the user's AI: connected by this run, or found so by the diagnosis. Bbrain,
+// the guide that stays, talks through it.
+function hermesAnswers() {
+  if (state.steps.hermes_ia === 'done') return true;
+  const c = state.diag && state.diag.checks.find((x) => x.id === 'hermes_ia');
+  return Boolean(c) && c.status === 'ok';
+}
+
 // E1. Connected now, Claude can help repair a step that fails later. Inside the
 // install screen, without screen(): the steps stay in view. `why`: another reason, when
 // the step that follows needs Claude's login itself. True once Claude is connected.
@@ -2019,6 +2027,16 @@ function showDone() {
 
   const vault = button('Ouvrir mon cerveau dans Obsidian', () => act(vault, 'open_vault', 'J’ouvre Obsidian…', 'Ton cerveau est dans Documents › Brain.'), { kind: 'secondary', act: 'vault' });
   ui.actions.append(vault);
+  // Hermes answers: Bbrain, the guide, takes over from here (PARCOURS-guide.md). It comes by
+  // itself, once: its pane of glass over the screen, its conversation, its first words.
+  const bbrain = hermesAnswers() && button('Parler à Bbrain', () => openBbrain(bbrain), { act: 'bbrain' });
+  if (bbrain) {
+    ui.screen.append(h('p', { class: 'note' }, 'Bbrain, ton guide, prend le relais : il reste avec toi après l’installation. Maintiens les touches contrôle et option, et parle-lui.'));
+    if (!state.bbrainVenu) {
+      state.bbrainVenu = true;
+      later(() => { if (gen === view.gen) openBbrain(bbrain); }, 1500);
+    }
+  }
   if (loginFirst) {
     // Settings of the system no login fixes: nothing more to offer here.
     if (state.codexLogin !== 'system') {
@@ -2026,10 +2044,24 @@ function showDone() {
       ui.actions.append(connect);
     }
   } else {
-    const onboard = button('Personnaliser mon cerveau (15 min)', () => act(onboard, 'start_onboarding', 'C’est parti !', `Une ${OS.window} s’ouvre : réponds aux questions de ${first}.`), { act: 'next' });
+    const onboard = button('Personnaliser mon cerveau (15 min)', () => act(onboard, 'start_onboarding', 'C’est parti !', `Une ${OS.window} s’ouvre : réponds aux questions de ${first}.`), { kind: bbrain ? 'secondary' : 'primary', act: 'next' });
     ui.actions.append(onboard);
   }
-  focusMain();
+  if (bbrain) ui.actions.append(bbrain);
+  if (bbrain) bbrain.focus({ preventScroll: true });
+  else focusMain();
+}
+
+// Bbrain's pane of glass and conversation; Bibo's window stays where it is.
+async function openBbrain(btn) {
+  const gen = view.gen;
+  btn.disabled = true;
+  try {
+    await invoke('bbrain_open');
+  } catch (e) {
+    if (gen === view.gen) say('worried', 'Bbrain ne s’est pas ouvert.', errText(e));
+  }
+  later(() => { btn.disabled = false; }, 3000);
 }
 
 // The guide's own window, above the program it guides in; this one goes to the Dock or the taskbar.

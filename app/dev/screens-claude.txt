@@ -200,145 +200,145 @@
 1 2 94 4 95 96 97 98 99 100 273 274 101 102 103 104 105 106 18 19
 
 ### s=manque&hermes_etape=installer&go=done
-1 2 275 4 276 277 278 279 280 281 282 283 284 285 286 287 288 289 290 291 292 18 293
+1 2 275 4 276 277 278 279 280 281 282 283 284 285 286 287 288 289 290 291 292 18 293 294
 
 ### s=installe&hermes_etape=brancher&agents=codex&go=done
-294 295 296 297 2 298 299 300 301 302 303 304
+295 296 297 298 2 299 300 301 302 303 304 305 306
 
 ### s=installe&hermes_etape=brancher&deconnecte=1&go=done
-56 2 305 306 307 308 309 310 311 312 299 301 302 18 313
+56 2 307 308 309 310 311 312 313 314 300 302 303 18 315 316
 
 ### s=installe&hermes_etape=brancher&deconnecte=1&click=skip&go=done
-56 2 305 306 307 314 18 315
+56 2 307 308 309 317 18 318
 
 ### s=installe&hermes_etape=brancher&fail=hermes_ia&go=done
-56 2 316 306 299 317 318 301 302 18 313
+56 2 319 308 300 320 321 302 303 18 315 316
 
 ### s=installe&hermes_etape=brancher&fail=hermes_ia&click=skip&go=done
-56 2 316 306 299 317 18 319
+56 2 319 308 300 320 18 322
 
 ### s=installe&hermes_etape=relier&go=done
-56 2 320 321 322 323 18 324
+56 2 323 324 325 326 18 327 328
 
 ### s=installe&hermes_etape=relier&fail=hermes_cerveau&go=done
-56 2 320 321 322 325 326 327 328 323 18 324
+56 2 323 324 325 329 330 331 332 326 18 327 328
 
 ### s=installe&hermes_etape=relier&fail=hermes_cerveau&click=skip&go=done
-56 2 320 321 322 325 326 18 329
+56 2 323 324 325 329 330 18 333 334
 
 ### s=installe&acces=1&go=access
-56 2 57 18 330
+56 2 57 18 335
 
 ### s=installe&acces=1&go=access-ask
-56 2 57 18 330 331 332 333 334 335 336 337 338 339 54 60 61 62
+56 2 57 18 335 336 337 338 339 340 341 342 343 344 54 60 61 62
 
 ### s=installe&acces=1&go=done
-56 2 57 18 330 331 332 333 334 335 336 337 338 339 54
+56 2 57 18 335 336 337 338 339 340 341 342 343 344 54
 
 ### s=installe&acces=1&micro=refuse&go=done
-56 2 57 18 330 331 332 333 334 335 336 337 338 340 339 54
+56 2 57 18 335 336 337 338 339 340 341 342 343 345 344 54
 
 ### s=installe&acces=1&go=done&os=windows
-58 21 59 18 341 342 343 344 345 346 347 348 54
+58 21 59 18 346 347 348 349 350 351 352 353 54
 
 ### s=installe&acces=1&go=done&os=linux
 58 21 63 18 54
 
 ### s=installe&acces=1&click=later,later,later&go=done
-56 2 57 18 330 334 337 54
+56 2 57 18 335 339 342 54
 
 ### s=installe&acces=refuse&go=access-ko
-56 2 57 18 330 331 332 333 334 335 349
+56 2 57 18 335 336 337 338 339 340 354
 
 ### s=installe&acces=ok&go=done
 56 2 57 18 54
 
 ### s=installe&acces=1&memoire=chatgpt&go=import-offer
-56 2 57 18 330 331 332 333 334 335 336 337 338 339 350
+56 2 57 18 335 336 337 338 339 340 341 342 343 344 355
 
 ### s=installe&acces=ok&tel=1&go=messaging
-56 2 57 18 351
+56 2 57 18 356
 
 ### s=installe&acces=ok&tel=1&go=messaging&os=windows
-58 21 59 18 351
+58 21 59 18 356
 
 ### s=installe&acces=1&tel=1&click=later,later,later&go=messaging
-56 2 57 18 330 334 337 351
+56 2 57 18 335 339 342 356
 
 ### s=installe&acces=ok&tel=1&go=whatsapp-wait
-56 2 57 18 351 352 353 354 355
+56 2 57 18 356 357 358 359 360
 
 ### s=installe&acces=ok&tel=1&wa=scan&go=whatsapp-ok
-56 2 57 18 351 352 353 354 355 356 357
+56 2 57 18 356 357 358 359 360 361 362
 
 ### s=installe&acces=ok&tel=1&wa=scan&fin=sans-bonjour&go=whatsapp-ok&os=linux
-58 21 63 18 351 352 353 354 355 356 358
+58 21 63 18 356 357 358 359 360 361 363
 
 ### s=installe&acces=ok&tel=1&wa=scan&fin=pas-connecte&go=messaging-ko
-56 2 57 18 351 352 353 354 355 356 359
+56 2 57 18 356 357 358 359 360 361 364
 
 ### s=installe&acces=ok&tel=1&wa=expire&go=messaging-ko
-56 2 57 18 351 352 353 354 355 360
+56 2 57 18 356 357 358 359 360 365
 
 ### s=installe&acces=ok&tel=1&wa=echec&go=messaging-ko
-56 2 57 18 351 352 361
+56 2 57 18 356 357 366
 
 ### s=installe&acces=ok&tel=1&tg=attente&click=telegram&go=telegram-ask
-56 2 57 18 351 362 363
+56 2 57 18 356 367 368
 
 ### s=installe&acces=ok&tel=1&click=telegram&go=telegram-ok
-56 2 57 18 351 362 363 364
+56 2 57 18 356 367 368 369
 
 ### s=installe&acces=ok&tel=1&tg=ferme&click=telegram&go=messaging-ko
-56 2 57 18 351 362 365
+56 2 57 18 356 367 370
 
 ### s=installe&acces=ok&tel=1&memoire=chatgpt&click=later&go=import-offer
-56 2 57 18 351 350
+56 2 57 18 356 355
 
 ### s=installe&acces=ok&tel=wa&memoire=chatgpt&go=import-offer
-56 2 57 18 350
+56 2 57 18 355
 
 ### s=installe&memoire=chatgpt&go=import-offer
-56 2 57 18 350
+56 2 57 18 355
 
 ### s=installe&memoire=claude&go=import-offer&os=windows
-58 21 59 18 366
+58 21 59 18 371
 
 ### s=installe&memoire=aucun&go=import-offer&os=linux
-58 21 63 18 367
+58 21 63 18 372
 
 ### s=installe&memoire=chatgpt&go=import-ask
-56 2 57 18 350 368
+56 2 57 18 355 373
 
 ### s=installe&memoire=aucun&go=import-ask&click=ask-claude&os=windows
-58 21 59 18 367 369
+58 21 59 18 372 374
 
 ### s=installe&memoire=chatgpt&go=import-done&colle=1
-56 2 57 18 350 368 370 250 251 252 235 253
+56 2 57 18 355 373 375 250 251 252 235 253
 
 ### s=installe&memoire=chatgpt&go=done&colle=1&click=done
-56 2 57 18 350 368 370 250 251 252 235 253 371
+56 2 57 18 355 373 375 250 251 252 235 253 376
 
 ### s=installe&memoire=deja&go=done
 56 2 57 18 54
 
 ### s=installe&memoire=claude&go=done&click=later
-56 2 57 18 366 54
+56 2 57 18 371 54
 
 ### s=installe&deconnecte=1&memoire=chatgpt&click=skip&go=done
-56 2 372 18 93 373
+56 2 377 18 93 378
 
 ### s=installe&agents=codex&memoire=chatgpt&go=import-ask
-294 295 296 297 2 374 303 350 375
+295 296 297 298 2 379 304 355 380
 
 ### s=installe&memoire=claude&lien=refuse&go=import-ask
-56 2 57 18 366 376
+56 2 57 18 371 381
 
 ### s=installe&memoire=chatgpt&copie=refuse&go=import-ask
-56 2 57 18 350 377
+56 2 57 18 355 382
 
 ### s=motscles&memoire=chatgpt&click=later&add=done&key=pa-abcdefghijklmnopqrstuvwxyz&go=done&nth=2
-56 2 67 18 350 19 68 378 379 380 381 382 54
+56 2 67 18 355 19 68 383 384 385 386 387 54
 
 #1
 == welcome
@@ -4105,36 +4105,40 @@ Tu utilisais ChatGPT ou Claude ? Apporte ce qu’ils savent de toi.
 Nouveau : je peux te guider pas à pas dans n’importe quel logiciel.
 [Essayer le guide]
 Dernière chose : présente-toi à lui. Il te pose quelques questions pour te connaître.
+Bbrain, ton guide, prend le relais : il reste avec toi après l’installation. Maintiens les touches contrôle et option, et parle-lui.
 [Ouvrir mon cerveau dans Obsidian]
 [Personnaliser mon cerveau (15 min)]
+[Parler à Bbrain]
 
 #294
+== done
+Ton second cerveau est prêt !
+Claude retient maintenant ce que tu lui apprends.
+Hermes t’a répondu : « Bonjour, je suis prêt. » Il passe par ton abonnement Claude : ce que tu lui demandes compte sur ton forfait, comme avec Claude.
+Hermes sait maintenant où lire ton cerveau. Demande-lui : « Qu’est-ce que tu sais de moi ? »
+Ton cerveau retrouve tes notes par mots-clés. Il peut aussi les retrouver par le sens.
+[Activer la recherche par le sens]
+Tu utilisais ChatGPT ou Claude ? Apporte ce qu’ils savent de toi.
+[Importer ma mémoire]
+Nouveau : je peux te guider pas à pas dans n’importe quel logiciel.
+[Essayer le guide]
+Dernière chose : présente-toi à lui. Il te pose quelques questions pour te connaître.
+Bbrain, ton guide, prend le relais : il reste avec toi après l’installation. Maintiens les touches contrôle et option, et parle-lui.
+[Ouvrir mon cerveau dans Obsidian]
+[Personnaliser mon cerveau (15 min)]
+[Parler à Bbrain (inactif)]
+
+#295
 == welcome
 Content de te revoir !
 Ton second cerveau est installé. Je peux aussi te guider pas à pas dans un logiciel : tu me montres ta fenêtre, je te dis où cliquer.
 [Choisir mon IA]
 [Guide-moi dans un logiciel]
 
-#295
-== choice
-Avec quelle IA veux-tu travailler ?
-Ton cerveau marche avec Claude, avec Codex, ou avec les deux.
-Claude
-Avec ton abonnement Claude (Pro ou Max). Claude Code, l’outil d’Anthropic.
-Codex
-Avec un abonnement ChatGPT personnel (pas un compte d’entreprise). Codex, l’outil d’OpenAI : ton résumé de chaque soir est écrit chez OpenAI.
-Les deux
-L’un écrit le résumé de chaque soir, l’autre prend le relais s’il ne répond pas. Il te faut les deux comptes.
-Tu pourras changer d’avis : rouvre l’app et refais ce choix.
-[Claude]
-[Codex]
-[Les deux]
-
 #296
 == choice
 Avec quelle IA veux-tu travailler ?
 Ton cerveau marche avec Claude, avec Codex, ou avec les deux.
-Mon conseil : Tu as déjà Claude Code, connecté à ton abonnement : ton cerveau travaillera avec lui.
 Claude
 Avec ton abonnement Claude (Pro ou Max). Claude Code, l’outil d’Anthropic.
 Codex
@@ -4158,11 +4162,27 @@ Avec un abonnement ChatGPT personnel (pas un compte d’entreprise). Codex, l’
 Les deux
 L’un écrit le résumé de chaque soir, l’autre prend le relais s’il ne répond pas. Il te faut les deux comptes.
 Tu pourras changer d’avis : rouvre l’app et refais ce choix.
+[Claude]
+[Codex]
+[Les deux]
+
+#298
+== choice
+Avec quelle IA veux-tu travailler ?
+Ton cerveau marche avec Claude, avec Codex, ou avec les deux.
+Mon conseil : Tu as déjà Claude Code, connecté à ton abonnement : ton cerveau travaillera avec lui.
+Claude
+Avec ton abonnement Claude (Pro ou Max). Claude Code, l’outil d’Anthropic.
+Codex
+Avec un abonnement ChatGPT personnel (pas un compte d’entreprise). Codex, l’outil d’OpenAI : ton résumé de chaque soir est écrit chez OpenAI.
+Les deux
+L’un écrit le résumé de chaque soir, l’autre prend le relais s’il ne répond pas. Il te faut les deux comptes.
+Tu pourras changer d’avis : rouvre l’app et refais ce choix.
 [Claude (inactif)]
 [Codex (inactif)]
 [Les deux (inactif)]
 
-#298
+#299
 == diag
 J’ai fait le tour.
 Il manque la connexion d’Hermes à ton IA et le lien entre Hermes et ton cerveau. Je m’en occupe.
@@ -4188,7 +4208,7 @@ Hermes et ton cerveau : À installerJe le relierai à ton cerveau juste après.
 [Revérifier]
 [Tout installer]
 
-#299
+#300
 == install
 Je branche Hermes sur ton IA.
 Étape 1 sur 2. Il passe par ton abonnement : aucune clé à acheter.
@@ -4196,7 +4216,7 @@ Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.En cou
 Hermes et ton cerveauIl lit ce que ton cerveau sait de toi.En attente
 Détails
 
-#300
+#301
 == install
 Connecte Hermes à ton compte ChatGPT
 Hermes passera par ton abonnement ChatGPT : aucune clé à acheter.
@@ -4210,7 +4230,7 @@ Tu te connectes directement chez OpenAI : je ne vois jamais ton mot de passe.
 [Rouvrir la page]
 Détails
 
-#301
+#302
 == install
 Je relie Hermes à ton cerveau.
 Étape 2 sur 2. Il lira ce que ton cerveau sait de toi.
@@ -4218,7 +4238,7 @@ Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.Fait
 Hermes et ton cerveauIl lit ce que ton cerveau sait de toi.En cours…
 Détails
 
-#302
+#303
 == install
 C’est installé !
 Plus qu’une petite étape.
@@ -4226,12 +4246,12 @@ Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.Fait
 Hermes et ton cerveauIl lit ce que ton cerveau sait de toi.Fait
 Détails
 
-#303
+#304
 == login
 Je vérifie la connexion de Codex…
 Un instant
 
-#304
+#305
 == done
 Ton second cerveau est prêt !
 Codex retient maintenant ce que tu lui apprends.
@@ -4240,10 +4260,26 @@ Hermes sait maintenant où lire ton cerveau. Demande-lui : « Qu’est-ce que 
 Tu utilisais ChatGPT ou Claude ? Apporte ce qu’ils savent de toi.
 [Importer ma mémoire]
 Dernière chose : présente-toi à lui. Il te pose quelques questions pour te connaître.
+Bbrain, ton guide, prend le relais : il reste avec toi après l’installation. Maintiens les touches contrôle et option, et parle-lui.
 [Ouvrir mon cerveau dans Obsidian]
 [Personnaliser mon cerveau (15 min)]
+[Parler à Bbrain]
 
-#305
+#306
+== done
+Ton second cerveau est prêt !
+Codex retient maintenant ce que tu lui apprends.
+Hermes t’a répondu : « Bonjour, je suis prêt. » Il passe par ton compte ChatGPT : ce que tu lui demandes compte sur ton forfait, comme avec ChatGPT.
+Hermes sait maintenant où lire ton cerveau. Demande-lui : « Qu’est-ce que tu sais de moi ? »
+Tu utilisais ChatGPT ou Claude ? Apporte ce qu’ils savent de toi.
+[Importer ma mémoire]
+Dernière chose : présente-toi à lui. Il te pose quelques questions pour te connaître.
+Bbrain, ton guide, prend le relais : il reste avec toi après l’installation. Maintiens les touches contrôle et option, et parle-lui.
+[Ouvrir mon cerveau dans Obsidian]
+[Personnaliser mon cerveau (15 min)]
+[Parler à Bbrain (inactif)]
+
+#307
 == diag
 J’ai fait le tour.
 Il manque la connexion d’Hermes à ton IA et le lien entre Hermes et ton cerveau. Je m’en occupe.
@@ -4268,14 +4304,14 @@ Hermes et ton cerveau : À installerJe le relierai à ton cerveau juste après.
 [Revérifier]
 [Tout installer]
 
-#306
+#308
 == install
 Je vérifie ton compte Claude…
 Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.En attente
 Hermes et ton cerveauIl lit ce que ton cerveau sait de toi.En attente
 Détails
 
-#307
+#309
 == install
 Connecte ton compte Claude maintenant
 Hermes passera par ton abonnement Claude : aucune clé à acheter.
@@ -4290,7 +4326,7 @@ Détails
 [Plus tard]
 [Connecter mon compte Claude]
 
-#308
+#310
 == install
 Connecte ton compte Claude maintenant
 Hermes passera par ton abonnement Claude : aucune clé à acheter.
@@ -4305,7 +4341,7 @@ Détails
 [Plus tard]
 [Connecter mon compte Claude (inactif)]
 
-#309
+#311
 == install
 J’attends que tu te connectes…
 Suis les étapes dans le Terminal.
@@ -4320,7 +4356,7 @@ Détails
 [Plus tard]
 [Rouvrir la fenêtre]
 
-#310
+#312
 == install
 J’attends que tu te connectes…
 Suis les étapes dans le Terminal.
@@ -4335,7 +4371,7 @@ Détails
 [Plus tard]
 [Rouvrir la fenêtre (inactif)]
 
-#311
+#313
 == install
 C’est connecté !
 Claude est prêt à m’aider. Je continue.
@@ -4347,7 +4383,7 @@ Reviens ici : je continue tout seul.
 Tu te connectes directement chez Anthropic : je ne vois jamais ton mot de passe.
 Détails
 
-#312
+#314
 == install
 J’attends que tu te connectes…
 Suis les étapes dans le Terminal.
@@ -4360,7 +4396,7 @@ Tu te connectes directement chez Anthropic : je ne vois jamais ton mot de passe
 J’attends ta connexion…
 Détails
 
-#313
+#315
 == done
 Ton second cerveau est prêt !
 Claude retient maintenant ce que tu lui apprends.
@@ -4371,10 +4407,28 @@ Tu utilisais ChatGPT ou Claude ? Apporte ce qu’ils savent de toi.
 Nouveau : je peux te guider pas à pas dans n’importe quel logiciel.
 [Essayer le guide]
 Dernière chose : présente-toi à lui. Il te pose quelques questions pour te connaître.
+Bbrain, ton guide, prend le relais : il reste avec toi après l’installation. Maintiens les touches contrôle et option, et parle-lui.
 [Ouvrir mon cerveau dans Obsidian]
 [Personnaliser mon cerveau (15 min)]
+[Parler à Bbrain]
 
-#314
+#316
+== done
+Ton second cerveau est prêt !
+Claude retient maintenant ce que tu lui apprends.
+Hermes t’a répondu : « Bonjour, je suis prêt. » Il passe par ton abonnement Claude : ce que tu lui demandes compte sur ton forfait, comme avec Claude.
+Hermes sait maintenant où lire ton cerveau. Demande-lui : « Qu’est-ce que tu sais de moi ? »
+Tu utilisais ChatGPT ou Claude ? Apporte ce qu’ils savent de toi.
+[Importer ma mémoire]
+Nouveau : je peux te guider pas à pas dans n’importe quel logiciel.
+[Essayer le guide]
+Dernière chose : présente-toi à lui. Il te pose quelques questions pour te connaître.
+Bbrain, ton guide, prend le relais : il reste avec toi après l’installation. Maintiens les touches contrôle et option, et parle-lui.
+[Ouvrir mon cerveau dans Obsidian]
+[Personnaliser mon cerveau (15 min)]
+[Parler à Bbrain (inactif)]
+
+#317
 == install
 C’est installé !
 Plus qu’une petite étape.
@@ -4382,7 +4436,7 @@ Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.Plus t
 Hermes et ton cerveauIl lit ce que ton cerveau sait de toi.Plus tard
 Détails
 
-#315
+#318
 == done
 Ton second cerveau est prêt !
 Claude retient maintenant ce que tu lui apprends.
@@ -4396,7 +4450,7 @@ Pense à connecter ton compte Claude : il te le demandera au premier lancement.
 [Ouvrir mon cerveau dans Obsidian]
 [Personnaliser mon cerveau (15 min)]
 
-#316
+#319
 == diag
 J’ai fait le tour.
 Il manque la connexion d’Hermes à ton IA et le lien entre Hermes et ton cerveau. Je m’en occupe.
@@ -4421,7 +4475,7 @@ Hermes et ton cerveau : À installerJe le relierai à ton cerveau juste après.
 [Revérifier]
 [Tout installer]
 
-#317
+#320
 == install
 Oups, ça a coincé.
 Ton abonnement a atteint sa limite pour le moment. Réessaie plus tard : elle se renouvelle toute seule.
@@ -4432,14 +4486,14 @@ Détails
 [Copier le rapport]
 [Réessayer]
 
-#318
+#321
 == install
 Je vérifie ton compte Claude…
 Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.Échec
 Hermes et ton cerveauIl lit ce que ton cerveau sait de toi.En attente
 Détails
 
-#319
+#322
 == done
 Ton second cerveau est prêt !
 Claude retient maintenant ce que tu lui apprends.
@@ -4452,7 +4506,7 @@ Dernière chose : présente-toi à lui. Il te pose quelques questions pour te c
 [Ouvrir mon cerveau dans Obsidian]
 [Personnaliser mon cerveau (15 min)]
 
-#320
+#323
 == diag
 J’ai fait le tour.
 Il manque le lien entre Hermes et ton cerveau. Je m’en occupe.
@@ -4477,27 +4531,27 @@ Hermes et ton cerveau : À installerPas encore relié à ton cerveau.
 [Revérifier]
 [Tout installer]
 
-#321
+#324
 == install
 Je vérifie ton compte Claude…
 Hermes et ton cerveauIl lit ce que ton cerveau sait de toi.En attente
 Détails
 
-#322
+#325
 == install
 Je relie Hermes à ton cerveau.
 Il lira ce que ton cerveau sait de toi.
 Hermes et ton cerveauIl lit ce que ton cerveau sait de toi.En cours…
 Détails
 
-#323
+#326
 == install
 C’est installé !
 Plus qu’une petite étape.
 Hermes et ton cerveauIl lit ce que ton cerveau sait de toi.Fait
 Détails
 
-#324
+#327
 == done
 Ton second cerveau est prêt !
 Claude retient maintenant ce que tu lui apprends.
@@ -4507,10 +4561,27 @@ Tu utilisais ChatGPT ou Claude ? Apporte ce qu’ils savent de toi.
 Nouveau : je peux te guider pas à pas dans n’importe quel logiciel.
 [Essayer le guide]
 Dernière chose : présente-toi à lui. Il te pose quelques questions pour te connaître.
+Bbrain, ton guide, prend le relais : il reste avec toi après l’installation. Maintiens les touches contrôle et option, et parle-lui.
 [Ouvrir mon cerveau dans Obsidian]
 [Personnaliser mon cerveau (15 min)]
+[Parler à Bbrain]
 
-#325
+#328
+== done
+Ton second cerveau est prêt !
+Claude retient maintenant ce que tu lui apprends.
+Hermes sait maintenant où lire ton cerveau. Demande-lui : « Qu’est-ce que tu sais de moi ? »
+Tu utilisais ChatGPT ou Claude ? Apporte ce qu’ils savent de toi.
+[Importer ma mémoire]
+Nouveau : je peux te guider pas à pas dans n’importe quel logiciel.
+[Essayer le guide]
+Dernière chose : présente-toi à lui. Il te pose quelques questions pour te connaître.
+Bbrain, ton guide, prend le relais : il reste avec toi après l’installation. Maintiens les touches contrôle et option, et parle-lui.
+[Ouvrir mon cerveau dans Obsidian]
+[Personnaliser mon cerveau (15 min)]
+[Parler à Bbrain (inactif)]
+
+#329
 == install
 Oups, ça a coincé.
 La mémoire d’Hermes est pleine : il n’y a plus la place d’y noter où est ton cerveau. Demande à Hermes de faire le tri dans sa mémoire, puis réessaie.
@@ -4520,7 +4591,7 @@ Détails
 [Copier le rapport]
 [Réessayer]
 
-#326
+#330
 == install
 Oups, ça a coincé.
 La mémoire d’Hermes est pleine : il n’y a plus la place d’y noter où est ton cerveau. Demande à Hermes de faire le tri dans sa mémoire, puis réessaie.
@@ -4533,7 +4604,7 @@ Détails
 [Réessayer]
 [Demander à Claude de réparer]
 
-#327
+#331
 == analyze
 Claude regarde ce qui s’est passé…
 En général moins d’une minute. Il ne modifie rien.
@@ -4544,7 +4615,7 @@ L’état de ton Mac : versions, place libre, connexion.
 Je rassemble ce qu’il lui faut sur ton Mac…
 [Arrêter]
 
-#328
+#332
 == analyze
 Claude regarde ce qui s’est passé…
 En général moins d’une minute. Il ne modifie rien.
@@ -4555,7 +4626,7 @@ L’état de ton Mac : versions, place libre, connexion.
 Claude lit le dossier…
 [Arrêter]
 
-#329
+#333
 == done
 Ton second cerveau est prêt !
 Claude retient maintenant ce que tu lui apprends.
@@ -4565,10 +4636,27 @@ Tu utilisais ChatGPT ou Claude ? Apporte ce qu’ils savent de toi.
 Nouveau : je peux te guider pas à pas dans n’importe quel logiciel.
 [Essayer le guide]
 Dernière chose : présente-toi à lui. Il te pose quelques questions pour te connaître.
+Bbrain, ton guide, prend le relais : il reste avec toi après l’installation. Maintiens les touches contrôle et option, et parle-lui.
 [Ouvrir mon cerveau dans Obsidian]
 [Personnaliser mon cerveau (15 min)]
+[Parler à Bbrain]
 
-#330
+#334
+== done
+Ton second cerveau est prêt !
+Claude retient maintenant ce que tu lui apprends.
+Hermes n’est pas encore relié à ton cerveau. Rouvre-moi quand tu veux : je reprendrai là où on s’est arrêtés.
+Tu utilisais ChatGPT ou Claude ? Apporte ce qu’ils savent de toi.
+[Importer ma mémoire]
+Nouveau : je peux te guider pas à pas dans n’importe quel logiciel.
+[Essayer le guide]
+Dernière chose : présente-toi à lui. Il te pose quelques questions pour te connaître.
+Bbrain, ton guide, prend le relais : il reste avec toi après l’installation. Maintiens les touches contrôle et option, et parle-lui.
+[Ouvrir mon cerveau dans Obsidian]
+[Personnaliser mon cerveau (15 min)]
+[Parler à Bbrain (inactif)]
+
+#335
 == access
 Je laisse Hermes ouvrir tes fichiers ?
 Avec ça, il retrouve un document que tu lui cites, range tes factures ou lit un PDF sans que tu aies à le lui envoyer.
@@ -4576,7 +4664,7 @@ Avec ça, il retrouve un document que tu lui cites, range tes factures ou lit un
 [Plus tard]
 [Oui, ouvre-lui mes fichiers]
 
-#331
+#336
 == access-ask
 À toi : active Hermes dans la page qui s’ouvre.
 Je vérifie tout seul dès que c’est fait.
@@ -4585,7 +4673,7 @@ Hermes n’est pas dans la liste ? Glisse-le dedans depuis la fenêtre du Finde
 Si macOS te propose « Quitter et rouvrir », accepte.
 [Plus tard]
 
-#332
+#337
 == access-ask
 À toi : active Hermes dans la page qui s’ouvre.
 Je vérifie tout seul dès que c’est fait.
@@ -4595,13 +4683,13 @@ Si macOS te propose « Quitter et rouvrir », accepte.
 [Plus tard]
 [Ouvrir les Réglages]
 
-#333
+#338
 == access-ok
 C’est bon, Hermes peut ouvrir tes fichiers.
 Essaie dans Hermes : « Qu’est-ce qui traîne dans mes Téléchargements ? »
 [Suivant]
 
-#334
+#339
 == access
 Je laisse Hermes se servir de ton écran ?
 Avec ça, il fait les choses à ta place : il voit l’écran, il clique et il tape comme toi. Remplir un formulaire, trier un dossier, régler une app.
@@ -4609,7 +4697,7 @@ Il voit ce qui est affiché pendant qu’il travaille. Tu peux le retirer quand 
 [Plus tard]
 [Oui, vas-y]
 
-#335
+#340
 == access-ask
 À toi : active CuaDriver dans les deux réglages.
 Je vérifie tout seul dès que c’est fait.
@@ -4617,13 +4705,13 @@ L’outil d’Hermes pour l’écran (CuaDriver) te demande deux réglages : Ac
 Active CuaDriver dans les deux (ton mot de passe peut t’être demandé).
 [Plus tard]
 
-#336
+#341
 == access-ok
 C’est bon, Hermes peut se servir de ton écran.
 Essaie dans Hermes : « Regarde mon écran et dis-moi ce que tu vois. »
 [Suivant]
 
-#337
+#342
 == access
 Je laisse Hermes t’entendre ?
 Avec ça, tu lui parles au lieu de taper : tu lui dictes un message, il l’écrit pour toi.
@@ -4631,20 +4719,20 @@ Quand il t’écoute, un point orange s’allume en haut de l’écran. Tu peux 
 [Plus tard]
 [Oui, demande-le]
 
-#338
+#343
 == access-ask
 À toi : macOS te pose une question.
 Je vérifie tout seul dès que c’est fait.
 Il demande si Hermes peut utiliser le micro : réponds « Autoriser ».
 [Plus tard]
 
-#339
+#344
 == access-ok
 C’est bon, Hermes t’entend.
 Essaie dans Hermes : clique sur le micro et dis « Bonjour ! ».
 [Continuer]
 
-#340
+#345
 == access-ask
 À toi : active Hermes dans la page qui s’ouvre.
 Je vérifie tout seul dès que c’est fait.
@@ -4652,7 +4740,7 @@ Active l’interrupteur à côté d’Hermes.
 [Plus tard]
 [Ouvrir les Réglages]
 
-#341
+#346
 == access
 Je laisse Hermes t’entendre ?
 Avec ça, tu lui parles au lieu de taper : tu lui dictes un message, il l’écrit pour toi.
@@ -4660,7 +4748,7 @@ Quand il t’écoute, une icône de micro s’affiche près de l’horloge. Tu p
 [Plus tard]
 [Oui, demande-le]
 
-#342
+#347
 == access-ask
 À toi : active le micro dans la page qui s’ouvre.
 Je vérifie tout seul dès que c’est fait.
@@ -4668,7 +4756,7 @@ Dans la page qui s’ouvre, active l’accès au micro.
 Plus bas, active aussi l’accès des applications de bureau.
 [Plus tard]
 
-#343
+#348
 == access-ask
 À toi : active le micro dans la page qui s’ouvre.
 Je vérifie tout seul dès que c’est fait.
@@ -4677,13 +4765,13 @@ Plus bas, active aussi l’accès des applications de bureau.
 [Plus tard]
 [Ouvrir les Paramètres]
 
-#344
+#349
 == access-ok
 C’est bon, Hermes t’entend.
 Essaie dans Hermes : clique sur le micro et dis « Bonjour ! ».
 [Suivant]
 
-#345
+#350
 == access
 Je laisse Hermes ranger tes dossiers protégés ?
 Windows protège tes Documents, tes Images et ton Bureau. Avec ça, Hermes peut y ranger et y écrire tes fichiers.
@@ -4691,7 +4779,7 @@ Windows protège tes Documents, tes Images et ton Bureau. Avec ça, Hermes peut 
 [Plus tard]
 [Oui, autorise-le]
 
-#346
+#351
 == access-ask
 À toi : ajoute Hermes dans la page qui s’ouvre.
 Je vérifie tout seul dès que c’est fait.
@@ -4699,7 +4787,7 @@ Dans la page qui s’ouvre, clique sur « Gérer la protection contre les ranso
 Puis sur « Autoriser une application via l’accès contrôlé aux dossiers », et ajoute Hermes.
 [Plus tard]
 
-#347
+#352
 == access-ask
 À toi : ajoute Hermes dans la page qui s’ouvre.
 Je vérifie tout seul dès que c’est fait.
@@ -4708,20 +4796,20 @@ Puis sur « Autoriser une application via l’accès contrôlé aux dossiers �
 [Plus tard]
 [Ouvrir les Paramètres]
 
-#348
+#353
 == access-ok
 C’est bon, Hermes peut ranger tes dossiers.
 Essaie dans Hermes : « Range mon Bureau par type de fichier. »
 [Continuer]
 
-#349
+#354
 == access-ko
 Ce n’est pas encore bon.
 Je ne vois pas encore ces deux autorisations pour CuaDriver. Réessaie : la fenêtre te montre ce qui manque.
 [Plus tard]
 [Réessayer]
 
-#350
+#355
 == import-offer
 ChatGPT te connaît déjà.
 Je lui demande ce qu’il sait de toi ? Comme ça, je sais tout de suite qui tu es, et tu n’as rien à me réexpliquer.
@@ -4730,7 +4818,7 @@ Je t’ouvre sa page et je lui prépare ma question. Ce qu’il répond, tu le r
 [J’utilise plutôt Claude]
 [Oui, demande à ChatGPT]
 
-#351
+#356
 == messaging
 Je te rejoins sur ton téléphone ?
 Avec ça, tu m’écris sur WhatsApp comme à un ami, même loin de ton ordinateur, et c’est moi qui t’écris quand j’ai quelque chose pour toi.
@@ -4740,13 +4828,13 @@ Je passe par ton propre WhatsApp, dans ta discussion avec toi-même : personne 
 [Plutôt Telegram]
 [Oui, sur WhatsApp]
 
-#352
+#357
 == whatsapp-wait
 Je prépare le code à scanner…
 La première fois, ça peut prendre une minute.
 [Plus tard]
 
-#353
+#358
 == whatsapp-wait
 Je prépare le code à scanner…
 La première fois, ça peut prendre une minute.
@@ -4755,7 +4843,7 @@ Va dans « Appareils connectés » : dans Réglages sur iPhone, dans le menu 
 Touche « Connecter un appareil », puis vise ce code.
 [Plus tard]
 
-#354
+#359
 == whatsapp-wait
 J’installe ce qu’il faut pour WhatsApp…
 La première fois, ça peut prendre une minute.
@@ -4764,7 +4852,7 @@ Va dans « Appareils connectés » : dans Réglages sur iPhone, dans le menu 
 Touche « Connecter un appareil », puis vise ce code.
 [Plus tard]
 
-#355
+#360
 == whatsapp-wait
 À toi : scanne ce code avec WhatsApp.
 Je vérifie tout seul dès que c’est fait.
@@ -4773,51 +4861,51 @@ Va dans « Appareils connectés » : dans Réglages sur iPhone, dans le menu 
 Touche « Connecter un appareil », puis vise ce code.
 [Plus tard]
 
-#356
+#361
 == whatsapp-saving
 C’est relié !
 Je m’installe pour te répondre même quand cette fenêtre est fermée. Ça peut prendre une minute.
 
-#357
+#362
 == whatsapp-ok
 C’est fait : je viens de t’écrire sur WhatsApp.
 Ouvre ta discussion avec toi-même et réponds-moi : je suis là.
 Ton assistant répond tant que ton ordinateur est allumé.
 [Continuer]
 
-#358
+#363
 == whatsapp-ok
 C’est fait : je suis sur ton WhatsApp.
 Écris-moi dans ta discussion avec toi-même : je te réponds.
 Ton assistant répond tant que ton ordinateur est allumé. S’il redémarre, ouvre Hermes pour que je revienne.
 [Continuer]
 
-#359
+#364
 == messaging-ko
 Ce n’est pas encore bon.
 Ton WhatsApp est relié, mais Hermes ne le voit pas encore connecté. Réessaie dans un instant.
 [Plus tard]
 [Réessayer]
 
-#360
+#365
 == messaging-ko
 Ce n’est pas encore bon.
 Le code a expiré avant d’être scanné : réessaie, je t’en prépare un nouveau.
 [Plus tard]
 [Réessayer]
 
-#361
+#366
 == messaging-ko
 Ce n’est pas encore bon.
 Hermes n’a pas démarré. Réessaie dans un instant.
 [Plus tard]
 [Réessayer]
 
-#362
+#367
 == telegram-ask
 J’ouvre Hermes sur la Messagerie…
 
-#363
+#368
 == telegram-ask
 À toi : crée ton assistant Telegram dans Hermes.
 Je vérifie tout seul dès que c’est fait.
@@ -4827,21 +4915,21 @@ Vise le code avec ton téléphone : Telegram s’ouvre, confirme.
 De retour dans Hermes, clique sur « Enregistrer et redémarrer ».
 [Plus tard]
 
-#364
+#369
 == telegram-ok
 C’est fait : je suis sur ton Telegram.
 Ouvre Telegram et écris « Bonjour » à ton assistant : il te répond.
 Ton assistant répond tant que ton ordinateur est allumé.
 [Continuer]
 
-#365
+#370
 == messaging-ko
 Ce n’est pas encore bon.
 Je n’ai pas pu ouvrir Hermes. Ouvre-le toi-même, puis va dans Messagerie.
 [Plus tard]
 [Réessayer]
 
-#366
+#371
 == import-offer
 Claude te connaît déjà.
 Je lui demande ce qu’il sait de toi ? Comme ça, je sais tout de suite qui tu es, et tu n’as rien à me réexpliquer.
@@ -4850,7 +4938,7 @@ Je t’ouvre sa page et je lui prépare ma question. Ce qu’il répond, tu le r
 [J’utilise plutôt ChatGPT]
 [Oui, demande à Claude]
 
-#367
+#372
 == import-offer
 Tu as déjà parlé à ChatGPT ou à Claude ?
 S’il te connaît, je lui demande ce qu’il sait de toi : tu n’auras rien à me réexpliquer.
@@ -4859,7 +4947,7 @@ Je t’ouvre sa page et je lui prépare ma question. Ce qu’il répond, tu le r
 [Claude]
 [ChatGPT]
 
-#368
+#373
 == import-ask
 J’ai ouvert ChatGPT avec ma question.
 Envoie-la, puis rapporte-moi sa réponse : je la range dans ton cerveau.
@@ -4876,7 +4964,7 @@ Ce que tu importes est lu sur ton Mac et ses secrets masqués. Puis Claude le tr
 [Retour]
 [Continuer (inactif)]
 
-#369
+#374
 == import-ask
 J’ai ouvert Claude avec ma question.
 Envoie-la, puis rapporte-moi sa réponse : je la range dans ton cerveau.
@@ -4893,7 +4981,7 @@ Ce que tu importes est lu sur ton PC et ses secrets masqués. Puis Claude le tri
 [Retour]
 [Continuer (inactif)]
 
-#370
+#375
 == import-ask
 J’ai ouvert ChatGPT avec ma question.
 Envoie-la, puis rapporte-moi sa réponse : je la range dans ton cerveau.
@@ -4910,7 +4998,7 @@ Ce que tu importes est lu sur ton Mac et ses secrets masqués. Puis Claude le tr
 [Retour]
 [Continuer]
 
-#371
+#376
 == done
 Ton second cerveau est prêt !
 Claude retient maintenant ce que tu lui apprends.
@@ -4922,7 +5010,7 @@ Dernière chose : présente-toi à lui. Il te pose quelques questions pour te c
 [Ouvrir mon cerveau dans Obsidian]
 [Personnaliser mon cerveau (15 min)]
 
-#372
+#377
 == diag
 Tout est déjà installé !
 Ton Mac a tout ce qu’il faut.
@@ -4943,7 +5031,7 @@ La mémoire de recherche : OKPrête.
 Recherche par le sens : OKActivée (Voyage AI)
 [Continuer]
 
-#373
+#378
 == done
 Ton second cerveau est prêt !
 Claude retient maintenant ce que tu lui apprends.
@@ -4956,7 +5044,7 @@ Pense à connecter ton compte Claude : il te le demandera au premier lancement.
 [Ouvrir mon cerveau dans Obsidian]
 [Personnaliser mon cerveau (15 min)]
 
-#374
+#379
 == diag
 Tout est déjà installé !
 Ton Mac a tout ce qu’il faut.
@@ -4978,7 +5066,7 @@ Recherche par le sens : OKActivée (Voyage AI)
 [Changer d’IA]
 [Continuer]
 
-#375
+#380
 == import-ask
 J’ai ouvert ChatGPT avec ma question.
 Envoie-la, puis rapporte-moi sa réponse : je la range dans ton cerveau.
@@ -4995,7 +5083,7 @@ Ce que tu importes est lu sur ton Mac et ses secrets masqués. Puis Codex le tri
 [Retour]
 [Continuer (inactif)]
 
-#376
+#381
 == import-ask
 Je n’ai pas pu ouvrir Claude.
 Ouvre claude.ai dans ton navigateur, colle ma question, puis rapporte-moi sa réponse.
@@ -5012,7 +5100,7 @@ Ce que tu importes est lu sur ton Mac et ses secrets masqués. Puis Claude le tr
 [Retour]
 [Continuer (inactif)]
 
-#377
+#382
 == import-ask
 J’ai ouvert ChatGPT avec ma question.
 Envoie-la, puis rapporte-moi sa réponse : je la range dans ton cerveau.
@@ -5029,7 +5117,7 @@ Ce que tu importes est lu sur ton Mac et ses secrets masqués. Puis Claude le tr
 [Retour]
 [Continuer (inactif)]
 
-#378
+#383
 == voyage
 Je vérifie ta clé auprès de Voyage…
 Crée un compte sur Voyage AI.
@@ -5043,7 +5131,7 @@ Je vérifie…
 [Retour]
 [Activer avec cette clé (inactif)]
 
-#379
+#384
 == voyage
 Clé acceptée !
 Ton cerveau trouvera tes notes par le sens.
@@ -5058,14 +5146,14 @@ Clé valide
 [Retour]
 [Activer avec cette clé]
 
-#380
+#385
 == install
 Je vérifie ton compte Claude…
 Recherche par le sensTon cerveau apprend à retrouver tes notes par le sens.En attente
 macOS va peut-être demander l’accès à ton dossier Documents : clique sur « Autoriser ».
 Détails
 
-#381
+#386
 == install
 J’active la recherche par le sens.
 Ton cerveau relit tes notes : quelques minutes.
@@ -5073,7 +5161,7 @@ Recherche par le sensTon cerveau apprend à retrouver tes notes par le sens.En c
 macOS va peut-être demander l’accès à ton dossier Documents : clique sur « Autoriser ».
 Détails
 
-#382
+#387
 == install
 C’est fait !
 Ton cerveau est installé dans Documents/Brain, avec la recherche par le sens.

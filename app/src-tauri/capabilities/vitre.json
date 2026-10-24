@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "vitre",
+  "description": "Bbrain's pane of glass over the screen: core APIs, talking with the user's engine (its requests checked in Rust, bbrain::METHODS) and the screen's capture for the model to point. It never answers what the engine asks before acting: the conversation does",
+  "windows": ["vitre"],
+  "permissions": [
+    "core:default",
+    "allow-bbrain-start",
+    "allow-bbrain-call",
+    "allow-bbrain-shot"
+  ]
+}

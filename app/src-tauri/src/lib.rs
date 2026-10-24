@@ -1,5 +1,6 @@
 mod advice;
 mod agents;
+mod bbrain;
 mod claude;
 mod codex;
 mod config_guard;
@@ -443,6 +444,130 @@ async fn guide_open(app: tauri::AppHandle) -> Result<(), String> {
     open_guide(&app).map_err(|e| e.to_string())
 }
 
+/// Bbrain's conversation (bbrain.html): where the user reads, writes, and says yes or no before
+/// their assistant acts. Brought to the front if it is there. Closed, it only hides: what was said,
+/// and a question not answered yet, stay for the next time.
+fn open_bbrain(app: &tauri::AppHandle) -> tauri::Result<()> {
+    if let Some(w) = app.get_webview_window("bbrain") {
+        let _ = w.unminimize();
+        w.show()?;
+        return w.set_focus();
+    }
+    let window = tauri::WebviewWindowBuilder::new(app, "bbrain", tauri::WebviewUrl::App("bbrain.html".into()))
+        .title("Bbrain")
+        .inner_size(440.0, 660.0)
+        .min_inner_size(360.0, 420.0)
+        .build()?;
+    let hide = window.clone();
+    window.on_window_event(move |event| {
+        if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+            api.prevent_close();
+            let _ = hide.hide();
+        }
+    });
+    Ok(())
+}
+
+/// Bbrain's pane of glass (vitre.html): the whole main screen, clear, above every window and on
+/// every desktop; every click goes through it. Bbrain draws its pointer and its words there.
+fn open_vitre(app: &tauri::AppHandle) -> tauri::Result<()> {
+    if app.get_webview_window("vitre").is_some() {
+        return Ok(());
+    }
+    let Some(screen) = app.primary_monitor()? else { return Ok(()) };
+    let scale = screen.scale_factor();
+    let (at, size) = (screen.position().to_logical::<f64>(scale), screen.size().to_logical::<f64>(scale));
+    let window = tauri::WebviewWindowBuilder::new(app, "vitre", tauri::WebviewUrl::App("vitre.html".into()))
+        .title("Bbrain")
+        .decorations(false)
+        .transparent(true)
+        .shadow(false)
+        .resizable(false)
+        .always_on_top(true)
+        .visible_on_all_workspaces(true)
+        .skip_taskbar(true)
+        .focused(false)
+        .position(at.x, at.y)
+        .inner_size(size.width, size.height)
+        .build()?;
+    window.set_ignore_cursor_events(true)
+}
+
+/// Where the mouse is on the pane of glass, in its points: Bbrain listens there.
+fn on_vitre(app: &tauri::AppHandle) -> Option<(f64, f64)> {
+    let w = app.get_webview_window("vitre")?;
+    let (mouse, at, scale) = (w.cursor_position().ok()?, w.outer_position().ok()?, w.scale_factor().ok()?);
+    Some(((mouse.x - f64::from(at.x)) / scale, (mouse.y - f64::from(at.y)) / scale))
+}
+
+/// The installer's last screen opens Bbrain: its pane of glass, then its conversation.
+#[tauri::command]
+async fn bbrain_open(app: tauri::AppHandle) -> Result<(), String> {
+    open_vitre(&app).and_then(|()| open_bbrain(&app)).map_err(|e| e.to_string())
+}
+
+/// Bbrain's engine started and its conversation open, the keys watched: the conversation's id, also
+/// told to both windows (one of them may have started a new engine for the other).
+#[tauri::command]
+async fn bbrain_start(app: tauri::AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let windows = app.clone();
+        let session = bbrain::start(move |frame| {
+            for label in ["bbrain", "vitre"] {
+                let _ = windows.emit_to(label, "bbrain", &frame);
+            }
+            // The engine asks before acting: the conversation, where the user answers, comes forward.
+            if bbrain::asks_user(&frame) {
+                let _ = open_bbrain(&windows);
+            }
+        })?;
+        let keys = app.clone();
+        bbrain::watch_keys(move |down| {
+            let at = on_vitre(&keys);
+            let _ = keys.emit_to("vitre", "bbrain-touches", serde_json::json!({"down": down, "at": at}));
+        });
+        for label in ["bbrain", "vitre"] {
+            let _ = app.emit_to(label, "bbrain-session", &session);
+        }
+        Ok(session)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// One request of Bbrain's windows to the engine, among those they may make (bbrain::METHODS).
+#[tauri::command]
+async fn bbrain_call(method: String, params: serde_json::Value) -> Result<serde_json::Value, String> {
+    if !bbrain::METHODS.contains(&method.as_str()) {
+        return Err(format!("Bbrain ne demande jamais {method}."));
+    }
+    tauri::async_runtime::spawn_blocking(move || bbrain::link()?.call(&method, params, std::time::Duration::from_secs(120)))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// The user's answer to what the engine asked (approval, clarify): from the conversation only.
+#[tauri::command]
+async fn bbrain_reply(id: serde_json::Value, result: serde_json::Value) -> Result<(), String> {
+    bbrain::link()?.reply(id, result)
+}
+
+/// The screen, for the model to see where to point, and where the pane of glass lies on it.
+#[tauri::command]
+async fn bbrain_shot(app: tauri::AppHandle) -> Option<serde_json::Value> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let screen = app.primary_monitor().ok()??;
+        let scale = screen.scale_factor();
+        let (size, origin) = (screen.size().to_logical::<f64>(scale), screen.position().to_logical::<f64>(scale));
+        let at = app.get_webview_window("vitre")?.outer_position().ok()?.to_logical::<f64>(scale);
+        let path = bbrain::shot(&std::env::temp_dir().join("bibo-bbrain"), size.width)?;
+        Some(serde_json::json!({"path": path, "width": size.width, "height": size.height, "dx": at.x - origin.x, "dy": at.y - origin.y}))
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
 /// The installer's welcome offers the guide: the brain and Claude Code are there (nothing is run).
 #[tauri::command]
 async fn guide_offert() -> bool {
@@ -749,14 +874,20 @@ pub fn run() {
             guide_annuler,
             guide_fin,
             guide_brouillon,
-            guide_enregistrer
+            guide_enregistrer,
+            bbrain_open,
+            bbrain_start,
+            bbrain_call,
+            bbrain_reply,
+            bbrain_shot
         ])
         .build(tauri::generate_context!())
         .expect("error while running Brain in a Box")
         .run(|_, event| {
-            // Hermes's server for a pairing stops with the app, the pairing with it.
+            // Hermes's server for a pairing stops with the app, the pairing with it; Bbrain's engine too.
             if let tauri::RunEvent::Exit = event {
                 hermes_messaging::stop_server();
+                bbrain::stop();
             }
         });
 }
@@ -812,7 +943,23 @@ mod tests {
         for c in named_in("../src/guide.js", &commands) {
             assert!(guide.contains(&c), "guide.js calls {c}");
         }
-        let nobodys: Vec<&String> = commands.iter().filter(|c| !main.contains(*c) && !guide.contains(*c)).collect();
+        // Bbrain's windows talk with the engine, nothing of the installer's nor of the guide's; only
+        // the conversation answers what the engine asks before acting (approval, clarify).
+        let bbrain = allowed("capabilities/bbrain.json", "bbrain");
+        let vitre = allowed("capabilities/vitre.json", "vitre");
+        let talk = ["bbrain_start", "bbrain_call"].map(String::from);
+        assert_eq!(bbrain, talk.iter().cloned().chain(["bbrain_reply".to_string()]).collect(), "Bbrain's conversation");
+        assert_eq!(vitre, talk.iter().cloned().chain(["bbrain_shot".to_string()]).collect(), "Bbrain's pane of glass");
+        for c in named_in("../src/bbrain.js", &commands) {
+            assert!(bbrain.contains(&c), "bbrain.js calls {c}");
+        }
+        for c in named_in("../src/vitre.js", &commands) {
+            assert!(vitre.contains(&c), "vitre.js calls {c}");
+        }
+        let nobodys: Vec<&String> = commands
+            .iter()
+            .filter(|c| !main.contains(*c) && !guide.contains(*c) && !bbrain.contains(*c) && !vitre.contains(*c))
+            .collect();
         assert!(nobodys.is_empty(), "no window may call {nobodys:?}");
     }
 }

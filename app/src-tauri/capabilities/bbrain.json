@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "bbrain",
+  "description": "Bbrain's conversation: core APIs, and talking with the user's engine (its requests checked in Rust, bbrain::METHODS); the only window that answers what the engine asks before acting. None of the installer's commands, none of the guide's",
+  "windows": ["bbrain"],
+  "permissions": [
+    "core:default",
+    "allow-bbrain-start",
+    "allow-bbrain-call",
+    "allow-bbrain-reply"
+  ]
+}

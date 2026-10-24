@@ -51,6 +51,7 @@
     "allow-hermes-device",
     "allow-open-hermes-device-page",
     "allow-guide-open",
-    "allow-guide-offert"
+    "allow-guide-offert",
+    "allow-bbrain-open"
   ]
 }

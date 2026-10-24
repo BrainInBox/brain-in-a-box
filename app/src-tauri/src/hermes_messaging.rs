@@ -275,6 +275,14 @@ fn server() -> Result<(u16, String), String> {
         }
         *slot = None;
     }
+    let (child, port, token) = spawn_serve()?;
+    *slot = Some(Server { child, port, token: token.clone() });
+    Ok((port, token))
+}
+
+/// A `hermes serve --isolated` of Bibo's own, with a token Bibo picked: ready once it prints its
+/// port. Bbrain's engine starts the same way (bbrain.rs), and stays its own.
+pub(crate) fn spawn_serve() -> Result<(Child, u16, String), String> {
     let bin = hermes::bin().ok_or(NO_HERMES)?;
     let token = fresh_token();
     let env = [("HERMES_DASHBOARD_SESSION_TOKEN", token.as_str())];
@@ -296,8 +304,7 @@ fn server() -> Result<(u16, String), String> {
     };
     // Read on, or the server would block on a full pipe.
     std::thread::spawn(move || lines.into_iter().for_each(drop));
-    *slot = Some(Server { child, port, token: token.clone() });
-    Ok((port, token))
+    Ok((child, port, token))
 }
 
 /// `HERMES_BACKEND_READY port=N`, printed once the server listens (web_server.py).

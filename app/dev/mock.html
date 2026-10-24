@@ -659,6 +659,7 @@
       // The guide (guide-mock.html has its window): offered once the brain and Claude Code are there.
       async guide_offert() { await wait(50); return scenario === 'installe' || scenario === 'motscles'; },
       async guide_open() { console.log('guide_open'); await wait(100); },
+      async bbrain_open() { console.log('bbrain_open'); await wait(100); },
     };
 
     // « Importer ma mémoire »: what importer-memoire answers through import.rs (no agreement code here).

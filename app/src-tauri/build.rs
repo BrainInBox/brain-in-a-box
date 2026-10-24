@@ -63,6 +63,11 @@ const COMMANDS: &[&str] = &[
     "guide_fin",
     "guide_brouillon",
     "guide_enregistrer",
+    "bbrain_open",
+    "bbrain_start",
+    "bbrain_call",
+    "bbrain_reply",
+    "bbrain_shot",
 ];
 
 fn main() {
