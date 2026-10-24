@@ -17,7 +17,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-2025, windows-2022]
-        chunk: [a]
+        chunk: [a, b, verrou]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 300
     defaults:
