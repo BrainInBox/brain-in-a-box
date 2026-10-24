@@ -1,6 +1,6 @@
 # Throwaway (branch spike/guide-capture-dpi-mutations, deleted afterwards): on the CI's Windows at 125
-# and 150 %, the test of #78 green on its code, then red with each protection of a stretched window's
-# capture taken out (spike/guide-capture-dpi/mutations.py).
+# and 150 %, the tests named echelle of #78 green on its code, then red with each protection of the
+# capture at another scale taken out (spike/guide-capture-dpi/mutations.py).
 name: spike-guide-capture-dpi-mutations
 
 on:
@@ -38,6 +38,6 @@ jobs:
           & "$env:RUNNER_TEMP\echelle.exe" 1920 1080 $env:BIBO_ECHELLE
           if ($LASTEXITCODE) { exit 1 }
       - name: Unmutated, green
-        run: cargo test --locked --lib -- --ignored bureau_echelle --test-threads=1 --nocapture
+        run: cargo test --locked --lib -- --ignored echelle --test-threads=1 --nocapture
       - name: Each protection taken out turns it red
         run: python -I ../../spike/guide-capture-dpi/mutations.py
