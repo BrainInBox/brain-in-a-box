@@ -5,7 +5,7 @@ name: terrain
 # earlier version ran, a reinstallation over an install its user changed), seven nights of the night
 # check in time travel, the real Claude on a synthetic corpus (engine/tests/terrain.py), and the desktop app
 # downloaded, installed and clicked through in its real window on all three systems, a capture of every
-# screen (terrain_app.py).
+# screen (terrain_app.py); on a PC without winget too, and as an update over the version users already have.
 # Each job leaves a table in its summary and a JSON artifact; the scheduled run keeps one
 # issue labelled "terrain" up to date, read by the repair agent (docs/terrain-agent.md).
 #
@@ -543,8 +543,14 @@ jobs:
   # asked), and "app-codex", Codex chosen alone, the gate open in the robot's copy of the kit only
   # (terrain_app.py), as the other benches open it. On "app", a third launch walks Bibo's guide with
   # a fake Claude in Claude Code's place (engine/tests/fake_claude.py): no AI is asked here either.
+  # On macOS and Windows, "app-mise-a-jour": the version users already have, clicked through to its
+  # brain, then the tested version over it, opened again with the fake Claude connected (terrain.py,
+  # mise_a_jour). On master, app-latest (what the site's button downloads), then the same preview over
+  # it, as a user who downloads Bibo again. A branch's app is built as the next version after the
+  # published ones (terrain.py version-suivante), as release.yml numbers them, and goes over the
+  # preview it was numbered after: never a newer one published meanwhile.
   app-macos:
-    name: The app, clicked through (macOS${{ matrix.parcours == 'app-codex' && ', Codex chosen' || '' }})
+    name: The app, clicked through (macOS${{ matrix.parcours == 'app-codex' && ', Codex chosen' || matrix.parcours == 'app-mise-a-jour' && ', update over the published one' || '' }})
     needs: ref
     runs-on: macos-latest
     timeout-minutes: 185
@@ -554,7 +560,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        parcours: [app, app-codex]
+        parcours: [app, app-codex, app-mise-a-jour]
     env:
       PARCOURS: ${{ matrix.parcours }}
       TERRAIN_SHA: ${{ needs.ref.outputs.sha }}
@@ -599,7 +605,7 @@ jobs:
           key: terrain-build-${{ runner.os }}-universal-${{ hashFiles('app/src-tauri/Cargo.lock') }}
           restore-keys: terrain-build-${{ runner.os }}-universal-
 
-      # The command of release.yml: one universal DMG, ad-hoc signed.
+      # The command of release.yml: one universal DMG, ad-hoc signed, numbered as the next preview.
       - name: Build the app from the tested commit (branch)
         if: steps.source.outputs.source == 'build'
         timeout-minutes: 40
@@ -612,15 +618,16 @@ jobs:
         run: |
           rustup target add aarch64-apple-darwin x86_64-apple-darwin
           command -v cargo-tauri >/dev/null || cargo install tauri-cli --version "=$TAURI_CLI_VERSION" --locked
+          version=$(python3 -I "$GITHUB_WORKSPACE/engine/tests/terrain.py" version-suivante)
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::no version for the build ($version)"; exit 1; }
           build() {
             rm -rf "target/$TARGET/release/bundle"
-            cargo tauri build --ci --target "$TARGET" --bundles dmg -- --locked
+            cargo tauri build --ci --target "$TARGET" --bundles dmg --config "{\"version\":\"$version\"}" -- --locked
           }
           build || { echo "::warning::bundling failed once, trying again"; build; }
           shopt -s nullglob
           dmgs=(target/"$TARGET"/release/bundle/dmg/*.dmg)
           [ "${#dmgs[@]}" -eq 1 ] || { echo "::error::expected one DMG, found ${#dmgs[@]}"; exit 1; }
-          version=$(python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1]))["version"])' tauri.conf.json)
           mkdir -p "$RUNNER_TEMP/app"
           dmg="$RUNNER_TEMP/app/Brain-in-a-Box_${version}-terrain.${TERRAIN_SHA:0:7}_macos-universal.dmg"
           cp "${dmgs[0]}" "$dmg"
@@ -647,7 +654,9 @@ jobs:
       # A Mac as users get it: no Apple command line tools (the image has Xcode and the tools, set
       # aside here, never deleted): the app's step « Outils Apple » opens Apple's window and the
       # robot clicks it through. The harness keeps Homebrew's python3 and git, none of /usr/bin's.
+      # The update keeps them: a Mac that already has its brain had them for it.
       - name: No Apple command line tools, before the app
+        if: matrix.parcours != 'app-mise-a-jour'
         timeout-minutes: 5
         run: |
           aside="$RUNNER_TEMP/outils-apple"
@@ -705,8 +714,12 @@ jobs:
   # PCs (poste-neuf.ps1), and no Git: once the app is installed, before its first start, the robot
   # uninstalls the runner's (PiloteWindows.poste_neuf, .github/ci/sans-git.ps1, its proof in
   # TERRAIN_SANS_GIT's file). The app has to bring both. No Claude token here either.
+  # "app-sans-winget": the same PC without winget (.github/ci/poste-sans-winget.ps1, after Git went):
+  # Python and Git come from their official installers, Obsidian not at all, as Bibo says at its
+  # diagnosis. "app-mise-a-jour": the update over the published version (see app-macos), the NSIS
+  # installer saying « Mettre à jour Bibo » and asking nothing; the runner's Git stays there.
   app-windows:
-    name: The app, clicked through (Windows${{ matrix.parcours == 'app-codex' && ', Codex chosen' || '' }})
+    name: The app, clicked through (Windows${{ matrix.parcours == 'app-codex' && ', Codex chosen' || matrix.parcours == 'app-sans-winget' && ', no winget' || matrix.parcours == 'app-mise-a-jour' && ', update over the published one' || '' }})
     needs: ref
     runs-on: windows-latest
     timeout-minutes: 190
@@ -716,7 +729,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        parcours: [app, app-codex]
+        parcours: [app, app-codex, app-sans-winget, app-mise-a-jour]
     env:
       PARCOURS: ${{ matrix.parcours }}
       TERRAIN_SHA: ${{ needs.ref.outputs.sha }}
@@ -769,7 +782,7 @@ jobs:
           key: terrain-build-${{ runner.os }}-x86_64-pc-windows-msvc-${{ hashFiles('app/src-tauri/Cargo.lock') }}
           restore-keys: terrain-build-${{ runner.os }}-x86_64-pc-windows-msvc-
 
-      # The command of release.yml: one NSIS installer, for the user alone.
+      # The command of release.yml: one NSIS installer, for the user alone, numbered as the next preview.
       - name: Build the app from the tested commit (branch)
         if: steps.source.outputs.source == 'build'
         timeout-minutes: 45
@@ -783,17 +796,20 @@ jobs:
             cargo install tauri-cli --version "=$env:TAURI_CLI_VERSION" --locked
             if ($LASTEXITCODE) { exit 1 }
           }
+          $version = python -I "$env:GITHUB_WORKSPACE\engine\tests\terrain.py" version-suivante
+          if ($LASTEXITCODE -or "$version" -notmatch '^\d+\.\d+\.\d+$') { "::error::no version for the build ($version)"; exit 1 }
+          $config = Join-Path $env:RUNNER_TEMP 'version.json'
+          [IO.File]::WriteAllText($config, "{`"version`":`"$version`"}")
           $bundle = "target\$env:TARGET\release\bundle"
           foreach ($try in 1, 2) {
             Remove-Item -Recurse -Force $bundle -ErrorAction SilentlyContinue
-            cargo tauri build --ci --target $env:TARGET --bundles nsis -- --locked
+            cargo tauri build --ci --target $env:TARGET --bundles nsis --config $config -- --locked
             if (-not $LASTEXITCODE) { break }
             if ($try -eq 2) { exit 1 }
             "::warning::bundling failed once, trying again"
           }
           $exes = @(Get-ChildItem "$bundle\nsis\*-setup.exe")
           if ($exes.Count -ne 1) { "::error::expected one NSIS installer, found $($exes.Count)"; exit 1 }
-          $version = (Get-Content tauri.conf.json -Raw | ConvertFrom-Json).version
           New-Item -ItemType Directory "$env:RUNNER_TEMP\app" -Force | Out-Null
           $exe = "$env:RUNNER_TEMP\app\Brain-in-a-Box_$version-terrain.$($env:TERRAIN_SHA.Substring(0, 7))_windows-x64-setup.exe"
           Copy-Item $exes[0].FullName $exe
@@ -1154,7 +1170,7 @@ jobs:
       contents: read
       issues: write
     env:
-      ATTENDUS: macos-neuf,macos-montee,windows-neuf,windows-montee,linux-neuf,linux-reinstallation,macos-claude,windows-claude,macos-app,windows-app,linux-app,macos-app-codex,windows-app-codex,linux-app-codex
+      ATTENDUS: macos-neuf,macos-montee,windows-neuf,windows-montee,linux-neuf,linux-reinstallation,macos-claude,windows-claude,macos-app,windows-app,linux-app,macos-app-codex,windows-app-codex,linux-app-codex,windows-app-sans-winget,macos-app-mise-a-jour,windows-app-mise-a-jour
       # A job that did not succeed is a failure even when its rows say nothing (terrain.py JOBS).
       JOBS: ref=${{ needs.ref.result }},macos=${{ needs.macos.result }},windows=${{ needs.windows.result }},linux=${{ needs.linux.result }},claude=${{ needs.claude.result }},app-macos=${{ needs.app-macos.result }},app-windows=${{ needs.app-windows.result }},app-linux-build=${{ needs.app-linux-build.result }},app-linux=${{ needs.app-linux.result }},epingles=${{ needs.epingles.result }}
     steps:

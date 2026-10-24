@@ -160,9 +160,19 @@ and skills, the kit's correction-detector run as Codex runs it, and that nothing
 there. Its results are `terrain-<os>-app-codex` and `captures-<os>-app-codex`. Opening Codex for real
 (the PR that changes `CODEX_OUVERT`) is the maintainer's, never a fix of this path.
 
+Two more paths (`terrain.py`, `app`). `app-sans-winget` (Windows): the path `app` once winget is gone
+too (`.github/ci/poste-sans-winget.ps1`, its proof in `details.poste_neuf.sans_winget`); Python and Git
+must come from their official installers (`details.git`, `details.python`), Obsidian not at all, its line
+and winget's orange at the diagnosis (`app-winget-diagnostic`, `app-obsidian-absent`). `app-mise-a-jour`
+(macOS, Windows): the version users have (`details.avant`: app-latest on master, on a branch the preview
+its build was numbered after), its brain installed, then the tested version over it (`details.apres`;
+steps `maj-*`: `maj-versions` refuses an older one, `maj-installeur` the NSIS pages, `maj-cerveau-intact`
+the vault, kit, settings and tasks). Results `terrain-<os>-app-sans-winget` and `-app-mise-a-jour`, with
+their `captures-` artifacts.
+
 ```bash
-gh run download <run-id> --name terrain-macos-app --dir "$(mktemp -d)"     # the JSON (terrain-windows-app, terrain-linux-app; -app-codex)
-gh run download <run-id> --name captures-macos-app --dir "$(mktemp -d)"    # the captures (captures-windows-app, captures-linux-app; -app-codex)
+gh run download <run-id> --name terrain-macos-app --dir "$(mktemp -d)"     # the JSON (terrain-windows-app, terrain-linux-app; -app-codex, -app-sans-winget, -app-mise-a-jour)
+gh run download <run-id> --name captures-macos-app --dir "$(mktemp -d)"    # the captures (captures-windows-app, captures-linux-app; the same suffixes)
 ```
 
 - `etape` says where: `app-preparation`, `app-telechargement`, `app-verification` or
