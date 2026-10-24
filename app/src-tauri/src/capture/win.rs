@@ -575,8 +575,9 @@ mod tests {
                 alone.w,
                 alone.h
             );
-            let margins = black_margins(&alone);
-            assert!(margins.iter().all(|&m| m <= 1), "{mode}: no invisible border kept: {margins:?}");
+            // Nothing black but the line Windows 11 draws around a window: 1 px at 96 dpi, 2 at 144.
+            let (margins, line) = (black_margins(&alone), dpi(handle(win.window.id)).div_ceil(96));
+            assert!(margins.iter().all(|&m| m <= line), "{mode}: no invisible border kept: {margins:?}");
             let under = covered_keeps_none_of_it(&d, &win, mode);
 
             assert!(guide::fenetres().unwrap().iter().any(|f| f.id == win.window.id && f.app == "Atelier Demo"));
