@@ -1,0 +1,77 @@
+# Throwaway (branch spike/guide-v2-uia-mutations): each protection of the guide v2's Windows reader
+# (capture/uia_win.rs) taken out in turn turns a desktop test red, on a VM at 150 %; and what lies over
+# the Odoo-like page's password field in Edge, with and without its notranslate meta.
+name: spike-uia-mutations
+
+on:
+  push:
+    branches: [spike/guide-v2-uia-mutations]
+
+permissions:
+  contents: read
+
+jobs:
+  mutations:
+    runs-on: windows-2025
+    timeout-minutes: 240
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: app/src-tauri
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build the tests
+        run: cargo test --locked --lib --no-run
+      - name: The screen, 1920x1080 at 150 %
+        run: |
+          & "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /target:exe "/out:$env:RUNNER_TEMP\echelle.exe" ..\..\.github\ci\echelle.cs
+          if ($LASTEXITCODE) { exit 1 }
+          & "$env:RUNNER_TEMP\echelle.exe" 1920 1080 150
+          if ($LASTEXITCODE) { exit 1 }
+      - name: A RemoteApp of the VM itself (mstsc), for its mutation
+        timeout-minutes: 5
+        run: |
+          ../../.github/ci/remoteapp.ps1
+          "BIBO_LOIN_PID=$((Get-Process mstsc | Select-Object -First 1).Id)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Each protection taken out turns a desktop test red
+        run: python -I ../../spike/uia/mutations_uia.py . vm --distance
+
+  sonde-edge:
+    runs-on: windows-2025
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: app/src-tauri
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build the tests
+        run: cargo test --locked --lib --no-run
+      - name: The screen, 1920x1080 at 100 %
+        run: |
+          & "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /target:exe "/out:$env:RUNNER_TEMP\echelle.exe" ..\..\.github\ci\echelle.cs
+          if ($LASTEXITCODE) { exit 1 }
+          & "$env:RUNNER_TEMP\echelle.exe" 1920 1080 100
+          if ($LASTEXITCODE) { exit 1 }
+      - name: Edge's page, 5 times without the notranslate meta, then 5 times with it
+        run: |
+          $page = 'tests\fixtures\guide\odoo.html'
+          $with = Get-Content $page -Raw
+          $without = $with -replace ' translate="no"', '' -replace '<meta name="google" content="notranslate">', ''
+          $sum = @()
+          foreach ($mode in 'without', 'with') {
+            Set-Content -Path $page -Value $(if ($mode -eq 'with') { $with } else { $without }) -NoNewline -Encoding utf8
+            for ($i = 1; $i -le 5; $i++) {
+              $out = cargo test --locked --lib -- --ignored --exact capture::uia_win::tests::uia_edge_page --test-threads=1 --nocapture 2>&1 | Out-String
+              $ok = $LASTEXITCODE -eq 0
+              $lines = $out -split "`n" | Where-Object { $_ -match 'fenetres_sur|over it|panicked|orange_avant' }
+              $sum += "$mode $i ok=$ok"
+              $sum += $lines | ForEach-Object { "   $($_.Trim())" }
+            }
+          }
+          $sum | ForEach-Object { $_ }
+          @('```') + $sum + @('```') | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
