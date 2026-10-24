@@ -270,40 +270,55 @@ fn au_premier_plan(win: HWND, at: (i32, i32)) {
 /// click. Not kept out of captures (R2): Bibo blacks it in its own image.
 struct Pastille {
     id: u64,
-    tid: u32,
-    fil: Option<std::thread::JoinHandle<()>>,
+    vit: Vit,
+}
+
+/// Where the pastille lives: a thread of its own, or Tauri's main thread, the overlay's.
+enum Vit {
+    Seule { tid: u32, fil: Option<std::thread::JoinHandle<()>> },
+    Tauri(tauri::AppHandle),
+}
+
+/// The pastille's window, of its colour (every pastille of a run is GREEN: the class keeps the first's).
+fn fenetre_pastille(r: RectEcran, c: [u8; 3]) -> HWND {
+    unsafe extern "system" fn proc_(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+        // SAFETY: a plain window's default behaviour.
+        unsafe { DefWindowProcW(h, msg, wp, lp) }
+    }
+    let _p = Physical::enter();
+    // SAFETY: a class of its own colour, registered once by the process; the window is destroyed on the
+    // thread that made it.
+    unsafe {
+        let fond = CreateSolidBrush(COLORREF(u32::from(c[0]) | (u32::from(c[1]) << 8) | (u32::from(c[2]) << 16)));
+        RegisterClassW(&WNDCLASSW { lpfnWndProc: Some(proc_), hbrBackground: fond, lpszClassName: w!("BiboPastilleTest"), ..Default::default() });
+        CreateWindowExW(
+            WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
+            w!("BiboPastilleTest"),
+            w!("Bibo pastille"),
+            WS_POPUP | WS_VISIBLE,
+            r.x,
+            r.y,
+            r.largeur as i32,
+            r.hauteur as i32,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap()
+    }
 }
 
 impl Pastille {
     fn ouvrir(r: RectEcran, c: [u8; 3]) -> Pastille {
-        unsafe extern "system" fn proc_(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
-            // SAFETY: a plain window's default behaviour.
-            unsafe { DefWindowProcW(h, msg, wp, lp) }
-        }
         let (tx, rx) = mpsc::channel();
         let fil = std::thread::spawn(move || {
-            let _p = Physical::enter();
-            // SAFETY: a class of its own colour, registered by this thread; the window is destroyed on it.
+            let h = fenetre_pastille(r, c);
+            // SAFETY: no argument.
+            tx.send((id_of(h), unsafe { GetCurrentThreadId() })).unwrap();
+            let mut msg = MSG::default();
+            // SAFETY: this thread's own messages; its window destroyed on it.
             unsafe {
-                let fond = CreateSolidBrush(COLORREF(u32::from(c[0]) | (u32::from(c[1]) << 8) | (u32::from(c[2]) << 16)));
-                RegisterClassW(&WNDCLASSW { lpfnWndProc: Some(proc_), hbrBackground: fond, lpszClassName: w!("BiboPastilleTest"), ..Default::default() });
-                let h = CreateWindowExW(
-                    WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
-                    w!("BiboPastilleTest"),
-                    w!("Bibo pastille"),
-                    WS_POPUP | WS_VISIBLE,
-                    r.x,
-                    r.y,
-                    r.largeur as i32,
-                    r.hauteur as i32,
-                    None,
-                    None,
-                    None,
-                    None,
-                )
-                .unwrap();
-                tx.send((id_of(h), GetCurrentThreadId())).unwrap();
-                let mut msg = MSG::default();
                 while GetMessageW(&mut msg, None, 0, 0).as_bool() {
                     let _ = TranslateMessage(&msg);
                     DispatchMessageW(&msg);
@@ -312,16 +327,40 @@ impl Pastille {
             }
         });
         let (id, tid) = rx.recv().unwrap();
-        Pastille { id, tid, fil: Some(fil) }
+        Pastille { id, vit: Vit::Seule { tid, fil: Some(fil) } }
+    }
+
+    /// On Tauri's main thread, as the guide's window is in the app: once clicked, the thread in front is
+    /// the overlay's own, the one whose showing could take the focus.
+    fn dans_tauri(app: &tauri::AppHandle, r: RectEcran, c: [u8; 3]) -> Pastille {
+        let (tx, rx) = mpsc::channel();
+        app.run_on_main_thread(move || {
+            let _ = tx.send(id_of(fenetre_pastille(r, c)));
+        })
+        .unwrap();
+        let id = rx.recv_timeout(Duration::from_secs(10)).expect("the pastille on Tauri's thread");
+        Pastille { id, vit: Vit::Tauri(app.clone()) }
     }
 }
 
 impl Drop for Pastille {
     fn drop(&mut self) {
-        // SAFETY: the pastille's thread, told to end.
-        let _ = unsafe { PostThreadMessageW(self.tid, WM_QUIT, WPARAM(0), LPARAM(0)) };
-        if let Some(f) = self.fil.take() {
-            let _ = f.join();
+        match &mut self.vit {
+            Vit::Seule { tid, fil } => {
+                // SAFETY: the pastille's thread, told to end.
+                let _ = unsafe { PostThreadMessageW(*tid, WM_QUIT, WPARAM(0), LPARAM(0)) };
+                if let Some(f) = fil.take() {
+                    let _ = f.join();
+                }
+            }
+            Vit::Tauri(app) => {
+                let (id, (tx, rx)) = (self.id, mpsc::channel());
+                let _ = app.run_on_main_thread(move || {
+                    // SAFETY: our window, on the thread that made it.
+                    let _ = tx.send(unsafe { DestroyWindow(hwnd(id)) }.is_ok());
+                });
+                let _ = rx.recv_timeout(Duration::from_secs(10));
+            }
         }
     }
 }
@@ -619,8 +658,9 @@ fn verifier_calque(app: &tauri::AppHandle, d: &Desk, t: &str, fautes: &mut Vec<S
     let tb = barre_des_taches();
     let pr = RectEcran { x: ecran.rect.droite() as i32 - 260, y: tb.y - 90, largeur: 220, hauteur: 60 };
 
-    // Shown while Bibo has the focus (the user just asked), then Bibo gives it back.
-    let pastille = Pastille::ouvrir(pr, GREEN);
+    // Shown while Bibo has the focus (the user just asked, on its window of Tauri's thread, the overlay's),
+    // then Bibo gives it back.
+    let pastille = Pastille::dans_tauri(app, pr, GREEN);
     sleep(300);
     clic(centre(&pr));
     faute(within(Duration::from_secs(5), || (devant() == hwnd(pastille.id)).then_some(())).is_some(), "Bibo's pastille never in front".into());
