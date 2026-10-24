@@ -335,10 +335,15 @@ fn lay(base: &mut Rgba, dialog: &Rgba, dx: i64, dy: i64) {
     }
 }
 
-/// A capture's pixels to a pixel of the screen, for a window of `dpi` on a screen of `screen` dpi.
+/// A capture's pixels to a pixel of the screen, for a window of `dpi` on a screen of `screen` dpi. A
+/// program unaware of the screen's scale (or aware of another one) has its windows stretched by Windows
+/// on the screen, while PrintWindow draws them at their own size: 96 / 144 at 150 %. Never one aware of
+/// each screen's scale (`per_monitor`), whatever the two say (astride two screens, or its program not
+/// yet caught up with a change of scale); and only the screen's DPI as a thread counting in physical
+/// pixels reads it (`physical`). Else, or either unknown, 1: cut as it is on the screen.
 #[cfg_attr(not(windows), allow(dead_code))]
-fn ratio(dpi: u32, screen: u32, _per_monitor: bool, _physical: bool) -> f64 {
-    if dpi == 0 || screen == 0 {
+fn ratio(dpi: u32, screen: u32, per_monitor: bool, physical: bool) -> f64 {
+    if per_monitor || !physical || dpi == 0 || screen == 0 {
         1.0
     } else {
         f64::from(dpi) / f64::from(screen)
@@ -347,18 +352,25 @@ fn ratio(dpi: u32, screen: u32, _per_monitor: bool, _physical: bool) -> f64 {
 
 /// The bitmap a window draws itself in, (width, height, the ratio its image is cut at), for its frame
 /// `w` x `h` on the screen and the ratio it draws at (a capture's pixels to one of the screen): room
-/// for all of it when it draws bigger than its frame. None when that is empty or past MAX_SIDE.
+/// for all of it when it draws bigger than its frame. Past MAX_SIDE, its frame cut at a ratio of 1 (what
+/// it draws past it lost); None when even that is empty or past MAX_SIDE.
 #[cfg_attr(not(windows), allow(dead_code))]
 fn room(w: i32, h: i32, ratio: f64) -> Option<(i32, i32, f64)> {
-    let side = |v: i32| (f64::from(v) * ratio.max(1.0)).ceil() as i32;
-    let (cw, ch) = (side(w), side(h));
-    (cw > 0 && ch > 0 && cw as u32 <= MAX_SIDE && ch as u32 <= MAX_SIDE).then_some((cw, ch, ratio))
+    let at = |r: f64| {
+        let side = |v: i32| (f64::from(v) * r.max(1.0)).ceil() as i32;
+        let (cw, ch) = (side(w), side(h));
+        (cw > 0 && ch > 0 && cw as u32 <= MAX_SIDE && ch as u32 <= MAX_SIDE).then_some((cw, ch, r))
+    };
+    at(ratio).or_else(|| at(1.0))
 }
 
 /// The image at another size, each pixel the one under its centre: a dialog of another scale than its
-/// window, at the window's.
+/// window, at the window's. None past MAX_SIDE, or when either is empty.
 #[cfg_attr(not(windows), allow(dead_code))]
 fn resized(img: &Rgba, w: u32, h: u32) -> Option<Rgba> {
+    if w == 0 || h == 0 || w > MAX_SIDE || h > MAX_SIDE || img.w == 0 || img.h == 0 {
+        return None;
+    }
     let under = |i: u32, to: u32, from: u32| ((u64::from(i) * 2 + 1) * u64::from(from) / (u64::from(to) * 2)) as u32;
     let mut px = Vec::with_capacity(w as usize * h as usize * 4);
     for y in 0..h {

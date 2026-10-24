@@ -29,7 +29,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 use super::{from_bgra, is_terminal, lay, ratio, resized, room, same_window, Found, Rate, Window};
-use crate::shot::{Rgba, MAX_SIDE};
+use crate::shot::Rgba;
 
 /// The shell's own windows: the desktop, the taskbar, and Start and its search (a store app's
 /// window, alone at the top only for the system's panels: a store app's own sits in an
@@ -393,9 +393,11 @@ pub fn grab(chosen: &Window) -> Result<Rgba, Rate> {
     let (mut image, at, r) = print(h, &physical).ok_or(Rate::Noire)?;
     if let Some((mut dialog, its, own)) = modal(h, chosen.pid).and_then(|d| print(d, &physical)) {
         // A dialog of another scale than its window (a program of mixed parts), at the window's.
-        let (w, ht) = (in_image(its.right - its.left, r) as u32, in_image(its.bottom - its.top, r) as u32);
-        if own != r && w <= MAX_SIDE && ht <= MAX_SIDE {
-            dialog = resized(&dialog, w, ht).unwrap_or(dialog);
+        if own != r {
+            let (w, ht) = (in_image(its.right - its.left, r), in_image(its.bottom - its.top, r));
+            if let Some(d) = resized(&dialog, w.max(0) as u32, ht.max(0) as u32) {
+                dialog = d;
+            }
         }
         lay(&mut image, &dialog, in_image(its.left - at.left, r).into(), in_image(its.top - at.top, r).into());
     }
@@ -860,7 +862,11 @@ mod tests {
     /// The scale the job bureau-echelle set (BIBO_ECHELLE), the tests that lower it being on the CI's
     /// runner only: never a developer's screen changed.
     fn runner_scale(var: impl Fn(&str) -> Option<String>) -> Result<u32, String> {
-        var("BIBO_ECHELLE").and_then(|e| e.parse().ok()).ok_or_else(|| "the job bureau-echelle's scale, 125 or 150 (BIBO_ECHELLE)".to_string())
+        let scale = var("BIBO_ECHELLE").and_then(|e| e.parse().ok()).filter(|&e| e > 100);
+        match (var("GITHUB_ACTIONS").as_deref(), scale) {
+            (Some("true"), Some(e)) => Ok(e),
+            _ => Err("the job bureau-echelle's scale, 125 or 150 (BIBO_ECHELLE), on a runner of the CI's (GITHUB_ACTIONS)".to_string()),
+        }
     }
 
     #[test]
