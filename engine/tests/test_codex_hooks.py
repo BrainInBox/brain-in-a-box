@@ -90,7 +90,7 @@ class Bench(unittest.TestCase):
     def env(self, **extra):
         e = {k: v for k, v in os.environ.items()
              if k not in ("CLAUDE_CODE_ENTRYPOINT", "BRAIN_HEADLESS", "CLAUDE_PROJECT_DIR", "GBRAIN_HOME",
-                          "BRAIN_CONTROLE_DIR", "CODEX_HOME")}
+                          "BRAIN_CONTROLE_DIR", "CODEX_HOME", "BRAIN_DIR")}
         e.update(HOME=str(self.home), USERPROFILE=str(self.home), TMPDIR=str(self.tmp), TEMP=str(self.tmp),
                  TMP=str(self.tmp))
         e.update(extra)
