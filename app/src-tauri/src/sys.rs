@@ -1174,7 +1174,9 @@ mod tests {
         let mut lines = Vec::new();
         let script = "head -c 9000000 /dev/zero | tr '\\0' x; echo; echo ok; head -c 9000000 /dev/zero | tr '\\0' y >&2; echo >&2; echo err >&2; \
                       head -c 16 /dev/zero | tr '\\0' z; echo";
-        let code = run_isolated_pipes(Path::new("/bin/sh"), &["-c", script], &isolated(&[], dir.path(), "", &cancel), 16, &mut |p, l| lines.push((p, l)));
+        // 18 MB through tr: about 3.5 s alone, past isolated()'s 5 s on a loaded machine. The cap is what is tested here, not the time.
+        let roomy = Isolated { limit: Duration::from_secs(120), ..isolated(&[], dir.path(), "", &cancel) };
+        let code = run_isolated_pipes(Path::new("/bin/sh"), &["-c", script], &roomy, 16, &mut |p, l| lines.push((p, l)));
         assert_eq!(code.unwrap(), Some(0));
         lines.sort_by_key(|(p, _)| *p == Pipe::Err);
         let seen: Vec<(Pipe, String)> = lines.into_iter().map(|(p, l)| (p, if l.len() > 16 { format!("{} bytes", l.len()) } else { l })).collect();
