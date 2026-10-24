@@ -1,0 +1,39 @@
+# Throwaway (branch spike/guide-v2-ecran-mutations): each protection of the guide v2's whole screen, overlay
+# and change detection (capture/ecran.rs, calque.rs, calque.js, capture/veille.rs) taken out in turn turns a
+# desk test of capture/vm.rs red, on Windows Server 2022 and 2025. A witness first, nothing taken out.
+name: spike-ecran-mutations
+
+on:
+  push:
+    branches: [spike/guide-v2-ecran-mutations]
+
+permissions:
+  contents: read
+
+jobs:
+  mutations:
+    name: mutations (${{ matrix.os }}, ${{ matrix.chunk }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2025, windows-2022]
+        chunk: [a, b, verrou]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 300
+    defaults:
+      run:
+        shell: bash
+        working-directory: app/src-tauri
+    env:
+      MATRIX_OS: ${{ matrix.os }}
+      CARGO_PROFILE_RELEASE_INCREMENTAL: "true"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Every mutation's text where it is expected
+        run: python -I ../../spike/ecran/mutations_ecran.py --check
+      - name: Build the desk tests
+        run: cargo test --locked --release --lib --no-run
+      - name: Each protection taken out turns a desk test red
+        run: python -I ../../spike/ecran/mutations_ecran.py "${{ matrix.chunk }}"
