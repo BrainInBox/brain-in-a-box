@@ -1,5 +1,6 @@
-# Throwaway (branch spike/guide-v2-uia-mutations): what lies over Edge's page when the guide v2's
-# desktop tests run in a row, and how Edge exposes a row without its list.
+# Throwaway (branch spike/guide-v2-uia-mutations): each protection of the guide v2's Windows reader
+# (capture/uia_win.rs) taken out in turn turns a desktop test red, on a VM at 150 %; and what lies over
+# the Odoo-like page's password field in Edge (sonde, first push only).
 name: spike-uia-mutations
 
 on:
@@ -10,15 +11,9 @@ permissions:
   contents: read
 
 jobs:
-  sonde:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { os: windows-2025, echelle: 100 }
-          - { os: windows-2022, echelle: 125 }
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+  mutations:
+    runs-on: windows-2025
+    timeout-minutes: 240
     defaults:
       run:
         shell: pwsh
@@ -29,48 +24,16 @@ jobs:
           persist-credentials: false
       - name: Build the tests
         run: cargo test --locked --lib --no-run
-      - name: The screen, 1920x1080 at ${{ matrix.echelle }} %
+      - name: The screen, 1920x1080 at 150 %
         run: |
           & "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /target:exe "/out:$env:RUNNER_TEMP\echelle.exe" ..\..\.github\ci\echelle.cs
           if ($LASTEXITCODE) { exit 1 }
-          & "$env:RUNNER_TEMP\echelle.exe" 1920 1080 ${{ matrix.echelle }}
+          & "$env:RUNNER_TEMP\echelle.exe" 1920 1080 150
           if ($LASTEXITCODE) { exit 1 }
-      - name: How Edge exposes rows without their list
+      - name: A RemoteApp of the VM itself (mstsc), for its mutation
+        timeout-minutes: 5
         run: |
-          $html = @'
-          <!doctype html><meta charset=utf-8><title>Sonde lignes</title>
-          <div role="listitem" aria-label="Sonde A listitem">Sonde A</div>
-          <div role="option" aria-label="Sonde B option">Sonde B</div>
-          <ul role="none"><li>Sonde C li in ul none</li></ul>
-          <div role="treeitem" aria-label="Sonde D treeitem">Sonde D</div>
-          <div role="row" aria-label="Sonde E row"><span role="cell">Sonde E cell</span></div>
-          <ul><li>Sonde F li in ul</li></ul>
-          <div role="gridcell" aria-label="Sonde G gridcell">Sonde G</div>
-          <div role="listbox" aria-label="Sonde H listbox"><div role="option">Sonde H option in listbox</div></div>
-          '@
-          $p = Join-Path $env:RUNNER_TEMP 'sonde.html'
-          Set-Content -Path $p -Value $html -Encoding utf8
-          $edge = @("${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe", "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
-          $proc = Start-Process $edge -ArgumentList "--user-data-dir=$env:RUNNER_TEMP\sonde-profil", '--no-first-run', '--no-default-browser-check', ('file:///' + ($p -replace '\\', '/')) -PassThru
-          Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
-          $A = [System.Windows.Automation.AutomationElement]
-          $any = [System.Windows.Automation.Condition]::TrueCondition
-          $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
-          for ($i = 0; $i -lt 30; $i++) {
-            Start-Sleep -Seconds 1
-            $w = $A::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children, $any) | Where-Object { $_.Current.Name -like 'Sonde lignes*' } | Select-Object -First 1
-            if (-not $w) { continue }
-            $found = $w.FindAll([System.Windows.Automation.TreeScope]::Descendants, $any) | Where-Object { $_.Current.Name -like 'Sonde*' }
-            if ($found.Count -ge 6) {
-              foreach ($e in $found) { "$($e.Current.ControlType.ProgrammaticName) | $($e.Current.Name) | parent $($walker.GetParent($e).Current.ControlType.ProgrammaticName)" }
-              break
-            }
-          }
-          Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
-      - name: The guide v2's desktop tests 3 times in a row
-        run: |
-          for ($i = 1; $i -le 3; $i++) {
-            $out = cargo test --locked --lib -- --ignored uia_ --skip uia_remoteapp --test-threads=1 --nocapture 2>&1 | Out-String
-            "run $i exit=$LASTEXITCODE"
-            $out -split "`n" | Where-Object { $_ -match 'panicked|never there|over it|over the window|capture_reprise|fenetres_sur|test result' } | ForEach-Object { "   $($_.Trim())" }
-          }
+          ../../.github/ci/remoteapp.ps1
+          "BIBO_LOIN_PID=$((Get-Process mstsc | Select-Object -First 1).Id)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Each protection taken out turns a desktop test red
+        run: python -I ../../spike/uia/mutations_uia.py . vm --distance

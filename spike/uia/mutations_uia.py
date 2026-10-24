@@ -51,7 +51,11 @@ LOCAL = [
 ]
 
 VM = [
-    ("a list's rows taken for commands", WIN, [("    (UIA_ListItemControlTypeId, Sorte::Donnees),", "    (UIA_ListItemControlTypeId, Sorte::Commande(Genre::Bouton)),")], [EDGE, ATELIER]),
+    # A list's row lies in its list in Edge and WinForms (spike: a listitem or an option without its list
+    # is a Group), and a list is never walked: the two are taken out together.
+    ("a list walked and its rows taken for commands", WIN, [("    (UIA_ListControlTypeId, Sorte::Donnees),", "    (UIA_ListControlTypeId, Sorte::Autre),"),
+                                                           ("    (UIA_ListItemControlTypeId, Sorte::Donnees),", "    (UIA_ListItemControlTypeId, Sorte::Commande(Genre::Bouton)),")], [EDGE, ATELIER]),
+    ("a row out of a table taken for a command", WIN, [("    (UIA_DataItemControlTypeId, Sorte::Donnees),", "    (UIA_DataItemControlTypeId, Sorte::Commande(Genre::Bouton)),")], [EDGE]),
     ("texts kept", WIN, [("const SORTES: [(UIA_CONTROLTYPE_ID, Sorte); 21] = [", "const SORTES: [(UIA_CONTROLTYPE_ID, Sorte); 22] = [\n    (UIA_TextControlTypeId, Sorte::Commande(Genre::Champ)),")], [EDGE]),
     ("a page's <nav> no bar", WIN, [("        None if repere == UIA_NavigationLandmarkTypeId.0 => Sorte::Barre,\n", "")], [EDGE]),
     ("no depth limit", WIN, [("        if profondeur > PROFONDEUR_MAX {", "        if profondeur > usize::MAX - 1 {")], [EDGE]),
