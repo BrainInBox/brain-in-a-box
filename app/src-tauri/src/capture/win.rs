@@ -32,32 +32,32 @@ use crate::shot::{Rgba, MAX_SIDE};
 /// window, alone at the top only for the system's panels: a store app's own sits in an
 /// ApplicationFrameWindow). Opened while Bibo waits for the click, Start is never taken for the
 /// user's program.
-const SHELL: &[&str] = &["Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd", "Windows.UI.Core.CoreWindow"];
+pub(super) const SHELL: &[&str] = &["Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd", "Windows.UI.Core.CoreWindow"];
 
-fn handle(id: u64) -> HWND {
+pub(super) fn handle(id: u64) -> HWND {
     HWND(id as usize as *mut c_void)
 }
 
-fn id_of(h: HWND) -> u64 {
+pub(super) fn id_of(h: HWND) -> u64 {
     h.0 as usize as u64
 }
 
-fn visible(h: HWND) -> bool {
+pub(super) fn visible(h: HWND) -> bool {
     // SAFETY: any value is accepted; a handle that is no window is « not visible ».
     unsafe { IsWindowVisible(h) }.as_bool()
 }
 
-fn minimized(h: HWND) -> bool {
+pub(super) fn minimized(h: HWND) -> bool {
     // SAFETY: as above.
     unsafe { IsIconic(h) }.as_bool()
 }
 
-fn owner(h: HWND) -> Option<HWND> {
+pub(super) fn owner(h: HWND) -> Option<HWND> {
     // SAFETY: as above; no owner is an error.
     unsafe { GetWindow(h, GW_OWNER) }.ok().filter(|o| !o.is_invalid())
 }
 
-fn pid_of(h: HWND) -> u32 {
+pub(super) fn pid_of(h: HWND) -> u32 {
     let mut pid = 0;
     // SAFETY: `pid` lives for the call.
     unsafe { GetWindowThreadProcessId(h, Some(&mut pid)) };
@@ -76,7 +76,7 @@ fn title(h: HWND) -> String {
     wide_text(|b| unsafe { GetWindowTextW(h, b) })
 }
 
-fn class(h: HWND) -> String {
+pub(super) fn class(h: HWND) -> String {
     // SAFETY: as above.
     wide_text(|b| unsafe { GetClassNameW(h, b) })
 }
@@ -104,7 +104,7 @@ fn identity(h: HWND) -> Option<Window> {
     Some(Window { id: id_of(h), pid, app: image_path(pid)? })
 }
 
-fn cloaked(h: HWND) -> bool {
+pub(super) fn cloaked(h: HWND) -> bool {
     let mut value = 0u32;
     // SAFETY: a u32 for DWMWA_CLOAKED, its size given.
     let read = unsafe { DwmGetWindowAttribute(h, DWMWA_CLOAKED, (&mut value as *mut u32).cast(), size_of::<u32>() as u32) };
@@ -220,10 +220,10 @@ pub fn foreground() -> Option<Found> {
 
 /// While it lives, this thread counts in physical pixels, as PrintWindow draws: a window's frame and
 /// its image agree whatever the screen's scale.
-struct Physical(DPI_AWARENESS_CONTEXT);
+pub(super) struct Physical(DPI_AWARENESS_CONTEXT);
 
 impl Physical {
-    fn enter() -> Self {
+    pub(super) fn enter() -> Self {
         // SAFETY: a context Windows defines; the one before is put back on drop.
         Physical(unsafe { SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) })
     }
@@ -239,8 +239,8 @@ impl Drop for Physical {
 }
 
 /// A bitmap in Bibo's memory, for a window to draw itself in.
-struct Canvas {
-    dc: HDC,
+pub(super) struct Canvas {
+    pub(super) dc: HDC,
     bitmap: HBITMAP,
     before: HGDIOBJ,
     bits: *const u8,
@@ -248,7 +248,7 @@ struct Canvas {
 }
 
 impl Canvas {
-    fn new(w: i32, h: i32) -> Option<Self> {
+    pub(super) fn new(w: i32, h: i32) -> Option<Self> {
         let info = BITMAPINFO {
             bmiHeader: BITMAPINFOHEADER {
                 biSize: size_of::<BITMAPINFOHEADER>() as u32,
@@ -282,7 +282,7 @@ impl Canvas {
         Some(Canvas { dc, bitmap, before, bits: bits as *const u8, len: w as usize * h as usize * 4 })
     }
 
-    fn pixels(&self) -> &[u8] {
+    pub(super) fn pixels(&self) -> &[u8] {
         // SAFETY: what GDI still has to draw is drawn first; the DIB's pixels live as long as `self`.
         unsafe {
             let _ = GdiFlush();
@@ -302,7 +302,7 @@ impl Drop for Canvas {
     }
 }
 
-fn frame(h: HWND) -> Option<RECT> {
+pub(super) fn frame(h: HWND) -> Option<RECT> {
     let mut r = RECT::default();
     // SAFETY: a RECT for DWMWA_EXTENDED_FRAME_BOUNDS, its size given.
     unsafe { DwmGetWindowAttribute(h, DWMWA_EXTENDED_FRAME_BOUNDS, (&mut r as *mut RECT).cast(), size_of::<RECT>() as u32) }.ok()?;

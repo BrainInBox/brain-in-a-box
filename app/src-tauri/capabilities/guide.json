@@ -28,6 +28,8 @@
     "allow-guide-fin",
     "allow-guide-brouillon",
     "allow-guide-enregistrer",
+    "allow-guide-calque-montrer",
+    "allow-guide-calque-effacer",
     "allow-open-link",
     "allow-open-claude-login",
     "allow-claude-logged-in",

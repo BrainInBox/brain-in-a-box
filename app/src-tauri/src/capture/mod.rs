@@ -15,8 +15,12 @@ use serde::Serialize;
 
 use crate::shot::Rgba;
 
+pub mod ecran;
 #[cfg(target_os = "macos")]
 mod mac;
+pub mod veille;
+#[cfg(all(test, windows))]
+mod vm;
 #[cfg(windows)]
 mod win;
 #[cfg(target_os = "linux")]
