@@ -523,9 +523,7 @@ jobs:
         run: |
           & "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /target:exe "/out:$env:RUNNER_TEMP\echelle.exe" ..\..\.github\ci\echelle.cs
           if ($LASTEXITCODE) { exit 1 }
-          & "$env:RUNNER_TEMP\echelle.exe" taille 1920 1080
-          if ($LASTEXITCODE) { exit 1 }
-          & "$env:RUNNER_TEMP\echelle.exe" pour ${{ matrix.echelle }}
+          & "$env:RUNNER_TEMP\echelle.exe" 1920 1080 ${{ matrix.echelle }}
           if ($LASTEXITCODE) { exit 1 }
       - name: A RemoteApp of the VM itself (mstsc)
         if: matrix.echelle == 100

@@ -7,13 +7,13 @@
 use std::mem::size_of;
 
 use windows::core::Interface;
-use windows::Win32::Foundation::{HWND, LPARAM, RECT};
+use windows::Win32::Foundation::{HWND, LPARAM, POINT, RECT};
 use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST};
 use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED};
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::*;
 use windows::Win32::UI::Input::KeyboardAndMouse::IsWindowEnabled;
-use windows::Win32::UI::WindowsAndMessaging::EnumWindows;
+use windows::Win32::UI::WindowsAndMessaging::{EnumWindows, GetAncestor, WindowFromPoint, GA_ROOT};
 
 use super::uia::{attend_un_choix, court, descendre, dialogue, distant, garde, navigateur, visible, Cadre, Contexte, Element, Genre, Lire, Liste, Sorte};
 use super::win::{class, cloaked, foreground, frame, handle, identity, list, minimized, owner, pid_of, visible as shown, Physical};
@@ -169,6 +169,7 @@ fn enfants(el: &IUIAutomationElement) -> Vec<IUIAutomationElement> {
 
 /// One window's walk.
 struct Parcours<'a> {
+    hwnd: HWND,
     fenetre: Cadre,
     ecran: Cadre,
     navigateur: bool,
@@ -191,16 +192,25 @@ impl Parcours<'_> {
         self.toutes.push(Element { genre, nom: String::new(), cadre: c, barre_titre, choix: false });
         let hors_vue = unsafe { el.CachedIsOffscreen() }.map_or(true, |b| b.as_bool());
         let actif = unsafe { el.CachedIsEnabled() }.is_ok_and(|b| b.as_bool());
-        if garde(genre, ctx, self.navigateur) && visible(&c, &self.fenetre, &self.ecran, hors_vue, actif, self.cachees) {
+        if garde(genre, ctx, self.navigateur) && visible(&c, &self.fenetre, &self.ecran, hors_vue, actif, self.cachees) && montre(self.hwnd, &c) {
             let nom = unsafe { el.CachedName() }.map(|b| court(&b.to_string())).unwrap_or_default();
             self.elements.push(Element { genre, nom, cadre: c, barre_titre, choix: false });
         }
     }
 }
 
-/// The process's windows on the screen, the one on top first: its main window, its dialogs, its
-/// open menus.
-fn fenetres(pid: u32) -> Vec<HWND> {
+/// Whether the window shows at the middle of the box: another window over it (another program's, a
+/// browser's bubble, Bibo's pill) hides the command. A window the clicks go through (Bibo's ring)
+/// hides nothing.
+fn montre(w: HWND, c: &Cadre) -> bool {
+    let p = POINT { x: c.x + c.largeur / 2, y: c.y + c.hauteur / 2 };
+    // SAFETY: plain values; no window there is a null handle, never `w`.
+    let racine = unsafe { GetAncestor(WindowFromPoint(p), GA_ROOT) };
+    racine == w
+}
+
+/// The desktop's windows, the one on top first.
+fn en_ordre() -> Vec<HWND> {
     unsafe extern "system" fn each(h: HWND, all: LPARAM) -> windows::core::BOOL {
         // SAFETY: the Vec lent below, alive for the whole call.
         unsafe { (*(all.0 as *mut Vec<HWND>)).push(h) };
@@ -209,7 +219,13 @@ fn fenetres(pid: u32) -> Vec<HWND> {
     let mut all: Vec<HWND> = Vec::new();
     // SAFETY: `each` only pushes to `all`, which outlives the call.
     let _ = unsafe { EnumWindows(Some(each), LPARAM(&mut all as *mut Vec<HWND> as isize)) };
-    all.into_iter().filter(|&h| pid_of(h) == pid && shown(h) && !minimized(h) && !cloaked(h)).collect()
+    all
+}
+
+/// The process's windows on the screen, the one on top first: its main window, its dialogs, its
+/// open menus.
+fn fenetres(pid: u32) -> Vec<HWND> {
+    en_ordre().into_iter().filter(|&h| pid_of(h) == pid && shown(h) && !minimized(h) && !cloaked(h)).collect()
 }
 
 fn ecran_de(h: HWND) -> Option<Cadre> {
@@ -256,7 +272,7 @@ impl Lire for Lecteur {
             }
             // SAFETY: a window handle; its first level comes back cached.
             let Ok(racine) = (unsafe { self.auto.ElementFromHandleBuildCache(w, &self.vue) }) else { continue };
-            let mut p = Parcours { fenetre: f, ecran, navigateur: navigateur(&cible.app), cachees, elements: Vec::new(), toutes: Vec::new(), secrets: Vec::new() };
+            let mut p = Parcours { hwnd: w, fenetre: f, ecran, navigateur: navigateur(&cible.app), cachees, elements: Vec::new(), toutes: Vec::new(), secrets: Vec::new() };
             self.parcourir(&racine, Contexte::default(), 0, &mut p);
             // SAFETY: a cached property of an element of ours.
             let modale = unsafe { racine.GetCachedPropertyValue(UIA_WindowIsModalPropertyId) }.ok().and_then(|v| bool::try_from(&v).ok()).unwrap_or(false);
@@ -442,9 +458,22 @@ mod tests {
         ms[17]
     }
 
+    /// The windows over a box of the screen, the one on top first: said when a colour is not found
+    /// where its element is.
+    fn dessus(c: &Cadre) -> Vec<String> {
+        let _p = Physical::enter();
+        en_ordre()
+            .into_iter()
+            .filter(|&h| shown(h) && !cloaked(h))
+            .filter_map(|h| Some((h, frame(h).map(cadre)?)))
+            .filter(|(_, f)| f.touche(c))
+            .map(|(h, f)| format!("{} (pid {}) [{},{},{},{}]", class(h), pid_of(h), f.x, f.y, f.largeur, f.hauteur))
+            .collect()
+    }
+
     /// The box of a colour on the screen against the element's box: the largest gap of the four sides.
     fn ecart(test: &str, img: &Rgba, origine: (i32, i32), couleur: [u8; 3], nom: &str, c: &Cadre) -> i32 {
-        let (l, t, r, b) = bounds(img, couleur).unwrap_or_else(|| panic!("{test}: no pixel of {couleur:?} for {nom}"));
+        let (l, t, r, b) = bounds(img, couleur).unwrap_or_else(|| panic!("{test}: no pixel of {couleur:?} for {nom}; over it: {:?}", dessus(c)));
         let (x, y) = (c.x - origine.0, c.y - origine.1);
         let g = [(x - l).abs(), (y - t).abs(), (x + c.largeur - r).abs(), (y + c.hauteur - b).abs()].into_iter().max().unwrap();
         mesure(test, &format!("ecart_px[{nom}]"), format!("{g} (ecran {l},{t},{r},{b} ; uia {x},{y},{},{})", x + c.largeur, y + c.hauteur));
@@ -539,6 +568,36 @@ mod tests {
         atelier("pmv2");
     }
 
+    /// A window of another program over a button, always on top and never active, as Bibo's pill: that
+    /// button is not listed, the others are; the window gone, it is back.
+    #[test]
+    #[ignore = "a Windows desktop (VM)"]
+    fn uia_couvert() {
+        let test = format!("couvert_{}", echelle());
+        let dir = tempfile::tempdir().unwrap();
+        let exe = csc("atelier_uia.cs", dir.path());
+        let titre = format!("Atelier couvert {}", std::process::id());
+        let _p = Program(Command::new(&exe).args(["erp", titre.as_str(), "60", "60", "900", "640", "pmv2"]).spawn().unwrap());
+        let win = listed_as(|f| f.titre == titre);
+        let l = jusqu_a(&test, &win.window, WAIT, |l| nomme(l, Genre::Bouton, "Supprimer").is_some());
+        let s = nomme(&l, Genre::Bouton, "Supprimer").unwrap().cadre;
+        let milieu = Cadre { x: s.x + s.largeur / 2, y: s.y + s.hauteur / 2, largeur: 1, hauteur: 1 };
+
+        let toile = csc("atelier.cs", dir.path());
+        let pastille = format!("Pastille {}", std::process::id());
+        let (x, y) = ((milieu.x - 60).to_string(), (milieu.y - 30).to_string());
+        let d = Program(Command::new(&toile).args(["dessus", pastille.as_str(), x.as_str(), y.as_str(), "120", "60", "1e88e5"]).spawn().unwrap());
+        let over = listed_as(|f| f.titre == pastille);
+        assert!(cadre_de(&over).touche(&milieu), "{test}: the window lies over Supprimer's middle");
+        let l = jusqu_a(&test, &win.window, WAIT, |l| nomme(l, Genre::Bouton, "Supprimer").is_none());
+        imprime(&test, &l, (0, 0));
+        for nom in ["Nouveau", "Enregistrer"] {
+            assert!(nomme(&l, Genre::Bouton, nom).is_some(), "{test}: {nom}, not covered: {:?}", noms(&l));
+        }
+        drop(d);
+        jusqu_a(&test, &win.window, WAIT, |l| nomme(l, Genre::Bouton, "Supprimer").is_some());
+    }
+
     /// A window that draws itself without a control (a canvas, a program without accessibility):
     /// nothing but its title bar's buttons, so pixels. Closed, it is not found (R22).
     #[test]
@@ -597,6 +656,7 @@ mod tests {
             pire = pire.max(ecart(&test, &img, origine, couleur, nom, &e.cadre));
         }
         assert_eq!(l.secrets.len(), 1, "{test}: the password field");
+        mesure(&test, "fenetres_sur_le_mot_de_passe", format!("{:?}", dessus(&l.secrets[0])));
         pire = pire.max(ecart(&test, &img, origine, ORANGE, "mot de passe", &l.secrets[0]));
         mesure(&test, "ecart_max_px", pire);
         let avant = count(&img, ORANGE);

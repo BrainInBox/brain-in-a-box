@@ -17,7 +17,7 @@
 
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Mutex, MutexGuard, PoisonError};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use super::{Rate, Window};
 use crate::shot::Zone;
@@ -307,6 +307,9 @@ struct Travail {
     cible: Option<Window>,
     cachees: Vec<Cadre>,
     reponse: Option<Sender<Result<Liste, Rate>>>,
+    /// Past it, nobody waits for the list any more: it is not read. A program that hangs never piles
+    /// up the lists asked meanwhile.
+    echeance: Option<Instant>,
 }
 
 /// The reader's thread: it makes its reader there (UIA's client stays on the thread that made it),
@@ -323,6 +326,9 @@ impl Travailleur {
         let _ = std::thread::Builder::new().name("bibo-uia".into()).spawn(move || {
             let mut lecteur = creer();
             for t in recu {
+                if t.echeance.is_some_and(|e| Instant::now() >= e) {
+                    continue;
+                }
                 let liste = match &mut lecteur {
                     Ok(l) => l.lire(t.cible.as_ref(), &t.cachees),
                     Err(e) => Err(*e),
@@ -332,7 +338,7 @@ impl Travailleur {
                 }
             }
         });
-        let _ = envoi.send(Travail { cible: None, cachees: Vec::new(), reponse: None });
+        let _ = envoi.send(Travail { cible: None, cachees: Vec::new(), reponse: None, echeance: None });
         Travailleur { envoi }
     }
 }
@@ -341,7 +347,8 @@ impl Travailleur {
 #[cfg_attr(not(windows), allow(dead_code))]
 fn demander(envoi: &Sender<Travail>, cible: &Window, cachees: &[Cadre], delai: Duration) -> Result<Liste, Rate> {
     let (reponse, recu) = mpsc::channel();
-    envoi.send(Travail { cible: Some(cible.clone()), cachees: cachees.to_vec(), reponse: Some(reponse) }).map_err(|_| Rate::Indisponible)?;
+    let echeance = Some(Instant::now() + delai);
+    envoi.send(Travail { cible: Some(cible.clone()), cachees: cachees.to_vec(), reponse: Some(reponse), echeance }).map_err(|_| Rate::Indisponible)?;
     recu.recv_timeout(delai).map_err(|_| Rate::Indisponible)?
 }
 
@@ -387,7 +394,6 @@ pub fn elements(fenetre: &Window, cachees: &[Cadre]) -> Result<Liste, Rate> {
 mod tests {
     use super::*;
     use std::sync::Arc;
-    use std::time::Instant;
 
     fn el(genre: Genre, nom: &str) -> Element {
         Element { genre, nom: court(nom), cadre: Cadre { x: 10, y: 10, largeur: 80, hauteur: 30 }, barre_titre: false, choix: false }
@@ -630,6 +636,19 @@ mod tests {
         let start = Instant::now();
         assert_eq!(demander(&t.envoi, &sage(), &[], Duration::from_millis(150)), Err(Rate::Indisponible));
         assert!(start.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn the_lists_nobody_waits_for_any_more_are_not_read() {
+        let (t, lus, _) = faux(0, 300);
+        until("warmed up", || lus.lock().unwrap().len() == 1);
+        for _ in 0..5 {
+            assert_eq!(demander(&t.envoi, &sage(), &[], Duration::from_millis(20)), Err(Rate::Indisponible));
+        }
+        let start = Instant::now();
+        assert!(demander(&t.envoi, &sage(), &[], Duration::from_secs(5)).is_ok());
+        assert!(start.elapsed() < Duration::from_millis(1000), "the four given up were read: {:?}", start.elapsed());
+        assert_eq!(lus.lock().unwrap().len(), 3, "the warm-up, the one under way, this one");
     }
 
     #[test]

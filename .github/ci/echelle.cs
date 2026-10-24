@@ -1,11 +1,12 @@
-// The CI VM's screen, its size and its scale, as the Settings app sets them, without a sign-out: the
-// guide v2's elements at 100, 125 and 150 % (test.yml, app-uia). Compiled there by Windows' own csc.
-// ASCII only: csc reads a file without a byte order mark in the ANSI code page.
+// The CI's Windows screen at a size and a scale, as the Settings app sets them (no sign-out), for the
+// guide's capture tests at 125 and 150 % (test.yml, job bureau-echelle). Compiled on the runner by
+// Windows' own csc. ASCII only: csc reads a file without a byte order mark in the ANSI code page.
 //
-//   echelle.exe info                  modes, size, the scale range and the DPI a per-monitor process sees
-//   echelle.exe taille <w> <h>        the screen's size (ChangeDisplaySettings)
-//   echelle.exe pour <percent>        the scale, 100, 125, 150... (DisplayConfigSetDeviceInfo, type -4,
-//                                     the call behind Settings > Display > Scale)
+//   echelle.exe <width> <height> <percent>
+//
+// The size by ChangeDisplaySettings, then the scale by DisplayConfigSetDeviceInfo (type -4, the call
+// behind Settings > Display > Scale, relative to the recommended one); done once a per-monitor thread
+// sees the screen at that DPI.
 using System;
 using System.Runtime.InteropServices;
 
@@ -60,9 +61,9 @@ static class Echelle
     [DllImport("user32.dll")] static extern IntPtr SetThreadDpiAwarenessContext(IntPtr ctx);
     [DllImport("user32.dll")] static extern IntPtr MonitorFromPoint(POINT p, uint flags);
     [DllImport("shcore.dll")] static extern int GetDpiForMonitor(IntPtr mon, int type, out uint x, out uint y);
-    [DllImport("user32.dll")] static extern uint GetDpiForSystem();
     [DllImport("user32.dll")] static extern int GetSystemMetrics(int i);
 
+    // The steps of Settings > Display > Scale; the device's range is counted from its recommended one.
     static readonly int[] Scales = { 100, 125, 150, 175, 200, 225, 250, 300, 350, 400, 450, 500 };
 
     static PATH[] Paths()
@@ -78,100 +79,59 @@ static class Echelle
         return p;
     }
 
-    static DPI_GET Range(PATH p)
-    {
-        DPI_GET g = new DPI_GET();
-        g.h.type = -3;
-        g.h.size = Marshal.SizeOf(typeof(DPI_GET));
-        g.h.adapter = p.srcAdapter;
-        g.h.id = p.srcId;
-        int r = DisplayConfigGetDeviceInfo(ref g);
-        if (r != 0) throw new Exception("DisplayConfigGetDeviceInfo " + r);
-        return g;
-    }
-
-    static uint MonitorDpi()
+    // The screen's DPI and size as a per-monitor thread (DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) sees them.
+    static uint ScreenDpi()
     {
         IntPtr before = SetThreadDpiAwarenessContext(new IntPtr(-4));
-        POINT o = new POINT();
         uint x, y;
-        GetDpiForMonitor(MonitorFromPoint(o, 1), 0, out x, out y);
+        GetDpiForMonitor(MonitorFromPoint(new POINT(), 1), 0, out x, out y);
         int w = GetSystemMetrics(0), h = GetSystemMetrics(1);
         SetThreadDpiAwarenessContext(before);
-        Console.WriteLine("screen " + w + "x" + h + " physical, monitor dpi " + x + ", system dpi " + GetDpiForSystem());
+        Console.WriteLine("screen " + w + "x" + h + ", " + x + " dpi");
         return x;
     }
 
-    static void Info()
+    static int Main(string[] a)
     {
-        DEVMODE dm = new DEVMODE();
-        dm.dmSize = (short)Marshal.SizeOf(typeof(DEVMODE));
-        string modes = "";
-        for (int i = 0; EnumDisplaySettings(null, i, ref dm); i++)
-        {
-            if (dm.dmBitsPerPel == 32) modes += dm.dmPelsWidth + "x" + dm.dmPelsHeight + " ";
-        }
-        Console.WriteLine("modes: " + modes);
-        foreach (PATH p in Paths())
-        {
-            DPI_GET g = Range(p);
-            int rec = -g.min;
-            Console.WriteLine("source " + p.srcId + ": scale " + Scales[rec + g.cur] + "% (recommended " + Scales[rec] + "%, max " + Scales[Math.Min(Scales.Length - 1, rec + g.max)] + "%)");
-        }
-        MonitorDpi();
-    }
-
-    static int Size(int w, int h)
-    {
+        int width = int.Parse(a[0]), height = int.Parse(a[1]), percent = int.Parse(a[2]);
         DEVMODE dm = new DEVMODE();
         dm.dmSize = (short)Marshal.SizeOf(typeof(DEVMODE));
         EnumDisplaySettings(null, -1, ref dm);
-        dm.dmPelsWidth = w;
-        dm.dmPelsHeight = h;
+        dm.dmPelsWidth = width;
+        dm.dmPelsHeight = height;
         dm.dmFields = 0x80000 | 0x100000;
         int r = ChangeDisplaySettings(ref dm, 0);
-        Console.WriteLine("ChangeDisplaySettings " + w + "x" + h + ": " + r);
-        MonitorDpi();
-        return r == 0 ? 0 : 1;
-    }
+        Console.WriteLine("ChangeDisplaySettings " + width + "x" + height + ": " + r);
+        if (r != 0) return 1;
 
-    static int Scale(int percent)
-    {
         int want = Array.IndexOf(Scales, percent);
-        if (want < 0) throw new Exception("not a scale: " + percent);
+        if (want < 0) { Console.WriteLine("not a scale: " + percent); return 2; }
         foreach (PATH p in Paths())
         {
-            DPI_GET g = Range(p);
-            int rec = -g.min;
-            int rel = want - rec;
-            if (rel > g.max)
-            {
-                Console.WriteLine("source " + p.srcId + ": " + percent + "% is over its max " + Scales[rec + g.max] + "%");
-                return 2;
-            }
+            DPI_GET g = new DPI_GET();
+            g.h.type = -3;
+            g.h.size = Marshal.SizeOf(typeof(DPI_GET));
+            g.h.adapter = p.srcAdapter;
+            g.h.id = p.srcId;
+            r = DisplayConfigGetDeviceInfo(ref g);
+            if (r != 0) { Console.WriteLine("DisplayConfigGetDeviceInfo " + r); return 1; }
+            int rel = want + g.min;
+            if (rel > g.max) { Console.WriteLine("source " + p.srcId + ": " + percent + " % is over its max"); return 2; }
             DPI_SET s = new DPI_SET();
             s.h.type = -4;
             s.h.size = Marshal.SizeOf(typeof(DPI_SET));
             s.h.adapter = p.srcAdapter;
             s.h.id = p.srcId;
             s.rel = rel;
-            int r = DisplayConfigSetDeviceInfo(ref s);
-            Console.WriteLine("source " + p.srcId + ": set " + percent + "%: " + r);
+            r = DisplayConfigSetDeviceInfo(ref s);
+            Console.WriteLine("source " + p.srcId + ": " + percent + " %: " + r);
             if (r != 0) return 1;
         }
         for (int i = 0; i < 50; i++)
         {
-            if (MonitorDpi() == (uint)(96 * percent / 100)) return 0;
+            if (ScreenDpi() == (uint)(96 * percent / 100)) return 0;
             System.Threading.Thread.Sleep(200);
         }
         return 3;
-    }
-
-    static int Main(string[] a)
-    {
-        if (a[0] == "info") { Info(); return 0; }
-        if (a[0] == "taille") return Size(int.Parse(a[1]), int.Parse(a[2]));
-        if (a[0] == "pour") return Scale(int.Parse(a[1]));
-        return 9;
     }
 }
