@@ -913,10 +913,12 @@ for (const fault of measuresDiffer(diagnoseRs, got)) {
   differ += 1;
   console.log(`FAIL mock.html's measures are not diagnose.rs': ${fault}`);
 }
-// « 10 à 20 minutes » nowhere the window shows: the install's Details either (steps.rs' log).
-if (fs.readFileSync(path.join(HERE, '..', 'src-tauri', 'src', 'steps.rs'), 'utf8').includes('10 à 20')) {
+// « 10 à 20 minutes » nowhere: not in the install's Details (steps.rs' log), not on the site that sends here.
+// The diagnosis says how long, from what is left and the network.
+for (const file of ['app/src-tauri/src/steps.rs', 'site/index.html']) {
+  if (!fs.readFileSync(path.join(HERE, '..', '..', file), 'utf8').includes('10 à 20')) continue;
   differ += 1;
-  console.log('FAIL steps.rs still says « 10 à 20 minutes »: the diagnosis says how long');
+  console.log(`FAIL ${file} still says « 10 à 20 minutes »: the diagnosis says how long`);
 }
 // A link the window asks for opens: steps.rs' open_link refuses any other host, and the button would only ever
 // say « Je n'ai pas pu l'ouvrir » (the Store's page, once).
