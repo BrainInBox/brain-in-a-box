@@ -629,6 +629,7 @@ fn verifier_calque(app: &tauri::AppHandle, d: &Desk, t: &str, fautes: &mut Vec<S
     faute(montre == Ok(Montre { anneau: true, bulle: true }), format!("shown: {montre:?}"));
     let id = ecran::calque().fenetre.expect("the overlay's window");
     mesure(t, "affinite_lue", format!("{:#x}", affinite(id)));
+    mesure(t, "calque_fenetre", format!("{:?}", window_rect(hwnd(id))));
     faute(affinite(id) == 0x11, "the affinity read back".into());
     sleep(2000);
     faute(devant() == hwnd(pastille.id), format!("the overlay took the focus: {}", class(devant())));

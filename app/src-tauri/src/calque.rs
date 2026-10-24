@@ -180,9 +180,13 @@ impl Plan {
         out
     }
 
-    /// The page's call (calque.js), its coordinates from the overlay's corner.
-    fn script(&self) -> String {
-        let (ox, oy) = (self.ecran.rect.x, self.ecran.rect.y);
+    /// Whether the ring and the bubble lie whole in the page, `zone` (its place on the screens).
+    fn dans(&self, zone: &RectEcran) -> bool {
+        self.anneau.is_none_or(|(r, _, _)| zone.contient(&r)) && zone.contient(&self.bulle)
+    }
+
+    /// The page's call (calque.js), its coordinates from the page's corner, at `origine` on the screens.
+    fn script(&self, (ox, oy): (i32, i32)) -> String {
         let boite = |r: &RectEcran| serde_json::json!({ "x": r.x - ox, "y": r.y - oy, "largeur": r.largeur, "hauteur": r.hauteur });
         let p = self.ton.palette();
         let d = serde_json::json!({
@@ -241,13 +245,14 @@ mod os {
 
     use tauri::webview::PageLoadEvent;
     use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, Runtime, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
-    use windows::Win32::Foundation::HWND;
+    use windows::Win32::Foundation::{HWND, POINT, RECT};
+    use windows::Win32::Graphics::Gdi::ClientToScreen;
     use windows::Win32::UI::WindowsAndMessaging::{
-        GetWindowDisplayAffinity, IsWindowVisible, SetWindowDisplayAffinity, SetWindowPos, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER,
-        SWP_NOSIZE, WDA_EXCLUDEFROMCAPTURE,
+        GetClientRect, GetWindowDisplayAffinity, IsWindowVisible, SetWindowDisplayAffinity, SetWindowPos, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE,
+        SWP_NOOWNERZORDER, SWP_NOSIZE, WDA_EXCLUDEFROMCAPTURE,
     };
 
-    use super::{exclue, Montre, Plan, Refus, LABEL};
+    use super::{exclue, Montre, Plan, RectEcran, Refus, LABEL};
     use crate::capture::ecran::calque as etat;
 
     const EFFACER: &str = "window.calqueEffacer && window.calqueEffacer()";
@@ -281,6 +286,17 @@ mod os {
         // SAFETY: our window; a u32 for the call.
         let _ = unsafe { GetWindowDisplayAffinity(hwnd(id), &mut a) };
         a
+    }
+
+    /// Where its page lies on the screens, in physical pixels (its client area).
+    fn zone(id: u64) -> Option<RectEcran> {
+        let (mut o, mut r) = (POINT::default(), RECT::default());
+        // SAFETY: our window; a POINT and a RECT for the calls.
+        unsafe {
+            ClientToScreen(hwnd(id), &mut o).as_bool().then_some(())?;
+            GetClientRect(hwnd(id), &mut r).ok()?;
+        }
+        Some(RectEcran { x: o.x, y: o.y, largeur: (r.right - r.left).max(0) as u32, hauteur: (r.bottom - r.top).max(0) as u32 })
     }
 
     /// Back on top every 250 ms while it shows, never activated, until the overlay is closed.
@@ -354,21 +370,26 @@ mod os {
         let (w, id) = ouvrir(app)?;
         let r = plan.ecran.rect;
         let w2 = w.clone();
-        // Placed, shown empty, and its affinity read once shown: Windows says then whether it holds.
-        let lue = sur_le_fil(app, move || -> tauri::Result<u32> {
+        // Placed over the screen, shown empty, then read: its affinity (Windows says once it shows whether
+        // it holds) and where its page lies (tao moves an undecorated window when the scale changes: Server
+        // 2025 at 125 % left it 8 px off).
+        let (lue, zone) = sur_le_fil(app, move || -> tauri::Result<(u32, Option<RectEcran>)> {
             w2.eval(EFFACER)?;
             w2.set_position(PhysicalPosition::new(r.x, r.y))?;
             w2.set_size(PhysicalSize::new(r.largeur, r.hauteur))?;
+            // SAFETY: our window, on its thread; never activated.
+            let _ = unsafe { SetWindowPos(hwnd(id), Some(HWND_TOPMOST), r.x, r.y, r.largeur as i32, r.hauteur as i32, SWP_NOACTIVATE | SWP_NOOWNERZORDER) };
             w2.show()?;
-            Ok(affinite(id))
+            Ok((affinite(id), zone(id)))
         })?
         .map_err(erreur)?;
-        if !exclue(lue) {
+        // Nothing drawn out of a capture's reach only, nor where the page cannot hold it whole.
+        let Some(zone) = zone.filter(|z| exclue(lue) && plan.dans(z)) else {
             let _ = w.hide();
             return Ok(Montre { anneau: false, bulle: false });
-        }
+        };
         super::dessiner(&mut etat(), plan.traces());
-        w.eval(plan.script()).map_err(erreur)?;
+        w.eval(plan.script((zone.x, zone.y))).map_err(erreur)?;
         Ok(Montre { anneau: plan.anneau.is_some(), bulle: true })
     }
 
@@ -476,10 +497,10 @@ mod tests {
         let p = plan(&Demande { ton: Ton::Danger, ..demande(10, 10, 100, 30) }, e).unwrap();
         assert_eq!(p.anneau, None);
         assert_eq!(p.traces().len(), 1, "the bubble alone");
-        assert!(p.script().contains(r#""anneau":null"#) && p.script().contains(r#""mot":"Attention""#));
+        assert!(p.script((0, 0)).contains(r#""anneau":null"#) && p.script((0, 0)).contains(r#""mot":"Attention""#));
         assert!(plan(&Demande { anneau: false, ..demande(10, 10, 100, 30) }, e).unwrap().anneau.is_none());
         let a = plan(&Demande { ton: Ton::Attention, ..demande(10, 10, 100, 30) }, e).unwrap();
-        assert!(a.anneau.is_some() && a.script().contains("#a35f09") && a.script().contains(r#""mot":"Attention""#));
+        assert!(a.anneau.is_some() && a.script((0, 0)).contains("#a35f09") && a.script((0, 0)).contains(r#""mot":"Attention""#));
     }
 
     /// The page gets JSON, its text a string in it: no quote nor tag of the text closes anything.
@@ -487,12 +508,31 @@ mod tests {
     fn the_text_reaches_the_page_as_a_string() {
         let e = ecran(0, 0, 1920, 1080, 1.0);
         let p = plan(&Demande { texte: r#"Clique sur "Valider" puis </script><b>ici</b> \ fin"#.into(), ..demande(10, 10, 100, 30) }, e).unwrap();
-        let s = p.script();
+        let s = p.script((0, 0));
         let json = s.strip_prefix("window.calqueDessiner && window.calqueDessiner(").and_then(|s| s.strip_suffix(')')).unwrap();
         let v: serde_json::Value = serde_json::from_str(json).unwrap();
         assert_eq!(v["texte"], p.texte);
         assert_eq!(v["anneau"]["boite"]["x"], 10 - 14);
         assert_eq!(v["couleurs"]["fonce"], "#c23a6e");
+    }
+
+    /// The page draws from its own corner, wherever Windows put it: 8 px up and left of the screen's (Server
+    /// 2025 at 125 %), the ring 8 px further in the page. A page that does not hold the ring and the bubble
+    /// whole draws nothing.
+    #[test]
+    fn the_page_draws_from_its_own_corner() {
+        let e = ecran(0, 0, 1920, 1080, 1.25);
+        let p = plan(&demande(149, 178, 200, 60), e).unwrap();
+        let x = |s: String| {
+            let v: serde_json::Value = serde_json::from_str(s.strip_prefix("window.calqueDessiner && window.calqueDessiner(").unwrap().strip_suffix(')').unwrap()).unwrap();
+            (v["anneau"]["boite"]["x"].as_i64().unwrap(), v["bulle"]["boite"]["y"].as_i64().unwrap())
+        };
+        assert_eq!(x(p.script((0, 0))), (130, 270));
+        assert_eq!(x(p.script((-8, -8))), (138, 278));
+        assert!(p.dans(&e.rect) && p.dans(&RectEcran { x: -8, y: -8, largeur: 1920, hauteur: 1080 }));
+        let droite = plan(&demande(1700, 178, 200, 60), e).unwrap();
+        assert!(droite.dans(&e.rect) && !droite.dans(&RectEcran { x: -8, y: -8, largeur: 1920, hauteur: 1080 }), "the bubble at the screen's right edge, cut");
+        assert!(!p.dans(&RectEcran { x: 140, y: 0, largeur: 1780, hauteur: 1080 }), "the ring cut");
     }
 
     /// A new drawing: captures are searched for it and for the one before, which may still show; erased
