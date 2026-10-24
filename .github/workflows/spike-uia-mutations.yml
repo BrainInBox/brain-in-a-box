@@ -57,6 +57,11 @@ jobs:
 
   mutations:
     if: contains(github.event.head_commit.message, '[mutations]')
+    name: mutations (${{ matrix.shard }}/3)
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2]
     runs-on: windows-2025
     timeout-minutes: 300
     defaults:
@@ -81,4 +86,4 @@ jobs:
           ../../.github/ci/remoteapp.ps1
           "BIBO_LOIN_PID=$((Get-Process mstsc | Select-Object -First 1).Id)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: Each protection taken out turns a desktop test red
-        run: python -I ../../spike/uia/mutations_uia.py . vm --distance
+        run: python -I ../../spike/uia/mutations_uia.py . vm --distance --shard=${{ matrix.shard }}/3
