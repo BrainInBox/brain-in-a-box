@@ -71,7 +71,7 @@ fn wide_text(read: impl FnOnce(&mut [u16]) -> i32) -> String {
 }
 
 /// Another process's window title is read from the system, without a message to that window.
-fn title(h: HWND) -> String {
+pub(super) fn title(h: HWND) -> String {
     // SAFETY: the buffer's length goes with it.
     wide_text(|b| unsafe { GetWindowTextW(h, b) })
 }
