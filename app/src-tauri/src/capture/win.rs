@@ -722,10 +722,11 @@ mod tests {
         until("the message box open", || modal(h, win.window.pid).is_some());
         let dialog = modal(h, win.window.pid).unwrap();
         assert_eq!(class(dialog), "#32770");
+        // Windows sizes and paints the box after it shows (once caught all black, 202x128): drawn, it is
+        // at its place in its own image.
+        until("the message box drawn at its place in its own image", || print(dialog).is_some_and(|(a, _)| black_margins(&a).iter().all(|&m| m <= 1)));
         let (alone, _) = print(dialog).unwrap();
-        let margins = black_margins(&alone);
-        eprintln!("message box {}x{}, black margins {margins:?}", alone.w, alone.h);
-        assert!(margins.iter().all(|&m| m <= 1), "drawn at its place in its own image: {margins:?}");
+        eprintln!("message box {}x{}, black margins {:?}", alone.w, alone.h, black_margins(&alone));
         let img = grab(&win.window).unwrap();
         let white = count(&img, [255, 255, 255]);
         assert!(white > pixels(&alone) / 4, "its white in the window's capture: {white}");
