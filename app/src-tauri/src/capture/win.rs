@@ -417,6 +417,7 @@ mod tests {
     use crate::capture::bureau::*;
     use crate::capture::{Screen, System};
     use crate::guide::{self, GuideError};
+    use std::cell::Cell;
     use std::path::PathBuf;
     use std::process::Command;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -671,9 +672,10 @@ mod tests {
 
     /// A window of the atelier's scale modes captured whole: the image `s` of its frame on the screen
     /// (a capture's pixels to one of the screen), nothing left black but the line Windows 11 draws around
-    /// a window (1 px at 96 dpi, 2 at 144), its green band along the right and bottom edges (a capture cut
-    /// short loses it); its dialog, `sd` of its own frame alone, laid at its place at the window's scale:
-    /// where it shows alone, to 3 pixels.
+    /// a window (1 px at 96 dpi, 2 at 144) and what rounding leaves when it is drawn bigger than its
+    /// frame, its green band along the right and bottom edges (a capture cut short loses it); its dialog,
+    /// `sd` of its own frame alone, laid at its place at the window's scale: where it shows alone, to 3
+    /// pixels.
     fn captured_whole(win: &Found, dialog: HWND, s: f64, sd: f64) {
         let h = handle(win.window.id);
         // DWM's frames are the screen's pixels, whatever the thread counts in.
@@ -690,13 +692,12 @@ mod tests {
         let o = bounds(&alone, ORANGE).expect("the dialog's colour in its own image");
         let place = (dx + scaled(o.0, k), dy + scaled(o.1, k), dx + scaled(o.2, k), dy + scaled(o.3, k));
         let orange = bounds(&img, ORANGE).expect("the dialog's colour in the capture");
-        let margins = black_margins(&img);
-        let line = |w: HWND| dpi(w).div_ceil(96);
-        // A pixel of the screen is `s` of the image's: the frame's place, known to a pixel of the screen, is
-        // known to ceil(s) - 1 more of the image's (3 px black on the left at 150 %, the window at 144 dpi).
-        let slack = (s.ceil() as u32).saturating_sub(1);
+        let (margins, alone_margins) = (black_margins(&img), black_margins(&alone));
+        // The line, then, drawn bigger than its frame (k > 1), what the rounding leaves: its frame and its
+        // rect on the screen each rounded to a pixel of the screen, k of the image's (3 and 4 px at 150 %).
+        let edge = |w: HWND, k: f64| dpi(w).div_ceil(96) + if k > 1.0 { (k + 0.5).floor() as u32 } else { 0 };
         eprintln!(
-            "{} at {} %, window {s:.3} dialog {sd:.3}: image {}x{} for {size:?}, black margins {margins:?}, green band right {right} bottom {bottom}; dialog alone {}x{} for {alone_size:?}, its colour {orange:?} for {place:?}",
+            "{} at {} %, window {s:.3} dialog {sd:.3}: image {}x{} for {size:?}, black margins {margins:?}, green band right {right} bottom {bottom}; dialog alone {}x{} for {alone_size:?}, black margins {alone_margins:?}, its colour {orange:?} for {place:?}",
             win.titre,
             echelle(),
             img.w,
@@ -704,10 +705,10 @@ mod tests {
             alone.w,
             alone.h
         );
-        assert!(margins.iter().all(|&m| m <= line(h) + slack), "nothing left black: {margins:?}");
+        assert!(margins.iter().all(|&m| m <= edge(h, s)), "nothing left black: {margins:?}");
         assert!(right && bottom, "its green band along the right and bottom edges: right {right}, bottom {bottom}");
         assert!((img.w as i32).abs_diff(size.0) <= 2 && (img.h as i32).abs_diff(size.1) <= 2, "its size: {}x{}, not {size:?}", img.w, img.h);
-        assert!(black_margins(&alone).iter().all(|&m| m <= line(dialog)), "the dialog alone, nothing black: {:?}", black_margins(&alone));
+        assert!(alone_margins.iter().all(|&m| m <= edge(dialog, sd)), "the dialog alone, nothing black: {alone_margins:?}");
         assert!(
             (alone.w as i32).abs_diff(alone_size.0) <= 2 && (alone.h as i32).abs_diff(alone_size.1) <= 2,
             "the dialog alone: {}x{}, not {alone_size:?}",
@@ -831,6 +832,16 @@ mod tests {
         let _back = Back(tool.clone(), echelle);
         set_scale(&tool, 100).unwrap();
         assert_eq!((dpi(h), dpi(dialog)), (opened, opened), "its scale kept, the screen's lowered");
+        // Windows moves the windows once the scale has changed, the dialog apart from its window (once
+        // caught 63 px from where its frame said, at 125 %): both still for half a second first.
+        let last = Cell::new((None::<(RECT, RECT)>, 0));
+        until("the window and its dialog still at the new scale", || {
+            let now = frame(h).zip(frame(dialog));
+            let (before, n) = last.get();
+            let n = if now.is_some() && before == now { n + 1 } else { 0 };
+            last.set((now, n));
+            n >= 5
+        });
         let s = f64::from(opened) / 96.0;
         captured_whole(&win, dialog, s, s);
     }
