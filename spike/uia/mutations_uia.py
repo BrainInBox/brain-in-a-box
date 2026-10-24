@@ -9,9 +9,9 @@ import sys
 UIA, WIN = "src/capture/uia.rs", "src/capture/uia_win.rs"
 U = "capture::uia::tests::"
 W = "capture::uia_win::tests::"
-ATELIER, UNAWARE, EDGE, MESSAGE, QUESTION, SAISIE, TOILE, CHAUD, COUVERT = (
+ATELIER, UNAWARE, EDGE, MESSAGE, QUESTION, SAISIE, TOILE, CHAUD, COUVERT, DISTANT = (
     "uia_atelier_pmv2", "uia_atelier_unaware", "uia_edge_page", "uia_dialogue_message", "uia_dialogue_question",
-    "uia_dialogue_saisie", "uia_sans_arbre", "uia_edge_chaud", "uia_couvert")
+    "uia_dialogue_saisie", "uia_sans_arbre", "uia_edge_chaud", "uia_couvert", "uia_distant_par_son_nom")
 
 LOCAL = [
     ("in a browser, its own bar and tabs kept", UIA, [("    (!navigateur || ctx.page) && (genre != Genre::Lien || ctx.barre)", "    (genre != Genre::Lien || ctx.barre)")]),
@@ -47,6 +47,8 @@ LOCAL = [
     ("a list nobody waits for read all the same", UIA, [("                if t.echeance.is_some_and(|e| Instant::now() >= e) {\n                    continue;\n                }\n", "")]),
     ("a slow list waited for", UIA, [("    recu.recv_timeout(delai).map_err(|_| Rate::Indisponible)?", "    recu.recv().map_err(|_| Rate::Indisponible)?")]),
     ("password zones at the screen's place, not the capture's", UIA, [("    let at = |v: i32, o: i32| v.saturating_sub(o).max(0) as u32;", "    let at = |v: i32, _o: i32| v.max(0) as u32;")]),
+    ("no identity checked before", UIA, [("    if !toujours() {\n        return Err(Rate::Introuvable);\n    }\n    let lu = lire()?;", "    let lu = lire()?;")]),
+    ("no identity checked after", UIA, [("    let lu = lire()?;\n    if !toujours() {\n        return Err(Rate::Introuvable);\n    }\n", "    let lu = lire()?;\n")]),
     ("the reader kept after the guide", UIA, [("            for t in recu {", "            for t in recu.iter().chain(std::iter::from_fn(|| { std::thread::park(); None })) {")]),
 ]
 
@@ -63,7 +65,7 @@ VM = [
     ("a window that waits on a dialog read", WIN, [("            if !active(w) {\n                continue;\n            }", "            let _ = active(w);")], [MESSAGE, QUESTION]),
     ("boxes in logical pixels", WIN, [("        let _physical = Physical::enter();\n        let cible = match cible {", "        let cible = match cible {")], [UNAWARE, ATELIER, EDGE]),
     ("other programs' windows read", WIN, [("    en_ordre().into_iter().filter(|&h| pid_of(h) == pid && shown(h)", "    en_ordre().into_iter().filter(|&h| shown(h)")], [ATELIER, EDGE]),
-    ("no identity checked before", WIN, [("        if cible.pid == std::process::id() || !toujours() {", "        if cible.pid == std::process::id() {")], [TOILE]),
+    ("the window's identity not checked", WIN, [("            || same_window(&cible, identity(h).as_ref()),", "            || true,")], [TOILE]),
     ("a dialog's choice not said", WIN, [("                p.elements.iter_mut().for_each(|e| e.choix = true);\n                liste.choix.push(f);", "                let _ = f;")], [MESSAGE, QUESTION]),
     ("the dialog's guard counts what is seen only", WIN, [("attend, modale), &p.toutes) {", "attend, modale), &p.elements) {")], [MESSAGE]),
     ("not a browser to the walk", WIN, [("navigateur: navigateur(&cible.app), cachees", "navigateur: false, cachees")], [EDGE]),
@@ -71,14 +73,12 @@ VM = [
                                           "            let nom = unsafe { el.GetCurrentPropertyValue(UIA_ValueValuePropertyId) }.ok().and_then(|v| windows::core::BSTR::try_from(&v).ok()).map(|b| b.to_string()).filter(|v| !v.is_empty()).map(|v| court(&v)).unwrap_or_else(|| unsafe { el.CachedName() }.map(|b| court(&b.to_string())).unwrap_or_default());")], [ATELIER, EDGE]),
     ("no read as the guide opens (on Edge)", UIA, [("        let _ = envoi.send(Travail { cible: None, cachees: Vec::new(), reponse: None, echeance: None });\n", "")], [CHAUD]),
     ("a command under another window listed", WIN, [(" && montre(self.hwnd, &c) {", " {")], [COUVERT]),
+    ("a remote desktop's list not emptied", WIN, [("                if distant(&cible.app) {\n                    return Ok(Liste::default());\n                }\n", "")], [DISTANT]),
     # Expected to survive, said in the PR: redundant on these VMs.
-    ("a remote desktop's list not emptied (its tree is empty anyway)", WIN, [("        if distant(&cible.app) {\n            return Ok(Liste::default());\n        }", "")], ["uia_remoteapp"]),
-    ("no identity checked after (a race no test makes)", WIN, [("        if !toujours() {\n            return Err(Rate::Introuvable);\n        }\n        Ok(liste)", "        Ok(liste)")], [TOILE]),
     ("a window on another screen read (one screen on a VM)", WIN, [(".filter(|f| f.touche(&ecran))", "")], [ATELIER]),
     ("UIA's modal not read (its owner waits too)", WIN, [("            let modale = unsafe {", "            let modale = false && unsafe {")], [QUESTION]),
 ]
-EXPECTED = {"a remote desktop's list not emptied (its tree is empty anyway)", "no identity checked after (a race no test makes)",
-            "a window on another screen read (one screen on a VM)", "UIA's modal not read (its owner waits too)"}
+EXPECTED = {"a window on another screen read (one screen on a VM)", "UIA's modal not read (its owner waits too)"}
 
 
 def run(root, args):
@@ -89,7 +89,7 @@ def main():
     root, which = sys.argv[1], sys.argv[2]
     local = which == "local"
     only = sys.argv[3:]
-    base = run(root, [U] if local else ["--ignored", "--exact", "--test-threads=1"] + [W + t for t in (ATELIER, UNAWARE, EDGE, MESSAGE, QUESTION, SAISIE, TOILE, CHAUD, COUVERT)]
+    base = run(root, [U] if local else ["--ignored", "--exact", "--test-threads=1"] + [W + t for t in (ATELIER, UNAWARE, EDGE, MESSAGE, QUESTION, SAISIE, TOILE, CHAUD, COUVERT, DISTANT)]
                + ([W + "uia_remoteapp"] if "--distance" in only else []))
     print("\n".join((base.stdout + base.stderr).strip().splitlines()[-12:]))
     if base.returncode != 0:
