@@ -692,6 +692,9 @@ mod tests {
         let orange = bounds(&img, ORANGE).expect("the dialog's colour in the capture");
         let margins = black_margins(&img);
         let line = |w: HWND| dpi(w).div_ceil(96);
+        // A pixel of the screen is `s` of the image's: the frame's place, known to a pixel of the screen, is
+        // known to ceil(s) - 1 more of the image's (3 px black on the left at 150 %, the window at 144 dpi).
+        let slack = (s.ceil() as u32).saturating_sub(1);
         eprintln!(
             "{} at {} %, window {s:.3} dialog {sd:.3}: image {}x{} for {size:?}, black margins {margins:?}, green band right {right} bottom {bottom}; dialog alone {}x{} for {alone_size:?}, its colour {orange:?} for {place:?}",
             win.titre,
@@ -701,7 +704,7 @@ mod tests {
             alone.w,
             alone.h
         );
-        assert!(margins.iter().all(|&m| m <= line(h)), "nothing left black: {margins:?}");
+        assert!(margins.iter().all(|&m| m <= line(h) + slack), "nothing left black: {margins:?}");
         assert!(right && bottom, "its green band along the right and bottom edges: right {right}, bottom {bottom}");
         assert!((img.w as i32).abs_diff(size.0) <= 2 && (img.h as i32).abs_diff(size.1) <= 2, "its size: {}x{}, not {size:?}", img.w, img.h);
         assert!(black_margins(&alone).iter().all(|&m| m <= line(dialog)), "the dialog alone, nothing black: {:?}", black_margins(&alone));
@@ -713,7 +716,9 @@ mod tests {
         );
         let off = [orange.0 - place.0, orange.1 - place.1, orange.2 - place.2, orange.3 - place.3];
         assert!(off.iter().all(|d| d.abs() <= 3), "the dialog at its place and its size: {orange:?}, not {place:?}");
-        assert!(count(&img, BLUE) > pixels(&img) / 3, "and the window around it");
+        // Over a third of what the dialog leaves (stretched to 150 %, the one of mixed parts covers 42 %).
+        let left = pixels(&img).saturating_sub(((place.2 - place.0) * (place.3 - place.1)) as usize);
+        assert!(count(&img, BLUE) > left / 3, "and the window around it: {} blue of {left}", count(&img, BLUE));
     }
 
     /// A program unaware of the screen's scale (many an old ERP): at 125 or 150 %, Windows stretches its
