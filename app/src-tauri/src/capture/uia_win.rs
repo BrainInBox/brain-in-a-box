@@ -15,7 +15,7 @@ use windows::Win32::UI::Accessibility::*;
 use windows::Win32::UI::Input::KeyboardAndMouse::IsWindowEnabled;
 use windows::Win32::UI::WindowsAndMessaging::{EnumWindows, GetAncestor, WindowFromPoint, GA_ROOT};
 
-use super::uia::{attend_un_choix, court, descendre, dialogue, distant, garde, navigateur, visible, Cadre, Contexte, Element, Genre, Lire, Liste, Sorte};
+use super::uia::{attend_un_choix, court, descendre, dialogue, distant, garde, navigateur, tant_que, visible, Cadre, Contexte, Element, Genre, Lire, Liste, Sorte};
 use super::win::{class, cloaked, foreground, frame, handle, identity, list, minimized, owner, pid_of, visible as shown, Physical};
 use super::{same_window, Rate, Window};
 
@@ -151,6 +151,34 @@ impl Lecteur {
             }
         }
     }
+
+    /// The commands of the process's windows on `h`'s screen, the one on top first. In physical pixels:
+    /// the caller has entered them.
+    fn arbre(&self, h: HWND, pid: u32, navigateur: bool, cachees: &[Cadre]) -> Result<Liste, Rate> {
+        let ecran = ecran_de(h).ok_or(Rate::Introuvable)?;
+        let mut liste = Liste::default();
+        for w in fenetres(pid) {
+            let Some(f) = frame(w).map(cadre).filter(|f| f.touche(&ecran)) else { continue };
+            // A window that waits on a dialog: nothing of it can be clicked.
+            if !active(w) {
+                continue;
+            }
+            // SAFETY: a window handle; its first level comes back cached.
+            let Ok(racine) = (unsafe { self.auto.ElementFromHandleBuildCache(w, &self.vue) }) else { continue };
+            let mut p = Parcours { hwnd: w, fenetre: f, ecran, navigateur, cachees, elements: Vec::new(), toutes: Vec::new(), secrets: Vec::new() };
+            self.parcourir(&racine, Contexte::default(), 0, &mut p);
+            // SAFETY: a cached property of an element of ours.
+            let modale = unsafe { racine.GetCachedPropertyValue(UIA_WindowIsModalPropertyId) }.ok().and_then(|v| bool::try_from(&v).ok()).unwrap_or(false);
+            let attend = owner(w).is_some_and(|o| !active(o));
+            if attend_un_choix(dialogue(&class(w), attend, modale), &p.toutes) {
+                p.elements.iter_mut().for_each(|e| e.choix = true);
+                liste.choix.push(f);
+            }
+            liste.elements.extend(p.elements);
+            liste.secrets.extend(p.secrets);
+        }
+        Ok(liste)
+    }
 }
 
 fn ou(auto: &IUIAutomation, avant: Option<IUIAutomationCondition>, c: IUIAutomationCondition) -> windows::core::Result<IUIAutomationCondition> {
@@ -251,43 +279,23 @@ impl Lire for Lecteur {
             Some(w) => w.clone(),
             None => devant().ok_or(Rate::Introuvable)?,
         };
+        if cible.pid == std::process::id() {
+            return Err(Rate::Introuvable);
+        }
         let h = handle(cible.id);
-        let toujours = || same_window(&cible, identity(h).as_ref());
-        if cible.pid == std::process::id() || !toujours() {
-            return Err(Rate::Introuvable);
-        }
-        if minimized(h) || !shown(h) {
-            return Err(Rate::Reduite);
-        }
-        if distant(&cible.app) {
-            return Ok(Liste::default());
-        }
-        let ecran = ecran_de(h).ok_or(Rate::Introuvable)?;
-        let mut liste = Liste::default();
-        for w in fenetres(cible.pid) {
-            let Some(f) = frame(w).map(cadre).filter(|f| f.touche(&ecran)) else { continue };
-            // A window that waits on a dialog: nothing of it can be clicked.
-            if !active(w) {
-                continue;
-            }
-            // SAFETY: a window handle; its first level comes back cached.
-            let Ok(racine) = (unsafe { self.auto.ElementFromHandleBuildCache(w, &self.vue) }) else { continue };
-            let mut p = Parcours { hwnd: w, fenetre: f, ecran, navigateur: navigateur(&cible.app), cachees, elements: Vec::new(), toutes: Vec::new(), secrets: Vec::new() };
-            self.parcourir(&racine, Contexte::default(), 0, &mut p);
-            // SAFETY: a cached property of an element of ours.
-            let modale = unsafe { racine.GetCachedPropertyValue(UIA_WindowIsModalPropertyId) }.ok().and_then(|v| bool::try_from(&v).ok()).unwrap_or(false);
-            let attend = owner(w).is_some_and(|o| !active(o));
-            if attend_un_choix(dialogue(&class(w), attend, modale), &p.toutes) {
-                p.elements.iter_mut().for_each(|e| e.choix = true);
-                liste.choix.push(f);
-            }
-            liste.elements.extend(p.elements);
-            liste.secrets.extend(p.secrets);
-        }
-        if !toujours() {
-            return Err(Rate::Introuvable);
-        }
-        Ok(liste)
+        tant_que(
+            || same_window(&cible, identity(h).as_ref()),
+            || {
+                if minimized(h) || !shown(h) {
+                    return Err(Rate::Reduite);
+                }
+                // A remote desktop's windows show another computer: whatever its tree says, nothing (C10).
+                if distant(&cible.app) {
+                    return Ok(Liste::default());
+                }
+                self.arbre(h, cible.pid, navigateur(&cible.app), cachees)
+            },
+        )
     }
 }
 
@@ -770,6 +778,35 @@ mod tests {
         let ok = l.elements.iter().position(|e| e.nom == "OK").expect("OK");
         assert!(designe(&l, ok + 1, "OK").is_some());
         assert!(l.elements.iter().any(|e| e.genre == Genre::Champ), "its field");
+    }
+
+    /// A program named as a remote desktop's client: an empty list, even when its tree has commands (a
+    /// client that would expose the other computer's). The ERP-like window run as `mstsc.exe`.
+    #[test]
+    #[ignore = "a Windows desktop (VM)"]
+    fn uia_distant_par_son_nom() {
+        let test = format!("distant_par_son_nom_{}", echelle());
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join("mstsc.exe");
+        std::fs::rename(csc("atelier_uia.cs", dir.path()), &exe).unwrap();
+        let titre = format!("Atelier distant {}", std::process::id());
+        let _p = Program(Command::new(&exe).args(["erp", titre.as_str(), "60", "60", "900", "640", "pmv2"]).spawn().unwrap());
+        let win = listed_as(|f| f.titre == titre);
+        devant_par_clic(&win);
+        assert!(distant(&win.window.app), "{test}: {}", win.window.app);
+
+        let lecteur = Lecteur::nouveau().unwrap();
+        let _physical = Physical::enter();
+        let arbre = || lecteur.arbre(handle(win.window.id), win.window.pid, false, &[]).unwrap_or_default();
+        let start = Instant::now();
+        while nomme(&arbre(), Genre::Bouton, "Nouveau").is_none() {
+            assert!(start.elapsed() < WAIT, "{test}: its tree never had its commands");
+            std::thread::sleep(Duration::from_millis(250));
+        }
+        let l = elements(&win.window, &[]).unwrap();
+        imprime(&test, &l, (0, 0));
+        assert!(l.elements.is_empty() && l.secrets.is_empty(), "{test}: {:?}", noms(&l));
+        assert!(repli_pixels(&l), "{test}: pixels");
     }
 
     /// A RemoteApp's windows (mstsc, opened by the job, its pid in BIBO_LOIN_PID): an empty list, so
