@@ -35,6 +35,12 @@
 1. **La vraie connexion de Chafic** sur le Mac de test remis à neuf (build 6, carte de connexion à l'écran). Le relais `../.scratch/phase1/relais.py` (lancé par `relais-start.sh`) ouvre une page « Connecter tes comptes à Bbox » sur le Mac mini, joignable par Tailscale depuis les seuls appareils de Chafic (son MacBook et ses iPhone) : il ne journalise que les chemins, jamais le code. Le tunnel vers la fenêtre de Bbox (port 9333) et le relais tournent en arrière-plan.
 2. **Le reste de la marque et de l'IA gratuite** : `store/free-tier.ts`, `terms-butterbar.tsx`, `guest_allowed`, `free_tier_offer`, `default_soul.py`, `prompt_builder.py`, la mention MIT ; puis la preuve avec un ChatGPT gratuit et le retrait de `~/bbox-baseline`.
 
+### Restes de l'analyse « Hermès déjà là » (`../.scratch/phase1/coexist-analysis.md`)
+
+- **F3, décidé par le PO le 25/10 : pas maintenant.** Quand Hermès tourne déjà, Bbox se raccroche à sa passerelle telle quelle : rien n'est perdu, mais les conversations tournent sur le code de la personne, donc sans les retouches Bbox (nom, pas d'IA gratuite). La cible (Awa) n'a pas Hermès ; ce cas concerne surtout les initiés. La « voie séparée » (verrou propre à Bbox, passerelle sans messageries) attendra un besoin réel.
+- **Avant toute version publique** (les builds de commit ne sont pas concernés) : F6, le flux de mise à jour retombe sur `NousResearch/hermes-agent` si la variable d'environnement de la CI est absente (`electron-builder.config.cjs:61`), et `resolveUpdateRoot` doit rendre null en mode embarqué ; F7, le nom de commande d'une version publique est `hermes` (`product-identity.cjs:61`), à passer à `bbox`.
+- F8 (facultatif) : l'étape de confirmation du modèle ne doit pas changer le modèle sans choix explicite quand d'autres fournisseurs existent.
+
 ## La prochaine action
 
 Quand Chafic a connecté ses comptes : vérifier dans le Mac de test que Bbox répond par Claude puis par ChatGPT, capture à l'appui, puis déconnecter son ChatGPT du Mac de test et arrêter le relais.
