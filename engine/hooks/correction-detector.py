@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """UserPromptSubmit hook: when the user corrects the assistant, remind it to
-write the lesson to Profile/lessons.md before going on. When the user says
+write the lesson to Profile/lessons.md (Profil/ in an older brain) before going on. When the user says
 they did not follow an explanation, the lesson is about how it explains.
 
 English and French. A bare negation is NOT a correction: "it doesn't build",
@@ -107,12 +107,17 @@ if CODEX:
     brain = Path(payload.get("cwd") if isinstance(payload.get("cwd"), str) and payload["cwd"] else os.getcwd())
 else:
     brain = Path(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
-if not (brain / "Profile" / "lessons.md").exists():
-    # The brain each session start names (controle-sessionstart.py): BRAIN_DIR, else Documents/Brain,
-    # else ~/Brain (install.ps1's when Windows guards Documents).
-    mine = [Path(os.environ["BRAIN_DIR"].strip())] if os.environ.get("BRAIN_DIR", "").strip() else \
-        [Path.home() / "Documents" / "Brain", Path.home() / "Brain"]
-    brain = next((d for d in mine if (d / "Profile").is_dir()), mine[0])
+try:
+    from _vault_write import PROFILES, brain_dir, profile_dir
+except Exception:   # missing or broken: the lesson still has a place, as before it
+    PROFILES, brain_dir, profile_dir = ("Profile", "Profil"), None, lambda _: "Profile"
+if not any((brain / p / "lessons.md").exists() for p in PROFILES):
+    # The brain each session start names (_vault_write.brain_dir): BRAIN_DIR, else Documents/Brain, else
+    # ~/Brain (install.ps1's when Windows guards Documents); none there yet, where the installer makes it.
+    chosen = os.environ.get("BRAIN_DIR", "").strip()
+    brain = Path((brain_dir(str(Path.home())) if brain_dir else None) or chosen or Path.home() / "Documents" / "Brain")
+# Where each session start reads the lessons: an older brain's Profil, beside a Profile made since, included.
+profile = profile_dir(brain)
 
 if is_strong:
     banner = "⚠️ CORRECTION DETECTED"
@@ -123,7 +128,7 @@ else:
             "not a technical mistake. Then explain again, starting from something concrete.")
 reminder = (
     f"{banner} — BEFORE doing anything else:\n"
-    f"1. Append a line to {brain}/Profile/lessons.md under today's header (## YYYY-MM-DD). The file is chronological (most recent day at the BOTTOM): today's header lives at the END of the file. Create it at the end if missing and add the entry right below it, NEVER at the top.\n"
+    f"1. Append a line to {brain}/{profile}/lessons.md under today's header (## YYYY-MM-DD). The file is chronological (most recent day at the BOTTOM): today's header lives at the END of the file. Create it at the end if missing and add the entry right below it, NEVER at the top.\n"
     "   Format: - **[short context]** -> rule: [what to do] (when: [trigger condition])\n"
     "2. Confirm visibly: ✓ noted in lessons.md\n"
     f"{last}"

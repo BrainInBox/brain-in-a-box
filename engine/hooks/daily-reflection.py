@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Daily reflection: turns a day of work into Journal/YYYY-MM-DD.md and the
-day's entry in the "Recent context" of Profile/memory.md.
+day's entry in the "Recent context" of Profile/memory.md (Profil/ in an older brain).
 
 Scheduled at 12:00 and 23:00 (launchd / Task Scheduler). By hand:
     daily-reflection.py                    today, slot picked from the hour, after the missed evenings
@@ -41,7 +41,10 @@ this program's warnings too in French. Claude answers with Sonnet: see MODEL.
 Environment: BRAIN_DIR (vault, default ~/Documents/Brain), BRAIN_GIT_ROOTS
 (extra repos to scan, os.pathsep-separated), HERMES_DB, CLAUDE_BIN, CODEX_BIN,
 BRAIN_CODEX_MODEL, BRAIN_NO_NOTIFY=1 (no desktop notification when the reflection
-starts failing).
+starts failing for something to do, never a usage limit: macOS' own; a Windows toast,
+which Windows shows only when the task runs in the person's open session, not under
+install.ps1's default S4U task, where the morning line says it instead; notify-send on
+Linux when it is there).
 For tests and trials: --projects DIR reads the transcripts from DIR instead of
 ~/.claude/projects, --logs DIR keeps the state, error log and run lock there
 instead of ~/.claude/logs.
@@ -61,9 +64,9 @@ except ImportError:  # Windows
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
     from _redact import redact
-    from _vault_write import clean_item, write_atomic  # shared with session-recap
+    from _vault_write import clean_item, profile_dir, write_atomic  # shared with session-recap
 except ImportError:
-    redact = clean_item = write_atomic = None
+    redact = clean_item = profile_dir = write_atomic = None
 try:
     import _headless as headless
     from _headless_claude import which
@@ -75,7 +78,7 @@ except ImportError:
     langue = None
 
 HOME = Path.home()
-BRAIN = MEMORY = LOGS = STATE = PROJECTS = None
+BRAIN = MEMORY = SOUL = LOGS = STATE = PROJECTS = None
 HERMES_DB = Path(os.environ.get("HERMES_DB") or HOME / ".hermes" / "state.db")
 
 BUDGET = 300_000      # hard cap on the session text sent in the prompt
@@ -156,9 +159,11 @@ SYSTEM = """You write the daily journal of a personal notes vault from one day o
 
 def configure(brain=None, logs=None, projects=None):
     """Sets the vault, log and transcript folders (main and tests)."""
-    global BRAIN, MEMORY, LOGS, STATE, PROJECTS
+    global BRAIN, MEMORY, SOUL, LOGS, STATE, PROJECTS
     BRAIN = Path(brain or os.environ.get("BRAIN_DIR") or HOME / "Documents" / "Brain")
-    MEMORY = BRAIN / "Profile" / "memory.md"
+    # An older brain's Profil folder: never a Profile made beside it, where the session start would lose its soul.md.
+    profile = BRAIN / (profile_dir(BRAIN) if profile_dir else "Profile")
+    MEMORY, SOUL = profile / "memory.md", profile / "soul.md"
     LOGS = Path(logs) if logs else HOME / ".claude" / "logs"
     STATE = LOGS / "daily-reflection.state.json"
     PROJECTS = Path(projects) if projects else HOME / ".claude" / "projects"
@@ -1021,7 +1026,7 @@ def reflect_once(day, slot, sessions, gitlog, agents, command=None, codex_comman
     try:
         jbase, mbase = read_note(journal_path), read_note(MEMORY)
         prompt = build_prompt(day, slot, sessions, gitlog, journal_now(jbase), memory_now(mbase, day),
-                              _read_text(BRAIN / "Profile" / "soul.md", SOUL_CAP), agents[0].agents, system)
+                              _read_text(SOUL, SOUL_CAP), agents[0].agents, system)
         answer = ask(prompt, agents, command, codex_command)
         draft = clean_answer(answer.output)
     except headless.HeadlessError as e:
@@ -1155,6 +1160,12 @@ def what_to_do(reason):
     return "dis à Claude « le résumé de ma journée échoue, regarde pourquoi »."
 
 
+def notice(reason):
+    """The notification's words, in French: what to do (a usage limit is never notified)."""
+    todo = what_to_do(reason)
+    return todo[0].upper() + todo[1:]
+
+
 def status_text(st, lang=None):
     """The warning at the top of memory.md while the reflection fails or an evening waits, in French
     in a French vault: what to do first, the error itself as a detail."""
@@ -1175,14 +1186,58 @@ def status_text(st, lang=None):
             f"the period since. Backfill: `python3 ~/.claude/hooks/brain/daily-reflection.py --day YYYY-MM-DD`.")
 
 
+# A toast from Windows PowerShell 5.1, which every Windows 10 and 11 has: nothing to install. The
+# script is fixed and in clear, one line given to -Command as the app does (an encoded command is
+# what security software flags); the words come from the environment, never in the script.
+TOAST = "; ".join([
+    "$ErrorActionPreference = 'Stop'",
+    "$m = [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]",
+    "$xml = $m::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02)",
+    "$text = $xml.GetElementsByTagName('text')",
+    "$null = $text.Item(0).AppendChild($xml.CreateTextNode($env:BRAIN_NOTIFY_TITLE))",
+    "$null = $text.Item(1).AppendChild($xml.CreateTextNode($env:BRAIN_NOTIFY_TEXT))",
+    "$toast = [Windows.UI.Notifications.ToastNotification]::new($xml)"])
+# Shown under the name and icon of a Start menu entry: Bibo's when it is installed (its installer gives
+# its shortcut the app's identifier, tauri.conf.json), else Windows PowerShell's, which Windows always has.
+BIBO_APP_ID = "com.braininbox.installer"
+NOTIFIER = "; ".join([
+    "$id = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe'",
+    "try { if (Get-StartApps | Where-Object AppID -eq '%s') { $id = '%s' } } catch {}" % (BIBO_APP_ID, BIBO_APP_ID),
+    "$n = $m::CreateToastNotifier($id)"])
+SHOW = "$n.Show($toast)"
+
+
+def powershell():
+    """Windows PowerShell by its full path: never a powershell.exe of the current folder or the PATH."""
+    return os.path.join(os.environ.get("SystemRoot") or r"C:\Windows", "System32", "WindowsPowerShell", "v1.0",
+                        "powershell.exe")
+
+
 def notify(msg, title="Brain: daily reflection failed"):
-    if os.environ.get("BRAIN_NO_NOTIFY") or sys.platform != "darwin":
+    """A desktop notification, when it can: macOS' own, a Windows toast, notify-send on Linux."""
+    if os.environ.get("BRAIN_NO_NOTIFY"):
         return
-    # Both go in argv: nothing is interpolated into the AppleScript source.
     try:
-        subprocess.run(["/usr/bin/osascript", "-e", "on run argv", "-e",
-                        "display notification (item 1 of argv) with title (item 2 of argv)",
-                        "-e", "end run", msg, title], capture_output=True, timeout=10)
+        if sys.platform == "darwin":
+            # Both go in argv: nothing is interpolated into the AppleScript source.
+            subprocess.run(["/usr/bin/osascript", "-e", "on run argv", "-e",
+                            "display notification (item 1 of argv) with title (item 2 of argv)",
+                            "-e", "end run", msg, title], capture_output=True, timeout=10)
+        elif sys.platform == "win32":
+            script = "; ".join([TOAST, NOTIFIER, SHOW])
+            subprocess.run([powershell(), "-NoProfile", "-NonInteractive", "-Command", script],
+                           env=dict(os.environ, BRAIN_NOTIFY_TITLE=title, BRAIN_NOTIFY_TEXT=msg),
+                           capture_output=True, stdin=subprocess.DEVNULL, timeout=60, creationflags=NO_WINDOW)
+        elif sys.platform.startswith("linux"):
+            exe = which("notify-send") if which else None
+            if not exe:
+                return
+            # A timer or cron starts it without the session's bus: the user's own is at its usual place.
+            env, uid = dict(os.environ), getattr(os, "getuid", None)
+            bus = "/run/user/%d/bus" % uid() if uid else None
+            if bus and not env.get("DBUS_SESSION_BUS_ADDRESS") and os.path.exists(bus):
+                env["DBUS_SESSION_BUS_ADDRESS"] = "unix:path=" + bus
+            subprocess.run([exe, title, msg], env=env, capture_output=True, stdin=subprocess.DEVNULL, timeout=10)
     except Exception:
         pass
 
@@ -1252,7 +1307,7 @@ def reflect(day, slot, dry_run=False, command=None, codex_command=None, missed=F
             print(e)
             jbase = mbase = None
         prompt = build_prompt(day, slot, masked, gitlog, journal_now(jbase), memory_now(mbase, day),
-                              _read_text(BRAIN / "Profile" / "soul.md", SOUL_CAP), chosen, system)
+                              _read_text(SOUL, SOUL_CAP), chosen, system)
         n_h = sum(1 for label, _ in masked if label.startswith("hermes"))
         n_x = sum(1 for label, _ in masked if label.startswith("codex "))
         counts = f"{len(masked) - n_h - n_x} Claude session(s), " if "claude" in chosen or "codex" not in chosen else ""
@@ -1335,6 +1390,7 @@ def record(day, slot, reason, answer, chosen, lang, missed):
             set_status_block(status_text(st, lang))
         else:
             st.update(failing_since=None, last_error=None)
+            st.pop("notified", None)
             set_status_block(None)
     else:
         if missed:
@@ -1345,15 +1401,17 @@ def record(day, slot, reason, answer, chosen, lang, missed):
                 del pending[day]
                 give_up(day, lang, f"{tries['costly']} costly failures, the last one: {reason}")
             _keep_pending(st, pending)
-        # Said once when it starts failing, not at every run: memory.md says it as long as it lasts.
-        started = not st.get("failing_since")
+        # Notified once while it fails, not at every run (memory.md says it as long as it lasts), and only what
+        # asks something: a usage limit needs nothing, and the morning line says nothing of it either. A state
+        # from before "notified": told when it started failing for another reason than the limit.
+        told = st.get("notified", bool(st.get("failing_since")) and _kind(st.get("last_error")) != "quota")
         st["failing_since"] = st.get("failing_since") or time.strftime("%Y-%m-%d %H:%M")
         st["last_error"] = reason
         set_status_block(status_text(st, lang))
-        if started:
+        if not told and _kind(reason) != "quota":
+            st["notified"] = True
             if lang == "fr":
-                todo = what_to_do(reason)
-                notify(todo[0].upper() + todo[1:], "Ton cerveau : le résumé de ta journée a échoué")
+                notify(notice(reason), "Ton cerveau : le résumé de ta journée a échoué")
             else:
                 notify(f"{day} {slot}: {reason}")
     save_state(st)

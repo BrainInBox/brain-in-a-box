@@ -3513,7 +3513,8 @@ def telecharger(url, dest, timeout=600):
 
 # What makes release.yml publish a preview (its `on.push.paths`): the newest commit touching one
 # of them on the tested master must be in the preview the night downloads.
-PUBLIE = ("app", "engine/hooks/_agents.py", ".github/workflows/release.yml", ".github/ci/app-release-plan.py")
+PUBLIE = ("app", "engine/hooks/_agents.py", "engine/hooks/_conseil.py", "skills/guide-moi/consignes.md", "onboarding",
+          ".github/workflows/release.yml", ".github/ci/app-release-plan.py")
 RETARD_MAX_H = 24
 
 

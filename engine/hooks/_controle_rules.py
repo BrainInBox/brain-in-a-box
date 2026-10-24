@@ -1049,7 +1049,8 @@ def make_d1(note, targets, ctx, aid, limit=None):
 
 # What a template or the kit writes by itself: no content of the user's.
 AUTO_PROPERTIES = {"date", "created", "updated", "modified"}
-AUTO_HEADING = "📊 Claude Sessions"
+# session-recap.py's section, titled in the brain's language.
+AUTO_HEADINGS = ("📊 Claude Sessions", "📊 Sessions avec Claude")
 
 
 def _placeholders_out(s):
@@ -1091,7 +1092,7 @@ def empty_note(text, name):
     for ln in lines[start:]:
         m = HEADING.match(ln.strip())
         title = " ".join(_placeholders_out(m.group(2)).split()) if m else ""
-        if title and title != AUTO_HEADING and title.casefold() != own:
+        if title and title not in AUTO_HEADINGS and title.casefold() != own:
             return False
     return useful_chars(lines, start) < 20
 

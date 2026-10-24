@@ -23,6 +23,7 @@ The workflow is read with Ruby's YAML (macOS ships it, as for test-hooks.sh).
 
     python -I -m unittest discover -s engine/tests -v
 """
+import fnmatch
 import json
 import os
 import re
@@ -141,15 +142,25 @@ class ReleaseWorkflow(unittest.TestCase):
         self.assertNotIn("workflow_run", triggers)
 
     def test_a_change_to_a_file_the_app_carries_publishes_it(self):
-        # The app is built with Codex's gate (engine/hooks/_agents.py, agents.rs): opening Codex on a
-        # system publishes the app that offers it, and the night checks the preview holds that change.
+        # The app carries files of the kit in its binary (include_str!): Codex's gate (agents.rs), the
+        # advice (advice.rs), the guide's rules (guide.rs), the interview for a brain installed from a
+        # terminal (steps.rs). A change to one publishes the app, and the night checks the preview holds it.
         triggers = self.wf.get("on", self.wf.get("true"))
+        carried = set()
+        for rs in sorted((TAURI / "src").rglob("*.rs")):
+            code = rs.read_text(encoding="utf-8").split("#[cfg(test)]")[0]
+            for rel in re.findall(r'include_(?:str|bytes)!\("([^"]+)"\)', code):
+                path = (rs.parent / rel).resolve().relative_to(ROOT).as_posix()
+                if not path.startswith("app/"):
+                    carried.add(path)
+        self.assertTrue({"engine/hooks/_agents.py", "onboarding/ONBOARDING.md"} <= carried, carried)
         for event in ("pull_request", "push"):
-            self.assertIn("engine/hooks/_agents.py", triggers[event]["paths"], event)
-        app = WORKFLOW.parents[2] / "app" / "src-tauri" / "src" / "agents.rs"
-        self.assertIn('include_str!("../../../engine/hooks/_agents.py")', app.read_text(encoding="utf-8"))
+            for path in sorted(carried):
+                with self.subTest(event=event, path=path):
+                    self.assertTrue(any(fnmatch.fnmatchcase(path, glob.replace("**", "*"))
+                                        for glob in triggers[event]["paths"]), triggers[event]["paths"])
         terrain_app = (WORKFLOW.parents[2] / "engine" / "tests" / "terrain_app.py").read_text(encoding="utf-8")
-        published = re.search(r"^PUBLIE = \((.*)\)$", terrain_app, re.M).group(1)
+        published = re.search(r"^PUBLIE = \((.*?)\)$", terrain_app, re.M | re.S).group(1)
         for path in triggers["push"]["paths"]:
             self.assertIn('"%s"' % path.replace("/**", ""), published, path)
 

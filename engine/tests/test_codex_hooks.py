@@ -90,7 +90,7 @@ class Bench(unittest.TestCase):
     def env(self, **extra):
         e = {k: v for k, v in os.environ.items()
              if k not in ("CLAUDE_CODE_ENTRYPOINT", "BRAIN_HEADLESS", "CLAUDE_PROJECT_DIR", "GBRAIN_HOME",
-                          "BRAIN_CONTROLE_DIR", "CODEX_HOME")}
+                          "BRAIN_CONTROLE_DIR", "CODEX_HOME", "BRAIN_DIR")}
         e.update(HOME=str(self.home), USERPROFILE=str(self.home), TMPDIR=str(self.tmp), TEMP=str(self.tmp),
                  TMP=str(self.tmp))
         e.update(extra)
@@ -175,7 +175,7 @@ class Payloads(Bench):
                     self.assertEqual((code, err), (0, ""))
                     if hook == "controle-sessionstart":
                         answer = self.answered(event, out)
-                        self.assertIn("Contrôle de cette nuit : 2 corrections faites",
+                        self.assertIn("Cette nuit, j'ai fait 2 petites corrections",
                                       answer["hookSpecificOutput"]["additionalContext"])
                         self.assertIn("mot de passe ou une clé", answer["systemMessage"])
                     elif hook == "correction-detector":
@@ -344,7 +344,7 @@ class Claude(Bench):
                                                       "transcript_path": "/x/claude.jsonl"}])
         said = {hook: out for hook, _, out, _ in before[0]}
         self.assertIn("CORRECTION DETECTED", said["correction-detector"])
-        self.assertIn("Contrôle de cette nuit", json.loads(said["controle-sessionstart"])["systemMessage"])
+        self.assertIn("Cette nuit, j'ai fait 2 petites", json.loads(said["controle-sessionstart"])["systemMessage"])
         for agents in (None, ["claude"], ["codex"]):
             with self.subTest(agents=agents):
                 self.choose(agents)
