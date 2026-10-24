@@ -524,12 +524,13 @@ impl Drop for Ecrans {
 // ── The capture ──
 
 /// The whole screen leaves, another program's window included (D2 b); Bibo's pastille and the password
-/// field are black in it, and only them; Teams still sees both (the witness); ≤ 1 280 px sent.
+/// field are black in it, and only them; Teams still sees both (the witness); 1 280 px sent of 1 920.
 #[test]
-#[ignore = "a Windows desktop (VM)"]
+#[ignore = "a Windows desktop (VM); changes the screen's resolution, put back after"]
 fn vm_capture_ecran_entier() {
     const T: &str = "capture";
     let _p = Physical::enter();
+    let _ecrans = Ecrans::hd(T);
     let d = desk();
     let (_a, appli) = d.open("fenetre", "Appli", (60, 60, 600, 400), BLUE);
     let (_b, autre) = d.open("fenetre", "Autre", (700, 100, 280, 240), MAGENTA);
@@ -581,6 +582,9 @@ fn vm_capture_ecran_entier() {
     let sent = ecran::a_envoyer(&c);
     mesure(T, "envoyee", format!("{}x{}", sent.w, sent.h));
     assert!(sent.w.max(sent.h) <= crate::shot::MAX_SENT);
+    if ecran.rect.largeur > crate::shot::MAX_SENT {
+        assert_eq!(sent.w, crate::shot::MAX_SENT, "the whole screen, made smaller");
+    }
 
     let mut durees = Vec::new();
     for _ in 0..20 {
@@ -668,6 +672,12 @@ fn verifier_calque(app: &tauri::AppHandle, d: &Desk, t: &str, fautes: &mut Vec<S
     mesure(t, "temoin_bulle", format!("{b1}/{}", bulle.aire()));
     mesure(t, "anneau_ecart_px", place);
     mesure(t, "anneau_centre_bouton_px", centre_px);
+    // Where the dark pixels around the ring lie, should the ring be off: inside its box, and around it.
+    mesure(t, "anneau_attendu", format!("{ext:?}, bande sombre {sombre:?}"));
+    mesure(t, "anneau_vu", format!("{vu_la:?}"));
+    mesure(t, "fonce_hors_de_l_anneau", compte(&vu, &ecran.rect, &autour, FONCE) - compte(&vu, &ecran.rect, &ext, FONCE));
+    mesure(t, "bulle_attendue", format!("{bulle:?}"));
+    mesure(t, "bulle_vue", format!("{:?}", bornes(&vu, &ecran.rect, &bulle.agrandi(40, 40), ENCRE)));
     faute(a1 * 10 >= bande * 3, "witness: the ring on the screen".into());
     faute(b1 * 10 >= bulle.aire(), "witness: the bubble on the screen".into());
     faute(place <= 6, format!("the ring {place} px off"));
@@ -920,7 +930,8 @@ fn vm_veille_dialogue() {
             (e[n1].t.duration_since(e[n1 - 1].t), e[n1].t.duration_since(tf))
         };
         mesure(T, format!("fermeture_{i}"), format!("{} ms après, {} ms après l'envoi d'avant", apres.as_millis(), entre.as_millis()));
-        if entre < ECART_MIN {
+        // 5 s between the looks that sent them; each image handed over a few ms after its look.
+        if entre + Duration::from_millis(25) < ECART_MIN {
             fautes.push(format!("{i}: two sendings {} ms apart", entre.as_millis()));
         }
         sleep(ECART_MIN.as_millis() as u64 + 300);

@@ -232,8 +232,9 @@ impl Veilleur {
                         Ok(c) => {
                             bilan.durees.push(t.elapsed().as_secs_f32() * 1000.0);
                             let geste = Instant::now().checked_sub(inactif);
-                            let ignorer = ecran::zones_du_systeme(&ecran);
-                            if veille.voir(Instant::now(), vignette(&c.image), geste, &ecran.rect, &ignorer) == Decision::Envoyer {
+                            let (ignorer, v) = (ecran::zones_du_systeme(&ecran), vignette(&c.image));
+                            // The look's time, as close to the sending as can be: 5 s apart, sent 5 s apart.
+                            if veille.voir(Instant::now(), v, geste, &ecran.rect, &ignorer) == Decision::Envoyer {
                                 envoi(c);
                             }
                             veille.delai()
