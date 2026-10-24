@@ -1,7 +1,15 @@
 #!/usr/bin/env python3
 """
-Stop hook: extracts lightweight stats from a Claude session and appends them to
-~/Documents/Brain/Journal/YYYY-MM-DD.md under the "📊 Claude Sessions" section.
+Stop hook: extracts lightweight stats from a Claude session and appends them to the brain's
+Journal/YYYY-MM-DD.md under its sessions section.
+
+The brain is the one each session start names (_vault_write.brain_dir: BRAIN_DIR, else
+~/Documents/Brain, else ~/Brain, with its Profile or Profil folder): where there is none, nothing is
+written and no folder is made. A new journal and its section are titled in the brain's language,
+as the reflection picks it (_langue.py: what Profile/soul.md names, else the computer's): "Journal"
+and "📊 Sessions avec Claude" in French, "Daily" and "📊 Claude Sessions" otherwise. A section
+already there, in either language, is the one used. A block's lines are in the brain's language
+too; its sid:`…`, by which it is found again, is the same in both.
 
 Idempotent (replaces the session's earlier block). No LLM call.
 
@@ -16,10 +24,11 @@ from pathlib import Path
 from collections import Counter
 from datetime import datetime
 
-BRAIN = Path.home() / "Documents" / "Brain"
-JOURNAL_DIR = BRAIN / "Journal"
 LOCK_DIR = Path(tempfile.gettempdir()) / "claude-session-locks"
-SECTION = "## 📊 Claude Sessions"
+# (the day's title, the sessions' section, a block's lines); _controle_rules.AUTO_HEADINGS knows both
+# sections.
+ENGLISH = ("Daily", "## 📊 Claude Sessions", ("tools:", "intent:", "files:", "infra/cli:"))
+FRENCH = ("Journal", "## 📊 Sessions avec Claude", ("outils :", "demande :", "fichiers :", "commandes :"))
 # Claude Code's session ids are UUIDs. The id names the lock file and goes in the journal:
 # anything else is refused.
 SID_RE = re.compile(r"[A-Za-z0-9_-]{1,128}")
@@ -30,9 +39,13 @@ SID_RE = re.compile(r"[A-Za-z0-9_-]{1,128}")
 # the reflection. Without it (or _redact.py) nothing is written.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
-    from _vault_write import clean_item, write_atomic
+    from _vault_write import brain_dir, clean_item, write_atomic
 except ImportError:
-    clean_item = write_atomic = None
+    brain_dir = clean_item = write_atomic = None
+try:
+    import _langue
+except ImportError:  # English titles, as before
+    _langue = None
 
 
 def own_folder(d):
@@ -197,13 +210,22 @@ def fmt_time(ts):
         return "??:??"
 
 
-def short_cwd(cwd):
+def in_brain(cwd, brain):
+    """Whether cwd is the brain or a folder of it, wherever it is (a link to it included)."""
+    try:
+        here, top = (os.path.normcase(os.path.realpath(p)) for p in (cwd, brain))
+    except (OSError, ValueError):   # a name no system takes (a NUL in it)
+        return False
+    return here == top or here.startswith(top.rstrip(os.sep) + os.sep)
+
+
+def short_cwd(cwd, brain=None):
     if not cwd:
         return "?"
+    if brain and in_brain(cwd, brain):
+        return "Brain"
     # Normalize: drop trailing slash, expand home
     cwd = cwd.rstrip("/").replace(str(Path.home()), "~")
-    if "/Documents/Brain" in cwd:
-        return "Brain"
     if cwd.startswith("~/DEV/"):
         return cwd.replace("~/DEV/", "")
     return cwd
@@ -245,12 +267,12 @@ def shown_id(session_id, agent):
     return session_id if agent == "codex" else session_id[:8]
 
 
-def render_entry(stats, session_id, cwd, agent="claude"):
+def render_entry(stats, session_id, cwd, agent="claude", brain=None, names=ENGLISH):
     end = fmt_time(stats["last_ts"])
     dur_str, resumed = fmt_duration(stats["first_ts"], stats["last_ts"])
     header_time = (f"~{end}" if resumed else f"{fmt_time(stats['first_ts'])}–{end}")
     # In a code span: no leading "=" or "$=" either, Dataview would run it as a query.
-    cwd_s = clean_item(short_cwd(cwd), 200).lstrip("=$ ") or "?"
+    cwd_s = clean_item(short_cwd(cwd, brain), 200).lstrip("=$ ") or "?"
     model = clean_item((stats["model"] or "").replace("claude-", ""), 30)
     if agent == "codex":
         model = f"codex {model}".rstrip()
@@ -259,16 +281,17 @@ def render_entry(stats, session_id, cwd, agent="claude"):
     prompt = clean_item(stats["first_prompt"], 140)
     signals = ", ".join(f"{s}×{n}" for s, n in stats["signals"].most_common(5))
 
+    tools, intent, files, cli = names[2]
     lines = [
         f"- **{header_time}** ({dur_str}) `{cwd_s}` {model} · sid:`{shown_id(session_id, agent)}`",
-        f"  - tools: {top_tools or '—'}",
+        f"  - {tools} {top_tools or '—'}",
     ]
     if prompt:
-        lines.append(f"  - intent: {prompt}")
+        lines.append(f"  - {intent} {prompt}")
     if files_s != "—":
-        lines.append(f"  - files: {files_s}")
+        lines.append(f"  - {files} {files_s}")
     if signals:
-        lines.append(f"  - infra/cli: {signals}")
+        lines.append(f"  - {cli} {signals}")
     return "\n".join(lines)
 
 
@@ -279,10 +302,21 @@ def _read(path):
         return None
 
 
-def upsert_session(journal, session_id, entry, agent="claude"):
+def titles(brain):
+    """(the day's title, the sessions' section) in the brain's language: French when Profile/soul.md
+    names it, or names none on a French computer."""
+    if _langue is not None:
+        soul = _langue.de_soul(brain)
+        if (_langue.du_systeme() if soul is None else soul) == "fr":
+            return FRENCH
+    return ENGLISH
+
+
+def upsert_session(journal, session_id, entry, agent="claude", names=ENGLISH):
     """Writes this session's block into the day's journal, in place of its earlier one. True if changed.
     Atomically, and re-read just before: a write made meanwhile (another session's recap, the
-    reflection, which writes the same file) is merged, not lost."""
+    reflection, which writes the same file) is merged, not lost. A new journal or section is titled
+    with names (titles()); a section already there, in either language, is kept."""
     if journal.is_symlink():
         raise RuntimeError(f"{journal.name} is a link: left as it is")  # as the reflection does
     # Match existing block: header line + nested "  - ..." continuation lines
@@ -292,12 +326,12 @@ def upsert_session(journal, session_id, entry, agent="claude"):
     )
     for _ in range(3):
         raw = _read(journal)
-        txt = raw.decode("utf-8") if raw is not None else f"# {journal.stem} — Daily\n\n{SECTION}\n\n"
+        txt = raw.decode("utf-8") if raw is not None else f"# {journal.stem} — {names[0]}\n\n{names[1]}\n\n"
         nl = "\r\n" if txt.count("\r\n") * 2 > txt.count("\n") else "\n"  # the file's own, as the reflection
         new_txt = pattern.sub("", txt)
         # Ensure section header still present after removal
-        if SECTION not in new_txt:
-            new_txt = new_txt.rstrip() + f"{nl}{nl}{SECTION}{nl}{nl}"
+        if ENGLISH[1] not in new_txt and FRENCH[1] not in new_txt:
+            new_txt = new_txt.rstrip() + f"{nl}{nl}{names[1]}{nl}{nl}"
         new_txt = new_txt.rstrip("\r\n") + nl + entry.replace("\n", nl) + nl
         if raw is not None and new_txt == txt:
             return False
@@ -331,6 +365,9 @@ def main():
         raise ValueError("session_id is not a plain id: nothing written")
     cwd = payload.get("cwd") or os.getcwd()
     transcript_path = payload.get("transcript_path")
+    brain = brain_dir(os.path.expanduser("~"))
+    if brain is None:
+        sys.exit(0)   # no brain here (not made yet, moved): none is made
 
     # Debounce: skip if the last recap for this sid was < DEBOUNCE_SECS ago.
     # A shared /tmp: never follow a link someone left under that name.
@@ -360,8 +397,9 @@ def main():
         sys.exit(0)
 
     day = time.strftime("%Y-%m-%d")
-    entry = render_entry(stats, sid, cwd, agent)
-    upsert_session(JOURNAL_DIR / f"{day}.md", sid, entry, agent)
+    names = titles(brain)
+    entry = render_entry(stats, sid, cwd, agent, brain, names)
+    upsert_session(Path(brain) / "Journal" / f"{day}.md", sid, entry, agent, names)
     sys.exit(0)
 
 

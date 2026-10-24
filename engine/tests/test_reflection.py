@@ -1150,7 +1150,7 @@ class Language(Run):
         title = "Ton cerveau : le résumé de ta journée a échoué"
         self.assertEqual(notify.call_args_list, [
             mock.call("Ouvre Bibo et reconnecte ton compte Claude.", title),
-            mock.call("Rien, ta limite d'usage de Claude est atteinte : le prochain résumé rattrapera.", title)],
+            mock.call("Ta limite d'usage de Claude est atteinte : rien à faire, le prochain résumé rattrapera.", title)],
             "once when it starts failing, again after a success")
         os.environ.pop("BRAIN_NO_NOTIFY")
         with mock.patch.object(dr.sys, "platform", "darwin"), mock.patch.object(dr.subprocess, "run") as run:
@@ -1160,6 +1160,76 @@ class Language(Run):
         self.assertIn("display notification (item 1 of argv) with title (item 2 of argv)", argv)
         self.assertEqual(argv[-2:], ["Ouvre Bibo.", "Ton cerveau : le résumé de ta journée a échoué"],
                          "both in argv, never in the script")
+
+    def test_the_notification_on_windows_too_with_nothing_to_install(self):
+        """A toast from Windows PowerShell 5.1 (in every Windows 10 and 11), without a console: the words go
+        through the environment, never into the script."""
+        os.environ.pop("BRAIN_NO_NOTIFY")
+        msg, title = "Ouvre Bibo et reconnecte ton compte Claude.", "Ton cerveau : le résumé de ta journée a échoué"
+        with mock.patch.object(dr.sys, "platform", "win32"), mock.patch.dict(os.environ, {"SystemRoot": r"C:\Win"}), \
+                mock.patch.object(dr.subprocess, "run") as run:
+            dr.notify(msg, title)
+        argv, kw = run.call_args.args[0], run.call_args.kwargs
+        self.assertTrue(argv[0].startswith("C:\\Win") and argv[0].endswith("powershell.exe"), argv[0])
+        # The script in clear, as the app runs PowerShell: an encoded command is what security software flags.
+        self.assertEqual(argv[1:4], ["-NoProfile", "-NonInteractive", "-Command"])
+        self.assertEqual(len(argv), 5)
+        script = argv[4]
+        self.assertNotIn("\n", script, "one line: the command line takes it whole")
+        self.assertNotIn('"', script, "nothing the command line would have to escape")
+        self.assertIn("ToastNotificationManager", script)
+        self.assertIn(".Show(", script)
+        self.assertEqual((kw["env"]["BRAIN_NOTIFY_TITLE"], kw["env"]["BRAIN_NOTIFY_TEXT"]), (title, msg))
+        for words in (msg, title, "reconnecte"):
+            self.assertNotIn(words, " ".join(argv) + script)
+        self.assertEqual(kw["creationflags"], dr.NO_WINDOW)
+
+    def test_the_toast_bears_bibos_name_when_bibo_is_installed(self):
+        """Under Windows PowerShell's name and icon, a toast looks like a stranger's to a beginner: Bibo's
+        installer gives its Start menu shortcut the app's identifier, and the toast takes it when Windows
+        lists it; without Bibo (install.ps1 alone), PowerShell's, which Windows always knows."""
+        conf = json.loads((HERE.parent.parent / "app" / "src-tauri" / "tauri.conf.json").read_text(encoding="utf-8"))
+        self.assertEqual(dr.BIBO_APP_ID, conf["identifier"], "the identifier Bibo's installer writes")
+        self.assertIn("Get-StartApps", dr.NOTIFIER)
+        self.assertIn("'%s'" % conf["identifier"], dr.NOTIFIER)
+        self.assertIn("WindowsPowerShell\\v1.0\\powershell.exe'", dr.NOTIFIER, "PowerShell's without Bibo")
+        self.assertIn("try {", dr.NOTIFIER, "a Windows without Get-StartApps still has its toast")
+        for script in (dr.TOAST, dr.NOTIFIER):
+            self.assertNotIn('"', script)
+            self.assertNotIn("\n", script)
+
+    @unittest.skipUnless(os.name == "nt", "Windows' own PowerShell")
+    def test_the_toast_is_made_on_this_windows(self):
+        """Up to the toast itself (shown in a desktop session; a runner may have none): the types load, the
+        words are put in."""
+        env = dict(os.environ, BRAIN_NOTIFY_TITLE="Ton cerveau : « essai »", BRAIN_NOTIFY_TEXT="<b>rien</b> & 'x'")
+        script = dr.TOAST + "; " + dr.NOTIFIER + "; [Console]::Out.Write($id + '|' + $toast.Content.GetXml())"
+        p = subprocess.run([dr.powershell(), "-NoProfile", "-NonInteractive", "-Command", script],
+                           env=env, capture_output=True, timeout=120)
+        out = p.stdout.decode("utf-8", "replace")
+        self.assertEqual(p.returncode, 0, p.stderr.decode("utf-8", "replace")[-800:])
+        self.assertIn("ToastText02", out)
+        self.assertTrue(out.startswith(("{1AC14E77-", dr.BIBO_APP_ID + "|")), out[:120])
+        self.assertIn("&lt;b", out)   # the words are text in the toast, never its markup
+        self.assertIn("&amp;", out)
+        self.assertNotIn("<b>", out)
+
+    def test_the_notification_on_linux_when_notify_send_is_there(self):
+        os.environ.pop("BRAIN_NO_NOTIFY")
+        os.environ.pop("DBUS_SESSION_BUS_ADDRESS", None)
+        bus = "/run/user/%s/bus" % (os.getuid() if hasattr(os, "getuid") else 0)
+        with mock.patch.object(dr.sys, "platform", "linux"), mock.patch.object(dr.subprocess, "run") as run, \
+                mock.patch.object(dr, "which", return_value="/usr/bin/notify-send") as which, \
+                mock.patch.object(dr.os.path, "exists", side_effect=lambda p: p == bus):
+            dr.notify("Rien à faire.", "Ton cerveau")
+        which.assert_called_with("notify-send")
+        self.assertEqual(run.call_args.args[0], ["/usr/bin/notify-send", "Ton cerveau", "Rien à faire."])
+        if hasattr(os, "getuid"):   # a timer started without the session's bus finds it
+            self.assertEqual(run.call_args.kwargs["env"]["DBUS_SESSION_BUS_ADDRESS"], "unix:path=" + bus)
+        with mock.patch.object(dr.sys, "platform", "linux"), mock.patch.object(dr.subprocess, "run") as run, \
+                mock.patch.object(dr, "which", return_value=None):
+            dr.notify("Rien à faire.")
+        run.assert_not_called()
 
     def test_soul_in_english_keeps_english_titles_and_the_computer_is_still_named(self):
         self.fresh_day("English by default.")

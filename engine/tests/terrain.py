@@ -462,7 +462,8 @@ def nuits(t, opts):
     t.check(e.get("secrets_a_changer") == 1 and e.get("verdict") == "rouge",
             "un secret déjà dans l'historique : %s à changer, verdict %s" % (e.get("secrets_a_changer"), e.get("verdict")))
     t.check(jeton not in read(vault, "Projects/vieux-jeton.md"), "le jeton déjà commité n'a pas été masqué")
-    t.check("change-le" in first, "la ligne de démarrage ne dit pas de changer le secret")
+    # One thing to do, which the controle skill walks through: which one, where to change it, « c'est changé ».
+    t.check("quel mot de passe dois-je changer" in first, "la ligne de démarrage ne dit pas de changer le secret")
     for rel, text in (("Projects/nettoyage.md", nettoyage), ("Projects/purge.md", purge), ("Projects/reset.md", reset)):
         t.check(read(vault, rel) == text, "une correction annulée est revenue dans %s" % rel)
     t.check(callout("Projects/encore.md"), "après « reprendre », la note écrite pendant la pause n'est pas corrigée")

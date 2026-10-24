@@ -47,8 +47,13 @@ on:
     branches: [master]
     paths:
       - "app/**"
-      # The app reads Codex's gate in its own copy of it before any kit is on disk (agents.rs).
+      # Files of the kit the app carries in its binary (include_str!): Codex's gate, read before any kit
+      # is on disk (agents.rs), the advice (advice.rs), the guide's rules (guide.rs), the interview for a
+      # brain installed from a terminal (steps.rs). engine/tests/test_release_workflow.py finds them.
       - "engine/hooks/_agents.py"
+      - "engine/hooks/_conseil.py"
+      - "skills/guide-moi/consignes.md"
+      - "onboarding/**"
       - ".github/workflows/release.yml"
       - ".github/ci/app-release-plan.py"
   push:
@@ -56,6 +61,9 @@ on:
     paths:
       - "app/**"
       - "engine/hooks/_agents.py"
+      - "engine/hooks/_conseil.py"
+      - "skills/guide-moi/consignes.md"
+      - "onboarding/**"
       - ".github/workflows/release.yml"
       - ".github/ci/app-release-plan.py"
   workflow_dispatch:

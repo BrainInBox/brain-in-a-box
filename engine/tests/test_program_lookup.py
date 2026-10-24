@@ -47,7 +47,7 @@ class Planted(unittest.TestCase):
     """The current folder holds a claude, a git, a gbrain... of someone else's, in it and in its bin/;
     the PATH names them only as ".", "bin" and an empty entry, then a folder of nothing."""
 
-    NAMES = ("claude", "git", "gbrain", "xclip", "osascript", "taskkill")
+    NAMES = ("claude", "git", "gbrain", "xclip", "osascript", "taskkill", "notify-send", "powershell")
 
     def setUp(self):
         self.root = os.path.realpath(tempfile.mkdtemp(prefix="biab-lookup-"))
@@ -178,6 +178,12 @@ class Planted(unittest.TestCase):
         self.assertEqual(dr._git("--version"), "")
         with mock.patch.object(im.sys, "platform", "linux"), self.assertRaises(im.Erreur):
             im.presse_papiers()
+        os.environ.pop("BRAIN_NO_NOTIFY", None)
+        with mock.patch.object(dr.sys, "platform", "linux"):
+            dr.notify("x")
+        with mock.patch.object(dr.sys, "platform", "win32"), mock.patch.object(dr.subprocess, "run") as run:
+            dr.notify("x")
+        self.assertFalse(self.planted(run.call_args[0][0]), "Windows' own PowerShell, by its full path")
         self.assertEqual(self.runs(), [])
 
     @unittest.skipUnless(sys.platform == "darwin", "macOS's notification")

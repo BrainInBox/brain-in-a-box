@@ -4,6 +4,8 @@
 # runs them there, so your real ~/Documents/Brain and ~/.claude are never touched.
 # Run it any time after ./install.sh to confirm your install is healthy.
 set -u
+# A BRAIN_DIR from your shell would send the hooks to your real brain.
+unset BRAIN_DIR
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TMP0="${TMPDIR:-/tmp}"
@@ -145,6 +147,9 @@ for h in logger indexer; do
 done
 
 echo "════ 4) session-recap ════"
+# The journal's titles follow the brain's language (soul.md's, else the computer's): English here,
+# whatever this computer speaks; a French brain below.
+printf '# Soul\n\n## Language\nEnglish\n' > "$H/Documents/Brain/Profile/soul.md"
 echo "$PAYLOAD" | HOME="$H" python3 "$HB/session-recap.py" 2>/dev/null
 J="$H/Documents/Brain/Journal/$DAY.md"
 grep -q "📊 Claude Sessions" "$J" 2>/dev/null && ok "Journal section created" || no "no Journal section"
@@ -237,7 +242,7 @@ codex_stop "$H" "$HB"
 cmp -s "$J" "$CJ" && [ ! -e "$LD/recap-$CSID.lock" ] \
   && ok "Codex's Stop hook: silent without Codex in agents.json, and while Codex is closed (no lock, journal unchanged)" \
   || no "Codex's Stop hook wrote while Codex is not chosen or closed"
-CXH="$H/codex-open"; mkdir -p "$CXH/hooks" "$CXH/Documents/Brain/Journal" "$CXH/.brain-in-a-box"
+CXH="$H/codex-open"; mkdir -p "$CXH/hooks" "$CXH/Documents/Brain/Profile" "$CXH/.brain-in-a-box"
 cp "$HB/session-recap.py" "$HB/_codex_rollout.py" "$HB/_vault_write.py" "$HB/_redact.py" "$HB/_agents.py" "$CXH/hooks/"
 open_gate "$CXH/hooks/_agents.py"
 cp "$H/.brain-in-a-box/agents.json" "$CXH/.brain-in-a-box/"
@@ -247,6 +252,22 @@ grep -q "codex gpt-6.1-sol · sid:\`$CSID\`\$" "$CXH/Documents/Brain/Journal/$DA
   && ok "control: Codex open and chosen, its Stop hook writes the session's block under its whole id" \
   || no "control: Codex's Stop hook wrote nothing even with Codex open and chosen"
 rm -rf "$H/.brain-in-a-box" "$CXH" "$CJ"
+# The brain is BRAIN_DIR (else Documents/Brain, else ~/Brain): a French one gets its titles in French. Where
+# no brain is, none is made.
+FRB="$H/cerveau-fr"; mkdir -p "$FRB/Profile"; printf '# Âme\n\n## Langue\nfrançais\n' > "$FRB/Profile/soul.md"
+recap_in(){ echo "{\"session_id\":\"$1$(date +%s)\",\"cwd\":\"/Users/builder/proj\",\"transcript_path\":\"$TX\"}" \
+  | HOME="$2" BRAIN_DIR="$3" python3 "$HB/session-recap.py" 2>/dev/null; }
+recap_in frrecap "$H" "$FRB"
+[ "$(head -3 "$FRB/Journal/$DAY.md" 2>/dev/null)" = "$(printf '# %s — Journal\n\n## 📊 Sessions avec Claude' "$DAY")" ] \
+  && grep -q "sid:.frrecap" "$FRB/Journal/$DAY.md" && ! grep -q "sid:.frrecap" "$J" \
+  && grep -q "^  - outils : " "$FRB/Journal/$DAY.md" \
+  && ok "a French brain in BRAIN_DIR: the session goes there, under « Journal » and « Sessions avec Claude », in French" \
+  || no "a French brain in BRAIN_DIR: wrong journal or titles ($(head -3 "$FRB/Journal/$DAY.md" 2>&1 | tr '\n' '|'))"
+NB="$H/no-brain"; mkdir -p "$NB"
+recap_in nobrain "$NB" ""; recap_in gone "$NB" "$NB/gone"
+[ -z "$(find "$NB" -mindepth 1 -print -quit)" ] && ok "no brain (none in BRAIN_DIR, Documents/Brain or ~/Brain): none is made" \
+  || no "the recap made a brain: $(find "$NB" -mindepth 1 | head -3)"
+rm -f "$H/Documents/Brain/Profile/soul.md"
 
 echo "════ 5) daily-reflection (claude faked: no tool, JSON answer, the program writes) ════"
 # The fake claude (engine/tests/fake_claude.py) replays the real stream-json
@@ -526,7 +547,8 @@ etat 20261014-0407; out=$(cs); rc=$?
 import json, sys
 d = json.load(sys.stdin)
 h = d["hookSpecificOutput"]
-line = "\u00ab Contr\u00f4le de cette nuit : 3 corrections faites (annulables). D\u00e9tail : Profile/controle.md. \u00bb"
+line = ("\n<ligne>Cette nuit, j\x27ai fait 3 petites corrections dans tes notes : tout va bien, rien \u00e0 faire "
+        "(si tu n\x27en veux pas, dis \u00ab annule les corrections de cette nuit \u00bb).</ligne>")
 sys.exit(0 if h["hookEventName"] == "SessionStart" and line in h["additionalContext"] and "systemMessage" not in d else 1)' \
   && ok "the night's line, as SessionStart JSON (additionalContext, no systemMessage for green)" || no "wrong or no SessionStart JSON: $out"
 out=$(cs); [ -z "$out" ] && ok "said once: a second session says nothing" || no "said twice: $out"
@@ -587,7 +609,7 @@ out=$(cxall "$HB" cli 2>&1)
 cx "$XO" correction-detector UserPromptSubmit-cli | codex_takes UserPromptSubmit "CORRECTION DETECTED" \
   && ok "Codex open: a correction typed in Codex's terminal, its reminder as Codex's schema takes it" \
   || no "correction-detector's answer to Codex: missing, or refused by Codex's schema"
-cx "$XO" controle-sessionstart SessionStart-cli | codex_takes SessionStart "Contrôle de cette nuit : 3 corrections faites" \
+cx "$XO" controle-sessionstart SessionStart-cli | codex_takes SessionStart "Cette nuit, j'ai fait 3 petites corrections" \
   && ok "Codex open: the night check's line at Codex's start, as Codex's schema takes it" \
   || no "controle-sessionstart's answer to Codex: missing, or refused by Codex's schema"
 out=$(cx "$XO" gbrain-update-check SessionStart-cli; for h in session-logger session-indexer session-recap; do cx "$XO" "$h" Stop-cli; done)
@@ -988,6 +1010,25 @@ for d in sorted(p for p in Path(sys.argv[1]).iterdir() if p.is_dir()):
     if not (fm and name and name.group(1) == d.name and re.search(r"^description:\s*\S", fm.group(1), re.M)):
         bad.append(d.name)
 print("  bad: %s" % ", ".join(bad)) if bad else None
+sys.exit(1 if bad else 0)
+PY
+  # The brain is not always ~/Documents/Brain (BRAIN_DIR; ~/Brain when Windows guards Documents): no skill writes
+  # that path in, and one that sends Claude to the brain's folders says which, as the session start names it, then
+  # the same fallbacks (a Mac's or a Linux's install sets no BRAIN_DIR).
+  python3 - "$REPO/skills" <<'PY' && ok "skills: the brain is the folder the session start names, no Documents/Brain written in" \
+    || no "skills: a brain path written in (see above)"
+import re, sys
+from pathlib import Path
+root = Path(sys.argv[1])
+FALLBACK = "else `$BRAIN_DIR`, else `~/Documents/Brain` or `~/Brain`, the one with a `Profile/` folder"
+def text(f):
+    return re.sub(r"\s+", " ", f.read_text(encoding="utf-8", errors="replace"))
+bad = [str(f.relative_to(root)) for f in sorted(root.rglob("*"))
+       if f.is_file() and re.search(r"Documents[/\\]+Brain", text(f).replace(FALLBACK, ""))]
+bad += ["%s does not say where the brain is" % n for n in ("brain-boost", "controle", "convert-documents-to-markdown",
+                                                             "quick-research")
+        if "Brain: this person's notes are in …\"), " + FALLBACK not in text(root / n / "SKILL.md")]
+print("  " + "; ".join(bad)) if bad else None
 sys.exit(1 if bad else 0)
 PY
   ! grep -rqi --exclude=LICENSE 'hermes' "$REPO/skills" && ok "skills: no Hermes leftovers in the bundled skills (attributions aside)" || no "skills: Hermes references remain"

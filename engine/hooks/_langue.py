@@ -1,4 +1,4 @@
-"""The person's language: the one Profile/soul.md names, else the system's.
+"""The person's language: the one Profile/soul.md names (Profil/ in an older brain), else the system's.
 
 Used by daily-reflection.py (the language of the journal it writes, and its titles) and by
 controle-sessionstart.py (the language each session is told to speak). Reads one note and the
@@ -12,6 +12,8 @@ import os
 import re
 import subprocess
 import sys
+
+from _vault_write import profile_dir
 
 # code: (its name, as said to a model; the words that name it in a note)
 LANGUES = {
@@ -53,7 +55,7 @@ def de_soul(vault):
     of the first language that line names, "?" for a language this module does not know, None when it
     names none (still {{LANGUAGE}}, no such heading nor field, no file)."""
     try:
-        with open(os.path.join(str(vault), "Profile", "soul.md"), encoding="utf-8", errors="replace") as f:
+        with open(os.path.join(str(vault), profile_dir(vault), "soul.md"), encoding="utf-8", errors="replace") as f:
             lines = f.read(20000).splitlines()
     except OSError:
         return None
