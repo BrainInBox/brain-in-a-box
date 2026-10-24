@@ -548,7 +548,7 @@ import json, sys
 d = json.load(sys.stdin)
 h = d["hookSpecificOutput"]
 line = ("\n<ligne>Cette nuit, j\x27ai fait 3 petites corrections dans tes notes : tout va bien, rien \u00e0 faire "
-        "(si tu n\x27en veux pas, dis \u00ab annule le contr\u00f4le \u00bb).</ligne>")
+        "(si tu n\x27en veux pas, dis \u00ab annule les corrections de cette nuit \u00bb).</ligne>")
 sys.exit(0 if h["hookEventName"] == "SessionStart" and line in h["additionalContext"] and "systemMessage" not in d else 1)' \
   && ok "the night's line, as SessionStart JSON (additionalContext, no systemMessage for green)" || no "wrong or no SessionStart JSON: $out"
 out=$(cs); [ -z "$out" ] && ok "said once: a second session says nothing" || no "said twice: $out"
