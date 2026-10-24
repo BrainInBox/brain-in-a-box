@@ -260,6 +260,8 @@ mod os {
     /// How often the overlay goes back on top (W3).
     const REHAUSSE: Duration = Duration::from_millis(250);
     const CHARGEMENT: Duration = Duration::from_secs(15);
+    /// The page's first load: the session's first WebView2 can be slow (a CI VM took over 15 s once).
+    const PREMIER_CHARGEMENT: Duration = Duration::from_secs(60);
 
     static ARRET: Mutex<Option<Arc<AtomicBool>>> = Mutex::new(None);
 
@@ -344,7 +346,7 @@ mod os {
             .build()
             .map_err(erreur)?;
         let pret = || -> Result<u64, Refus> {
-            rx.recv_timeout(CHARGEMENT).map_err(|_| erreur("la page du calque ne s'est pas chargée"))?;
+            rx.recv_timeout(PREMIER_CHARGEMENT).map_err(|_| erreur("la page du calque ne s'est pas chargée"))?;
             let id = w.hwnd().map_err(erreur)?.0 as usize as u64;
             let w2 = w.clone();
             sur_le_fil(app, move || {
