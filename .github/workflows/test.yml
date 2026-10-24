@@ -442,6 +442,7 @@ jobs:
           node --check ../src/app.js
           node --check ../src/guide.js
           node --check ../src/bibo.js
+          node --check ../src/calque.js
       # Every screen of the mock's scenarios with Claude alone, word for word as screens-claude.txt
       # holds them (master's, before Codex), the checks of Codex's screens where the mock opens it, and
       # the guide's screens in paste mode as screens-guide.txt holds them.
@@ -491,6 +492,63 @@ jobs:
           assert d["advice"]["conseil"] == "claude" and d["advice"]["text"], d.get("advice")
           print("linux:", d["os"], len(ids), "checks, to do:", d["todo"])
           PY
+
+  # The guide v2's foundations on a Windows desktop (app/src-tauri/src/capture/vm.rs), on Server 2022 and
+  # 2025 as its proofs were (spec guide v2, §10): the whole screen captured, Bibo's pastille and a password
+  # field black in it; Bibo's overlay out of every capture, clicks through it, back on top, at 100, 125 and
+  # 150 %; the change detection on the whole screen (60 s of a clock, a spinner, a video and a notification:
+  # nothing sent; a dialog: one sending under 1.5 s); the lock screen, last (nobody unlocks it). Windows of
+  # known colours (tests/fixtures/guide/atelier.cs) and the app's own overlay; pixels counted in memory,
+  # no image kept. Built in release, the app's speed. One test a process: a process has one Tauri.
+  guide-ecran:
+    name: guide-ecran (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2025, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+        working-directory: app/src-tauri
+    env:
+      VM: cargo test --locked --release --lib -- --ignored --test-threads=1 --nocapture --exact
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build the desk tests
+        run: cargo test --locked --release --lib --no-run
+      - name: The whole screen leaves, Bibo's pastille and the password field black in it
+        run: $VM capture::vm::vm_capture_ecran_entier 2>&1 | tee "$RUNNER_TEMP/capture.log"
+      - name: The overlay, out of every capture, clicks through it, on top, at 100, 125 and 150 %
+        if: always()
+        run: $VM capture::vm::vm_calque 2>&1 | tee "$RUNNER_TEMP/calque.log"
+      - name: Idleness without a hook
+        if: always()
+        run: $VM capture::vm::vm_inactivite 2>&1 | tee "$RUNNER_TEMP/inactivite.log"
+      - name: 60 s of a clock, a spinner, a video and a notification, nothing sent
+        if: always()
+        run: $VM capture::vm::vm_veille_calme_60s 2>&1 | tee "$RUNNER_TEMP/calme.log"
+      - name: A dialog that opens, one sending under 1.5 s
+        if: always()
+        run: $VM capture::vm::vm_veille_dialogue 2>&1 | tee "$RUNNER_TEMP/dialogue.log"
+      - name: The session locked, nothing read (last)
+        if: always()
+        run: $VM capture::vm::vm_verrouille 2>&1 | tee "$RUNNER_TEMP/verrou.log"
+      - name: Measures
+        if: always()
+        run: |
+          {
+            echo "### Mesures (${{ matrix.os }})"
+            echo
+            echo '```'
+            grep -h '^MESURE\|^FAUTE\|^test capture::\|panicked' "$RUNNER_TEMP"/*.log || true
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
 
   # The app's own install path on a real Windows, without its window: Claude Code, then the
   # brain (install.ps1 from this commit, no console, no question) on a PC with only the Store's
