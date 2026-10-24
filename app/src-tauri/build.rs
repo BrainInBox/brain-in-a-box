@@ -65,7 +65,31 @@ const COMMANDS: &[&str] = &[
     "save_report",
 ];
 
+/// Tauri's own Windows manifest (tauri-build's windows-app-manifest.xml): Common Controls 6.
+const COMMON_CONTROLS_6: &str = r#"<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <dependency>
+    <dependentAssembly>
+      <assemblyIdentity type="win32" name="Microsoft.Windows.Common-Controls" version="6.0.0.0" processorArchitecture="*" publicKeyToken="6595b64144ccf1df" language="*" />
+    </dependentAssembly>
+  </dependency>
+</assembly>
+"#;
+
 fn main() {
     let manifest = tauri_build::AppManifest::new().commands(COMMANDS);
-    tauri_build::try_build(tauri_build::Attributes::new().app_manifest(manifest)).expect("tauri-build");
+    let mut attributes = tauri_build::Attributes::new().app_manifest(manifest);
+    // On Windows, the linker embeds Tauri's manifest in every binary of the package: the app, as tauri-build
+    // would, and the lib's tests, which run Tauri's own windows (capture/vm.rs) and would not start without
+    // it (STATUS_ENTRYPOINT_NOT_FOUND: Common Controls 6 only has TaskDialogIndirect). tauri-build then
+    // embeds none, or the app would have two.
+    let var = |k: &str| std::env::var(k).unwrap_or_default();
+    if var("CARGO_CFG_TARGET_OS") == "windows" && var("CARGO_CFG_TARGET_ENV") == "msvc" {
+        let path = std::path::Path::new(&var("OUT_DIR")).join("windows-app-manifest.xml");
+        std::fs::write(&path, COMMON_CONTROLS_6).expect("the Windows manifest");
+        println!("cargo:rustc-link-arg=/MANIFEST:EMBED");
+        println!("cargo:rustc-link-arg=/MANIFESTUAC:NO");
+        println!("cargo:rustc-link-arg=/MANIFESTINPUT:{}", path.display());
+        attributes = attributes.windows_attributes(tauri_build::WindowsAttributes::new_without_app_manifest());
+    }
+    tauri_build::try_build(attributes).expect("tauri-build");
 }
