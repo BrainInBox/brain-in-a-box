@@ -1188,8 +1188,7 @@ def status_text(st, lang=None):
 
 # A toast from Windows PowerShell 5.1, which every Windows 10 and 11 has: nothing to install. The
 # script is fixed and in clear, one line given to -Command as the app does (an encoded command is
-# what security software flags); the words come from the environment, never in the script. The
-# notifier shows it under PowerShell's name, the one Windows knows from its Start menu entry.
+# what security software flags); the words come from the environment, never in the script.
 TOAST = "; ".join([
     "$ErrorActionPreference = 'Stop'",
     "$m = [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]",
@@ -1198,8 +1197,13 @@ TOAST = "; ".join([
     "$null = $text.Item(0).AppendChild($xml.CreateTextNode($env:BRAIN_NOTIFY_TITLE))",
     "$null = $text.Item(1).AppendChild($xml.CreateTextNode($env:BRAIN_NOTIFY_TEXT))",
     "$toast = [Windows.UI.Notifications.ToastNotification]::new($xml)"])
-NOTIFIER = ("$n = $m::CreateToastNotifier("
-            "'{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe')")
+# Shown under the name and icon of a Start menu entry: Bibo's when it is installed (its installer gives
+# its shortcut the app's identifier, tauri.conf.json), else Windows PowerShell's, which Windows always has.
+BIBO_APP_ID = "com.braininbox.installer"
+NOTIFIER = "; ".join([
+    "$id = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe'",
+    "try { if (Get-StartApps | Where-Object AppID -eq '%s') { $id = '%s' } } catch {}" % (BIBO_APP_ID, BIBO_APP_ID),
+    "$n = $m::CreateToastNotifier($id)"])
 SHOW = "$n.Show($toast)"
 
 

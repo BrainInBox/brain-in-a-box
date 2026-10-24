@@ -1184,17 +1184,32 @@ class Language(Run):
             self.assertNotIn(words, " ".join(argv) + script)
         self.assertEqual(kw["creationflags"], dr.NO_WINDOW)
 
+    def test_the_toast_bears_bibos_name_when_bibo_is_installed(self):
+        """Under Windows PowerShell's name and icon, a toast looks like a stranger's to a beginner: Bibo's
+        installer gives its Start menu shortcut the app's identifier, and the toast takes it when Windows
+        lists it; without Bibo (install.ps1 alone), PowerShell's, which Windows always knows."""
+        conf = json.loads((HERE.parent.parent / "app" / "src-tauri" / "tauri.conf.json").read_text(encoding="utf-8"))
+        self.assertEqual(dr.BIBO_APP_ID, conf["identifier"], "the identifier Bibo's installer writes")
+        self.assertIn("Get-StartApps", dr.NOTIFIER)
+        self.assertIn("'%s'" % conf["identifier"], dr.NOTIFIER)
+        self.assertIn("WindowsPowerShell\\v1.0\\powershell.exe'", dr.NOTIFIER, "PowerShell's without Bibo")
+        self.assertIn("try {", dr.NOTIFIER, "a Windows without Get-StartApps still has its toast")
+        for script in (dr.TOAST, dr.NOTIFIER):
+            self.assertNotIn('"', script)
+            self.assertNotIn("\n", script)
+
     @unittest.skipUnless(os.name == "nt", "Windows' own PowerShell")
     def test_the_toast_is_made_on_this_windows(self):
         """Up to the toast itself (shown in a desktop session; a runner may have none): the types load, the
         words are put in."""
         env = dict(os.environ, BRAIN_NOTIFY_TITLE="Ton cerveau : « essai »", BRAIN_NOTIFY_TEXT="<b>rien</b> & 'x'")
-        script = dr.TOAST + "; " + dr.NOTIFIER + "; [Console]::Out.Write($toast.Content.GetXml())"
+        script = dr.TOAST + "; " + dr.NOTIFIER + "; [Console]::Out.Write($id + '|' + $toast.Content.GetXml())"
         p = subprocess.run([dr.powershell(), "-NoProfile", "-NonInteractive", "-Command", script],
                            env=env, capture_output=True, timeout=120)
         out = p.stdout.decode("utf-8", "replace")
         self.assertEqual(p.returncode, 0, p.stderr.decode("utf-8", "replace")[-800:])
         self.assertIn("ToastText02", out)
+        self.assertTrue(out.startswith(("{1AC14E77-", dr.BIBO_APP_ID + "|")), out[:120])
         self.assertIn("&lt;b", out)   # the words are text in the toast, never its markup
         self.assertIn("&amp;", out)
         self.assertNotIn("<b>", out)
