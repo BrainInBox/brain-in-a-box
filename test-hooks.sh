@@ -120,6 +120,16 @@ LH="$H/lessonhome"; mkdir -p "$LH/Brain/Profile" "$H/elsewhere/Profile"
   && [ "$(lessons_to "$H")" = "$H/Documents/Brain" ] \
   && ok "a correction outside the brain: the lesson goes to BRAIN_DIR, else Documents/Brain, else ~/Brain" \
   || no "a correction outside the brain names $(lessons_to "$LH") (~/Brain), $(lessons_to "$LH" BRAIN_DIR="$H/elsewhere") (BRAIN_DIR)"
+# An older brain's Profil folder, with a Profile folder made beside it since: the lessons go where its
+# soul.md is, where each session start reads them.
+mkdir -p "$LH/Documents/Brain/Profil" "$LH/Documents/Brain/Profile"
+: > "$LH/Documents/Brain/Profil/soul.md"; : > "$LH/Documents/Brain/Profile/memory.md"
+out=$(printf '{"prompt": "no, actually do it the other way"}' | (cd "$H/tmp" && env -u CLAUDE_CODE_ENTRYPOINT \
+  -u CLAUDE_PROJECT_DIR -u BRAIN_DIR HOME="$LH" python3 "$HB/correction-detector.py"))
+case "$out" in
+  *"line to $LH/Documents/Brain/Profil/lessons.md"*) ok "an older brain's Profil folder: the lesson goes next to its soul.md";;
+  *) no "an older brain's lesson goes elsewhere than Profil/lessons.md: $out";;
+esac
 rm -rf "$LH" "$H/elsewhere"
 
 echo "════ 2) session-logger ════"

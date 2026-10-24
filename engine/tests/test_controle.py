@@ -361,6 +361,8 @@ class SecretAlreadyCommitted(Sandbox):
         etat = self.etat_json()
         self.assertEqual(etat["verdict"], "rouge")
         self.assertEqual(etat["secrets_a_changer"], 1)
+        self.assertEqual(etat["secrets_caches"], 0, "in the history: the line to change it says it")
+        self.assertEqual(etat["corrections_notes"], etat["corrections"] - 1)
         self.assertIn("change-le", read(self.vault, "Profile/controle.md"))
         out = self.cli("annuler", ids[0], "--remettre-le-secret")
         self.assertIn("historique", out)
@@ -371,6 +373,46 @@ class SecretAlreadyCommitted(Sandbox):
         self.cli("nuit")
         self.assertEqual(self.action_ids(head), [])
         self.assertIn(token, read(self.vault, "Projects/vieux.md"))
+
+
+class Health(Sandbox):
+    """The report's health lines, and the codes etat.json gives the session start for them."""
+
+    def codes(self):
+        return {a["code"]: a["niveau"] for a in self.etat_json()["alertes"]}
+
+    def test_gbrain_back_on_the_version_that_works_is_no_alarm(self):
+        os.makedirs(os.path.join(self.home, ".gbrain"))
+        self.small_vault()
+        for status, code, level, said in (
+                ("rolled_back", "gbrain_retour", "orange", "- 🟠 La dernière mise à jour de gbrain a raté : je suis "
+                                                           "revenu à la version d'avant, qui marche, donc rien à faire.\n"),
+                ("broken", "gbrain", "rouge", "- 🔴 gbrain ne démarre plus après une mise à jour ratée")):
+            with self.subTest(status):
+                with open(os.path.join(self.home, ".gbrain", "last-update.json"), "w", encoding="utf-8") as f:
+                    json.dump({"status": status, "tag": "v1.2.3", "before": "v1.2.2", "after": "v1.2.2"}, f)
+                self.cli("maintenant")
+                self.assertEqual({k: v for k, v in self.codes().items() if k.startswith("gbrain")}, {code: level})
+                self.assertIn(said, read(self.vault, "Profile/controle.md"))
+
+    def test_the_summary_stopped_by_the_usage_limit_has_its_own_code(self):
+        """However long after the evening the check runs (a laptop asleep, the task caught up at boot): the
+        session start then knows there is nothing to do."""
+        logs = os.path.join(self.home, ".claude", "logs")
+        os.makedirs(logs)
+        state = os.path.join(logs, "daily-reflection.state.json")
+        self.small_vault()
+        for error, code in (("quota: You've hit your usage limit", "reflexion_limite"),
+                            ("auth: Not logged in", "reflexion")):
+            with self.subTest(error):
+                with open(state, "w", encoding="utf-8") as f:
+                    json.dump({"failing_since": "2026-10-14 23:00", "last_error": error}, f)
+                old = time.time() - 9 * 3600
+                os.utime(state, (old, old))
+                self.cli("maintenant")
+                self.assertEqual({k: v for k, v in self.codes().items() if k.startswith("reflexion")},
+                                 {code: "orange"})
+                self.assertIn("- 🟠 La réflexion du jour échoue depuis le 14/10", read(self.vault, "Profile/controle.md"))
 
 
 class Contract(Sandbox):
@@ -936,6 +978,10 @@ class SecretsLifecycle(Sandbox):
         write(self.vault, "Projects/cle.md", "# Clé\n\npassword: %s\n" % secret)
         age_files(self.vault)
         self.cli("nuit")
+        # Undoing the night leaves it hidden: the morning line says it apart from the night's small corrections.
+        etat = self.etat_json()
+        self.assertEqual((etat["secrets_caches"], etat["secrets_a_changer"]), (1, 0))
+        self.assertEqual(etat["corrections_notes"], etat["corrections"] - 1)
         out = self.cli("annuler", "derniere-nuit")
         self.assertNotIn(secret, read(self.vault, "Projects/cle.md"))
         sid = S1_ID.search(out).group(0)
@@ -963,6 +1009,27 @@ class SecretsLifecycle(Sandbox):
             self.assertIn(named, row)
         self.assertNotIn("same command", row)
         self.assertNotRegex(row, r"https?:|\birm\b|\bcurl\b|\biex\b")
+
+    def test_a_secret_is_named_by_its_note_and_changed_where_they_usually_go(self):
+        """Never an ID for the person to give, never an address Claude made up (a wrong one, or a lookalike)."""
+        with open(SKILL, encoding="utf-8") as f:
+            rows = [ln for ln in f.read().splitlines() if ln.startswith("|")]
+        change = next(r for r in rows if "quel mot de passe dois-je changer" in r)
+        self.assertIn("never write an address or a link from memory", change)
+        for words in ("c'est changé", "remets mon mot de passe"):
+            with self.subTest(words):
+                row = next(r for r in rows if words in r)
+                self.assertIn("by its note's name, never by its ID", row)
+        back = next(r for r in rows if "remets mon mot de passe" in r)
+        self.assertIn("--essai", back)
+        self.assertIn("explicit yes", back)
+
+    def test_a_kept_night_script_is_compared_never_merged_by_claude(self):
+        with open(SKILL, encoding="utf-8") as f:
+            row = next(ln for ln in f.read().splitlines() if ln.startswith("|") and "ne tourne plus" in ln)
+        for named in ("~/.brain-in-a-box/pending/gbrain-nightly.sh", "~/.claude/hooks/brain/gbrain-nightly.sh",
+                      "explicit yes", "Never merge or edit either yourself"):
+            self.assertIn(named, row)
 
     def test_change_it_lasts_until_done(self):
         token = "gh" + "p_" + "canariDURE" + "x7Y8" * 7
@@ -1224,6 +1291,16 @@ class SessionStart(unittest.TestCase):
         # Between tags, alone: the line holds « » of its own (the words to say).
         return re.search(r"\n<ligne>(.*)</ligne>(?:\n|$)", ctx).group(1)
 
+    def later(self, hours=4):
+        """As if the dead man's switches had been seen late that many hours ago (shown.json)."""
+        path = os.path.join(self.state, "shown.json")
+        with open(path, encoding="utf-8") as f:
+            shown = json.load(f)
+        then = (datetime.now() - timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%S")
+        shown["retard"] = {k: then for k in shown["retard"]}
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(shown, f)
+
     def test_the_line_follows_etat_json_once_per_run(self):
         self.etat()
         out = self.hook()
@@ -1278,7 +1355,12 @@ class SessionStart(unittest.TestCase):
         claude = {"niveau": "orange", "code": "claude"}
         summary = {"niveau": "orange", "code": "reflexion"}
         quiet = [("saute:limite-reflexion", [summary, claude]), ("saute:limite", [claude]),
-                 ("saute:quota-jour", [claude]), ("saute:abonnement", [claude])]
+                 ("saute:quota-jour", [claude]), ("saute:abonnement", [claude]),
+                 # The check ran long after the evening (a laptop asleep, caught up at boot): its own code.
+                 ("fait", [{"niveau": "orange", "code": "reflexion_limite"}]),
+                 ("saute:rien-de-neuf", [{"niveau": "orange", "code": "reflexion_limite"}]),
+                 # gbrain went back to the version that works: its own line says it once, nothing to do.
+                 ("fait", [{"niveau": "orange", "code": "gbrain_retour"}])]
         for n, (skip, alerts) in enumerate(quiet):
             with self.subTest(skip):
                 self.etat(run="20261014-07%02d" % n, corrections=1, a_voir=0, claude=skip, alertes=alerts)
@@ -1313,6 +1395,26 @@ class SessionStart(unittest.TestCase):
                 parts = self.line(self.hook()).split(" · ")
                 self.assertEqual((len(parts), parts[-1]), (2, done))
 
+    def test_a_hidden_secret_is_said_as_such_not_as_a_small_correction(self):
+        """A secret written in clear, hidden the same night (never in the history): undoing the night leaves it
+        hidden, so it is no « petite correction » that « annule » takes back. Its own words bring it back."""
+        cases = [((3, 2, 1), "Cette nuit, j'ai fait 2 petites corrections dans tes notes et caché un mot de passe ou "
+                             "une clé écrit en clair : tout va bien, rien à faire (si tu n'en veux pas, %s ; pour "
+                             "retrouver le mot de passe, dis « remets mon mot de passe »)." % UNDO),
+                 ((1, 0, 1), "Cette nuit, j'ai caché un mot de passe ou une clé écrit en clair dans tes notes : tout va "
+                             "bien, rien à faire (pour le retrouver, dis « remets mon mot de passe »)."),
+                 ((2, 0, 3), "Cette nuit, j'ai caché 3 mots de passe ou clés écrits en clair dans tes notes : tout va "
+                             "bien, rien à faire (pour les retrouver, dis « remets mes mots de passe »)."),
+                 ((2, 1, 1, 1), "Cette nuit, j'ai fait une petite correction dans tes notes et caché un mot de passe ou "
+                                "une clé écrit en clair, mais un point attend ton avis : %s pour tout voir, et annuler "
+                                "ce que tu ne veux pas." % ASK)]
+        for n, (counts, want) in enumerate(cases):
+            fixed, notes, hidden, look = counts + (0,) * (4 - len(counts))
+            with self.subTest(want):
+                self.etat(run="20261014-09%02d" % n, corrections=fixed, corrections_notes=notes,
+                          secrets_caches=hidden, a_voir=look)
+                self.assertEqual(self.line(self.hook()), want)
+
     def test_a_rolled_back_update_is_said_once_without_versions(self):
         """gbrain went back to the version that works by itself: nothing to do, so said once per failed version,
         in plain words, and never as an alarm."""
@@ -1340,8 +1442,8 @@ class SessionStart(unittest.TestCase):
         self.assertEqual(text.split(" · "), [
             "J'ai trouvé un mot de passe ou une clé écrit en clair dans tes notes et je l'ai caché, mais une copie "
             "reste dans l'historique de ton cerveau : dis « quel mot de passe dois-je changer ? » et je te guide.",
-            "La recherche intelligente dans tes notes (gbrain) est en panne depuis une mise à jour ratée, mais tes "
-            "notes ne risquent rien : dis « répare gbrain » et je t'aide à la remettre en route."],
+            "gbrain (la recherche dans tes notes) est en panne depuis une mise à jour ratée, mais tes notes ne "
+            "risquent rien : dis « répare gbrain » et je t'aide à le remettre en route."],
             "two at most, reds first")
         self.assertEqual(out["systemMessage"], text)
         out = self.hook()
@@ -1374,12 +1476,25 @@ class SessionStart(unittest.TestCase):
         self.assertNotIn("systemMessage", self.hook())
         self.etat(run="20261013-0405", dernier_succes=stamp(49))
         self.update(derniere_verif_ok=stamp(73, utc=True))
+        # Seen late for the first time: the computer may have just started, its night's catch-up running
+        # (StartWhenAvailable, Persistent=true). Said only if it is still late hours later.
+        self.assertIsNone(self.hook(), "a Monday morning after a weekend off")
+        self.later(2)
+        self.assertIsNone(self.hook(), "the catch-up still has time")
+        self.later(4)
         out = self.hook()
         self.assertEqual(out["systemMessage"].split(" · "), [
             "Tes notes n'ont pas été vérifiées depuis 2 jours, sans doute parce que l'ordinateur était éteint la "
             "nuit : dis « contrôle mon cerveau » pour le faire maintenant.",
             "Les mises à jour de gbrain (la recherche dans tes notes) ne sont plus vérifiées depuis 3 jours : il "
             "marche toujours, mais dis « pourquoi gbrain n'est pas à jour ? » pour que je regarde."])
+        # Caught up: forgotten; late again another day, the grace again.
+        self.etat(run="20261014-0405", dernier_succes=stamp(3))
+        self.update(derniere_verif_ok=stamp(3, utc=True))
+        self.hook()
+        self.etat(run="20261013-0406", dernier_succes=stamp(50))
+        self.update(derniere_verif_ok=stamp(74, utc=True))
+        self.assertIsNone(self.hook())
 
     def test_never_ran_counts_from_the_install(self):
         os.makedirs(os.path.join(self.home, "DEV", "gbrain", ".git"))
@@ -1388,6 +1503,8 @@ class SessionStart(unittest.TestCase):
         self.assertIsNone(self.hook(), "installed today: nothing to say")
         self.installed("controle.py", 100)
         self.installed("gbrain_update.py", 100)
+        self.assertIsNone(self.hook())
+        self.later()
         out = self.hook()
         self.assertIn("pas été vérifiées depuis 4 jours", out["systemMessage"])
         self.assertIn("ne sont plus vérifiées depuis 4 jours", out["systemMessage"])
@@ -1406,10 +1523,13 @@ class SessionStart(unittest.TestCase):
         os.makedirs(pending)
         with open(os.path.join(pending, "gbrain-nightly.sh"), "w", encoding="utf-8", newline="") as f:
             f.write("#!/bin/zsh\n")
+        self.assertIsNone(self.hook())
+        self.later()
         out = self.hook()
         self.assertEqual(out["systemMessage"], "Le contrôle de nuit ne tourne plus depuis 4 jours : ton script de nuit "
-                                               "modifié est gardé et la nouvelle version attend ; relance "
-                                               "l'installation pour la prendre.")
+                                               "a été modifié sur cet ordinateur, je l'ai gardé et la nouvelle "
+                                               "version attend à côté ; dis « mon contrôle de nuit ne tourne plus » "
+                                               "pour que je regarde.")
         self.assertNotIn("éteint", out["systemMessage"])
 
     def test_every_line_is_plain_words_and_says_what_to_do(self):
@@ -1428,7 +1548,11 @@ class SessionStart(unittest.TestCase):
                  dict(night, corrections=2, alertes=[{"code": "reflexion"}]),
                  dict(night, corrections=1, a_voir=1, alertes=[{"code": "reflexion"}]),
                  dict(night, corrections=1, claude="saute:limite-reflexion", alertes=[{"code": "reflexion"}]),
-                 dict(night, corrections=0, alertes=[{"code": "reflexion"}, {"code": "commit_refuse"}])]
+                 dict(night, corrections=0, alertes=[{"code": "reflexion"}, {"code": "commit_refuse"}]),
+                 dict(night, corrections=1, alertes=[{"code": "reflexion_limite"}, {"code": "gbrain_retour"}]),
+                 dict(night, corrections=1, corrections_notes=0, secrets_caches=1),
+                 dict(night, corrections=4, corrections_notes=2, secrets_caches=2),
+                 dict(night, corrections=2, corrections_notes=1, secrets_caches=1, a_voir=1)]
         etats += [dict(night, corrections=c, a_voir=v) for c in (0, 1, 3) for v in (0, 1, 2) if c or v]
         lines = []
         for etat in etats:
@@ -1452,7 +1576,7 @@ class SessionStart(unittest.TestCase):
                                "point de santé", "masqué", "le contrôle a fait", "annule le contrôle"):
                     self.assertNotIn(jargon, line)
                 self.assertNotRegex(line, r"^\d|(?<!\d)1 ", "un, une; a sentence starts with a word")
-                self.assertRegex(line, r"dis « [^»]+ »|rien à faire|relance l'installation")
+                self.assertRegex(line, r"dis « [^»]+ »|rien à faire")
                 self.assertTrue(line.endswith(".") and ". " not in line, "one sentence")
 
     def test_no_update_switch_without_the_kits_updater(self):
@@ -1593,6 +1717,13 @@ class SessionStart(unittest.TestCase):
         self.assertEqual(lessons, ["- [2026-10-01] **profil** -> règle : lue"])
         self.assertIn("(Profil/lessons.md, oldest first)", ctx)
         self.assertNotIn("Profile/", ctx)
+        # The evening summary or a hook of an older kit made Profile/ beside it since: Profil keeps its place.
+        os.makedirs(os.path.join(self.home, "Documents", "Brain", "Profile"))
+        with open(os.path.join(self.home, "Documents", "Brain", "Profile", "memory.md"), "w", encoding="utf-8") as f:
+            f.write("# Memory\n")
+        ctx, again = self.brain(self.hook(LANG="fr_FR.UTF-8"))
+        self.assertIn("Speak to them in English (Profil/soul.md).", ctx)
+        self.assertEqual(again, lessons)
 
     def test_said_again_after_clear_and_compact_not_on_resume(self):
         self.etat()

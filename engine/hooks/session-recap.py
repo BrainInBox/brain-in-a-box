@@ -29,6 +29,19 @@ LOCK_DIR = Path(tempfile.gettempdir()) / "claude-session-locks"
 # sections.
 ENGLISH = ("Daily", "## 📊 Claude Sessions", ("tools:", "intent:", "files:", "infra/cli:"))
 FRENCH = ("Journal", "## 📊 Sessions avec Claude", ("outils :", "demande :", "fichiers :", "commandes :"))
+# A French brain's block names Claude's and Codex's tools in words, the same kind counted once; an MCP server's, or
+# one not listed here, as it is.
+TOOL_WORDS = {"Commande": ("Bash", "BashOutput", "KillShell", "PowerShell", "exec_command", "exec", "shell",
+                           "local_shell", "write_stdin"),
+              "Lecture": ("Read", "NotebookRead", "read_file", "view_image"),
+              "Écriture": ("Write",),
+              "Modification": ("Edit", "MultiEdit", "NotebookEdit", "apply_patch"),
+              "Recherche": ("Grep", "Glob", "LS", "grep_files", "list_dir"),
+              "Page web": ("WebFetch",),
+              "Recherche web": ("WebSearch", "web_search"),
+              "Sous-agent": ("Task", "Agent"),
+              "Liste de tâches": ("TodoWrite", "update_plan")}
+FRENCH_TOOLS = {name: word for word, tools in TOOL_WORDS.items() for name in tools}
 # Claude Code's session ids are UUIDs. The id names the lock file and goes in the journal:
 # anything else is refused.
 SID_RE = re.compile(r"[A-Za-z0-9_-]{1,128}")
@@ -276,7 +289,12 @@ def render_entry(stats, session_id, cwd, agent="claude", brain=None, names=ENGLI
     model = clean_item((stats["model"] or "").replace("claude-", ""), 30)
     if agent == "codex":
         model = f"codex {model}".rstrip()
-    top_tools = ", ".join(f"{clean_item(n, 60)} {c}" for n, c in stats["tools"].most_common(5))
+    used = stats["tools"]
+    if names == FRENCH:
+        used = Counter()
+        for n, c in stats["tools"].items():
+            used[FRENCH_TOOLS.get(n, n)] += c
+    top_tools = ", ".join(f"{clean_item(n, 60)} {c}" for n, c in used.most_common(5))
     files_s = short_files(stats["files"])
     prompt = clean_item(stats["first_prompt"], 140)
     signals = ", ".join(f"{s}×{n}" for s, n in stats["signals"].most_common(5))

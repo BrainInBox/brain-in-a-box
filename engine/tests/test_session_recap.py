@@ -71,8 +71,18 @@ class Entry(unittest.TestCase):
         st["signals"]["ssh"] = 2
         lines = rc.render_entry(st, "a1b2c3d4-e5f6-7890", "proj", names=rc.FRENCH).splitlines()
         self.assertTrue(lines[0].endswith(" · sid:`a1b2c3d4`"), "the id stays as it is: the block is found by it")
-        self.assertEqual(lines[1:], ["  - outils : Read 2, Edit 1", "  - demande : build the login page",
+        self.assertEqual(lines[1:], ["  - outils : Lecture 2, Modification 1", "  - demande : build the login page",
                                      "  - fichiers : a.ts", "  - commandes : ssh×2"])
+
+    def test_a_french_block_names_the_tools_in_french(self):
+        """Claude's and Codex's tool names in words, the same kind counted once; one of an MCP server as it is."""
+        st = stats()
+        st["tools"] = Counter({"Bash": 3, "exec_command": 2, "Edit": 1, "MultiEdit": 1, "apply_patch": 1, "Grep": 1,
+                               "WebFetch": 1, "mcp__notion__search": 1})
+        tools = rc.render_entry(st, "a1b2c3d4", "proj", names=rc.FRENCH).splitlines()[1]
+        self.assertEqual(tools, "  - outils : Commande 5, Modification 3, Recherche 1, Page web 1, mcp__notion__search 1")
+        english = rc.render_entry(st, "a1b2c3d4", "proj").splitlines()[1]
+        self.assertTrue(english.startswith("  - tools: Bash 3, exec_command 2, "), "an English brain's as before")
 
     def test_nothing_obsidian_runs_or_loads(self):
         e = rc.render_entry(stats(RUNS, ["/p/<img src=x>.md", "/p/`$= 1`.md"]), "a1b2c3d4-e5f6", "$= dv.el('b', 2)")
@@ -439,7 +449,7 @@ class Brain(unittest.TestCase):
         text = self.journal(brain)
         self.assertTrue(text.startswith(f"# {self.day} — Journal\n\n## 📊 Sessions avec Claude\n- **"), text)
         self.assertIn(sid, text)
-        self.assertIn("\n  - outils : Read 3\n", text, "its lines in French too")
+        self.assertIn("\n  - outils : Lecture 3\n", text, "its lines in French too")
         for english in ("tools:", "intent:", "files:", "infra/cli:"):
             self.assertNotIn(english, text)
 
@@ -499,6 +509,10 @@ class Brain(unittest.TestCase):
         os.environ["BRAIN_DIR"] = str(brain)
         self.stop()
         self.assertTrue(self.journal(brain).startswith(f"# {self.day} — Journal\n\n## 📊 Sessions avec Claude\n"))
+        # A Profile folder made beside it since (the evening summary's memory.md): soul.md still names French.
+        (brain / "Profile").mkdir()
+        (brain / "Profile" / "memory.md").write_text("# Memory\n", encoding="utf-8")
+        self.assertEqual(rc.titles(brain), rc.FRENCH)
 
     def test_no_brain_no_folder(self):
         self.stop()

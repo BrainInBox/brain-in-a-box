@@ -35,6 +35,7 @@ import _controle_rules as rules  # noqa: E402
 import _controle_judge as judge  # noqa: E402
 import _agents  # noqa: E402
 from _headless_claude import which  # noqa: E402
+from _vault_write import profile_dir  # noqa: E402
 
 ENV_HELP = """environment (all optional):
   BRAIN_DIR            the vault (default ~/Documents/Brain); --brain wins
@@ -129,7 +130,10 @@ ALERT_TEXT = {
                           "la mise à jour de gbrain ne sont peut-être pas branchés.",
     "partiel": "Plus de 10 000 notes : je n'ai regardé que les 10 000 premières.",
     "reflexion": "La réflexion du jour échoue depuis le {x}.",
+    "reflexion_limite": "La réflexion du jour échoue depuis le {x}.",
     "gbrain": "{x}",
+    "gbrain_retour": "La dernière mise à jour de gbrain a raté : je suis revenu à la version d'avant, qui marche, "
+                     "donc rien à faire.",
     "claude": "{x}",
     "agents": "Le choix d'IA (~/.brain-in-a-box/agents.json) n'est pas fiable ({x}) : la réflexion et la relecture "
               "ne demandent plus rien à une IA. Relance l'installation.",
@@ -604,7 +608,7 @@ class Run:
         if not self.vault.is_dir():
             self.alert("rouge", "vault_absent")
             return self.finish(scan=None)
-        profile = next((p for p in ("Profile", "Profil") if (self.vault / p).is_dir()), "Profile")
+        profile = profile_dir(self.vault)
         if self.writes:
             self.state.ensure()
         self.key = self.state.key(create=self.writes)
@@ -1312,10 +1316,12 @@ class Run:
         if isinstance(version, str) and re.match(r"^v?\d+(\.\d+){2,3}$", version):
             self.gbrain_version = version if version.startswith("v") else "v" + version
         status = info.get("status")
-        if status in ("rolled_back", "broken"):
-            text = ("gbrain ne démarre plus après une mise à jour ratée : relance l'installation." if status == "broken"
-                    else "gbrain : la dernière mise à jour a échoué, retour arrière fait.")
-            self.alert("rouge", "gbrain", text)
+        if status == "broken":
+            self.alert("rouge", "gbrain", "gbrain ne démarre plus après une mise à jour ratée : dis « répare gbrain » "
+                                          "à Claude.")
+        elif status == "rolled_back":
+            # It works: nothing to do, so no alarm; the session start says it once.
+            self.alert("orange", "gbrain_retour")
         elif isinstance(info.get("retard_jours"), int) and info["retard_jours"] > 14:
             self.alert("rouge", "gbrain", "gbrain a %d jours de retard sur ses mises à jour." % info["retard_jours"])
         elif self.gbrain_version:
@@ -1326,7 +1332,9 @@ class Run:
             d = since[:10]
             limit = judge.limit_of(str(st.get("last_error") or ""))
             why = " (limite d'usage de %s)" % ("Codex" if limit == "codex" else "Claude") if limit else ""
-            self.alert("orange", "reflexion", "%s/%s%s" % (d[8:10], d[5:7], why))
+            # A usage limit needs nothing, the next summary catches up: a code of its own, that the session start
+            # keeps quiet however long after the evening this check runs.
+            self.alert("orange", "reflexion_limite" if limit else "reflexion", "%s/%s%s" % (d[8:10], d[5:7], why))
         if self.claude == "fait":
             i = self.judge_info
             cost = i.get("cout")
@@ -1407,10 +1415,15 @@ class Run:
             journal = self.journal(verdict, len(shown), end)
             write_json(self.state.dir / "runs" / (self.run + ".json"), journal)
             prev = self.state.load("etat.json", {})
+            # A secret hidden tonight stays hidden when the night is undone: the session start says it apart from
+            # the notes' small corrections. One git already had is said by secrets_a_changer.
+            masked = [a for a in done if a["type"] == "S1"]
+            hidden = sum(a["resume"].get("n", 1) for a in masked
+                         if not self.quarantine.get(a["id"], {}).get("historique"))
             etat = {"run": self.run, "mode": self.mode, "fin": end.replace(microsecond=0).isoformat(),
                     "dernier_succes": end.replace(microsecond=0).isoformat(), "verdict": verdict,
-                    "corrections": len(done), "a_voir": len(shown), "secrets_a_changer": len(self.to_change),
-                    "secrets_ids": self.to_change,
+                    "corrections": len(done), "corrections_notes": len(done) - len(masked), "secrets_caches": hidden,
+                    "a_voir": len(shown), "secrets_a_changer": len(self.to_change), "secrets_ids": self.to_change,
                     "rapport": report_rel or prev.get("rapport"), "rapport_reecrit": bool(report_rel),
                     "claude": self.claude, "cause": self.cause,
                     "alertes": [{"niveau": lv, "code": code} for lv, code, _ in self.alerts]}
@@ -1804,7 +1817,7 @@ class Undo:
         return 0
 
     def note_in_report(self, run, ok, by_hand):
-        profile = next((p for p in ("Profile", "Profil") if (self.vault / p).is_dir()), "Profile")
+        profile = profile_dir(self.vault)
         rel = profile + "/controle.md"
         note = rules.read_note(str(self.vault), rel)
         if note is None:
@@ -1918,7 +1931,7 @@ def cmd_secret_changed(opts):
 
 def cmd_lessons(opts):
     vault = vault_dir(opts)
-    profile = next((p for p in ("Profile", "Profil") if (vault / p).is_dir()), "Profile")
+    profile = profile_dir(vault)
     note = rules.read_note(str(vault), profile + "/lessons.md")
     if note is None:
         print("Pas de lessons.md lisible dans %s." % profile)

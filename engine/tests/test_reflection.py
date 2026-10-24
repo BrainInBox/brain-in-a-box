@@ -1086,6 +1086,17 @@ class Language(Run):
         self.memory.write_text("# Memory\n", encoding="utf-8")
         self.age()
 
+    def test_an_older_brains_profil_folder_holds_its_soul_and_memory(self):
+        """A brain whose profile folder is Profil (an older brain's): its soul.md is read and its memory.md
+        written there, never a Profile folder made beside it."""
+        (self.vault / "Profile").rename(self.vault / "Profil")
+        (self.vault / "Profil" / "soul.md").write_text("# Âme\n\n## Langue\nfrançais, tutoiement\n", encoding="utf-8")
+        dr.configure(brain=self.vault, logs=self.root / "logs", projects=self.root / "projects")
+        self.run_reflection()
+        self.assertIn("français, tutoiement", (self.fake / "prompt.txt").read_text(encoding="utf-8"))
+        self.assertIn("- Login page shipped\n", (self.vault / "Profil" / "memory.md").read_text(encoding="utf-8"))
+        self.assertFalse((self.vault / "Profile").exists())
+
     def test_soul_not_filled_and_a_french_computer_write_french(self):
         self.fresh_day("{{LANGUAGE}} by default. Switch only when the code/repo requires it.")
         os.environ["LANG"] = "fr_FR.UTF-8"
@@ -1147,11 +1158,17 @@ class Language(Run):
                 self.run_reflection(scenario="not-logged-in")
             self.run_reflection()
             self.run_reflection(scenario="quota")
+            self.run_reflection(scenario="quota")
+            self.run_reflection(scenario="not-logged-in")
         title = "Ton cerveau : le résumé de ta journée a échoué"
-        self.assertEqual(notify.call_args_list, [
-            mock.call("Ouvre Bibo et reconnecte ton compte Claude.", title),
-            mock.call("Ta limite d'usage de Claude est atteinte : rien à faire, le prochain résumé rattrapera.", title)],
-            "once when it starts failing, again after a success")
+        self.assertEqual(notify.call_args_list, [mock.call("Ouvre Bibo et reconnecte ton compte Claude.", title)] * 2,
+                         "once when it starts failing; the usage limit, nothing to do, never (the morning line is "
+                         "quiet too); what asks something after it, once")
+        self.fresh_day("English.")
+        with mock.patch.object(dr, "notify") as notify:
+            self.run_reflection()
+            self.run_reflection(scenario="quota")
+        self.assertEqual(notify.call_args_list, [], "nor in an English brain")
         os.environ.pop("BRAIN_NO_NOTIFY")
         with mock.patch.object(dr.sys, "platform", "darwin"), mock.patch.object(dr.subprocess, "run") as run:
             dr.notify("Ouvre Bibo.", "Ton cerveau : le résumé de ta journée a échoué")

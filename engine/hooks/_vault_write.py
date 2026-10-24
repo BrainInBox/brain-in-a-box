@@ -35,8 +35,15 @@ def brain_dir(home):
 
 
 def profile_dir(brain):
-    """The name of the brain's profile folder (soul.md, lessons.md): Profile, else Profil when only it is there."""
-    return next((p for p in PROFILES if os.path.isdir(os.path.join(str(brain), p))), PROFILES[0])
+    """The name of the brain's profile folder: the one that holds soul.md, else lessons.md, else the one there
+    (Profile first). An older brain's Profil keeps its place when a Profile folder is made beside it since
+    (an older hook's memory.md or lessons.md)."""
+    there = [p for p in PROFILES if os.path.isdir(os.path.join(str(brain), p))]
+    for name in ("soul.md", "lessons.md"):
+        held = next((p for p in there if os.path.isfile(os.path.join(str(brain), p, name))), None)
+        if held:
+            return held
+    return there[0] if there else PROFILES[0]
 
 
 def clean_item(text, limit):

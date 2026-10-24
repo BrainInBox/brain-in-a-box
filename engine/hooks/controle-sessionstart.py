@@ -19,7 +19,9 @@ hook counts. When the cause is known, the line says it: the vault folder is
 missing (etat.json), or the user's own nightly is kept and the kit's waits in
 ~/.brain-in-a-box/pending (only its presence is looked at). The update's
 switch is off without a gbrain clone in ~/DEV/gbrain or beside a
-gbrain-selfupdate.sh of the user's own, as in gbrain-update-check.py.
+gbrain-selfupdate.sh of the user's own, as in gbrain-update-check.py. A switch
+seen late for the first time is said only when it still is GRACE_H hours later
+(shown.json): a computer just started may be catching up on its night right then.
 
 A green or orange line is shown once per run, a red one once a day while its
 cause lasts (shown.json, next to etat.json), in whichever session starts first,
@@ -49,6 +51,10 @@ from datetime import datetime, timezone
 
 CHECK_DEAD_H = 48
 UPDATE_DEAD_H = 72
+# Time for a missed night to catch up once the computer is on (StartWhenAvailable, Persistent=true, launchd
+# after a sleep): the check takes minutes, gbrain's update up to an hour.
+GRACE_H = 3
+LATE, STAMP = ":retard", "%Y-%m-%dT%H:%M:%S"
 LATE_DAYS = 14
 # Matched whole (fullmatch: no newline after it), ASCII digits only.
 VERSION = re.compile(r"v?\d+(\.\d+){2,3}", re.A)
@@ -59,12 +65,16 @@ CHECK_NOW = "dis « contrôle mon cerveau »"
 FIND_IT = "dis « retrouve mon cerveau »"
 UNDO = {"nuit": "dis « annule les corrections de cette nuit »"}
 UNDO_LAST = "dis « annule les dernières corrections »"
+KEPT_SCRIPT = "dis « mon contrôle de nuit ne tourne plus » pour que je regarde"
 SUMMARY = "dis « le résumé de ma journée échoue, regarde pourquoi »"
 WHY_LATE = "dis « pourquoi gbrain n'est pas à jour ? » pour que je regarde"
 GBRAIN = "gbrain (la recherche dans tes notes)"
 # The review skipped for what asks nothing of the person (etat.json's "claude"): a usage limit, the day's
 # three reviews done, a paid key it never uses. limite-reflexion: the evening summary hit that limit too.
 QUIET_SKIPS = {"saute:limite", "saute:limite-reflexion", "saute:quota-jour", "saute:abonnement"}
+# Alerts that ask nothing either: the evening summary stopped by the usage limit (the next one catches up), gbrain
+# back on the version that works (its own line says it once). gbrain's own red is said by update_lines().
+QUIET_ALERTS = {"reflexion_limite", "gbrain_retour", "gbrain"}
 # Keys of what is said once, then never again while it lasts (shown.json keeps them as SEEN).
 ONCE, SEEN = "info:", "vu"
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -133,6 +143,10 @@ def count(n, noun, feminine=False):
     return "%s %s" % ("une" if feminine else "un", noun) if n == 1 else "%d %s" % (n, noun.replace(" ", "s ") + "s")
 
 
+def hidden_secrets(n):
+    return "un mot de passe ou une clé écrit en clair" if n == 1 else "%d mots de passe ou clés écrits en clair" % n
+
+
 def listed(items):
     return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " et " + items[-1]
 
@@ -159,12 +173,12 @@ def check_lines(etat, now, home, trouble=False):
                                  "ne sont plus vérifiées la nuit ; %s pour que je le cherche." % FIND_IT))
     elif base and (now - base).total_seconds() > CHECK_DEAD_H * 3600:
         if os.path.isfile(os.path.join(home, ".brain-in-a-box", "pending", "gbrain-nightly.sh")):
-            reds.append(("controle", "Le contrôle de nuit ne tourne plus depuis %d jour%s : ton script de nuit modifié "
-                                     "est gardé et la nouvelle version attend ; relance l'installation pour la "
-                                     "prendre." % (n, s(n))))
+            reds.append(("controle" + LATE, "Le contrôle de nuit ne tourne plus depuis %d jour%s : ton script de nuit "
+                                            "a été modifié sur cet ordinateur, je l'ai gardé et la nouvelle version "
+                                            "attend à côté ; %s." % (n, s(n), KEPT_SCRIPT)))
         else:
-            reds.append(("controle", "Tes notes n'ont pas été vérifiées depuis %d jour%s, sans doute parce que "
-                                     "l'ordinateur était éteint la nuit : %s pour le faire maintenant."
+            reds.append(("controle" + LATE, "Tes notes n'ont pas été vérifiées depuis %d jour%s, sans doute parce que "
+                                            "l'ordinateur était éteint la nuit : %s pour le faire maintenant."
                          % (n, s(n), CHECK_NOW)))
     if not etat:
         return reds, None, None
@@ -181,11 +195,14 @@ def check_lines(etat, now, home, trouble=False):
                                   "cachés, mais des copies restent dans l'historique de ton cerveau : dis « quels "
                                   "mots de passe dois-je changer ? » et je te guide." % secrets))
     run = etat.get("run") if isinstance(etat.get("run"), str) and RUN_ID.fullmatch(etat["run"]) else None
-    if not run or etat.get("rapport_reecrit") is not True or any(k == "controle" for k, _ in reds):
+    if not run or etat.get("rapport_reecrit") is not True or any(k.startswith("controle") for k, _ in reds):
         return reds, None, None   # a quiet night rewrites no report, and says nothing
-    fixed, look = num(etat.get("corrections")), num(etat.get("a_voir"))
-    # gbrain's own alert is said by update_lines(), from last-update.json; what asks nothing is no worry.
-    alerts = codes - {"gbrain"} - ({"claude"} if etat.get("claude") in QUIET_SKIPS else set())
+    # A secret hidden tonight is no « petite correction »: undoing the night leaves it hidden, its own words bring it
+    # back. An etat.json from before corrections_notes counts them all as corrections.
+    fixed, look = num(etat.get("corrections_notes", etat.get("corrections"))), num(etat.get("a_voir"))
+    hidden = num(etat.get("secrets_caches"))
+    # What asks nothing is no worry.
+    alerts = codes - QUIET_ALERTS - ({"claude"} if etat.get("claude") in QUIET_SKIPS else set())
     summary = "reflexion" in alerts and etat.get("claude") != "saute:limite-reflexion"
     alerts.discard("reflexion")
     # Never « tout va bien » next to something to look at, nor next to a red said by its own line.
@@ -194,12 +211,24 @@ def check_lines(etat, now, home, trouble=False):
                         "un souci est à regarder" if alerts else "") if n]
     # The summary alone has its own words; anything else is in the report.
     say = SUMMARY if news == ["le résumé de ta journée ne se fait plus"] else None
-    done = "j'ai fait %s dans tes notes" % count(fixed, "petite correction", feminine=True)
-    calm = not (trouble or secrets or "gbrain" in codes)
-    if fixed and not news:
-        fine = " : tout va bien, rien à faire" if calm else ""
-        line = "%s, %s%s (si tu n'en veux pas, %s)." % (when, done, fine, UNDO.get(etat.get("mode"), UNDO_LAST))
+    fixes = count(fixed, "petite correction", feminine=True)
+    if fixed and hidden:
+        done = "j'ai fait %s dans tes notes et caché %s" % (fixes, hidden_secrets(hidden))
     elif fixed:
+        done = "j'ai fait %s dans tes notes" % fixes
+    else:
+        done = "j'ai caché %s dans tes notes" % hidden_secrets(hidden)
+    calm = not (trouble or secrets or "gbrain" in codes)
+    if (fixed or hidden) and not news:
+        fine = " : tout va bien, rien à faire" if calm else ""
+        how = ["si tu n'en veux pas, %s" % UNDO.get(etat.get("mode"), UNDO_LAST)] if fixed else []
+        if hidden:
+            one = hidden == 1
+            them = (("retrouver le mot de passe" if one else "retrouver les mots de passe") if fixed
+                    else "le retrouver" if one else "les retrouver")
+            how.append("pour %s, dis « %s »" % (them, "remets mon mot de passe" if one else "remets mes mots de passe"))
+        line = "%s, %s%s (%s)." % (when, done, fine, " ; ".join(how))
+    elif fixed or hidden:
         line = "%s, %s, mais %s : %s." % (when, done, listed(news), say or SAY_WHAT +
                                           " pour tout voir, et annuler ce que tu ne veux pas")
     elif news:
@@ -217,9 +246,8 @@ def update_lines(info, now):
         status, late = info.get("status"), num(info.get("retard_jours"))
         if status == "broken":
             # Not « ne marche plus »: gbq answers by keywords meanwhile (Windows), and the notes are safe.
-            reds.append(("gbrain:broken", "La recherche intelligente dans tes notes (gbrain) est en panne depuis une "
-                                          "mise à jour ratée, mais tes notes ne risquent rien : dis « répare gbrain » "
-                                          "et je t'aide à la remettre en route."))
+            reds.append(("gbrain:broken", "%s est en panne depuis une mise à jour ratée, mais tes notes ne risquent "
+                                          "rien : dis « répare gbrain » et je t'aide à le remettre en route." % GBRAIN))
         elif status == "rolled_back":
             # It works: said once per version that failed, and no version number.
             reds.append((ONCE + "gbrain:rolled_back:%s" % (version(info.get("tag")) or "?"),
@@ -234,8 +262,8 @@ def update_lines(info, now):
             or mtime("gbrain_update.py", timezone.utc)
         if base and (now - base).total_seconds() > UPDATE_DEAD_H * 3600:
             n = days_since(base, now)
-            reds.append(("maj", "Les mises à jour de %s ne sont plus vérifiées depuis %d jour%s : il marche "
-                                "toujours, mais %s." % (GBRAIN, n, s(n), WHY_LATE)))
+            reds.append(("maj" + LATE, "Les mises à jour de %s ne sont plus vérifiées depuis %d jour%s : il "
+                                       "marche toujours, mais %s." % (GBRAIN, n, s(n), WHY_LATE)))
     return reds
 
 
@@ -346,11 +374,23 @@ def check_part(home):
     shown_path = os.path.join(state, "shown.json")
     shown = read_json(shown_path) or {}
     seen = shown.get("rouge") if isinstance(shown.get("rouge"), dict) else {}
-    today = datetime.now().strftime("%Y-%m-%d")
+    now = datetime.now()
+    today = now.strftime("%Y-%m-%d")
+    # A switch seen late: since when (forgotten once it is not), said GRACE_H hours later if it still is.
+    was = shown.get("retard") if isinstance(shown.get("retard"), dict) else {}
+    since = {k: min(parsed(was.get(k), STAMP) or now, now) for k, _ in reds if k.endswith(LATE)}
+    late = {k: t.strftime(STAMP) for k, t in since.items()}
+    reds = [(k, text) for k, text in reds if (now - since.get(k, now)).total_seconds() >= GRACE_H * 3600
+            or not k.endswith(LATE)]
     parts = [(k, text) for k, text in reds if seen.get(k) not in (today, SEEN)]
     if line and shown.get("run") != run:
         parts.append(("run", line))
     parts = parts[:2]
+    if late != was:
+        shown["retard"] = late
+        if not parts:
+            os.makedirs(state, mode=0o700, exist_ok=True)
+            write_shown(shown_path, shown)
     if not parts:
         return None
     for k, _ in parts:

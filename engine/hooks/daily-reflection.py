@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Daily reflection: turns a day of work into Journal/YYYY-MM-DD.md and the
-day's entry in the "Recent context" of Profile/memory.md.
+day's entry in the "Recent context" of Profile/memory.md (Profil/ in an older brain).
 
 Scheduled at 12:00 and 23:00 (launchd / Task Scheduler). By hand:
     daily-reflection.py                    today, slot picked from the hour, after the missed evenings
@@ -41,9 +41,10 @@ this program's warnings too in French. Claude answers with Sonnet: see MODEL.
 Environment: BRAIN_DIR (vault, default ~/Documents/Brain), BRAIN_GIT_ROOTS
 (extra repos to scan, os.pathsep-separated), HERMES_DB, CLAUDE_BIN, CODEX_BIN,
 BRAIN_CODEX_MODEL, BRAIN_NO_NOTIFY=1 (no desktop notification when the reflection
-starts failing: macOS' own; a Windows toast, which Windows shows only when the task
-runs in the person's open session, not under install.ps1's default S4U task, where the
-morning line says it instead; notify-send on Linux when it is there).
+starts failing for something to do, never a usage limit: macOS' own; a Windows toast,
+which Windows shows only when the task runs in the person's open session, not under
+install.ps1's default S4U task, where the morning line says it instead; notify-send on
+Linux when it is there).
 For tests and trials: --projects DIR reads the transcripts from DIR instead of
 ~/.claude/projects, --logs DIR keeps the state, error log and run lock there
 instead of ~/.claude/logs.
@@ -63,9 +64,9 @@ except ImportError:  # Windows
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
     from _redact import redact
-    from _vault_write import clean_item, write_atomic  # shared with session-recap
+    from _vault_write import clean_item, profile_dir, write_atomic  # shared with session-recap
 except ImportError:
-    redact = clean_item = write_atomic = None
+    redact = clean_item = profile_dir = write_atomic = None
 try:
     import _headless as headless
     from _headless_claude import which
@@ -77,7 +78,7 @@ except ImportError:
     langue = None
 
 HOME = Path.home()
-BRAIN = MEMORY = LOGS = STATE = PROJECTS = None
+BRAIN = MEMORY = SOUL = LOGS = STATE = PROJECTS = None
 HERMES_DB = Path(os.environ.get("HERMES_DB") or HOME / ".hermes" / "state.db")
 
 BUDGET = 300_000      # hard cap on the session text sent in the prompt
@@ -158,9 +159,11 @@ SYSTEM = """You write the daily journal of a personal notes vault from one day o
 
 def configure(brain=None, logs=None, projects=None):
     """Sets the vault, log and transcript folders (main and tests)."""
-    global BRAIN, MEMORY, LOGS, STATE, PROJECTS
+    global BRAIN, MEMORY, SOUL, LOGS, STATE, PROJECTS
     BRAIN = Path(brain or os.environ.get("BRAIN_DIR") or HOME / "Documents" / "Brain")
-    MEMORY = BRAIN / "Profile" / "memory.md"
+    # An older brain's Profil folder: never a Profile made beside it, where the session start would lose its soul.md.
+    profile = BRAIN / (profile_dir(BRAIN) if profile_dir else "Profile")
+    MEMORY, SOUL = profile / "memory.md", profile / "soul.md"
     LOGS = Path(logs) if logs else HOME / ".claude" / "logs"
     STATE = LOGS / "daily-reflection.state.json"
     PROJECTS = Path(projects) if projects else HOME / ".claude" / "projects"
@@ -1023,7 +1026,7 @@ def reflect_once(day, slot, sessions, gitlog, agents, command=None, codex_comman
     try:
         jbase, mbase = read_note(journal_path), read_note(MEMORY)
         prompt = build_prompt(day, slot, sessions, gitlog, journal_now(jbase), memory_now(mbase, day),
-                              _read_text(BRAIN / "Profile" / "soul.md", SOUL_CAP), agents[0].agents, system)
+                              _read_text(SOUL, SOUL_CAP), agents[0].agents, system)
         answer = ask(prompt, agents, command, codex_command)
         draft = clean_answer(answer.output)
     except headless.HeadlessError as e:
@@ -1158,10 +1161,7 @@ def what_to_do(reason):
 
 
 def notice(reason):
-    """The notification's words, in French: what to do, or that there is nothing to do."""
-    if _kind(reason) == "quota":
-        who = "Codex" if str(reason).startswith("codex: ") else "Claude"
-        return f"Ta limite d'usage de {who} est atteinte : rien à faire, le prochain résumé rattrapera."
+    """The notification's words, in French: what to do (a usage limit is never notified)."""
     todo = what_to_do(reason)
     return todo[0].upper() + todo[1:]
 
@@ -1307,7 +1307,7 @@ def reflect(day, slot, dry_run=False, command=None, codex_command=None, missed=F
             print(e)
             jbase = mbase = None
         prompt = build_prompt(day, slot, masked, gitlog, journal_now(jbase), memory_now(mbase, day),
-                              _read_text(BRAIN / "Profile" / "soul.md", SOUL_CAP), chosen, system)
+                              _read_text(SOUL, SOUL_CAP), chosen, system)
         n_h = sum(1 for label, _ in masked if label.startswith("hermes"))
         n_x = sum(1 for label, _ in masked if label.startswith("codex "))
         counts = f"{len(masked) - n_h - n_x} Claude session(s), " if "claude" in chosen or "codex" not in chosen else ""
@@ -1390,6 +1390,7 @@ def record(day, slot, reason, answer, chosen, lang, missed):
             set_status_block(status_text(st, lang))
         else:
             st.update(failing_since=None, last_error=None)
+            st.pop("notified", None)
             set_status_block(None)
     else:
         if missed:
@@ -1400,12 +1401,15 @@ def record(day, slot, reason, answer, chosen, lang, missed):
                 del pending[day]
                 give_up(day, lang, f"{tries['costly']} costly failures, the last one: {reason}")
             _keep_pending(st, pending)
-        # Said once when it starts failing, not at every run: memory.md says it as long as it lasts.
-        started = not st.get("failing_since")
+        # Notified once while it fails, not at every run (memory.md says it as long as it lasts), and only what
+        # asks something: a usage limit needs nothing, and the morning line says nothing of it either. A state
+        # from before "notified": told when it started failing for another reason than the limit.
+        told = st.get("notified", bool(st.get("failing_since")) and _kind(st.get("last_error")) != "quota")
         st["failing_since"] = st.get("failing_since") or time.strftime("%Y-%m-%d %H:%M")
         st["last_error"] = reason
         set_status_block(status_text(st, lang))
-        if started:
+        if not told and _kind(reason) != "quota":
+            st["notified"] = True
             if lang == "fr":
                 notify(notice(reason), "Ton cerveau : le résumé de ta journée a échoué")
             else:
