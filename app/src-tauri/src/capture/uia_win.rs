@@ -294,6 +294,7 @@ impl Lire for Lecteur {
 #[cfg(test)]
 mod tests {
     use super::super::uia::{designe, elements, fermer, lignes, ouvrir, repli_pixels, zones_secretes, NOM_MAX};
+    use super::super::win::title;
     use super::*;
     use crate::capture::bureau::*;
     use crate::capture::win::Canvas;
@@ -453,7 +454,10 @@ mod tests {
                     return l.clone();
                 }
             }
-            assert!(start.elapsed() < attente, "{test}: never there; last: {:?}", l.map(|l| noms(&l)));
+            if start.elapsed() > attente {
+                let f = frame(handle(w.id)).map(cadre);
+                panic!("{test}: never there; last: {:?}; over the window: {:?}", l.map(|l| noms(&l)), f.map(|f| dessus(&f)));
+            }
             std::thread::sleep(Duration::from_millis(250));
         }
     }
@@ -483,7 +487,7 @@ mod tests {
             .filter(|&h| shown(h) && !cloaked(h))
             .filter_map(|h| Some((h, frame(h).map(cadre)?)))
             .filter(|(_, f)| f.touche(c))
-            .map(|(h, f)| format!("{} (pid {}) [{},{},{},{}]", class(h), pid_of(h), f.x, f.y, f.largeur, f.hauteur))
+            .map(|(h, f)| format!("{} {:?} (pid {}) [{},{},{},{}]", class(h), court(&title(h)), pid_of(h), f.x, f.y, f.largeur, f.hauteur))
             .collect()
     }
 
