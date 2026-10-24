@@ -490,11 +490,18 @@ mod tests {
     }
 
     fn csc(source: &str, dir: &Path) -> PathBuf {
+        csc_avec(source, dir, &["System.Windows.Forms.dll", "System.Drawing.dll"])
+    }
+
+    /// Compiled against those assemblies of the .NET Framework (a path under its folder, or a name).
+    fn csc_avec(source: &str, dir: &Path, refs: &[&str]) -> PathBuf {
         let windir = PathBuf::from(std::env::var("WINDIR").unwrap_or_else(|_| "C:\\Windows".into()));
-        let csc = windir.join("Microsoft.NET").join("Framework64").join("v4.0.30319").join("csc.exe");
+        let framework = windir.join("Microsoft.NET").join("Framework64").join("v4.0.30319");
+        let csc = framework.join("csc.exe");
         let exe = dir.join(source.replace(".cs", ".exe"));
         let out = Command::new(&csc)
-            .args(["/nologo", "/target:winexe", "/optimize+", "/r:System.Windows.Forms.dll", "/r:System.Drawing.dll"])
+            .args(["/nologo", "/target:winexe", "/optimize+"])
+            .args(refs.iter().map(|r| format!("/r:{}", if r.contains('\\') { framework.join(r).display().to_string() } else { r.to_string() })))
             .arg(format!("/out:{}", exe.display()))
             .arg(fixture(source))
             .output()
@@ -1164,6 +1171,28 @@ mod tests {
         let l = jusqu_a(&test, &win.window, WAIT, |l| l.elements.iter().any(|e| e.genre == Genre::Menu && !e.barre_titre && (e.nom.starts_with("Close") || e.nom.starts_with("Fermer"))));
         imprime(&format!("{test}_systeme"), &l, (0, 0));
         touches(&[VK_ESCAPE]);
+    }
+
+    /// WPF puts a tab's content under its tab: the selected one's commands are listed, its password
+    /// box found.
+    #[test]
+    #[ignore = "a Windows desktop (VM)"]
+    fn uia_wpf() {
+        let test = format!("wpf_{}", echelle());
+        let dir = tempfile::tempdir().unwrap();
+        let wpf = ["WPF\\PresentationFramework.dll", "WPF\\PresentationCore.dll", "WPF\\WindowsBase.dll", "System.Xaml.dll"];
+        let exe = csc_avec("atelier_wpf.cs", dir.path(), &wpf);
+        let titre = format!("Atelier WPF {}", std::process::id());
+        let _p = Program(Command::new(&exe).args([titre.as_str(), "60", "60", "640", "420"]).spawn().unwrap());
+        let win = listed_as(|f| f.titre == titre);
+        devant_par_clic(&win);
+        ouvrir();
+        let l = jusqu_a(&test, &win.window, WAIT, |l| nomme(l, Genre::Onglet, "Clients").is_some());
+        imprime(&test, &l, (0, 0));
+        assert!(nomme(&l, Genre::Bouton, "Valider la facture").is_some(), "{test}: the selected tab's content: {:?}", noms(&l));
+        let f = cadre_de(&win);
+        let s = secrets_jusqu_a(&test, &ecran_de_la(&win.window), |s| s.champs.iter().any(|c| c.touche(&f)));
+        noircis(&test, &mut ecran(f), (f.x, f.y), &s, &[ORANGE]);
     }
 
     /// Another window of the program, owned by none (as Edge's second window, another site): nothing of
