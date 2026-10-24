@@ -68,7 +68,7 @@ VM = [
     ("the window's identity not checked", WIN, [("            || same_window(&cible, identity(h).as_ref()),", "            || true,")], [TOILE]),
     ("a dialog's choice not said", WIN, [("                p.elements.iter_mut().for_each(|e| e.choix = true);\n                liste.choix.push(f);", "                let _ = f;")], [MESSAGE, QUESTION]),
     ("the dialog's guard counts what is seen only", WIN, [("attend, modale), &p.toutes) {", "attend, modale), &p.elements) {")], [MESSAGE]),
-    ("not a browser to the walk", WIN, [("navigateur: navigateur(&cible.app), cachees", "navigateur: false, cachees")], [EDGE]),
+    ("not a browser to the walk", WIN, [("self.arbre(h, cible.pid, navigateur(&cible.app), cachees)", "self.arbre(h, cible.pid, false, cachees)")], [EDGE]),
     ("a field's value for its name", WIN, [("            let nom = unsafe { el.CachedName() }.map(|b| court(&b.to_string())).unwrap_or_default();",
                                           "            let nom = unsafe { el.GetCurrentPropertyValue(UIA_ValueValuePropertyId) }.ok().and_then(|v| windows::core::BSTR::try_from(&v).ok()).map(|b| b.to_string()).filter(|v| !v.is_empty()).map(|v| court(&v)).unwrap_or_else(|| unsafe { el.CachedName() }.map(|b| court(&b.to_string())).unwrap_or_default());")], [ATELIER, EDGE]),
     ("no read as the guide opens (on Edge)", UIA, [("        let _ = envoi.send(Travail { cible: None, cachees: Vec::new(), reponse: None, echeance: None });\n", "")], [CHAUD]),
