@@ -2,8 +2,11 @@
 <!-- An Odoo-like page for the tests of the guide v2's elements (src/capture/uia_win.rs), opened in Edge
      on a Windows VM. Made-up customers only. Buttons and the password field of known colours: their
      boxes are found again on the screen. -->
-<html lang="fr">
+<html lang="fr" translate="no">
 <meta charset="utf-8">
+<!-- Never offered to be translated: on an English Edge, the bubble « Translate page from French? »
+     came over the page's right half in about 1 run of 3 (its commands then left out, as they should). -->
+<meta name="google" content="notranslate">
 <title>Devis - Odoo (imitation)</title>
 <style>
   html, body { margin: 0; font: 14px sans-serif; background: #f9fafb; color: #111; }
@@ -55,8 +58,9 @@
     <div class="card" role="toolbar" aria-label="Actions"><a href="#">Imprimer</a> <button>Dupliquer</button></div>
     <div class="card"><b>Prochaine relance</b><br><a href="#">Bijouterie Robin</a></div>
     <div class="card">Client : <span>Pharmacie Leroy</span></div>
-    <!-- A row without its list, as Odoo's home lays out its apps: data all the same, never listed. -->
-    <div class="card" role="listitem" aria-label="Fleuriste Garnier">Fleuriste Garnier</div>
+    <!-- A list, and a row out of any table (Edge: a DataItem under the page): data, never listed. -->
+    <div class="card"><b>Relances</b><ul><li>Cave Gauthier</li></ul></div>
+    <div class="card" role="row" aria-label="Fleuriste Garnier">Fleuriste Garnier</div>
     <div class="card"><button>Planifier une activite</button> <a href="#">Conditions generales</a></div>
     <div class="card" style="height:34px;overflow:hidden"><div style="height:80px"></div><button>Cache derriere</button></div>
     <div class="card" id="profond"></div>
