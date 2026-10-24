@@ -659,9 +659,10 @@ mod tests {
     }
 
     /// A window of the atelier's scale modes captured whole: the image `s` of its frame on the screen
-    /// (a capture's pixels to one of the screen), nothing left black, its green band along the right and
-    /// bottom edges (a capture cut short loses it); its dialog, `sd` of its own frame alone, laid at its
-    /// place at the window's scale: where it shows alone, to 3 pixels.
+    /// (a capture's pixels to one of the screen), nothing left black but the line Windows 11 draws around
+    /// a window (1 px at 96 dpi, 2 at 144), its green band along the right and bottom edges (a capture cut
+    /// short loses it); its dialog, `sd` of its own frame alone, laid at its place at the window's scale:
+    /// where it shows alone, to 3 pixels.
     fn captured_whole(win: &Found, dialog: HWND, s: f64, sd: f64) {
         let h = handle(win.window.id);
         // DWM's frames are the screen's pixels, whatever the thread counts in.
@@ -682,6 +683,7 @@ mod tests {
         let place = (dx + scaled(o.0, k), dy + scaled(o.1, k), dx + scaled(o.2, k), dy + scaled(o.3, k));
         let orange = bounds(&img, ORANGE).expect("the dialog's colour in the capture");
         let margins = black_margins(&img);
+        let line = |w: HWND| dpi(w).div_ceil(96);
         eprintln!(
             "{} at {} %, window {s:.3} dialog {sd:.3}: image {}x{} for {size:?}, black margins {margins:?}, green band right {right} bottom {bottom}; dialog alone {}x{} for {alone_size:?}, its colour {orange:?} for {place:?}",
             win.titre,
@@ -691,10 +693,10 @@ mod tests {
             alone.w,
             alone.h
         );
-        assert!(margins.iter().all(|&m| m <= 1), "nothing left black: {margins:?}");
+        assert!(margins.iter().all(|&m| m <= line(h)), "nothing left black: {margins:?}");
         assert!(right && bottom, "its green band along the right and bottom edges: right {right}, bottom {bottom}");
         assert!((img.w as i32).abs_diff(size.0) <= 2 && (img.h as i32).abs_diff(size.1) <= 2, "its size: {}x{}, not {size:?}", img.w, img.h);
-        assert!(black_margins(&alone).iter().all(|&m| m <= 1), "the dialog alone, nothing black: {:?}", black_margins(&alone));
+        assert!(black_margins(&alone).iter().all(|&m| m <= line(dialog)), "the dialog alone, nothing black: {:?}", black_margins(&alone));
         assert!(
             (alone.w as i32).abs_diff(alone_size.0) <= 2 && (alone.h as i32).abs_diff(alone_size.1) <= 2,
             "the dialog alone: {}x{}, not {alone_size:?}",
@@ -757,19 +759,18 @@ mod tests {
     }
 
     /// A program unaware of the scale whose drawing GDI scales: « Système (amélioré) » in its
-    /// Compatibility tab, ticked against an old ERP's blur. Drawn sharp at the screen's pixels.
+    /// Compatibility tab, ticked against an old ERP's blur. Sharp on the screen, PrintWindow draws it at
+    /// its own size all the same, as one Windows stretches (the CI's Windows at 125 and 150 %).
     #[test]
     #[ignore = "a Windows desktop (VM)"]
     fn bureau_echelle_a_window_gdi_scales_is_captured_whole() {
         let d = desk();
         let (_p, win, h, dialog) = open_with_dialog(&d, "gdi");
-        // SAFETY: a window handle; contexts Windows defines.
-        let (context, gdi, unaware) = unsafe {
-            let c = GetWindowDpiAwarenessContext(h);
-            (c.0 as isize, AreDpiAwarenessContextsEqual(c, DPI_AWARENESS_CONTEXT_UNAWARE_GDISCALED).as_bool(), AreDpiAwarenessContextsEqual(c, DPI_AWARENESS_CONTEXT_UNAWARE).as_bool())
-        };
-        eprintln!("gdi: dpi {} (dialog {}), context {context:#x}, equal to unaware gdi-scaled {gdi}, to unaware {unaware}", dpi(h), dpi(dialog));
-        captured_whole(&win, dialog, 1.0, 1.0);
+        // SAFETY: a window handle; a context Windows defines.
+        let gdi = unsafe { AreDpiAwarenessContextsEqual(GetWindowDpiAwarenessContext(h), DPI_AWARENESS_CONTEXT_UNAWARE_GDISCALED) }.as_bool();
+        assert_eq!((dpi(h), dpi(dialog), gdi), (96, 96, true), "unaware of the scale, its drawing scaled by GDI");
+        let s = 100.0 / f64::from(echelle());
+        captured_whole(&win, dialog, s, s);
     }
 
     /// echelle.cs (.github/ci), compiled in the test's folder: the screen's scale set as Settings sets it.
