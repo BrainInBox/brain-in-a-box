@@ -34,10 +34,10 @@ done   # HTTP/2 302, four times
 
 ## Update the captures
 
-They come from the nightly field test (`.github/workflows/terrain.yml`), artifacts `captures-macos-app`, `captures-windows-app` and `captures-linux-app`, and the update's `captures-macos-app-mise-a-jour` and `captures-windows-app-mise-a-jour` (the end once Claude is connected, SmartScreen naming the site's file):
+They come from the nightly field test (`.github/workflows/terrain.yml`), artifacts `captures-macos-app`, `captures-windows-app` and `captures-linux-app`, and the update's `captures-macos-app-mise-a-jour` and `captures-windows-app-mise-a-jour` (the end once Claude is connected, SmartScreen naming the site's file). Take a green run of master: a branch's run films an app that is not published yet.
 
 ```bash
-run=$(gh run list -w terrain.yml -s completed -L 1 --json databaseId -q '.[0].databaseId')
+run=$(gh run list -w terrain.yml -b master -s success -L 1 --json databaseId -q '.[0].databaseId')
 for a in macos-app windows-app linux-app macos-app-mise-a-jour windows-app-mise-a-jour; do
   gh run download "$run" -n "captures-$a" -D "/tmp/captures/${a/-app/}"
 done

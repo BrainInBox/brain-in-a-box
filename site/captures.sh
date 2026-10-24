@@ -40,8 +40,9 @@ done <<'EOF'
 # Installing the app. The DMG's window as laid out by Finder (release.yml and terrain.yml build it so).
 macos/dmg                           10  60 660 400  mac-dmg
 macos/gatekeeper                   382 129 260 284  mac-bloquee
-# SmartScreen names the file: the update's first install opens the very file of the site's button
-# (app-latest, Brain-in-a-Box_windows-x64-setup.exe); the path "app" opens a preview's or a build's.
+# SmartScreen names the file: the update's first install opens the preview before, kept under the
+# name of the site's button (Brain-in-a-Box_windows-x64-setup.exe) as its user has it; the path "app"
+# opens a preview's or a build's, named with its version.
 windows-mise-a-jour/01-avant-smartscreen.png 246 95 532 150 win-smartscreen-1
 windows-mise-a-jour/02-avant-smartscreen.png 246 95 532 498 win-smartscreen-2
 windows/installeur-bienvenue       263 166 497 386  win-installeur
