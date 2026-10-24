@@ -20,6 +20,9 @@
   .search { width: 160px; height: 28px; }
   .long { width: 220px; }
   .pwd { background: #ff9800; border: 0; width: 140px; height: 28px; }
+  .pwd2 { background: #00acc1; border: 0; width: 120px; height: 24px; }
+  .pwd3 { background: #c0ca33; border: 0; width: 120px; height: 24px; }
+  .mini { width: auto; }
   main { display: flex; gap: 16px; padding: 12px 16px; }
   table { border-collapse: collapse; background: #fff; width: 760px; }
   th, td { border-bottom: 1px solid #eee; padding: 4px 8px; text-align: left; }
@@ -56,6 +59,9 @@
   </table>
   <aside>
     <div class="card" role="toolbar" aria-label="Actions"><a href="#">Imprimer</a> <button>Dupliquer</button></div>
+    <!-- Password fields where the walk never goes, data: a list's row, a table's cell. -->
+    <div class="card"><ul style="margin:0;padding-left:16px"><li><label>Code <input class="pwd2" type="password" value="invente-1111"></label></li></ul></div>
+    <div class="card"><table class="mini"><tr><td><label>Signature <input class="pwd3" type="password" value="invente-2222"></label></td></tr></table></div>
     <div class="card"><b>Prochaine relance</b><br><a href="#">Bijouterie Robin</a></div>
     <div class="card">Client : <span>Pharmacie Leroy</span></div>
     <!-- A list, and a row out of any table (Edge: a DataItem under the page): data, never listed. -->

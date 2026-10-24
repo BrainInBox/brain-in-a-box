@@ -7,13 +7,18 @@
 //! fields by their label. A link only in a bar of navigation, menus or tools: elsewhere its name is
 //! often a customer (on a quotation's form, the customer is a link). Never a value, never anything
 //! inside a table, a list or a tree. In a browser, the page only, never its tabs. Each name on one
-//! line, 40 characters at most. What lies in a hidden zone or under another window is left out;
-//! password fields come apart, to be blacked on the image. A dialog that waits on the person's choice
-//! is said: Bibo puts a bubble there, never a ring (M1).
+//! line, 40 characters at most, nothing in it the person cannot see. The window asked, its dialogs and
+//! its menus only: not the program's other windows (Edge's other window is another site, Explorer's
+//! taskbar names every window). What lies in a hidden zone or under another window is left out. A
+//! dialog that waits on the person's choice is said, on whatever screen: Bibo puts a bubble there,
+//! never a ring (M1).
 //!
-//! The reader lives on a thread of its own, created with a first read when the guide opens: that one
-//! takes 0.3 to 1.2 s, and gets a browser to build its tree. The next ones take tens of milliseconds.
-//! macOS and Linux: not available (P6).
+//! The password fields come apart (§11 D2 (b), the whole screen leaves): every window's on the screen,
+//! whatever its program, found by a search of their own, and the windows whose fields cannot be known.
+//!
+//! The reader lives on a thread of its own, made when the guide opens with a first read: that one takes
+//! 0.3 to 1.2 s, and gets a browser to build its tree. The next ones take tens of milliseconds. Once the
+//! guide is closed, nothing is read. macOS and Linux: not available (P6).
 
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Mutex, MutexGuard, PoisonError};
@@ -23,15 +28,25 @@ use super::{Rate, Window};
 use crate::shot::Zone;
 
 pub const NOM_MAX: usize = 40;
-/// How long a list is waited for; past it, Bibo points by pixels as in v1. UIA's own timeouts keep a
-/// program that hangs from holding the reader much longer.
+/// Past it, nothing more is listed (the window on top's first): a page of a thousand links in a bar
+/// costs neither the person's quota nor time.
 #[cfg_attr(not(windows), allow(dead_code))]
+pub const ELEMENTS_MAX: usize = 150;
+/// Around a password field, what is blacked too: a program unaware of the scale lies 3 px off.
+#[cfg_attr(not(test), allow(dead_code))]
+const MARGE: i32 = 4;
+/// How long a read is waited for; past it, Bibo points by pixels as in v1, and a capture waits. UIA's
+/// own timeouts keep a program that hangs from holding the reader much longer.
 const DELAI: Duration = Duration::from_secs(3);
 /// The programs whose window shows another computer's screen: their tree has nothing of it (C10).
 #[cfg_attr(not(windows), allow(dead_code))]
 const DISTANTS: [&str; 6] = ["mstsc.exe", "msrdc.exe", "msrdcw.exe", "wfica32.exe", "cdviewer.exe", "vmconnect.exe"];
+/// Yandex's is `browser.exe`.
 #[cfg_attr(not(windows), allow(dead_code))]
-const NAVIGATEURS: [&str; 6] = ["msedge.exe", "chrome.exe", "firefox.exe", "brave.exe", "opera.exe", "vivaldi.exe"];
+const NAVIGATEURS: [&str; 16] = [
+    "msedge.exe", "chrome.exe", "firefox.exe", "brave.exe", "opera.exe", "vivaldi.exe", "arc.exe", "whale.exe", "librewolf.exe", "waterfox.exe",
+    "floorp.exe", "zen.exe", "chromium.exe", "thorium.exe", "browser.exe", "iexplore.exe",
+];
 
 /// A box on the screen, in physical pixels.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -86,6 +101,8 @@ pub struct Element {
     pub genre: Genre,
     /// On one line, 40 characters at most.
     pub nom: String,
+    /// The name was longer, and cut: a label that goes on may still be its.
+    pub coupe: bool,
     pub cadre: Cadre,
     /// One of the window's own buttons (minimize, maximize, close), not the program's.
     pub barre_titre: bool,
@@ -95,12 +112,33 @@ pub struct Element {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Liste {
-    /// Numbered from 1, in this order: the window on top first.
+    /// Numbered from 1, in this order: the window on top first. ELEMENTS_MAX at most.
     pub elements: Vec<Element>,
-    /// Password fields, blacked on the image before anything else is made of it.
-    pub secrets: Vec<Cadre>,
-    /// The dialogs that wait on the person's choice.
+    /// The dialogs that wait on the person's choice, this screen's or another's.
     pub choix: Vec<Cadre>,
+    /// The window asked waits on a dialog: nothing of it can be clicked.
+    pub attend: bool,
+}
+
+/// What never leaves in an image of a screen.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Secrets {
+    /// The password fields of every window on it, as UIA gives their boxes.
+    pub champs: Vec<Cadre>,
+    /// The windows whose fields cannot be known (a remote desktop, a program that does not answer):
+    /// never taken for windows without one.
+    pub opaques: Vec<Cadre>,
+}
+
+impl Secrets {
+    /// What is blacked of the fields: each box and 4 px around it.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn a_noircir(&self) -> Vec<Cadre> {
+        self.champs
+            .iter()
+            .map(|c| Cadre { x: c.x.saturating_sub(MARGE), y: c.y.saturating_sub(MARGE), largeur: c.largeur.saturating_add(2 * MARGE), hauteur: c.hauteur.saturating_add(2 * MARGE) })
+            .collect()
+    }
 }
 
 /// What a node of the tree is, as the rules see it.
@@ -162,6 +200,14 @@ pub(super) fn dialogue(classe: &str, proprietaire_attend: bool, modale: bool) ->
     classe == "#32770" || proprietaire_attend || modale
 }
 
+/// What the guard of the dialog counts: every button, seen or not (a hidden zone over « Non » leaves
+/// a choice all the same); a field or a list only when the person can type or pick in it. A read-only
+/// box of details, or one disabled or folded away, makes no form of a message.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(super) fn compte(genre: Genre, hors_vue: bool, actif: bool, lecture_seule: bool) -> bool {
+    !matches!(genre, Genre::Champ | Genre::Liste) || (actif && !hors_vue && !lecture_seule)
+}
+
 /// A dialog that waits on the person's choice (M1): two buttons or more, and nothing to type nor to
 /// pick from a list. A form in a dialog (Sage's invoice) is not one.
 #[cfg_attr(not(windows), allow(dead_code))]
@@ -184,13 +230,56 @@ pub(super) fn navigateur(app: &str) -> bool {
     NAVIGATEURS.contains(&exe(app).as_str())
 }
 
-/// A name as it goes in the list: on one line, no quote that would end it, no invisible or bidi mark,
-/// 40 characters at most.
+/// Shows nothing, yet the model reads it: controls; format characters (bidi, zero width, the soft
+/// hyphen, tags that spell ASCII unseen); variation selectors; Hangul's blank fillers.
+fn invisible(c: char) -> bool {
+    c.is_control()
+        || matches!(
+            c,
+            '\u{ad}'
+                | '\u{34f}'
+                | '\u{600}'..='\u{605}'
+                | '\u{61c}'
+                | '\u{6dd}'
+                | '\u{70f}'
+                | '\u{890}'..='\u{891}'
+                | '\u{8e2}'
+                | '\u{115f}'..='\u{1160}'
+                | '\u{17b4}'..='\u{17b5}'
+                | '\u{180b}'..='\u{180f}'
+                | '\u{200b}'..='\u{200f}'
+                | '\u{202a}'..='\u{202e}'
+                | '\u{2060}'..='\u{206f}'
+                | '\u{3164}'
+                | '\u{fe00}'..='\u{fe0f}'
+                | '\u{feff}'
+                | '\u{ffa0}'
+                | '\u{fff0}'..='\u{fffb}'
+                | '\u{110bd}'
+                | '\u{110cd}'
+                | '\u{13430}'..='\u{1343f}'
+                | '\u{1bca0}'..='\u{1bca3}'
+                | '\u{1d173}'..='\u{1d17a}'
+                | '\u{e0000}'..='\u{e0fff}'
+        )
+}
+
+/// A name on one line, no quote that would end it, nothing invisible, its spaces single.
+fn net(nom: &str) -> String {
+    let line: String = nom.chars().filter(|&c| !invisible(c) || c.is_whitespace()).map(|c| if c == '"' { '\'' } else { c }).collect();
+    line.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// A name as it goes in the list: 40 characters at most.
 #[cfg_attr(not(windows), allow(dead_code))]
 pub(super) fn court(nom: &str) -> String {
-    let invisible = |c: char| c.is_control() || matches!(c, '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{2069}' | '\u{feff}');
-    let line: String = nom.chars().filter(|&c| !invisible(c) || c.is_whitespace()).map(|c| if c == '"' { '\'' } else { c }).collect();
-    line.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(NOM_MAX).collect()
+    net(nom).chars().take(NOM_MAX).collect()
+}
+
+/// Whether `court` cuts that name.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(super) fn coupe(nom: &str) -> bool {
+    net(nom).chars().count() > NOM_MAX
 }
 
 /// A list holds for the window asked only: the same before and after its tree is read (R22). Closed
@@ -209,9 +298,10 @@ pub(super) fn tant_que<T>(toujours: impl Fn() -> bool, lire: impl FnOnce() -> Re
 
 /// Bibo points by pixels, as in v1, when the tree gives nothing to point at: nothing but the title
 /// bar's buttons (a program without accessibility, a canvas), or nothing at all (a remote desktop).
+/// Never on a dialog that waits on the person's choice, nor on a window that waits on a dialog.
 #[cfg_attr(not(test), allow(dead_code))]
 pub fn repli_pixels(liste: &Liste) -> bool {
-    liste.elements.iter().all(|e| e.barre_titre)
+    !liste.attend && liste.choix.is_empty() && liste.elements.iter().all(|e| e.barre_titre)
 }
 
 /// A letter without its accent, in lower case. A pair this misses only costs a ring: no match, a
@@ -244,18 +334,18 @@ enum Accord {
     Prefixe,
 }
 
-/// The engine's label against a name of the list: the same words; or the name says more after them
-/// (« New add »); or the name was cut at 40 characters and the label goes on.
-fn accord(libelle: &str, nom: &str) -> Option<Accord> {
-    let (a, b) = (mots(libelle), mots(nom));
+/// The engine's label against an element of the list: the same words; or the name says more after
+/// them (« New add »); or the name was cut at 40 characters and the label goes on.
+fn accord(libelle: &str, e: &Element) -> Option<Accord> {
+    let (a, b) = (mots(libelle), mots(&e.nom));
     if a.is_empty() || b.is_empty() {
         return None;
     }
     if a == b {
         return Some(Accord::Egal);
     }
-    let coupe = nom.chars().count() >= NOM_MAX && a.join(" ").starts_with(&b.join(" "));
-    (b.starts_with(&a) || coupe).then_some(Accord::Prefixe)
+    let suite = e.coupe && a.join(" ").starts_with(&b.join(" "));
+    (b.starts_with(&a) || suite).then_some(Accord::Prefixe)
 }
 
 /// The element the engine names by its number, if its name is the label the engine gives (C3): the
@@ -268,9 +358,9 @@ pub fn designe<'a>(liste: &'a Liste, numero: usize, libelle: &str) -> Option<&'a
     if e.barre_titre || e.choix {
         return None;
     }
-    match accord(libelle, &e.nom)? {
+    match accord(libelle, e)? {
         Accord::Egal => Some(e),
-        Accord::Prefixe => (!liste.elements.iter().any(|o| !o.barre_titre && accord(libelle, &o.nom) == Some(Accord::Egal))).then_some(e),
+        Accord::Prefixe => (!liste.elements.iter().any(|o| !o.barre_titre && accord(libelle, o) == Some(Accord::Egal))).then_some(e),
     }
 }
 
@@ -293,13 +383,12 @@ pub fn lignes(liste: &Liste, origine: (i32, i32), ratio: f64) -> Vec<String> {
         .collect()
 }
 
-/// The password fields as zones of the screen's capture taken from `origine`, for `shot::paint` to
-/// black them before anything else is made of the image.
+/// Boxes of the screen as zones of its capture taken from `origine`, for `shot::paint` to black them
+/// before anything else is made of the image.
 #[cfg_attr(not(test), allow(dead_code))]
-pub fn zones_secretes(liste: &Liste, origine: (i32, i32)) -> Vec<Zone> {
+pub fn zones_secretes(cadres: &[Cadre], origine: (i32, i32)) -> Vec<Zone> {
     let at = |v: i32, o: i32| v.saturating_sub(o).max(0) as u32;
-    liste
-        .secrets
+    cadres
         .iter()
         .map(|c| {
             let (x, y) = (at(c.x, origine.0), at(c.y, origine.1));
@@ -309,25 +398,29 @@ pub fn zones_secretes(liste: &Liste, origine: (i32, i32)) -> Vec<Zone> {
         .collect()
 }
 
-/// Who reads the tree: UIA on Windows, a fake in the tests. `None`: the window in front, Bibo's left
-/// out (the read that warms the reader up).
+/// Who reads the trees: UIA on Windows, a fake in the tests.
 #[cfg_attr(not(windows), allow(dead_code))]
 pub(super) trait Lire {
+    /// The commands of a window's program on its screen. `None`: the window in front, Bibo's left out
+    /// (the read that warms the reader up).
     fn lire(&mut self, cible: Option<&Window>, cachees: &[Cadre]) -> Result<Liste, Rate>;
+    /// The password fields of every window on that screen, and the windows whose fields are unknown.
+    fn secrets(&mut self, ecran: &Cadre) -> Result<Secrets, Rate>;
 }
+
+/// A read for the reader's thread to do with its reader (or with why it has none).
+type Tache = Box<dyn FnOnce(Result<&mut dyn Lire, Rate>) + Send>;
 
 #[cfg_attr(not(windows), allow(dead_code))]
 struct Travail {
-    cible: Option<Window>,
-    cachees: Vec<Cadre>,
-    reponse: Option<Sender<Result<Liste, Rate>>>,
-    /// Past it, nobody waits for the list any more: it is not read. A program that hangs never piles
-    /// up the lists asked meanwhile.
+    faire: Tache,
+    /// Past it, nobody waits for the read any more: it is not done. A program that hangs never piles
+    /// up the reads asked meanwhile.
     echeance: Option<Instant>,
 }
 
 /// The reader's thread: it makes its reader there (UIA's client stays on the thread that made it),
-/// reads once the window in front, then each list asked, in turn. It ends with its last sender.
+/// reads once the window in front, then each read asked, in turn. It ends with its last sender.
 #[cfg_attr(not(windows), allow(dead_code))]
 struct Travailleur {
     envoi: Sender<Travail>,
@@ -335,7 +428,7 @@ struct Travailleur {
 
 #[cfg_attr(not(windows), allow(dead_code))]
 impl Travailleur {
-    fn demarrer<L: Lire>(creer: impl FnOnce() -> Result<L, Rate> + Send + 'static) -> Travailleur {
+    fn demarrer<L: Lire + 'static>(creer: impl FnOnce() -> Result<L, Rate> + Send + 'static) -> Travailleur {
         let (envoi, recu) = mpsc::channel::<Travail>();
         let _ = std::thread::Builder::new().name("bibo-uia".into()).spawn(move || {
             let mut lecteur = creer();
@@ -343,26 +436,29 @@ impl Travailleur {
                 if t.echeance.is_some_and(|e| Instant::now() >= e) {
                     continue;
                 }
-                let liste = match &mut lecteur {
-                    Ok(l) => l.lire(t.cible.as_ref(), &t.cachees),
+                (t.faire)(match &mut lecteur {
+                    Ok(l) => Ok(l as &mut dyn Lire),
                     Err(e) => Err(*e),
-                };
-                if let Some(r) = t.reponse {
-                    let _ = r.send(liste);
-                }
+                });
             }
         });
-        let _ = envoi.send(Travail { cible: None, cachees: Vec::new(), reponse: None, echeance: None });
+        let chauffe: Tache = Box::new(|l| {
+            if let Ok(l) = l {
+                let _ = l.lire(None, &[]);
+            }
+        });
+        let _ = envoi.send(Travail { faire: chauffe, echeance: None });
         Travailleur { envoi }
     }
 }
 
-/// A list asked of the reader's thread, waited for `delai` at most.
-#[cfg_attr(not(windows), allow(dead_code))]
-fn demander(envoi: &Sender<Travail>, cible: &Window, cachees: &[Cadre], delai: Duration) -> Result<Liste, Rate> {
+/// A read asked of the reader's thread, waited for `delai` at most.
+fn demander<T: Send + 'static>(envoi: &Sender<Travail>, delai: Duration, quoi: impl FnOnce(&mut dyn Lire) -> Result<T, Rate> + Send + 'static) -> Result<T, Rate> {
     let (reponse, recu) = mpsc::channel();
-    let echeance = Some(Instant::now() + delai);
-    envoi.send(Travail { cible: Some(cible.clone()), cachees: cachees.to_vec(), reponse: Some(reponse), echeance }).map_err(|_| Rate::Indisponible)?;
+    let faire: Tache = Box::new(move |l| {
+        let _ = reponse.send(l.and_then(quoi));
+    });
+    envoi.send(Travail { faire, echeance: Some(Instant::now() + delai) }).map_err(|_| Rate::Indisponible)?;
     recu.recv_timeout(delai).map_err(|_| Rate::Indisponible)?
 }
 
@@ -372,7 +468,14 @@ fn lecteur() -> MutexGuard<'static, Option<Travailleur>> {
     LECTEUR.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// The guide opened: the reader is made, and reads the program in front once, for nothing.
+/// A read while the guide is open; none once it is closed, and no reader made again for it.
+fn au_lecteur<T: Send + 'static>(quoi: impl FnOnce(&mut dyn Lire) -> Result<T, Rate> + Send + 'static) -> Result<T, Rate> {
+    let envoi = lecteur().as_ref().map(|t| t.envoi.clone()).ok_or(Rate::Indisponible)?;
+    demander(&envoi, DELAI, quoi)
+}
+
+/// The guide v2 opened: the reader is made, and reads the program in front once, for nothing.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn ouvrir() {
     #[cfg(windows)]
     {
@@ -384,6 +487,7 @@ pub fn ouvrir() {
 }
 
 /// The guide closed: the reader goes, its thread with it.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn fermer() {
     lecteur().take();
 }
@@ -391,17 +495,16 @@ pub fn fermer() {
 /// The commands of `fenetre`'s program on the screen it is on, the hidden zones' left out.
 #[cfg_attr(not(test), allow(dead_code))]
 pub fn elements(fenetre: &Window, cachees: &[Cadre]) -> Result<Liste, Rate> {
-    #[cfg(windows)]
-    {
-        ouvrir();
-        let envoi = lecteur().as_ref().map(|t| t.envoi.clone()).ok_or(Rate::Indisponible)?;
-        demander(&envoi, fenetre, cachees, DELAI)
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = (fenetre, cachees);
-        Err(Rate::Indisponible)
-    }
+    let (fenetre, cachees) = (fenetre.clone(), cachees.to_vec());
+    au_lecteur(move |l| l.lire(Some(&fenetre), &cachees))
+}
+
+/// The password fields of the screen `ecran` (in physical pixels), Bibo's own windows left out: they
+/// are blacked whole. An error: nothing known, nothing sent.
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn secrets(ecran: &Cadre) -> Result<Secrets, Rate> {
+    let ecran = *ecran;
+    au_lecteur(move |l| l.secrets(&ecran))
 }
 
 #[cfg(test)]
@@ -410,7 +513,7 @@ mod tests {
     use std::sync::Arc;
 
     fn el(genre: Genre, nom: &str) -> Element {
-        Element { genre, nom: court(nom), cadre: Cadre { x: 10, y: 10, largeur: 80, hauteur: 30 }, barre_titre: false, choix: false }
+        Element { genre, nom: court(nom), coupe: coupe(nom), cadre: Cadre { x: 10, y: 10, largeur: 80, hauteur: 30 }, barre_titre: false, choix: false }
     }
 
     fn liste(elements: Vec<Element>) -> Liste {
@@ -422,8 +525,14 @@ mod tests {
         assert_eq!(court("  Nouveau\r\n\tdevis  "), "Nouveau devis");
         assert_eq!(court("Exporter toutes les factures du trimestre vers le cabinet comptable"), "Exporter toutes les factures du trimestr");
         assert_eq!(court(&"é".repeat(60)).chars().count(), NOM_MAX);
+        assert!(coupe(&"é".repeat(41)) && !coupe(&"é".repeat(40)) && !coupe(&format!("{}\u{e0041}\u{200b} ", "é".repeat(40))), "cut: more than 40 seen");
         assert_eq!(court("Dire \"oui\""), "Dire 'oui'", "a quote would end the line's name");
         assert_eq!(court("Pa\u{202e}yer\u{200b}\u{7}"), "Payer", "bidi, zero-width and control marks");
+        // Invisible to the person, read by the model: tags spell ASCII (U+E0041 is an invisible A), and
+        // the other format characters and variation selectors show nothing either.
+        assert_eq!(court("Payer\u{e0001}\u{e0049}\u{e0067}\u{e006e}\u{e006f}\u{e0072}\u{e0065}\u{e007f}"), "Payer", "tags");
+        assert_eq!(court("Pa\u{ad}yer\u{61c}\u{180e}\u{fe0f}\u{e0100}\u{fff9}\u{2064}\u{206f}"), "Payer", "format marks and variation selectors");
+        assert_eq!(court("Caf\u{e9} \u{2192} Facture n\u{b0} 12 \u{20ac}"), "Caf\u{e9} \u{2192} Facture n\u{b0} 12 \u{20ac}", "what shows stays");
     }
 
     #[test]
@@ -498,6 +607,17 @@ mod tests {
         saisie.pop();
         saisie.push(el(Genre::Case, "Ne plus demander"));
         assert!(attend_un_choix(true, &saisie), "a box to tick does not make it a form");
+
+        // What the guard counts: a field only when one can type in it.
+        for g in [Genre::Bouton, Genre::Case] {
+            assert!(compte(g, true, false, true), "{g:?}: counted, even out of view or disabled");
+        }
+        for g in [Genre::Champ, Genre::Liste] {
+            assert!(compte(g, false, true, false), "{g:?}: one can type or pick in it");
+            assert!(!compte(g, false, true, true), "{g:?}: read only, a message's details");
+            assert!(!compte(g, true, true, false), "{g:?}: folded away");
+            assert!(!compte(g, false, false, false), "{g:?}: disabled");
+        }
     }
 
     #[test]
@@ -507,6 +627,9 @@ mod tests {
         assert!(!distant("C:\\Sage\\Sage100.exe"));
         assert!(navigateur("C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe") && navigateur("C:\\x\\chrome.exe"));
         assert!(!navigateur("C:\\x\\EXCEL.EXE"));
+        for b in ["arc.exe", "whale.exe", "librewolf.exe", "waterfox.exe", "floorp.exe", "zen.exe", "chromium.exe", "thorium.exe", "browser.exe", "iexplore.exe"] {
+            assert!(navigateur(&format!("C:\\x\\{b}")), "{b}: its tabs are other sites' titles");
+        }
     }
 
     #[test]
@@ -530,6 +653,11 @@ mod tests {
         let barre = |n: &str| Element { barre_titre: true, ..el(Genre::Bouton, n) };
         assert!(repli_pixels(&liste(vec![barre("Réduire"), barre("Agrandir"), barre("Fermer")])), "a canvas");
         assert!(!repli_pixels(&liste(vec![barre("Fermer"), el(Genre::Bouton, "Nouveau")])));
+        // A dialog that waits on the person's choice, its buttons not listed (covered, in a hidden zone,
+        // on another screen): never a ring by pixels either.
+        let choix = Liste { choix: vec![Cadre { x: 300, y: 200, largeur: 360, hauteur: 200 }], ..Liste::default() };
+        assert!(!repli_pixels(&choix), "the person's choice");
+        assert!(!repli_pixels(&Liste { attend: true, ..Liste::default() }), "a window that waits on a dialog: nothing to click there");
     }
 
     #[test]
@@ -561,6 +689,12 @@ mod tests {
         assert!(designe(&l, 1, "Exporter toutes les factures du mois").is_none());
         let l = liste(vec![el(Genre::Bouton, "Exporter")]);
         assert!(designe(&l, 1, "Exporter toutes les factures").is_none(), "a short name was not cut");
+        // Forty characters exactly, not cut: its last word is all of it.
+        let quarante = "Supprimer d\u{e9}finitivement la facture n\u{b0} 1";
+        assert_eq!(quarante.chars().count(), NOM_MAX);
+        let l = liste(vec![el(Genre::Bouton, quarante)]);
+        assert!(designe(&l, 1, "Supprimer d\u{e9}finitivement la facture n\u{b0} 12").is_none(), "n\u{b0} 1 is not n\u{b0} 12");
+        assert!(designe(&l, 1, quarante).is_some());
     }
 
     #[test]
@@ -596,15 +730,20 @@ mod tests {
 
     #[test]
     fn password_fields_become_zones_of_the_capture() {
-        let l = Liste { secrets: vec![Cadre { x: 2000, y: 300, largeur: 160, hauteur: 24 }, Cadre { x: 1900, y: -10, largeur: 40, hauteur: 30 }], ..Liste::default() };
+        let s = Secrets { champs: vec![Cadre { x: 2000, y: 300, largeur: 160, hauteur: 24 }, Cadre { x: 1900, y: -10, largeur: 40, hauteur: 30 }], opaques: Vec::new() };
         assert_eq!(
-            zones_secretes(&l, (1920, 0)),
-            vec![Zone { x: 80, y: 300, largeur: 160, hauteur: 24 }, Zone { x: 0, y: 0, largeur: 20, hauteur: 20 }],
+            s.a_noircir(),
+            vec![Cadre { x: 1996, y: 296, largeur: 168, hauteur: 32 }, Cadre { x: 1896, y: -14, largeur: 48, hauteur: 38 }],
+            "4 px around (a program unaware of the scale: 3 px off)"
+        );
+        assert_eq!(
+            zones_secretes(&s.a_noircir(), (1920, 0)),
+            vec![Zone { x: 76, y: 296, largeur: 168, hauteur: 32 }, Zone { x: 0, y: 0, largeur: 24, hauteur: 24 }],
             "on the capture from its corner, what lies before it cut"
         );
         let mut img = crate::shot::tests::rgba(300, 400, [255, 152, 0, 255]);
-        crate::shot::paint(&mut img, &zones_secretes(&l, (1920, 0)));
-        assert_eq!(crate::shot::black_share(&img), (160.0 * 24.0 + 400.0) / (300.0 * 400.0));
+        crate::shot::paint(&mut img, &zones_secretes(&s.a_noircir(), (1920, 0)));
+        assert_eq!(crate::shot::black_share(&img), (168.0 * 32.0 + 24.0 * 24.0) / (300.0 * 400.0));
     }
 
     /// The windows read, in turn (None: the window in front).
@@ -633,6 +772,10 @@ mod tests {
             self.lus.lock().unwrap().push(cible.map(|w| w.id));
             Ok(liste(vec![el(Genre::Bouton, "Nouveau")]))
         }
+
+        fn secrets(&mut self, ecran: &Cadre) -> Result<Secrets, Rate> {
+            Ok(Secrets { champs: vec![*ecran], opaques: Vec::new() })
+        }
     }
 
     impl Drop for Faux {
@@ -659,6 +802,10 @@ mod tests {
         Window { id: 42, pid: 7, app: "C:\\Sage\\Sage100.exe".into() }
     }
 
+    fn liste_de(t: &Travailleur, delai: Duration) -> Result<Liste, Rate> {
+        demander(&t.envoi, delai, |l| l.lire(Some(&sage()), &[]))
+    }
+
     fn until(what: &str, done: impl Fn() -> bool) {
         let start = Instant::now();
         while !done() {
@@ -672,17 +819,24 @@ mod tests {
         let (t, lus, _) = faux(600, 5);
         until("the read that warms it up", || lus.lock().unwrap().len() == 1);
         assert_eq!(*lus.lock().unwrap(), vec![None], "the window in front, before any list is asked");
-        let start = Instant::now();
-        let l = demander(&t.envoi, &sage(), &[], Duration::from_secs(3)).unwrap();
-        assert!(start.elapsed() < Duration::from_millis(300), "{:?}", start.elapsed());
+        // The slow read was the first: the one asked comes after it (the clock is the VM's to measure).
+        let l = liste_de(&t, Duration::from_secs(3)).unwrap();
         assert_eq!((l.elements.len(), lus.lock().unwrap().clone()), (1, vec![None, Some(42)]));
+    }
+
+    #[test]
+    fn the_password_fields_are_read_on_the_readers_thread_too() {
+        let (t, lus, _) = faux(0, 0);
+        let ecran = Cadre { x: 0, y: 0, largeur: 1920, hauteur: 1080 };
+        assert_eq!(demander(&t.envoi, Duration::from_secs(3), move |l| l.secrets(&ecran)).map(|s| s.champs), Ok(vec![ecran]));
+        assert_eq!(*lus.lock().unwrap(), vec![None], "after the read that warms it up");
     }
 
     #[test]
     fn a_list_too_slow_is_none_and_pixels_take_over() {
         let (t, _, _) = faux(0, 2000);
         let start = Instant::now();
-        assert_eq!(demander(&t.envoi, &sage(), &[], Duration::from_millis(150)), Err(Rate::Indisponible));
+        assert_eq!(liste_de(&t, Duration::from_millis(150)), Err(Rate::Indisponible));
         assert!(start.elapsed() < Duration::from_secs(1));
     }
 
@@ -691,20 +845,23 @@ mod tests {
         let (porte, attente) = mpsc::channel();
         let (t, lus, _, commencees) = faux_a_la_porte(0, 0, Some(attente));
         until("warmed up", || lus.lock().unwrap().len() == 1);
-        t.envoi.send(Travail { cible: Some(sage()), cachees: Vec::new(), reponse: None, echeance: None }).unwrap();
+        let sans_reponse: Tache = Box::new(|l| {
+            let _ = l.map(|l| l.lire(Some(&sage()), &[]));
+        });
+        t.envoi.send(Travail { faire: sans_reponse, echeance: None }).unwrap();
         until("a read under way, held", || *commencees.lock().unwrap() == 2);
         for _ in 0..4 {
-            assert_eq!(demander(&t.envoi, &sage(), &[], Duration::from_millis(20)), Err(Rate::Indisponible));
+            assert_eq!(liste_de(&t, Duration::from_millis(20)), Err(Rate::Indisponible));
         }
         drop(porte);
-        assert!(demander(&t.envoi, &sage(), &[], Duration::from_secs(5)).is_ok());
+        assert!(liste_de(&t, Duration::from_secs(5)).is_ok());
         assert_eq!(lus.lock().unwrap().len(), 3, "the warm-up, the one under way, this one: not the four given up");
     }
 
     #[test]
     fn a_reader_that_cannot_be_made_lists_nothing() {
         let t = Travailleur::demarrer(|| -> Result<Faux, Rate> { Err(Rate::Indisponible) });
-        assert_eq!(demander(&t.envoi, &sage(), &[], Duration::from_secs(1)), Err(Rate::Indisponible));
+        assert_eq!(liste_de(&t, Duration::from_secs(1)), Err(Rate::Indisponible));
     }
 
     #[test]
@@ -713,6 +870,17 @@ mod tests {
         until("warmed up", || lus.lock().unwrap().len() == 1);
         drop(t);
         until("its reader gone with its thread", || *parti.lock().unwrap());
+    }
+
+    /// Windows: the real reader made, then gone with the guide. A list asked after (a step late to
+    /// answer) makes none again, nor reads the window in front.
+    #[test]
+    fn once_the_guide_is_closed_nothing_is_read() {
+        ouvrir();
+        fermer();
+        assert_eq!(elements(&sage(), &[]), Err(Rate::Indisponible));
+        assert_eq!(secrets(&Cadre { x: 0, y: 0, largeur: 1920, hauteur: 1080 }), Err(Rate::Indisponible));
+        assert!(lecteur().is_none(), "no reader made again");
     }
 
     #[test]
