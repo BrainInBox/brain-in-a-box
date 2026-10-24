@@ -359,11 +359,14 @@ fn open_guide(app: &tauri::AppHandle) -> tauri::Result<()> {
         None => builder.inner_size(400.0, 600.0),
     };
     let window = builder.build()?;
+    // The guide v2's elements: UI Automation's first read takes up to 1.2 s, done now (Windows).
+    capture::uia::ouvrir();
     let handle = app.clone();
     window.on_window_event(move |event| match event {
         // The installer's window comes back: an app with no window in sight looks gone.
         tauri::WindowEvent::Destroyed => {
             guide::fin();
+            capture::uia::fermer();
             if let Some(main) = handle.get_webview_window("main") {
                 let _ = main.unminimize();
             }

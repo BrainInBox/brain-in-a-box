@@ -415,6 +415,18 @@ class GuideReel(unittest.TestCase):
             w, h, rows = lecteur.decode_png(terrain.ecrans_guide.avec_bande(toile, "Y7KC").png())
             self.assertEqual((w, h, lecteur.read_code(rows, h - lecteur.BAND)), (1280, 828, "Y7KC"), ecran)
 
+    def test_the_bands_letters_are_the_apps(self):
+        # The night draws its codes from the letters the app's band draws (shot.rs) and the fake reads: no
+        # letter the model reads as another (U and V, phases 0 of the guide and of the guide v2).
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("lecteur_bande", LECTEUR_BANDE)
+        lecteur = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(lecteur)
+        shot = Path(HERE, "..", "..", "app", "src-tauri", "src", "shot.rs").read_text(encoding="utf-8")
+        app = re.search(r'pub const ALPHABET: &\[u8; \d+\] = b"([^"]+)";', shot).group(1)
+        self.assertEqual((terrain.CODE_ALPHABET, lecteur.ALPHABET), (app, app))
+        self.assertFalse(set("UV") & set(app), app)
+
     def test_the_rules_and_the_schema_are_the_apps(self):
         system, schema = terrain.guide_contrat()
         with open(terrain.CONSIGNES, encoding="utf-8") as f:

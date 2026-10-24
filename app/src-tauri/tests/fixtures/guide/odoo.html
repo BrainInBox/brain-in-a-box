@@ -1,0 +1,91 @@
+<!doctype html>
+<!-- An Odoo-like page for the tests of the guide v2's elements (src/capture/uia_win.rs), opened in Edge
+     on a Windows VM. Made-up customers only. Buttons and the password field of known colours: their
+     boxes are found again on the screen. -->
+<html lang="fr" translate="no">
+<meta charset="utf-8">
+<!-- Never offered to be translated: on an English Edge, the bubble « Translate page from French? »
+     came over the page's right half in about 1 run of 3 (its commands then left out, as they should). -->
+<meta name="google" content="notranslate">
+<title>Devis - Odoo (imitation)</title>
+<style>
+  html, body { margin: 0; font: 14px sans-serif; background: #f9fafb; color: #111; }
+  nav { display: flex; align-items: center; gap: 4px; height: 46px; background: #714b67; padding: 0 8px; }
+  nav a, nav button { color: #fff; background: none; border: 0; font: inherit; padding: 6px 10px; text-decoration: none; }
+  nav .systray { margin-left: auto; display: flex; gap: 4px; }
+  .panel { display: flex; align-items: center; gap: 8px; padding: 10px 16px; background: #fff; border-bottom: 1px solid #ddd; }
+  .new { background: #2e7d32; color: #fff; border: 0; width: 96px; height: 34px; font: inherit; }
+  .save { background: #8e24aa; color: #fff; border: 0; width: 110px; height: 34px; font: inherit; }
+  .del { background: #e53935; color: #fff; border: 0; width: 110px; height: 34px; font: inherit; }
+  .search { width: 160px; height: 28px; }
+  .long { width: 220px; }
+  .pwd { background: #ff9800; border: 0; width: 140px; height: 28px; }
+  main { display: flex; gap: 16px; padding: 12px 16px; }
+  table { border-collapse: collapse; background: #fff; width: 760px; }
+  th, td { border-bottom: 1px solid #eee; padding: 4px 8px; text-align: left; }
+  td a { color: #017e84; }
+  aside { width: 300px; }
+  .card { background: #fff; border: 1px solid #ddd; padding: 8px; margin-bottom: 8px; }
+  .far { position: absolute; top: 3000px; left: 40px; }
+</style>
+<nav aria-label="Menu principal">
+  <button aria-label="Menu des applications">&#9638;</button>
+  <a href="#">Ventes</a>
+  <a href="#">Commandes</a>
+  <a href="#">A facturer</a>
+  <a href="#">Produits</a>
+  <div class="systray">
+    <button aria-label="Messages">&#9993;</button>
+    <button aria-label="Mon compte">&#9786;</button>
+  </div>
+</nav>
+<div class="panel">
+  <button class="new">Nouveau</button>
+  <input class="search" type="search" placeholder="Rechercher..." aria-label="Rechercher">
+  <button class="save">Enregistrer</button>
+  <button class="del">Supprimer</button>
+  <button class="long">Exporter toutes les factures du trimestre vers le cabinet comptable</button>
+  <label>Mot de passe <input class="pwd" type="password" value="invente-0000"></label>
+  <button aria-label="Precedent">&lt;</button>
+  <button aria-label="Suivant">&gt;</button>
+</div>
+<main>
+  <table>
+    <thead><tr><th><input type="checkbox" aria-label="Tout selectionner"></th><th>Numero</th><th>Client</th><th>Vendeur</th><th>Total</th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <aside>
+    <div class="card" role="toolbar" aria-label="Actions"><a href="#">Imprimer</a> <button>Dupliquer</button></div>
+    <div class="card"><b>Prochaine relance</b><br><a href="#">Bijouterie Robin</a></div>
+    <div class="card">Client : <span>Pharmacie Leroy</span></div>
+    <!-- A list, and a row out of any table (Edge: a DataItem under the page): data, never listed. -->
+    <div class="card"><b>Relances</b><ul><li>Cave Gauthier</li></ul></div>
+    <div class="card" role="row" aria-label="Fleuriste Garnier">Fleuriste Garnier</div>
+    <div class="card"><button>Planifier une activite</button> <a href="#">Conditions generales</a></div>
+    <div class="card" style="height:34px;overflow:hidden"><div style="height:80px"></div><button>Cache derriere</button></div>
+    <div class="card" id="profond"></div>
+  </aside>
+</main>
+<button class="far">Bas de page</button>
+<script>
+  const clients = ["Boulangerie Martin", "Garage Dupont", "Pharmacie Leroy", "Plomberie Moreau", "Cafe Lefebvre",
+    "Fleuriste Garnier", "Librairie Fournier", "Menuiserie Girard", "Coiffure Bonnet", "Epicerie Lambert",
+    "Optique Fontaine", "Traiteur Rousseau", "Cordonnerie Vincent", "Pressing Muller", "Quincaillerie Faure"];
+  const rows = document.getElementById("rows");
+  clients.forEach((c, i) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td><input type="checkbox" aria-label="Selectionner"></td><td>S000${40 + i}</td>` +
+      `<td><a href="#">${c}</a></td><td>Vendeur ${i % 3}</td><td>${(120 + 37 * i)},00 &euro;</td>`;
+    rows.appendChild(tr);
+  });
+  // Toolbars in toolbars, 40 deep, a button at the bottom: past the reader's depth, never walked.
+  let deep = document.getElementById("profond");
+  for (let i = 0; i < 40; i++) {
+    const d = document.createElement("div");
+    d.setAttribute("role", "toolbar");
+    deep.appendChild(d);
+    deep = d;
+  }
+  deep.innerHTML = "<button>Tres profond</button>";
+</script>
+</html>

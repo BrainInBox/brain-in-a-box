@@ -21,6 +21,10 @@ mod mac;
 mod win;
 #[cfg(target_os = "linux")]
 mod x11;
+/// The guide v2's elements: what can be clicked in the program in front, from UI Automation.
+pub mod uia;
+#[cfg(windows)]
+mod uia_win;
 
 /// How long Bibo waits for the click in the user's window (R4): time to find the program in the
 /// taskbar. The guide's window counts it down (the status gives it).
@@ -81,8 +85,7 @@ impl From<&Found> for Fenetre {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Rate {
     /// Not on this system (Wayland, X11 without a compositing manager, macOS 13, macOS refusing): paste
-    /// mode.
-    #[cfg_attr(windows, allow(dead_code))]
+    /// mode. Windows: UI Automation would not answer (the guide v2's elements).
     Indisponible,
     /// Closed, or its id now another program's window (R22).
     Introuvable,
