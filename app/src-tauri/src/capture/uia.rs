@@ -7,9 +7,9 @@
 //! fields by their label. A link only in a bar of navigation, menus or tools: elsewhere its name is
 //! often a customer (on a quotation's form, the customer is a link). Never a value, never anything
 //! inside a table, a list or a tree. In a browser, the page only, never its tabs. Each name on one
-//! line, 40 characters at most. What lies in a hidden zone is left out; password fields come apart,
-//! to be blacked on the image. A dialog that waits on the person's choice is said: Bibo puts a bubble
-//! there, never a ring (M1).
+//! line, 40 characters at most. What lies in a hidden zone or under another window is left out;
+//! password fields come apart, to be blacked on the image. A dialog that waits on the person's choice
+//! is said: Bibo puts a bubble there, never a ring (M1).
 //!
 //! The reader lives on a thread of its own, created with a first read when the guide opens: that one
 //! takes 0.3 to 1.2 s, and gets a browser to build its tree. The next ones take tens of milliseconds.
@@ -505,13 +505,19 @@ mod tests {
 
     #[test]
     fn the_label_against_the_name() {
-        let l = liste(vec![el(Genre::Bouton, "Nouveau"), el(Genre::Bouton, "New arrow_drop_down"), el(Genre::Menu, "&Édition")]);
+        let l = liste(vec![
+            el(Genre::Bouton, "Nouveau"),
+            el(Genre::Bouton, "New arrow_drop_down"),
+            el(Genre::Menu, "&Édition"),
+            el(Genre::Bouton, "arrow_back Retour"),
+        ]);
         assert_eq!(designe(&l, 1, "Nouveau").map(|e| e.nom.as_str()), Some("Nouveau"));
         assert!(designe(&l, 1, "  NOUVEAU ").is_some(), "case and spaces");
         assert!(designe(&l, 1, "Enregistrer").is_none(), "another name: the number was wrong");
         assert!(designe(&l, 2, "New").is_some(), "an icon's word after it");
+        assert!(designe(&l, 4, "Retour").is_some(), "an icon's word before it");
         assert!(designe(&l, 3, "Edition").is_some(), "accents and the accelerator");
-        assert!(designe(&l, 0, "Nouveau").is_none() && designe(&l, 4, "Nouveau").is_none(), "no such number");
+        assert!(designe(&l, 0, "Nouveau").is_none() && designe(&l, 5, "Nouveau").is_none(), "no such number");
         assert!(designe(&l, 1, "").is_none() && designe(&l, 1, "▾").is_none(), "no label, nothing to check");
 
         // Words after it: the name begins with the label.

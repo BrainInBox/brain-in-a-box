@@ -414,6 +414,22 @@ mod tests {
         from_bgra(canvas.pixels(), c.largeur as u32, c.hauteur as u32, (0, 0, c.largeur, c.hauteur))
     }
 
+    /// The window on the screen once each colour of its commands shows, 3 s at most: a run of the CI
+    /// once found no pixel of Edge's password field (3 jobs of 6), nothing said what lay over it. Each
+    /// capture taken again says the windows over the window then.
+    fn ecran_montre(test: &str, f: Cadre, couleurs: &[[u8; 3]]) -> Rgba {
+        let start = Instant::now();
+        loop {
+            let img = ecran(f);
+            let absentes: Vec<_> = couleurs.iter().filter(|&&c| count(&img, c) == 0).collect();
+            if absentes.is_empty() || start.elapsed() > Duration::from_secs(3) {
+                return img;
+            }
+            mesure(test, "capture_reprise", format!("{absentes:?} absent; over the window: {:?}", dessus(&f)));
+            std::thread::sleep(Duration::from_millis(250));
+        }
+    }
+
     fn nomme<'a>(l: &'a Liste, genre: Genre, nom: &str) -> Option<&'a Element> {
         l.elements.iter().find(|e| e.genre == genre && e.nom == nom)
     }
@@ -507,7 +523,7 @@ mod tests {
 
         let f = cadre_de(&win);
         let origine = (f.x, f.y);
-        let mut img = ecran(f);
+        let mut img = ecran_montre(&test, f, &[GREEN, PURPLE, RED, ORANGE]);
         imprime(&test, &l, origine);
         let mut pire = 0;
         for (couleur, nom) in [(GREEN, "Nouveau"), (PURPLE, "Enregistrer"), (RED, "Supprimer")] {
@@ -648,7 +664,7 @@ mod tests {
 
         let f = cadre_de(&win);
         let origine = (f.x, f.y);
-        let mut img = ecran(f);
+        let mut img = ecran_montre(&test, f, &[GREEN, PURPLE, RED, ORANGE]);
         imprime(&test, &l, origine);
         let mut pire = 0;
         for (couleur, nom) in [(GREEN, "Nouveau"), (PURPLE, "Enregistrer"), (RED, "Supprimer")] {
