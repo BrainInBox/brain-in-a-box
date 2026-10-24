@@ -335,6 +335,22 @@ fn lay(base: &mut Rgba, dialog: &Rgba, dx: i64, dy: i64) {
     }
 }
 
+/// The image at another size, each pixel the one under its centre: a dialog of another scale than its
+/// window, at the window's.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn resized(img: &Rgba, w: u32, h: u32) -> Rgba {
+    let under = |i: u32, to: u32, from: u32| ((u64::from(i) * 2 + 1) * u64::from(from) / (u64::from(to) * 2)) as u32;
+    let mut px = Vec::with_capacity(w as usize * h as usize * 4);
+    for y in 0..h {
+        let row = under(y, h, img.h) * img.w;
+        for x in 0..w {
+            let i = ((row + under(x, w, img.w)) * 4) as usize;
+            px.extend_from_slice(&img.px[i..i + 4]);
+        }
+    }
+    Rgba { w, h, px }
+}
+
 /// A frame as ScreenCaptureKit gives it (blue, green, red, alpha; `stride` bytes a row, padded) into
 /// RGBA, its alpha kept: a window's rounded corners are transparent, put on white before it is sent.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
@@ -643,6 +659,21 @@ mod tests {
         let mut base = crate::shot::tests::rgba(8, 6, [0, 0, 255, 255]);
         lay(&mut base, &dialog, 50, -50);
         assert_eq!((orange(&base), base.w, base.h), (vec![], 8, 6));
+    }
+
+    #[test]
+    fn a_dialog_of_another_scale_is_resized_pixel_for_pixel() {
+        // 2×2 of four colours, then 3×3 (150 %) and back to 2×2: each pixel the one under its centre.
+        let colours = [[1, 0, 0, 255], [2, 0, 0, 255], [3, 0, 0, 255], [4, 0, 0, 255]];
+        let img = Rgba { w: 2, h: 2, px: colours.concat() };
+        let big = resized(&img, 3, 3);
+        let red = |img: &Rgba| img.px.chunks_exact(4).map(|p| p[0]).collect::<Vec<_>>();
+        assert_eq!((big.w, big.h, red(&big)), (3, 3, vec![1, 2, 2, 3, 4, 4, 3, 4, 4]));
+        assert_eq!(resized(&big, 2, 2).px, img.px);
+        assert_eq!(resized(&img, 2, 2).px, img.px, "at its size, the same");
+        let small = resized(&big, 1, 2);
+        assert_eq!((small.w, small.h, red(&small)), (1, 2, vec![2, 4]));
+        assert_eq!(resized(&img, 0, 5).px.len(), 0);
     }
 
     #[test]

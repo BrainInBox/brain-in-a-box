@@ -27,7 +27,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     IsIconic, IsWindow, IsWindowVisible, GWL_EXSTYLE, GW_OWNER, PW_RENDERFULLCONTENT, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
 };
 
-use super::{from_bgra, is_terminal, lay, same_window, Found, Rate, Window};
+use super::{from_bgra, is_terminal, lay, resized, same_window, Found, Rate, Window};
 use crate::shot::{Rgba, MAX_SIDE};
 
 /// The shell's own windows: the desktop, the taskbar, and Start and its search (a store app's
@@ -221,7 +221,8 @@ pub fn foreground() -> Option<Found> {
 }
 
 /// While it lives, this thread counts in physical pixels, as PrintWindow draws a window aware of the
-/// screen's scale: its frame and its image agree. One Windows stretches draws at its own (`image_ratio`).
+/// screen's scale: its frame and its image agree. One Windows stretches draws at its own (`image_ratio`,
+/// which needs it).
 struct Physical(DPI_AWARENESS_CONTEXT);
 
 impl Physical {
@@ -306,8 +307,9 @@ impl Drop for Canvas {
 
 /// A capture's pixels to a pixel of the screen. A program unaware of the screen's scale (or aware of
 /// another one) has its windows stretched by Windows on the screen, while PrintWindow draws them at
-/// their own size: 96 / 144 at 150 %. Counted in physical pixels (`Physical`).
-fn image_ratio(h: HWND) -> f64 {
+/// their own size: 96 / 144 at 150 %. Right only for a thread counting in physical pixels: the screen's
+/// DPI is read as the thread counts.
+fn image_ratio(h: HWND, _: &Physical) -> f64 {
     let (mut screen, mut y) = (0, 0);
     // SAFETY: a window handle and plain values; two u32 for the call.
     let (own, read) = unsafe {
@@ -334,13 +336,17 @@ fn frame(h: HWND) -> Option<RECT> {
 }
 
 /// The window drawn by itself into a bitmap of ours, cut to its visible frame (without the invisible
-/// borders of Windows 10 and 11) at the size it drew, with that frame on the screen; None when it would
-/// not draw.
-fn print(h: HWND) -> Option<(Rgba, RECT)> {
+/// borders of Windows 10 and 11) at the size it drew, with that frame on the screen and the ratio it
+/// drew at (`image_ratio`); None when it would not draw.
+fn print(h: HWND, physical: &Physical) -> Option<(Rgba, RECT, f64)> {
     let mut outer = RECT::default();
     // SAFETY: a RECT for the call.
     unsafe { GetWindowRect(h, &mut outer) }.ok()?;
-    let (w, ht) = (outer.right - outer.left, outer.bottom - outer.top);
+    // Read once, before it draws: the image and its cut at the same scale.
+    let r = image_ratio(h, physical);
+    // Aware of a bigger scale than its screen's, it draws bigger than its frame: room for all of it.
+    let room = |v: i32| (f64::from(v) * r.max(1.0)).ceil() as i32;
+    let (w, ht) = (room(outer.right - outer.left), room(outer.bottom - outer.top));
     if w <= 0 || ht <= 0 || w as u32 > MAX_SIDE || ht as u32 > MAX_SIDE {
         return None;
     }
@@ -350,10 +356,9 @@ fn print(h: HWND) -> Option<(Rgba, RECT)> {
     if !unsafe { PrintWindow(h, canvas.dc, PRINT_WINDOW_FLAGS(PW_RENDERFULLCONTENT)) }.as_bool() {
         return None;
     }
-    let r = image_ratio(h);
     let mine = |v: i32| in_image(v, r);
     let keep = (mine(shown.left - outer.left), mine(shown.top - outer.top), mine(shown.right - outer.left), mine(shown.bottom - outer.top));
-    Some((from_bgra(canvas.pixels(), w as u32, ht as u32, keep), shown))
+    Some((from_bgra(canvas.pixels(), w as u32, ht as u32, keep), shown, r))
 }
 
 /// The dialog a disabled window waits on (R11): its last active popup, or its hidden owner's, of
@@ -373,9 +378,11 @@ fn modal(h: HWND, pid: u32) -> Option<HWND> {
 
 /// The window, if it is still the one chosen, as it draws itself, with the dialog it waits on
 /// drawn at its place. Checked again afterwards: the image is that window's, not another that took
-/// its id meanwhile.
+/// its id meanwhile. Its pixels are the window's own: `image_ratio` of one of the screen (1 for a
+/// program aware of the scale, 2/3 for one Windows stretches to 150 %); a point of the screen lies in
+/// it at (point - its frame's corner) x that ratio.
 pub fn grab(chosen: &Window) -> Result<Rgba, Rate> {
-    let _physical = Physical::enter();
+    let physical = Physical::enter();
     let h = handle(chosen.id);
     let still = || same_window(chosen, identity(h).as_ref());
     if !still() {
@@ -384,9 +391,13 @@ pub fn grab(chosen: &Window) -> Result<Rgba, Rate> {
     if minimized(h) || !visible(h) {
         return Err(Rate::Reduite);
     }
-    let (mut image, at) = print(h).ok_or(Rate::Noire)?;
-    if let Some((dialog, its)) = modal(h, chosen.pid).and_then(print) {
-        let r = image_ratio(h);
+    let (mut image, at, r) = print(h, &physical).ok_or(Rate::Noire)?;
+    if let Some((mut dialog, its, own)) = modal(h, chosen.pid).and_then(|d| print(d, &physical)) {
+        // A dialog of another scale than its window (a program of mixed parts), at the window's.
+        let (w, ht) = (in_image(its.right - its.left, r) as u32, in_image(its.bottom - its.top, r) as u32);
+        if own != r && w <= MAX_SIDE && ht <= MAX_SIDE {
+            dialog = resized(&dialog, w, ht);
+        }
         lay(&mut image, &dialog, in_image(its.left - at.left, r).into(), in_image(its.top - at.top, r).into());
     }
     if !still() {
@@ -668,10 +679,7 @@ mod tests {
         // DWM's frames are the screen's pixels, whatever the thread counts in.
         let (at, its) = (frame(h).unwrap(), frame(dialog).unwrap());
         let img = grab(&win.window).unwrap();
-        let alone = {
-            let _physical = Physical::enter();
-            print(dialog).unwrap().0
-        };
+        let alone = print(dialog, &Physical::enter()).unwrap().0;
         let scaled = |v: i32, k: f64| (f64::from(v) * k).round() as i32;
         let size = (scaled(at.right - at.left, s), scaled(at.bottom - at.top, s));
         let alone_size = (scaled(its.right - its.left, sd), scaled(its.bottom - its.top, sd));
@@ -866,8 +874,9 @@ mod tests {
         assert_eq!(class(dialog), "#32770");
         // Windows sizes and paints the box after it shows (once caught all black, 202x128): drawn, it is
         // at its place in its own image.
-        until("the message box drawn at its place in its own image", || print(dialog).is_some_and(|(a, _)| black_margins(&a).iter().all(|&m| m <= 1)));
-        let (alone, _) = print(dialog).unwrap();
+        let physical = Physical::enter();
+        until("the message box drawn at its place in its own image", || print(dialog, &physical).is_some_and(|(a, ..)| black_margins(&a).iter().all(|&m| m <= 1)));
+        let (alone, ..) = print(dialog, &physical).unwrap();
         eprintln!("message box {}x{}, black margins {:?}", alone.w, alone.h, black_margins(&alone));
         let img = grab(&win.window).unwrap();
         let white = count(&img, [255, 255, 255]);
