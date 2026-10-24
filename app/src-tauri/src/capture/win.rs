@@ -32,7 +32,7 @@ use crate::shot::{Rgba, MAX_SIDE};
 /// window, alone at the top only for the system's panels: a store app's own sits in an
 /// ApplicationFrameWindow). Opened while Bibo waits for the click, Start is never taken for the
 /// user's program.
-const SHELL: &[&str] = &["Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd", "Windows.UI.Core.CoreWindow"];
+pub(super) const SHELL: &[&str] = &["Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd", "Windows.UI.Core.CoreWindow"];
 
 pub(super) fn handle(id: u64) -> HWND {
     HWND(id as usize as *mut c_void)

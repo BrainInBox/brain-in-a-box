@@ -14,13 +14,15 @@ use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CoUninitiali
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::*;
 use windows::Win32::UI::Input::KeyboardAndMouse::IsWindowEnabled;
-use windows::Win32::UI::WindowsAndMessaging::{EnumChildWindows, EnumWindows, GetAncestor, GetWindowThreadProcessId, WindowFromPoint, GA_ROOT, GA_ROOTOWNER};
+use windows::Win32::UI::WindowsAndMessaging::{
+    EnumChildWindows, EnumWindows, GetAncestor, GetWindowLongW, GetWindowThreadProcessId, WindowFromPoint, GA_ROOT, GWL_STYLE, WS_CAPTION, WS_POPUP,
+};
 
 use super::uia::{
     attend_un_choix, compte, court, coupe, descendre, dialogue, distant, garde, navigateur, tant_que, visible, Cadre, Contexte, Element, Genre, Lire, Liste,
     Secrets, Sorte, ELEMENTS_MAX,
 };
-use super::win::{class, cloaked, foreground, frame, handle, identity, list, minimized, owner, pid_of, visible as shown, Physical};
+use super::win::{class, cloaked, foreground, frame, handle, identity, list, minimized, owner, pid_of, visible as shown, Physical, SHELL};
 use super::{same_window, Rate, Window};
 
 /// What each control type is to the rules; the view holds these kinds only. Text, images, groups,
@@ -306,9 +308,17 @@ fn montre_une_page(w: HWND) -> bool {
     trouve
 }
 
+/// The end of a window's chain of owners. By `GW_OWNER`: `GA_ROOTOWNER` stops at a dialog that is no
+/// popup (a WinForms one), and a program may hang all its windows on a hidden one (Delphi's).
 fn racine_de(h: HWND) -> HWND {
-    // SAFETY: any value is accepted.
-    unsafe { GetAncestor(h, GA_ROOTOWNER) }
+    let mut r = h;
+    for _ in 0..32 {
+        match owner(r) {
+            Some(o) => r = o,
+            None => break,
+        }
+    }
+    r
 }
 
 fn fil_de(h: HWND) -> u32 {
@@ -316,13 +326,28 @@ fn fil_de(h: HWND) -> u32 {
     unsafe { GetWindowThreadProcessId(h, None) }
 }
 
-/// The windows of what the person works in, the one on top first: `h`, the windows it owns or that
-/// own it (its dialogs, its palettes, the menus a toolkit draws), and the system's menus its thread
-/// opens. Not its program's other windows: Edge's other window is another site, and Explorer's
-/// taskbar names every window open and its notification area says what each program says.
+fn coquille(h: HWND) -> bool {
+    SHELL.contains(&class(h).as_str())
+}
+
+/// A menu of a thread: the system's (`#32768`), or a toolkit's popup without a title bar, owned by
+/// none or by a hidden window (WinForms hangs its menus on one).
+fn menu(w: HWND) -> bool {
+    // SAFETY: any value is accepted.
+    let style = unsafe { GetWindowLongW(w, GWL_STYLE) } as u32;
+    let popup = style & WS_POPUP.0 != 0 && style & WS_CAPTION.0 != WS_CAPTION.0;
+    class(w) == "#32768" || (popup && (racine_de(w) == w || !en_vue(racine_de(w))))
+}
+
+/// The windows of what the person works in, the one on top first: `h`, the windows hung on the same
+/// owner as it (its dialogs, its palettes), and the menus its thread opens. Not its program's other
+/// windows: Edge's other window is another site. Never the shell's: Explorer's window may live in
+/// the taskbar's process, the shell's Run box hangs on it, and the taskbar names every window open
+/// and its notification area says what each program says.
 fn famille(h: HWND) -> Vec<HWND> {
     let (racine, fil) = (racine_de(h), fil_de(h));
-    en_ordre().into_iter().filter(|&w| en_vue(w) && (racine_de(w) == racine || (class(w) == "#32768" && fil_de(w) == fil))).collect()
+    let racine = (!coquille(racine)).then_some(racine);
+    en_ordre().into_iter().filter(|&w| en_vue(w) && (w == h || (!coquille(w) && (racine.is_some_and(|r| racine_de(w) == r) || (fil_de(w) == fil && menu(w)))))).collect()
 }
 
 fn ecran_de(h: HWND) -> Option<Cadre> {
@@ -408,7 +433,7 @@ mod tests {
     use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
     use windows::Win32::UI::Input::KeyboardAndMouse::{
         SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEINPUT,
-        MOUSE_EVENT_FLAGS, VIRTUAL_KEY, VK_ESCAPE, VK_MENU, VK_SPACE,
+        MOUSE_EVENT_FLAGS, VIRTUAL_KEY, VK_ESCAPE, VK_LWIN, VK_MENU, VK_R, VK_SPACE,
     };
     use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, SetCursorPos, WM_CLOSE};
 
@@ -1058,7 +1083,7 @@ mod tests {
         assert!(!repli_pixels(&l), "{test}: the same program here has its tree");
     }
 
-    /// A window of a program the test did not start (Explorer's), asked to close.
+    /// A window of a program the test did not start (the shell's), asked to close.
     struct Fermer(HWND);
 
     impl Drop for Fermer {
@@ -1068,12 +1093,13 @@ mod tests {
         }
     }
 
-    /// Explorer's window lives in the taskbar's process: the taskbar's buttons (every window's title)
-    /// and its notification area (what each program says) are none of its commands.
+    /// The shell's Run box lives in the taskbar's process, as Explorer's windows may: the taskbar's
+    /// buttons (every window's title) and its notification area (what each program says) are none of
+    /// its commands.
     #[test]
     #[ignore = "a Windows desktop (VM)"]
-    fn uia_explorateur() {
-        let test = format!("explorateur_{}", echelle());
+    fn uia_executer() {
+        let test = format!("executer_{}", echelle());
         let barre = en_ordre().into_iter().find(|&h| class(h) == "Shell_TrayWnd").expect("the taskbar");
         let siens: Vec<(String, Cadre)> = {
             let lecteur = Lecteur::nouveau().unwrap();
@@ -1084,20 +1110,24 @@ mod tests {
         mesure(&test, "barre_des_taches", format!("{:?}", siens.iter().map(|(n, _)| n).collect::<Vec<_>>()));
         assert!(!siens.is_empty(), "{test}: the taskbar's own commands, to look for");
 
-        let dir = tempfile::tempdir().unwrap();
-        let nom = format!("Dossier {}", std::process::id());
-        std::fs::create_dir(dir.path().join(&nom)).unwrap();
-        let _lanceur = Program(Command::new("explorer.exe").arg(dir.path().join(&nom)).spawn().unwrap());
-        let win = listed_as(|f| f.titre.starts_with(&nom));
-        let _ferme = Fermer(handle(win.window.id));
-        mesure(&test, "processus", format!("{} {} ; barre {}", class(handle(win.window.id)), win.window.pid, pid_of(barre)));
-        assert_eq!(win.window.pid, pid_of(barre), "{test}: Explorer's window in the taskbar's process, else this test proves nothing");
-        devant_par_clic(&win);
+        touches(&[VK_LWIN, VK_R]);
+        let start = Instant::now();
+        let boite = loop {
+            if let Some(h) = en_ordre().into_iter().find(|&h| en_vue(h) && class(h) == "#32770" && pid_of(h) == pid_of(barre)) {
+                break h;
+            }
+            assert!(start.elapsed() < WAIT, "{test}: no Run box in the taskbar's process");
+            std::thread::sleep(Duration::from_millis(200));
+        };
+        let _ferme = Fermer(boite);
+        let fil = fil_de(boite) == fil_de(barre);
+        mesure(&test, "boite", format!("{:?} ; proprietaire {:?} ; fil de la barre {fil}", title(boite), owner(boite).map(class)));
+        let cible = identity(boite).unwrap();
         ouvrir();
-        let l = jusqu_a(&test, &win.window, WAIT, |l| l.elements.iter().any(|e| !e.barre_titre));
+        let l = jusqu_a(&test, &cible, WAIT, |l| l.elements.iter().any(|e| e.genre == Genre::Bouton && !e.barre_titre));
         imprime(&test, &l, (0, 0));
         let de_la_barre: Vec<&String> = l.elements.iter().filter(|e| siens.iter().any(|(n, c)| *n == e.nom && *c == e.cadre)).map(|e| &e.nom).collect();
-        assert!(de_la_barre.is_empty(), "{test}: the taskbar's in Explorer's list: {de_la_barre:?}");
+        assert!(de_la_barre.is_empty(), "{test}: the taskbar's in the Run box's list: {de_la_barre:?}");
     }
 
     fn atelier_en(mode: &str, titre: &str, x: i32, y: i32, l: i32, h: i32, dir: &Path) -> (Program, Found) {
@@ -1250,7 +1280,9 @@ mod tests {
         ouvrir();
         let t = Instant::now();
         let s = secrets(&ecran_);
-        let connus = |s: &Secrets| s.champs.iter().filter(|c| c.touche(&f)).count();
+        // Edge's, not the one of the window over it.
+        let dessus_ = cadre_de(&devant_);
+        let connus = |s: &Secrets| s.champs.iter().filter(|c| c.touche(&f) && !c.touche(&dessus_)).count();
         mesure(&test, "premier", format!("{:?} en {:.1} ms", s.as_ref().map(|s| (connus(s), quoi(&s.opaques))), t.elapsed().as_secs_f64() * 1000.0));
         if let Ok(s) = &s {
             assert!(connus(s) == 3 || s.opaques.contains(&f), "{test}: Edge's fields neither found ({}) nor said unknown: {s:?}", connus(s));
