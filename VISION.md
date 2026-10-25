@@ -77,6 +77,8 @@ Une personne qui ne connaît que ChatGPT, sans aucune aide : elle installe Bbox 
 
 Les logiciels de gestion, la saisie de données, l'automatisation des process, une recherche qui demande une carte bancaire, Windows 10.
 
+Exception (25/10) : une piste entreprise avance à part, accompagnée par nous, avec un premier client (une usine d'emballages). Elle sert à apprendre l'étape 3 du chemin avant de la construire, et elle ne ralentit pas Bbox. Détail : `~/brain-in-a-box-worktrees/ENTREPRISE-architecture-et-methode.md`.
+
 ## Qui décide
 
 Chafic porte la vision et décide. Le product owner développe le produit : il propose, construit, prouve, et contredit quand c'est justifié. Rien n'est publié sans l'accord de Chafic.
