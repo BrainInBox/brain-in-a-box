@@ -6,6 +6,13 @@
 
 **Décision de Chafic, 25/10 (ses mots)** : « Oui à ton ordre, avec une correction : on ne perd plus de temps sur le Calendrier ni sur les petites finitions. La priorité absolue devient le cerveau installé et branché par Bbox, en réutilisant l'installateur du kit Brain in a Box qui le fait déjà, pas en le refaisant. » Et pour les essais réels : « je te dis qui plus tard » (on ne relance plus cette question).
 
+**Consigne de Chafic du 25/10 au soir (ses mots, résumés)** : le cerveau installé et branché par Bbox d'abord, en réutilisant l'installateur du kit ; ensuite la mémoire de Claude ou ChatGPT récupérée dans le cerveau ; puis les autorisations du Mac une par une, chacune avec un premier usage utile. La version 17 : fabriquée avec Opus 5.5 par défaut, un seul essai rapide. Calendrier et finitions de texte : on note leurs défauts ici et on passe. Le PO avance seul et répond de ses décisions (section « Décisions prises seul par le PO », plus bas). C'est fini quand, sur un Mac vierge, Bbox installe le cerveau, le branche et s'en sert dans une vraie conversation, prouvé à l'écran, avec un résumé en 10 lignes et les captures.
+
+**État, 25/10 à 16 h 45 UTC** :
+- `5c324d2` (`~/bbox`) : un compte Claude sans modèle choisi atterrit sur Opus 5.5 (`claude-opus-5-5`, ou sa version datée), plus Sonnet 5 ; ChatGPT garde `gpt-6-sol`. Tests : 9 sur 9 avec et sans le mode Bbox (`c11-opus-on.out`, `c11-opus-off.out`) ;
+- build 17 (`5c324d2`) lancé à 16 h 45 (`build17.sh`, puis mise à jour de `bbox-essai2`) ; essai rapide prévu : modèle enregistré seul = Opus 5.5, un message, journal `model=claude-opus-5-5` ;
+- le point horaire tourne (tâche `e8e899414b01`, chaque heure pile, livrée sur Telegram, se souvient du point précédent et n'envoie qu'une ligne si rien n'a bougé). **À supprimer quand la phase 2 est finie.** Ses sorties : `~/.hermes/profiles/brain-in-a-box/cron/output/e8e899414b01/` ; le PO les relit à chaque étape, et s'il y voit « ⚠️ », il s'arrête, relit ce fichier et revient au cerveau.
+
 ### 1. Chantier 11, priorité absolue : le cerveau installé et branché par Bbox
 
 But, vu par Awa : juste après avoir connecté son IA, Bbox lui dit en une phrase qu'il installe son cerveau, le fait sans terminal, puis répond à « Qu'est-ce que tu sais de moi ? » à partir de ce cerveau. Sur un Mac qui a déjà le kit, rien n'est réinstallé ni effacé : « Tu as déjà ton cerveau et tes notes : je les garde tels quels. » (`../PLAN-bbox.md`).
@@ -58,6 +65,13 @@ But, vu par Awa : juste après avoir connecté son IA, Bbox lui dit en une phras
 - Calendrier jusqu'au vrai rendez-vous, refus, « Mon point du jour », annonce avant l'autorisation, « 3,8 Go » au lieu de « 3.8 GB » ;
 - « Visite : Pas de réponse », chronomètre pendant la visite, « session », « Med », « Ran sw_vers », « J'ai fait N étapes », l'arrêt « Messageries » de la visite ;
 - « Desktop boot failed » sur un Mac lent, le PATH du terminal, la licence MIT à l'écran, F6 et F7 avant une version publique, le Developer ID (et `fr.lproj` alors vérifiable), Windows.
+
+## Décisions prises seul par le PO
+
+(Chafic, 25/10 au soir : « tu avances seul, tu prends les initiatives nécessaires et tu en es responsable ». Une ligne par décision, datée, avec sa raison. Le point horaire lit cette section.)
+
+- 25/10 16 h 45 : le build 17 part tel quel (`5c324d2`), sans attendre le chantier 11, pour que l'essai rapide d'Opus se fasse pendant que le PO lit l'installateur du kit. Raison : Chafic veut ce build, et le fabriquer ne bloque rien.
+- 25/10 16 h 45 : un compte Claude dont l'abonnement ne propose pas Opus 5.5 garde Sonnet 5 (et jamais un Opus plus ancien). Raison : un modèle absent de l'abonnement ferait échouer la première réponse.
 
 ## Où est le code
 
