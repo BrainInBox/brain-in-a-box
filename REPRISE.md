@@ -77,7 +77,7 @@ But, vu par Awa : juste après avoir connecté son IA, Bbox lui dit en une phras
 - « Visite : Pas de réponse », chronomètre pendant la visite, « session », « Med », « Ran sw_vers », « J'ai fait N étapes », l'arrêt « Messageries » de la visite ;
 - **place sur le disque** : un Mac plein (courant) fait refuser les outils d'Apple, et Awa resterait devant un message d'Apple. Bbox devrait regarder la place libre avant d'ouvrir la fenêtre d'Apple (environ 10 Go sur macOS 27, avec le cerveau), le dire en une phrase et proposer de faire de la place avec elle ; à faire juste après la preuve du cerveau ;
 - Bbox lui-même pèse 4,6 Go une fois installé : à alléger plus tard ;
-- textes encore en anglais dans la fenêtre (vu au build 17, `b17-opus.png`) : « New conversation », « What I can do », « Messaging », « Artifacts », « Scheduled jobs », « Search conversations… », « Pinned », « Conversations », « Earlier today », « What can I do for you? », « Ready », « Smart », « Med » ;
+- textes en anglais : sur un Mac réglé en français, la fenêtre est en français (« Nouvelle conversation », « Ce que je sais faire », « Prêt », « Intelligent », vu sur `bbox-vierge3`) ; restent « NEW SESSION » et « Med ». Les textes anglais du build 17 venaient du Mac de test réglé en anglais ;
 - la réflexion du soir et la nuit du kit passent par Claude Code (`install.sh` choisit Claude d'office) : chez Awa, sans la commande `claude`, elles ne tournent pas ; à faire passer par Bbox, hors de la première heure ;
 - « Desktop boot failed » sur un Mac lent, le PATH du terminal, la licence MIT à l'écran, F6 et F7 avant une version publique, le Developer ID (et `fr.lproj` alors vérifiable), Windows.
 
