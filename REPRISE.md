@@ -1,6 +1,63 @@
-# REPRISE : où en est Bbox (25/10/2026, nuit)
+# REPRISE : où en est Bbox (25/10/2026, soir)
 
 À lire en premier pour reprendre le travail. Ce document est mis à jour à chaque étape. La boussole est `VISION.md`, dans ce même dossier. Les décisions que Chafic a tranchées sont dans le skill `brain-in-a-box-product`, section « Décisions validées par Chafic, ne plus redemander » ; la même section est recopiée dans la page `projects/brain-in-a-box` du C-brain. On ne les repose pas.
+
+## La prochaine action (réécrite le 25/10 au soir, après la décision de Chafic)
+
+**Décision de Chafic, 25/10 (ses mots)** : « Oui à ton ordre, avec une correction : on ne perd plus de temps sur le Calendrier ni sur les petites finitions. La priorité absolue devient le cerveau installé et branché par Bbox, en réutilisant l'installateur du kit Brain in a Box qui le fait déjà, pas en le refaisant. » Et pour les essais réels : « je te dis qui plus tard » (on ne relance plus cette question).
+
+### 1. Chantier 11, priorité absolue : le cerveau installé et branché par Bbox
+
+But, vu par Awa : juste après avoir connecté son IA, Bbox lui dit en une phrase qu'il installe son cerveau, le fait sans terminal, puis répond à « Qu'est-ce que tu sais de moi ? » à partir de ce cerveau. Sur un Mac qui a déjà le kit, rien n'est réinstallé ni effacé : « Tu as déjà ton cerveau et tes notes : je les garde tels quels. » (`../PLAN-bbox.md`).
+
+État vérifié le 25/10 : Bbox ne branche aucun cerveau aujourd'hui. Dans `~/bbox`, « gbrain » n'apparaît que dans deux fichiers de tests venus d'Hermès (`tests/hermes_cli/test_codex_runtime_plugin_migration.py`, `tests/agent/test_run_agent.py`), jamais dans le code de l'app.
+
+**Où est l'installateur du kit et ce qu'il fait déjà** (ce dossier, branche `feat/bbox` ; clone principal `~/brain-in-a-box`) :
+- `install.sh` (1 066 lignes, Mac et Linux) et `install.ps1` (1 414 lignes, Windows). Il se relance sans risque et ne détruit rien : il n'écrase jamais un cerveau ni un `CLAUDE.md` existants, il fusionne et garde une copie de ce qu'il remplace. Journal : `~/.brain-in-a-box/install.log`. Dans l'ordre :
+  1. vérifications : `git` et `python3` obligatoires (sur un Mac vierge, ce sont les outils Apple), choix des agents (`--agents`, ou `BIAB_AGENTS`), Bun à la version épinglée (`engine/gbrain-pin.json`) par son installeur officiel ;
+  2. clé Voyage AI facultative (sans elle, la recherche marche par mots-clés ; décision : hors de l'installation) ;
+  3. GBrain cloné à la version épinglée dans `~/DEV/gbrain` (depuis `github.com/garrytan/gbrain`), `bun install --frozen-lockfile`, `bun link` ;
+  4. le cerveau `~/Documents/Brain`, copié de `vault-skeleton/` seulement s'il n'existe pas ;
+  5. les hooks dans `~/.claude/hooks/brain`, puis `gbq`, `controle` et `importer-memoire` dans `~/.local/bin` ;
+  6. trois tâches launchd : la nuit à 4 h, la réflexion à 12 h et 23 h, la vérification le lundi à 8 h ;
+  7. si Claude Code est choisi (c'est le choix par défaut) : hooks dans `~/.claude/settings.json`, bloc dans `~/.claude/CLAUDE.md`, skills ; il prévient seulement si la commande `claude` manque ;
+  8. `git init` du cerveau, `gbrain init --pglite`, indexation du cerveau (`engine/nightly/gbrain-sync-vault.py`), puis plongements s'il y a une clé ;
+  9. vérification des hooks (`test-hooks.sh`).
+- L'app Bibo du kit (Tauri, `app/src-tauri/src/`) fait déjà tout le chemin autour, sur les branches locales `feat/hermes` et `feat/bbox` (rien sur master) :
+  - `steps.rs` : ordre sur Mac « claude, clt, bun, obsidian, brain, hermes, hermes_ia, hermes_cerveau ». L'étape `clt` installe les outils Apple (`xcode-select --install`). L'étape `brain` télécharge le kit (`BrainInBox/brain-in-a-box/archive/refs/heads/master.zip`, ou `BIAB_ARCHIVE`) puis lance `/bin/bash install.sh` en montrant ses lignes, et vérifie ensuite que rien ne manque ;
+  - `hermes_brain.rs` (`b2a81b6`) : branche le cerveau sur Hermès par une seule entrée de sa mémoire (`MEMORY.md`, séparateur « § », même verrou, limite de 2 200 caractères, rien d'autre n'est touché), marquée « Cerveau (Brain in a Box) ». Elle dit où est le cerveau, de lire `Profile/about.md`, `business.md`, `memory.md` et `soul.md`, et d'utiliser `gbq query` pour le reste. Prouvé le 21/10 : le vrai Hermès lit `Profile/about.md` et répond avec son contenu. Ses textes disent encore « Hermes » : en Bbox, c'est Bbox qui parle ;
+  - `import.rs` et `engine/bin/importer-memoire` : « Importer ma mémoire » depuis ChatGPT ou Claude (export ou copier-coller) ; `4ecb5ef` le propose de lui-même à la fin ;
+  - `hermes_access.rs` (`01f9e2c`) : les autorisations une à une (fichiers, écran avec clavier et souris, micro), la raison d'abord, puis la vérification ;
+  - `hermes_messaging.rs` (`dbbff71`) : WhatsApp (code dessiné par Bibo) et Telegram.
+
+**Comment le réutiliser sans le refaire** (recommandation du PO, à confirmer en lisant le code au début du chantier) :
+- Bbox lance `install.sh` tel quel, comme l'étape `brain` de Bibo, depuis son accueil juste après la connexion de l'IA, en montrant une phrase par grande étape et non les lignes brutes ;
+- Bbox embarque les fichiers du kit dans son paquet, à un commit épinglé de `feat/bbox`, au lieu de télécharger master (master n'a pas les travaux locaux, et on ne publie rien) ;
+- Bbox écrit lui-même l'entrée « Cerveau (Brain in a Box) » dans sa mémoire, au même format que `hermes_brain.rs`, à son nom ;
+- dans le même build : remettre Opus 5.5 comme modèle choisi d'office pour un compte Claude (décision du 23/10, écart noté plus bas).
+
+**Points à trancher au début du chantier, chacun avec une recommandation** :
+- les outils Apple : sur un Mac vierge, `git` et `python3` ouvrent la fenêtre d'installation d'Apple. Recommandation : reprendre l'étape `clt` de Bibo, annoncée par Bbox en une phrase, avec une seule fenêtre d'Apple ;
+- le choix des agents : `install.sh` branche Claude Code par défaut (hooks, `CLAUDE.md`, skills), alors que chez Awa l'IA est dans Bbox. Vérifier ce que fait `install.sh` sans la commande `claude`, puis choisir le réglage le plus simple qui ne casse rien chez quelqu'un qui a déjà le kit ;
+- le réseau : `install.sh` télécharge Bun et GBrain. Il faut une phrase claire si Internet manque, et la possibilité de reprendre.
+
+**Preuve attendue** (sur `bbox-essai2`, puis sur un Mac vierge) : le cerveau s'installe depuis Bbox sans terminal ; « Qu'est-ce que tu sais de moi ? » reçoit une réponse tirée du cerveau ; `gbq query` répond ; sur un Mac qui a déjà le kit, `~/Documents/Brain` et `~/.claude` sont inchangés (comparer avant et après). Captures de tout ce que voit la personne, puis un commit par étape qui marche.
+
+### 2. Ensuite, dans cet ordre (validé le 25/10)
+1. La mémoire de ChatGPT ou Claude, récupérée dans le cerveau (`importer-memoire`, `import.rs`), proposée par Bbox de lui-même.
+2. Les autorisations du Mac une à une, chacune avec un premier usage utile (logique de `hermes_access.rs`).
+3. Le premier essai avec une vraie personne : Chafic dira qui. On ne lui repose pas la question.
+4. La souris Bbox et la visite en cinq arrêts.
+5. Les Réglages au « tu » (environ 340 phrases), Windows, la signature Apple.
+
+### 3. La version 17 : code prêt, pas fabriquée, et on ne la rejoue pas pour elle-même
+- Les 9 commits du chantier 10 (`fa8cb91`..`9e6ea7a`) sont vérifiés par le PO (voir le journal plus bas) et partiront avec le premier build du chantier 11. Selon la décision de Chafic, pas de séance consacrée au Calendrier ni aux finitions. Si le Calendrier marche au passage, tant mieux ; sinon, il va dans « Plus tard ».
+- Points ouverts du chantier 10 : voir le journal (palette et page non couvertes par un test, trois chemins d'installation encore ouverts, visite, « Mon point du jour » montré avant l'autorisation, PDF et rappels pas vérifiés sur un Mac vierge).
+
+### 4. Plus tard (liste unique, rien ici n'est prioritaire)
+- Calendrier jusqu'au vrai rendez-vous, refus, « Mon point du jour », annonce avant l'autorisation, « 3,8 Go » au lieu de « 3.8 GB » ;
+- « Visite : Pas de réponse », chronomètre pendant la visite, « session », « Med », « Ran sw_vers », « J'ai fait N étapes », l'arrêt « Messageries » de la visite ;
+- « Desktop boot failed » sur un Mac lent, le PATH du terminal, la licence MIT à l'écran, F6 et F7 avant une version publique, le Developer ID (et `fr.lproj` alors vérifiable), Windows.
 
 ## Où est le code
 
@@ -108,7 +165,7 @@
   - la désinstallation « Bbox seul » n'existe que sur macOS ; Windows garde le désinstalleur du système (à vérifier au test Windows) ;
   - le message de refus en cas de passerelle étrangère dit encore « hermes gateway stop » : à réécrire en mots simples, au nom de Bbox.
 
-## La prochaine action
+## Journal des builds 11 à 17 (fait, gardé pour l'historique)
 
 Le chantier 5, code A, B, C fait le 25/10 (sous-agent `deleg_04033a90` interrompu après A et B, C terminé et vérifié par le PO) :
   - `e611fb6` (correction amont) : la liste en ligne d'Anthropic est triée par nom, donc son premier Sonnet était le plus ancien (Sonnet 4.5) ; le choix silencieux suit maintenant l'ordre de la liste maison, sans jamais prendre Opus ou Fable (coût) ;
@@ -194,7 +251,7 @@ Le chantier 5, code A, B, C fait le 25/10 (sous-agent `deleg_04033a90` interromp
   - **défaut bloquant du Calendrier** : après « Allow Full Access » (Réglages : « Bbox 3f4b998, Full Access »), la case dit « Tu as refusé, aucun souci. » ; un second clic attend sans fenêtre jusqu'à l'abandon de l'accueil (« Applications », « Pas de réponse », puis « on reprendra les connecteurs »). Cause prouvée par un script de diagnostic lancé par Bbox lui-même : en JXA, l'état d'autorisation d'EventKit arrive en texte (« before 3 string »), donc toutes les comparaisons à 1, 2, 3 échouent. Correctif d'une ligne (`Number(...)`) confié au chantier 10 avec E2 à E6 ;
   - autres restes : « Applications / Aucun » et « No connectors for now » quand on passe ; la fenêtre Comptes Internet cache les trois étapes ; sur un Mac en anglais avec Bbox en français, un accueil sur deux part en anglais (« Hi, I'm Bbox », « What Bbox can do for me ») ; « Bleu Bbox, va. » ;
   - les builds de test sont signés « ad hoc » sans droits embarqués : le droit `apple-events` ne sera vérifiable que sur l'app signée.
-- **Point d'étape présenté à Chafic le 25/10** (`../PLAN-bbox.md`, « Point d'étape du 25/10 ») : phases 0 et 1 (Mac) faites, phase 2 à peine commencée (le cerveau n'est pas branché), phase 3 pas commencée, phase 4 commencée en avance. Pause demandée par Chafic : rien de nouveau n'est lancé avant sa réponse (ordre proposé, premier essai réel).
+- **Point d'étape présenté à Chafic le 25/10** (`../PLAN-bbox.md`, « Point d'étape du 25/10 ») : phases 0 et 1 (Mac) faites, phase 2 à peine commencée (le cerveau n'est pas branché), phase 3 pas commencée, phase 4 commencée en avance. Pause demandée par Chafic : rien de nouveau n'est lancé avant sa réponse (ordre proposé, premier essai réel). Sa réponse, le 25/10 au soir : l'ordre est validé, mais le cerveau installé et branché par Bbox passe en priorité absolue, en réutilisant l'installateur du kit, sans plus de temps sur le Calendrier ni sur les finitions ; il dira plus tard qui fera les essais réels (voir « La prochaine action », en haut).
   - **Écart reconnu par le PO** : Chafic a décidé Opus 5.5 d'office pour Pro et Max (23/10) ; `e611fb6` règle le choix automatique sur Sonnet 5 et exclut Opus. À remettre sur Opus 5.5 au build 17 ; Sonnet pour Pro seulement si la limite d'usage arrive trop vite.
 - **Chantier 10 fait (`deleg_665cd835`, `fa8cb91`..`9e6ea7a`, 9 commits au-dessus de `3f4b998`)** : E1 (`Number(...)` sur l'état d'EventKit), E2 (la carte reste ouverte pendant la question de macOS ; « Mail et Calendrier » dans la récapitulation), E3 (« C'est noté : {couleur}. »), E4 (« Pas de Mail ni de Calendrier pour l'instant, aucun souci, on pourra le faire plus tard. »), E5 (les trois étapes d'abord, puis « Ouvrir Comptes Internet »), E6 (l'accueil attend la langue enregistrée, 10 s au plus) ; page « Ce que je sais faire » (8 cartes, « Essayer » ouvre une conversation avec le message déjà envoyé), section « Le Mail et le Calendrier de ce Mac », plus de catalogue public ni d'installation par lien, `manage_catalog` retiré des outils en mode Bbox. Chiffres de l'agent : interface 11 624 sur 11 624, tsc 0, moteur 284 passés avec et sans le mode Bbox. Vérifié par le PO (`po-c10.out`) : arbre propre, 0 tiret ajouté, interface 11 624 sur 11 624 (1 369 fichiers), tsc 0, moteur 284 passés avec et sans le mode Bbox (21 fichiers).
   - Points ouverts de l'agent : (1) non couverts par un test : les entrées masquées de la palette et l'ouverture de la page en place ; (2) chemins d'installation encore ouverts : l'outil terminal si la commande est dans le PATH, la carte des modules de l'accueil (`openCatalogPluginInstall`) si cette étape tourne en Bbox, le bouton de Réglages > Délégation qui installe un module du catalogue ; (3) le texte de la visite ne parle pas de la section Mail et Calendrier ; (4) « Mon point du jour » est montré même avant l'autorisation de Mail ou Calendrier (macOS demande alors pendant la conversation) ; (5) pas vérifié sur un Mac vierge : lire des factures en PDF (PyMuPDF absent du paquet) et des rappels qui sonnent quand l'app est fermée.
@@ -212,6 +269,14 @@ Ancienne note du build 11 : build 11 sur `bbox-essai2` et preuve : `config.yaml`
 - **Disque du Mac de test presque plein** (environ 200 Mo libres au build 7) : « Session unavailable / storage_unavailable » est apparu, et a disparu après avoir libéré de la place et relancé Bbox. Attention, ce message n'a pas une seule cause : au build 8, sur un disque à moitié vide, il venait d'une session sans modèle (voir plus haut). Lire le journal (`receipt refused: storage_unavailable … caused by …`) avant de conclure ; on a libéré des caches du système. Les trois copies de l'Hermès simulé (`~/run6d-traces`, `~/run6e-traces`, `~/coexist-traces`, environ 12 Go) contiennent un dossier `.hermes` : la règle de Chafic qui protège ces dossiers interdit de les supprimer, et c'est voulu. Agrandir le disque ne marche pas : la partition de secours du Mac virtuel bloque l'agrandissement, et macOS refuse de la retirer (protection du système). Le chemin retenu pour le build 8 : un nouveau Mac de test, `bbox-essai2`, cloné de l'image vierge macOS 27 (`macos-golden-gate-vanilla:27.0`, 11 Go libres, de quoi tenir l'app de 4,6 Go), joignable par `.tools/vm-ssh/vssh-bbox-essai2`, où l'on recopie la connexion Claude de Chafic depuis l'ancien par un tuyau SSH, sans jamais l'afficher ; l'ancien `bbox-essai` est ensuite arrêté et n'est plus utilisé, pour que les deux ne se disputent pas le même jeton. Les essais « Hermès déjà là » se font dans un clone jetable.
 - **macOS n'accepte que deux Mac virtuels allumés à la fois** (« The number of VMs exceeds the system limit ») : pour démarrer `bbox-essai2`, `bibo-vm` a été arrêté le 25/10 (rien n'y tournait pour nos essais), puis `bbox-essai` une fois la connexion Claude recopiée (pour qu'un seul Mac rafraîchisse le jeton). Au 25/10, seul `bbox-essai2` tourne, avec Bbox ouvert et le tunnel `9333` ; `bibo-vm` et `bbox-essai` sont arrêtés, et se rallument par `tart run <nom> --no-graphics --no-audio`.
 - Le sélecteur de modèle (en bas, à droite du champ) ne réagit qu'à de vrais clics de souris : `cdp.py clickxy <x> <y>` (ajouté le 25/10), pas `click`. Le choix vaut pour la conversation en cours ; l'étiquette se met à jour au message suivant.
+
+- **État des Macs virtuels à la fin de la session du 25/10** : `bbox-essai2` allumé, Bbox `3f4b998` (build 16) ouvert avec le port 9333, accueil terminé, Calendrier et Mail autorisés ; `vnc-hold.py` et le tunnel `9333` tournent sur le Mac mini. `bbox-essai`, `bibo-vm` et `bbox-mac-vierge` sont arrêtés. Copies de réglages dans le Mac de test : `~/auth-parked/config.yaml.b11-before`, `.b14-before`, `.b16-before` (et `.with-model`).
+- **Relancer l'accueil sur le Mac de test** : quitter Bbox puis l'arrêter par son numéro de processus ; `sed -i "" "s/^  run: false/  run: true/" ~/.hermes/config.yaml` ; `open -a "/Applications/Bbox <sha>.app" --args --remote-debugging-port=9333 "--remote-allow-origins=*"`.
+- **Repères d'écran (Mac de test, 1024 x 768)** : par VNC, « Allow Full Access » du Calendrier en `512 354`, « Allow » de Mail en `571 430`, la fenêtre parasite `sshd-keygen-wrapper` se ferme en `453 382` ; par CDP, le prénom est `input[placeholder="Ton prénom"]`, la couleur en `434 245`, la case Calendrier en `810 317`.
+- **Tart coupe le Mac virtuel à la deuxième connexion VNC d'un même lancement** : garder une seule connexion ouverte avec `.tools/vnc-hold.py` (copie dans `../.scratch/phase1/`), et passer par elle.
+- **Diagnostiquer une autorisation de macOS** : jamais par SSH, car l'autorisation irait à `sshd` et une commande `osascript` vers System Events ou une app finit en attente (sortie 124) avec une fenêtre `sshd-keygen-wrapper`. On fait lancer le script par Bbox lui-même dans une conversation : c'est ainsi que `../.scratch/phase1/cal-diag.js` a prouvé le défaut du Calendrier (« before 3 string 9ms »).
+- **Commandes bloquées par les règles de sécurité du Mac mini, à ne pas contourner** : tout `rm -r` qui vise un dossier `.hermes` (dont `~/run6d-traces`), une commande qui contient le nom de la passerelle d'Hermès suivi de sa sous-commande, le `hermes` du paquet lancé sur le Mac de Chafic, `hdiutil` enchaîné avec `rm` et `sed`, `launchctl print` et `pkill` par SSH, `rm soul-probe-*`, prettier sur `electron/local-gateway.ts`. On déplace au lieu de supprimer, et on arrête un processus par son numéro.
+- **Échecs de tests anciens, hors de notre travail** (notés pendant la session) : 7 échecs vitest et 3 tests Windows (`schtasks`) qui échouent déjà sans nos changements ; la vérification parente (`bbox-parent-check.sh`) reste la référence.
 
 ## Ce qui se fait à la fin, et que seul Chafic peut faire
 
