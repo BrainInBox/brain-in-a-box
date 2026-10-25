@@ -8,9 +8,10 @@
 
 **Consigne de Chafic du 25/10 au soir (ses mots, résumés)** : le cerveau installé et branché par Bbox d'abord, en réutilisant l'installateur du kit ; ensuite la mémoire de Claude ou ChatGPT récupérée dans le cerveau ; puis les autorisations du Mac une par une, chacune avec un premier usage utile. La version 17 : fabriquée avec Opus 5.5 par défaut, un seul essai rapide. Calendrier et finitions de texte : on note leurs défauts ici et on passe. Le PO avance seul et répond de ses décisions (section « Décisions prises seul par le PO », plus bas). C'est fini quand, sur un Mac vierge, Bbox installe le cerveau, le branche et s'en sert dans une vraie conversation, prouvé à l'écran, avec un résumé en 10 lignes et les captures.
 
-**État, 25/10 à 16 h 45 UTC** :
-- `5c324d2` (`~/bbox`) : un compte Claude sans modèle choisi atterrit sur Opus 5.5 (`claude-opus-5-5`, ou sa version datée), plus Sonnet 5 ; ChatGPT garde `gpt-6-sol`. Tests : 9 sur 9 avec et sans le mode Bbox (`c11-opus-on.out`, `c11-opus-off.out`) ;
-- build 17 (`5c324d2`) lancé à 16 h 45 (`build17.sh`, puis mise à jour de `bbox-essai2`) ; essai rapide prévu : modèle enregistré seul = Opus 5.5, un message, journal `model=claude-opus-5-5` ;
+**État, 25/10 à 17 h 40 UTC** :
+- **Version 17 prouvée (essai rapide, fini)** : build `5c324d2` sur `bbox-essai2` ; un réglage sans modèle reçoit seul `model.default: claude-opus-5-5`, `provider: anthropic` en 5 secondes (`b17-opus.sh`) ; un message « Bonjour, dis-moi en une phrase ce que tu peux faire pour moi. » part sur `model=claude-opus-5-5` (journal, 2,7 s) ; le sélecteur affiche « Opus 5.5 » ; la réponse dit « Bbox, ton guide » et tutoie (`../.scratch/phase1/b17-opus.png`). Le réglage d'origine du Mac de test est remis (`~/auth-parked/config.yaml.b17-before`) ;
+- **Chantier 11, code fait et testé** (branche `bbox/brain`, fusionnée dans `~/bbox/bbox/identity`, HEAD `730e178`) : `ea1dcf0` (le kit embarqué et son installation), `35a69b7`, `730e178`. Vérification parente : 228 tests sur 228, avec et sans le mode Bbox (`c11-py-on.out`, `c11-py-off.out`) ; les échecs de `tests/tui_gateway` vus pendant la session ne viennent pas de nos changements : sur les 5 fichiers concernés, le même échec unique sur `5c324d2` et sur `bbox/brain` (`c11-tg-compare.sh`) ; les 9 autres n'apparaissent que quand tout le dossier est lancé d'un coup (non creusé, hors du cerveau) ;
+- build 18 (`730e178`) en fabrication (`build18.sh`), puis essai sur un Mac vierge neuf, `bbox-vierge3` (macOS 27 vierge, langue mise en français, sans outils Apple), écran tenu par `../.scratch/phase1/vnc-vierge3/vnc-hold.py` ;
 - le point horaire tourne (tâche `e8e899414b01`, chaque heure pile, livrée sur Telegram, se souvient du point précédent et n'envoie qu'une ligne si rien n'a bougé). **À supprimer quand la phase 2 est finie.** Ses sorties : `~/.hermes/profiles/brain-in-a-box/cron/output/e8e899414b01/` ; le PO les relit à chaque étape, et s'il y voit « ⚠️ », il s'arrête, relit ce fichier et revient au cerveau.
 
 ### 1. Chantier 11, priorité absolue : le cerveau installé et branché par Bbox
@@ -36,6 +37,12 @@ But, vu par Awa : juste après avoir connecté son IA, Bbox lui dit en une phras
   - `import.rs` et `engine/bin/importer-memoire` : « Importer ma mémoire » depuis ChatGPT ou Claude (export ou copier-coller) ; `4ecb5ef` le propose de lui-même à la fin ;
   - `hermes_access.rs` (`01f9e2c`) : les autorisations une à une (fichiers, écran avec clavier et souris, micro), la raison d'abord, puis la vérification ;
   - `hermes_messaging.rs` (`dbbff71`) : WhatsApp (code dessiné par Bibo) et Telegram.
+
+**Ce qui est codé (25/10, `ea1dcf0`)** :
+- `bbox_kit/` : copie figée du kit (`git archive` de `feat/bbox`, commit dans `bbox_kit/KIT_COMMIT`), rafraîchie par `scripts/bbox-sync-kit.sh` ; gardée octet pour octet (`.gitattributes`) et hors du contrôle de style (`lefthook.yml`) ; elle part dans l'app par `agent-payload` ;
+- `agent/bbox_brain.py` : copie le kit dans `~/.brain-in-a-box/src` et lance son `install.sh` tel quel, comme l'app du kit (personne au clavier, outils du Mac seulement, journal `~/.brain-in-a-box/bbox-install.log`) ; sans outils Apple, la fenêtre d'Apple d'abord (`xcode-select --install`) ; deux essais, puis « plus tard » ; un cerveau déjà là est gardé tel quel et seulement branché ; le prénom de l'accueil remplace `{{NAME}}` dans `Profile/about.md` ;
+- le branchement : une entrée de la mémoire de Bbox, « Cerveau de la personne : … », qui dit où sont les notes, lesquelles lire (`Profile/about.md`, `business.md`, `memory.md`, `soul.md`), comment chercher (`~/.local/bin/gbq query`) et d'y noter ce qu'elle apprend ;
+- le démarrage : après la carte du prénom de l'accueil, ou au premier message d'une conversation quand aucun accueil ne tourne ; chaque changement est dit une fois, dans les mots de Bbox (« J'installe ton cerveau en fond : c'est là que je garderai ce que tu m'apprends. », puis « Ton cerveau est prêt… ») ; une conversation ouverte avant le branchement reçoit à chaque message la façon de s'en servir.
 
 **Comment le réutiliser sans le refaire** (recommandation du PO, à confirmer en lisant le code au début du chantier) :
 - Bbox lance `install.sh` tel quel, comme l'étape `brain` de Bibo, depuis son accueil juste après la connexion de l'IA, en montrant une phrase par grande étape et non les lignes brutes ;
@@ -64,6 +71,8 @@ But, vu par Awa : juste après avoir connecté son IA, Bbox lui dit en une phras
 ### 4. Plus tard (liste unique, rien ici n'est prioritaire)
 - Calendrier jusqu'au vrai rendez-vous, refus, « Mon point du jour », annonce avant l'autorisation, « 3,8 Go » au lieu de « 3.8 GB » ;
 - « Visite : Pas de réponse », chronomètre pendant la visite, « session », « Med », « Ran sw_vers », « J'ai fait N étapes », l'arrêt « Messageries » de la visite ;
+- textes encore en anglais dans la fenêtre (vu au build 17, `b17-opus.png`) : « New conversation », « What I can do », « Messaging », « Artifacts », « Scheduled jobs », « Search conversations… », « Pinned », « Conversations », « Earlier today », « What can I do for you? », « Ready », « Smart », « Med » ;
+- la réflexion du soir et la nuit du kit passent par Claude Code (`install.sh` choisit Claude d'office) : chez Awa, sans la commande `claude`, elles ne tournent pas ; à faire passer par Bbox, hors de la première heure ;
 - « Desktop boot failed » sur un Mac lent, le PATH du terminal, la licence MIT à l'écran, F6 et F7 avant une version publique, le Developer ID (et `fr.lproj` alors vérifiable), Windows.
 
 ## Décisions prises seul par le PO
@@ -72,6 +81,12 @@ But, vu par Awa : juste après avoir connecté son IA, Bbox lui dit en une phras
 
 - 25/10 16 h 45 : le build 17 part tel quel (`5c324d2`), sans attendre le chantier 11, pour que l'essai rapide d'Opus se fasse pendant que le PO lit l'installateur du kit. Raison : Chafic veut ce build, et le fabriquer ne bloque rien.
 - 25/10 16 h 45 : un compte Claude dont l'abonnement ne propose pas Opus 5.5 garde Sonnet 5 (et jamais un Opus plus ancien). Raison : un modèle absent de l'abonnement ferait échouer la première réponse.
+- 25/10 17 h : le chantier 11 se code dans un dossier à part (`~/brain-in-a-box-worktrees/bbox-c11`, branche `bbox/brain`), fusionné dans `~/bbox` une fois testé. Raison : `~/bbox` servait au build 17 en même temps.
+- 25/10 17 h : le kit part dans Bbox comme copie figée à un commit noté (`bbox_kit/KIT_COMMIT`), et non téléchargé depuis GitHub. Raison : master n'a pas les travaux locaux, on ne publie rien, et l'installation doit marcher à l'identique à chaque fois.
+- 25/10 17 h : l'installation du cerveau démarre seule après le prénom, et aussi au premier message quand aucun accueil ne tourne (Bbox déjà installé, accueil sauté). Raison : le cerveau doit être là d'office, sans que la personne le demande.
+- 25/10 17 h : un cerveau déjà présent (`~/Documents/Brain`, la base de gbrain et `gbq`) n'est ni réinstallé ni touché ; Bbox apprend seulement où il est. Raison : ne jamais toucher aux notes de quelqu'un qui a déjà le kit.
+- 25/10 17 h : sans outils Apple, Bbox ouvre la fenêtre d'Apple en disant quoi cliquer ; si la personne la ferme, un deuxième essai, puis « plus tard » sans insister. Raison : `install.sh` a besoin de git et de python3, et une fenêtre refusée ne doit pas bloquer la conversation.
+- 25/10 17 h 30 : `install.sh` garde son choix d'office (Claude Code) ; on ne lui passe aucune option. Raison : c'est ce que fait l'app du kit sur Mac, et sans la commande `claude` il prévient seulement ; la réflexion du soir par Bbox va dans « Plus tard ».
 
 ## Où est le code
 
