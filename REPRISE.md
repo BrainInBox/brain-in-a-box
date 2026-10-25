@@ -110,7 +110,12 @@
 
 ## La prochaine action
 
-Le chantier 5, en cours (sous-agent lancé le 25/10) : premier envoi avalé, modèle par défaut Sonnet 5, « tu » partout, restes de l'accueil et des messages techniques. Puis build 11 sur `bbox-essai2` et preuve : `config.yaml` sans modèle (`printf "onboarding:\n  run: true\n"`), relancer, écrire une seule fois : Bbox doit répondre en tutoyant, avec Sonnet 5. La configuration d'origine reste dans `~/auth-parked/config.yaml.with-model`.
+Le chantier 5, code A, B, C fait le 25/10 (sous-agent `deleg_04033a90` interrompu après A et B, C terminé et vérifié par le PO) :
+  - `e611fb6` (correction amont) : la liste en ligne d'Anthropic est triée par nom, donc son premier Sonnet était le plus ancien (Sonnet 4.5) ; le choix silencieux suit maintenant l'ordre de la liste maison, sans jamais prendre Opus ou Fable (coût) ;
+  - `e37624d` : le premier envoi était avalé parce que la vérification de démarrage disait « prêt » sur la seule connexion, alors que la conversation refusait faute de modèle ; en mode Bbox, elle demande maintenant aussi un modèle, le choix automatique se fait au démarrage (avec nouvelles tentatives si le moteur démarre encore) et un envoi sans modèle choisit le modèle puis envoie dans le même appui ;
+  - `4bf222d` et `75b407b` : « tu » partout. L'identité dit à l'IA de tutoyer en français ; la carte, les boutons et le menu d'état tutoient (« Connecte ton IA pour que je puisse te répondre. », « Pour te répondre, j'ai besoin de ton IA. », « J'ai ouvert Claude dans ton navigateur. ») ; un test interdit « vous » sur ce chemin. Les textes amont au « vous » visibles ailleurs : 341 chaînes dans 20 fichiers, à reprendre plus tard ;
+  - tests vérifiés par le PO : interface 5 576 sur 5 576 (537 fichiers), typage sans erreur, moteur 36 sur 36 avec et sans le mode Bbox.
+  Reste D (restes de texte : « Nous blue », « once Hermes is back », alerte disque, question de disposition, « What are we building? », bulle d'état), confié à un sous-agent après la fabrication du build 11. Puis build 11 sur `bbox-essai2` et preuve : `config.yaml` sans modèle (`printf "onboarding:\n  run: true\n"`), relancer, écrire une seule fois : Bbox doit répondre en tutoyant, avec Sonnet 5. La configuration d'origine reste dans `~/auth-parked/config.yaml.with-model`.
 
 À trancher plus tard : faire de Claude le fournisseur actif d'office après la connexion. Dans l'essai du 25/10, la conversation est bien partie sur Claude après la connexion, mais la carte du modèle doit être vérifiée sur une connexion faite depuis la fenêtre elle-même.
 
