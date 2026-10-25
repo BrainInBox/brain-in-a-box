@@ -123,7 +123,17 @@ Le chantier 5, code A, B, C fait le 25/10 (sous-agent `deleg_04033a90` interromp
   - journal : les lignes « Nous » n'apparaissent qu'au démarrage, avant le choix du modèle (07:05:51-52) ; ensuite « Vision auto-detect: using main provider anthropic (claude-sonnet-5) » et les titres passent par le compte Claude ;
   - interface en français (Réglages > Apparence > Général > Langue) : « Écris comme tu parles, même en une ligne. Je pose les bonnes questions et je m'occupe du reste. », « Prêt » en bas (`b11-fr-2.png`). Encore visibles : « Commencez par un objectif » dans le champ, l'onglet « NEW SESSION », « Med », « Choisissez la langue de l'interface du desktop. » (ajoutés au sous-agent D) ;
   - au redémarrage du Mac virtuel très chargé, `desktop.log` montre « Desktop boot failed: Gateway starting (deadline). » puis une nouvelle tentative réussie : à surveiller sur un vrai Mac lent ;
-  - la conversation « Getting started » coupée (« Gateway shutting down… once Hermes is back ») venait de l'arrêt de l'app par le script d'essai, pas de Bbox. Puis build 11 sur `bbox-essai2` et preuve : `config.yaml` sans modèle (`printf "onboarding:\n  run: true\n"`), relancer, écrire une seule fois : Bbox doit répondre en tutoyant, avec Sonnet 5. La configuration d'origine reste dans `~/auth-parked/config.yaml.with-model`.
+  - la conversation « Getting started » coupée (« Gateway shutting down… once Hermes is back ») venait de l'arrêt de l'app par le script d'essai, pas de Bbox.
+- **Chantier 5 D, code fait le 25/10** (sous-agent `deleg_0c630496`, 7 commits au-dessus de `75b407b`, mode Bbox seulement) :
+  - `d54841e` : « Bbox blue it is. » / « Bleu Bbox » (l'identifiant `nous` reste en configuration) ;
+  - `07fda92` : réponse coupée : « I was closed while answering. Send your message again. » / « J'ai été fermé pendant que je répondais. Renvoie ton message. » (et la variante redémarrage) ;
+  - `b5b99c6` : disque : « Your Mac is running out of space (3.9 GB free). » / « Ton Mac n'a presque plus de place (3.9 GB libres). », sans commande ; aucun bouton faute d'action en un clic (cul-de-sac à traiter plus tard) ;
+  - `773d379` : l'accueil ne pose plus la question de disposition, Basic d'office (Elite reste dans les Réglages) ;
+  - `9168fbb` et `538fee1` : champ vide : « What can I do for you? », « Give Bbox a task »… / « Que puis-je faire pour toi ? », « Donne une tâche à Bbox », « Commence par un objectif »… ; suites au « tu » ; onglet « Nouvelle session » ;
+  - `7ba14b8` : bulle d'état : « Your AI is ready », « Reconnect », « Restart Bbox » / « Ton IA est prête », « Reconnecter », « Redémarrer Bbox » ;
+  - non fait : « Ran sw_vers + 4 commands » (introuvable vite), « Med » (étiquette codée en dur dans toutes les langues) ;
+  - tests vérifiés par le PO sur `538fee1` : interface 10 216 sur 10 216 (1 182 fichiers), typage sans erreur, moteur 165 passés et 6 ignorés, avec et sans le mode Bbox.
+  Build 12 lancé, puis preuve à l'écran : accueil neuf (couleur, pas de question de disposition), champ et bulle d'état en français au « tu ». Puis build 11 sur `bbox-essai2` et preuve : `config.yaml` sans modèle (`printf "onboarding:\n  run: true\n"`), relancer, écrire une seule fois : Bbox doit répondre en tutoyant, avec Sonnet 5. La configuration d'origine reste dans `~/auth-parked/config.yaml.with-model`.
 
 À trancher plus tard : faire de Claude le fournisseur actif d'office après la connexion. Dans l'essai du 25/10, la conversation est bien partie sur Claude après la connexion, mais la carte du modèle doit être vérifiée sur une connexion faite depuis la fenêtre elle-même.
 
