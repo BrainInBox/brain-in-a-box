@@ -28,11 +28,13 @@
   - la passerelle de la personne tourne toujours, même processus avant et après : Bbox écrit dans le journal « a bundled app never restarts a gateway, attaching as-is » ;
   - Bbox n'ajoute que des caches, ses propres fichiers d'état et cinq liens de commande dans `~/.local/bin`, seulement là où le nom est libre (`cli-provision.ts` ne remplace jamais un fichier ni un lien valide) ; la commande `hermes` de la personne n'est pas touchée ;
   - à l'écran : la session « Ranger les factures » et la tâche planifiée de la personne sont là (`coexist-2.png`, `coexist-3.png`).
+- **Preuve finale de la phase 1 côté Mac, le 25/10 à 0 h 47 UTC** (build 6, Mac de test remis à neuf) : Chafic a connecté seul ses deux abonnements depuis son téléphone. Dans une même conversation, Bbox a répondu par Claude (`model=claude-sonnet-5 provider=anthropic`, connexion `manual:hermes_pkce`), puis, après le choix de GPT-6.1-sol dans le sélecteur du bas, par ChatGPT (`model=gpt-6.1-sol provider=openai-codex`). Captures `live-claude.png` et `live-both.png`. Ensuite, son ChatGPT a été retiré par « Remove ChatGPT » puis « Disconnect » dans Settings > Accounts (plus aucune entrée `openai-codex` dans `auth.json`), et le relais a été arrêté. Son Claude reste connecté au Mac de test pour les essais suivants.
+- **Défaut vu pendant cette preuve** : à « qui es-tu ? », Bbox a répondu « Je suis Bbox, ton assistant Hermes ». Le fichier de personnalité créé au premier lancement (`SOUL.md`, tiré de `default_soul.py`) et l'identité de `prompt_builder.py` disent encore « Hermes Agent, built by Nous Research ». C'est la première tâche du chantier 2.
 - Tests sur `5dc1465` : tests Python ciblés au vert (32 sur l'identité, Claude et la cohabitation), typage propre ; vitest : 7 échecs restants, tous d'environnement (chemins `/private/var` du Mac, sondes de lancement), déjà présents avant nos changements.
 
 ## Les deux chantiers en cours
 
-1. **La vraie connexion de Chafic** sur le Mac de test remis à neuf (build 6, carte de connexion à l'écran). Le relais `../.scratch/phase1/relais.py` (lancé par `relais-start.sh`) ouvre une page « Connecter tes comptes à Bbox » sur le Mac mini, joignable par Tailscale depuis les seuls appareils de Chafic (son MacBook et ses iPhone) : il ne journalise que les chemins, jamais le code. Le tunnel vers la fenêtre de Bbox (port 9333) et le relais tournent en arrière-plan.
+1. **Fait le 25/10 : la vraie connexion de Chafic** (voir la preuve finale plus haut). Le relais `../.scratch/phase1/relais.py` (lancé par `relais-start.sh`) ouvre une page « Connecter tes comptes à Bbox » sur le Mac mini, joignable par Tailscale depuis les seuls appareils de Chafic : il ne journalise que les chemins, jamais le code. Il est arrêté ; le relancer pour un prochain geste de connexion.
 2. **Le reste de la marque et de l'IA gratuite** : `store/free-tier.ts`, `terms-butterbar.tsx`, `guest_allowed`, `free_tier_offer`, `default_soul.py`, `prompt_builder.py`, la mention MIT ; puis la preuve avec un ChatGPT gratuit et le retrait de `~/bbox-baseline`.
 
 ### Restes de l'analyse « Hermès déjà là » (`../.scratch/phase1/coexist-analysis.md`)
@@ -48,15 +50,16 @@
 
 ## La prochaine action
 
-Quand Chafic a connecté ses comptes : vérifier dans le Mac de test que Bbox répond par Claude puis par ChatGPT, capture à l'appui, puis déconnecter son ChatGPT du Mac de test et arrêter le relais.
+Bbox se présente en son seul nom dans la conversation : en mode Bbox, `default_soul.py` et `prompt_builder.py` ne disent plus jamais « Hermes » ni « Nous Research », tests à l'appui ; puis build 7 et la question « qui es-tu ? » posée dans le Mac de test, capture à l'appui. Le sous-agent lancé le 25/10 fait la partie code ; le PO fait le build et la preuve.
 
-Attention : comme `hermes auth add anthropic`, la connexion Claude enregistre le compte sans le rendre actif. Bbox ouvre ensuite l'étape de choix du modèle, que le relais ne valide pas : la valider par `cdp.py` avant de tester une réponse. À trancher plus tard : faire de Claude le fournisseur actif d'office après la connexion (petit changement, à prouver).
+À trancher plus tard : faire de Claude le fournisseur actif d'office après la connexion. Dans l'essai du 25/10, la conversation est bien partie sur Claude après la connexion, mais la carte du modèle doit être vérifiée sur une connexion faite depuis la fenêtre elle-même.
 
 ## Notes d'essai
 
 - Remettre le Mac de test à neuf : `vm-blank-1.sh` (retire le service de démarrage fabriqué, vide le disque avec `sync`, arrête le Mac virtuel proprement), relancer `tart run bbox-essai`, puis `vm-blank-2.sh`, puis le tunnel `-L 9333:127.0.0.1:9333`. Sans `sync` et sans arrêt propre, le déplacement du fichier de démarrage est perdu.
 - Une commande `launchctl print` passée par SSH a été bloquée par une règle de sécurité du Mac mini : pour remettre le Mac de test à neuf, on déplace le fichier de démarrage et on redémarre le Mac virtuel au lieu d'appeler `launchctl`.
 - Une session n'apparaît dans la fenêtre que si son nombre de messages est au moins 1.
+- Le sélecteur de modèle (en bas, à droite du champ) ne réagit qu'à de vrais clics de souris : `cdp.py clickxy <x> <y>` (ajouté le 25/10), pas `click`. Le choix vaut pour la conversation en cours ; l'étiquette se met à jour au message suivant.
 
 ## Ce qui se fait à la fin, et que seul Chafic peut faire
 
