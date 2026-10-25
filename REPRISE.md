@@ -174,7 +174,7 @@ Le chantier 5, code A, B, C fait le 25/10 (sous-agent `deleg_04033a90` interromp
 - **Trouvailles du 25/10 sur l'écran de la machine (par VNC), confiées au chantier 8 (`deleg_59edd152`)** :
   - P0 : à chaque lancement, Bbox appelle `git` et macOS propose « The “git” command requires the command line developer tools… Install » (le programme d'installation d'Apple reste ouvert) ;
   - P0 : la page « Capacités » montre « Hermes Agent + Teknium », « Use, configure, theme, extend, and orchestrate Hermes Agent. », des catégories en anglais et un pied de page « Developer Mode », « Submit Mod », « Developer Docs » ;
-  - « 1 en file d'attente — en pause », « Tour perdu pendant le redémarrage », « Réveil de default… », « Skill chargé: google-workspace », « (Recommended) » dans une carte de choix ;
+  - « 1 en file d'attente », suivi d'un long tiret puis « en pause », « Tour perdu pendant le redémarrage », « Réveil de default… », « Skill chargé: google-workspace », « (Recommended) » dans une carte de choix ;
   - le contrôle de l'ordinateur ne marche pas : « computer_use backend unavailable: cua-driver session setup failed » (chantier des autorisations à venir) ;
   - l'alerte « Ton Mac n'a presque plus de place (4.0 GB libres). » est vue à l'écran. Puis build 11 sur `bbox-essai2` et preuve : `config.yaml` sans modèle (`printf "onboarding:\n  run: true\n"`), relancer, écrire une seule fois : Bbox doit répondre en tutoyant, avec Sonnet 5. La configuration d'origine reste dans `~/auth-parked/config.yaml.with-model`.
 
