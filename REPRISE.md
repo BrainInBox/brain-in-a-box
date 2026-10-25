@@ -41,6 +41,17 @@
   - impasse : si la personne choisit « I'll choose a provider later » puis écrit, elle reçoit « Session unavailable / storage_unavailable » (cause : aucun modèle, et `restore_policy` refuse une session sans modèle ; avant, le modèle gratuit de Nous servait de repli). Il faut rouvrir la carte Claude / ChatGPT avec une phrase simple et garder le message ;
   - jargon en bas à gauche : « Backend needs setup », et sa bulle « Inference not ready / Add a provider credential before sending your first message. », qui ne mène nulle part ; « Backend » aussi dans la pastille du modèle ;
   - la ligne « Détails » de l'écran d'échec au démarrage, et les cartes de connecteurs hébergés par Nous (voir plus bas).
+- **Chantier 3, code fait le 25/10** (sous-agent `deleg_9a2e1acb`, 4 commits au-dessus de `1980115`, tout en mode Bbox seulement) :
+  - `c70a680` : le moteur refuse une conversation sans IA connectée par `provider_not_configured` au lieu d'enregistrer une session sans modèle (`gateway/session_local.py`) ;
+  - `f55cdbc` : sans IA connectée, « Envoyer » ne crée plus de session : la carte Claude / ChatGPT se rouvre avec « To answer you, I need your AI. Connect Claude or ChatGPT, it takes a minute. » (FR « Pour vous répondre, j'ai besoin de votre IA. Connectez Claude ou ChatGPT, ça prend une minute. »), et le message reste dans le champ. En bas à gauche, « Backend needs setup » devient « Connect your AI » ; sa bulle dit « Connect your AI so I can answer you. » avec un bouton qui rouvre la même carte ;
+  - `dc483d0` : la ligne « Détails » de l'écran d'échec au démarrage ne cite plus de commande ;
+  - `d36e765` : les cartes des connecteurs hébergés par Nous sont cachées.
+  Tests : interface 224 sur 224 sur le lot de départ (217 avant), 864 sur 864 sur le lot élargi, nouveaux tests Bbox 12 sur 12, typage sans erreur ; moteur 20 passent hors mode Bbox, et en mode Bbox les 4 mêmes échecs avant et après (tests d'origine de l'essai gratuit, attendus).
+  Points ouverts :
+  - **le registre du français** : l'interface de Bbox vouvoie (« Connectez votre IA »), alors que l'IA tutoie dans la conversation (« ton guide », « tes factures »). Deux voix pour un seul Bbox : question posée à Chafic le 25/10, recommandation du PO « tu » partout ;
+  - « Backend » reste dans les autres états de l'élément de la barre d'état (prêt, connexion, hors ligne) ; « Med » dans la pastille vient du niveau de réflexion. À revoir avec la fenêtre simplifiée ;
+  - la carte « annuaire de connecteurs » affichée dans la conversation, quand l'IA propose un branchement, liste encore les connecteurs hébergés : laissée exprès (la cacher casserait la suite de la conversation) ;
+  - à vérifier sur l'app fabriquée : que la fenêtre sait bien « aucune IA connectée » après « I'll choose a provider later » (sinon c'est le refus du moteur qui rouvre la carte).
 - **Vu au build 8, plus tard** : « Backend needs setup » reste affiché alors que Bbox répond (le choix du modèle vaut pour la conversation, aucun modèle par défaut n'est enregistré : à rapprocher de F8) ; le bloc « Thought briefly » montre le raisonnement de l'IA en anglais à une personne qui écrit en français ; les Réglages gardent toutes les sections d'Hermès (« Mixture of Agents », « Terminal backend »…) : la fenêtre simplifiée reste à faire.
 - Tests sur `5dc1465` : tests Python ciblés au vert (32 sur l'identité, Claude et la cohabitation), typage propre ; vitest : 7 échecs restants, tous d'environnement (chemins `/private/var` du Mac, sondes de lancement), déjà présents avant nos changements.
 
@@ -75,7 +86,7 @@
 
 ## La prochaine action
 
-Le chantier 3, en cours (sous-agent `deleg_9a2e1acb`) : l'impasse « Session unavailable » sans IA connectée (rouvrir la carte Claude / ChatGPT), le jargon « Backend » et sa bulle, la ligne « Détails » de l'écran d'échec, et cacher les connecteurs hébergés par Nous. Puis build 9 sur `bbox-essai2` (`essai-update.sh` à adapter à `vssh-bbox-essai2`) et preuve à l'écran, sans compte puis avec le Claude de Chafic.
+Build 9 (`d36e765`) mis à jour sur `bbox-essai2` (`BBOX_VM=bbox-essai2 essai-update.sh run9`), puis preuve à l'écran : sans IA (connexion de Chafic mise de côté le temps de l'essai par `essai2-noai.sh off`, remise par `essai2-noai.sh on`), « I'll choose a provider later », écrire, la carte doit revenir avec la phrase ; puis avec le Claude de Chafic, une question.
 
 À trancher plus tard : faire de Claude le fournisseur actif d'office après la connexion. Dans l'essai du 25/10, la conversation est bien partie sur Claude après la connexion, mais la carte du modèle doit être vérifiée sur une connexion faite depuis la fenêtre elle-même.
 
