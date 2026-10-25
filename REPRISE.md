@@ -60,6 +60,13 @@
   - « Backend ready » (et « connecting », « offline ») en bas à gauche : jargon, à dire en mots simples ;
   - « Thought briefly » montre le raisonnement de l'IA, en anglais, à une personne qui écrit en français : décision du PO, le cacher par défaut en mode Bbox (on montre le résultat, pas la mécanique) ;
   - le moteur interroge encore Nous pour une vérification d'outils (`nous requested but Nous Portal not configured`, `check_fn <lambda> returned False; dependent tools will be unavailable`) : invisible à l'écran, mais un outil peut manquer sans le dire ; à identifier.
+- **Chantier 4, code fait le 25/10** (sous-agent `deleg_f87e9e97`, 4 commits au-dessus de `d36e765`, mode Bbox seulement) :
+  - `ff38faf` : un compte IA connecté sans modèle suffit. Une ligne « Connected » de la carte termine la configuration d'un clic, sans nouvelle connexion ; au démarrage et à l'envoi, Bbox prend le compte connecté (Claude d'abord, puis ChatGPT) avec son modèle recommandé (le même que l'accueil après une connexion : claude-sonnet-5, gpt-6-sol) et l'enregistre comme les Réglages. Il vérifie d'abord que le compte répond et ne remplace jamais un modèle déjà choisi ;
+  - `d5821a7` : en bas à gauche, « Ready » / « Prêt », « Starting… » / « Démarrage… », « Not running » / « À l'arrêt », « Your AI is not answering » / « Votre IA ne répond pas » ; plus de « Backend » ;
+  - `1461f23` : le raisonnement de l'IA (« Thought briefly ») est caché par défaut, réactivable dans Réglages > Chat ;
+  - `e8e6b6c` : les lignes « Nous » du journal venaient du contrôle de l'outil de vision, qui sans modèle principal essaie OpenRouter puis Nous ; une fois le modèle enregistré, il passe par le compte de la personne (test ajouté). La carte des connecteurs hébergés reste coupée exprès.
+  Tests : interface 4 611 sur 4 611 (481 fichiers), typage sans erreur ; moteur 63 passent, 4 échecs déjà présents avant (sans rapport).
+  Points ouverts : la bulle de l'élément d'état garde « Inference ready », « Reconnect gateway », « Restart gateway » ; si un compte est ajouté pendant que l'app tourne, la carte peut s'ouvrir puis se refermer seule, et il faut renvoyer le message.
 - **Mise à jour du Mac de test** : au build 9, l'ancienne fenêtre (`Bbox 1980115`) a survécu à « Quitter » et à un premier arrêt, et continuait de piloter le moteur depuis son dossier effacé (« Could not run hermes gateway ensure », « Could not load sessions »). `essai-update.sh` force maintenant l'arrêt et refuse d'effacer l'ancienne version si une fenêtre tourne encore. Pour la personne, à regarder avec F6 (mises à jour).
 - **Vu au build 8, plus tard** : « Backend needs setup » reste affiché alors que Bbox répond (le choix du modèle vaut pour la conversation, aucun modèle par défaut n'est enregistré : à rapprocher de F8) ; le bloc « Thought briefly » montre le raisonnement de l'IA en anglais à une personne qui écrit en français ; les Réglages gardent toutes les sections d'Hermès (« Mixture of Agents », « Terminal backend »…) : la fenêtre simplifiée reste à faire.
 - Tests sur `5dc1465` : tests Python ciblés au vert (32 sur l'identité, Claude et la cohabitation), typage propre ; vitest : 7 échecs restants, tous d'environnement (chemins `/private/var` du Mac, sondes de lancement), déjà présents avant nos changements.
@@ -95,7 +102,7 @@
 
 ## La prochaine action
 
-Le chantier 4, en cours (sous-agent lancé le 25/10) : choix automatique du modèle quand une IA est connectée, « Backend » en mots simples, raisonnement caché par défaut, vérification d'outils qui interroge Nous. Puis build 10 sur `bbox-essai2` et preuve : remettre `config.yaml` sans modèle (copie `config.yaml` de `run9`), relancer, écrire, Bbox doit répondre sans passer par les Réglages.
+Build 10 (`e8e6b6c`) mis à jour sur `bbox-essai2` (`essai-update.sh run10`), puis preuve : `config.yaml` mis de côté et remplacé par une version sans modèle (comme après une connexion recopiée), relancer Bbox, écrire : Bbox doit répondre sans passer par les Réglages, « Ready » en bas, pas de « Thought briefly » ; puis remettre la configuration d'origine.
 
 À trancher plus tard : faire de Claude le fournisseur actif d'office après la connexion. Dans l'essai du 25/10, la conversation est bien partie sur Claude après la connexion, mais la carte du modèle doit être vérifiée sur une connexion faite depuis la fenêtre elle-même.
 
