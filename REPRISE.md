@@ -62,7 +62,7 @@ But, vu par Awa : juste après avoir connecté son IA, Bbox lui dit en une phras
 **Preuve attendue** (sur `bbox-essai2`, puis sur un Mac vierge) : le cerveau s'installe depuis Bbox sans terminal ; « Qu'est-ce que tu sais de moi ? » reçoit une réponse tirée du cerveau ; `gbq query` répond ; sur un Mac qui a déjà le kit, `~/Documents/Brain` et `~/.claude` sont inchangés (comparer avant et après). Captures de tout ce que voit la personne, puis un commit par étape qui marche.
 
 ### 2. Ensuite, dans cet ordre (validé le 25/10)
-1. La mémoire de ChatGPT ou Claude, récupérée dans le cerveau (`importer-memoire`, `import.rs`), proposée par Bbox de lui-même.
+1. La mémoire de ChatGPT ou Claude, récupérée dans le cerveau (`importer-memoire`, `import.rs`), proposée par Bbox de lui-même. **Piste du PO (25/10, à vérifier au début du chantier)** : `importer-memoire` fait trier les souvenirs par la commande `claude`, qu'`install.sh` installe déjà ; elle accepte une connexion passée par `CLAUDE_CODE_OAUTH_TOKEN` (`_headless_claude.setup_token`). Bbox lancerait donc l'importeur du kit tel quel en lui prêtant sa propre connexion Claude, sans seconde connexion pour la personne. Le chemin le plus simple pour elle : la phrase à coller dans ChatGPT ou Claude (`importer-memoire phrase`), puis sa réponse collée dans Bbox (`preparer -`), l'accord, `lancer`.
 2. Les autorisations du Mac une à une, chacune avec un premier usage utile (logique de `hermes_access.rs`).
 3. Le premier essai avec une vraie personne : Chafic dira qui. On ne lui repose pas la question.
 4. La souris Bbox et la visite en cinq arrêts.
@@ -78,7 +78,7 @@ But, vu par Awa : juste après avoir connecté son IA, Bbox lui dit en une phras
 - **place sur le disque** : un Mac plein (courant) fait refuser les outils d'Apple, et Awa resterait devant un message d'Apple. Bbox devrait regarder la place libre avant d'ouvrir la fenêtre d'Apple (environ 10 Go sur macOS 27, avec le cerveau), le dire en une phrase et proposer de faire de la place avec elle ; à faire juste après la preuve du cerveau ;
 - Bbox lui-même pèse 4,6 Go une fois installé : à alléger plus tard ;
 - textes en anglais : sur un Mac réglé en français, la fenêtre est en français (« Nouvelle conversation », « Ce que je sais faire », « Prêt », « Intelligent », vu sur `bbox-vierge3`) ; restent « NEW SESSION » et « Med ». Les textes anglais du build 17 venaient du Mac de test réglé en anglais ;
-- la réflexion du soir et la nuit du kit passent par Claude Code (`install.sh` choisit Claude d'office) : chez Awa, sans la commande `claude`, elles ne tournent pas ; à faire passer par Bbox, hors de la première heure ;
+- la réflexion du soir et la nuit du kit passent par Claude Code : `install.sh` l'installe, mais sans connexion à lui (Awa n'a que celle de Bbox) elles ne tournent pas ; à brancher sur la connexion de Bbox, hors de la première heure ;
 - « Desktop boot failed » sur un Mac lent, le PATH du terminal, la licence MIT à l'écran, F6 et F7 avant une version publique, le Developer ID (et `fr.lproj` alors vérifiable), Windows.
 
 ## Décisions prises seul par le PO
@@ -92,7 +92,7 @@ But, vu par Awa : juste après avoir connecté son IA, Bbox lui dit en une phras
 - 25/10 17 h : l'installation du cerveau démarre seule après le prénom, et aussi au premier message quand aucun accueil ne tourne (Bbox déjà installé, accueil sauté). Raison : le cerveau doit être là d'office, sans que la personne le demande.
 - 25/10 17 h : un cerveau déjà présent (`~/Documents/Brain`, la base de gbrain et `gbq`) n'est ni réinstallé ni touché ; Bbox apprend seulement où il est. Raison : ne jamais toucher aux notes de quelqu'un qui a déjà le kit.
 - 25/10 17 h : sans outils Apple, Bbox ouvre la fenêtre d'Apple en disant quoi cliquer ; si la personne la ferme, un deuxième essai, puis « plus tard » sans insister. Raison : `install.sh` a besoin de git et de python3, et une fenêtre refusée ne doit pas bloquer la conversation.
-- 25/10 17 h 30 : `install.sh` garde son choix d'office (Claude Code) ; on ne lui passe aucune option. Raison : c'est ce que fait l'app du kit sur Mac, et sans la commande `claude` il prévient seulement ; la réflexion du soir par Bbox va dans « Plus tard ».
+- 25/10 17 h 30 : `install.sh` garde son choix d'office (Claude Code) ; on ne lui passe aucune option. Raison : c'est ce que fait l'app du kit sur Mac. Il installe lui-même la commande `claude` (depuis claude.ai) : c'est le moteur dont l'import de la mémoire et la réflexion du soir du kit ont besoin, et Bbox lui prêtera sa connexion Claude (voir le chantier 2).
 
 ## Où est le code
 
