@@ -1,0 +1,3 @@
+101 assistant : Bonjour, c'est Bbox. Me voilà sur Telegram : écris-moi ici quand tu veux, même loin de ton Mac. On range tes factures : dis-moi où elles sont (photos, mails, dossier sur le Mac) et on commence.
+102 user : [Bbox, from the chat on their Mac: their phone was just connected and you wrote them this here] / Bonjour, c'est Bbox. Me voilà sur Telegram : écris-moi ici quand tu veux, même loin de ton Mac. On range tes factures : dis-moi où elles sont (photos, mails, dossier sur le Mac) et on commence.
+109 assistant : Bonjour, c'est Bbox. Me voilà sur Telegram : écris-moi ici quand tu veux, même loin de ton Mac. On reprend tes factures ici : dis-moi où on en était ou envoie-moi la prochaine.
