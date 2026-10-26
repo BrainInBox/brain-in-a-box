@@ -6,6 +6,31 @@ Mission : `~/brain-in-a-box-worktrees/MISSION-branchements.md`
 
 État : **TERMINÉ** le 26/10/2026 à 19 h 20 UTC : les quatre étapes sont prouvées (étape 1 par Telegram seulement, WhatsApp sauté sur décision de Chafic). Branche à réunir : `bbox/branchements` (HEAD `137f7f6`). `REPRISE-guide.md` dit aussi « TERMINÉ » : c'est cette session qui réunit (mission, « À la fin »).
 
+## Réunion (`MISSION-reunion-suite.md`) : à lire en premier
+
+État au 26/10, 23 h 05 UTC.
+
+- **Où on en est** : étape 1 de la mission, le passage en cours sur `bbox-reunion1` (build `bbb6bb2`), qui sert d'état des lieux. Prouvé (captures 00 à 24 dans `../.reunion/preuves/`) : Claude connecté, Bbox écrit le premier, cerveau prêt, mémoire ChatGPT importée (11 souvenirs), micro, contrôle de l'ordinateur, écran et fichiers avec leur premier usage, ordre autorisations puis téléphone. Vérifié dans `~/.hermes/state.db` de la VM : un seul bonjour, zéro « Échec du tour ».
+- **En cours : le téléphone.** Code Telegram envoyé à Chafic à 22 h 52 UTC (un seul message, édité à chaque nouveau code ; état dans `../.reunion/phone-relay.json`). À 23 h 03, pas encore branché (`TELEGRAM_BOT_TOKEN` absent du `.env` de la VM). Restent ensuite : Bbox écrit le premier sur le nouveau bot, la visite, la souris.
+- **Outil d'écran arrêté** : `reunion-screen.py` ne tourne plus (vu à 23 h 03, `vnc.sh` répond « timeout »). Le relancer ouvre une deuxième connexion VNC sur le même lancement, et Tart a déjà arrêté un Mac de test dans ce cas. La conversation d'Awa est sur le disque de la VM : au pire, on relance la VM et on refait seulement la carte Telegram.
+- **La suite, dans l'ordre** : (1) finir téléphone, visite et souris sur `bbox-reunion1`, captures 25 et suivantes ; (2) corriger les défauts du tableau, chacun avec un test qui échoue puis passe ; (3) un seul build ; (4) un dernier passage complet sur un Mac neuf (place disque : décider seul sans rien supprimer, sinon demander à Chafic sur Telegram) ; (5) récapitulatif à Chafic sur Telegram : prouvé avec captures, pas prouvé, gestes qui l'attendent, liste des Mac de test avec leur taille.
+
+| # | Point de la mission | Défaut vu par Awa | Capture (`../.reunion/preuves/`) | État |
+|---|---|---|---|---|
+| 1 | 1 | Fenêtre d'Apple « outils de développement » (git, environ 5 minutes) sans annonce, qui cache les cartes ; la carte de Bbox expire pendant ce temps et il faut écrire « c'est fait » | `defaut-outils-ligne-de-commande.png`, `defaut-carte-expiree-pendant-apple.png` | à corriger |
+| 2 | 2 | Accès à Documents demandé pendant le choix de la couleur, avant l'explication | `defaut-documents-avant-explication.png` | à corriger |
+| 3 | 3 | Question macOS « réseau local » en anglais avant le premier mot de Bbox | `defaut-reseau-local.png` | à corriger |
+| 4 | 4 | Notification « zsh peut s'exécuter en arrière-plan », qui cache aussi un interrupteur des Réglages | `defaut-zsh-arriere-plan.png` | à corriger |
+| 5 | 4 | Ligne « Self-improvement review… » en anglais dans la conversation | `defaut-ligne-technique-anglais.png` | à corriger |
+| 6 | 5 | Après « Passer » sur la photo du cahier, Bbox s'arrête | `defaut-guide-sarrete-apres-passer.png` | à corriger |
+| 7 | 5 | Après « Quitter et rouvrir », Bbox revient sur la conversation mais n'écrit rien | `16-rouvert-meme-conversation.png`, `23-rouvert-apres-acces-disque.png` | à corriger |
+| 8 | 5 | Petit tour proposé avec les cartes de première tâche, avant les autorisations | `defaut-tour-propose-trop-tot.png` | à corriger |
+| 9 | 5 | Étiquette « Brain Memory Import » en anglais au-dessus de la réponse | `06-memoire-rangee-propose-micro.png` | à corriger |
+| | hors mission (finitions) | Menus « File, Edit, View, Window, Help », nom « Bbox bbb6bb2 » dans la barre, « J'ai fait 4 étapes » | | noté |
+| | outil de test | Relancé par macOS, Bbox n'a plus la porte de débogage 9222 | | contourné par `phone-send.py` |
+
+Code à lire pour corriger (dossier `../bbox-reunion`, branche `bbox/reunion`) : `agent/bbox_brain.py`, `apps/desktop/electron/apple-developer-tools.ts`, `tools/setup_beat_tool.py`, `agent/onboarding_text.py`, `agent/onboarding_flow.py`, `agent/turn_context.py`, `tools/bbox_permissions_tool.py`, `tools/bbox_phone_tool.py`.
+
 ## Les quatre étapes
 
 1. Le téléphone : Telegram BRANCHÉ et prouvé le 26/10 sur `bbox-brch1` (`c0f6f00`). WhatsApp n'est pas fait : Chafic a décidé « Pas WhatsApp cette fois, Telegram suffit ». Bbox propose le téléphone de lui-même dans l'accueil, montre la carte et son code (captures 1 et 2) ; Chafic crée le bot depuis son téléphone ; la carte passe à « Ton téléphone est branché » à 18 h 01 UTC (journal : `telegram connected`). Puis Bbox écrit le premier sur Telegram à 18 h 05 UTC et le dit à Awa à l'écran (capture 4) ; Chafic reçoit le message et répond « Okk » à 18 h 19 ; Bbox lui répond en 6 secondes. Deux défauts vus en route, corrigés dans le code (`195e713`, `f8b7d1a`, `137f7f6`) : voir « Défauts trouvés ». Preuve à l'écran avec `137f7f6` (19 h 13 UTC, capture 5) : Awa dit « Je dois sortir. Écris-moi sur Telegram », Bbox écrit avec l'étape en cours (« On reprend tes factures ici ») et le message est rangé une seule fois, comme message de Bbox, dans la conversation du téléphone (`conversation-telegram-apres-correction.txt`, message 109). Reste à voir à l'écran : Bbox qui écrit le premier sans aide juste après un branchement neuf (correction de « Échec du tour ») ; cela demande un nouveau bot, donc les gestes de Chafic : prévu dans la première heure sur un Mac neuf, à la réunion. Preuves : `preuves/telephone-brch1/`.
