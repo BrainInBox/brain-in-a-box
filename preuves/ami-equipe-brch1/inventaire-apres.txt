@@ -1,0 +1,28 @@
+f214ee495fee384daee2e22056c5f475966f37cd39be46144883321010267f20  ./.gbrain-owner.json
+6bba7d6fb306db597141f5fac4d930428205a744d592f6d49055ca6006cb2176  ./.gitignore
+3e8f4b0e223b288b6098d1dec55d1ca557184052cd333f8b7b2b31016938aec4  ./Agents/README.md
+223b0262e0b30928c6c12d44f03c70e941e1e354cf2ccc418c962f48c38226db  ./Agents/_template.md
+08a968d6c7f62934fe86b3543229f65bdeec7454d41ade1fcb57b6ef58ed7f63  ./CLAUDE.md
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  ./Clients/Actifs/.gitkeep
+679b627821fe9c8313e70a0de57489776ec4eef429960c2d6b4c8584de091bbd  ./Clients/Actifs/boutiques.md
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  ./Clients/Prospects/.gitkeep
+ac6864a47577eeafbfa2495c5605ce6d3134c731f4498e59d989d1ec52287e85  ./Commence ici.md
+ec8cf312ae95e001d24992c84a1c0df019db5f03ee3a56b36d959361bc9c05c6  ./Decisions/README.md
+f96e19fe9fcc2ed34cae58f67a608c6c697ea753bfdaa8b5de97bc7edd8d4094  ./Decisions/_template.md
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  ./Journal/.gitkeep
+235839bb8f6dec258980424b462d7edf0a571eed7e6e77dba2d7cab74618f95b  ./Profile/about.md
+df70289d37cc1370bf3f5219209af885888bea8ed1fd85534994c01eb76e869d  ./Profile/behavior.md
+c6cba8be0c5d93201f9eea554add1969e742ddc768eabc7b24589c06998ba602  ./Profile/business.md
+17b9da73b80ed45de90db649a2fc51b43cdebc6875f244497688883502925ab7  ./Profile/lessons.md
+3eeaa47bc99fa6d767338db44bcc2c7523de35dd9da079e4559008eb8d55eb2b  ./Profile/memory.md
+20a1c73aa0c4367ab9a40caa1f753d77236f30cd6ce7e9eabb9eb23934b1bf65  ./Profile/soul.md
+d4eb60ab56a99ba79ee1d2c749bf0133dd280dd328f11a4348db128989be0f67  ./Profile/stack.md
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  ./Projects/.gitkeep
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  ./Resources/Templates/.gitkeep
+42c05b6a98b1a5ef93998c3c3de1fad2280f7a955155831280593c635aab58bf  ./Skills/README.md
+c0243c83472671a97505629f60d4420a8c8b908bc5653264e65ca1d1a86af222  ./Skills/_template.md
+2e01074acafefc8339ea2d22b3ae51be80bad9d39ef5b6884233db5c0f2a7bad  ./Team/README.md
+6f2a96a08e4c07a5c11644b63b81368304e8f1e6fc1d4d4cfec1868209d9b123  ./Team/_template.md
+# files: 25
+# git: 29d5bd0 profil Moussa | changes not saved: 0
+# gbrain: 0 pages 12 pages 
