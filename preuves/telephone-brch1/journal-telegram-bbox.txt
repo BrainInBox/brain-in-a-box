@@ -1,0 +1,7 @@
+2026-10-26 11:01:01,733 INFO gateway.run: ✓ telegram connected
+2026-10-26 11:05:06,044 INFO [local-b2f4a0097310a5d6ab90e7fa3fec9e0b4aa914ea4ab9891c40b460de39ee7812] agent.tool_executor: tool phone completed (0.00s, 54 chars)
+2026-10-26 11:05:09,153 WARNING gateway.mirror: Mirror: no session found for telegram:<id-telegram> thread=None user=<chafic>:501 (explicit_id=none, origin-scan bailed)
+2026-10-26 11:05:09,156 INFO [local-b2f4a0097310a5d6ab90e7fa3fec9e0b4aa914ea4ab9891c40b460de39ee7812] agent.tool_executor: tool phone completed (0.65s, 76 chars)
+2026-10-26 11:19:08,834 INFO gateway.run: inbound message: platform=telegram user=<chafic> chat=<id-telegram> msg='Okk' reply_to_id=None reply_to_text=''
+2026-10-26 11:19:09,242 INFO [<id-telegram>_111908_<id-telegram>] agent.turn_context: conversation turn: session=<id-telegram>_111908_<id-telegram> model=anthropic/claude-opus-5.5 provider=openrouter platform=telegram hi
+2026-10-26 11:19:14,566 INFO gateway.run: response ready: platform=telegram chat=<id-telegram> session=agent:main:telegram:dm:<id-telegram> time=5.7s api_calls=1 response=141 chars

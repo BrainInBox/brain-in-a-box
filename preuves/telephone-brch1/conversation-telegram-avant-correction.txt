@@ -1,0 +1,2 @@
+user : Okk
+assistant : Salut ! Je n'ai pas d'échange précédent sous les yeux, donc je ne sais pas à quoi se rapporte ton « ok ». Qu'est-ce que tu veux qu'on fasse ?
