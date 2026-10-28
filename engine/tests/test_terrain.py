@@ -534,6 +534,14 @@ class Workflow(unittest.TestCase):
                     self.assertEqual(st["with"]["ref"], "${{ needs.ref.outputs.sha }}", name)
             self.assertEqual(job["env"]["TERRAIN_SHA"], "${{ needs.ref.outputs.sha }}", name)
 
+    def test_the_linux_desktop_has_time_for_a_slow_mirror(self):
+        # 2026-10-27: Azure's Ubuntu mirror served ~85 kB/s, the desktop's 31 MB took past the step's
+        # 5 minutes, and its apt-get, still running, held dpkg's lock when the app scenario started.
+        step = [st for st in self.jobs["app-linux"]["steps"] if st.get("name") == "A desktop for the app"]
+        self.assertEqual(len(step), 1)
+        self.assertIn("apt-get install", step[0]["run"])
+        self.assertGreaterEqual(step[0]["timeout-minutes"], 15)
+
     def test_a_run_started_by_hand_tests_its_own_branch(self):
         on = self.wf["true"]
         self.assertEqual(sorted(on), ["schedule", "workflow_dispatch"], "nothing a stranger can trigger")
