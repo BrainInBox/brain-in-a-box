@@ -2,13 +2,13 @@
 
 À lire en premier pour reprendre le travail. Ce document est mis à jour à chaque étape. La boussole est `VISION.md`, dans ce même dossier. Les décisions que Chafic a tranchées sont dans le skill `brain-in-a-box-product`, section « Décisions validées par Chafic, ne plus redemander » ; la même section est recopiée dans la page `projects/brain-in-a-box` du C-brain. On ne les repose pas.
 
-## La prochaine action (26/10, 23 h 05 UTC)
+## La prochaine action (28/10, 12 h 20 UTC)
 
 Depuis le 26/10 à 0 h 50, le travail est partagé entre des sessions qui ont chacune leur mission et leur fichier de reprise ; ce fichier-là fait foi pour sa part :
-- **Réunion** (`../MISSION-reunion-suite.md`, qui prolonge `../MISSION-branchements.md`) : `REPRISE-branchements.md`, section « Réunion ». Les branchements (téléphone par Telegram, présentation à voix haute, import de la mémoire, ami déjà équipé) sont terminés et fusionnés avec le guide dans la branche `bbox/reunion` (`bbb6bb2`, build `Bbox bbb6bb2`). En cours : la première heure entière sur le Mac neuf `bbox-reunion1` comme état des lieux (preuves 00 à 24 : connexion Claude, bonjour de Bbox en premier, cerveau, mémoire ChatGPT, les quatre autorisations avec leur premier usage) ; restent téléphone, visite et souris. Ensuite : corriger les neuf défauts notés, un seul build, un dernier passage sur un Mac neuf, puis le récapitulatif à Chafic sur Telegram.
+- **Réunion** (`../MISSION-reunion-suite.md`, qui prolonge `../MISSION-branchements.md`) : `REPRISE-branchements.md`, section « Réunion ». Les branchements (téléphone par Telegram, présentation à voix haute, import de la mémoire, ami déjà équipé) sont terminés et fusionnés avec le guide dans la branche `bbox/reunion`. Les défauts de l'état des lieux sont corrigés (`028a154`, `7dea272`, `cdb943b`, `f3b61be`, `afd6c78`), build unique `Bbox afd6c78`. 28/10 : dernier passage sur le Mac neuf `bbox-reunion2`, captures `r3-*` ; prouvés : Bbox écrit le premier, un seul bonjour, zéro « Échec du tour », cerveau, mémoire ChatGPT, les cinq autorisations avec leur premier usage, puis Bbox propose le téléphone. Le retour après « Quitter et rouvrir » ne tient pas encore (défaut 7 bis, recorrigé dans `ec018a3`, pas encore fabriqué). En cours : le téléphone (code Telegram envoyé à Chafic à 12 h 08), puis visite et souris, puis le récapitulatif à Chafic sur Telegram.
 - **Guide** (`../MISSION-guide.md`) : `REPRISE-guide.md` (souris et visite).
 
-Ce qui attend Chafic : le branchement Telegram du Mac de test (dans son dernier message Telegram de Bbox : le lien, « Démarrer », puis « Créer », sur ce message seulement) ; dire s'il régénère la clé Fastlane affichée par erreur dans une session précédente ; choisir, après le récapitulatif, quels Mac de test supprimer.
+Ce qui attend Chafic : le branchement Telegram du Mac de test (dans son dernier message Telegram de Bbox : le lien, « Démarrer », puis « Créer », sur ce message seulement) ; dire s'il régénère la clé Fastlane affichée par erreur dans une session précédente ; choisir, après le récapitulatif, quels Mac de test supprimer (13 Go libres seulement le 28/10) et s'il veut un build de plus pour prouver `ec018a3`.
 
 Le détail de la priorité du 25/10 (cerveau, import, autorisations, tous prouvés) est dans `HISTORIQUE.md`.
 
