@@ -132,3 +132,18 @@ Une entrée :
 - Correctif : #37 (`newline=""` partout où l'octet compte).
 - Test de non-régression : le job `windows` de `test.yml` lance `engine/tests`.
 - Catégorie à surveiller : fins de ligne.
+
+## 2026-10-27 · Linux (VM) · Un miroir Ubuntu lent faisait échouer l'app sur un verrou de dpkg
+- Symptôme : `app-linux`, parcours `app-codex`, scénario `app`, étape `app-installation` : « les
+  bibliothèques d'un bureau Ubuntu ne s'installent pas : E: Could not get lock /var/lib/dpkg/lock-frontend.
+  It is held by process 2507 (apt-get) ».
+- Cause : l'étape « A desktop for the app » (5 minutes, 20 s d'habitude) téléchargeait ses 31 Mo depuis
+  le miroir Ubuntu d'Azure à ~85 ko/s : coupée à 5 minutes, son apt-get est resté vivant et tenait le
+  verrou de dpkg quand le robot a lancé le sien, 11 s plus tard. Le kit n'y est pour rien ; l'autre
+  parcours du même run, sur un autre runner, avait fini en 20 s.
+- Pourquoi les tests ne l'avaient pas vu : rien ne disait la marge des étapes de préparation d'une VM ;
+  5 minutes suffisaient à toutes les nuits jusque-là.
+- Correctif : l'étape a 15 minutes, le job `app-linux` 160 (PR claude/terrain-bureau-linux-delai).
+- Test de non-régression : `test_terrain.Workflow.test_the_linux_desktop_has_time_for_a_slow_mirror`
+  (et `test_a_job_has_time_for_every_step_it_runs`, qui a demandé les 10 minutes du job).
+- Catégorie à surveiller : préparation de la VM (réseau, miroirs), diagnostic (un échec doit dire sa cause).
