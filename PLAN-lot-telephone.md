@@ -641,7 +641,7 @@ Attendu : une ligne `asar local=X vm=X | files local=N vm=N` avec les mêmes val
 
 2. Le redémarrage, qui est le cas de `r5-30` : `zsh launch.sh bbox-reunion2 <court>`, puis la même lecture **dans les 10 secondes**, et la capture `r6-02-carte-reliee-juste-apres-relance.png`.
 
-### [ ] Tâche 14 : passage 6, défauts 25 et 17 (Chafic n'a rien à faire) (40 min, surtout de l'attente)
+### [x] Tâche 14 : passage 6, défauts 25 et 17 (Chafic n'a rien à faire) (40 min, surtout de l'attente)
 
 1. **Rendre la carte à Awa sans rien supprimer** : on éteint Telegram dans la config, et on garde le jeton.
 
@@ -786,3 +786,4 @@ Plus : Vitest 11 658 sur 11 658, `tsc` à 0, aucun nouvel échec Python, 0 tiret
 - 01 h 41 : tâche 14, points 2 et 3. `say.sh` envoyé, Bbox répond avec une nouvelle carte (32 s). « Afficher le code » cliqué une fois par VNC : **le code vient au premier clic** (défaut 26 pas reproduit, une observation). Les 4 lignes se lisent en entier, le code juste dessous : `r6-03-carte-telegram-quatre-gestes.png`.
 - 01 h 44 : tâche 14, point 4 lancé. `caffeinate` tournait sur aucun des deux Mac : le Mac mini ne dort jamais (`sleep 0`), la VM a maintenant `caffeinate -d -i -t 7200`. Surveillance `../.reunion/watch-expire.sh` en fond (lecture de la carte toutes les 20 s, capture `r610-*` toutes les 5 min, trace `probe/fix7/expire.txt`).
 - 01 h 47 : tâche 16, points 2 et 3 faits pendant l'attente. Pour rester sous 30 Ko, les lignes 12, 13, 16 et 20 (prouvées le 29/10, sans reste) sont aussi sorties mot pour mot vers HISTORIQUE (même script et mêmes contrôles, `sortir-lignes2.py`, commit `d5a2f93`) ; 21 et 23 restent (un reste ouvert chacune). Lignes 25, 26, 27, 28 à jour, nouvelle ligne 29 (l'éclair), chemin de la cause du 17 corrigé, état du passage 6 en tête. REPRISE : 27 902 octets, 0 tiret cadratin, commit `5f0a379`. La ligne 17 sera finie après l'expiration.
+- 02 h 12 : tâche 14 finie. Le code affiché à 1 h 41 a expiré à 2 h 11 (6 captures `r610-1` à `r610-6`, code toujours là jusqu'à 2 h 10). La carte dit « Ce code n'est plus valable, c'est normal : chaque code ne dure qu'un moment. Touche « Afficher un nouveau code » ; l'ancien ne marche plus. » ; aucun texte rouge dans la carte (couleurs lues par `cdp.sh`), pas de « Ça n'a pas marché ». Preuves `r6-04-code-expire-sans-rouge.png` et `r6-04-expire.txt`. **Défaut 17 réglé à l'écran.** Limite : la veille du Mac n'a pas été rejouée (VM tenue éveillée), seule l'expiration simple l'a été. Ligne 17 de REPRISE finie. Le bouton « Afficher un nouveau code » n'a pas été touché : il servira à la tâche 15, avec Chafic.
