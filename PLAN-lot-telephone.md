@@ -692,7 +692,7 @@ Pendant l'attente, avancer sur la tâche 16 (les documents).
 
 Si Chafic ne répond pas, on ne bloque pas : les défauts 28, 25 et 17 sont prouvés sans lui, on écrit le bilan avec le 27 « en attente de ses gestes » et on le relance une fois.
 
-**Bloquée cette nuit (noté le 30/10 à 1 h 55 UTC), à faire avec Chafic le matin (15 min).** Trois raisons : il faut son téléphone et ses 4 gestes ; un code ne vit qu'environ 30 minutes, donc un code envoyé la nuit serait mort à son réveil ; et un envoi à Chafic demande son ok cette nuit (règle de la nuit). Rien ne lui a été envoyé. Prêt pour le matin : `Bbox 04fe5e7` tourne sur `bbox-reunion2` ; Telegram est éteint dans sa config (jeton gardé, copie `~/.hermes/config.yaml.avant-passage6`), donc la carte de 1 h 41 proposera « Afficher un nouveau code » ; le tunnel 9356 tourne. Le matin : relancer `caffeinate -d -i -t 7200` dans la VM (celui de la nuit s'arrête vers 3 h 44), puis les points 1 à 5 ci-dessus. Pour revenir à l'état d'avant sans refaire de lien : remettre la copie de la config dans la VM et relancer Bbox (le bot du 29/10 remarche, `r6-01`).
+**Bloquée cette nuit (noté le 30/10 à 1 h 55 UTC), à faire avec Chafic le matin (15 min).** Trois raisons : il faut son téléphone et ses 4 gestes ; un code ne vit qu'environ 30 minutes, donc un code envoyé la nuit serait mort à son réveil ; et un envoi à Chafic demande son ok cette nuit (règle de la nuit). Rien ne lui a été envoyé. Prêt pour le matin : `Bbox 04fe5e7` tourne sur `bbox-reunion2` ; Telegram est éteint dans sa config (jeton gardé, copie `~/.hermes/config.yaml.avant-passage6`), donc la carte de 1 h 41 proposera « Afficher un nouveau code » ; le tunnel 9356 tourne. Le matin : relancer `caffeinate -d -i -t 7200` dans la VM (celui de la nuit s'arrête vers 3 h 44) et le tunnel 9356 s'il est tombé (sa commande est dans `launch.sh`), puis les points 1 à 5 ci-dessus. Pour revenir à l'état d'avant sans refaire de lien : remettre la copie de la config dans la VM et relancer Bbox (le bot du 29/10 remarche, `r6-01`).
 
 ### [ ] Tâche 16 : documents (20 min, à faire pendant les attentes)
 
@@ -726,7 +726,9 @@ Si Chafic ne répond pas, on ne bloque pas : les défauts 28, 25 et 17 sont prou
    - `references/bbox-phone-channel.md` : les deux puces sur le code expiré citent encore `hermes_cli/web_server_messaging.py` et « pas corrigé » ; les remplacer par l'état de la ligne 17 de REPRISE après le passage 6.
 6. **Cerveau C-brain** : une entrée de chronologie sur `projects/brain-in-a-box` (`add_timeline_entry`), qui dit ce qui est prouvé et cite le commit de REPRISE.
 
-### [ ] Tâche 17 : bilan à Chafic (5 min)
+**État au 30/10 à 2 h 18 UTC** : points 1 à 4 faits (commits `4dbbddf`, `d5a2f93`, `5f0a379`, `0273f1e` ; le message de commit prévu au point 4 a été changé, car 27 n'est pas encore prouvé) ; point 6 fait (entrée du 2026-10-30, enregistrée à 2 h 15) ; point 5 bloqué (raison ci-dessus), 5 minutes dans une session normale. La tâche reste donc ouverte.
+
+### [x] Tâche 17 : bilan à Chafic (5 min)
 
 Court, en commençant par ce que ça change pour Awa :
 
@@ -749,6 +751,8 @@ Une seule question en fin de message, avec une recommandation tranchée (le lot 
 
 Plus : Vitest 11 658 sur 11 658, `tsc` à 0, aucun nouvel échec Python, 0 tiret cadratin, REPRISE sous 30 000 octets.
 
+**État au 30/10 à 2 h 20 UTC.** 28 : prouvé (`r6-01`, `r6-02`), `r6-08` attend la tâche 15. 17 : prouvé (`r6-04`). 25 : carte prouvée (`r6-03`), « Chafic relie sans aide » attend la tâche 15. 27 : tests verts, l'écran (`r6-07`) attend la tâche 15. Vitest : 11 655 sur 11 655 (le compte de 11 658 ajoutait à tort les 3 tests Python), `tsc` à 0, aucun nouvel échec Python, 0 tiret cadratin, REPRISE à 28 448 octets.
+
 ## Risques, compromis, questions ouvertes
 
 - **27, la carte doit rester affichée.** La surveillance vit dans la carte : si la conversation la démonte (longue liste virtualisée, changement de conversation), elle s'arrête et le Mac ne reprend pas. Le passage le dira. Plan B, non construit maintenant : déplacer la surveillance dans un module qui ne dépend pas de la carte (cela demanderait un autre build, donc l'accord de Chafic).
@@ -757,7 +761,7 @@ Plus : Vitest 11 658 sur 11 658, `tsc` à 0, aucun nouvel échec Python, 0 tiret
 - **25, le texte.** Les boutons « Create bot » et « Connect this bot » restent en anglais, parce que c'est ce qu'elle voit dans Telegram. Le nom du bot de création n'est jamais écrit : on dit « la conversation de Create bot », pour que Bbox reste le seul nom. L'étiquette du bouton de validation de Telegram n'a pas été vue sur capture, d'où « et valide ».
 - **Un seul build.** Si le passage révèle autre chose, on le note, on ne reconstruit pas sans accord.
 - **Hors de ce lot** : 24 (cause inconnue), 26 (seulement observé), écart de nom de la visite.
-- **Tâche 14, la commande `hermes config set`.** Elle n'a pas encore été essayée dans la VM. Si elle échoue, le repli est le réglage Telegram de Bbox (Réglages, Messagerie), capturé. On ne supprime rien.
+- **Tâche 14, la commande `hermes config set`.** Elle n'a pas encore été essayée dans la VM. Si elle échoue, le repli est le réglage Telegram de Bbox (Réglages, Messagerie), capturé. On ne supprime rien. **Essayée le 30/10 à 1 h 39 : elle marche** (journal).
 
 ---
 
@@ -787,3 +791,10 @@ Plus : Vitest 11 658 sur 11 658, `tsc` à 0, aucun nouvel échec Python, 0 tiret
 - 01 h 44 : tâche 14, point 4 lancé. `caffeinate` tournait sur aucun des deux Mac : le Mac mini ne dort jamais (`sleep 0`), la VM a maintenant `caffeinate -d -i -t 7200`. Surveillance `../.reunion/watch-expire.sh` en fond (lecture de la carte toutes les 20 s, capture `r610-*` toutes les 5 min, trace `probe/fix7/expire.txt`).
 - 01 h 47 : tâche 16, points 2 et 3 faits pendant l'attente. Pour rester sous 30 Ko, les lignes 12, 13, 16 et 20 (prouvées le 29/10, sans reste) sont aussi sorties mot pour mot vers HISTORIQUE (même script et mêmes contrôles, `sortir-lignes2.py`, commit `d5a2f93`) ; 21 et 23 restent (un reste ouvert chacune). Lignes 25, 26, 27, 28 à jour, nouvelle ligne 29 (l'éclair), chemin de la cause du 17 corrigé, état du passage 6 en tête. REPRISE : 27 902 octets, 0 tiret cadratin, commit `5f0a379`. La ligne 17 sera finie après l'expiration.
 - 02 h 12 : tâche 14 finie. Le code affiché à 1 h 41 a expiré à 2 h 11 (6 captures `r610-1` à `r610-6`, code toujours là jusqu'à 2 h 10). La carte dit « Ce code n'est plus valable, c'est normal : chaque code ne dure qu'un moment. Touche « Afficher un nouveau code » ; l'ancien ne marche plus. » ; aucun texte rouge dans la carte (couleurs lues par `cdp.sh`), pas de « Ça n'a pas marché ». Preuves `r6-04-code-expire-sans-rouge.png` et `r6-04-expire.txt`. **Défaut 17 réglé à l'écran.** Limite : la veille du Mac n'a pas été rejouée (VM tenue éveillée), seule l'expiration simple l'a été. Ligne 17 de REPRISE finie. Le bouton « Afficher un nouveau code » n'a pas été touché : il servira à la tâche 15, avec Chafic.
+- 02 h 20 : tâche 16, points 1 à 4 et 6 faits, point 5 bloqué (modifier un skill est interdit dans cette session ; texte prêt, revérifié dans le code de `04fe5e7`, la leçon du garde-fou réduite à ce qui est prouvé). Chronologie du C-brain écrite à 2 h 15. Tâche 17 : bilan rédigé et remis en message final de cette session, rien envoyé par Telegram. Texte :
+  > 1. Pour Awa, trois des quatre défauts du téléphone sont réglés et vus à l'écran sur le Mac de test (Bbox 04fe5e7) : la carte reste « Ton téléphone est branché » après une relance (28), elle donne les 4 gestes Telegram dans l'ordre (25), et un code expiré dit « plus valable, c'est normal », sans rouge (17).
+  > 2. Le quatrième (27 : le Mac reprend seul quand elle touche « Démarrer ») est codé et testé, mais il faut ton téléphone pour le voir : je ne t'ai rien envoyé cette nuit, tout est prêt pour 15 minutes avec toi ce matin.
+  > 3. Le clic qui ne donnait rien (26) ne s'est pas reproduit ; un petit défaut nouveau est noté (29) : après une relance, « Afficher le code » s'affiche une seconde avant « branché ».
+  > 4. Contrôles verts (11 655 tests de l'interface sur 11 655, aucun nouvel échec) ; preuves, plan, REPRISE et cerveau à jour ; seule chose pas faite : les leçons du skill, interdites cette nuit, texte prêt dans le plan.
+  > 5. Je recommande ce matin les 15 minutes du 27 avec toi, puis le lot suivant (29, 26, l'accueil absent au premier lancement (24) et le nom de la 5e étape de la visite) avec un build 8 : tu valides ?
+  Fin de la nuit. Restent ouvertes : tâche 15 (avec Chafic) et tâche 16 point 5 (session normale).
