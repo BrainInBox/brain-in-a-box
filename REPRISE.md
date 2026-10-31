@@ -35,6 +35,8 @@ Le détail de la priorité du 25/10 (cerveau, import, autorisations, tous prouv�
 
 (Chafic, 25/10 au soir : « tu avances seul, tu prends les initiatives nécessaires et tu en es responsable ». Une ligne par décision, datée, avec sa raison. Le point horaire lit cette section.)
 
+- 31/10 13 h 05 UTC : le point horaire (cron `e8e899414b01`) est supprimé, à la demande de Chafic sur Telegram (« Arrête ce cron stp »). Plus aucun point automatique ; la tâche unique du build 9 (`0b73957a2c24`) est déjà terminée.
+
 - 26/10 0 h 50 : le point horaire suit les deux nouvelles sessions (leurs fichiers de reprise, leurs commits, leur activité) au lieu de cette seule session, et ne classe plus la visite ni les Réglages en « secondaire ». Raison : sinon il aurait signalé à tort la session guide, qui fait exactement sa mission, et l'inactivité normale de cette session. Il reste actif jusqu'à la fin de la phase 2, comme demandé.
 - 26/10 0 h 30 : pour l'enregistrement de l'écran, Bbox dit d'activer « Bbox » (et non « CuaDriver ») et ouvre lui-même chaque page des Réglages (`425ac359c5`). Raison : macOS 27 range cette autorisation sous le nom de l'app qui contient CuaDriver ; dit « cherche CuaDriver », Awa ne trouve rien.
 - 26/10 0 h 05 : une simple vérification ne démarre plus CuaDriver tant que l'écran n'a jamais été accordé (`7ee92e6314`). Raison : ce démarrage silencieux, pendant l'étape du micro, a dépensé l'unique question « contrôler ce Mac » de macOS, affichée derrière Bbox ; au moment où Awa a dit oui, les Réglages se sont ouverts sur une page vide.
