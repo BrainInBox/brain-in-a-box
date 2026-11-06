@@ -97,6 +97,72 @@ const SCENARIOS = [
   's=installe&go=import&nth=2&click=import,pick,next,stop&pause=import',
   // The model refused to answer (Claude Code would have had another one answer instead).
   's=repair-ok&go=done&error=refused',
+  // Hermes on a Mac (point 2, then point 3): installed then connected through Claude, its first answer at
+  // the end; through ChatGPT, its code in big while the step runs; Claude logged out, its login asked first
+  // and why, or put off then offered where the step stops; the subscription's limit once, then put off.
+  's=manque&hermes_etape=installer&go=done',
+  's=installe&hermes_etape=brancher&agents=codex&go=done',
+  's=installe&hermes_etape=brancher&deconnecte=1&go=done',
+  's=installe&hermes_etape=brancher&deconnecte=1&click=skip&go=done',
+  's=installe&hermes_etape=brancher&fail=hermes_ia&go=done',
+  's=installe&hermes_etape=brancher&fail=hermes_ia&click=skip&go=done',
+  // Point 4: connected, then linked to the brain, what to ask it at the end; its memory full, once, then put off.
+  's=installe&hermes_etape=relier&go=done',
+  's=installe&hermes_etape=relier&fail=hermes_cerveau&go=done',
+  's=installe&hermes_etape=relier&fail=hermes_cerveau&click=skip&go=done',
+  // Point 4, the guide asks for the user: ChatGPT seen here, asked first; Claude seen; neither seen, the
+  // user says; its page opened with the question, the answer pasted then sorted; already imported, or
+  // put off: the end at once.
+  // Point 6, what Hermes may do, one at a time: on a Mac its files (a page), its screen (CuaDriver's
+  // window), its voice (macOS's window, or its page once refused); on Windows its voice and the folder
+  // guard; nothing on Linux. Put off, all of them; the screen's check failing; all given; then the memory.
+  's=installe&acces=1&go=access',
+  's=installe&acces=1&go=access-ask',
+  's=installe&acces=1&go=done',
+  's=installe&acces=1&micro=refuse&go=done',
+  's=installe&acces=1&go=done&os=windows',
+  's=installe&acces=1&go=done&os=linux',
+  's=installe&acces=1&click=later,later,later&go=done',
+  's=installe&acces=refuse&go=access-ko',
+  's=installe&acces=ok&go=done',
+  's=installe&acces=1&memoire=chatgpt&go=import-offer',
+  // Point 5, the assistant on the phone, after what Hermes may do and before the memory: offered (on a
+  // Mac, on Windows, after the permissions put off); WhatsApp's code waiting; scanned, linked and its first
+  // message; linked without it, on Linux without the service; linked but never seen connected; the code
+  // expired; Hermes not starting; Telegram asked, then seen connected; Hermes Desktop not opening; put off,
+  // then the memory; and not offered when WhatsApp already reaches the assistant.
+  's=installe&acces=ok&tel=1&go=messaging',
+  's=installe&acces=ok&tel=1&go=messaging&os=windows',
+  's=installe&acces=1&tel=1&click=later,later,later&go=messaging',
+  's=installe&acces=ok&tel=1&go=whatsapp-wait',
+  's=installe&acces=ok&tel=1&wa=scan&go=whatsapp-ok',
+  's=installe&acces=ok&tel=1&wa=scan&fin=sans-bonjour&go=whatsapp-ok&os=linux',
+  's=installe&acces=ok&tel=1&wa=scan&fin=pas-connecte&go=messaging-ko',
+  's=installe&acces=ok&tel=1&wa=expire&go=messaging-ko',
+  's=installe&acces=ok&tel=1&wa=echec&go=messaging-ko',
+  's=installe&acces=ok&tel=1&tg=attente&click=telegram&go=telegram-ask',
+  's=installe&acces=ok&tel=1&click=telegram&go=telegram-ok',
+  's=installe&acces=ok&tel=1&tg=ferme&click=telegram&go=messaging-ko',
+  's=installe&acces=ok&tel=1&memoire=chatgpt&click=later&go=import-offer',
+  's=installe&acces=ok&tel=wa&memoire=chatgpt&go=import-offer',
+  's=installe&memoire=chatgpt&go=import-offer',
+  's=installe&memoire=claude&go=import-offer&os=windows',
+  's=installe&memoire=aucun&go=import-offer&os=linux',
+  's=installe&memoire=chatgpt&go=import-ask',
+  's=installe&memoire=aucun&go=import-ask&click=ask-claude&os=windows',
+  's=installe&memoire=chatgpt&go=import-done&colle=1',
+  's=installe&memoire=chatgpt&go=done&colle=1&click=done',
+  's=installe&memoire=deja&go=done',
+  's=installe&memoire=claude&go=done&click=later',
+  // Not offered while the brain's AI cannot sort: its login put off. Codex on ChatGPT sorts: offered.
+  's=installe&deconnecte=1&memoire=chatgpt&click=skip&go=done',
+  's=installe&agents=codex&memoire=chatgpt&go=import-ask',
+  // Its page would not open: the address to type, and the question to copy.
+  's=installe&memoire=claude&lien=refuse&go=import-ask',
+  // The clipboard refused: the button to click is named, the question is not said copied.
+  's=installe&memoire=chatgpt&copie=refuse&go=import-ask',
+  // Voyage, added from the last screen, ends the install again: the offer is not made twice.
+  's=motscles&memoire=chatgpt&click=later&add=done&key=pa-abcdefghijklmnopqrstuvwxyz&go=done&nth=2',
   // A beginner's day one: the preview's number on the welcome, the login put off twice (the end asks for
   // it first), a login that never comes (what to do, after 3 min: here 20 s), the guide under a failure.
   's=manque&go=welcome&version=0.1.76&os=windows',

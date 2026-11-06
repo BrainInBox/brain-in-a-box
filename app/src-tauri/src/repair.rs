@@ -256,8 +256,8 @@ const STOPS: &[(&str, &str)] = &[
 
 /// The sites a company's network has to let through, with their subdomains: Claude Code's installer and
 /// Claude itself, the kit and Git (github.com, its downloads on githubusercontent.com), Python, Bun and the
-/// packages it fetches for gbrain. One list for every sentence that names them ({sites}).
-pub(crate) const SITES: &[&str] = &["claude.ai", "anthropic.com", "github.com", "githubusercontent.com", "python.org", "bun.sh", "npmjs.org"];
+/// packages it fetches for gbrain, Hermes's installer (on a Mac). One list for every sentence that names them ({sites}).
+pub(crate) const SITES: &[&str] = &["claude.ai", "anthropic.com", "github.com", "githubusercontent.com", "python.org", "bun.sh", "npmjs.org", "nousresearch.com"];
 
 /// The stops no AI can do anything about from here: the company's rules, the choice of AI that the user
 /// alone changes. Their sentence says whom to ask; Claude is not offered (and the subscription not spent).
@@ -2005,6 +2005,8 @@ fn terminal_script(claude: &Path, path: &std::ffi::OsStr, dir: &Path, settings: 
 const SETTINGS_PANES: &[(&str, &str)] = &[
     ("storage", "x-apple.systempreferences:com.apple.settings.Storage"),
     ("privacy_files", "x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders"),
+    ("privacy_all_files", "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"),
+    ("privacy_microphone", "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"),
     ("software_update", "x-apple.systempreferences:com.apple.Software-Update-Settings.extension"),
 ];
 /// Windows: Storage settings, the Windows Security page where ransomware protection
@@ -2013,6 +2015,7 @@ const SETTINGS_PANES: &[(&str, &str)] = &[
 const SETTINGS_PANES: &[(&str, &str)] = &[
     ("storage", "ms-settings:storagesense"),
     ("privacy_files", "windowsdefender://threat"),
+    ("privacy_microphone", "ms-settings:privacy-microphone"),
     ("software_update", "ms-settings:windowsupdate"),
 ];
 
@@ -3677,6 +3680,17 @@ pub(crate) mod tests {
                     "{pane}"
                 );
             }
+        }
+        // The pages hermes_access.rs opens.
+        let access: &[&str] = if cfg!(target_os = "macos") {
+            &["privacy_all_files", "privacy_microphone"]
+        } else if cfg!(windows) {
+            &["privacy_microphone", "privacy_files"]
+        } else {
+            &[]
+        };
+        for pane in access {
+            assert!(settings_url(pane).is_some_and(|u| system.iter().any(|s| u.starts_with(s))), "{pane}");
         }
         for bad in ["", "https://evil.example", "x-apple.systempreferences:com.apple.Users", "storage;open -a Terminal"] {
             assert!(settings_url(bad).is_none(), "{bad}");

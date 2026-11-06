@@ -199,47 +199,188 @@
 ### s=repair-ok&go=done&error=refused
 1 2 91 92 93 94 95 96 97 242 243 98 99 100 101 102 103 16 17
 
+### s=manque&hermes_etape=installer&go=done
+1 2 244 245 246 247 248 249 250 251 252 253 254 255 256 257 258 259 260 16 261 262
+
+### s=installe&hermes_etape=brancher&agents=codex&go=done
+263 264 265 266 2 267 268 269 270 271 272 273 274
+
+### s=installe&hermes_etape=brancher&deconnecte=1&go=done
+275 2 276 277 278 279 280 281 282 268 270 271 16 283 284
+
+### s=installe&hermes_etape=brancher&deconnecte=1&click=skip&go=done
+275 2 276 277 278 285 16 286
+
+### s=installe&hermes_etape=brancher&fail=hermes_ia&go=done
+57 2 287 277 268 288 289 290 270 271 16 283 284
+
+### s=installe&hermes_etape=brancher&fail=hermes_ia&click=skip&go=done
+57 2 287 277 268 288 289 16 291
+
+### s=installe&hermes_etape=relier&go=done
+57 2 292 293 294 295 16 296 297
+
+### s=installe&hermes_etape=relier&fail=hermes_cerveau&go=done
+57 2 292 293 294 298 299 300 301 302 295 16 296 297
+
+### s=installe&hermes_etape=relier&fail=hermes_cerveau&click=skip&go=done
+57 2 292 293 294 298 299 300 16 303 304
+
+### s=installe&acces=1&go=access
+57 2 58 16 305
+
+### s=installe&acces=1&go=access-ask
+57 2 58 16 305 306 307 308 309 310 311 312 313 314 55 62
+
+### s=installe&acces=1&go=done
+57 2 58 16 305 306 307 308 309 310 311 312 313 314 55
+
+### s=installe&acces=1&micro=refuse&go=done
+57 2 58 16 305 306 307 308 309 310 311 312 313 315 314 55
+
+### s=installe&acces=1&go=done&os=windows
+59 19 60 16 316 317 318 319 320 321 322 323 61
+
+### s=installe&acces=1&go=done&os=linux
+59 19 60 16 63
+
+### s=installe&acces=1&click=later,later,later&go=done
+57 2 58 16 305 309 312 55
+
+### s=installe&acces=refuse&go=access-ko
+57 2 58 16 305 306 307 308 309 310 324
+
+### s=installe&acces=ok&go=done
+57 2 58 16 55
+
+### s=installe&acces=1&memoire=chatgpt&go=import-offer
+57 2 58 16 305 306 307 308 309 310 311 312 313 314 325
+
+### s=installe&acces=ok&tel=1&go=messaging
+57 2 58 16 326
+
+### s=installe&acces=ok&tel=1&go=messaging&os=windows
+59 19 60 16 326
+
+### s=installe&acces=1&tel=1&click=later,later,later&go=messaging
+57 2 58 16 305 309 312 326
+
+### s=installe&acces=ok&tel=1&go=whatsapp-wait
+57 2 58 16 326 327 328 329
+
+### s=installe&acces=ok&tel=1&wa=scan&go=whatsapp-ok
+57 2 58 16 326 327 328 329 330 331
+
+### s=installe&acces=ok&tel=1&wa=scan&fin=sans-bonjour&go=whatsapp-ok&os=linux
+59 19 60 16 326 327 328 329 330 332
+
+### s=installe&acces=ok&tel=1&wa=scan&fin=pas-connecte&go=messaging-ko
+57 2 58 16 326 327 328 329 330 333
+
+### s=installe&acces=ok&tel=1&wa=expire&go=messaging-ko
+57 2 58 16 326 327 328 329 334
+
+### s=installe&acces=ok&tel=1&wa=echec&go=messaging-ko
+57 2 58 16 326 327 335
+
+### s=installe&acces=ok&tel=1&tg=attente&click=telegram&go=telegram-ask
+57 2 58 16 326 336 337
+
+### s=installe&acces=ok&tel=1&click=telegram&go=telegram-ok
+57 2 58 16 326 336 337 338
+
+### s=installe&acces=ok&tel=1&tg=ferme&click=telegram&go=messaging-ko
+57 2 58 16 326 336 339
+
+### s=installe&acces=ok&tel=1&memoire=chatgpt&click=later&go=import-offer
+57 2 58 16 326 325
+
+### s=installe&acces=ok&tel=wa&memoire=chatgpt&go=import-offer
+57 2 58 16 325
+
+### s=installe&memoire=chatgpt&go=import-offer
+57 2 58 16 325
+
+### s=installe&memoire=claude&go=import-offer&os=windows
+59 19 60 16 340
+
+### s=installe&memoire=aucun&go=import-offer&os=linux
+59 19 60 16 341
+
+### s=installe&memoire=chatgpt&go=import-ask
+57 2 58 16 325 342
+
+### s=installe&memoire=aucun&go=import-ask&click=ask-claude&os=windows
+59 19 60 16 341 343
+
+### s=installe&memoire=chatgpt&go=import-done&colle=1
+57 2 58 16 325 342 344 221 222 223 206 224
+
+### s=installe&memoire=chatgpt&go=done&colle=1&click=done
+57 2 58 16 325 342 344 221 222 223 206 224 55
+
+### s=installe&memoire=deja&go=done
+57 2 58 16 55
+
+### s=installe&memoire=claude&go=done&click=later
+57 2 58 16 340 55
+
+### s=installe&deconnecte=1&memoire=chatgpt&click=skip&go=done
+275 2 345 16 90 346
+
+### s=installe&agents=codex&memoire=chatgpt&go=import-ask
+263 264 265 266 2 347 272 325 348
+
+### s=installe&memoire=claude&lien=refuse&go=import-ask
+57 2 58 16 340 349
+
+### s=installe&memoire=chatgpt&copie=refuse&go=import-ask
+57 2 58 16 325 350
+
+### s=motscles&memoire=chatgpt&click=later&add=done&key=pa-abcdefghijklmnopqrstuvwxyz&go=done&nth=2
+57 2 67 16 325 17 50 51 52 351 53 54 55
+
 ### s=manque&go=welcome&version=0.1.76&os=windows
-244
+352
 
 ### s=manque&go=done&click=skip,skip&os=windows
-18 19 20 21 22 23 28 29 30 31 32 33 34 16 90 245
+18 19 20 21 22 23 28 29 30 31 32 33 34 16 90 353
 
 ### s=manque&go=done&nth=2&click=skip,skip&jamais=1&hint=20
-1 2 3 4 5 6 11 12 13 14 15 16 90 246 247 248 249 250 251
+1 2 3 4 5 6 11 12 13 14 15 16 90 346 354 355 356 357 358
 
 ### s=login-early&go=done&jamais=1&hint=20
-1 2 69 70 71 72 73 74 252 253
+1 2 69 70 71 72 73 74 359 360
 
 ### s=echec&go=done&fail=brain&os=windows&guide=1
-18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 86 87 254 88 89 33 34 16 35
+18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 86 87 361 88 89 33 34 16 35
 
 ### s=installe&go=welcome&deco=1&os=windows
-255
+362
 
 ### s=installe&go=welcome&deco=1&click=next&os=windows
-255 256 257 59
+362 363 364 59
 
 ### s=manque&go=welcome&click=plan
-1 258
+1 365
 
 ### s=manque&go=diag&alerte=network&os=windows
-18 19 259
+18 19 366
 
 ### s=manque&go=diag&alerte=disk
-1 2 260
+1 2 367
 
 ### s=installe&go=done&click=vault&os=windows
-59 19 60 16 61 261 262 263
+59 19 60 16 61 368 369 370
 
 ### s=installe&go=welcome&incomplet=1&os=windows
-264
+371
 
 ### s=installe&go=welcome&lent=1&os=windows
 59
 
 ### s=installe&go=done&click=vault&obsidian=absent&os=windows
-59 19 60 16 61 261 265 266
+59 19 60 16 61 368 372 373
 
 #1
 == welcome
@@ -2964,6 +3105,1214 @@ Détails
 [Demander à Claude de réparer]
 
 #244
+== diag
+J’ai fait le tour : ton Mac est prêt.
+J’installe Claude Code, les outils Apple, le moteur de ta mémoire, Obsidian, ton cerveau, Hermes, la connexion d’Hermes à ton IA et le lien entre Hermes et ton cerveau : 10 à 20 minutes. Si tu peux, branche-toi sur un Wi-Fi : il y a beaucoup à télécharger.
+Mon conseil : Ton cerveau marche avec Claude : il te faudra un abonnement Claude Pro ou Max.
+[Voir le détail]
+[Tout installer]
+
+#245
+== install
+J’installe Claude Code.
+Étape 1 sur 8. L’outil officiel d’Anthropic.
+Claude CodeClaude, directement sur ton Mac.En cours…
+Outils AppleLes outils de base fournis par Apple.En attente
+BunLe moteur de ta mémoire.En attente
+ObsidianPour feuilleter ton cerveau.En attente
+Ton cerveauTes notes, ta mémoire et tes automatismes.En attente
+HermesTon IA au quotidien, dans son app.En attente
+Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.En attente
+Hermes et ton cerveauIl lit ce que ton cerveau sait de toi.En attente
+Garde ton ordinateur sur le chargeur et ouvert jusqu’à la fin : s’il se met en veille, l’installation s’arrête.
+Détails
+
+#246
+== install
+Je vérifie ton compte Claude…
+Claude CodeClaude, directement sur ton Mac.Fait
+Outils AppleLes outils de base fournis par Apple.En attente
+BunLe moteur de ta mémoire.En attente
+ObsidianPour feuilleter ton cerveau.En attente
+Ton cerveauTes notes, ta mémoire et tes automatismes.En attente
+HermesTon IA au quotidien, dans son app.En attente
+Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.En attente
+Hermes et ton cerveauIl lit ce que ton cerveau sait de toi.En attente
+Détails
+
+#247
+== install
+Connecte ton compte Claude maintenant
+Comme ça, si une étape coince, Claude pourra m’aider à la réparer.
+Claude CodeClaude, directement sur ton Mac.Fait
+Outils AppleLes outils de base fournis par Apple.En attente
+BunLe moteur de ta mémoire.En attente
+ObsidianPour feuilleter ton cerveau.En attente
+Ton cerveauTes notes, ta mémoire et tes automatismes.En attente
+HermesTon IA au quotidien, dans son app.En attente
+Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.En attente
+Hermes et ton cerveauIl lit ce que ton cerveau sait de toi.En attente
+Clique sur le bouton. Ton navigateur s’ouvre sur claude.ai : connecte-toi avec le compte de ton abonnement, puis clique sur « Autoriser » (Authorize).
+Une fenêtre de commandes s’ouvre aussi : laisse-la ouverte, tu n’as rien à y taper.
+Reviens ici : je continue tout seul.
+Tu te connectes directement chez Anthropic : je ne vois jamais ton mot de passe.
+Détails
+[Plus tard]
+[Connecter mon compte Claude]
+
+#248
+== install
+Connecte ton compte Claude maintenant
+Comme ça, si une étape coince, Claude pourra m’aider à la réparer.
+Claude CodeClaude, directement sur ton Mac.Fait
+Outils AppleLes outils de base fournis par Apple.En attente
+BunLe moteur de ta mémoire.En attente
+ObsidianPour feuilleter ton cerveau.En attente
+Ton cerveauTes notes, ta mémoire et tes automatismes.En attente
+HermesTon IA au quotidien, dans son app.En attente
+Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.En attente
+Hermes et ton cerveauIl lit ce que ton cerveau sait de toi.En attente
+Clique sur le bouton. Ton navigateur s’ouvre sur claude.ai : connecte-toi avec le compte de ton abonnement, puis clique sur « Autoriser » (Authorize).
+Une fenêtre de commandes s’ouvre aussi : laisse-la ouverte, tu n’as rien à y taper.
+Reviens ici : je continue tout seul.
+Tu te connectes directement chez Anthropic : je ne vois jamais ton mot de passe.
+Détails
+[Plus tard]
+[Connecter mon compte Claude (inactif)]
+
+#249
+== install
+J’attends que tu te connectes…
+Connecte-toi dans ton navigateur : je vois tout seul quand c’est bon.
+Claude CodeClaude, directement sur ton Mac.Fait
+Outils AppleLes outils de base fournis par Apple.En attente
+BunLe moteur de ta mémoire.En attente
+ObsidianPour feuilleter ton cerveau.En attente
+Ton cerveauTes notes, ta mémoire et tes automatismes.En attente
+HermesTon IA au quotidien, dans son app.En attente
+Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.En attente
+Hermes et ton cerveauIl lit ce que ton cerveau sait de toi.En attente
+Clique sur le bouton. Ton navigateur s’ouvre sur claude.ai : connecte-toi avec le compte de ton abonnement, puis clique sur « Autoriser » (Authorize).
+Une fenêtre de commandes s’ouvre aussi : laisse-la ouverte, tu n’as rien à y taper.
+Reviens ici : je continue tout seul.
+Tu te connectes directement chez Anthropic : je ne vois jamais ton mot de passe.
+J’attends ta connexion…
+Détails
+[Plus tard]
+[Rouvrir la fenêtre]
+
+#250
+== install
+J’attends que tu te connectes…
+Connecte-toi dans ton navigateur : je vois tout seul quand c’est bon.
+Claude CodeClaude, directement sur ton Mac.Fait
+Outils AppleLes outils de base fournis par Apple.En attente
+BunLe moteur de ta mémoire.En attente
+ObsidianPour feuilleter ton cerveau.En attente
+Ton cerveauTes notes, ta mémoire et tes automatismes.En attente
+HermesTon IA au quotidien, dans son app.En attente
+Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.En attente
+Hermes et ton cerveauIl lit ce que ton cerveau sait de toi.En attente
+Clique sur le bouton. Ton navigateur s’ouvre sur claude.ai : connecte-toi avec le compte de ton abonnement, puis clique sur « Autoriser » (Authorize).
+Une fenêtre de commandes s’ouvre aussi : laisse-la ouverte, tu n’as rien à y taper.
+Reviens ici : je continue tout seul.
+Tu te connectes directement chez Anthropic : je ne vois jamais ton mot de passe.
+J’attends ta connexion…
+Détails
+[Plus tard]
+[Rouvrir la fenêtre (inactif)]
+
+#251
+== install
+C’est connecté !
+Claude est prêt à m’aider. Je continue.
+Claude CodeClaude, directement sur ton Mac.Fait
+Outils AppleLes outils de base fournis par Apple.En attente
+BunLe moteur de ta mémoire.En attente
+ObsidianPour feuilleter ton cerveau.En attente
+Ton cerveauTes notes, ta mémoire et tes automatismes.En attente
+HermesTon IA au quotidien, dans son app.En attente
+Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.En attente
+Hermes et ton cerveauIl lit ce que ton cerveau sait de toi.En attente
+Clique sur le bouton. Ton navigateur s’ouvre sur claude.ai : connecte-toi avec le compte de ton abonnement, puis clique sur « Autoriser » (Authorize).
+Une fenêtre de commandes s’ouvre aussi : laisse-la ouverte, tu n’as rien à y taper.
+Reviens ici : je continue tout seul.
+Tu te connectes directement chez Anthropic : je ne vois jamais ton mot de passe.
+Détails
+
+#252
+== install
+Une fenêtre Apple va s’ouvrir : clique sur Installer.
+Je t’attends. Tu ne la vois pas ? Regarde dans le Dock.
+Claude CodeClaude, directement sur ton Mac.Fait
+Outils AppleClique sur « Installer » (Install), puis « Accepter » (Agree). Apple télécharge ensuite ses outils, 5 à 15 min : ne t’inquiète pas si sa fenêtre annonce d’abord plus d’une heure.En cours…
+BunLe moteur de ta mémoire.En attente
+ObsidianPour feuilleter ton cerveau.En attente
+Ton cerveauTes notes, ta mémoire et tes automatismes.En attente
+HermesTon IA au quotidien, dans son app.En attente
+Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.En attente
+Hermes et ton cerveauIl lit ce que ton cerveau sait de toi.En attente
+Garde ton ordinateur sur le chargeur et ouvert jusqu’à la fin : s’il se met en veille, l’installation s’arrête.
+Détails
+
+#253
+== install
+J’installe Bun.
+Étape 3 sur 8. C’est le moteur de ta mémoire.
+Claude CodeClaude, directement sur ton Mac.Fait
+Outils AppleLes outils de base fournis par Apple.Fait
+BunLe moteur de ta mémoire.En cours…
+ObsidianPour feuilleter ton cerveau.En attente
+Ton cerveauTes notes, ta mémoire et tes automatismes.En attente
+HermesTon IA au quotidien, dans son app.En attente
+Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.En attente
+Hermes et ton cerveauIl lit ce que ton cerveau sait de toi.En attente
+Garde ton ordinateur sur le chargeur et ouvert jusqu’à la fin : s’il se met en veille, l’installation s’arrête.
+Détails
+
+#254
+== install
+J’installe Obsidian.
+Étape 4 sur 8. Gros téléchargement (230 Mo) : un peu de patience.
+Claude CodeClaude, directement sur ton Mac.Fait
+Outils AppleLes outils de base fournis par Apple.Fait
+BunLe moteur de ta mémoire.Fait
+ObsidianPour feuilleter ton cerveau.En cours…
+Ton cerveauTes notes, ta mémoire et tes automatismes.En attente
+HermesTon IA au quotidien, dans son app.En attente
+Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.En attente
+Hermes et ton cerveauIl lit ce que ton cerveau sait de toi.En attente
+Garde ton ordinateur sur le chargeur et ouvert jusqu’à la fin : s’il se met en veille, l’installation s’arrête.
+Détails
+
+#255
+== install
+Je prépare ton cerveau.
+Étape 5 sur 8. C’est l’étape la plus longue.
+Claude CodeClaude, directement sur ton Mac.Fait
+Outils AppleLes outils de base fournis par Apple.Fait
+BunLe moteur de ta mémoire.Fait
+ObsidianPour feuilleter ton cerveau.Fait
+Ton cerveauTes notes, ta mémoire et tes automatismes.En cours…
+HermesTon IA au quotidien, dans son app.En attente
+Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.En attente
+Hermes et ton cerveauIl lit ce que ton cerveau sait de toi.En attente
+macOS va peut-être demander l’accès à ton dossier Documents : clique sur « Autoriser ».
+Garde ton ordinateur sur le chargeur et ouvert jusqu’à la fin : s’il se met en veille, l’installation s’arrête.
+Détails
+
+#256
+== install
+J’installe Hermes, ton IA au quotidien.
+Étape 6 sur 8. Gros téléchargement : quelques minutes.
+Claude CodeClaude, directement sur ton Mac.Fait
+Outils AppleLes outils de base fournis par Apple.Fait
+BunLe moteur de ta mémoire.Fait
+ObsidianPour feuilleter ton cerveau.Fait
+Ton cerveauTes notes, ta mémoire et tes automatismes.Fait
+HermesTon IA au quotidien, dans son app.En cours…
+Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.En attente
+Hermes et ton cerveauIl lit ce que ton cerveau sait de toi.En attente
+Garde ton ordinateur sur le chargeur et ouvert jusqu’à la fin : s’il se met en veille, l’installation s’arrête.
+Détails
+
+#257
+== install
+Je vérifie ton compte Claude…
+Claude CodeClaude, directement sur ton Mac.Fait
+Outils AppleLes outils de base fournis par Apple.Fait
+BunLe moteur de ta mémoire.Fait
+ObsidianPour feuilleter ton cerveau.Fait
+Ton cerveauTes notes, ta mémoire et tes automatismes.Fait
+HermesTon IA au quotidien, dans son app.Fait
+Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.En attente
+Hermes et ton cerveauIl lit ce que ton cerveau sait de toi.En attente
+Détails
+
+#258
+== install
+Je branche Hermes sur ton IA.
+Étape 7 sur 8. Il passe par ton abonnement : aucune clé à acheter.
+Claude CodeClaude, directement sur ton Mac.Fait
+Outils AppleLes outils de base fournis par Apple.Fait
+BunLe moteur de ta mémoire.Fait
+ObsidianPour feuilleter ton cerveau.Fait
+Ton cerveauTes notes, ta mémoire et tes automatismes.Fait
+HermesTon IA au quotidien, dans son app.Fait
+Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.En cours…
+Hermes et ton cerveauIl lit ce que ton cerveau sait de toi.En attente
+Garde ton ordinateur sur le chargeur et ouvert jusqu’à la fin : s’il se met en veille, l’installation s’arrête.
+Détails
+
+#259
+== install
+Je relie Hermes à ton cerveau.
+Étape 8 sur 8. Il lira ce que ton cerveau sait de toi.
+Claude CodeClaude, directement sur ton Mac.Fait
+Outils AppleLes outils de base fournis par Apple.Fait
+BunLe moteur de ta mémoire.Fait
+ObsidianPour feuilleter ton cerveau.Fait
+Ton cerveauTes notes, ta mémoire et tes automatismes.Fait
+HermesTon IA au quotidien, dans son app.Fait
+Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.Fait
+Hermes et ton cerveauIl lit ce que ton cerveau sait de toi.En cours…
+Garde ton ordinateur sur le chargeur et ouvert jusqu’à la fin : s’il se met en veille, l’installation s’arrête.
+Détails
+
+#260
+== install
+C’est installé !
+Plus qu’une petite étape.
+Claude CodeClaude, directement sur ton Mac.Fait
+Outils AppleLes outils de base fournis par Apple.Fait
+BunLe moteur de ta mémoire.Fait
+ObsidianPour feuilleter ton cerveau.Fait
+Ton cerveauTes notes, ta mémoire et tes automatismes.Fait
+HermesTon IA au quotidien, dans son app.Fait
+Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.Fait
+Hermes et ton cerveauIl lit ce que ton cerveau sait de toi.Fait
+Détails
+
+#261
+== done
+Ton second cerveau est prêt !
+Claude retient maintenant ce que tu lui apprends.
+Hermes t’a répondu : « Bonjour, je suis prêt. » Il passe par ton abonnement Claude : ce que tu lui demandes compte sur ton forfait, comme avec Claude.
+Hermes sait maintenant où lire ton cerveau. Demande-lui : « Qu’est-ce que tu sais de moi ? »
+Je peux te guider pas à pas dans n’importe quel logiciel : tu me montres ta fenêtre, je te dis où cliquer.
+Tu utilisais ChatGPT ou Claude ? « Importer ma mémoire » apporte à ton cerveau ce qu’ils savent de toi.
+[Importer ma mémoire]
+[Voir mes notes]
+[Recherche par le sens]
+Pour me retrouver plus tard : si tu m’as ouvert depuis le fichier téléchargé (.dmg), glisse d’abord l’icône Brain in a Box sur le dossier Applications, dans sa fenêtre. Ensuite, Cmd + Espace, tape « Brain in a Box », puis Entrée.
+Bbrain, ton guide, prend le relais : il reste avec toi après l’installation. Maintiens les touches contrôle et option, et parle-lui.
+[Présente-toi à Claude (15 min)]
+[Guide-moi dans un logiciel]
+[Parler à Bbrain]
+
+#262
+== done
+Ton second cerveau est prêt !
+Claude retient maintenant ce que tu lui apprends.
+Hermes t’a répondu : « Bonjour, je suis prêt. » Il passe par ton abonnement Claude : ce que tu lui demandes compte sur ton forfait, comme avec Claude.
+Hermes sait maintenant où lire ton cerveau. Demande-lui : « Qu’est-ce que tu sais de moi ? »
+Je peux te guider pas à pas dans n’importe quel logiciel : tu me montres ta fenêtre, je te dis où cliquer.
+Tu utilisais ChatGPT ou Claude ? « Importer ma mémoire » apporte à ton cerveau ce qu’ils savent de toi.
+[Importer ma mémoire]
+[Voir mes notes]
+[Recherche par le sens]
+Pour me retrouver plus tard : si tu m’as ouvert depuis le fichier téléchargé (.dmg), glisse d’abord l’icône Brain in a Box sur le dossier Applications, dans sa fenêtre. Ensuite, Cmd + Espace, tape « Brain in a Box », puis Entrée.
+Bbrain, ton guide, prend le relais : il reste avec toi après l’installation. Maintiens les touches contrôle et option, et parle-lui.
+[Présente-toi à Claude (15 min)]
+[Guide-moi dans un logiciel]
+[Parler à Bbrain (inactif)]
+
+#263
+== welcome
+Content de te revoir !
+Je peux te guider pas à pas dans un logiciel : tu me montres ta fenêtre, je te dis où cliquer.
+[Choisir mon IA]
+[Guide-moi dans un logiciel]
+
+#264
+== choice
+Avec quelle IA veux-tu travailler ?
+Ton cerveau marche avec Claude, avec Codex, ou avec les deux.
+Claude
+Avec ton abonnement Claude (Pro ou Max). Claude Code, l’outil d’Anthropic.
+Codex
+Avec un abonnement ChatGPT personnel (pas un compte d’entreprise). Codex, l’outil d’OpenAI : ton résumé de chaque soir est écrit chez OpenAI.
+Les deux
+L’un écrit le résumé de chaque soir, l’autre prend le relais s’il ne répond pas. Il te faut les deux comptes.
+Tu pourras changer d’avis : rouvre l’app et refais ce choix.
+[Claude]
+[Codex]
+[Les deux]
+
+#265
+== choice
+Avec quelle IA veux-tu travailler ?
+Ton cerveau marche avec Claude, avec Codex, ou avec les deux.
+Mon conseil : Tu as déjà Claude Code, connecté à ton abonnement : ton cerveau travaillera avec lui.
+Claude
+Avec ton abonnement Claude (Pro ou Max). Claude Code, l’outil d’Anthropic.
+Codex
+Avec un abonnement ChatGPT personnel (pas un compte d’entreprise). Codex, l’outil d’OpenAI : ton résumé de chaque soir est écrit chez OpenAI.
+Les deux
+L’un écrit le résumé de chaque soir, l’autre prend le relais s’il ne répond pas. Il te faut les deux comptes.
+Tu pourras changer d’avis : rouvre l’app et refais ce choix.
+[Claude]
+[Codex]
+[Les deux]
+
+#266
+== choice
+Avec quelle IA veux-tu travailler ?
+Ton cerveau marche avec Claude, avec Codex, ou avec les deux.
+Mon conseil : Tu as déjà Claude Code, connecté à ton abonnement : ton cerveau travaillera avec lui.
+Claude
+Avec ton abonnement Claude (Pro ou Max). Claude Code, l’outil d’Anthropic.
+Codex
+Avec un abonnement ChatGPT personnel (pas un compte d’entreprise). Codex, l’outil d’OpenAI : ton résumé de chaque soir est écrit chez OpenAI.
+Les deux
+L’un écrit le résumé de chaque soir, l’autre prend le relais s’il ne répond pas. Il te faut les deux comptes.
+Tu pourras changer d’avis : rouvre l’app et refais ce choix.
+[Claude (inactif)]
+[Codex (inactif)]
+[Les deux (inactif)]
+
+#267
+== diag
+J’ai fait le tour : ton Mac est prêt.
+J’installe la connexion d’Hermes à ton IA et le lien entre Hermes et ton cerveau : 10 à 20 minutes. Si tu peux, branche-toi sur un Wi-Fi : il y a beaucoup à télécharger.
+[Voir le détail]
+[Changer d’IA]
+[Tout installer]
+
+#268
+== install
+Je branche Hermes sur ton IA.
+Étape 1 sur 2. Il passe par ton abonnement : aucune clé à acheter.
+Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.En cours…
+Hermes et ton cerveauIl lit ce que ton cerveau sait de toi.En attente
+Garde ton ordinateur sur le chargeur et ouvert jusqu’à la fin : s’il se met en veille, l’installation s’arrête.
+Détails
+
+#269
+== install
+Connecte Hermes à ton compte ChatGPT
+Hermes passera par ton abonnement ChatGPT : aucune clé à acheter.
+Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.En cours…
+Hermes et ton cerveauIl lit ce que ton cerveau sait de toi.En attente
+Dans la page qui s’est ouverte, connecte-toi à ChatGPT.
+Tape le code ci-dessous.
+Reviens ici : je continue tout seul.
+K7QF-93HT
+Tu te connectes directement chez OpenAI : je ne vois jamais ton mot de passe.
+[Rouvrir la page]
+Garde ton ordinateur sur le chargeur et ouvert jusqu’à la fin : s’il se met en veille, l’installation s’arrête.
+Détails
+
+#270
+== install
+Je relie Hermes à ton cerveau.
+Étape 2 sur 2. Il lira ce que ton cerveau sait de toi.
+Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.Fait
+Hermes et ton cerveauIl lit ce que ton cerveau sait de toi.En cours…
+Garde ton ordinateur sur le chargeur et ouvert jusqu’à la fin : s’il se met en veille, l’installation s’arrête.
+Détails
+
+#271
+== install
+C’est installé !
+Plus qu’une petite étape.
+Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.Fait
+Hermes et ton cerveauIl lit ce que ton cerveau sait de toi.Fait
+Détails
+
+#272
+== login
+Je vérifie la connexion de Codex…
+Un instant
+
+#273
+== done
+Ton second cerveau est prêt !
+Codex retient maintenant ce que tu lui apprends.
+Hermes t’a répondu : « Bonjour, je suis prêt. » Il passe par ton compte ChatGPT : ce que tu lui demandes compte sur ton forfait, comme avec ChatGPT.
+Hermes sait maintenant où lire ton cerveau. Demande-lui : « Qu’est-ce que tu sais de moi ? »
+Tu utilisais ChatGPT ou Claude ? « Importer ma mémoire » apporte à ton cerveau ce qu’ils savent de toi.
+[Importer ma mémoire]
+[Voir mes notes]
+Pour me retrouver plus tard : si tu m’as ouvert depuis le fichier téléchargé (.dmg), glisse d’abord l’icône Brain in a Box sur le dossier Applications, dans sa fenêtre. Ensuite, Cmd + Espace, tape « Brain in a Box », puis Entrée.
+Bbrain, ton guide, prend le relais : il reste avec toi après l’installation. Maintiens les touches contrôle et option, et parle-lui.
+[Présente-toi à Codex (15 min)]
+[Parler à Bbrain]
+
+#274
+== done
+Ton second cerveau est prêt !
+Codex retient maintenant ce que tu lui apprends.
+Hermes t’a répondu : « Bonjour, je suis prêt. » Il passe par ton compte ChatGPT : ce que tu lui demandes compte sur ton forfait, comme avec ChatGPT.
+Hermes sait maintenant où lire ton cerveau. Demande-lui : « Qu’est-ce que tu sais de moi ? »
+Tu utilisais ChatGPT ou Claude ? « Importer ma mémoire » apporte à ton cerveau ce qu’ils savent de toi.
+[Importer ma mémoire]
+[Voir mes notes]
+Pour me retrouver plus tard : si tu m’as ouvert depuis le fichier téléchargé (.dmg), glisse d’abord l’icône Brain in a Box sur le dossier Applications, dans sa fenêtre. Ensuite, Cmd + Espace, tape « Brain in a Box », puis Entrée.
+Bbrain, ton guide, prend le relais : il reste avec toi après l’installation. Maintiens les touches contrôle et option, et parle-lui.
+[Présente-toi à Codex (15 min)]
+[Parler à Bbrain (inactif)]
+
+#275
+== welcome
+Content de te revoir !
+Il manque ton compte Claude : connecte-le, puis je pourrai te guider pas à pas dans un logiciel.
+Clique sur le bouton. Ton navigateur s’ouvre sur claude.ai : connecte-toi avec le compte de ton abonnement, puis clique sur « Autoriser » (Authorize).
+Une fenêtre de commandes s’ouvre aussi : laisse-la ouverte, tu n’as rien à y taper.
+Reviens ici : je vois tout seul quand c’est bon.
+[Je n’ai pas encore Claude Pro]
+[Vérifier mon Mac]
+[Connecter mon compte Claude]
+
+#276
+== diag
+J’ai fait le tour : ton Mac est prêt.
+J’installe la connexion d’Hermes à ton IA et le lien entre Hermes et ton cerveau : 10 à 20 minutes. Si tu peux, branche-toi sur un Wi-Fi : il y a beaucoup à télécharger.
+Mon conseil : Tu utilises déjà Claude : ton cerveau travaillera avec lui (il te faudra un abonnement Pro ou Max pour Claude Code).
+[Voir le détail]
+[Tout installer]
+
+#277
+== install
+Je vérifie ton compte Claude…
+Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.En attente
+Hermes et ton cerveauIl lit ce que ton cerveau sait de toi.En attente
+Détails
+
+#278
+== install
+Connecte ton compte Claude maintenant
+Hermes passera par ton abonnement Claude : aucune clé à acheter.
+Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.En attente
+Hermes et ton cerveauIl lit ce que ton cerveau sait de toi.En attente
+Clique sur le bouton. Ton navigateur s’ouvre sur claude.ai : connecte-toi avec le compte de ton abonnement, puis clique sur « Autoriser » (Authorize).
+Une fenêtre de commandes s’ouvre aussi : laisse-la ouverte, tu n’as rien à y taper.
+Reviens ici : je continue tout seul.
+Tu te connectes directement chez Anthropic : je ne vois jamais ton mot de passe.
+Détails
+[Plus tard]
+[Connecter mon compte Claude]
+
+#279
+== install
+Connecte ton compte Claude maintenant
+Hermes passera par ton abonnement Claude : aucune clé à acheter.
+Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.En attente
+Hermes et ton cerveauIl lit ce que ton cerveau sait de toi.En attente
+Clique sur le bouton. Ton navigateur s’ouvre sur claude.ai : connecte-toi avec le compte de ton abonnement, puis clique sur « Autoriser » (Authorize).
+Une fenêtre de commandes s’ouvre aussi : laisse-la ouverte, tu n’as rien à y taper.
+Reviens ici : je continue tout seul.
+Tu te connectes directement chez Anthropic : je ne vois jamais ton mot de passe.
+Détails
+[Plus tard]
+[Connecter mon compte Claude (inactif)]
+
+#280
+== install
+J’attends que tu te connectes…
+Connecte-toi dans ton navigateur : je vois tout seul quand c’est bon.
+Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.En attente
+Hermes et ton cerveauIl lit ce que ton cerveau sait de toi.En attente
+Clique sur le bouton. Ton navigateur s’ouvre sur claude.ai : connecte-toi avec le compte de ton abonnement, puis clique sur « Autoriser » (Authorize).
+Une fenêtre de commandes s’ouvre aussi : laisse-la ouverte, tu n’as rien à y taper.
+Reviens ici : je continue tout seul.
+Tu te connectes directement chez Anthropic : je ne vois jamais ton mot de passe.
+J’attends ta connexion…
+Détails
+[Plus tard]
+[Rouvrir la fenêtre]
+
+#281
+== install
+J’attends que tu te connectes…
+Connecte-toi dans ton navigateur : je vois tout seul quand c’est bon.
+Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.En attente
+Hermes et ton cerveauIl lit ce que ton cerveau sait de toi.En attente
+Clique sur le bouton. Ton navigateur s’ouvre sur claude.ai : connecte-toi avec le compte de ton abonnement, puis clique sur « Autoriser » (Authorize).
+Une fenêtre de commandes s’ouvre aussi : laisse-la ouverte, tu n’as rien à y taper.
+Reviens ici : je continue tout seul.
+Tu te connectes directement chez Anthropic : je ne vois jamais ton mot de passe.
+J’attends ta connexion…
+Détails
+[Plus tard]
+[Rouvrir la fenêtre (inactif)]
+
+#282
+== install
+C’est connecté !
+Claude est prêt à m’aider. Je continue.
+Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.En attente
+Hermes et ton cerveauIl lit ce que ton cerveau sait de toi.En attente
+Clique sur le bouton. Ton navigateur s’ouvre sur claude.ai : connecte-toi avec le compte de ton abonnement, puis clique sur « Autoriser » (Authorize).
+Une fenêtre de commandes s’ouvre aussi : laisse-la ouverte, tu n’as rien à y taper.
+Reviens ici : je continue tout seul.
+Tu te connectes directement chez Anthropic : je ne vois jamais ton mot de passe.
+Détails
+
+#283
+== done
+Ton second cerveau est prêt !
+Claude retient maintenant ce que tu lui apprends.
+Hermes t’a répondu : « Bonjour, je suis prêt. » Il passe par ton abonnement Claude : ce que tu lui demandes compte sur ton forfait, comme avec Claude.
+Hermes sait maintenant où lire ton cerveau. Demande-lui : « Qu’est-ce que tu sais de moi ? »
+Je peux te guider pas à pas dans n’importe quel logiciel : tu me montres ta fenêtre, je te dis où cliquer.
+Tu utilisais ChatGPT ou Claude ? « Importer ma mémoire » apporte à ton cerveau ce qu’ils savent de toi.
+[Importer ma mémoire]
+[Voir mes notes]
+Pour me retrouver plus tard : si tu m’as ouvert depuis le fichier téléchargé (.dmg), glisse d’abord l’icône Brain in a Box sur le dossier Applications, dans sa fenêtre. Ensuite, Cmd + Espace, tape « Brain in a Box », puis Entrée.
+Bbrain, ton guide, prend le relais : il reste avec toi après l’installation. Maintiens les touches contrôle et option, et parle-lui.
+[Présente-toi à Claude (15 min)]
+[Guide-moi dans un logiciel]
+[Parler à Bbrain]
+
+#284
+== done
+Ton second cerveau est prêt !
+Claude retient maintenant ce que tu lui apprends.
+Hermes t’a répondu : « Bonjour, je suis prêt. » Il passe par ton abonnement Claude : ce que tu lui demandes compte sur ton forfait, comme avec Claude.
+Hermes sait maintenant où lire ton cerveau. Demande-lui : « Qu’est-ce que tu sais de moi ? »
+Je peux te guider pas à pas dans n’importe quel logiciel : tu me montres ta fenêtre, je te dis où cliquer.
+Tu utilisais ChatGPT ou Claude ? « Importer ma mémoire » apporte à ton cerveau ce qu’ils savent de toi.
+[Importer ma mémoire]
+[Voir mes notes]
+Pour me retrouver plus tard : si tu m’as ouvert depuis le fichier téléchargé (.dmg), glisse d’abord l’icône Brain in a Box sur le dossier Applications, dans sa fenêtre. Ensuite, Cmd + Espace, tape « Brain in a Box », puis Entrée.
+Bbrain, ton guide, prend le relais : il reste avec toi après l’installation. Maintiens les touches contrôle et option, et parle-lui.
+[Présente-toi à Claude (15 min)]
+[Guide-moi dans un logiciel]
+[Parler à Bbrain (inactif)]
+
+#285
+== install
+C’est installé !
+Plus qu’une petite étape.
+Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.Plus tard
+Hermes et ton cerveauIl lit ce que ton cerveau sait de toi.Plus tard
+Détails
+
+#286
+== done
+Presque prêt : il manque ton compte Claude
+Connecte-le pour que Claude puisse travailler avec ton cerveau. Il faut un abonnement Claude Pro ou Max.
+Clique sur le bouton. Ton navigateur s’ouvre sur claude.ai : connecte-toi avec le compte de ton abonnement, puis clique sur « Autoriser » (Authorize).
+Une fenêtre de commandes s’ouvre aussi : laisse-la ouverte, tu n’as rien à y taper.
+Reviens ici : je vois tout seul quand c’est bon.
+[Je n’ai pas encore Claude Pro]
+Hermes n’est pas encore branché sur ton IA. Rouvre-moi quand tu veux : je reprendrai là où on s’est arrêtés.
+Tu utilisais ChatGPT ou Claude ? « Importer ma mémoire » apporte à ton cerveau ce qu’ils savent de toi.
+[Importer ma mémoire]
+[Voir mes notes]
+Pour me retrouver plus tard : si tu m’as ouvert depuis le fichier téléchargé (.dmg), glisse d’abord l’icône Brain in a Box sur le dossier Applications, dans sa fenêtre. Ensuite, Cmd + Espace, tape « Brain in a Box », puis Entrée.
+[Connecter mon compte Claude]
+
+#287
+== diag
+J’ai fait le tour : ton Mac est prêt.
+J’installe la connexion d’Hermes à ton IA et le lien entre Hermes et ton cerveau : 10 à 20 minutes. Si tu peux, branche-toi sur un Wi-Fi : il y a beaucoup à télécharger.
+Mon conseil : Tu as déjà Claude Code, connecté à ton abonnement : ton cerveau travaillera avec lui.
+[Voir le détail]
+[Tout installer]
+
+#288
+== install
+Oups, ça a coincé.
+Ton abonnement a atteint sa limite pour le moment. Réessaie plus tard : elle se renouvelle toute seule.
+Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.Échec
+Hermes et ton cerveauIl lit ce que ton cerveau sait de toi.En attente
+Détails
+[Plus tard]
+[Copier le rapport]
+[Réessayer]
+
+#289
+== install
+Oups, ça a coincé.
+Ton abonnement a atteint sa limite pour le moment. Réessaie plus tard : elle se renouvelle toute seule.
+Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.Échec
+Hermes et ton cerveauIl lit ce que ton cerveau sait de toi.En attente
+Le guide marche déjà, même si l’installation n’est pas finie : je peux te guider pas à pas dans un logiciel.
+[Essayer le guide quand même]
+Détails
+[Plus tard]
+[Copier le rapport]
+[Réessayer]
+
+#290
+== install
+Je vérifie ton compte Claude…
+Connexion d’HermesIl passe par ton abonnement : aucune clé à acheter.Échec
+Hermes et ton cerveauIl lit ce que ton cerveau sait de toi.En attente
+Détails
+
+#291
+== done
+Ton second cerveau est prêt !
+Claude retient maintenant ce que tu lui apprends.
+Hermes n’est pas encore branché sur ton IA. Rouvre-moi quand tu veux : je reprendrai là où on s’est arrêtés.
+Je peux te guider pas à pas dans n’importe quel logiciel : tu me montres ta fenêtre, je te dis où cliquer.
+Tu utilisais ChatGPT ou Claude ? « Importer ma mémoire » apporte à ton cerveau ce qu’ils savent de toi.
+[Importer ma mémoire]
+[Voir mes notes]
+Pour me retrouver plus tard : si tu m’as ouvert depuis le fichier téléchargé (.dmg), glisse d’abord l’icône Brain in a Box sur le dossier Applications, dans sa fenêtre. Ensuite, Cmd + Espace, tape « Brain in a Box », puis Entrée.
+[Présente-toi à Claude (15 min)]
+[Guide-moi dans un logiciel]
+
+#292
+== diag
+J’ai fait le tour : ton Mac est prêt.
+J’installe le lien entre Hermes et ton cerveau : 10 à 20 minutes. Si tu peux, branche-toi sur un Wi-Fi : il y a beaucoup à télécharger.
+Mon conseil : Tu as déjà Claude Code, connecté à ton abonnement : ton cerveau travaillera avec lui.
+[Voir le détail]
+[Tout installer]
+
+#293
+== install
+Je vérifie ton compte Claude…
+Hermes et ton cerveauIl lit ce que ton cerveau sait de toi.En attente
+Détails
+
+#294
+== install
+Je relie Hermes à ton cerveau.
+Il lira ce que ton cerveau sait de toi.
+Hermes et ton cerveauIl lit ce que ton cerveau sait de toi.En cours…
+Garde ton ordinateur sur le chargeur et ouvert jusqu’à la fin : s’il se met en veille, l’installation s’arrête.
+Détails
+
+#295
+== install
+C’est installé !
+Plus qu’une petite étape.
+Hermes et ton cerveauIl lit ce que ton cerveau sait de toi.Fait
+Détails
+
+#296
+== done
+Ton second cerveau est prêt !
+Claude retient maintenant ce que tu lui apprends.
+Hermes sait maintenant où lire ton cerveau. Demande-lui : « Qu’est-ce que tu sais de moi ? »
+Je peux te guider pas à pas dans n’importe quel logiciel : tu me montres ta fenêtre, je te dis où cliquer.
+Tu utilisais ChatGPT ou Claude ? « Importer ma mémoire » apporte à ton cerveau ce qu’ils savent de toi.
+[Importer ma mémoire]
+[Voir mes notes]
+Pour me retrouver plus tard : si tu m’as ouvert depuis le fichier téléchargé (.dmg), glisse d’abord l’icône Brain in a Box sur le dossier Applications, dans sa fenêtre. Ensuite, Cmd + Espace, tape « Brain in a Box », puis Entrée.
+Bbrain, ton guide, prend le relais : il reste avec toi après l’installation. Maintiens les touches contrôle et option, et parle-lui.
+[Présente-toi à Claude (15 min)]
+[Guide-moi dans un logiciel]
+[Parler à Bbrain]
+
+#297
+== done
+Ton second cerveau est prêt !
+Claude retient maintenant ce que tu lui apprends.
+Hermes sait maintenant où lire ton cerveau. Demande-lui : « Qu’est-ce que tu sais de moi ? »
+Je peux te guider pas à pas dans n’importe quel logiciel : tu me montres ta fenêtre, je te dis où cliquer.
+Tu utilisais ChatGPT ou Claude ? « Importer ma mémoire » apporte à ton cerveau ce qu’ils savent de toi.
+[Importer ma mémoire]
+[Voir mes notes]
+Pour me retrouver plus tard : si tu m’as ouvert depuis le fichier téléchargé (.dmg), glisse d’abord l’icône Brain in a Box sur le dossier Applications, dans sa fenêtre. Ensuite, Cmd + Espace, tape « Brain in a Box », puis Entrée.
+Bbrain, ton guide, prend le relais : il reste avec toi après l’installation. Maintiens les touches contrôle et option, et parle-lui.
+[Présente-toi à Claude (15 min)]
+[Guide-moi dans un logiciel]
+[Parler à Bbrain (inactif)]
+
+#298
+== install
+Oups, ça a coincé.
+La mémoire d’Hermes est pleine : il n’y a plus la place d’y noter où est ton cerveau. Demande à Hermes de faire le tri dans sa mémoire, puis réessaie.
+Hermes et ton cerveauIl lit ce que ton cerveau sait de toi.Échec
+Détails
+[Plus tard]
+[Copier le rapport]
+[Réessayer]
+
+#299
+== install
+Oups, ça a coincé.
+La mémoire d’Hermes est pleine : il n’y a plus la place d’y noter où est ton cerveau. Demande à Hermes de faire le tri dans sa mémoire, puis réessaie.
+Hermes et ton cerveauIl lit ce que ton cerveau sait de toi.Échec
+Claude peut regarder ce qui s’est passé et me dire comment réparer. Il lit le journal de cette étape, jamais tes clés ni tes fichiers personnels. Ça utilise un peu de ton abonnement Claude.
+Voir exactement ce que j’envoie
+Détails
+[Plus tard]
+[Copier le rapport]
+[Réessayer]
+[Demander à Claude de réparer]
+
+#300
+== install
+Oups, ça a coincé.
+La mémoire d’Hermes est pleine : il n’y a plus la place d’y noter où est ton cerveau. Demande à Hermes de faire le tri dans sa mémoire, puis réessaie.
+Hermes et ton cerveauIl lit ce que ton cerveau sait de toi.Échec
+Claude peut regarder ce qui s’est passé et me dire comment réparer. Il lit le journal de cette étape, jamais tes clés ni tes fichiers personnels. Ça utilise un peu de ton abonnement Claude.
+Voir exactement ce que j’envoie
+Le guide marche déjà, même si l’installation n’est pas finie : je peux te guider pas à pas dans un logiciel.
+[Essayer le guide quand même]
+Détails
+[Plus tard]
+[Copier le rapport]
+[Réessayer]
+[Demander à Claude de réparer]
+
+#301
+== analyze
+Claude regarde ce qui s’est passé…
+En général moins d’une minute. Il ne modifie rien.
+Ce que je lui montre :
+L’étape « Hermes et ton cerveau » et son message d’erreur.
+Les dernières lignes du journal, clés masquées.
+L’état de ton Mac : versions, place libre, connexion.
+Je rassemble ce qu’il lui faut sur ton Mac…
+[Arrêter]
+
+#302
+== analyze
+Claude regarde ce qui s’est passé…
+En général moins d’une minute. Il ne modifie rien.
+Ce que je lui montre :
+L’étape « Hermes et ton cerveau » et son message d’erreur.
+Les dernières lignes du journal, clés masquées.
+L’état de ton Mac : versions, place libre, connexion.
+Claude lit le dossier…
+[Arrêter]
+
+#303
+== done
+Ton second cerveau est prêt !
+Claude retient maintenant ce que tu lui apprends.
+Hermes n’est pas encore relié à ton cerveau. Rouvre-moi quand tu veux : je reprendrai là où on s’est arrêtés.
+Je peux te guider pas à pas dans n’importe quel logiciel : tu me montres ta fenêtre, je te dis où cliquer.
+Tu utilisais ChatGPT ou Claude ? « Importer ma mémoire » apporte à ton cerveau ce qu’ils savent de toi.
+[Importer ma mémoire]
+[Voir mes notes]
+Pour me retrouver plus tard : si tu m’as ouvert depuis le fichier téléchargé (.dmg), glisse d’abord l’icône Brain in a Box sur le dossier Applications, dans sa fenêtre. Ensuite, Cmd + Espace, tape « Brain in a Box », puis Entrée.
+Bbrain, ton guide, prend le relais : il reste avec toi après l’installation. Maintiens les touches contrôle et option, et parle-lui.
+[Présente-toi à Claude (15 min)]
+[Guide-moi dans un logiciel]
+[Parler à Bbrain]
+
+#304
+== done
+Ton second cerveau est prêt !
+Claude retient maintenant ce que tu lui apprends.
+Hermes n’est pas encore relié à ton cerveau. Rouvre-moi quand tu veux : je reprendrai là où on s’est arrêtés.
+Je peux te guider pas à pas dans n’importe quel logiciel : tu me montres ta fenêtre, je te dis où cliquer.
+Tu utilisais ChatGPT ou Claude ? « Importer ma mémoire » apporte à ton cerveau ce qu’ils savent de toi.
+[Importer ma mémoire]
+[Voir mes notes]
+Pour me retrouver plus tard : si tu m’as ouvert depuis le fichier téléchargé (.dmg), glisse d’abord l’icône Brain in a Box sur le dossier Applications, dans sa fenêtre. Ensuite, Cmd + Espace, tape « Brain in a Box », puis Entrée.
+Bbrain, ton guide, prend le relais : il reste avec toi après l’installation. Maintiens les touches contrôle et option, et parle-lui.
+[Présente-toi à Claude (15 min)]
+[Guide-moi dans un logiciel]
+[Parler à Bbrain (inactif)]
+
+#305
+== access
+Je laisse Hermes ouvrir tes fichiers ?
+Avec ça, il retrouve un document que tu lui cites, range tes factures ou lit un PDF sans que tu aies à le lui envoyer.
+Ça lui ouvre tous tes fichiers, y compris tes mails et tes messages. Tu peux le retirer quand tu veux dans les Réglages.
+[Plus tard]
+[Oui, ouvre-lui mes fichiers]
+
+#306
+== access-ask
+À toi : active Hermes dans la page qui s’ouvre.
+Je vérifie tout seul dès que c’est fait.
+Active l’interrupteur à côté d’Hermes (ton mot de passe peut t’être demandé).
+Hermes n’est pas dans la liste ? Glisse-le dedans depuis la fenêtre du Finder que je t’ouvre à côté.
+Si macOS te propose « Quitter et rouvrir », accepte.
+[Plus tard]
+
+#307
+== access-ask
+À toi : active Hermes dans la page qui s’ouvre.
+Je vérifie tout seul dès que c’est fait.
+Active l’interrupteur à côté d’Hermes (ton mot de passe peut t’être demandé).
+Hermes n’est pas dans la liste ? Glisse-le dedans depuis la fenêtre du Finder que je t’ouvre à côté.
+Si macOS te propose « Quitter et rouvrir », accepte.
+[Plus tard]
+[Ouvrir les Réglages]
+
+#308
+== access-ok
+C’est bon, Hermes peut ouvrir tes fichiers.
+Essaie dans Hermes : « Qu’est-ce qui traîne dans mes Téléchargements ? »
+[Suivant]
+
+#309
+== access
+Je laisse Hermes se servir de ton écran ?
+Avec ça, il fait les choses à ta place : il voit l’écran, il clique et il tape comme toi. Remplir un formulaire, trier un dossier, régler une app.
+Il voit ce qui est affiché pendant qu’il travaille. Tu peux le retirer quand tu veux dans les Réglages.
+[Plus tard]
+[Oui, vas-y]
+
+#310
+== access-ask
+À toi : active CuaDriver dans les deux réglages.
+Je vérifie tout seul dès que c’est fait.
+L’outil d’Hermes pour l’écran (CuaDriver) te demande deux réglages : Accessibilité et Enregistrement de l’écran.
+Active CuaDriver dans les deux (ton mot de passe peut t’être demandé).
+[Plus tard]
+
+#311
+== access-ok
+C’est bon, Hermes peut se servir de ton écran.
+Essaie dans Hermes : « Regarde mon écran et dis-moi ce que tu vois. »
+[Suivant]
+
+#312
+== access
+Je laisse Hermes t’entendre ?
+Avec ça, tu lui parles au lieu de taper : tu lui dictes un message, il l’écrit pour toi.
+Quand il t’écoute, un point orange s’allume en haut de l’écran. Tu peux le retirer quand tu veux dans les Réglages.
+[Plus tard]
+[Oui, demande-le]
+
+#313
+== access-ask
+À toi : macOS te pose une question.
+Je vérifie tout seul dès que c’est fait.
+Il demande si Hermes peut utiliser le micro : réponds « Autoriser ».
+[Plus tard]
+
+#314
+== access-ok
+C’est bon, Hermes t’entend.
+Essaie dans Hermes : clique sur le micro et dis « Bonjour ! ».
+[Continuer]
+
+#315
+== access-ask
+À toi : active Hermes dans la page qui s’ouvre.
+Je vérifie tout seul dès que c’est fait.
+Active l’interrupteur à côté d’Hermes.
+[Plus tard]
+[Ouvrir les Réglages]
+
+#316
+== access
+Je laisse Hermes t’entendre ?
+Avec ça, tu lui parles au lieu de taper : tu lui dictes un message, il l’écrit pour toi.
+Quand il t’écoute, une icône de micro s’affiche près de l’horloge. Tu peux le retirer quand tu veux dans les Paramètres.
+[Plus tard]
+[Oui, demande-le]
+
+#317
+== access-ask
+À toi : active le micro dans la page qui s’ouvre.
+Je vérifie tout seul dès que c’est fait.
+Dans la page qui s’ouvre, active l’accès au micro.
+Plus bas, active aussi l’accès des applications de bureau.
+[Plus tard]
+
+#318
+== access-ask
+À toi : active le micro dans la page qui s’ouvre.
+Je vérifie tout seul dès que c’est fait.
+Dans la page qui s’ouvre, active l’accès au micro.
+Plus bas, active aussi l’accès des applications de bureau.
+[Plus tard]
+[Ouvrir les Paramètres]
+
+#319
+== access-ok
+C’est bon, Hermes t’entend.
+Essaie dans Hermes : clique sur le micro et dis « Bonjour ! ».
+[Suivant]
+
+#320
+== access
+Je laisse Hermes ranger tes dossiers protégés ?
+Windows protège tes Documents, tes Images et ton Bureau. Avec ça, Hermes peut y ranger et y écrire tes fichiers.
+Ça lui permet de modifier les fichiers de ces dossiers. Tu peux le retirer quand tu veux, au même endroit.
+[Plus tard]
+[Oui, autorise-le]
+
+#321
+== access-ask
+À toi : ajoute Hermes dans la page qui s’ouvre.
+Je vérifie tout seul dès que c’est fait.
+Dans la page qui s’ouvre, clique sur « Gérer la protection contre les ransomware ».
+Puis sur « Autoriser une application via l’accès contrôlé aux dossiers », et ajoute Hermes.
+[Plus tard]
+
+#322
+== access-ask
+À toi : ajoute Hermes dans la page qui s’ouvre.
+Je vérifie tout seul dès que c’est fait.
+Dans la page qui s’ouvre, clique sur « Gérer la protection contre les ransomware ».
+Puis sur « Autoriser une application via l’accès contrôlé aux dossiers », et ajoute Hermes.
+[Plus tard]
+[Ouvrir les Paramètres]
+
+#323
+== access-ok
+C’est bon, Hermes peut ranger tes dossiers.
+Essaie dans Hermes : « Range mon Bureau par type de fichier. »
+[Continuer]
+
+#324
+== access-ko
+Ce n’est pas encore bon.
+Je ne vois pas encore ces deux autorisations pour CuaDriver. Réessaie : la fenêtre te montre ce qui manque.
+[Plus tard]
+[Réessayer]
+
+#325
+== import-offer
+ChatGPT te connaît déjà.
+Je lui demande ce qu’il sait de toi ? Comme ça, je sais tout de suite qui tu es, et tu n’as rien à me réexpliquer.
+Je t’ouvre sa page et je lui prépare ma question. Ce qu’il répond, tu le relis avant que j’en garde quoi que ce soit.
+[Plus tard]
+[J’utilise plutôt Claude]
+[Oui, demande à ChatGPT]
+
+#326
+== messaging
+Je te rejoins sur ton téléphone ?
+Avec ça, tu m’écris sur WhatsApp comme à un ami, même loin de ton ordinateur, et c’est moi qui t’écris quand j’ai quelque chose pour toi.
+Je passe par ton propre WhatsApp, dans ta discussion avec toi-même : personne d’autre ne peut me parler. Ton assistant répond tant que ton ordinateur est allumé.
+À savoir : WhatsApp n’autorise pas officiellement ce genre d’outil, et il peut, rarement, restreindre un compte relié ainsi. Si ça t’inquiète, choisis Telegram.
+[Plus tard]
+[Plutôt Telegram]
+[Oui, sur WhatsApp]
+
+#327
+== whatsapp-wait
+Je prépare le code à scanner…
+La première fois, ça peut prendre une minute.
+[Plus tard]
+
+#328
+== whatsapp-wait
+J’installe ce qu’il faut pour WhatsApp…
+La première fois, ça peut prendre une minute.
+[Plus tard]
+
+#329
+== whatsapp-wait
+À toi : scanne ce code avec WhatsApp.
+Je vérifie tout seul dès que c’est fait.
+Ouvre WhatsApp sur ton téléphone.
+Va dans « Appareils connectés » : dans Réglages sur iPhone, dans le menu ⋮ sur Android.
+Touche « Connecter un appareil », puis vise ce code.
+[Plus tard]
+
+#330
+== whatsapp-saving
+C’est relié !
+Je m’installe pour te répondre même quand cette fenêtre est fermée. Ça peut prendre une minute.
+
+#331
+== whatsapp-ok
+C’est fait : je viens de t’écrire sur WhatsApp.
+Ouvre ta discussion avec toi-même et réponds-moi : je suis là.
+Ton assistant répond tant que ton ordinateur est allumé.
+[Continuer]
+
+#332
+== whatsapp-ok
+C’est fait : je suis sur ton WhatsApp.
+Écris-moi dans ta discussion avec toi-même : je te réponds.
+Ton assistant répond tant que ton ordinateur est allumé. S’il redémarre, ouvre Hermes pour que je revienne.
+[Continuer]
+
+#333
+== messaging-ko
+Ce n’est pas encore bon.
+Ton WhatsApp est relié, mais Hermes ne le voit pas encore connecté. Réessaie dans un instant.
+[Plus tard]
+[Réessayer]
+
+#334
+== messaging-ko
+Ce n’est pas encore bon.
+Le code a expiré avant d’être scanné : réessaie, je t’en prépare un nouveau.
+[Plus tard]
+[Réessayer]
+
+#335
+== messaging-ko
+Ce n’est pas encore bon.
+Hermes n’a pas démarré. Réessaie dans un instant.
+[Plus tard]
+[Réessayer]
+
+#336
+== telegram-ask
+J’ouvre Hermes sur la Messagerie…
+
+#337
+== telegram-ask
+À toi : crée ton assistant Telegram dans Hermes.
+Je vérifie tout seul dès que c’est fait.
+Dans Hermes, sur la page Messagerie, choisis Telegram.
+Clique sur « Créer avec un code QR ».
+Vise le code avec ton téléphone : Telegram s’ouvre, confirme.
+De retour dans Hermes, clique sur « Enregistrer et redémarrer ».
+[Plus tard]
+
+#338
+== telegram-ok
+C’est fait : je suis sur ton Telegram.
+Ouvre Telegram et écris « Bonjour » à ton assistant : il te répond.
+Ton assistant répond tant que ton ordinateur est allumé.
+[Continuer]
+
+#339
+== messaging-ko
+Ce n’est pas encore bon.
+Je n’ai pas pu ouvrir Hermes. Ouvre-le toi-même, puis va dans Messagerie.
+[Plus tard]
+[Réessayer]
+
+#340
+== import-offer
+Claude te connaît déjà.
+Je lui demande ce qu’il sait de toi ? Comme ça, je sais tout de suite qui tu es, et tu n’as rien à me réexpliquer.
+Je t’ouvre sa page et je lui prépare ma question. Ce qu’il répond, tu le relis avant que j’en garde quoi que ce soit.
+[Plus tard]
+[J’utilise plutôt ChatGPT]
+[Oui, demande à Claude]
+
+#341
+== import-offer
+Tu as déjà parlé à ChatGPT ou à Claude ?
+S’il te connaît, je lui demande ce qu’il sait de toi : tu n’auras rien à me réexpliquer.
+Je t’ouvre sa page et je lui prépare ma question. Ce qu’il répond, tu le relis avant que j’en garde quoi que ce soit.
+[Ni l’un ni l’autre]
+[Claude]
+[ChatGPT]
+
+#342
+== import-ask
+J’ai ouvert ChatGPT avec ma question.
+Envoie-la, puis rapporte-moi sa réponse : je la range dans ton cerveau.
+Dans ChatGPT, envoie ma question, si elle n’est pas déjà partie.
+Elle n’est pas écrite ? Colle-la (Cmd-V) : je l’ai copiée pour toi.
+[Question copiée]
+[Rouvrir ChatGPT]
+Voir ma question
+Je change d’outil et j’ai besoin d’exporter mes données. Liste chaque souvenir que tu as enregistré sur moi, et tout ce que tu as appris de moi dans nos conversations passées. Mets tout dans un seul bloc de code, pour que je puisse le copier facilement. Une entrée par ligne, au format : [date d’enregistrement, si tu l’as] - le souvenir. Couvre tout ce qui suit, avec mes propres mots autant que possible : les consignes que je t’ai données sur ta façon de répondre (ton, format, style, « fais toujours… », « ne fais jamais… ») ; qui je suis : prénom, ville, métier, langues, centres d’intérêt ; mes projets, mes objectifs et les sujets qui reviennent ; les outils, logiciels et langages que j’utilise ; les personnes avec qui je travaille (prénom et rôle) ; mes préférences et les corrections que je t’ai faites ; tout autre contexte enregistré. Ne résume pas, ne regroupe pas, n’oublie rien, n’invente rien. N’écris aucun mot de passe, aucun numéro, aucun identifiant. Après le bloc de code, dis-moi si la liste est complète ou s’il en reste.
+Quand il a fini, copie sa réponse avec le bouton Copier de son bloc de code.
+Colle-la ici.
+S’il dit qu’il en reste, écris-lui « Continue » et colle la suite à la fin.
+Avant l’envoi, je masque les clés et les mots de passe écrits « mot de passe : … ». Un code glissé dans une phrase peut passer : avant de lancer, regarde « Voir exactement ce que j’envoie ». Le reste (noms de clients, montants, projets) part chez Anthropic pour être trié par Claude, avec ton abonnement Claude, et nulle part ailleurs. Le résultat est une nouvelle note de ton cerveau, que tu relis.
+[Retour]
+[Continuer (inactif)]
+
+#343
+== import-ask
+J’ai ouvert Claude avec ma question.
+Envoie-la, puis rapporte-moi sa réponse : je la range dans ton cerveau.
+Dans Claude, envoie ma question, si elle n’est pas déjà partie.
+Elle n’est pas écrite ? Colle-la (Ctrl-V) : je l’ai copiée pour toi.
+[Question copiée]
+[Rouvrir Claude]
+Voir ma question
+Je change d’outil et j’ai besoin d’exporter mes données. Liste chaque souvenir que tu as enregistré sur moi, et tout ce que tu as appris de moi dans nos conversations passées. Mets tout dans un seul bloc de code, pour que je puisse le copier facilement. Une entrée par ligne, au format : [date d’enregistrement, si tu l’as] - le souvenir. Couvre tout ce qui suit, avec mes propres mots autant que possible : les consignes que je t’ai données sur ta façon de répondre (ton, format, style, « fais toujours… », « ne fais jamais… ») ; qui je suis : prénom, ville, métier, langues, centres d’intérêt ; mes projets, mes objectifs et les sujets qui reviennent ; les outils, logiciels et langages que j’utilise ; les personnes avec qui je travaille (prénom et rôle) ; mes préférences et les corrections que je t’ai faites ; tout autre contexte enregistré. Ne résume pas, ne regroupe pas, n’oublie rien, n’invente rien. N’écris aucun mot de passe, aucun numéro, aucun identifiant. Après le bloc de code, dis-moi si la liste est complète ou s’il en reste.
+Quand il a fini, copie sa réponse avec le bouton Copier de son bloc de code.
+Colle-la ici.
+S’il dit qu’il en reste, écris-lui « Continue » et colle la suite à la fin.
+Avant l’envoi, je masque les clés et les mots de passe écrits « mot de passe : … ». Un code glissé dans une phrase peut passer : avant de lancer, regarde « Voir exactement ce que j’envoie ». Le reste (noms de clients, montants, projets) part chez Anthropic pour être trié par Claude, avec ton abonnement Claude, et nulle part ailleurs. Le résultat est une nouvelle note de ton cerveau, que tu relis.
+[Retour]
+[Continuer (inactif)]
+
+#344
+== import-ask
+J’ai ouvert ChatGPT avec ma question.
+Envoie-la, puis rapporte-moi sa réponse : je la range dans ton cerveau.
+Dans ChatGPT, envoie ma question, si elle n’est pas déjà partie.
+Elle n’est pas écrite ? Colle-la (Cmd-V) : je l’ai copiée pour toi.
+[Question copiée]
+[Rouvrir ChatGPT]
+Voir ma question
+Je change d’outil et j’ai besoin d’exporter mes données. Liste chaque souvenir que tu as enregistré sur moi, et tout ce que tu as appris de moi dans nos conversations passées. Mets tout dans un seul bloc de code, pour que je puisse le copier facilement. Une entrée par ligne, au format : [date d’enregistrement, si tu l’as] - le souvenir. Couvre tout ce qui suit, avec mes propres mots autant que possible : les consignes que je t’ai données sur ta façon de répondre (ton, format, style, « fais toujours… », « ne fais jamais… ») ; qui je suis : prénom, ville, métier, langues, centres d’intérêt ; mes projets, mes objectifs et les sujets qui reviennent ; les outils, logiciels et langages que j’utilise ; les personnes avec qui je travaille (prénom et rôle) ; mes préférences et les corrections que je t’ai faites ; tout autre contexte enregistré. Ne résume pas, ne regroupe pas, n’oublie rien, n’invente rien. N’écris aucun mot de passe, aucun numéro, aucun identifiant. Après le bloc de code, dis-moi si la liste est complète ou s’il en reste.
+Quand il a fini, copie sa réponse avec le bouton Copier de son bloc de code.
+Colle-la ici.
+S’il dit qu’il en reste, écris-lui « Continue » et colle la suite à la fin.
+Avant l’envoi, je masque les clés et les mots de passe écrits « mot de passe : … ». Un code glissé dans une phrase peut passer : avant de lancer, regarde « Voir exactement ce que j’envoie ». Le reste (noms de clients, montants, projets) part chez Anthropic pour être trié par Claude, avec ton abonnement Claude, et nulle part ailleurs. Le résultat est une nouvelle note de ton cerveau, que tu relis.
+[Retour]
+[Continuer]
+
+#345
+== diag
+Tout est déjà installé !
+Ton Mac a tout ce qu’il faut.
+Mon conseil : Tu utilises déjà Claude : ton cerveau travaillera avec lui (il te faudra un abonnement Pro ou Max pour Claude Code).
+[Voir le détail]
+[Continuer]
+
+#346
+== done
+Presque prêt : il manque ton compte Claude
+Connecte-le pour que Claude puisse travailler avec ton cerveau. Il faut un abonnement Claude Pro ou Max.
+Clique sur le bouton. Ton navigateur s’ouvre sur claude.ai : connecte-toi avec le compte de ton abonnement, puis clique sur « Autoriser » (Authorize).
+Une fenêtre de commandes s’ouvre aussi : laisse-la ouverte, tu n’as rien à y taper.
+Reviens ici : je vois tout seul quand c’est bon.
+[Je n’ai pas encore Claude Pro]
+Tu utilisais ChatGPT ou Claude ? « Importer ma mémoire » apporte à ton cerveau ce qu’ils savent de toi.
+[Importer ma mémoire]
+[Voir mes notes]
+Pour me retrouver plus tard : si tu m’as ouvert depuis le fichier téléchargé (.dmg), glisse d’abord l’icône Brain in a Box sur le dossier Applications, dans sa fenêtre. Ensuite, Cmd + Espace, tape « Brain in a Box », puis Entrée.
+[Connecter mon compte Claude]
+
+#347
+== diag
+Tout est déjà installé !
+Ton Mac a tout ce qu’il faut.
+[Voir le détail]
+[Changer d’IA]
+[Continuer]
+
+#348
+== import-ask
+J’ai ouvert ChatGPT avec ma question.
+Envoie-la, puis rapporte-moi sa réponse : je la range dans ton cerveau.
+Dans ChatGPT, envoie ma question, si elle n’est pas déjà partie.
+Elle n’est pas écrite ? Colle-la (Cmd-V) : je l’ai copiée pour toi.
+[Question copiée]
+[Rouvrir ChatGPT]
+Voir ma question
+Je change d’outil et j’ai besoin d’exporter mes données. Liste chaque souvenir que tu as enregistré sur moi, et tout ce que tu as appris de moi dans nos conversations passées. Mets tout dans un seul bloc de code, pour que je puisse le copier facilement. Une entrée par ligne, au format : [date d’enregistrement, si tu l’as] - le souvenir. Couvre tout ce qui suit, avec mes propres mots autant que possible : les consignes que je t’ai données sur ta façon de répondre (ton, format, style, « fais toujours… », « ne fais jamais… ») ; qui je suis : prénom, ville, métier, langues, centres d’intérêt ; mes projets, mes objectifs et les sujets qui reviennent ; les outils, logiciels et langages que j’utilise ; les personnes avec qui je travaille (prénom et rôle) ; mes préférences et les corrections que je t’ai faites ; tout autre contexte enregistré. Ne résume pas, ne regroupe pas, n’oublie rien, n’invente rien. N’écris aucun mot de passe, aucun numéro, aucun identifiant. Après le bloc de code, dis-moi si la liste est complète ou s’il en reste.
+Quand il a fini, copie sa réponse avec le bouton Copier de son bloc de code.
+Colle-la ici.
+S’il dit qu’il en reste, écris-lui « Continue » et colle la suite à la fin.
+Avant l’envoi, je masque les clés et les mots de passe écrits « mot de passe : … ». Un code glissé dans une phrase peut passer : avant de lancer, regarde « Voir exactement ce que j’envoie ». Le reste (noms de clients, montants, projets) part chez OpenAI pour être trié par Codex, avec ton abonnement ChatGPT personnel, et nulle part ailleurs. Le résultat est une nouvelle note de ton cerveau, que tu relis.
+[Retour]
+[Continuer (inactif)]
+
+#349
+== import-ask
+Je n’ai pas pu ouvrir Claude.
+Ouvre claude.ai dans ton navigateur, colle ma question, puis rapporte-moi sa réponse.
+Dans Claude, envoie ma question, si elle n’est pas déjà partie.
+Elle n’est pas écrite ? Colle-la (Cmd-V) : je l’ai copiée pour toi.
+[Question copiée]
+[Ouvrir Claude]
+Voir ma question
+Je change d’outil et j’ai besoin d’exporter mes données. Liste chaque souvenir que tu as enregistré sur moi, et tout ce que tu as appris de moi dans nos conversations passées. Mets tout dans un seul bloc de code, pour que je puisse le copier facilement. Une entrée par ligne, au format : [date d’enregistrement, si tu l’as] - le souvenir. Couvre tout ce qui suit, avec mes propres mots autant que possible : les consignes que je t’ai données sur ta façon de répondre (ton, format, style, « fais toujours… », « ne fais jamais… ») ; qui je suis : prénom, ville, métier, langues, centres d’intérêt ; mes projets, mes objectifs et les sujets qui reviennent ; les outils, logiciels et langages que j’utilise ; les personnes avec qui je travaille (prénom et rôle) ; mes préférences et les corrections que je t’ai faites ; tout autre contexte enregistré. Ne résume pas, ne regroupe pas, n’oublie rien, n’invente rien. N’écris aucun mot de passe, aucun numéro, aucun identifiant. Après le bloc de code, dis-moi si la liste est complète ou s’il en reste.
+Quand il a fini, copie sa réponse avec le bouton Copier de son bloc de code.
+Colle-la ici.
+S’il dit qu’il en reste, écris-lui « Continue » et colle la suite à la fin.
+Avant l’envoi, je masque les clés et les mots de passe écrits « mot de passe : … ». Un code glissé dans une phrase peut passer : avant de lancer, regarde « Voir exactement ce que j’envoie ». Le reste (noms de clients, montants, projets) part chez Anthropic pour être trié par Claude, avec ton abonnement Claude, et nulle part ailleurs. Le résultat est une nouvelle note de ton cerveau, que tu relis.
+[Retour]
+[Continuer (inactif)]
+
+#350
+== import-ask
+J’ai ouvert ChatGPT avec ma question.
+Envoie-la, puis rapporte-moi sa réponse : je la range dans ton cerveau.
+Dans ChatGPT, envoie ma question, si elle n’est pas déjà partie.
+Elle n’est pas écrite ? Clique sur « Copier la question », puis colle-la (Cmd-V).
+[Copier la question]
+[Rouvrir ChatGPT]
+Voir ma question
+Je change d’outil et j’ai besoin d’exporter mes données. Liste chaque souvenir que tu as enregistré sur moi, et tout ce que tu as appris de moi dans nos conversations passées. Mets tout dans un seul bloc de code, pour que je puisse le copier facilement. Une entrée par ligne, au format : [date d’enregistrement, si tu l’as] - le souvenir. Couvre tout ce qui suit, avec mes propres mots autant que possible : les consignes que je t’ai données sur ta façon de répondre (ton, format, style, « fais toujours… », « ne fais jamais… ») ; qui je suis : prénom, ville, métier, langues, centres d’intérêt ; mes projets, mes objectifs et les sujets qui reviennent ; les outils, logiciels et langages que j’utilise ; les personnes avec qui je travaille (prénom et rôle) ; mes préférences et les corrections que je t’ai faites ; tout autre contexte enregistré. Ne résume pas, ne regroupe pas, n’oublie rien, n’invente rien. N’écris aucun mot de passe, aucun numéro, aucun identifiant. Après le bloc de code, dis-moi si la liste est complète ou s’il en reste.
+Quand il a fini, copie sa réponse avec le bouton Copier de son bloc de code.
+Colle-la ici.
+S’il dit qu’il en reste, écris-lui « Continue » et colle la suite à la fin.
+Avant l’envoi, je masque les clés et les mots de passe écrits « mot de passe : … ». Un code glissé dans une phrase peut passer : avant de lancer, regarde « Voir exactement ce que j’envoie ». Le reste (noms de clients, montants, projets) part chez Anthropic pour être trié par Claude, avec ton abonnement Claude, et nulle part ailleurs. Le résultat est une nouvelle note de ton cerveau, que tu relis.
+[Retour]
+[Continuer (inactif)]
+
+#351
+== install
+Je vérifie ton compte Claude…
+Recherche par le sensTon cerveau apprend à retrouver tes notes par le sens.En attente
+Détails
+
+#352
 == welcome
 Salut, moi c’est Bibo !
 Je vais installer ton second cerveau pour Claude. 10 à 20 minutes, tu n’as aucune commande à taper.
@@ -2975,7 +4324,7 @@ Il te faut un abonnement Claude Pro ou Max.
 Préversion 76
 [Vérifier mon PC]
 
-#245
+#353
 == done
 Presque prêt : il manque ton compte Claude
 Connecte-le pour que Claude puisse travailler avec ton cerveau. Il faut un abonnement Claude Pro ou Max.
@@ -2989,21 +4338,7 @@ Tu utilisais ChatGPT ou Claude ? « Importer ma mémoire » apporte à ton ce
 Pour me retrouver plus tard : ouvre le menu Démarrer (Start) et tape « Brain in a Box ».
 [Connecter mon compte Claude]
 
-#246
-== done
-Presque prêt : il manque ton compte Claude
-Connecte-le pour que Claude puisse travailler avec ton cerveau. Il faut un abonnement Claude Pro ou Max.
-Clique sur le bouton. Ton navigateur s’ouvre sur claude.ai : connecte-toi avec le compte de ton abonnement, puis clique sur « Autoriser » (Authorize).
-Une fenêtre de commandes s’ouvre aussi : laisse-la ouverte, tu n’as rien à y taper.
-Reviens ici : je vois tout seul quand c’est bon.
-[Je n’ai pas encore Claude Pro]
-Tu utilisais ChatGPT ou Claude ? « Importer ma mémoire » apporte à ton cerveau ce qu’ils savent de toi.
-[Importer ma mémoire]
-[Voir mes notes]
-Pour me retrouver plus tard : si tu m’as ouvert depuis le fichier téléchargé (.dmg), glisse d’abord l’icône Brain in a Box sur le dossier Applications, dans sa fenêtre. Ensuite, Cmd + Espace, tape « Brain in a Box », puis Entrée.
-[Connecter mon compte Claude]
-
-#247
+#354
 == done
 Presque prêt : il manque ton compte Claude
 Connecte-le pour que Claude puisse travailler avec ton cerveau. Il faut un abonnement Claude Pro ou Max.
@@ -3017,7 +4352,7 @@ Tu utilisais ChatGPT ou Claude ? « Importer ma mémoire » apporte à ton ce
 Pour me retrouver plus tard : si tu m’as ouvert depuis le fichier téléchargé (.dmg), glisse d’abord l’icône Brain in a Box sur le dossier Applications, dans sa fenêtre. Ensuite, Cmd + Espace, tape « Brain in a Box », puis Entrée.
 [Connecter mon compte Claude (inactif)]
 
-#248
+#355
 == done
 J’attends que tu te connectes…
 Connecte-toi dans ton navigateur : je vois tout seul quand c’est bon.
@@ -3032,7 +4367,7 @@ Tu utilisais ChatGPT ou Claude ? « Importer ma mémoire » apporte à ton ce
 Pour me retrouver plus tard : si tu m’as ouvert depuis le fichier téléchargé (.dmg), glisse d’abord l’icône Brain in a Box sur le dossier Applications, dans sa fenêtre. Ensuite, Cmd + Espace, tape « Brain in a Box », puis Entrée.
 [Rouvrir la fenêtre]
 
-#249
+#356
 == done
 J’attends que tu te connectes…
 Connecte-toi dans ton navigateur : je vois tout seul quand c’est bon.
@@ -3047,7 +4382,7 @@ Tu utilisais ChatGPT ou Claude ? « Importer ma mémoire » apporte à ton ce
 Pour me retrouver plus tard : si tu m’as ouvert depuis le fichier téléchargé (.dmg), glisse d’abord l’icône Brain in a Box sur le dossier Applications, dans sa fenêtre. Ensuite, Cmd + Espace, tape « Brain in a Box », puis Entrée.
 [Rouvrir la fenêtre (inactif)]
 
-#250
+#357
 == done
 J’attends que tu te connectes…
 Connecte-toi dans ton navigateur : je vois tout seul quand c’est bon.
@@ -3063,7 +4398,7 @@ Tu utilisais ChatGPT ou Claude ? « Importer ma mémoire » apporte à ton ce
 Pour me retrouver plus tard : si tu m’as ouvert depuis le fichier téléchargé (.dmg), glisse d’abord l’icône Brain in a Box sur le dossier Applications, dans sa fenêtre. Ensuite, Cmd + Espace, tape « Brain in a Box », puis Entrée.
 [Rouvrir la fenêtre (inactif)]
 
-#251
+#358
 == done
 J’attends que tu te connectes…
 Connecte-toi dans ton navigateur : je vois tout seul quand c’est bon.
@@ -3079,7 +4414,7 @@ Tu utilisais ChatGPT ou Claude ? « Importer ma mémoire » apporte à ton ce
 Pour me retrouver plus tard : si tu m’as ouvert depuis le fichier téléchargé (.dmg), glisse d’abord l’icône Brain in a Box sur le dossier Applications, dans sa fenêtre. Ensuite, Cmd + Espace, tape « Brain in a Box », puis Entrée.
 [Rouvrir la fenêtre]
 
-#252
+#359
 == install
 J’attends que tu te connectes…
 Connecte-toi dans ton navigateur : je vois tout seul quand c’est bon.
@@ -3097,7 +4432,7 @@ Détails
 [Plus tard]
 [Rouvrir la fenêtre (inactif)]
 
-#253
+#360
 == install
 J’attends que tu te connectes…
 Connecte-toi dans ton navigateur : je vois tout seul quand c’est bon.
@@ -3115,7 +4450,7 @@ Détails
 [Plus tard]
 [Rouvrir la fenêtre]
 
-#254
+#361
 == install
 Oups, ça a coincé.
 L’installation de ton cerveau s’est arrêtée avant la fin. Clique sur « Réessayer » ; si ça recommence, envoie le rapport à la personne qui t’a conseillé Bibo.
@@ -3130,7 +4465,7 @@ Détails
 [Réessayer]
 [Demander à Claude de réparer]
 
-#255
+#362
 == welcome
 Content de te revoir !
 Il manque ton compte Claude : connecte-le, puis je pourrai te guider pas à pas dans un logiciel.
@@ -3141,7 +4476,7 @@ Reviens ici : je vois tout seul quand c’est bon.
 [Vérifier mon PC]
 [Connecter mon compte Claude]
 
-#256
+#363
 == welcome
 Content de te revoir !
 Il manque ton compte Claude : connecte-le, puis je pourrai te guider pas à pas dans un logiciel.
@@ -3152,7 +4487,7 @@ Reviens ici : je vois tout seul quand c’est bon.
 [Vérifier mon PC]
 [Connecter mon compte Claude (inactif)]
 
-#257
+#364
 == welcome
 J’attends que tu te connectes…
 Connecte-toi dans ton navigateur : je vois tout seul quand c’est bon.
@@ -3164,7 +4499,7 @@ J’attends ta connexion…
 [Vérifier mon PC]
 [Rouvrir la fenêtre]
 
-#258
+#365
 == welcome
 Salut, moi c’est Bibo !
 Je vais installer ton second cerveau pour Claude. 10 à 20 minutes, tu n’as aucune commande à taper.
@@ -3175,7 +4510,7 @@ Il te faut un abonnement Claude Pro ou Max.
 La page des abonnements Claude s’est ouverte dans ton navigateur : choisis Claude Pro, puis reviens ici.
 [Vérifier mon Mac]
 
-#259
+#366
 == diag
 J’ai fait le tour : un point à vérifier.
 claude.ai ne répond pas. Une étape risque d’échouer. Vérifie ton Wi-Fi. Au travail, le réseau bloque parfois ces sites : essaie depuis chez toi. Tu peux installer quand même (10 à 20 minutes), ou faire ça puis cliquer sur « Revérifier ».
@@ -3199,7 +4534,7 @@ Recherche par le sens : À noterRecherche par mots-clés seulement. Une clé Vo
 [Revérifier]
 [Tout installer]
 
-#260
+#367
 == diag
 J’ai fait le tour : un point à vérifier.
 Il reste 7 Go. Ça passe, mais c’est juste. Pour faire de la place, vide la Corbeille (Trash) ou supprime de gros fichiers. Tu peux installer quand même (10 à 20 minutes), ou faire ça puis cliquer sur « Revérifier ».
@@ -3222,7 +4557,7 @@ Recherche par le sens : À noterRecherche par mots-clés seulement. Une clé Vo
 [Revérifier]
 [Tout installer]
 
-#261
+#368
 == done
 Ton second cerveau est prêt !
 Claude retient maintenant ce que tu lui apprends.
@@ -3234,7 +4569,7 @@ Pour me retrouver plus tard : ouvre le menu Démarrer (Start) et tape « Brain
 [Présente-toi à Claude (15 min)]
 [Guide-moi dans un logiciel]
 
-#262
+#369
 == done
 J’ouvre Obsidian…
 Tes notes s’ouvrent dans Obsidian.
@@ -3247,7 +4582,7 @@ Pour me retrouver plus tard : ouvre le menu Démarrer (Start) et tape « Brain
 [Présente-toi à Claude (15 min)]
 [Guide-moi dans un logiciel]
 
-#263
+#370
 == done
 J’ouvre Obsidian…
 Tes notes s’ouvrent dans Obsidian.
@@ -3260,14 +4595,14 @@ Pour me retrouver plus tard : ouvre le menu Démarrer (Start) et tape « Brain
 [Présente-toi à Claude (15 min)]
 [Guide-moi dans un logiciel]
 
-#264
+#371
 == welcome
 Content de te revoir !
 Ton installation n’est pas finie : clique sur « Vérifier mon PC » pour la reprendre. Le guide marche déjà : je peux te guider pas à pas dans un logiciel.
 [Vérifier mon PC]
 [Guide-moi dans un logiciel]
 
-#265
+#372
 == done
 Ça n’a pas marché.
 Obsidian n’est pas encore installé.
@@ -3280,7 +4615,7 @@ Pour me retrouver plus tard : ouvre le menu Démarrer (Start) et tape « Brain
 [Présente-toi à Claude (15 min)]
 [Guide-moi dans un logiciel]
 
-#266
+#373
 == done
 Ça n’a pas marché.
 Obsidian n’est pas encore installé.

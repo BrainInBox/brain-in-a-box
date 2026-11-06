@@ -1,0 +1,2 @@
+✓ Set model.provider = claude-subscription-directsdk-experimental in /Users/someone/.hermes/config.yaml
+  Cleared model.base_url (https://openrouter.ai/api/v1) — that route belonged to auto, not claude-subscription-directsdk-experimental. claude-subscription-directsdk-experimental's endpoint resolves automatically; set model.base_url again if you meant a custom endpoint.

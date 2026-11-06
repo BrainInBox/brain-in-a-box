@@ -1,0 +1,50 @@
+{
+  "accessibility": null,
+  "can_grant": true,
+  "checks": [
+    {
+      "label": "binary",
+      "message": "cua-driver 0.21.0 (aarch64-macos)",
+      "status": "ok"
+    },
+    {
+      "label": "install dir",
+      "message": "/Users/someone/.hermes/tools/cua-driver-0.21.0-darwin-arm64/CuaDriver.app/Contents/MacOS/cua-driver",
+      "status": "ok"
+    },
+    {
+      "label": "home dir",
+      "message": "/Users/someone/.cua-driver (0 release dirs cached)",
+      "status": "ok"
+    },
+    {
+      "label": "telemetry",
+      "message": "disabled via environment (installation ID retained)",
+      "status": "ok"
+    },
+    {
+      "label": "legacy LaunchAgent",
+      "message": "not present",
+      "status": "ok"
+    },
+    {
+      "label": "legacy update script",
+      "message": "not present",
+      "status": "ok"
+    },
+    {
+      "label": "TCC + cdhash report",
+      "message": "for a full bundle / signature / TCC dump, run `cua-driver diagnose`",
+      "status": "ok"
+    }
+  ],
+  "error": null,
+  "installed": true,
+  "platform": "darwin",
+  "platform_supported": true,
+  "ready": false,
+  "screen_recording": null,
+  "screen_recording_capturable": null,
+  "source": null,
+  "version": "cua-driver 0.21.0"
+}
