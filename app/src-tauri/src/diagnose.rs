@@ -2095,7 +2095,8 @@ mod tests {
             ids,
             [
                 "linux", "disk", "network", "paquets", "bun", "claude", "claude_auth", "obsidian", "brain_vault", "brain_hooks",
-                "brain_skills", "brain_memory", "voyage"
+                "brain_skills", "brain_memory", "voyage", "hermes", "hermes_ia",
+                "hermes_cerveau"
             ]
         );
         assert!(!format!("{d:?}").contains("SECRET"));
@@ -2158,7 +2159,8 @@ mod tests {
             ids,
             [
                 "windows", "disk", "network", "python", "git", "bun", "claude", "claude_auth", "obsidian", "brain_vault",
-                "brain_hooks", "brain_skills", "brain_memory", "voyage"
+                "brain_hooks", "brain_skills", "brain_memory", "voyage", "hermes", "hermes_ia",
+                "hermes_cerveau"
             ]
         );
         assert_eq!(by_id(&d, "python").detail, "Python 3.12.10");
