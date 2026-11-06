@@ -328,6 +328,19 @@ mod tests {
         assert_eq!(parse_settings("{}"), (true, LIMIT));
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn the_memory_is_beside_hermes_config_on_windows() {
+        assert_eq!(
+            parse_memory_file("C:\\Users\\someone\\.hermes\\config.yaml\r\n"),
+            Some(PathBuf::from("C:\\Users\\someone\\.hermes\\memories\\MEMORY.md"))
+        );
+        assert_eq!(parse_memory_file("/Users/someone/.hermes/config.yaml"), None, "no drive: not absolute here");
+        assert_eq!(parse_memory_file("config.yaml"), None, "never a guess relative to the app");
+    }
+
+    /// The fixture is a Mac's answer: an absolute path only where `/` starts one.
+    #[cfg(unix)]
     #[test]
     fn the_memory_is_beside_hermes_config() {
         assert_eq!(parse_memory_file(&fixture("config-path.txt")), Some(PathBuf::from("/Users/someone/.hermes/memories/MEMORY.md")));
