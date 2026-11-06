@@ -1,0 +1,1 @@
+External CLI logins (Codex CLI, Claude Code) are not adopted: auth.adopt_external_logins is false. Hermes uses only its own logins; run `hermes auth add <provider>` to add one.

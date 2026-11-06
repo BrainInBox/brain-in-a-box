@@ -277,6 +277,8 @@ body.big .plan { justify-content: center; text-align: left; }
 
 .note { color: var(--ink-2); font-size: 14px; }
 
+/* WhatsApp's code to scan: black on white whatever the theme, crisp at any scale. */
+.qr { display: block; width: 232px; height: 232px; margin: 0 auto; background: #fff; border-radius: 10px; image-rendering: pixelated; }
 /* « Préversion 76 », at the bottom of the welcome: there to be read out when asking for help, no more. */
 .version { color: var(--ink-2); font-size: 12px; opacity: 0.8; }
 
@@ -478,6 +480,15 @@ body.big .plan { justify-content: center; text-align: left; }
 
 .login-card > * + * { margin-top: 12px; }
 
+/* Hermes's ChatGPT code, read here and typed in the browser. */
+.device-code {
+  font: 650 26px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.12em;
+  text-align: center;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
 .step {
   display: grid;
   grid-template-columns: 20px 1fr auto;
@@ -497,7 +508,7 @@ body.big .plan { justify-content: center; text-align: left; }
 
 .step-status { color: var(--ink-2); font-size: 13.5px; white-space: nowrap; }
 
-.step.is-pending .step-name { color: var(--ink-2); }
+.step.is-pending .step-name, .step.is-later .step-name { color: var(--ink-2); }
 .step.is-running { background: var(--accent-soft); }
 .step.is-running .step-status { color: var(--ink); font-weight: 600; }
 .step.is-done .step-status { color: var(--ok); }

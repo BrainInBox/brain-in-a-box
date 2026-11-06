@@ -1,0 +1,1 @@
+✓ Set auth.adopt_external_logins = False in /Users/someone/.hermes/config.yaml

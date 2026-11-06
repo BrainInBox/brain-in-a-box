@@ -397,6 +397,23 @@ pub fn run_streaming_until(
     })
 }
 
+/// Starts a program that keeps running (Hermes's own server) and hands back its stdout and
+/// stderr lines as they come: the caller reads what it waits for, then must keep draining
+/// them. Stopped with `stop`, everything it started included.
+pub fn spawn_piped(program: &Path, args: &[&str], env: &[(&str, &str)]) -> io::Result<(Child, Lines)> {
+    let mut cmd = command(program);
+    cmd.args(args).stdin(Stdio::null());
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    start(&mut cmd, None)
+}
+
+/// Stops a program from `spawn_piped` and everything it started.
+pub fn stop(child: &mut Child) {
+    kill_group(child);
+}
+
 /// Starts a helper that lives as long as the caller keeps its `Child` (and the pipe to its stdin, when
 /// `stdin` is piped): nothing of an AppImage reaches it.
 #[cfg(unix)]
@@ -588,7 +605,7 @@ pub enum Pipe {
 }
 
 /// Lines from both pipes, newline included, as they come.
-type Lines = Receiver<(Pipe, Vec<u8>)>;
+pub type Lines = Receiver<(Pipe, Vec<u8>)>;
 
 /// Spawns the program in a process group of its own, so that a timeout stops it with
 /// everything it started, and reads both pipes on threads that send each line on.

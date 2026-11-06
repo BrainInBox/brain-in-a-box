@@ -1,0 +1,1 @@
+{"default": "claude-opus-5-5", "provider": "anthropic", "base_url": "https://api.anthropic.com", "api_mode": "anthropic_messages"}

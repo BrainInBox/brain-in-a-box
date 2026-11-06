@@ -107,10 +107,33 @@ const STEPS = {
     say: ['J’active la recherche par le sens.', 'Ton cerveau relit tes notes : quelques minutes.'],
     step: 'brain',
   },
+  // Last, on a Mac: the brain works without it. Its official installer, then its app in Applications.
+  hermes: {
+    name: 'Hermes',
+    short: 'Hermes',
+    what: 'Ton IA au quotidien, dans son app.',
+    say: ['J’installe Hermes, ton IA au quotidien.', 'Gros téléchargement : quelques minutes.'],
+  },
+  // After it: Hermes on the subscription the user already pays for, no key to buy. The step ends on
+  // Hermes's first answer; ChatGPT's login shows its code here, in big (watchHermesDevice).
+  hermes_ia: {
+    name: 'Connexion d’Hermes',
+    short: 'la connexion d’Hermes à ton IA',
+    what: 'Il passe par ton abonnement : aucune clé à acheter.',
+    say: ['Je branche Hermes sur ton IA.', 'Il passe par ton abonnement : aucune clé à acheter.'],
+  },
+  // Then Hermes's memory notes where the brain is, which every conversation reads: asked what it
+  // knows of the user, Hermes reads the brain (hermes_brain.rs). The step ends on what to ask it.
+  hermes_cerveau: {
+    name: 'Hermes et ton cerveau',
+    short: 'le lien entre Hermes et ton cerveau',
+    what: 'Il lit ce que ton cerveau sait de toi.',
+    say: ['Je relie Hermes à ton cerveau.', 'Il lira ce que ton cerveau sait de toi.'],
+  },
 };
 
 const CHECK_STATUS = { ok: 'OK', missing: 'À installer', later: 'Plus tard', warn: 'À noter', error: 'Bloquant' };
-const STEP_STATUS = { pending: 'En attente', running: 'En cours…', done: 'Fait', failed: 'Échec' };
+const STEP_STATUS = { pending: 'En attente', running: 'En cours…', done: 'Fait', failed: 'Échec', later: 'Plus tard' };
 
 const state = {
   // agents_offer: whether the window asks who the brain works with (only where the kit lets Codex be
@@ -136,6 +159,14 @@ const state = {
   advice: undefined,
   // « Importer ma mémoire »: the plan the importer made (what it read, the choices, no agreement code).
   importPlan: null,
+  // The guide offered, at the end of this run, to ask ChatGPT or Claude what they know: once.
+  importOffered: false,
+  // Point 6: what Hermes may do on this computer was asked for, at the end of this run: once.
+  accessOffered: false,
+  // Point 5: the assistant on the phone (WhatsApp or Telegram) was offered, in this run: once.
+  messagingOffered: false,
+  // An import wrote its note in this run: the last screen offers the other one.
+  memoryImported: false,
   // The Voyage key lives only here, in memory, and only once Voyage accepted it.
   key: '',
   // A brain step went through with a key: search by meaning is no longer on offer.
@@ -155,6 +186,12 @@ const state = {
   codexLoginSkipped: false,
   // How Codex was last seen logged in (codex_login): only "chatgpt" is a login the kit uses.
   codexLogin: '',
+  // Hermes's first answer and whose subscription it counts on, once the install connected it.
+  hermes: '',
+  // Once it is linked to the brain: what to ask it (hermes_brain.rs).
+  hermesBrain: '',
+  // The Hermes step put off (« Plus tard »): the end says so, and that the next opening takes it up.
+  hermesLater: '',
   repair: {
     // Plans that set something aside, per step id: « Remettre comme avant » puts it back.
     aside: {},
@@ -888,7 +925,7 @@ function showVoyage(back) {
 
 function stepIcon(s) {
   if (s === 'running') return h('span', { class: 'spinner', 'aria-hidden': 'true' });
-  return icon({ pending: 'pending', done: 'ok', failed: 'error' }[s]);
+  return icon({ pending: 'pending', done: 'ok', failed: 'error', later: 'pending' }[s]);
 }
 
 function paintStep(id, s, since) {
@@ -989,11 +1026,27 @@ async function runInstall(from, result = '') {
   const gen = renderInstall();
   const { plan } = state;
   for (let i = from; i < plan.length; i++) {
-    if (!state.loginAsked && !state.loginSkipped && chose('claude') && claudeInstalled()) {
-      await askLoginInline(gen);
-      if (gen !== view.gen) return;
-    }
     const id = plan[i];
+    // Its link to the brain waits with its connection: asked, Hermes could not answer yet.
+    if (id === 'hermes_cerveau' && state.hermesLater === 'hermes_ia') {
+      paintStep(id, 'later');
+      continue;
+    }
+    // Hermes's connection needs Claude's login when Claude is the only AI: asked right before it,
+    // for that reason, even after a « Plus tard » given for the repairs.
+    const forHermes = id === 'hermes_ia' && !chose('codex') && !state.loginSkipped;
+    if ((forHermes || (!state.loginAsked && !state.loginSkipped)) && chose('claude') && claudeInstalled()) {
+      const logged = await askLoginInline(gen, id === 'hermes_ia' ? HERMES_NEEDS_CLAUDE : undefined);
+      if (gen !== view.gen) return;
+      // « Plus tard »: Claude's login waits, for this session; Hermes's connection, for the next
+      // time. The last screen says both.
+      if (forHermes && !logged) {
+        state.loginSkipped = true;
+        state.hermesLater = id;
+        paintStep(id, 'later');
+        continue;
+      }
+    }
     const info = stepInfo(id);
     const run = stepRun(id);
     state.section = null;
@@ -1003,6 +1056,7 @@ async function runInstall(from, result = '') {
     // The Apple step's second line is an instruction: no step count in front of it.
     const where = plan.length > 1 && id !== 'clt' ? `Étape ${i + 1} sur ${plan.length}. ` : '';
     say('working', info.say[0], where + info.say[1]);
+    const device = run === 'hermes_ia' ? watchHermesDevice(gen, () => say('working', info.say[0], where + info.say[1])) : null;
     // Bibo raises a hand: a window of the system may show up (bibo.js, absent from dev/screens.mjs).
     if (id === 'clt' || systemAsks(id)) window.biboCue?.('demande');
 
@@ -1013,6 +1067,7 @@ async function runInstall(from, result = '') {
     } catch (e) {
       r = { id: run, ok: false, message: `Erreur inattendue : ${errText(e)}` };
     }
+    if (device) device.stop();
     // On failure the key stays in memory for « Réessayer ».
     if (!r || !r.ok) {
       paintStep(id, 'failed');
@@ -1025,6 +1080,8 @@ async function runInstall(from, result = '') {
     if (key) state.keyUsed = true;
     delete state.repair.aside[run];
     result = String(r.message || '');
+    if (run === 'hermes_ia') state.hermes = result;
+    if (run === 'hermes_cerveau') state.hermesBrain = result;
     paintStep(id, 'done');
     state.section = null;
     paintProgress();
@@ -1049,9 +1106,18 @@ function claudeInstalled() {
   return Boolean(c) && c.status === 'ok';
 }
 
+// Hermes answers on the user's AI: connected by this run, or found so by the diagnosis. Bbrain,
+// the guide that stays, talks through it.
+function hermesAnswers() {
+  if (state.steps.hermes_ia === 'done') return true;
+  const c = state.diag && state.diag.checks.find((x) => x.id === 'hermes_ia');
+  return Boolean(c) && c.status === 'ok';
+}
+
 // E1. Connected now, Claude can help repair a step that fails later. Inside the
-// install screen, without screen(): the steps stay in view.
-async function askLoginInline(gen) {
+// install screen, without screen(): the steps stay in view. `why`: another reason, when
+// the step that follows needs Claude's login itself. True once Claude is connected.
+async function askLoginInline(gen, why = 'Comme ça, si une étape coince, Claude pourra m’aider à la réparer.') {
   state.loginAsked = true;
   say('thinking', 'Je vérifie ton compte Claude…');
   let logged = false;
@@ -1060,9 +1126,9 @@ async function askLoginInline(gen) {
   } catch {
     logged = false;
   }
-  if (logged || gen !== view.gen) return;
+  if (logged || gen !== view.gen) return logged;
 
-  await new Promise((resolve) => {
+  return new Promise((resolve) => {
     const waiting = h('p', { class: 'loading', hidden: true }, h('span', { class: 'spinner', 'aria-hidden': 'true' }), 'J’attends ta connexion…');
     const connect = button('Connecter mon compte Claude', open, { act: 'next' });
     const card = h('div', { class: 'login-card card' },
@@ -1075,12 +1141,12 @@ async function askLoginInline(gen) {
     let over = false;
     let logged = false;
 
-    function finish() {
+    function finish(connected = false) {
       over = true;
       stopPolling();
       card.remove();
       ui.actions.replaceChildren();
-      resolve();
+      resolve(connected);
     }
 
     async function open() {
@@ -1105,16 +1171,78 @@ async function askLoginInline(gen) {
         say('happy', 'C’est connecté !', 'Claude est prêt à m’aider. Je continue.');
         waiting.hidden = true;
         ui.actions.replaceChildren();
-        later(finish, 2000);
+        later(() => finish(true), 2000);
       });
     }
 
-    say('idle', 'Connecte ton compte Claude maintenant', 'Comme ça, si une étape coince, Claude pourra m’aider à la réparer.');
+    say('idle', 'Connecte ton compte Claude maintenant', why);
     ui.screen.querySelector('.steps').after(card);
-    ui.actions.append(button('Plus tard', finish, { kind: 'ghost', act: 'skip' }), connect);
+    ui.actions.append(button('Plus tard', () => finish(false), { kind: 'ghost', act: 'skip' }), connect);
     card.scrollIntoView({ block: 'nearest' });
     focusMain();
   });
+}
+
+// Why the connection of Hermes asks for Claude's login (hermes_connect.rs: Claude's Pro or Max).
+const HERMES_NEEDS_CLAUDE = 'Hermes passera par ton abonnement Claude : aucune clé à acheter.';
+
+// The ChatGPT code Hermes waits for (hermes_device), in big under the steps while its connection
+// runs: Rust opened the page already, « Rouvrir la page » opens it again. `back`: the step's own
+// words again once the code is gone (the login went through, or the step ended).
+function watchHermesDevice(gen, back) {
+  let card = null;
+  let shown = '';
+  let over = false;
+  const tick = async () => {
+    let d = null;
+    try {
+      d = await invoke('hermes_device');
+    } catch {
+      d = null;
+    }
+    if (over || gen !== view.gen) return;
+    const code = d && typeof d.code === 'string' ? d.code : '';
+    if (code !== shown) {
+      if (card) card.remove();
+      card = code ? deviceCard(code) : null;
+      shown = code;
+      if (card) {
+        say('idle', 'Connecte Hermes à ton compte ChatGPT', 'Hermes passera par ton abonnement ChatGPT : aucune clé à acheter.');
+        ui.screen.querySelector('.steps').after(card);
+        card.scrollIntoView({ block: 'nearest' });
+      } else {
+        back();
+      }
+    }
+    later(tick, 1000);
+  };
+  later(tick, 1000);
+  return {
+    stop() {
+      over = true;
+      if (card) card.remove();
+    },
+  };
+}
+
+function deviceCard(code) {
+  const reopen = button('Rouvrir la page', async () => {
+    reopen.disabled = true;
+    try {
+      await invoke('open_hermes_device_page');
+    } catch (e) {
+      say('worried', 'La page ne s’est pas ouverte.', errText(e));
+    }
+    later(() => { reopen.disabled = false; }, 3000);
+  }, { kind: 'secondary', small: true, act: 'device' });
+  return h('div', { class: 'login-card card' },
+    h('ol', { class: 'plan' },
+      h('li', {}, 'Dans la page qui s’est ouverte, connecte-toi à ChatGPT.'),
+      h('li', {}, 'Tape le code ci-dessous.'),
+      h('li', {}, 'Reviens ici : je continue tout seul.')),
+    h('p', { class: 'device-code' }, code),
+    h('p', { class: 'note' }, 'Tu te connectes directement chez OpenAI : je ne vois jamais ton mot de passe.'),
+    reopen);
 }
 
 // Claude's login, said the same way wherever it is asked: the browser does it all, the command window
@@ -1245,9 +1373,15 @@ async function showFailure(index, intro = null) {
   else say('worried', 'Oups, ça a coincé.', message);
   ui.actions.replaceChildren();
   clearRepairNotes();
-  // Search by meaning is a bonus: the brain keeps working by keywords without it.
-  if (state.plan.includes('voyage')) {
-    ui.actions.append(button('Plus tard', () => { state.key = ''; checkLogin(); }, { kind: 'ghost', act: 'skip' }));
+  // Search by meaning is a bonus: the brain keeps working by keywords without it. Hermes, the
+  // last step, too, and its connection and its link: the brain works without them.
+  const hermesStep = ['hermes', 'hermes_ia', 'hermes_cerveau'].includes(id);
+  if (state.plan.includes('voyage') || hermesStep) {
+    ui.actions.append(button('Plus tard', () => {
+      state.key = '';
+      if (hermesStep) state.hermesLater = id;
+      checkLogin();
+    }, { kind: 'ghost', act: 'skip' }));
   }
   const retry = button('Réessayer', () => runInstall(index), { act: 'next' });
   ui.actions.append(copyButton(), retry);
@@ -1259,6 +1393,11 @@ async function showFailure(index, intro = null) {
   // The answer takes a few seconds (network, claude auth status): the buttons work meanwhile.
   const ask = {};
   view.failure = ask;
+  // Not one Claude repairs: Hermes's connection needs Claude's login, when Hermes goes through it.
+  if (id === 'hermes_ia') {
+    offerClaudeForHermes(index, retry, ask);
+    return;
+  }
   let status = null;
   try {
     status = await invoke('repair_status', { step });
@@ -1293,6 +1432,29 @@ async function showFailure(index, intro = null) {
   } else if (terminal) {
     retry.before(terminalButton(index));
   }
+  if (refocus) focusMain();
+}
+
+// Hermes goes through Claude's subscription unless Codex was chosen (hermes_connect.rs): with
+// Claude logged out, « Connecter mon compte Claude » asks Claude's login (E1), then the step again.
+async function offerClaudeForHermes(index, retry, ask) {
+  if (chose('codex') || !claudeInstalled()) return;
+  let logged = true;
+  try {
+    logged = await invoke('claude_logged_in');
+  } catch {
+    logged = true;
+  }
+  if (logged || view.failure !== ask) return;
+  const refocus = document.activeElement === retry || document.activeElement === document.body;
+  demote(retry);
+  ui.actions.append(button('Connecter mon compte Claude', () => {
+    state.loginAsked = false;
+    state.loginSkipped = false;
+    // Waiting for the login now, not failed: the step runs again once Claude is connected.
+    state.steps.hermes_ia = 'pending';
+    runInstall(index);
+  }, { act: 'next' }));
   if (refocus) focusMain();
 }
 
@@ -1895,7 +2057,7 @@ async function checkLogin() {
 
 // The first account still to connect, then the next one, then the end.
 function nextLogin(left) {
-  if (!left.length) showDone();
+  if (!left.length) finishInstall();
   else showLogin(left[0].engine, left.slice(1), left[0].said);
 }
 
@@ -2042,6 +2204,15 @@ function showDone() {
       ? `${listFr(names)} retiennent maintenant ce que tu leur apprends.`
       : `${first} retient maintenant ce que tu lui apprends.`);
   }
+  // The proof Hermes works, on the user's own subscription: its first answer. Then what to ask it,
+  // once it knows where the brain is.
+  if (state.hermes) ui.screen.append(h('p', { class: 'note' }, state.hermes));
+  if (state.hermesBrain) ui.screen.append(h('p', { class: 'note' }, state.hermesBrain));
+  // Put off: the diagnosis finds it missing next time, and the install picks it up there.
+  const putOff = { hermes: 'installé', hermes_ia: 'branché sur ton IA', hermes_cerveau: 'relié à ton cerveau' }[state.hermesLater];
+  if (putOff && !state.hermesBrain) {
+    ui.screen.append(h('p', { class: 'note' }, `Hermes n’est pas encore ${putOff}. Rouvre-moi quand tu veux : je reprendrai là où on s’est arrêtés.`));
+  }
   if (guide) ui.screen.append(h('p', { class: 'note' }, 'Je peux te guider pas à pas dans n’importe quel logiciel : tu me montres ta fenêtre, je te dis où cliquer.'));
   if (loginFirst) {
     const who = names.length > 1 ? first : 'lui';
@@ -2083,6 +2254,16 @@ function showDone() {
   ui.screen.append(h('p', { class: 'note' }, 'Tu utilisais ChatGPT ou Claude ? « Importer ma mémoire » apporte à ton cerveau ce qu’ils savent de toi.'),
     h('div', { class: 'links' }, links), folder);
   if (FIND_ME) ui.screen.append(h('p', { class: 'note' }, FIND_ME));
+  // Hermes answers: Bbrain, the guide, takes over from here (PARCOURS-guide.md). It comes by
+  // itself, once: its pane of glass over the screen, its conversation, its first words.
+  const bbrain = hermesAnswers() && button('Parler à Bbrain', () => openBbrain(bbrain), { act: 'bbrain' });
+  if (bbrain) {
+    ui.screen.append(h('p', { class: 'note' }, 'Bbrain, ton guide, prend le relais : il reste avec toi après l’installation. Maintiens les touches contrôle et option, et parle-lui.'));
+    if (!state.bbrainVenu) {
+      state.bbrainVenu = true;
+      later(() => { if (gen === view.gen) openBbrain(bbrain); }, 1500);
+    }
+  }
 
   if (loginFirst) {
     // Settings of the system no login fixes: nothing more to offer here.
@@ -2098,14 +2279,28 @@ function showDone() {
     ui.actions.append(connect);
   } else {
     const onboard = button(`Présente-toi à ${first} (15 min)`, () => act(onboard, 'start_onboarding', 'C’est parti !', `Une ${OS.window} s’ouvre : réponds aux questions de ${first}.`),
-      guide ? { kind: 'secondary', act: 'onboard' } : { act: 'next' });
+      guide || bbrain ? { kind: 'secondary', act: 'onboard' } : { act: 'next' });
     ui.actions.append(onboard);
     if (guide) {
-      const open = button('Guide-moi dans un logiciel', () => openGuide(open), { act: 'next' });
+      const open = button('Guide-moi dans un logiciel', () => openGuide(open), { kind: bbrain ? 'secondary' : 'primary', act: 'next' });
       ui.actions.append(open);
     }
   }
-  focusMain();
+  if (bbrain) ui.actions.append(bbrain);
+  if (bbrain) bbrain.focus({ preventScroll: true });
+  else focusMain();
+}
+
+// Bbrain's pane of glass and conversation; Bibo's window stays where it is.
+async function openBbrain(btn) {
+  const gen = view.gen;
+  btn.disabled = true;
+  try {
+    await invoke('bbrain_open');
+  } catch (e) {
+    if (gen === view.gen) say('worried', 'Bbrain ne s’est pas ouvert.', errText(e));
+  }
+  later(() => { btn.disabled = false; }, 3000);
 }
 
 // The guide's own window, above the program it guides in; this one goes to the Dock or the taskbar.
@@ -2225,6 +2420,450 @@ async function showImport() {
     return;
   }
   if (gen === view.gen) showImportChoice();
+}
+
+// Where the guide asks for the user. The address writes the question in a new conversation:
+// neither of them promises it, so the question is also copied, to paste if it is not there.
+const MEMORY_SOURCES = {
+  chatgpt: { name: 'ChatGPT', url: CHATGPT_URL, ask: 'https://chatgpt.com/?q=' },
+  claude: { name: 'Claude', url: CLAUDE_URL, ask: 'https://claude.ai/new?q=' },
+};
+const PASTE_KEYS = SYSTEM === 'macos' ? 'Cmd-V' : 'Ctrl-V';
+
+// The guide's offer at the end of the install, before the last screen: ask ChatGPT or Claude what
+// they know of the user, so the brain knows who it is from the start. Once per run, only when the
+// brain's AI can sort (logged in) and nothing was imported yet; otherwise the end straight away.
+// Point 6: what Hermes may do on this computer (hermes_access.rs), asked once per run, one at a time:
+// what it brings first, what it opens, then the system's window or page, and the check. Put off: the next.
+const MAC = OS.machine === 'Mac';
+const ACCESS = {
+  disque: {
+    title: 'Je laisse Hermes ouvrir tes fichiers ?',
+    why: 'Avec ça, il retrouve un document que tu lui cites, range tes factures ou lit un PDF sans que tu aies à le lui envoyer.',
+    opens: `Ça lui ouvre tous tes fichiers, y compris tes mails et tes messages. Tu peux le retirer quand tu veux dans les ${OS.settings}.`,
+    yes: 'Oui, ouvre-lui mes fichiers',
+    asking: 'À toi : active Hermes dans la page qui s’ouvre.',
+    pane: 'privacy_all_files',
+    how: ['Active l’interrupteur à côté d’Hermes (ton mot de passe peut t’être demandé).',
+      'Hermes n’est pas dans la liste ? Glisse-le dedans depuis la fenêtre du Finder que je t’ouvre à côté.',
+      'Si macOS te propose « Quitter et rouvrir », accepte.'],
+    ok: 'C’est bon, Hermes peut ouvrir tes fichiers.',
+    tryIt: 'Essaie dans Hermes : « Qu’est-ce qui traîne dans mes Téléchargements ? »',
+  },
+  ecran: {
+    title: 'Je laisse Hermes se servir de ton écran ?',
+    why: 'Avec ça, il fait les choses à ta place : il voit l’écran, il clique et il tape comme toi. Remplir un formulaire, trier un dossier, régler une app.',
+    opens: `Il voit ce qui est affiché pendant qu’il travaille. Tu peux le retirer quand tu veux dans les ${OS.settings}.`,
+    yes: 'Oui, vas-y',
+    asking: 'À toi : active CuaDriver dans les deux réglages.',
+    how: ['L’outil d’Hermes pour l’écran (CuaDriver) te demande deux réglages : Accessibilité et Enregistrement de l’écran.',
+      'Active CuaDriver dans les deux (ton mot de passe peut t’être demandé).'],
+    ok: 'C’est bon, Hermes peut se servir de ton écran.',
+    tryIt: 'Essaie dans Hermes : « Regarde mon écran et dis-moi ce que tu vois. »',
+  },
+  micro: {
+    title: 'Je laisse Hermes t’entendre ?',
+    why: 'Avec ça, tu lui parles au lieu de taper : tu lui dictes un message, il l’écrit pour toi.',
+    opens: `${MAC ? 'Quand il t’écoute, un point orange s’allume en haut de l’écran.' : 'Quand il t’écoute, une icône de micro s’affiche près de l’horloge.'} Tu peux le retirer quand tu veux dans les ${OS.settings}.`,
+    yes: 'Oui, demande-le',
+    asking: MAC ? 'À toi : macOS te pose une question.' : 'À toi : active le micro dans la page qui s’ouvre.',
+    pane: 'privacy_microphone',
+    how: MAC ? ['Il demande si Hermes peut utiliser le micro : réponds « Autoriser ».']
+      : ['Dans la page qui s’ouvre, active l’accès au micro.', 'Plus bas, active aussi l’accès des applications de bureau.'],
+    // macOS's window refused before, or left unanswered: its page.
+    page: MAC ? ['Active l’interrupteur à côté d’Hermes.'] : null,
+    pageAsking: 'À toi : active Hermes dans la page qui s’ouvre.',
+    ok: 'C’est bon, Hermes t’entend.',
+    tryIt: 'Essaie dans Hermes : clique sur le micro et dis « Bonjour ! ».',
+  },
+  dossiers: {
+    title: 'Je laisse Hermes ranger tes dossiers protégés ?',
+    why: 'Windows protège tes Documents, tes Images et ton Bureau. Avec ça, Hermes peut y ranger et y écrire tes fichiers.',
+    opens: 'Ça lui permet de modifier les fichiers de ces dossiers. Tu peux le retirer quand tu veux, au même endroit.',
+    yes: 'Oui, autorise-le',
+    asking: 'À toi : ajoute Hermes dans la page qui s’ouvre.',
+    pane: 'privacy_files',
+    how: ['Dans la page qui s’ouvre, clique sur « Gérer la protection contre les ransomware ».',
+      'Puis sur « Autoriser une application via l’accès contrôlé aux dossiers », et ajoute Hermes.'],
+    ok: 'C’est bon, Hermes peut ranger tes dossiers.',
+    tryIt: 'Essaie dans Hermes : « Range mon Bureau par type de fichier. »',
+  },
+};
+
+function showAccess(todo, i) {
+  if (i >= todo.length) {
+    finishInstall();
+    return;
+  }
+  const a = ACCESS[todo[i]];
+  screen('access');
+  say('idle', a.title, a.why);
+  ui.screen.append(h('p', { class: 'note' }, a.opens));
+  ui.actions.append(
+    button('Plus tard', () => showAccess(todo, i + 1), { kind: 'ghost', act: 'later' }),
+    button(a.yes, () => askAccess(todo, i), { act: 'next' }));
+  focusMain();
+}
+
+// The system's window waits for the user (the screen, the microphone on a Mac): the answer is the check.
+// A page opened instead: checked every few seconds until it is given.
+async function askAccess(todo, i) {
+  const id = todo[i];
+  const a = ACCESS[id];
+  const gen = screen('access-ask');
+  say('idle', a.asking, 'Je vérifie tout seul dès que c’est fait.');
+  const list = h('ol', { class: 'plan' }, a.how.map((t) => h('li', {}, t)));
+  ui.screen.append(list);
+  ui.actions.append(button('Plus tard', () => showAccess(todo, i + 1), { kind: 'ghost', act: 'later' }));
+  focusMain();
+  let given;
+  try {
+    given = await invoke('hermes_access_ask', { id });
+  } catch (e) {
+    if (gen !== view.gen) return;
+    screen('access-ko');
+    say('worried', 'Ce n’est pas encore bon.', errText(e));
+    ui.actions.append(
+      button('Plus tard', () => showAccess(todo, i + 1), { kind: 'ghost', act: 'later' }),
+      button('Réessayer', () => askAccess(todo, i), { act: 'next' }));
+    focusMain();
+    return;
+  }
+  if (gen !== view.gen) return;
+  if (given) {
+    accessGiven(todo, i);
+    return;
+  }
+  if (a.page) {
+    say('idle', a.pageAsking, 'Je vérifie tout seul dès que c’est fait.');
+    list.replaceChildren(...a.page.map((t) => h('li', {}, t)));
+  }
+  if (a.pane) ui.actions.append(settingsButton(a.pane));
+  let busy = false;
+  every(async () => {
+    if (busy) return;
+    busy = true;
+    try {
+      const seen = await invoke('hermes_access', { only: id });
+      if (gen === view.gen && Array.isArray(seen) && seen.some((p) => p && p.id === id && p.state === 'ok')) accessGiven(todo, i);
+    } catch {
+      // Checked again in a moment.
+    } finally {
+      busy = false;
+    }
+  }, 4000);
+}
+
+function accessGiven(todo, i) {
+  const a = ACCESS[todo[i]];
+  screen('access-ok');
+  say('happy', a.ok, a.tryIt);
+  ui.actions.append(button(i + 1 < todo.length ? 'Suivant' : 'Continuer', () => showAccess(todo, i + 1), { act: 'next' }));
+  focusMain();
+}
+
+// Point 5: the assistant on the phone (hermes_messaging.rs), offered once per run, after what Hermes
+// may do and before the memory, when no phone reaches it yet. WhatsApp: the user's own account, in their
+// chat with themselves; Hermes Desktop has no WhatsApp screen, so the code to scan is shown here.
+// Telegram: Hermes Desktop's own page. Either way done is when Hermes's gateway says it is connected.
+const ALWAYS_ON = 'Ton assistant répond tant que ton ordinateur est allumé.';
+
+function showMessaging() {
+  screen('messaging');
+  say('idle', 'Je te rejoins sur ton téléphone ?', 'Avec ça, tu m’écris sur WhatsApp comme à un ami, même loin de ton ordinateur, et c’est moi qui t’écris quand j’ai quelque chose pour toi.');
+  ui.screen.append(
+    h('p', { class: 'note' }, 'Je passe par ton propre WhatsApp, dans ta discussion avec toi-même : personne d’autre ne peut me parler. ' + ALWAYS_ON),
+    h('p', { class: 'note' }, 'À savoir : WhatsApp n’autorise pas officiellement ce genre d’outil, et il peut, rarement, restreindre un compte relié ainsi. Si ça t’inquiète, choisis Telegram.'));
+  ui.actions.append(
+    button('Plus tard', finishInstall, { kind: 'ghost', act: 'later' }),
+    button('Plutôt Telegram', openTelegram, { kind: 'secondary', act: 'telegram' }),
+    button('Oui, sur WhatsApp', startWhatsapp, { act: 'next' }));
+  focusMain();
+}
+
+function messagingFailed(text, retry) {
+  screen('messaging-ko');
+  say('worried', 'Ce n’est pas encore bon.', text);
+  ui.actions.append(
+    button('Plus tard', finishInstall, { kind: 'ghost', act: 'later' }),
+    button('Réessayer', retry, { act: 'next' }));
+  focusMain();
+}
+
+// Hermes prepares the code (its WhatsApp bridge, installed the first time), then shows a new one every
+// few seconds until the phone scans one: each is drawn as it comes.
+async function startWhatsapp() {
+  const gen = screen('whatsapp-wait');
+  say('working', 'Je prépare le code à scanner…', 'La première fois, ça peut prendre une minute.');
+  // Hermes's server stops with the pairing, even one still being prepared.
+  let id = '';
+  ui.actions.append(button('Plus tard', () => { invoke('whatsapp_cancel', { id }).catch(() => {}); finishInstall(); }, { kind: 'ghost', act: 'later' }));
+  let pairing;
+  try {
+    pairing = await invoke('whatsapp_start');
+  } catch (e) {
+    if (gen === view.gen) messagingFailed(errText(e), startWhatsapp);
+    return;
+  }
+  if (gen !== view.gen) return;
+  id = pairing.id;
+  const code = h('img', { class: 'qr', alt: 'Le code à scanner avec WhatsApp', width: 232, height: 232, hidden: true });
+  const steps = h('ol', { class: 'plan', hidden: true }, [
+    'Ouvre WhatsApp sur ton téléphone.',
+    'Va dans « Appareils connectés » : dans Réglages sur iPhone, dans le menu ⋮ sur Android.',
+    'Touche « Connecter un appareil », puis vise ce code.',
+  ].map((t) => h('li', {}, t)));
+  ui.screen.append(code, steps);
+  let shown = '';
+  let busy = false;
+  const show = (p) => {
+    if (gen !== view.gen || !p) return;
+    if (p.status === 'connected') {
+      finishWhatsapp(id);
+    } else if (p.status === 'expired') {
+      messagingFailed('Le code a expiré avant d’être scanné : réessaie, je t’en prépare un nouveau.', startWhatsapp);
+    } else if (p.status === 'error' || p.status === 'cancelled') {
+      messagingFailed(p.error || 'Hermes n’a pas pu préparer le code.', startWhatsapp);
+    } else if (p.qr && p.qr !== shown) {
+      if (!shown) say('idle', 'À toi : scanne ce code avec WhatsApp.', 'Je vérifie tout seul dès que c’est fait.');
+      shown = p.qr;
+      code.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(p.qr)}`;
+      code.hidden = false;
+      steps.hidden = false;
+    } else if (p.status === 'installing' && !shown) {
+      say('working', 'J’installe ce qu’il faut pour WhatsApp…', 'La première fois, ça peut prendre une minute.');
+    }
+  };
+  show(pairing);
+  every(async () => {
+    if (busy || gen !== view.gen) return;
+    busy = true;
+    try {
+      show(await invoke('whatsapp_poll', { id }));
+    } catch {
+      // Asked again in a moment.
+    } finally {
+      busy = false;
+    }
+  }, 2000);
+}
+
+// Scanned: Hermes saves the link and restarts its gateway with it, then the assistant writes first.
+async function finishWhatsapp(id) {
+  const gen = screen('whatsapp-saving');
+  say('working', 'C’est relié !', 'Je m’installe pour te répondre même quand cette fenêtre est fermée. Ça peut prendre une minute.');
+  let linked;
+  try {
+    linked = await invoke('whatsapp_finish', { id });
+  } catch (e) {
+    if (gen === view.gen) messagingFailed(errText(e), startWhatsapp);
+    return;
+  }
+  if (gen !== view.gen) return;
+  if (!linked || !linked.connected) {
+    messagingFailed('Ton WhatsApp est relié, mais Hermes ne le voit pas encore connecté. Réessaie dans un instant.', startWhatsapp);
+    return;
+  }
+  screen('whatsapp-ok');
+  if (linked.hello) say('happy', 'C’est fait : je viens de t’écrire sur WhatsApp.', 'Ouvre ta discussion avec toi-même et réponds-moi : je suis là.');
+  else say('happy', 'C’est fait : je suis sur ton WhatsApp.', 'Écris-moi dans ta discussion avec toi-même : je te réponds.');
+  ui.screen.append(h('p', { class: 'note' }, linked.always_on ? ALWAYS_ON : `${ALWAYS_ON} S’il redémarre, ouvre Hermes pour que je revienne.`));
+  ui.actions.append(button('Continuer', finishInstall, { act: 'next' }));
+  focusMain();
+}
+
+// Telegram: Hermes Desktop's page, where its own QR makes the user's bot. Checked every few seconds.
+async function openTelegram() {
+  const gen = screen('telegram-ask');
+  say('working', 'J’ouvre Hermes sur la Messagerie…');
+  let alwaysOn;
+  try {
+    alwaysOn = await invoke('telegram_open');
+  } catch (e) {
+    if (gen === view.gen) messagingFailed(errText(e), openTelegram);
+    return;
+  }
+  if (gen !== view.gen) return;
+  say('idle', 'À toi : crée ton assistant Telegram dans Hermes.', 'Je vérifie tout seul dès que c’est fait.');
+  ui.screen.append(h('ol', { class: 'plan' }, [
+    'Dans Hermes, sur la page Messagerie, choisis Telegram.',
+    'Clique sur « Créer avec un code QR ».',
+    'Vise le code avec ton téléphone : Telegram s’ouvre, confirme.',
+    'De retour dans Hermes, clique sur « Enregistrer et redémarrer ».',
+  ].map((t) => h('li', {}, t))));
+  ui.actions.append(button('Plus tard', finishInstall, { kind: 'ghost', act: 'later' }));
+  let busy = false;
+  every(async () => {
+    if (busy) return;
+    busy = true;
+    try {
+      const reach = await invoke('hermes_reach');
+      if (gen === view.gen && reach && reach.telegram) {
+        screen('telegram-ok');
+        say('happy', 'C’est fait : je suis sur ton Telegram.', 'Ouvre Telegram et écris « Bonjour » à ton assistant : il te répond.');
+        ui.screen.append(h('p', { class: 'note' }, alwaysOn ? ALWAYS_ON : `${ALWAYS_ON} S’il redémarre, ouvre Hermes pour que je revienne.`));
+        ui.actions.append(button('Continuer', finishInstall, { act: 'next' }));
+        focusMain();
+      }
+    } catch {
+      // Checked again in a moment.
+    } finally {
+      busy = false;
+    }
+  }, 4000);
+}
+
+async function finishInstall() {
+  const gen = view.gen;
+  if (!state.accessOffered) {
+    state.accessOffered = true;
+    let perms = null;
+    try {
+      perms = await invoke('hermes_access');
+    } catch {
+      perms = null;
+    }
+    if (gen !== view.gen) return;
+    // Not seen given: asked, Hermes's own check says what is missing.
+    const todo = (Array.isArray(perms) ? perms : []).filter((p) => p && Object.hasOwn(ACCESS, p.id) && p.state !== 'ok').map((p) => p.id);
+    if (todo.length) {
+      showAccess(todo, 0);
+      return;
+    }
+  }
+  if (!state.messagingOffered) {
+    state.messagingOffered = true;
+    let reach = null;
+    try {
+      reach = await invoke('hermes_reach');
+    } catch {
+      reach = null;
+    }
+    if (gen !== view.gen) return;
+    // Without Hermes, or a phone already reaching it: nothing to offer.
+    if (reach && typeof reach === 'object' && !reach.whatsapp && !reach.telegram) {
+      showMessaging();
+      return;
+    }
+  }
+  let offer = null;
+  if (!state.importOffered && importReady()) {
+    state.importOffered = true;
+    try {
+      await invoke('import_check');
+      offer = await invoke('import_offer');
+    } catch {
+      offer = null;
+    }
+  }
+  if (gen !== view.gen) return;
+  if (!offer || typeof offer !== 'object' || offer.deja) showDone();
+  else showMemoryOffer(Object.hasOwn(MEMORY_SOURCES, offer.source || '') ? offer.source : null);
+}
+
+// The importer sorts with the brain's preferred AI: it has to be logged in, Codex with ChatGPT.
+function importReady() {
+  const first = importAi();
+  if (first === AIS.claude) return !state.loginSkipped;
+  return first === AIS.codex && state.codexLogin === 'chatgpt';
+}
+
+// The one seen on this computer is asked first; seen neither, the user says (an account used only in
+// a browser leaves nothing here). Neither: the end, where the interview starts from nothing.
+function showMemoryOffer(source) {
+  screen('import-offer');
+  // Fetched now, so that the click copies it at once (a copy waits for no answer).
+  let text = '';
+  invoke('import_phrase').then((p) => { text = String(p || ''); }).catch(() => {});
+  const ask = (id) => () => askMemory(id, text);
+  const other = source === 'claude' ? 'chatgpt' : 'claude';
+  if (source) {
+    const s = MEMORY_SOURCES[source];
+    say('idle', `${s.name} te connaît déjà.`, `Je lui demande ce qu’il sait de toi ? Comme ça, je sais tout de suite qui tu es, et tu n’as rien à me réexpliquer.`);
+    ui.actions.append(
+      button('Plus tard', showDone, { kind: 'ghost', act: 'later' }),
+      button(`J’utilise plutôt ${MEMORY_SOURCES[other].name}`, ask(other), { kind: 'secondary', act: `ask-${other}` }),
+      button(`Oui, demande à ${s.name}`, ask(source), { act: 'next' }));
+  } else {
+    say('idle', 'Tu as déjà parlé à ChatGPT ou à Claude ?', 'S’il te connaît, je lui demande ce qu’il sait de toi : tu n’auras rien à me réexpliquer.');
+    ui.actions.append(
+      button('Ni l’un ni l’autre', showDone, { kind: 'ghost', act: 'later' }),
+      button('Claude', ask('claude'), { kind: 'secondary', act: 'ask-claude' }),
+      button('ChatGPT', ask('chatgpt'), { act: 'next' }));
+  }
+  ui.screen.append(h('p', { class: 'note' }, 'Je t’ouvre sa page et je lui prépare ma question. Ce qu’il répond, tu le relis avant que j’en garde quoi que ce soit.'));
+  focusMain();
+}
+
+// The question copied (still in the click), its page opened with it written, then the answer pasted
+// here, read as any pasted answer (readPaste).
+async function askMemory(source, ready) {
+  const s = MEMORY_SOURCES[source];
+  let text = ready;
+  const copied = text ? copyNow(text) : false;
+  const gen = screen('import-ask');
+  if (!text) {
+    try {
+      text = String(await invoke('import_phrase') || '');
+    } catch (e) {
+      if (gen === view.gen) showImportError(e);
+      return;
+    }
+    if (gen !== view.gen) return;
+  }
+  const page = text && s.ask.length + encodeQuery(text).length <= 2000 ? s.ask + encodeQuery(text) : s.url;
+  let opened = true;
+  try {
+    await invoke('open_link', { url: page });
+  } catch {
+    opened = false;
+  }
+  if (gen !== view.gen) return;
+  if (opened) say('idle', `J’ai ouvert ${s.name} avec ma question.`, 'Envoie-la, puis rapporte-moi sa réponse : je la range dans ton cerveau.');
+  else say('worried', `Je n’ai pas pu ouvrir ${s.name}.`, `Ouvre ${s.url.replace('https://', '')} dans ton navigateur, colle ma question, puis rapporte-moi sa réponse.`);
+  const question = h('details', { class: 'log' }, h('summary', {}, 'Voir ma question'), h('p', { class: 'phrase', tabindex: '0' }, text));
+  const copy = button(copied ? 'Question copiée' : 'Copier la question', () => {
+    const ok = copyNow(text);
+    copy.textContent = ok ? 'Question copiée' : 'Sélectionne-la et copie-la';
+    if (!ok) question.open = true;
+  }, { kind: 'secondary', small: true, act: 'copy-phrase' });
+  copy.disabled = !text;
+  const reopen = button(`${opened ? 'Rouvrir' : 'Ouvrir'} ${s.name}`, () => invoke('open_link', { url: page }).catch(() => {}), { kind: 'secondary', small: true, act: `open-${source}` });
+  const area = h('textarea', { class: 'paste', maxlength: 200000, 'aria-label': `La réponse de ${s.name}`, placeholder: `Colle sa réponse ici (${PASTE_KEYS})`, spellcheck: 'false' });
+  const next = button('Continuer', () => readPaste(area.value), { act: 'next' });
+  next.disabled = true;
+  area.addEventListener('input', () => { next.disabled = !area.value.trim(); });
+  ui.screen.append(
+    h('ol', { class: 'vsteps card' },
+      h('li', {},
+        h('p', {}, `Dans ${s.name}, envoie ma question, si elle n’est pas déjà partie.`),
+        // Copied only when the copy is sure: else the button, not a word that is not true.
+        h('p', { class: 'note' }, copied
+          ? `Elle n’est pas écrite ? Colle-la (${PASTE_KEYS}) : je l’ai copiée pour toi.`
+          : `Elle n’est pas écrite ? Clique sur « Copier la question », puis colle-la (${PASTE_KEYS}).`),
+        h('div', { class: 'row' }, copy, reopen),
+        question),
+      h('li', {}, h('p', {}, 'Quand il a fini, copie sa réponse avec le bouton Copier de son bloc de code.')),
+      h('li', {},
+        h('p', {}, 'Colle-la ici.'),
+        area,
+        h('p', { class: 'note' }, 'S’il dit qu’il en reste, écris-lui « Continue » et colle la suite à la fin.'))),
+    privacyNote(importAi()));
+  ui.actions.append(button('Retour', () => showMemoryOffer(source), { kind: 'ghost', act: 'back' }), next);
+  focusMain();
+}
+
+// Every character but letters, digits and - _ . ~ written %XX: nothing the system or a browser reads
+// as the end of the address (steps.rs opens it only so).
+function encodeQuery(text) {
+  return encodeURIComponent(text).replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+}
+
+// A copy in the click itself, where the system allows it; false when it did not.
+function copyNow(text) {
+  if (legacyCopy(text)) return true;
+  navigator.clipboard?.writeText(text).catch(() => {});
+  return false;
 }
 
 function showImportChoice(intro = null) {
@@ -2503,6 +3142,7 @@ function showImportResult(r) {
     return;
   }
   const name = String(r.note).replace(/^Imports\//, '').replace(/\.md$/, '');
+  state.memoryImported = true;
   say('happy', 'C’est rangé !', `${count(faits, 'fait')} dans Imports › ${name}.`);
   const par = r.par_categorie && typeof r.par_categorie === 'object' ? r.par_categorie : {};
   const jetes = Object.values(r.jetes && typeof r.jetes === 'object' ? r.jetes : {}).reduce((x, y) => x + (Number(y) || 0), 0);

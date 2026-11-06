@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="fr" class="vitre">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Vitre de Bbrain (maquette)</title>
+  <!-- Bbrain's pane of glass, as src/vitre.html, over a desktop drawn by this page only (the real pane
+       is clear), its bridge faked by bbrain-moteur.js with the frames of a live engine. Open at
+       1280 × 720: the frames point on a screen of that size, at (640, 360) then (980, 520). -->
+  <link rel="stylesheet" href="../src/bbrain.css">
+  <style>
+    .bureau { position: fixed; inset: 0; z-index: -1; overflow: hidden; background: linear-gradient(160deg, #35546f, #8fa9b9); font: 14px -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif; color: #1d1d1f; }
+    .bureau .menu { height: 24px; background: rgba(246, 246, 246, 0.85); padding: 4px 14px; font-size: 13px; }
+    .bureau .fenetre { position: absolute; left: 360px; top: 190px; width: 760px; height: 400px; background: #f5f5f3; border-radius: 12px; box-shadow: 0 24px 70px rgba(0, 0, 0, 0.35); }
+    .bureau .barre { height: 38px; border-bottom: 1px solid #ddd; padding: 11px 16px; color: #666; font-weight: 600; }
+    .bureau .texte { position: absolute; left: 40px; top: 70px; width: 460px; line-height: 1.5; color: #444; }
+    .bureau .bouton { position: absolute; padding: 9px 18px; border-radius: 8px; background: #2f6fde; color: #fff; transform: translate(-50%, -50%); white-space: nowrap; }
+    .bureau .gris { background: #e3e3e1; color: #333; }
+  </style>
+  <script src="bbrain-trames.js"></script>
+  <script src="bbrain-moteur.js"></script>
+  <script src="../src/ui.js" defer></script>
+  <script src="../src/bbrain-commun.js" defer></script>
+  <script src="../src/vitre.js" defer></script>
+</head>
+<body class="vitre">
+  <div class="bureau" aria-hidden="true">
+    <div class="menu">Mail&nbsp;&nbsp;&nbsp;Fichier&nbsp;&nbsp;&nbsp;Édition&nbsp;&nbsp;&nbsp;Présentation</div>
+    <div class="fenetre">
+      <div class="barre">Bienvenue dans Mail</div>
+      <p class="texte">Ajoute ton compte de messagerie pour retrouver tes mails ici.</p>
+      <span class="bouton gris" style="left: 280px; top: 170px">Ajouter un compte</span>
+      <span class="bouton" style="left: 620px; top: 330px">Valider</span>
+    </div>
+  </div>
+</body>
+</html>

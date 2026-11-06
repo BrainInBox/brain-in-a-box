@@ -1,0 +1,16 @@
+claude-subscription-directsdk [official] pinned @ 9b074e16
+claude-subscription-directsdk (official, maintained by NousResearch) 
+Experimental model provider that runs Hermes turns on a Claude Pro/Max 
+subscription through the official Claude Code CLI (the Agent SDK path), so no 
+separate API key or per-token bill. Requires the claude CLI installed and logged
+in; the plugin checks for it at load, in hermes model, in the pickers and before
+every request, and refuses cleanly with the install hint when it is missing. 
+Disclosure — every turn is billed against your Claude subscription's Agent SDK 
+allowance, and the provider inherits whatever account claude is logged into. 
+This plugin declares no tools, hooks, middleware, or env vars. Requires Hermes 
+>=0.21.4.
+Cloning https://github.com/NousResearch/hermes-official-plugins (subdir: 
+claude-subscription-directsdk)...
+Error: Plugin 'claude-subscription-directsdk-experimental' already exists. Use 
+force reinstall or run `hermes plugins update 
+claude-subscription-directsdk-experimental`.

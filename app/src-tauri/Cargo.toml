@@ -20,7 +20,7 @@ repair-in-app = []
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["macos-private-api"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Already in the build through tauri-utils: masking the dossier sent to Claude.
@@ -37,6 +37,10 @@ png = "=0.18.1"
 # AppKit, windows-sys and GTK bindings, raw-window-handle): this crate is the one it adds.
 # Without its defaults: GTK's picker on Linux, no xdg-desktop-portal (ashpd, zbus).
 rfd = { version = "=0.15.4", default-features = false, features = ["gtk3"] }
+
+# Bbrain's windows talk to Hermes's engine (`hermes serve`) over its local WebSocket, as Hermes's
+# own app does: a plain client on a thread, no TLS (127.0.0.1 only), no async runtime of its own.
+tungstenite = { version = "0.26", default-features = false, features = ["handshake"] }
 
 # Already in the build through tauri-build (embed-resource): the brain folder install.ps1
 # saved for the user (HKCU\Environment), read and written without a PowerShell.
