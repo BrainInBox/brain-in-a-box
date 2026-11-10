@@ -747,18 +747,18 @@ jobs:
           $calls = @(Get-Content "$env:RUNNER_TEMP\winget-casse\appels.txt")
           $py = 'install -e --id Python.Python.3.12 --source winget --silent --accept-package-agreements --accept-source-agreements --scope user'
           if (($calls -join '|') -cne "$py|source update --name winget|$py") { throw "winget was asked: $($calls -join ' | ')" }
-          # Python 3.14.8 for this user, the hooks on it.
+          # Python 3.14.10 for this user, the hooks on it.
           $hook = (@((Get-Content "$H\.claude\settings.json" -Raw | ConvertFrom-Json).hooks.UserPromptSubmit.hooks)[0]).command
           if ($hook -ne "$env:LOCALAPPDATA\Programs\Python\Python314\python.exe") { throw "the hooks run $hook" }
           $v = & $hook -c "import sys; print(sys.version.split()[0])"
-          if ($v -ne '3.14.8') { throw "Python $v" }
-          # Git 2.56.0.2, put there after the runner's was taken away; a new process finds it.
+          if ($v -ne '3.14.10') { throw "Python $v" }
+          # Git 2.56.0.4, put there after the runner's was taken away; a new process finds it.
           $proof = Get-Content "$env:RUNNER_TEMP\sans-git.json" -Raw | ConvertFrom-Json
           $git = @("$env:ProgramFiles\Git\cmd\git.exe", "$env:LOCALAPPDATA\Programs\Git\cmd\git.exe") | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
           if (-not $git) { throw 'no git.exe where Find-Git looks' }
           if ((Get-Item -LiteralPath (Split-Path -Parent $git)).CreationTimeUtc -lt [DateTimeOffset]::FromUnixTimeSeconds($proof.fin_epoch).UtcDateTime) { throw "$git was there before" }
           $gv = & $git --version
-          if ($gv -ne 'git version 2.56.0.windows.2') { throw "git: $gv" }
+          if ($gv -ne 'git version 2.56.0.windows.4') { throw "git: $gv" }
           $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
           if (-not (Get-Command git -CommandType Application -ErrorAction SilentlyContinue)) { throw 'a new process does not find git' }
           # What its absence cost on 2026-10-22: the vault's history, Git Bash for Claude Code, gbrain.
@@ -767,15 +767,15 @@ jobs:
           if (-not (Test-Path -LiteralPath (Join-Path (Split-Path -Parent (Split-Path -Parent $git)) 'bin\bash.exe'))) { throw 'no Git Bash next to git' }
           if ((Get-Content "$H\.brain-search\engine").Trim() -ne 'gbrain') { throw "the memory is $(Get-Content "$H\.brain-search\engine"), not gbrain" }
           # The log and the screen say which way worked; nothing of the installers left behind.
-          foreach ($l in "> installeur officiel : Python 3.14.8 (x64) https://www.python.org/ftp/python/3.14.8/python-3.14.8-amd64.exe`r`ninstalleur officiel : code 0",
+          foreach ($l in "> installeur officiel : Python 3.14.10 (x64) https://www.python.org/ftp/python/3.14.10/python-3.14.10-amd64.exe`r`ninstalleur officiel : code 0",
                          "> Python : $hook (installeur officiel)",
                          "> winget : sa source est en panne, Git non installe par winget",
-                         "> installeur officiel : Git 2.56.0.2 (x64) https://github.com/git-for-windows/git/releases/download/v2.56.0.windows.2/Git-2.56.0.2-64-bit.exe`r`ninstalleur officiel : code 0",
+                         "> installeur officiel : Git 2.56.0.4 (x64) https://github.com/git-for-windows/git/releases/download/v2.56.0.windows.4/Git-2.56.0.4-64-bit.exe`r`ninstalleur officiel : code 0",
                          "> winget : sa source est en panne, Obsidian non installe par winget") {
             if (-not $log.Contains($l)) { throw "install.log does not say: $l" }
           }
           if ($log -notmatch '(?m)^> Git : .+\\git\.exe \(installeur officiel\)\r?$') { throw 'install.log does not say Git came from its official installer' }
-          foreach ($l in "winget : sa source ne s'ouvre pas, je la mets a jour", 'Python 3.14.8 : installeur officiel', 'Git 2.56.0.2 : installeur officiel',
+          foreach ($l in "winget : sa source ne s'ouvre pas, je la mets a jour", 'Python 3.14.10 : installeur officiel', 'Git 2.56.0.4 : installeur officiel',
                          '[OK] git (', '[!]  Obsidian non installe (optionnel') {
             if (-not $out.Contains($l)) { throw "the install did not say: $l" }
           }

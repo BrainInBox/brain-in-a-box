@@ -122,7 +122,7 @@ try {
     $out = Said { $script:r = Official-Install "Git" }
     Check (-not $r -and $Started.Count -eq 0 -and "$Downloads" -ceq $Pins.Git.x64[0] -and
            $out -match "Git : le fichier telecharge ne correspond pas a l'empreinte SHA-256 epinglee, rien n'est lance" -and
-           (Log).Contains("> installeur officiel : Git 2.56.0.2 (x64) $($Pins.Git.x64[0])`r`ninstalleur officiel : empreinte SHA-256 $FakeSha, attendue $($Pins.Git.x64[1]) : rien n'est lance") -and
+           (Log).Contains("> installeur officiel : Git 2.56.0.4 (x64) $($Pins.Git.x64[0])`r`ninstalleur officiel : empreinte SHA-256 $FakeSha, attendue $($Pins.Git.x64[1]) : rien n'est lance") -and
            (Leftovers).Count -eq 0) `
           "official installer: a replaced installer is downloaded from the release, never run, said on screen and in the log, its folder removed"
     # The pin changed (one character): the same file, still never run.
@@ -139,12 +139,12 @@ try {
     $s = if ($Started.Count) { $Started[0] } else { @{} }
     $own = Join-Path $H ".brain-in-a-box"
     Check ($r -and $Started.Count -eq 1 -and $s.sha -ceq $FakeSha -and $s.file -like (Join-Path $own "installeur-*") -and
-           (Split-Path -Leaf $s.file) -ceq "Git-2.56.0.2-64-bit.exe" -and "$($s.args)" -ceq "$($OFFICIAL_INSTALLERS.Git.Args)" -and
+           (Split-Path -Leaf $s.file) -ceq "Git-2.56.0.4-64-bit.exe" -and "$($s.args)" -ceq "$($OFFICIAL_INSTALLERS.Git.Args)" -and
            $s.temp -ceq (Join-Path (Split-Path -Parent $s.file) "tmp") -and $s.tmp -ceq $s.temp -and -not $s.voyage) `
           "official installer: the pinned one runs once, from ~\.brain-in-a-box\installeur-*, silent, its TEMP there, no Voyage key: $($s.file) $($s.temp)"
     Check ((Leftovers).Count -eq 0 -and $env:TEMP -ceq $tempBefore -and $env:TMP -ceq $tempBefore -and $env:VOYAGE_API_KEY -ceq "pa-canari-voyage" -and $Refreshed -ge 1 -and
            $out -match "Git 2\.56\.0\.2 : installeur officiel" -and
-           (Log).Contains("> installeur officiel : Git 2.56.0.2 (x64) $($Pins.Git.x64[0])`r`ninstalleur officiel : code 0")) `
+           (Log).Contains("> installeur officiel : Git 2.56.0.4 (x64) $($Pins.Git.x64[0])`r`ninstalleur officiel : code 0")) `
           "official installer: its folder removed after, TEMP and the key back, PATH read again, the log says which and its code, in one note"
     # The screen says no admin window, not where it goes: from an administrator's PowerShell, Git goes to Program Files.
     Check ($out -match "Git 2\.56\.0\.2 : installeur officiel \(sans fenetre admin\), verifie avant de tourner" -and $out -notmatch "dans ton profil") `
@@ -157,7 +157,7 @@ try {
     # ARM64: its own installer; a 32-bit Windows: none, nothing downloaded; no network: said, nothing run.
     New-Home; $Serve = $Fake; $Arch = "arm64"; $OFFICIAL_INSTALLERS.Python.arm64 = @($Pins.Python.arm64[0], $FakeSha)
     $null = Said { $script:r = Official-Install "Python" }
-    Check ($r -and "$Downloads" -ceq $Pins.Python.arm64[0] -and (Split-Path -Leaf $Started[0].file) -ceq "python-3.14.8-arm64.exe" -and
+    Check ($r -and "$Downloads" -ceq $Pins.Python.arm64[0] -and (Split-Path -Leaf $Started[0].file) -ceq "python-3.14.10-arm64.exe" -and
            "$($Started[0].args)" -ceq "$($OFFICIAL_INSTALLERS.Python.Args)") "official installer: on ARM64, the ARM64 one"
     New-Home; $Serve = $Fake; $Arch = ""
     $null = Said { $script:r = Official-Install "Git" }
@@ -179,7 +179,7 @@ try {
     Check (-not $r -and $out -match "Python : son installeur officiel a echoue \(code 1625\)") "official installer: one that fails says its code on screen: $($out.Trim())"
     # Python's failure stops the install before the log opens: its notes go in first (Open-Log), the log opened once.
     New-Home; Remove-Item -LiteralPath $LOG; $LogOpen = $false
-    $notes = @("> winget install -e --id Python.Python.3.12`r`nwinget : code -1978335217", "> installeur officiel : Python 3.14.8 (x64) u`r`ninstalleur officiel : code 1625")
+    $notes = @("> winget install -e --id Python.Python.3.12`r`nwinget : code -1978335217", "> installeur officiel : Python 3.14.10 (x64) u`r`ninstalleur officiel : code 1625")
     $WingetNotes = $notes
     $opener = [bool](Get-Command Open-Log -CommandType Function -ErrorAction SilentlyContinue)
     if ($opener) { Open-Log; Open-Log }

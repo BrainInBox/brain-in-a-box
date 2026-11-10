@@ -278,11 +278,11 @@ function Winget-Install($id, $label) {
 # tableau de ses notes de version ; pour Python, sa page sur python.org et l'API de python.org.
 $OFFICIAL_INSTALLERS = @{
     "Git" = @{
-        Version = "2.56.0.2"
-        x64 = @("https://github.com/git-for-windows/git/releases/download/v2.56.0.windows.2/Git-2.56.0.2-64-bit.exe",
-                "52188f917b378f00c70ec136bcf090005f30d44fbc4eba0bce759cc6592d60f6")
-        arm64 = @("https://github.com/git-for-windows/git/releases/download/v2.56.0.windows.2/Git-2.56.0.2-arm64.exe",
-                  "b9ced78ce371577dc966f50ae571909d6731e36d31065d35c8efa21544c58bf0")
+        Version = "2.56.0.4"
+        x64 = @("https://github.com/git-for-windows/git/releases/download/v2.56.0.windows.4/Git-2.56.0.4-64-bit.exe",
+                "4961a4a8cc778d8b6e00a5819e5fe4d078b754555aff7aedc2d77a5d74c2de80")
+        arm64 = @("https://github.com/git-for-windows/git/releases/download/v2.56.0.windows.4/Git-2.56.0.4-arm64.exe",
+                  "e7dcc4adbb0eb373064598cd18bc75e60128707d816ead51cd9bd98e356f0075")
         # Inno Setup, sans fenetre ni message. Il ne demande jamais les droits admin (PrivilegesRequired=none)
         # et ignore /CURRENTUSER (aucun PrivilegesRequiredOverridesAllowed) : sans droits admin il va dans le
         # profil (%LOCALAPPDATA%\Programs\Git), lance d'un PowerShell administrateur dans Program Files, pour
@@ -290,11 +290,11 @@ $OFFICIAL_INSTALLERS = @{
         Args = @("/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/NOCANCEL", "/SP-")
     }
     "Python" = @{
-        Version = "3.14.8"
-        x64 = @("https://www.python.org/ftp/python/3.14.8/python-3.14.8-amd64.exe",
-                "759be887b96e736a3ca886daf8d575f18fcae1a09efab6902f42d59e8999f8ef")
-        arm64 = @("https://www.python.org/ftp/python/3.14.8/python-3.14.8-arm64.exe",
-                  "53ba74b5b4370eb823fe0005eedeab907479f7339cecb11efea0e75ab5f10cfc")
+        Version = "3.14.10"
+        x64 = @("https://www.python.org/ftp/python/3.14.10/python-3.14.10-amd64.exe",
+                "92480239264744fe0386a1bd8275786fefa126e3129e56a68e22b52c73329965")
+        arm64 = @("https://www.python.org/ftp/python/3.14.10/python-3.14.10-arm64.exe",
+                  "5b9547e4edae2f6fb2fbfec5e26cf91b4ea191e3b07f7727d5a2c5c2cca93ed3")
         # Pour cet utilisateur (%LOCALAPPDATA%\Programs\Python), sur son PATH ; sans le lanceur py, qui
         # s'installe pour tous les comptes (une fenetre admin).
         Args = @("/quiet", "InstallAllUsers=0", "PrependPath=1", "Include_launcher=0", "Include_test=0")
