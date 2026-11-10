@@ -132,3 +132,20 @@ Une entrée :
 - Correctif : #37 (`newline=""` partout où l'octet compte).
 - Test de non-régression : le job `windows` de `test.yml` lance `engine/tests`.
 - Catégorie à surveiller : fins de ligne.
+
+## 2026-11-10 · Windows · Les installeurs officiels épinglés de Git et Python avaient 14 jours de retard
+- Symptôme : terrain des 2026-11-08 et 2026-11-09, `job / epingles-failure` (OS `windows`) :
+  Git for Windows 2.56.0.4 (sorti le 2026-10-26) et Python 3.14.10 (sorti le 2026-10-25) dépassaient les
+  14 jours, `install.ps1` épinglait encore 2.56.0.2 et 3.14.8.
+- Cause : deux nouvelles versions en amont ; personne n'avait monté `$OFFICIAL_INSTALLERS`. Pas un bug du
+  code : la garde a fait son travail.
+- Pourquoi les tests ne l'avaient pas vu : ils l'ont vu, c'est le rôle de `.github/ci/epingles.py` (avertissement
+  avant 14 jours, rouge après).
+- Correctif : PR `claude/terrain-epingles-git-python` (version, URL et SHA-256 x64 et ARM64 dans `install.ps1`,
+  versions attendues par `install-ps1-secours.ps1` et `test.yml`). Empreintes Python : page de version de
+  python.org et son API, identiques au fichier téléchargé. Empreintes Git : le fichier téléchargé et le
+  manifeste winget `Git.Git` 2.56.0.4 (microsoft/winget-pkgs), identiques ; l'API GitHub et les notes de
+  version de git-for-windows n'étaient pas lisibles depuis la session de l'agent : à vérifier à la relecture.
+- Test de non-régression : le job `epingles` de `terrain.yml` (rouge avant, vert après) ; `windows-winget-casse`
+  de `test.yml` lance les nouveaux installeurs.
+- Catégorie à surveiller : dépendances en amont, épingles.
