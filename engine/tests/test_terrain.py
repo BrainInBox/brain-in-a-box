@@ -1481,5 +1481,68 @@ class Terminal(unittest.TestCase):
         self.assertIn("never asked about 'linger'", p.stdout.decode())
 
 
+@unittest.skipIf(sys.platform == "win32", "the weekly lint is a bash job of macOS and Linux")
+class UpgradeOnAMonday(unittest.TestCase):
+    """montee's coffre-intact: the kit's weekly lint (Monday 08:00, launchd or cron) writes its verdict into
+    memory.md on its own. Fired between montee-avant's snapshot and montee, it is not the installer's doing
+    (terrain 2026-11-16, macOS montee and Linux reinstallation); every other change still is."""
+
+    LINT = os.path.join(HERE, "..", "nightly", "gbrain-lint.sh")
+
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp(prefix="terrain-lundi-"))
+        self.addCleanup(shutil.rmtree, self.home, True)
+        h = self.home
+        (h / ".claude" / "hooks" / "brain").mkdir(parents=True)
+        (h / ".claude" / "hooks" / "brain" / "session-logger.py").write_text("# hook\n", encoding="utf-8")
+        (h / ".claude" / "settings.json").write_text("{}", encoding="utf-8")
+        (h / ".claude" / "CLAUDE.md").write_text("kit\n", encoding="utf-8")
+        self.vault = h / "Documents" / "Brain"
+        (self.vault / "Profile").mkdir(parents=True)
+        shutil.copy(os.path.join(HERE, "..", "..", "vault-skeleton", "Profile", "memory.md"), str(self.vault / "Profile"))
+        gbrain = h / ".bun" / "bin" / "gbrain"
+        gbrain.parent.mkdir(parents=True)
+        gbrain.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        os.chmod(gbrain, 0o755)
+        (h / ".gbrain").mkdir()
+        self.opts = types.SimpleNamespace(home=h, vm=True, parcours="reinstallation")
+        terrain.montee_avant(terrain.Etapes(), self.opts)
+
+    def lint(self):
+        env = {"HOME": str(self.home), "PATH": os.environ.get("PATH", "")}
+        p = subprocess.run(["bash", self.LINT], env=env, capture_output=True, timeout=60)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn("<!-- LINT:BEGIN -->", (self.vault / "Profile" / "memory.md").read_text(encoding="utf-8"))
+
+    def stopped_at(self):
+        t = terrain.Etapes()
+        try:
+            terrain.montee(t, self.opts)
+        except terrain.Echec as e:
+            return t.nom, str(e), t.details
+        return None, "", t.details
+
+    def test_the_lint_writing_memory_md_is_not_a_lost_note(self):
+        self.lint()
+        step, why, details = self.stopped_at()
+        self.assertNotEqual(step, "coffre-intact", why)
+        self.assertEqual(details.get("ecrit_par_le_lint"), ["Profile/memory.md"])
+
+    def test_a_line_lost_on_the_same_monday_still_fails(self):
+        self.lint()
+        mem = self.vault / "Profile" / "memory.md"
+        mem.write_text(mem.read_text(encoding="utf-8").replace("## Active decisions\n", ""), encoding="utf-8")
+        step, why, _ = self.stopped_at()
+        self.assertEqual(step, "coffre-intact")
+        self.assertIn("Profile/memory.md", why)
+
+    def test_a_lint_block_with_no_lint_run_still_fails(self):
+        self.lint()
+        os.remove(str(self.home / ".gbrain" / "lint.log"))
+        step, why, _ = self.stopped_at()
+        self.assertEqual(step, "coffre-intact")
+        self.assertIn("Profile/memory.md", why)
+
+
 if __name__ == "__main__":
     unittest.main()

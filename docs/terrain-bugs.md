@@ -132,3 +132,22 @@ Une entrée :
 - Correctif : #37 (`newline=""` partout où l'octet compte).
 - Test de non-régression : le job `windows` de `test.yml` lance `engine/tests`.
 - Catégorie à surveiller : fins de ligne.
+
+## 2026-11-16 · macOS et Linux (VM) · Le lint du lundi 08:00 passait pour une note changée par la montée
+- Symptôme : run planifié du lundi 2026-11-16, `macos / montee` et `linux / reinstallation`, scénario
+  `montee`, étape `coffre-intact` : « 1 fichier(s) du coffre perdu(s) ou changé(s) : Profile/memory.md ».
+  Même commit que les nuits vertes d'avant.
+- Cause : le lint hebdomadaire du kit (`engine/nightly/gbrain-lint.sh`, lundi 08:00 par launchd ou cron)
+  écrit son verdict entre `<!-- LINT:BEGIN -->` et `<!-- LINT:END -->` dans memory.md. Ce matin-là,
+  l'instantané de `montee-avant` (07:58 et 07:59 UTC) et le contrôle `montee` (08:00) l'encadraient :
+  le changement venait de la tâche planifiée, pas de l'installeur. Ce n'est pas un bug du kit.
+- Pourquoi les tests ne l'avaient pas vu : le run planifié finit d'habitude avant 08:00, et seulement
+  un lundi ; aucun test ne faisait tourner le lint entre l'instantané et le contrôle.
+- Correctif : `terrain.py` garde le texte de memory.md et l'heure de l'instantané ; `coffre-intact`
+  accepte un memory.md dont le seul changement est le bloc du lint, et seulement si `~/.gbrain/lint.log`
+  dit un « lint start » depuis l'instantané (`details.ecrit_par_le_lint`). Tout autre changement
+  échoue comme avant (PR claude/terrain-lint-lundi).
+- Test de non-régression : `test_terrain.UpgradeOnAMonday` (le vrai `gbrain-lint.sh`, un faux gbrain) :
+  `test_the_lint_writing_memory_md_is_not_a_lost_note` (rouge avant), et
+  `test_a_line_lost_on_the_same_monday_still_fails`, `test_a_lint_block_with_no_lint_run_still_fails`.
+- Catégorie à surveiller : horloge et planificateur (une tâche du kit à cheval sur un run).

@@ -1650,6 +1650,36 @@ def montee_state(opts):
     return opts.home / ".terrain" / "montee.json"
 
 
+# The kit's weekly lint (engine/nightly/gbrain-lint.sh, Monday 08:00 through launchd or cron) writes its
+# verdict between these markers in memory.md on its own. A night whose upgrade straddles it sees memory.md
+# change with no installer at fault (terrain 2026-11-16).
+LINT_BLOCK = re.compile(r"\n?<!-- LINT:BEGIN -->.*?<!-- LINT:END -->\n?", re.S)
+LINT_START = re.compile(r"^===== (\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) lint start =====$", re.M)
+LINT_MEMORY = "Profile/memory.md"
+
+
+def lint_ran_since(home, quand):
+    """True when the kit's weekly lint started at or after quand (local time, as its log writes it)."""
+    try:
+        log = read(home / ".gbrain" / "lint.log")
+    except OSError:
+        return False
+    return bool(quand) and any(ts >= quand for ts in LINT_START.findall(log))
+
+
+def written_by_the_lint(home, vault, snap):
+    """True when memory.md's only change since the snapshot is the lint's verdict block, the lint having run
+    since: every other byte as the snapshot kept it."""
+    before = snap.get("memoire")
+    if before is None or not lint_ran_since(home, snap.get("quand")):
+        return False
+    try:
+        now = read(vault, LINT_MEMORY)
+    except OSError:
+        return False
+    return now != before and LINT_BLOCK.sub("", now) == LINT_BLOCK.sub("", before)
+
+
 def montee_avant(t, opts):
     home = opts.home
     hooks = home / ".claude" / "hooks" / "brain"
@@ -1691,8 +1721,11 @@ def montee_avant(t, opts):
         f.write((USER_CLAUDE + "\n\n").encode("utf-8") + old)
 
     t("instantane")
+    mem = vault / LINT_MEMORY
     write_json(montee_state(opts), {"coffre": tree(vault),
-                                    "settings": hashlib.sha256((home / ".claude" / "settings.json").read_bytes()).hexdigest()})
+                                    "settings": hashlib.sha256((home / ".claude" / "settings.json").read_bytes()).hexdigest(),
+                                    "memoire": read(mem) if mem.is_file() else None,
+                                    "quand": datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
     t.resume = "état de l'installation %s en place, modifications de l'utilisateur faites" % avant
 
 
@@ -1707,6 +1740,9 @@ def montee(t, opts):
     t("coffre-intact")
     now = tree(vault)
     lost = sorted(rel for rel, sha in snap["coffre"].items() if now.get(rel) != sha)
+    if LINT_MEMORY in lost and written_by_the_lint(home, vault, snap):
+        lost.remove(LINT_MEMORY)
+        t.details["ecrit_par_le_lint"] = [LINT_MEMORY]
     t.check(not lost, "%d fichier(s) du coffre perdu(s) ou changé(s) : %s" % (len(lost), ", ".join(lost[:5])))
     t.details["ajouts_au_coffre"] = sorted(set(now) - set(snap["coffre"]))[:20]
 
