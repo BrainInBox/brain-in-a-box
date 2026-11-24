@@ -292,6 +292,9 @@ jobs:
           cp "${debs[0]}" "$deb"
           cp "${images[0]}" "$image"
           chmod 755 "$image"
+          # Out of the AppImage: 22.04's libwayland-client, which Ubuntu 26.04's Mesa cannot load its EGL
+          # with (the window stays empty); the system's is there wherever EGL is (appimage_libs.py).
+          bash .github/ci/appimage-tools.sh trim "$image"
 
           dpkg-deb -I "$deb"
           [ "$(dpkg-deb -f "$deb" Package)" = brain-in-a-box ] || { echo "::error::not the brain-in-a-box package"; exit 1; }

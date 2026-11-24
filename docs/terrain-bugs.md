@@ -132,3 +132,25 @@ Une entrée :
 - Correctif : #37 (`newline=""` partout où l'octet compte).
 - Test de non-régression : le job `windows` de `test.yml` lance `engine/tests`.
 - Catégorie à surveiller : fins de ligne.
+
+## 2026-11-24 · Linux (VM, Ubuntu 26.04) · L'app reste sur une fenêtre vide : l'AppImage embarque la libwayland-client de 22.04
+- Symptôme : depuis le 2026-11-12, `app-linux`, parcours `app` et `app-codex`, étape `app-chargement` :
+  « écran « chargement » depuis 180 s (Bibo n'a rien dit à l'écran) ». Le journal de l'app :
+  « Could not create default EGL display: EGL_BAD_PARAMETER. Aborting... ». Même AppImage
+  (préversion 203) et même commit que le 11-11, où tout passait.
+- Cause : `ubuntu-latest` est passé d'Ubuntu 24.04 à 26.04 le 12-11. L'AppImage, construite sur 22.04,
+  laisse EGL et Mesa au système, mais embarque `libwayland-client.so.0` de 22.04 (1.20), que WebKitGTK
+  charge en premier. L'EGL de Mesa 26 reçoit donc cette copie, à laquelle manquent trois symboles
+  (`wl_display_create_queue_with_name`, `wl_display_dispatch_queue_timeout`, `wl_fixes_interface`,
+  wayland ≥ 1.23/1.24) : Mesa ne se charge pas, WebKit abandonne, la fenêtre reste vide. Reproduit dans
+  un conteneur Ubuntu 26.04 sous Xvfb : fenêtre vide avec l'AppImage publiée ; accueil de Bibo une fois
+  la bibliothèque retirée (et toujours sur 22.04 et 24.04). Tout utilisateur d'Ubuntu 26.04 voit la
+  même chose.
+- Pourquoi les tests ne l'avaient pas vu : `release.yml` et `test.yml` ne lancent l'AppImage qu'avec
+  `--diagnose`, sans fenêtre ni EGL, et le terrain tournait sur 24.04, dont Mesa se contente de wayland 1.20.
+  Rien ne comparait ce que l'AppImage embarque à ce qu'un système plus récent attend.
+- Correctif : PR #… (`appimage-tools.sh trim` retire la bibliothèque après le bundle de Tauri, puis
+  réemballe l'AppImage avec l'outil et le runtime épinglés ; `check` refuse une AppImage qui la porte encore).
+- Test de non-régression : `engine/tests/test_appimage_libs.py` (`LibsLeftToTheSystem`,
+  `EveryBuildTrimsBeforeItChecks`) ; `appimage-tools.sh check` sur la préversion 203 : rouge.
+- Catégorie à surveiller : bibliothèques embarquées dans l'AppImage, nouvelle version d'Ubuntu.
