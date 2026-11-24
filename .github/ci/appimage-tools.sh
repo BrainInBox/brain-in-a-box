@@ -8,7 +8,11 @@
 #   type2-runtime's "continuous" release of the day. LDAI_RUNTIME_FILE gives it the pinned one;
 #   on GitHub it goes to $GITHUB_ENV, for the steps that follow (not the one running this).
 # Run before `cargo tauri build --bundles appimage` (release.yml, test.yml, terrain.yml), x86-64,
-# then `appimage-tools.sh check <file.AppImage>…`: each must start with the pinned runtime.
+# then `appimage-tools.sh trim <file.AppImage>`: it takes out what the AppImage leaves to the system
+# though linuxdeploy put it in (appimage_libs.py: 22.04's libwayland-client, which Ubuntu 26.04's
+# Mesa cannot load its EGL with), and packs it again with the same tool and the pinned runtime;
+# then `appimage-tools.sh check <file.AppImage>…`: each must start with the pinned runtime and leave
+# those libraries to the system.
 # A new pin: the file's address at a commit or a tagged release, and `sha256sum` of it.
 set -euo pipefail
 
@@ -27,13 +31,49 @@ pinned() {  # the pinned SHA-256 of $1
   awk -v n="$1" '$1 == n { print $2 }' <<< "$PINS"
 }
 
+here=$(cd "$(dirname "$0")" && pwd)
+
+pinned_runtime() {  # the runtime in the cache is still the pinned one
+  local got
+  got=$(sha256sum "$runtime" | cut -d' ' -f1)
+  [ "$got" = "$(pinned runtime-x86_64)" ] || { echo "::error::$runtime: SHA-256 $got, not the pinned runtime"; exit 1; }
+}
+
+unpack() {  # unpack $1 (an AppImage built here) into a new folder, printed; its runtime does it, no FUSE needed
+  local image work
+  image=$(cd "$(dirname "$1")" && pwd)/$(basename "$1")
+  work=$(mktemp -d)
+  (cd "$work" && "$image" --appimage-extract >/dev/null) || { echo "::error::$1 does not unpack"; rm -rf "$work"; exit 1; }
+  echo "$work"
+}
+
+if [ "${1:-}" = trim ]; then
+  [ "$#" -eq 2 ] || { echo "::error::appimage-tools.sh trim: which AppImage?"; exit 1; }
+  image=$2
+  pinned_runtime
+  work=$(unpack "$image")
+  trap 'rm -rf "$work"' EXIT
+  python3 -I "$here/appimage_libs.py" trim "$work/squashfs-root"
+  # The tool that packed it (linuxdeploy-plugin-appimage, pinned), with the pinned runtime.
+  ARCH=x86_64 LDAI_RUNTIME_FILE="$runtime" LDAI_OUTPUT="$work/trimmed.AppImage" \
+    "$dir/linuxdeploy-plugin-appimage.AppImage" --appimage-extract-and-run --appdir="$work/squashfs-root" >"$work/log" 2>&1 \
+    || { cat "$work/log"; echo "::error::$image: packing it again failed"; exit 1; }
+  [ -s "$work/trimmed.AppImage" ] || { cat "$work/log"; echo "::error::$image: packing it again wrote nothing"; exit 1; }
+  chmod 755 "$work/trimmed.AppImage"
+  mv -f "$work/trimmed.AppImage" "$image"
+  echo "$image: packed again without the libraries left to the system"
+  exit 0
+fi
+
 if [ "${1:-}" = check ]; then
   shift
   [ "$#" -gt 0 ] || { echo "::error::appimage-tools.sh check: which AppImage?"; exit 1; }
-  got=$(sha256sum "$runtime" | cut -d' ' -f1)
-  [ "$got" = "$(pinned runtime-x86_64)" ] || { echo "::error::$runtime: SHA-256 $got, not the pinned runtime"; exit 1; }
+  pinned_runtime
   for image in "$@"; do
-    python3 -I "$(dirname "$0")/appimage_runtime.py" "$runtime" "$image"
+    python3 -I "$here/appimage_runtime.py" "$runtime" "$image"
+    work=$(unpack "$image")
+    python3 -I "$here/appimage_libs.py" check "$work/squashfs-root" || { rm -rf "$work"; exit 1; }
+    rm -rf "$work"
   done
   exit 0
 fi

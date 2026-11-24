@@ -975,6 +975,7 @@ jobs:
           shopt -s nullglob
           images=(target/"$TARGET"/release/bundle/appimage/*.AppImage)
           [ "${#images[@]}" -eq 1 ] || { echo "::error::expected one AppImage, found ${#images[@]}"; exit 1; }
+          bash "$GITHUB_WORKSPACE/.github/ci/appimage-tools.sh" trim "${images[0]}"
           bash "$GITHUB_WORKSPACE/.github/ci/appimage-tools.sh" check "${images[0]}"
           version=$(python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1]))["version"])' tauri.conf.json)
           mkdir -p "$RUNNER_TEMP/app"
