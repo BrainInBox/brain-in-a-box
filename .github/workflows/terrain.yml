@@ -1020,7 +1020,7 @@ jobs:
     name: The app, clicked through (Linux${{ matrix.parcours == 'app-codex' && ', Codex chosen' || '' }})
     needs: [ref, app-linux-build]
     runs-on: ubuntu-latest
-    timeout-minutes: 150
+    timeout-minutes: 160
     permissions:
       contents: read
       attestations: read
@@ -1067,8 +1067,9 @@ jobs:
       # which holds the capture it pastes in the guide as a capture tool does), and
       # pkexec with the rule that stands in for the password typed in the system's window; it logs
       # the window's text (pkexec's cmdline_short) under fenetre-mot-de-passe, which the results check.
+      # 20 s on most nights; 15 minutes for a slow mirror (2026-10-27: ~85 kB/s, its 31 MB took 6).
       - name: A desktop for the app
-        timeout-minutes: 5
+        timeout-minutes: 15
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q xvfb openbox xdotool x11-utils imagemagick xclip at-spi2-core python3-gi \
